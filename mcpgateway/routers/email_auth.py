@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, SessionLocal
-from mcpgateway.middleware.rbac import require_permission
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import AuthenticationResponse, AuthEventResponse, ChangePasswordRequest, EmailLoginRequest, EmailRegistrationRequest, EmailUserResponse, SuccessResponse, UserListResponse
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, EmailValidationError, PasswordValidationError, UserExistsError
 from mcpgateway.services.logging_service import LoggingService
@@ -410,14 +410,13 @@ async def get_auth_events(limit: int = 50, offset: int = 0, current_user: EmailU
 # Admin-only endpoints
 @email_auth_router.get("/admin/users", response_model=UserListResponse)
 @require_permission("admin.user_management")
-async def list_users(limit: int = 100, offset: int = 0, current_user: EmailUser = Depends(get_current_user), db: Session = Depends(get_db)):
+async def list_users(limit: int = 100, offset: int = 0, current_user_ctx: dict = Depends(get_current_user_with_permissions)):
     """List all users (admin only).
 
     Args:
         limit: Maximum number of users to return
         offset: Number of users to skip
-        current_user: Currently authenticated user
-        db: Database session
+        current_user_ctx: Currently authenticated user context with permissions
 
     Returns:
         UserListResponse: List of users with pagination
@@ -430,6 +429,7 @@ async def list_users(limit: int = 100, offset: int = 0, current_user: EmailUser 
         >>> # Headers: Authorization: Bearer <admin_token>
     """
 
+    db = current_user_ctx["db"]
     auth_service = EmailAuthService(db)
 
     try:
@@ -445,15 +445,14 @@ async def list_users(limit: int = 100, offset: int = 0, current_user: EmailUser 
 
 @email_auth_router.get("/admin/events", response_model=list[AuthEventResponse])
 @require_permission("admin.user_management")
-async def list_all_auth_events(limit: int = 100, offset: int = 0, user_email: Optional[str] = None, current_user: EmailUser = Depends(get_current_user), db: Session = Depends(get_db)):
+async def list_all_auth_events(limit: int = 100, offset: int = 0, user_email: Optional[str] = None, current_user_ctx: dict = Depends(get_current_user_with_permissions)):
     """List authentication events for all users (admin only).
 
     Args:
         limit: Maximum number of events to return
         offset: Number of events to skip
         user_email: Filter events by specific user email
-        current_user: Currently authenticated user
-        db: Database session
+        current_user_ctx: Currently authenticated user context with permissions
 
     Returns:
         List[AuthEventResponse]: Authentication events
@@ -466,6 +465,7 @@ async def list_all_auth_events(limit: int = 100, offset: int = 0, user_email: Op
         >>> # Headers: Authorization: Bearer <admin_token>
     """
 
+    db = current_user_ctx["db"]
     auth_service = EmailAuthService(db)
 
     try:
@@ -480,13 +480,12 @@ async def list_all_auth_events(limit: int = 100, offset: int = 0, user_email: Op
 
 @email_auth_router.post("/admin/users", response_model=EmailUserResponse, status_code=status.HTTP_201_CREATED)
 @require_permission("admin.user_management")
-async def create_user(user_request: EmailRegistrationRequest, current_user: EmailUser = Depends(get_current_user), db: Session = Depends(get_db)):
+async def create_user(user_request: EmailRegistrationRequest, current_user_ctx: dict = Depends(get_current_user_with_permissions)):
     """Create a new user account (admin only).
 
     Args:
         user_request: User creation information
-        current_user: Currently authenticated admin user
-        db: Database session
+        current_user_ctx: Currently authenticated user context with permissions
 
     Returns:
         EmailUserResponse: Created user information
@@ -503,6 +502,7 @@ async def create_user(user_request: EmailRegistrationRequest, current_user: Emai
               "is_admin": false
             }
     """
+    db = current_user_ctx["db"]
     auth_service = EmailAuthService(db)
 
     try:
@@ -520,7 +520,7 @@ async def create_user(user_request: EmailRegistrationRequest, current_user: Emai
             user.password_change_required = True
             db.commit()
 
-        logger.info(f"Admin {current_user.email} created user: {user.email}")
+        logger.info(f"Admin {current_user_ctx['email']} created user: {user.email}")
 
         return EmailUserResponse.from_email_user(user)
 
@@ -537,13 +537,12 @@ async def create_user(user_request: EmailRegistrationRequest, current_user: Emai
 
 @email_auth_router.get("/admin/users/{user_email}", response_model=EmailUserResponse)
 @require_permission("admin.user_management")
-async def get_user(user_email: str, current_user: EmailUser = Depends(get_current_user), db: Session = Depends(get_db)):
+async def get_user(user_email: str, current_user_ctx: dict = Depends(get_current_user_with_permissions)):
     """Get user by email (admin only).
 
     Args:
         user_email: Email of user to retrieve
-        current_user: Currently authenticated admin user
-        db: Database session
+        current_user_ctx: Currently authenticated user context with permissions
 
     Returns:
         EmailUserResponse: User information
@@ -551,6 +550,7 @@ async def get_user(user_email: str, current_user: EmailUser = Depends(get_curren
     Raises:
         HTTPException: If user not found
     """
+    db = current_user_ctx["db"]
     auth_service = EmailAuthService(db)
 
     try:
@@ -567,14 +567,13 @@ async def get_user(user_email: str, current_user: EmailUser = Depends(get_curren
 
 @email_auth_router.put("/admin/users/{user_email}", response_model=EmailUserResponse)
 @require_permission("admin.user_management")
-async def update_user(user_email: str, user_request: EmailRegistrationRequest, current_user: EmailUser = Depends(get_current_user), db: Session = Depends(get_db)):
+async def update_user(user_email: str, user_request: EmailRegistrationRequest, current_user_ctx: dict = Depends(get_current_user_with_permissions)):
     """Update user information (admin only).
 
     Args:
         user_email: Email of user to update
         user_request: Updated user information
-        current_user: Currently authenticated admin user
-        db: Database session
+        current_user_ctx: Currently authenticated user context with permissions
 
     Returns:
         EmailUserResponse: Updated user information
@@ -582,6 +581,7 @@ async def update_user(user_email: str, user_request: EmailRegistrationRequest, c
     Raises:
         HTTPException: If user not found or update fails
     """
+    db = current_user_ctx["db"]
     auth_service = EmailAuthService(db)
 
     try:
@@ -613,7 +613,7 @@ async def update_user(user_email: str, user_request: EmailRegistrationRequest, c
         db.commit()
         db.refresh(user)
 
-        logger.info(f"Admin {current_user.email} updated user: {user.email}")
+        logger.info(f"Admin {current_user_ctx['email']} updated user: {user.email}")
 
         return EmailUserResponse.from_email_user(user)
 
@@ -624,13 +624,12 @@ async def update_user(user_email: str, user_request: EmailRegistrationRequest, c
 
 @email_auth_router.delete("/admin/users/{user_email}", response_model=SuccessResponse)
 @require_permission("admin.user_management")
-async def delete_user(user_email: str, current_user: EmailUser = Depends(get_current_user), db: Session = Depends(get_db)):
+async def delete_user(user_email: str, current_user_ctx: dict = Depends(get_current_user_with_permissions)):
     """Delete/deactivate user (admin only).
 
     Args:
         user_email: Email of user to delete
-        current_user: Currently authenticated admin user
-        db: Database session
+        current_user_ctx: Currently authenticated user context with permissions
 
     Returns:
         SuccessResponse: Success confirmation
@@ -638,11 +637,12 @@ async def delete_user(user_email: str, current_user: EmailUser = Depends(get_cur
     Raises:
         HTTPException: If user not found or deletion fails
     """
+    db = current_user_ctx["db"]
     auth_service = EmailAuthService(db)
 
     try:
         # Prevent admin from deleting themselves
-        if user_email == current_user.email:
+        if user_email == current_user_ctx["email"]:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot delete your own account")
 
         # Prevent deleting the last active admin user
@@ -652,7 +652,7 @@ async def delete_user(user_email: str, current_user: EmailUser = Depends(get_cur
         # Hard delete using auth service
         await auth_service.delete_user(user_email)
 
-        logger.info(f"Admin {current_user.email} deleted user: {user_email}")
+        logger.info(f"Admin {current_user_ctx['email']} deleted user: {user_email}")
 
         return SuccessResponse(success=True, message=f"User {user_email} has been deleted")
 
