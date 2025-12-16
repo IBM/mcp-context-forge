@@ -21,7 +21,7 @@ class TestPostgreSQLSchemaConfiguration:
         # Test URL with search_path option
         url_string = "postgresql://user:pass@host:5432/db?options=-c%20search_path=mcp_gateway"
         url = make_url(url_string)
-        
+
         # Verify options parameter is present
         assert "options" in url.query
         assert url.query["options"] == "-c search_path=mcp_gateway"
@@ -30,7 +30,7 @@ class TestPostgreSQLSchemaConfiguration:
         """Test that URLs without options parameter work correctly."""
         url_string = "postgresql://user:pass@host:5432/db"
         url = make_url(url_string)
-        
+
         # Verify no options parameter
         assert "options" not in url.query
 
@@ -38,7 +38,7 @@ class TestPostgreSQLSchemaConfiguration:
         """Test URL with multiple schemas in search_path."""
         url_string = "postgresql://user:pass@host:5432/db?options=-c%20search_path=mcp_gateway,public"
         url = make_url(url_string)
-        
+
         assert "options" in url.query
         assert "mcp_gateway" in url.query["options"]
         assert "public" in url.query["options"]
@@ -47,7 +47,7 @@ class TestPostgreSQLSchemaConfiguration:
         """Test that SQLite URLs with options don't cause errors."""
         url_string = "sqlite:///./test.db?options=-c%20search_path=test"
         url = make_url(url_string)
-        
+
         # SQLite backend should be detected
         assert url.get_backend_name() == "sqlite"
         # Options may be present but should be ignored by SQLite
@@ -59,9 +59,9 @@ class TestPostgreSQLSchemaConfiguration:
         url = make_url(url_string)
         backend = url.get_backend_name()
         driver = url.get_driver_name() or "default"
-        
+
         connect_args = {}
-        
+
         if backend == "postgresql" and driver in ("psycopg2", "default", ""):
             connect_args.update(
                 keepalives=1,
@@ -69,11 +69,11 @@ class TestPostgreSQLSchemaConfiguration:
                 keepalives_interval=5,
                 keepalives_count=5,
             )
-            
+
             url_options = url.query.get("options")
             if url_options:
                 connect_args["options"] = url_options
-        
+
         # Verify connect_args includes both keepalives and options
         assert "keepalives" in connect_args
         assert "options" in connect_args
@@ -84,12 +84,12 @@ class TestPostgreSQLSchemaConfiguration:
         url_string = "sqlite:///./test.db"
         url = make_url(url_string)
         backend = url.get_backend_name()
-        
+
         connect_args = {}
-        
+
         if backend == "sqlite":
             connect_args["check_same_thread"] = False
-        
+
         # Verify SQLite-specific args only
         assert "check_same_thread" in connect_args
         assert "options" not in connect_args
@@ -105,7 +105,7 @@ class TestPostgreSQLSchemaConfiguration:
             # No encoding (may work in some contexts)
             "postgresql://user:pass@host/db?options=-c search_path=test",
         ]
-        
+
         for url_string in test_cases:
             url = make_url(url_string)
             assert "options" in url.query
@@ -115,7 +115,7 @@ class TestPostgreSQLSchemaConfiguration:
         """Test URL with multiple query parameters including options."""
         url_string = "postgresql://user:pass@host/db?sslmode=require&options=-c%20search_path=mcp_gateway&connect_timeout=10"
         url = make_url(url_string)
-        
+
         # Verify all parameters are present
         assert "sslmode" in url.query
         assert "options" in url.query
@@ -132,7 +132,7 @@ class TestPostgreSQLSchemaConfiguration:
         """Test that various valid schema names work correctly."""
         url_string = f"postgresql://user:pass@host/db?options=-c%20search_path={schema_name}"
         url = make_url(url_string)
-        
+
         assert "options" in url.query
         assert schema_name in url.query["options"]
 
@@ -143,9 +143,9 @@ class TestPostgreSQLSchemaConfiguration:
         url = make_url(url_string)
         backend = url.get_backend_name()
         driver = url.get_driver_name() or "default"
-        
+
         connect_args = {}
-        
+
         if backend == "postgresql" and driver in ("psycopg2", "default", ""):
             connect_args.update(
                 keepalives=1,
@@ -153,11 +153,11 @@ class TestPostgreSQLSchemaConfiguration:
                 keepalives_interval=5,
                 keepalives_count=5,
             )
-            
+
             url_options = url.query.get("options")
             if url_options:
                 connect_args["options"] = url_options
-        
+
         # Verify keepalives are present but options are not
         assert "keepalives" in connect_args
         assert "options" not in connect_args
@@ -166,7 +166,7 @@ class TestPostgreSQLSchemaConfiguration:
         """Test options parameter with multiple PostgreSQL settings."""
         url_string = "postgresql://user:pass@host/db?options=-c%20search_path=mcp_gateway%20-c%20statement_timeout=30000"
         url = make_url(url_string)
-        
+
         assert "options" in url.query
         options = url.query["options"]
         assert "search_path=mcp_gateway" in options

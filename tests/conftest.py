@@ -239,3 +239,57 @@ def pytest_sessionfinish(session, exitstatus):
             db_mod.engine.dispose()
     except Exception:
         pass  # Ignore errors during cleanup
+
+
+# ---------------------------------------------------------------------------
+# Query counting fixtures for performance testing and N+1 detection
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def query_counter(test_engine):
+    """Fixture to count database queries in tests.
+
+    Usage:
+        def test_something(query_counter, test_db):
+            with query_counter() as counter:
+                # do database operations
+            assert counter.count <= 5, f"Too many queries: {counter.count}"
+
+    Args:
+        test_engine: SQLAlchemy engine fixture
+
+    Returns:
+        Callable that returns a context manager for counting queries
+    """
+    # Local
+    from tests.helpers.query_counter import count_queries
+
+    def _counter(print_queries: bool = False, print_summary: bool = False):
+        return count_queries(test_engine, print_queries=print_queries, print_summary=print_summary)
+
+    return _counter
+
+
+@pytest.fixture
+def assert_max_queries(test_engine):
+    """Fixture to assert maximum query count in tests.
+
+    Usage:
+        def test_list_tools(assert_max_queries, test_db):
+            with assert_max_queries(5):
+                tools = tool_service.list_tools(test_db)
+
+    Args:
+        test_engine: SQLAlchemy engine fixture
+
+    Returns:
+        Context manager that raises AssertionError if query limit exceeded
+    """
+    # Local
+    from tests.helpers.query_counter import assert_max_queries as _assert_max
+
+    def _fixture(max_count: int, message: str = None):
+        return _assert_max(test_engine, max_count, message)
+
+    return _fixture

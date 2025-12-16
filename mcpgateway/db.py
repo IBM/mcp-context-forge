@@ -24,6 +24,7 @@ Examples:
 # Standard
 from datetime import datetime, timedelta, timezone
 import logging
+import os
 from typing import Any, cast, Dict, Generator, List, Optional, TYPE_CHECKING
 import uuid
 
@@ -102,6 +103,10 @@ elif backend == "sqlite":
 # 5. Build the Engine with a single, clean connect_args mapping.
 # ---------------------------------------------------------------------------
 
+# Check for SQLALCHEMY_ECHO environment variable for query debugging
+# This is useful for N+1 detection and performance analysis
+_sqlalchemy_echo = os.getenv("SQLALCHEMY_ECHO", "").lower() in ("true", "1", "yes")
+
 
 def build_engine() -> Engine:
     """Build the SQLAlchemy engine with appropriate settings.
@@ -110,9 +115,15 @@ def build_engine() -> Engine:
     and connection arguments determined by the backend type. It also configures
     the connection pool size and timeout based on application settings.
 
+    Environment variables:
+        SQLALCHEMY_ECHO: Set to 'true' to log all SQL queries (useful for N+1 detection)
+
     Returns:
         SQLAlchemy Engine instance configured for the specified database.
     """
+    if _sqlalchemy_echo:
+        logger.info("SQLALCHEMY_ECHO enabled - all SQL queries will be logged")
+
     if backend == "sqlite":
         # SQLite supports connection pooling with proper configuration
         # For SQLite, we use a smaller pool size since it's file-based
@@ -133,6 +144,8 @@ def build_engine() -> Engine:
             connect_args=connect_args,
             # Log pool events in debug mode
             echo_pool=settings.log_level == "DEBUG",
+            # Log all SQL queries when SQLALCHEMY_ECHO=true (useful for N+1 detection)
+            echo=_sqlalchemy_echo,
         )
 
     if backend in ("mysql", "mariadb"):
@@ -148,6 +161,8 @@ def build_engine() -> Engine:
             pool_recycle=settings.db_pool_recycle,
             connect_args=connect_args,
             isolation_level="READ_COMMITTED",  # Fix PyMySQL sync issues
+            # Log all SQL queries when SQLALCHEMY_ECHO=true (useful for N+1 detection)
+            echo=_sqlalchemy_echo,
         )
 
     # Other databases support full pooling configuration
@@ -159,6 +174,8 @@ def build_engine() -> Engine:
         pool_timeout=settings.db_pool_timeout,
         pool_recycle=settings.db_pool_recycle,
         connect_args=connect_args,
+        # Log all SQL queries when SQLALCHEMY_ECHO=true (useful for N+1 detection)
+        echo=_sqlalchemy_echo,
     )
 
 

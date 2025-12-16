@@ -26,6 +26,14 @@ make dev                          # Start development server (port 8000) with au
 make serve                        # Production server (gunicorn, port 4444)
 ```
 
+### Database Performance Debugging
+```bash
+make dev-echo                     # Dev server with SQL query logging (N+1 detection)
+make test-db-perf                 # Run database performance/N+1 detection tests
+make test-db-perf-verbose         # Database performance tests with full SQL output
+```
+See [Database Performance Guide](docs/docs/development/db-performance.md) for N+1 detection and query optimization.
+
 ### Code Quality Pipeline
 ```bash
 # After writing code (auto-format & cleanup)
@@ -88,6 +96,8 @@ tests/
 ├── unit/               # Unit tests with pytest fixtures
 ├── integration/        # API endpoints & cross-service workflows
 ├── e2e/               # End-to-end workflows
+├── performance/        # Database performance & N+1 detection tests
+├── helpers/            # Test utilities (query_counter.py)
 ├── playwright/        # UI automation with Playwright
 ├── security/          # Security validation
 └── fuzz/             # Fuzzing & property-based testing

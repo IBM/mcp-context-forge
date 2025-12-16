@@ -43,7 +43,7 @@ services:
       - DATABASE_URL=postgresql://user:password@postgres:5432/mcp?options=-c%20search_path=mcp_gateway
     depends_on:
       - postgres
-  
+
   postgres:
     image: postgres:15
     environment:
@@ -98,9 +98,9 @@ GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA mcp_gateway TO your_app_user;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA mcp_gateway TO your_app_user;
 
 -- Set default privileges for future objects
-ALTER DEFAULT PRIVILEGES IN SCHEMA mcp_gateway 
+ALTER DEFAULT PRIVILEGES IN SCHEMA mcp_gateway
   GRANT ALL PRIVILEGES ON TABLES TO your_app_user;
-ALTER DEFAULT PRIVILEGES IN SCHEMA mcp_gateway 
+ALTER DEFAULT PRIVILEGES IN SCHEMA mcp_gateway
   GRANT ALL PRIVILEGES ON SEQUENCES TO your_app_user;
 ```
 
@@ -139,13 +139,13 @@ DO $$
 DECLARE
     row record;
 BEGIN
-    FOR row IN 
-        SELECT tablename 
-        FROM pg_tables 
-        WHERE schemaname = 'public' 
+    FOR row IN
+        SELECT tablename
+        FROM pg_tables
+        WHERE schemaname = 'public'
         AND tablename LIKE 'mcp_%'
     LOOP
-        EXECUTE 'ALTER TABLE public.' || quote_ident(row.tablename) || 
+        EXECUTE 'ALTER TABLE public.' || quote_ident(row.tablename) ||
                 ' SET SCHEMA mcp_gateway';
     END LOOP;
 END $$;
@@ -159,7 +159,7 @@ END $$;
 
 **Symptom**: Tables are still being created in `public` schema
 
-**Solution**: 
+**Solution**:
 1. Verify the `DATABASE_URL` includes the `options` parameter
 2. Check URL encoding is correct (space = `%20`)
 3. Restart the application to pick up the new configuration
