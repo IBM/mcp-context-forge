@@ -32,6 +32,7 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.services.gateway_service import GatewayService
 from mcpgateway.utils.create_slug import slugify
+from mcpgateway.validation.tags import validate_tags_field
 
 logger = logging.getLogger(__name__)
 
@@ -298,7 +299,30 @@ class CatalogService:
                 # First-Party
                 from mcpgateway.schemas import GatewayRead  # pylint: disable=import-outside-toplevel
 
-                gateway_read = GatewayRead.model_validate(db_gateway)
+                # Build dict for GatewayRead validation with converted tags
+                # This avoids mutating the database object
+                gateway_dict = {
+                    "id": db_gateway.id,
+                    "name": db_gateway.name,
+                    "slug": db_gateway.slug,
+                    "url": db_gateway.url,
+                    "description": db_gateway.description,
+                    "tags": validate_tags_field(db_gateway.tags) if db_gateway.tags else [],
+                    "transport": db_gateway.transport,
+                    "capabilities": db_gateway.capabilities,
+                    "created_at": db_gateway.created_at,
+                    "updated_at": db_gateway.updated_at,
+                    "enabled": db_gateway.enabled,
+                    "reachable": db_gateway.reachable,
+                    "last_seen": db_gateway.last_seen,
+                    "auth_type": db_gateway.auth_type,
+                    "visibility": db_gateway.visibility,
+                    "version": db_gateway.version,
+                    "team_id": db_gateway.team_id,
+                    "owner_email": db_gateway.owner_email,
+                }
+
+                gateway_read = GatewayRead.model_validate(gateway_dict)
 
                 return CatalogServerRegisterResponse(
                     success=True,
