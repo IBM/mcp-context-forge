@@ -239,10 +239,14 @@ class ResourceCache:
         Args:
             None
 
+        Returns:
+            int: Number of entries in cache
+
         Examples:
             >>> from mcpgateway.cache.resource_cache import ResourceCache
             >>> cache = ResourceCache(max_size=2, ttl=1)
             >>> cache.set('a', 1)
-            >>> assert len(cache) == 1
+            >>> len(cache)
+            1
         """
         return len(self._cache)
