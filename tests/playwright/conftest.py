@@ -89,8 +89,10 @@ def authenticated_page(page: Page) -> Page:
 def admin_page(page: Page):
     settings = Settings()
     """Provide a logged-in admin page for UI tests."""
+    settings = Settings()
     # Go directly to admin - HTTP Basic Auth is handled by the page fixture
     page.goto("/admin")
+    # Handle login page redirect if auth is required
     if re.search(r"login", page.url):
         page.fill('[name="email"]', settings.basic_auth_user)
         page.fill('[name="password"]', settings.basic_auth_password.get_secret_value())
