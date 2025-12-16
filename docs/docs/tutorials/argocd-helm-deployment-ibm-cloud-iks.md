@@ -107,7 +107,7 @@ podman build -t mcp-context-forge:dev -f Containerfile .
 !!! note "Production deployments"
     Production deployments can pull the signed image directly:
     ```
-    ghcr.io/ibm/mcp-context-forge:0.9.0
+    ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
     ```
 
 ---

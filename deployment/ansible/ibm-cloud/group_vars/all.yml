@@ -10,6 +10,6 @@ postgres_version: "14"
 redis_version: "7"
 
 # Application
-gateway_image: "ghcr.io/ibm/mcp-context-forge:v0.9.0"
+gateway_image: "ghcr.io/ibm/mcp-context-forge:v1.0.0-BETA-1"
 gateway_replicas: 2
 ingress_class: public-iks-k8s-nginx
