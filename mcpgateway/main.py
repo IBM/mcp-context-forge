@@ -2607,7 +2607,6 @@ async def create_tool(
         tool (ToolCreate): The data needed to create the tool.
         request (Request): The FastAPI request object for metadata extraction.
         team_id (Optional[str]): Team ID to assign the tool to.
-        visibility (str): Tool visibility (private, team, public).
         db (Session): The database session dependency.
         user: The authenticated user making the request.
 
