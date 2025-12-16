@@ -8,7 +8,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Context Forge - Gateway Administration</title>
+    <title>ContextForge - Gateway Administration</title>
 
     <!-- Security headers are set by middleware, not meta tags -->
     <!-- Favicon -->
@@ -189,17 +189,21 @@
         x-transition:leave-end="-translate-x-full"
       >
         <!-- Sidebar Header -->
-        <div class="flex items-center justify-between h-16 px-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+        <div class="flex items-center h-16 px-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0"
+             :class="sidebarCollapsed ? 'justify-center' : 'justify-between'">
           <a href="{{ root_path }}/admin" class="flex items-center" x-show="!sidebarCollapsed">
-            <span class="text-xl font-bold text-gray-800 dark:text-gray-200">Context Forge</span>
+            <img src="{{ root_path }}/static/contextforge-logo.png" alt="ContextForge" class="h-8 dark:hidden" />
+            <img src="{{ root_path }}/static/contextforge-logo-white.png" alt="ContextForge" class="h-8 hidden dark:block" />
           </a>
-          <a href="{{ root_path }}/admin" class="flex items-center justify-center" x-show="sidebarCollapsed">
-            <span class="text-xl">⚡</span>
-          </a>
+          <button @click="sidebarCollapsed = false" class="flex items-center justify-center" x-show="sidebarCollapsed" title="Expand sidebar">
+            <img src="{{ root_path }}/static/contextforge-icon.png" alt="ContextForge" class="h-8 w-8 dark:hidden" />
+            <img src="{{ root_path }}/static/contextforge-icon-white.png" alt="ContextForge" class="h-8 w-8 hidden dark:block" />
+          </button>
           <button
             @click="sidebarCollapsed = !sidebarCollapsed"
             class="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 hidden lg:block"
             :title="sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'"
+            x-show="!sidebarCollapsed"
           >
             <svg class="w-5 h-5 transition-transform" :class="{ 'rotate-180': sidebarCollapsed }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"></path>
