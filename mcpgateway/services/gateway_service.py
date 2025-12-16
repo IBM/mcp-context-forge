@@ -2719,7 +2719,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     if span:
                         span.set_attribute("health.status", "unhealthy")
                         span.set_attribute("error.message", str(e))
-                    logger.error(f"Health check failed for gateway {gateway.name}: {e}")
+
+                    # Set the logger as debug as this check happens for each interval
+                    logger.debug(f"Health check failed for gateway {gateway.name}: {e}")
                     await self._handle_gateway_failure(gateway)
 
     async def aggregate_capabilities(self, db: Session) -> Dict[str, Any]:
