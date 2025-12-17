@@ -27,9 +27,8 @@ def test_decode_qr_code_with_positions(tmp_path):
     )
     result = qr_decode(dec_req)
 
-    assert result["success"] is True
-    assert "positions" in result
-    assert len(result["positions"]) > 0
+    assert result.success is True
+    assert len(result.positions) > 0
 
 
 def test_decode_invalid_image_file():
@@ -37,8 +36,7 @@ def test_decode_invalid_image_file():
     dec_req = QRDecodingRequest(image_data="/nonexistent/path/image.png")
     result = qr_decode(dec_req)
 
-    assert result["success"] is False
-    assert "error" in result
+    assert result.success is False
 
 
 def test_decode_invalid_base64():
@@ -46,8 +44,8 @@ def test_decode_invalid_base64():
     dec_req = QRDecodingRequest(image_data="not_valid_base64!!!")
     result = qr_decode(dec_req)
 
-    assert result["success"] is False
-    assert result["error"] == "Could not load image from file or as base64"
+    assert result.success is False
+    assert result.error == "Could not load image from file or as base64"
 
 
 def test_decode_non_qr_image(tmp_path):
@@ -62,7 +60,7 @@ def test_decode_non_qr_image(tmp_path):
     dec_req = QRDecodingRequest(image_data=str(img_path), multiple_codes=False)
     result = qr_decode(dec_req)
 
-    assert result["success"] is False
+    assert result.success is False
 
 
 def test_decode_multiple_qr_codes():
@@ -71,10 +69,10 @@ def test_decode_multiple_qr_codes():
     image_path = Path(__file__).parent / "fixtures" / "test_images" / image_file
     dec_req = QRDecodingRequest(image_data=str(image_path), image_format="png", multiple_codes=True)
     result = qr_decode(dec_req)
-    assert result["success"] is True
-    assert isinstance(result["data"], list)
-    assert "test1" in result["data"]
-    assert "test2" in result["data"]
+    assert result.success is True
+    assert isinstance(result.data, list)
+    assert "test1" in result.data
+    assert "test2" in result.data
 
 
 def test_faild_decode_non_qr_image_multiple_codes(tmp_path):
@@ -96,8 +94,8 @@ def test_faild_decode_non_qr_image_multiple_codes(tmp_path):
     ):
         result = qr_decode(dec_req)
 
-    assert result["success"] is False
-    assert "decoding error" in result["error"]
+    assert result.success is False
+    assert "decoding error" in result.error
 
 
 def test_decode_large_image():
@@ -115,8 +113,8 @@ def test_decode_large_image():
         dec_req = QRDecodingRequest(image_data=img_base64)
         result = qr_decode(dec_req)
 
-    assert result["success"] is False
-    assert "too large" in result.get("error", "").lower()
+    assert result.success is False
+    assert "too large" in result.error.lower()
 
 
 def test_decode_with_preprocessing(tmp_path):
@@ -131,8 +129,8 @@ def test_decode_with_preprocessing(tmp_path):
     dec_req = QRDecodingRequest(image_data=str(gen_path), preprocessing=True)
     result = qr_decode(dec_req)
 
-    assert result["success"] is True
-    assert result["data"] == "preprocess_test"
+    assert result.success is True
+    assert result.data == "preprocess_test"
 
 
 def test_decode_with_preprocessing_small_image(tmp_path):
@@ -152,8 +150,8 @@ def test_decode_with_preprocessing_small_image(tmp_path):
     dec_req = QRDecodingRequest(image_data=str(gen_path), preprocessing=True)
     result = qr_decode(dec_req)
 
-    assert result["success"] is True
-    assert result["data"] == "small"
+    assert result.success is True
+    assert result.data == "small"
 
 
 def test_decode_without_preprocessing(tmp_path):
@@ -168,7 +166,7 @@ def test_decode_without_preprocessing(tmp_path):
     dec_req = QRDecodingRequest(image_data=str(gen_path), preprocessing=False)
     result = qr_decode(dec_req)
 
-    assert result["success"] is True
+    assert result.success is True
 
 
 def test_decode_load_image_error():
@@ -179,8 +177,8 @@ def test_decode_load_image_error():
         dec_req = QRDecodingRequest(image_data="dummy.png")
         result = qr_decode(dec_req)
 
-        assert result["success"] is False
-        assert "Test error" in result["error"]
+        assert result.success is False
+        assert "Test error" in result.error
 
 
 @pytest.mark.parametrize("file_format", ["png", "jpg", "jpeg", "gif", "bmp", "tiff"])
@@ -190,5 +188,5 @@ def test_decode_different_formats(file_format):
     image_path = Path(__file__).parent / "fixtures" / "test_images" / image_file
     dec_req = QRDecodingRequest(image_data=str(image_path), image_format=file_format)
     result = qr_decode(dec_req)
-    assert result["success"] is True
-    assert "test1" in result["data"]
+    assert result.success is True
+    assert "test1" in result.data
