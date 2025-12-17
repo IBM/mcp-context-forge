@@ -1109,6 +1109,87 @@ class StressTestUser(BaseUser):
         )
 
 
+class FastTimeUser(BaseUser):
+    """User that calls the fast_time MCP server tools.
+
+    Tests the fast-time-get-system-time tool via JSON-RPC.
+    Weight: High (main MCP tool testing)
+    """
+
+    weight = 5
+    wait_time = between(0.1, 0.5)
+
+    @task(10)
+    @tag("mcp", "fasttime", "tools")
+    def call_get_system_time(self):
+        """Call fast-time-get-system-time with Europe/Dublin timezone."""
+        payload = _json_rpc_request(
+            "tools/call",
+            {
+                "name": "fast-time-get-system-time",
+                "arguments": {"timezone": "Europe/Dublin"},
+            },
+        )
+        self.client.post(
+            "/rpc",
+            json=payload,
+            headers={**self.auth_headers, "Content-Type": "application/json"},
+            name="/rpc fast-time-get-system-time",
+        )
+
+    @task(5)
+    @tag("mcp", "fasttime", "tools")
+    def call_get_system_time_utc(self):
+        """Call fast-time-get-system-time with UTC timezone."""
+        payload = _json_rpc_request(
+            "tools/call",
+            {
+                "name": "fast-time-get-system-time",
+                "arguments": {"timezone": "UTC"},
+            },
+        )
+        self.client.post(
+            "/rpc",
+            json=payload,
+            headers={**self.auth_headers, "Content-Type": "application/json"},
+            name="/rpc fast-time-get-system-time [UTC]",
+        )
+
+    @task(3)
+    @tag("mcp", "fasttime", "tools")
+    def call_convert_time(self):
+        """Call fast-time-convert-time to convert between timezones."""
+        payload = _json_rpc_request(
+            "tools/call",
+            {
+                "name": "fast-time-convert-time",
+                "arguments": {
+                    "time": "2025-01-01T12:00:00",
+                    "source_timezone": "UTC",
+                    "target_timezone": "Europe/Dublin",
+                },
+            },
+        )
+        self.client.post(
+            "/rpc",
+            json=payload,
+            headers={**self.auth_headers, "Content-Type": "application/json"},
+            name="/rpc fast-time-convert-time",
+        )
+
+    @task(2)
+    @tag("mcp", "fasttime", "list")
+    def list_tools(self):
+        """List tools via JSON-RPC."""
+        payload = _json_rpc_request("tools/list")
+        self.client.post(
+            "/rpc",
+            json=payload,
+            headers={**self.auth_headers, "Content-Type": "application/json"},
+            name="/rpc tools/list [fasttime]",
+        )
+
+
 # =============================================================================
 # Combined User (Realistic Traffic Pattern)
 # =============================================================================

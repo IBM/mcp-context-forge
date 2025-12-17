@@ -498,7 +498,7 @@ clean:
 # help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
 # help: query-log-clear      - Clear database query log files
 
-.PHONY: smoketest test test-profile coverage pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report
+.PHONY: smoketest test test-profile coverage pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000
 
 ## --- Automated checks --------------------------------------------------------
 smoketest:
@@ -749,6 +749,10 @@ generate-report:                           ## Display most recent load test repo
 # help: load-test-sustained   - Sustained load test (25 users, 300s)
 # help: load-test-stress      - Stress test (500 users, 60s, minimal wait)
 # help: load-test-report      - Show last load test HTML report
+# help: load-test-compose     - Light load test for compose stack (port 4444)
+# help: load-test-timeserver  - Load test fast_time_server (5 users, 30s)
+# help: load-test-fasttime    - Load test fast_time MCP tools (50 users, 60s)
+# help: load-test-1000        - High-load test (1000 users, 120s)
 
 # Default load test configuration
 LOADTEST_HOST ?= http://localhost:8000
@@ -792,12 +796,14 @@ load-test-ui:                              ## Start Locust web UI at http://loca
 	@echo "   🎯 Default host: $(LOADTEST_HOST)"
 	@echo ""
 	@echo "   💡 Configure users, spawn rate, and duration in the UI"
-	@echo "   💡 Start server first with 'make dev' in another terminal"
+	@echo "   💡 Use 'User classes' dropdown to select FastTimeUser, etc."
+	@echo "   💡 Start server first with 'make dev' or 'docker compose up'"
 	@echo ""
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		locust -f $(LOADTEST_LOCUSTFILE) \
-			--host=$(LOADTEST_HOST)"
+			--host=$(LOADTEST_HOST) \
+			--class-picker"
 
 load-test-light:                           ## Light load test (10 users, 30s)
 	@echo "🔥 Running LIGHT load test..."
@@ -874,9 +880,29 @@ load-test-timeserver:                      ## Load test fast_time_server tools (
 			--headless \
 			--html=reports/loadtest_timeserver.html \
 			--csv=reports/loadtest_timeserver \
-			--tags timeserver \
+			FastTimeUser \
 			--only-summary"
 	@echo "✅ Report: reports/loadtest_timeserver.html"
+
+load-test-fasttime:                        ## Load test fast_time MCP tools (50 users, 60s)
+	@echo "⏰ Running FastTime MCP server load test..."
+	@echo "   Host: http://localhost:4444"
+	@echo "   Users: 50, Duration: 60s"
+	@echo "   💡 Requires: docker compose --profile with-fast-time up -d"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		locust -f $(LOADTEST_LOCUSTFILE) \
+			--host=http://localhost:4444 \
+			--users=50 \
+			--spawn-rate=10 \
+			--run-time=60s \
+			--headless \
+			--html=reports/loadtest_fasttime.html \
+			--csv=reports/loadtest_fasttime \
+			FastTimeUser \
+			--only-summary"
+	@echo "✅ Report: reports/loadtest_fasttime.html"
 
 load-test-1000:                            ## High-load test (1000 users, 120s) - requires tuned compose
 	@echo "🔥 Running HIGH LOAD test (1000 users, ~1000 RPS)..."
