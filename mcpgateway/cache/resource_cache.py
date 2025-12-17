@@ -156,7 +156,6 @@ class ResourceCache:
             del self._cache[key]
             return None
 
-        entry.expires_at = now + self.ttl
         self._cache.move_to_end(key)
 
         return entry.value
