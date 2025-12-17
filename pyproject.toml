@@ -108,6 +108,7 @@ dev = [
     "importchecker>=3.0",
     "interrogate>=1.7.0",
     "isort>=6.1.0",
+    "locust>=2.35.0",
     "mypy>=1.18.2",
     "pexpect>=4.9.0",
     "pip-licenses>=5.0.0",

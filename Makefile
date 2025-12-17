@@ -498,7 +498,7 @@ clean:
 # help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
 # help: query-log-clear      - Clear database query log files
 
-.PHONY: smoketest test test-profile coverage pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose dev-query-log query-log-tail query-log-analyze query-log-clear
+.PHONY: smoketest test test-profile coverage pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report
 
 ## --- Automated checks --------------------------------------------------------
 smoketest:
@@ -737,6 +737,107 @@ generate-report:                           ## Display most recent load test repo
 			echo ""; \
 		fi; \
 	done || echo "❌ No reports found. Run 'make generate-small' first."
+
+# =============================================================================
+# 🔥 HTTP LOAD TESTING - Locust-based traffic generation
+# =============================================================================
+# help: 🔥 HTTP LOAD TESTING (Locust)
+# help: load-test             - Run HTTP load test (50 users, 60s, headless)
+# help: load-test-ui          - Start Locust web UI at http://localhost:8089
+# help: load-test-light       - Light load test (10 users, 30s)
+# help: load-test-heavy       - Heavy load test (200 users, 120s)
+# help: load-test-sustained   - Sustained load test (25 users, 300s)
+# help: load-test-stress      - Stress test (500 users, 60s, minimal wait)
+# help: load-test-report      - Show last load test HTML report
+
+# Default load test configuration
+LOADTEST_HOST ?= http://localhost:8000
+LOADTEST_USERS ?= 50
+LOADTEST_SPAWN_RATE ?= 10
+LOADTEST_RUN_TIME ?= 60s
+LOADTEST_LOCUSTFILE := tests/loadtest/locustfile.py
+LOADTEST_HTML_REPORT := reports/locust_report.html
+LOADTEST_CSV_PREFIX := reports/locust
+
+load-test:                                 ## Run HTTP load test (50 users, 60s, headless)
+	@echo "🔥 Running HTTP load test with Locust..."
+	@echo "   Host: $(LOADTEST_HOST)"
+	@echo "   Users: $(LOADTEST_USERS)"
+	@echo "   Spawn rate: $(LOADTEST_SPAWN_RATE)/s"
+	@echo "   Duration: $(LOADTEST_RUN_TIME)"
+	@echo ""
+	@echo "   💡 Tip: Start server first with 'make dev' in another terminal"
+	@echo "   💡 Tip: Enable performance tab: MCPGATEWAY_PERFORMANCE_TRACKING=true"
+	@echo ""
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		locust -f $(LOADTEST_LOCUSTFILE) \
+			--host=$(LOADTEST_HOST) \
+			--users=$(LOADTEST_USERS) \
+			--spawn-rate=$(LOADTEST_SPAWN_RATE) \
+			--run-time=$(LOADTEST_RUN_TIME) \
+			--headless \
+			--html=$(LOADTEST_HTML_REPORT) \
+			--csv=$(LOADTEST_CSV_PREFIX) \
+			--only-summary"
+	@echo ""
+	@echo "✅ Load test complete!"
+	@echo "📄 HTML Report: $(LOADTEST_HTML_REPORT)"
+	@echo "📊 CSV Reports: $(LOADTEST_CSV_PREFIX)_*.csv"
+
+load-test-ui:                              ## Start Locust web UI at http://localhost:8089
+	@echo "🔥 Starting Locust Web UI..."
+	@echo "   🌐 Open http://localhost:8089 in your browser"
+	@echo "   🎯 Default host: $(LOADTEST_HOST)"
+	@echo ""
+	@echo "   💡 Configure users, spawn rate, and duration in the UI"
+	@echo "   💡 Start server first with 'make dev' in another terminal"
+	@echo ""
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		locust -f $(LOADTEST_LOCUSTFILE) \
+			--host=$(LOADTEST_HOST)"
+
+load-test-light:                           ## Light load test (10 users, 30s)
+	@echo "🔥 Running LIGHT load test..."
+	@$(MAKE) load-test LOADTEST_USERS=10 LOADTEST_SPAWN_RATE=2 LOADTEST_RUN_TIME=30s
+
+load-test-heavy:                           ## Heavy load test (200 users, 120s)
+	@echo "🔥 Running HEAVY load test..."
+	@echo "   ⚠️  This will generate significant load on your server"
+	@$(MAKE) load-test LOADTEST_USERS=200 LOADTEST_SPAWN_RATE=20 LOADTEST_RUN_TIME=120s
+
+load-test-sustained:                       ## Sustained load test (25 users, 300s)
+	@echo "🔥 Running SUSTAINED load test (5 minutes)..."
+	@$(MAKE) load-test LOADTEST_USERS=25 LOADTEST_SPAWN_RATE=5 LOADTEST_RUN_TIME=300s
+
+load-test-stress:                          ## Stress test (500 users, 60s)
+	@echo "🔥 Running STRESS test..."
+	@echo "   ⚠️  WARNING: This will generate EXTREME load!"
+	@echo "   ⚠️  Your server may become unresponsive"
+	@echo ""
+	@read -p "Continue with stress test? [y/N] " -n 1 -r; \
+	echo; \
+	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+		$(MAKE) load-test LOADTEST_USERS=500 LOADTEST_SPAWN_RATE=50 LOADTEST_RUN_TIME=60s; \
+	else \
+		echo "❌ Cancelled"; \
+	fi
+
+load-test-report:                          ## Show last load test HTML report
+	@if [ -f "$(LOADTEST_HTML_REPORT)" ]; then \
+		echo "📊 Opening load test report: $(LOADTEST_HTML_REPORT)"; \
+		if command -v xdg-open &> /dev/null; then \
+			xdg-open $(LOADTEST_HTML_REPORT); \
+		elif command -v open &> /dev/null; then \
+			open $(LOADTEST_HTML_REPORT); \
+		else \
+			echo "Open $(LOADTEST_HTML_REPORT) in your browser"; \
+		fi; \
+	else \
+		echo "❌ No report found. Run 'make load-test' first."; \
+	fi
 
 # =============================================================================
 # 🧬 MUTATION TESTING

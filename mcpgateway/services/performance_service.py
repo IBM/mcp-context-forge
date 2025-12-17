@@ -314,7 +314,8 @@ class PerformanceService:
                 if metric.name == "http_requests_total":
                     for sample in metric.samples:
                         if sample.name == "http_requests_total":
-                            status = sample.labels.get("status_code", "")
+                            # prometheus_fastapi_instrumentator uses 'status' label, not 'status_code'
+                            status = sample.labels.get("status", sample.labels.get("status_code", ""))
                             value = int(sample.value)
                             metrics.requests_total += value
 
