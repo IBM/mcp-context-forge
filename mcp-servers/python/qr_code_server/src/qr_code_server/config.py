@@ -37,17 +37,17 @@ class PerformanceConfig(BaseModel):
 
 
 class ConfigModel(BaseModel):
-    qr_generation: QRGenerationConfig
-    output: OutputConfig
-    decoding: DecodingConfig
-    performance: PerformanceConfig
+    qr_generation: QRGenerationConfig = Field(default_factory=QRGenerationConfig)
+    output: OutputConfig = Field(default_factory=OutputConfig)
+    decoding: DecodingConfig = Field(default_factory=DecodingConfig)
+    performance: PerformanceConfig = Field(default_factory=PerformanceConfig)
 
 
 def load_config() -> ConfigModel:
-
     if not CONFIG_PATH.exists():
         logger.info("No config at %s; using defaults", CONFIG_PATH)
         return ConfigModel()
+
     try:
         with open(CONFIG_PATH) as f:
             raw = yaml.safe_load(f) or {}
@@ -58,10 +58,11 @@ def load_config() -> ConfigModel:
     try:
         cfg = ConfigModel(**raw)
         logger.info("Loaded configuration from %s", CONFIG_PATH)
+        return cfg
     except ValidationError as exc:
         logger.error("Invalid configuration in %s: %s", CONFIG_PATH, exc)
         raise
 
-    return cfg
 
+# Load once at import time (intentional)
 config = load_config()

@@ -1,3 +1,4 @@
+from pydantic_core import ValidationError
 import pytest
 
 from qr_code_server.utils.file_utils import DEFAULT_FILE_NAME, convert_to_bytes, resolve_output_path
@@ -104,3 +105,32 @@ def test_convert_to_bytes_wrong_input():
         convert_to_bytes("MB100")
     with pytest.raises(ValueError):
         convert_to_bytes("")
+
+
+def test_load_config_defaults(tmp_path, monkeypatch):
+    import qr_code_server.config as cfg
+    fake_config = tmp_path / "config.yaml"
+
+    monkeypatch.setattr(cfg, "CONFIG_PATH", fake_config)
+
+    config = cfg.load_config()
+
+    assert config.qr_generation.default_size == 10
+    assert config.output.enable_zip_export is True
+    assert config.decoding.preprocessing_enabled is True
+
+
+def test_invalid_config_raises(tmp_path, monkeypatch):
+    import qr_code_server.config as cfg
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+    """
+    output:
+    max_batch_size: "not-an-int"
+    """
+    )
+
+    monkeypatch.setattr(cfg, "CONFIG_PATH", config_file)
+
+    with pytest.raises(ValidationError):
+        cfg.load_config()
