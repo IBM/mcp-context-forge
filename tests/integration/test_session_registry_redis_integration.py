@@ -1,3 +1,23 @@
+# -*- coding: utf-8 -*-
+"""Integration tests for Redis-backed SessionRegistry.
+
+Location: ./tests/integration/test_session_registry_redis_integration.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+End-to-end integration test validating Redis publish/subscribe
+behaviour for `SessionRegistry`. The test verifies that messages
+published by one registry are delivered to a transport registered
+on another registry instance via Redis pubsub and the registry's
+`respond()` loop. When required the test will start a temporary
+Redis container via Docker and a minimal local `/rpc` endpoint
+(aiohttp) to satisfy `generate_response()` RPC calls.
+
+Run guidance: use the `--with-integration` pytest flag so CI or
+local reviewers can opt-in to tests that may start external services.
+"""
+
 import asyncio
 import json
 import socket

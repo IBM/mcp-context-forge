@@ -1,3 +1,16 @@
+# -*- coding: utf-8 -*-
+"""Unit test: Redis broadcast single-encoding
+
+Location: ./tests/unit/test_session_registry_redis_broadcast.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+This unit test verifies that `SessionRegistry.broadcast()` when using the
+Redis backend publishes a single JSON-encoded payload (not double-encoded).
+The test injects a dummy Redis client to assert the published payload shape.
+"""
+
 import json
 
 import pytest
