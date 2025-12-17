@@ -16,5 +16,4 @@ decoding:
   supported_image_formats: ["png", "jpg", "jpeg", "gif", "bmp", "tiff"]
 
 performance:
-  cache_generated_codes: false  # Don't cache for security
   max_concurrent_requests: 10
