@@ -90,7 +90,7 @@ async def generate_batch_qr_codes(
     size: int = 10,
     naming_pattern: str = "qr_{index}",
     output_directory: str = "./qr_codes/",
-    zip_output: bool = False
+    zip_output: bool = False,
 ):
     try:
         async with _acquire_request_slot("generate_batch_qr_codes"):

@@ -1,4 +1,3 @@
-
 import base64
 import logging
 import os
@@ -56,8 +55,7 @@ def index_image_generator(
     fill_color: str = "black",
     back_color: str = "white",
 ) -> Generator[tuple[int, BaseImage], None, None]:
-    """Generator that yields indexed QR code images.
-    """
+    """Generator that yields indexed QR code images."""
     for index, item in enumerate(data):
         img = create_qr_image(
             data=item,
@@ -66,7 +64,7 @@ def index_image_generator(
             size=size,
             border=border,
             fill_color=fill_color,
-            back_color=back_color
+            back_color=back_color,
         )
         yield index, img
 
@@ -79,10 +77,8 @@ def create_qr_image(
     error_correction: str = "M",
     fill_color: str = "black",
     back_color: str = "white",
-
 ) -> BaseImage:
-    """Create a QR code image.
-    """
+    """Create a QR code image."""
 
     ec_map = {
         "L": qrcode.constants.ERROR_CORRECT_L,
@@ -91,11 +87,7 @@ def create_qr_image(
         "H": qrcode.constants.ERROR_CORRECT_H,
     }
 
-    factory_map = {
-        "png": PilImage,
-        "svg": SvgImage,
-        "ascii": ImageAscii
-    }
+    factory_map = {"png": PilImage, "svg": SvgImage, "ascii": ImageAscii}
 
     qr = qrcode.QRCode(
         version=None,
