@@ -698,6 +698,14 @@ class SessionRegistry(SessionBackend):
             return
 
         def _build_payload(msg: Any) -> str:
+            """Build a JSON payload for message broadcasting.
+
+            Args:
+                msg: Message to wrap in payload envelope.
+
+            Returns:
+                JSON-encoded string containing type, message, and timestamp.
+            """
             payload = {"type": "message", "message": msg, "timestamp": time.time()}
             return json.dumps(payload)
 
