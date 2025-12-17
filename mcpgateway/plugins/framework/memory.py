@@ -213,7 +213,7 @@ class CopyOnWriteDict(dict):
         Returns:
             A new dict containing the current state (original + modifications - deletions).
         """
-        return {k: v for k, v in self.items()}
+        return dict(self.items())
 
     def get_modifications(self) -> dict:
         """
