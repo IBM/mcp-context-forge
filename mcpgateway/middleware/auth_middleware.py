@@ -92,8 +92,6 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
             credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
             user = await get_current_user(credentials, db)
 
-            logger.info(f'{user=}')
-
             # Eagerly access user attributes before session closes to prevent DetachedInstanceError
             # This forces SQLAlchemy to load the data while the session is still active
             # Note: EmailUser uses 'email' as primary key, not 'id'
