@@ -806,10 +806,11 @@ class MCPJsonRpcUser(BaseUser):
     @task(2)
     @tag("mcp", "protocol")
     def protocol_ping(self):
-        """Protocol endpoint: Ping."""
+        """Protocol endpoint: Ping (JSON-RPC format)."""
+        payload = _json_rpc_request("ping")
         self.client.post(
             "/protocol/ping",
-            json={},
+            json=payload,
             headers={**self.auth_headers, "Content-Type": "application/json"},
             name="/protocol/ping",
         )
@@ -851,11 +852,14 @@ class WriteAPIUser(BaseUser):
     @tag("api", "write", "tools")
     def create_and_delete_tool(self):
         """Create a tool and then delete it."""
-        tool_name = f"loadtest-tool-{uuid.uuid4().hex[:8]}"
+        tool_name = f"loadtest_tool_{uuid.uuid4().hex[:8]}"
         tool_data = {
             "name": tool_name,
+            "url": "http://localhost:9999/loadtest",
             "description": "Load test tool - will be deleted",
-            "inputSchema": {"type": "object", "properties": {"input": {"type": "string"}}},
+            "integration_type": "REST",
+            "request_type": "POST",
+            "input_schema": {"type": "object", "properties": {"input": {"type": "string"}}},
         }
 
         # Create
@@ -881,13 +885,11 @@ class WriteAPIUser(BaseUser):
     @task(3)
     @tag("api", "write", "servers")
     def create_and_delete_server(self):
-        """Create a server and then delete it."""
-        server_name = f"loadtest-server-{uuid.uuid4().hex[:8]}"
+        """Create a virtual server and then delete it."""
+        server_name = f"loadtest_server_{uuid.uuid4().hex[:8]}"
         server_data = {
             "name": server_name,
-            "description": "Load test server - will be deleted",
-            "transport": "sse",
-            "url": f"http://localhost:9999/{server_name}",
+            "description": "Load test virtual server - will be deleted",
         }
 
         # Create
@@ -977,12 +979,14 @@ class WriteAPIUser(BaseUser):
     @tag("api", "write", "resources")
     def create_and_delete_resource(self):
         """Create a resource and then delete it."""
-        resource_uri = f"file:///tmp/loadtest-{uuid.uuid4().hex[:8]}.txt"
+        resource_id = uuid.uuid4().hex[:8]
+        resource_uri = f"file:///tmp/loadtest_{resource_id}.txt"
         resource_data = {
             "uri": resource_uri,
-            "name": f"loadtest-resource-{uuid.uuid4().hex[:8]}",
+            "name": f"loadtest_resource_{resource_id}",
             "description": "Load test resource - will be deleted",
-            "mimeType": "text/plain",
+            "mime_type": "text/plain",
+            "content": "Load test resource content",
         }
 
         with self.client.post(
@@ -1009,10 +1013,11 @@ class WriteAPIUser(BaseUser):
     @tag("api", "write", "prompts")
     def create_and_delete_prompt(self):
         """Create a prompt and then delete it."""
-        prompt_name = f"loadtest-prompt-{uuid.uuid4().hex[:8]}"
+        prompt_name = f"loadtest_prompt_{uuid.uuid4().hex[:8]}"
         prompt_data = {
             "name": prompt_name,
             "description": "Load test prompt - will be deleted",
+            "template": "This is a load test prompt template with input: {{input}}",
             "arguments": [{"name": "input", "description": "Input text", "required": False}],
         }
 
@@ -1040,11 +1045,12 @@ class WriteAPIUser(BaseUser):
     @tag("api", "write", "gateways")
     def create_and_delete_gateway(self):
         """Create a gateway and then delete it."""
-        gateway_name = f"loadtest-gateway-{uuid.uuid4().hex[:8]}"
+        gateway_name = f"loadtest_gateway_{uuid.uuid4().hex[:8]}"
         gateway_data = {
             "name": gateway_name,
             "description": "Load test gateway - will be deleted",
-            "url": f"http://localhost:9999/{gateway_name}",
+            "url": "http://localhost:9999/loadtest",
+            "transport": "SSE",
         }
 
         with self.client.post(
