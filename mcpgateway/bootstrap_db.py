@@ -91,27 +91,6 @@ async def bootstrap_admin_user() -> None:
                 is_admin=True,
             )
 
-            from mcpgateway.services.team_management_service import TeamManagementService
-
-            team_service = TeamManagementService(db)
-
-            public_team: Optional[EmailTeam] = await team_service.create_team(name="public", description="Defualt public team",
-                                           created_by=settings.platform_owner_email, visibility="public",
-                                           max_members=None)
-            
-            if public_team:
-                from mcpgateway.services.role_service import RoleService
-
-                role_service = RoleService(db)
-
-                team_owner_role: Optional[Role] = await role_service.get_role_by_name("team_owner", "team")
-
-                if team_owner_role:
-
-                    await role_service.assign_role_to_user(settings.platform_owner_email,
-                                                       team_owner_role.id, "team",
-                                                       public_team.id, settings.platform_owner_email)
-
             # Mark admin user as email verified and require password change on first login
             # First-Party
             from mcpgateway.db import utc_now  # pylint: disable=import-outside-toplevel

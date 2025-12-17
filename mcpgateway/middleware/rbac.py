@@ -342,7 +342,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
                     user_roles = request.state.user_roles
 
                 user_permissions = await permission_service.get_user_scopes(user_email=user_context["email"], roles=user_roles)
-
+            
             # Filter scopes that have the required permission
             granted_scopes = []
             for scope in user_permissions:

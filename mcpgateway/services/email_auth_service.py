@@ -331,25 +331,10 @@ class EmailAuthService:
 
             global_admin_role: Optional[Role] = await role_service.get_role_by_name(settings.default_global_role_admin, "global")
             global_member_role: Optional[Role] = await role_service.get_role_by_name(settings.default_global_role_member, "global")
-            
-            team_owner_role: Optional[Role] = await role_service.get_role_by_name(settings.default_role_name_owner, "team")
-            team_admin_role: Optional[Role] = await role_service.get_role_by_name(settings.default_role_name_admin, "team")
-            team_member_role: Optional[Role] = await role_service.get_role_by_name(settings.default_role_name_user, "team")
-
-            team_service = TeamManagementService(self.db)
-            public_team: Optional[EmailTeam] = await team_service.get_team_by_slug("public")
-
-            public_team_id = None
-            if public_team:
-                public_team_id = public_team.id
             if user.is_admin:
                 await role_service.assign_role_to_user(user_email=user.email, role_id=global_admin_role.id, scope="global", scope_id=None, granted_by=user.email, expires_at=None)
-                if public_team_id:
-                    await role_service.assign_role_to_user(user_email=user.email, role_id=team_admin_role.id, scope="team", scope_id=public_team_id, granted_by=user.email, expires_at=None)
             else:
                 await role_service.assign_role_to_user(user_email=user.email, role_id=global_member_role.id, scope="global", scope_id=None, granted_by=user.email, expires_at=None)
-                if public_team_id:
-                    await role_service.assign_role_to_user(user_email=user.email, role_id=team_member_role.id, scope="team", scope_id=public_team_id, granted_by=user.email, expires_at=None)
             logger.info(f"Created new user: {email}")
 
             # Create personal team if enabled
