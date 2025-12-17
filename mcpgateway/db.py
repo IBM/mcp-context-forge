@@ -1927,6 +1927,105 @@ class ObservabilitySavedQuery(Base):
     )
 
 
+# ---------------------------------------------------------------------------
+# Performance Monitoring Models
+# ---------------------------------------------------------------------------
+
+
+class PerformanceSnapshot(Base):
+    """
+    ORM model for point-in-time performance snapshots.
+
+    Stores comprehensive system, request, and worker metrics at regular intervals
+    for historical analysis and trend detection.
+
+    Attributes:
+        id (int): Auto-incrementing primary key.
+        timestamp (datetime): When the snapshot was taken.
+        host (str): Hostname of the machine.
+        worker_id (str): Worker identifier (PID or UUID).
+        metrics_json (dict): JSON blob containing all metrics data.
+        created_at (datetime): Record creation timestamp.
+    """
+
+    __tablename__ = "performance_snapshots"
+
+    # Primary key
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    # Snapshot metadata
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    host: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    worker_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+
+    # Metrics data (JSON blob)
+    metrics_json: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    # Indexes for efficient querying
+    __table_args__ = (
+        Index("idx_performance_snapshots_timestamp", "timestamp"),
+        Index("idx_performance_snapshots_host_timestamp", "host", "timestamp"),
+        Index("idx_performance_snapshots_created_at", "created_at"),
+    )
+
+
+class PerformanceAggregate(Base):
+    """
+    ORM model for aggregated performance metrics.
+
+    Stores hourly and daily aggregations of performance data for efficient
+    historical reporting and trend analysis.
+
+    Attributes:
+        id (int): Auto-incrementing primary key.
+        period_start (datetime): Start of the aggregation period.
+        period_end (datetime): End of the aggregation period.
+        period_type (str): Type of aggregation (hourly, daily).
+        host (str): Hostname (None for cluster-wide aggregates).
+        Various aggregate metrics for requests and resources.
+        created_at (datetime): Record creation timestamp.
+    """
+
+    __tablename__ = "performance_aggregates"
+
+    # Primary key
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    # Period metadata
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    period_type: Mapped[str] = mapped_column(String(20), nullable=False, index=True)  # hourly, daily
+    host: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+
+    # Request aggregates
+    requests_total: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    requests_2xx: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    requests_4xx: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    requests_5xx: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    avg_response_time_ms: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    p95_response_time_ms: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    peak_requests_per_second: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+
+    # Resource aggregates
+    avg_cpu_percent: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    avg_memory_percent: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    peak_cpu_percent: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    peak_memory_percent: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    # Indexes and constraints
+    __table_args__ = (
+        Index("idx_performance_aggregates_period", "period_type", "period_start"),
+        Index("idx_performance_aggregates_host_period", "host", "period_type", "period_start"),
+        UniqueConstraint("period_type", "period_start", "host", name="uq_performance_aggregate_period_host"),
+    )
+
+
 class Tool(Base):
     """
     ORM model for a registered Tool.

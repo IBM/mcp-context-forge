@@ -369,6 +369,16 @@ class Settings(BaseSettings):
     mcpgateway_grpc_timeout: int = Field(default=30, description="Default gRPC call timeout in seconds")
     mcpgateway_grpc_tls_enabled: bool = Field(default=False, description="Enable TLS for gRPC connections by default")
 
+    # ===================================
+    # Performance Monitoring Configuration
+    # ===================================
+    mcpgateway_performance_tracking: bool = Field(default=False, description="Enable performance tracking tab in admin UI")
+    mcpgateway_performance_collection_interval: int = Field(default=10, ge=1, le=300, description="Metric collection interval in seconds")
+    mcpgateway_performance_retention_hours: int = Field(default=24, ge=1, le=168, description="Snapshot retention period in hours")
+    mcpgateway_performance_retention_days: int = Field(default=90, ge=1, le=365, description="Aggregate retention period in days")
+    mcpgateway_performance_max_snapshots: int = Field(default=10000, ge=100, le=1000000, description="Maximum performance snapshots to retain")
+    mcpgateway_performance_distributed: bool = Field(default=False, description="Enable distributed mode metrics aggregation via Redis")
+
     # MCP Server Catalog Configuration
     mcpgateway_catalog_enabled: bool = Field(default=True, description="Enable MCP server catalog feature")
     mcpgateway_catalog_file: str = Field(default="mcp-catalog.yml", description="Path to catalog configuration file")
