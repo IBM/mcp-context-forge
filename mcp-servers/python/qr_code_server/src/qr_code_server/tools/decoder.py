@@ -1,8 +1,8 @@
 import logging
-from typing import Any, Literal, Optional, Union
+from typing import Any, Literal
 
 import cv2
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel
 
 from qr_code_server.config import config
 from qr_code_server.utils.file_utils import convert_to_bytes
@@ -17,9 +17,9 @@ class QRDecodingError(Exception):
 
 class QRCodeDecodeResult(BaseModel):
     success: bool
-    data: Union[str, list[str]] | None = None
+    data: str | list[str] | None = None
     positions: list[Any] | None = None
-    error: Optional[str] = None
+    error: str | None = None
 
 
 class QRDecodingRequest(BaseModel):

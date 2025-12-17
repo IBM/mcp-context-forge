@@ -20,7 +20,7 @@ def test_decode_qr_code_with_positions(tmp_path):
     gen_path = tmp_path / "test_qr.png"
     gen_req = QRGenerationRequest(data="test_position", format="png", save_path=str(gen_path))
     gen_result = create_qr_code(gen_req)
-    assert gen_result["success"] is True
+    assert gen_result.success is True
 
     dec_req = QRDecodingRequest(
         image_data=str(gen_path), multiple_codes=False, return_positions=True, preprocessing=False
@@ -124,7 +124,7 @@ def test_decode_with_preprocessing(tmp_path):
     gen_path = tmp_path / "test_qr.png"
     gen_req = QRGenerationRequest(data="preprocess_test", format="png", save_path=str(gen_path))
     gen_result = create_qr_code(gen_req)
-    assert gen_result["success"] is True
+    assert gen_result.success is True
 
     dec_req = QRDecodingRequest(image_data=str(gen_path), preprocessing=True)
     result = qr_decode(dec_req)
@@ -145,7 +145,7 @@ def test_decode_with_preprocessing_small_image(tmp_path):
         save_path=str(gen_path),
     )
     gen_result = create_qr_code(gen_req)
-    assert gen_result["success"] is True
+    assert gen_result.success is True
 
     dec_req = QRDecodingRequest(image_data=str(gen_path), preprocessing=True)
     result = qr_decode(dec_req)
@@ -161,7 +161,7 @@ def test_decode_without_preprocessing(tmp_path):
     gen_path = tmp_path / "test_qr.png"
     gen_req = QRGenerationRequest(data="no_preprocess_test", format="png", save_path=str(gen_path))
     gen_result = create_qr_code(gen_req)
-    assert gen_result["success"] is True
+    assert gen_result.success is True
 
     dec_req = QRDecodingRequest(image_data=str(gen_path), preprocessing=False)
     result = qr_decode(dec_req)
