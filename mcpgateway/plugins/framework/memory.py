@@ -141,17 +141,20 @@ class CopyOnWriteDict(dict):
         """
         Iterate over keys in the dictionary.
 
+        Yields keys in insertion order: first keys from the original dict (in their
+        original order), then new keys from modifications (in their insertion order).
+
         Yields:
             Keys that haven't been deleted.
         """
-        # Yield from modifications first, then original (avoiding duplicates and deleted)
-        seen = set()
-        for key in super().__iter__():
-            if key not in self._deleted:
-                seen.add(key)
-                yield key
+        # First, yield keys from original (in original order)
         for key in self._original:
-            if key not in seen and key not in self._deleted:
+            if key not in self._deleted:
+                yield key
+
+        # Then yield new keys from modifications (not in original)
+        for key in super().__iter__():
+            if key not in self._original and key not in self._deleted:
                 yield key
 
     def __repr__(self) -> str:
