@@ -707,12 +707,21 @@ class SessionRegistry(SessionBackend):
 
         elif self._backend == "redis":
             try:
-                if isinstance(message, (dict, list)):
-                    msg_json = json.dumps(message)
-                else:
-                    msg_json = json.dumps(str(message))
+                # if isinstance(message, (dict, list)):
+                #     msg_json = json.dumps(message)
+                # else:
+                #     msg_json = json.dumps(str(message))
 
-                await self._redis.publish(session_id, json.dumps({"type": "message", "message": msg_json, "timestamp": time.time()}))
+                # await self._redis.publish(session_id, json.dumps({"type": "message", "message": msg_json, "timestamp": time.time()}))
+                 
+                broadcast_payload = {
+                        "type": "message",
+                        "message": message,  # Keep as original type, not pre-encoded
+                        "timestamp": time.time(),
+                    }
+                  # Single encode
+                payload_json = json.dumps(broadcast_payload)
+                await self._redis.publish(session_id, payload_json)  # Single encode    
             except Exception as e:
                 logger.error(f"Redis error during broadcast: {e}")
         elif self._backend == "database":
@@ -855,8 +864,8 @@ class SessionRegistry(SessionBackend):
                         continue
                     data = json.loads(msg["data"])
                     message = data.get("message", {})
-                    if isinstance(message, str):
-                        message = json.loads(message)
+                    # if isinstance(message, str):
+                    #     message = json.loads(message)
                     transport = self.get_session_sync(session_id)
                     if transport:
                         await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
