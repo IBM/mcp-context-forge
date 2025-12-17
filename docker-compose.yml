@@ -59,8 +59,8 @@ services:
       dockerfile: Containerfile.lite     # Same one the Makefile builds
     restart: unless-stopped
     # NOTE: When using replicas > 1, access via nginx:8080 instead of direct port 4444
-    ports:
-      - "4444:4444"                 # HTTP (or HTTPS if SSL=true is set)
+    # ports:
+    #   - "4444:4444"               # Disabled for multi-replica mode
     networks: [mcpnet]
 
     # ──────────────────────────────────────────────────────────────────────
@@ -113,13 +113,14 @@ services:
       # Logging configuration
       - LOG_LEVEL=ERROR  # Default to ERROR for production performance
       - DISABLE_ACCESS_LOG=true  # Disable uvicorn access logs for performance (massive I/O overhead)
-      # Database pool tuning for 1000 RPS (memory-constrained)
-      - DB_POOL_SIZE=100
-      - DB_MAX_OVERFLOW=50
+      # Database pool tuning: 16 workers × 50 pool = 800 connections (< 1000 max)
+      - DB_POOL_SIZE=50
+      - DB_MAX_OVERFLOW=20
       - DB_POOL_TIMEOUT=30
       - DB_POOL_RECYCLE=1800
       # Gunicorn workers - critical for throughput!
-      - GUNICORN_WORKERS=8
+      # Rule of thumb: 2 * CPU cores for async workers
+      - GUNICORN_WORKERS=16
 
       # Phoenix Observability Integration (uncomment when using Phoenix)
       # - PHOENIX_ENDPOINT=${PHOENIX_ENDPOINT:-http://phoenix:6006}
@@ -154,14 +155,14 @@ services:
     # - Multi-instance: comment out ports, set replicas: 2+, access via nginx:8080
     deploy:
       mode: replicated
-      replicas: 1
+      replicas: 2
       resources:
         limits:
+          cpus: '8'
+          memory: 8G
+        reservations:
           cpus: '4'
           memory: 4G
-        reservations:
-          cpus: '2'
-          memory: 2G
 
     # ──────────────────────────────────────────────────────────────────────
     # Volume Mounts
@@ -190,11 +191,11 @@ services:
 
   postgres:
     image: postgres:17
-    # Performance tuning for 1000 RPS (constrained to 4 CPU / 8GB total)
+    # Performance tuning for high-load (16 workers × pool)
     command:
       - "postgres"
       - "-c"
-      - "max_connections=500"
+      - "max_connections=1000"
       - "-c"
       - "shared_buffers=512MB"
       - "-c"
@@ -234,11 +235,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.5'
-          memory: 3G
+          cpus: '4'
+          memory: 4G
         reservations:
-          cpus: '0.5'
-          memory: 1G
+          cpus: '2'
+          memory: 2G
 
   mariadb:
     image: mariadb:10.6
