@@ -10,24 +10,24 @@ def test_validation_fits_explicit_version():
     """Data fits the specified version → valid=True, fits=True."""
     req = QRValidationRequest(data="abc", target_version=5, error_correction="L")
     result = validate(req)
-    assert result["valid"] is True
-    assert result["fits"] is True
-    assert "error" not in result
+    assert result.valid is True
+    assert result.fits is True
+    assert result.error is None
 
 
 def test_validation_not_fit_explicit_version():
     req = QRValidationRequest(data="abc" * 100, target_version=5, error_correction="L")
     result = validate(req)
-    assert result["valid"] is False
-    assert result["fits"] is False
+    assert result.valid is False
+    assert result.fits is False
 
 
 def test_validation_without_target_version_checks_general_fit():
     """When version=None, it should only check whether any QR version fits."""
     req = QRValidationRequest(data="Hello", target_version=None)
     result = validate(req)
-    assert result["valid"] is True
-    assert result["fits"] is True
+    assert result.valid is True
+    assert result.fits is True
 
 
 def test_validation_no_version_and_data_too_large_for_all():
@@ -35,17 +35,17 @@ def test_validation_no_version_and_data_too_large_for_all():
     text = "A" * 20000  # guaranteed to exceed even version 40-H
     req = QRValidationRequest(data=text, target_version=None)
     result = validate(req)
-    assert result["valid"] is False
-    assert result["fits"] is False
-    assert result["error"] == "Data too large for any QR version"
+    assert result.valid is False
+    assert result.fits is False
+    assert result.error == "Data too large for any QR version"
 
 
 def test_validation_suggests_optimization():
     """When suggest_optimization=True, result must include suggested_version."""
     req = QRValidationRequest(data="abcdef", target_version=10, suggest_optimization=True)
     result = validate(req)
-    assert "suggested_version" in result
-    assert result["suggested_version"] is not None
+
+    assert result.suggested_version is not None
 
 
 def test_encode_bits_small_version():
