@@ -30,7 +30,7 @@ class QRDecodingRequest(BaseModel):
     preprocessing: bool = True  # Apply preprocessing for better detection
 
 
-def qr_decode(request: QRDecodingRequest) -> dict[str, Any]:
+def qr_decode(request: QRDecodingRequest) -> QRCodeDecodeResult:
     """
     Decode QR codes from an image. Handles single/multi code detection, image preprocessing,
     and robust OpenCV signature differences.
