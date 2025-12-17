@@ -32,7 +32,6 @@ class DecodingConfig(BaseModel):
 
 
 class PerformanceConfig(BaseModel):
-    cache_generated_codes: bool = Field(default=False)
     max_concurrent_requests: int = Field(default=10)
 
 
