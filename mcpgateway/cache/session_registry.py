@@ -690,20 +690,20 @@ class SessionRegistry(SessionBackend):
             True
             >>> reg._session_message['session_id']
             'session-789'
-            >>> json.loads(reg._session_message['message']) == message
+            >>> json.loads(reg._session_message['message'])['message'] == message
             True
         """
         # Skip for none backend only
         if self._backend == "none":
             return
 
-        if self._backend == "memory":
-            if isinstance(message, (dict, list)):
-                msg_json = json.dumps(message)
-            else:
-                msg_json = json.dumps(str(message))
+        def _build_payload(msg: Any) -> str:
+            payload = {"type": "message", "message": msg, "timestamp": time.time()}
+            return json.dumps(payload)
 
-            self._session_message: Dict[str, Any] | None = {"session_id": session_id, "message": msg_json}
+        if self._backend == "memory":
+            payload_json = _build_payload(message)
+            self._session_message: Dict[str, Any] | None = {"session_id": session_id, "message": payload_json}
 
         elif self._backend == "redis":
             try:
@@ -719,10 +719,7 @@ class SessionRegistry(SessionBackend):
                 logger.error(f"Redis error during broadcast: {e}")
         elif self._backend == "database":
             try:
-                if isinstance(message, (dict, list)):
-                    msg_json = json.dumps(message)
-                else:
-                    msg_json = json.dumps(str(message))
+                msg_json = _build_payload(message)
 
                 def _db_add() -> None:
                     """Store message in the database for inter-process communication.
@@ -841,10 +838,13 @@ class SessionRegistry(SessionBackend):
             pass
 
         elif self._backend == "memory":
-            # if self._session_message:
             transport = self.get_session_sync(session_id)
             if transport and self._session_message:
-                message = json.loads(str(self._session_message.get("message")))
+                data = json.loads(self._session_message.get("message"))
+                if isinstance(data, dict) and "message" in data:
+                    message = data["message"]
+                else:
+                    message = data
                 await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
 
         elif self._backend == "redis":
@@ -1000,7 +1000,11 @@ class SessionRegistry(SessionBackend):
                     record = await asyncio.to_thread(_db_read, session_id)
 
                     if record:
-                        message = json.loads(record.message)
+                        data = json.loads(record.message)
+                        if isinstance(data, dict) and "message" in data:
+                            message = data["message"]
+                        else:
+                            message = data
                         transport = self.get_session_sync(session_id)
                         if transport:
                             logger.info("Ready to respond")
