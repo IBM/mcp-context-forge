@@ -29,7 +29,6 @@ Examples:
 
 # Standard
 import asyncio
-from copy import deepcopy
 import logging
 from typing import Any, Optional, Union
 
@@ -38,6 +37,7 @@ from mcpgateway.plugins.framework.base import HookRef, Plugin
 from mcpgateway.plugins.framework.errors import convert_exception_to_error, PluginError, PluginViolationError
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.loader.plugin import PluginLoader
+from mcpgateway.plugins.framework.memory import copyonwrite
 from mcpgateway.plugins.framework.models import Config, GlobalContext, PluginContext, PluginContextTable, PluginErrorModel, PluginMode, PluginPayload, PluginResult
 from mcpgateway.plugins.framework.registry import PluginInstanceRegistry
 from mcpgateway.plugins.framework.utils import payload_matches
@@ -160,8 +160,8 @@ class PluginExecutor:
                 user=global_context.user,
                 tenant_id=global_context.tenant_id,
                 server_id=global_context.server_id,
-                state={} if not global_context.state else deepcopy(global_context.state),
-                metadata={} if not global_context.metadata else deepcopy(global_context.metadata),
+                state={} if not global_context.state else copyonwrite(global_context.state),
+                metadata={} if not global_context.metadata else copyonwrite(global_context.metadata),
             )
             # Get or create local context for this plugin
             local_context_key = global_context.request_id + hook_ref.plugin_ref.uuid
