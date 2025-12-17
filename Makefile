@@ -839,6 +839,69 @@ load-test-report:                          ## Show last load test HTML report
 		echo "❌ No report found. Run 'make load-test' first."; \
 	fi
 
+load-test-compose:                         ## Light load test for compose stack (10 users, 30s, port 4444)
+	@echo "🐳 Running compose-optimized load test..."
+	@echo "   Host: http://localhost:4444"
+	@echo "   Users: 10, Duration: 30s"
+	@echo "   💡 Requires: make compose-up"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		locust -f $(LOADTEST_LOCUSTFILE) \
+			--host=http://localhost:4444 \
+			--users=10 \
+			--spawn-rate=2 \
+			--run-time=30s \
+			--headless \
+			--html=reports/loadtest_compose.html \
+			--csv=reports/loadtest_compose \
+			--only-summary"
+	@echo "✅ Report: reports/loadtest_compose.html"
+
+load-test-timeserver:                      ## Load test fast_time_server tools (5 users, 30s)
+	@echo "⏰ Running time server load test..."
+	@echo "   Host: http://localhost:4444"
+	@echo "   Users: 5, Duration: 30s"
+	@echo "   💡 Requires: docker compose --profile with-fast-time up -d"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		locust -f $(LOADTEST_LOCUSTFILE) \
+			--host=http://localhost:4444 \
+			--users=5 \
+			--spawn-rate=1 \
+			--run-time=30s \
+			--headless \
+			--html=reports/loadtest_timeserver.html \
+			--csv=reports/loadtest_timeserver \
+			--tags timeserver \
+			--only-summary"
+	@echo "✅ Report: reports/loadtest_timeserver.html"
+
+load-test-1000:                            ## High-load test (1000 users, 120s) - requires tuned compose
+	@echo "🔥 Running HIGH LOAD test (1000 users, ~1000 RPS)..."
+	@echo "   Host: http://localhost:4444"
+	@echo "   Users: 1000, Spawn: 50/s, Duration: 120s"
+	@echo "   ⚠️  Requires tuned compose stack (make compose-down && make compose-up)"
+	@read -p "Continue? [y/N] " -n 1 -r; echo; \
+	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+		test -d "$(VENV_DIR)" || $(MAKE) venv; \
+		mkdir -p reports; \
+		/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+			locust -f $(LOADTEST_LOCUSTFILE) \
+				--host=http://localhost:4444 \
+				--users=1000 \
+				--spawn-rate=50 \
+				--run-time=120s \
+				--headless \
+				--html=reports/loadtest_1000.html \
+				--csv=reports/loadtest_1000 \
+				--only-summary"; \
+		echo "✅ Report: reports/loadtest_1000.html"; \
+	else \
+		echo "❌ Cancelled"; \
+	fi
+
 # =============================================================================
 # 🧬 MUTATION TESTING
 # =============================================================================

@@ -112,6 +112,13 @@ services:
       # Logging configuration
       - LOG_LEVEL=ERROR  # Default to ERROR for production performance
       - DISABLE_ACCESS_LOG=true  # Disable uvicorn access logs for performance (massive I/O overhead)
+      # Database pool tuning for 1000 RPS (memory-constrained)
+      - DB_POOL_SIZE=100
+      - DB_MAX_OVERFLOW=50
+      - DB_POOL_TIMEOUT=30
+      - DB_POOL_RECYCLE=1800
+      # Gunicorn workers - critical for throughput!
+      - GUNICORN_WORKERS=8
 
       # Phoenix Observability Integration (uncomment when using Phoenix)
       # - PHOENIX_ENDPOINT=${PHOENIX_ENDPOINT:-http://phoenix:6006}
@@ -141,6 +148,16 @@ services:
       retries: 5
       start_period: 30s
 
+    # Resource limits for 1000 RPS (constrained to 4 CPU / 8GB total)
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+
     # ──────────────────────────────────────────────────────────────────────
     # Volume Mounts
     # ──────────────────────────────────────────────────────────────────────
@@ -168,6 +185,33 @@ services:
 
   postgres:
     image: postgres:17
+    # Performance tuning for 1000 RPS (constrained to 4 CPU / 8GB total)
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=500"
+      - "-c"
+      - "shared_buffers=512MB"
+      - "-c"
+      - "work_mem=16MB"
+      - "-c"
+      - "effective_cache_size=1536MB"
+      - "-c"
+      - "maintenance_work_mem=128MB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "wal_buffers=16MB"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "effective_io_concurrency=200"
+      - "-c"
+      - "max_worker_processes=4"
+      - "-c"
+      - "max_parallel_workers_per_gather=2"
+      - "-c"
+      - "max_parallel_workers=4"
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=mysecretpassword
@@ -182,6 +226,14 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 3G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
 
   mariadb:
     image: mariadb:10.6
@@ -259,9 +311,32 @@ services:
 ###############################################################################
   redis:
     image: redis:latest
+    # Performance tuning for 1000 RPS (memory-constrained)
+    command:
+      - "redis-server"
+      - "--maxmemory"
+      - "512mb"
+      - "--maxmemory-policy"
+      - "allkeys-lru"
+      - "--tcp-backlog"
+      - "1024"
+      - "--timeout"
+      - "0"
+      - "--tcp-keepalive"
+      - "300"
+      - "--maxclients"
+      - "5000"
     ports:
       - "6379:6379"      # expose only if you want host access
     networks: [mcpnet]
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
 
 ###############################################################################
 #  OPTIONAL ADMIN TOOLS - handy web UIs for DB & cache (disabled by default)
