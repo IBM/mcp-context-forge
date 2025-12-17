@@ -58,6 +58,7 @@ services:
       context: .
       dockerfile: Containerfile.lite     # Same one the Makefile builds
     restart: unless-stopped
+    # NOTE: When using replicas > 1, access via nginx:8080 instead of direct port 4444
     ports:
       - "4444:4444"                 # HTTP (or HTTPS if SSL=true is set)
     networks: [mcpnet]
@@ -148,14 +149,18 @@ services:
       retries: 5
       start_period: 30s
 
-    # Resource limits for 1000 RPS (constrained to 4 CPU / 8GB total)
+    # Scaling options:
+    # - Single instance: use port 4444 directly, replicas: 1
+    # - Multi-instance: comment out ports, set replicas: 2+, access via nginx:8080
     deploy:
+      mode: replicated
+      replicas: 1
       resources:
         limits:
-          cpus: '2'
+          cpus: '4'
           memory: 4G
         reservations:
-          cpus: '1'
+          cpus: '2'
           memory: 2G
 
     # ──────────────────────────────────────────────────────────────────────
