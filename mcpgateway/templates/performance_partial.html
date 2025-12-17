@@ -1,0 +1,580 @@
+<!-- htmlhint doctype-first:false -->
+<!-- Performance Dashboard with Tabs and Auto-refresh -->
+<div x-data="{
+  activeTab: 'overview',
+  autoRefresh: true,
+  refreshInterval: 5000
+}" class="space-y-6">
+  <!-- Header with Refresh Controls -->
+  <div class="flex flex-wrap items-center justify-between gap-4">
+    <div>
+      <h2 class="text-2xl font-bold text-gray-900 dark:text-gray-100">Performance Monitor</h2>
+      <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
+        Host: <span class="font-mono">{{ dashboard.host }}</span> |
+        Uptime: {{ "{:,}".format(dashboard.uptime_seconds // 3600) }}h {{ (dashboard.uptime_seconds % 3600) // 60 }}m
+      </p>
+    </div>
+    <div class="flex items-center gap-3">
+      <label class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+        <input type="checkbox" x-model="autoRefresh" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+        Auto-refresh
+      </label>
+      <button
+        hx-get="{{ root_path }}/admin/performance/stats"
+        hx-target="#performance-panel"
+        hx-swap="innerHTML"
+        class="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 transition-colors">
+        <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+        </svg>
+        Refresh
+      </button>
+    </div>
+  </div>
+
+  <!-- Tab Navigation -->
+  <div class="border-b border-gray-200 dark:border-gray-700">
+    <nav class="flex flex-wrap -mb-px text-sm font-medium" aria-label="Performance Tabs">
+      <button @click="activeTab = 'overview'" :class="activeTab === 'overview' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'" class="py-3 px-4 border-b-2 transition-colors">
+        Overview
+      </button>
+      <button @click="activeTab = 'system'" :class="activeTab === 'system' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'" class="py-3 px-4 border-b-2 transition-colors">
+        System
+      </button>
+      <button @click="activeTab = 'workers'" :class="activeTab === 'workers' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'" class="py-3 px-4 border-b-2 transition-colors">
+        Workers
+      </button>
+      <button @click="activeTab = 'requests'" :class="activeTab === 'requests' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'" class="py-3 px-4 border-b-2 transition-colors">
+        Requests
+      </button>
+      <button @click="activeTab = 'database'" :class="activeTab === 'database' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'" class="py-3 px-4 border-b-2 transition-colors">
+        Database
+      </button>
+      <button @click="activeTab = 'cache'" :class="activeTab === 'cache' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'" class="py-3 px-4 border-b-2 transition-colors">
+        Cache
+      </button>
+    </nav>
+  </div>
+
+  <!-- Overview Tab -->
+  <div x-show="activeTab === 'overview'" x-transition>
+    <!-- Key Metrics Cards -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <!-- CPU -->
+      <div class="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/20 dark:to-blue-800/20 rounded-lg p-4 border border-blue-200 dark:border-blue-800">
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="text-2xl font-bold text-blue-900 dark:text-blue-100">{{ "%.1f"|format(dashboard.system.cpu_percent) }}%</div>
+            <div class="text-sm text-blue-700 dark:text-blue-300 mt-1">CPU Usage</div>
+          </div>
+          <div class="text-3xl">💻</div>
+        </div>
+        <div class="mt-2 w-full bg-blue-200 dark:bg-blue-700 rounded-full h-2">
+          <div class="bg-blue-600 dark:bg-blue-400 h-2 rounded-full transition-all" style="width: {{ dashboard.system.cpu_percent }}%"></div>
+        </div>
+        <div class="text-xs text-blue-600 dark:text-blue-400 mt-2">{{ dashboard.system.cpu_count }} cores</div>
+      </div>
+
+      <!-- Memory -->
+      <div class="bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/20 dark:to-green-800/20 rounded-lg p-4 border border-green-200 dark:border-green-800">
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="text-2xl font-bold text-green-900 dark:text-green-100">{{ "%.1f"|format(dashboard.system.memory_percent) }}%</div>
+            <div class="text-sm text-green-700 dark:text-green-300 mt-1">Memory</div>
+          </div>
+          <div class="text-3xl">🧠</div>
+        </div>
+        <div class="mt-2 w-full bg-green-200 dark:bg-green-700 rounded-full h-2">
+          <div class="bg-green-600 dark:bg-green-400 h-2 rounded-full transition-all" style="width: {{ dashboard.system.memory_percent }}%"></div>
+        </div>
+        <div class="text-xs text-green-600 dark:text-green-400 mt-2">{{ "{:,}".format(dashboard.system.memory_used_mb) }} / {{ "{:,}".format(dashboard.system.memory_total_mb) }} MB</div>
+      </div>
+
+      <!-- Workers -->
+      <div class="bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-900/20 dark:to-purple-800/20 rounded-lg p-4 border border-purple-200 dark:border-purple-800">
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="text-2xl font-bold text-purple-900 dark:text-purple-100">{{ dashboard.gunicorn.workers_active }}/{{ dashboard.gunicorn.workers_total }}</div>
+            <div class="text-sm text-purple-700 dark:text-purple-300 mt-1">Workers</div>
+          </div>
+          <div class="text-3xl">👷</div>
+        </div>
+        <div class="mt-2 w-full bg-purple-200 dark:bg-purple-700 rounded-full h-2">
+          {% set worker_pct = (dashboard.gunicorn.workers_active / dashboard.gunicorn.workers_total * 100) if dashboard.gunicorn.workers_total > 0 else 0 %}
+          <div class="bg-purple-600 dark:bg-purple-400 h-2 rounded-full transition-all" style="width: {{ worker_pct }}%"></div>
+        </div>
+        <div class="text-xs text-purple-600 dark:text-purple-400 mt-2">{{ dashboard.gunicorn.workers_idle }} idle</div>
+      </div>
+
+      <!-- Request Rate -->
+      <div class="bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-900/20 dark:to-orange-800/20 rounded-lg p-4 border border-orange-200 dark:border-orange-800">
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="text-2xl font-bold text-orange-900 dark:text-orange-100">{{ "%.1f"|format(dashboard.requests.requests_per_second) }}</div>
+            <div class="text-sm text-orange-700 dark:text-orange-300 mt-1">Req/sec</div>
+          </div>
+          <div class="text-3xl">🚀</div>
+        </div>
+        <div class="text-xs text-orange-600 dark:text-orange-400 mt-4">{{ "{:,}".format(dashboard.requests.requests_total) }} total requests</div>
+      </div>
+    </div>
+
+    <!-- Response Time and Error Rate -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <!-- Response Time Percentiles -->
+      <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+        <h4 class="font-semibold text-gray-900 dark:text-gray-100 mb-4">Response Time (ms)</h4>
+        <div class="space-y-3">
+          {% set max_rt = [dashboard.requests.response_time_p99_ms, 1] | max %}
+          <div class="flex items-center">
+            <span class="w-16 text-sm text-gray-600 dark:text-gray-400">Avg</span>
+            <div class="flex-1 mx-3">
+              <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3">
+                {% set avg_width = [dashboard.requests.response_time_avg_ms / max_rt * 100, 100] | min %}
+                <div class="bg-blue-500 h-3 rounded-full" style="width: {{ avg_width }}%"></div>
+              </div>
+            </div>
+            <span class="w-20 text-right font-mono text-sm text-gray-900 dark:text-gray-100">{{ "%.1f"|format(dashboard.requests.response_time_avg_ms) }}</span>
+          </div>
+          <div class="flex items-center">
+            <span class="w-16 text-sm text-gray-600 dark:text-gray-400">P50</span>
+            <div class="flex-1 mx-3">
+              <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3">
+                {% set p50_width = [dashboard.requests.response_time_p50_ms / max_rt * 100, 100] | min %}
+                <div class="bg-green-500 h-3 rounded-full" style="width: {{ p50_width }}%"></div>
+              </div>
+            </div>
+            <span class="w-20 text-right font-mono text-sm text-gray-900 dark:text-gray-100">{{ "%.1f"|format(dashboard.requests.response_time_p50_ms) }}</span>
+          </div>
+          <div class="flex items-center">
+            <span class="w-16 text-sm text-gray-600 dark:text-gray-400">P95</span>
+            <div class="flex-1 mx-3">
+              <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3">
+                {% set p95_width = [dashboard.requests.response_time_p95_ms / max_rt * 100, 100] | min %}
+                <div class="bg-yellow-500 h-3 rounded-full" style="width: {{ p95_width }}%"></div>
+              </div>
+            </div>
+            <span class="w-20 text-right font-mono text-sm text-gray-900 dark:text-gray-100">{{ "%.1f"|format(dashboard.requests.response_time_p95_ms) }}</span>
+          </div>
+          <div class="flex items-center">
+            <span class="w-16 text-sm text-gray-600 dark:text-gray-400">P99</span>
+            <div class="flex-1 mx-3">
+              <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3">
+                {% set p99_width = [dashboard.requests.response_time_p99_ms / max_rt * 100, 100] | min %}
+                <div class="bg-red-500 h-3 rounded-full" style="width: {{ p99_width }}%"></div>
+              </div>
+            </div>
+            <span class="w-20 text-right font-mono text-sm text-gray-900 dark:text-gray-100">{{ "%.1f"|format(dashboard.requests.response_time_p99_ms) }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- HTTP Status Distribution -->
+      <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+        <h4 class="font-semibold text-gray-900 dark:text-gray-100 mb-4">HTTP Status Distribution</h4>
+        <div class="space-y-3">
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400 flex items-center">
+              <span class="w-3 h-3 rounded-full bg-green-500 mr-2"></span> 2xx Success
+            </span>
+            <span class="font-semibold text-green-600 dark:text-green-400">{{ "{:,}".format(dashboard.requests.requests_2xx) }}</span>
+          </div>
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400 flex items-center">
+              <span class="w-3 h-3 rounded-full bg-blue-500 mr-2"></span> 3xx Redirect
+            </span>
+            <span class="font-semibold text-blue-600 dark:text-blue-400">{{ "{:,}".format(dashboard.requests.requests_3xx) }}</span>
+          </div>
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400 flex items-center">
+              <span class="w-3 h-3 rounded-full bg-yellow-500 mr-2"></span> 4xx Client Error
+            </span>
+            <span class="font-semibold text-yellow-600 dark:text-yellow-400">{{ "{:,}".format(dashboard.requests.requests_4xx) }}</span>
+          </div>
+          <div class="flex justify-between items-center py-2">
+            <span class="text-gray-600 dark:text-gray-400 flex items-center">
+              <span class="w-3 h-3 rounded-full bg-red-500 mr-2"></span> 5xx Server Error
+            </span>
+            <span class="font-semibold text-red-600 dark:text-red-400">{{ "{:,}".format(dashboard.requests.requests_5xx) }}</span>
+          </div>
+        </div>
+        <div class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+          <div class="flex justify-between items-center">
+            <span class="text-gray-600 dark:text-gray-400">Error Rate</span>
+            <span class="font-bold {% if dashboard.requests.error_rate > 5 %}text-red-600 dark:text-red-400{% elif dashboard.requests.error_rate > 1 %}text-yellow-600 dark:text-yellow-400{% else %}text-green-600 dark:text-green-400{% endif %}">
+              {{ "%.2f"|format(dashboard.requests.error_rate) }}%
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- System Tab -->
+  <div x-show="activeTab === 'system'" x-transition>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <!-- CPU Details -->
+      <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+        <h4 class="font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center">
+          <span class="text-2xl mr-2">💻</span> CPU
+        </h4>
+        <div class="space-y-3">
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">Usage</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "%.1f"|format(dashboard.system.cpu_percent) }}%</span>
+          </div>
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">Cores</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ dashboard.system.cpu_count }}</span>
+          </div>
+          {% if dashboard.system.cpu_freq_mhz %}
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">Frequency</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "{:,}".format(dashboard.system.cpu_freq_mhz|int) }} MHz</span>
+          </div>
+          {% endif %}
+          {% if dashboard.system.load_avg_1m is not none %}
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">Load Avg (1m)</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "%.2f"|format(dashboard.system.load_avg_1m) }}</span>
+          </div>
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">Load Avg (5m)</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "%.2f"|format(dashboard.system.load_avg_5m) }}</span>
+          </div>
+          <div class="flex justify-between items-center py-2">
+            <span class="text-gray-600 dark:text-gray-400">Load Avg (15m)</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "%.2f"|format(dashboard.system.load_avg_15m) }}</span>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Memory Details -->
+      <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+        <h4 class="font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center">
+          <span class="text-2xl mr-2">🧠</span> Memory
+        </h4>
+        <div class="space-y-3">
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">Usage</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "%.1f"|format(dashboard.system.memory_percent) }}%</span>
+          </div>
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">Used</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "{:,}".format(dashboard.system.memory_used_mb) }} MB</span>
+          </div>
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">Available</span>
+            <span class="font-semibold text-green-600 dark:text-green-400">{{ "{:,}".format(dashboard.system.memory_available_mb) }} MB</span>
+          </div>
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">Total</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "{:,}".format(dashboard.system.memory_total_mb) }} MB</span>
+          </div>
+          {% if dashboard.system.swap_total_mb > 0 %}
+          <div class="flex justify-between items-center py-2">
+            <span class="text-gray-600 dark:text-gray-400">Swap Used</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "{:,}".format(dashboard.system.swap_used_mb) }} / {{ "{:,}".format(dashboard.system.swap_total_mb) }} MB</span>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Disk Details -->
+      <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+        <h4 class="font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center">
+          <span class="text-2xl mr-2">💾</span> Disk
+        </h4>
+        <div class="space-y-3">
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">Usage</span>
+            <span class="font-semibold {% if dashboard.system.disk_percent > 90 %}text-red-600 dark:text-red-400{% elif dashboard.system.disk_percent > 75 %}text-yellow-600 dark:text-yellow-400{% else %}text-gray-900 dark:text-gray-100{% endif %}">{{ "%.1f"|format(dashboard.system.disk_percent) }}%</span>
+          </div>
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">Used</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "%.1f"|format(dashboard.system.disk_used_gb) }} GB</span>
+          </div>
+          <div class="flex justify-between items-center py-2">
+            <span class="text-gray-600 dark:text-gray-400">Total</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "%.1f"|format(dashboard.system.disk_total_gb) }} GB</span>
+          </div>
+        </div>
+        <div class="mt-4 w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3">
+          <div class="{% if dashboard.system.disk_percent > 90 %}bg-red-500{% elif dashboard.system.disk_percent > 75 %}bg-yellow-500{% else %}bg-blue-500{% endif %} h-3 rounded-full" style="width: {{ dashboard.system.disk_percent }}%"></div>
+        </div>
+      </div>
+
+      <!-- Network Details -->
+      <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+        <h4 class="font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center">
+          <span class="text-2xl mr-2">🌐</span> Network
+        </h4>
+        <div class="space-y-3">
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">Bytes Sent</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "{:,}".format(dashboard.system.network_bytes_sent // 1048576) }} MB</span>
+          </div>
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">Bytes Received</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "{:,}".format(dashboard.system.network_bytes_recv // 1048576) }} MB</span>
+          </div>
+          <div class="flex justify-between items-center py-2">
+            <span class="text-gray-600 dark:text-gray-400">Active Connections</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "{:,}".format(dashboard.system.network_connections) }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Workers Tab -->
+  <div x-show="activeTab === 'workers'" x-transition>
+    <!-- Gunicorn Summary -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 mb-4">
+      <h4 class="font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center">
+        <span class="text-2xl mr-2">👷</span> Gunicorn Status
+      </h4>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="text-center">
+          <div class="text-2xl font-bold text-gray-900 dark:text-gray-100">{{ dashboard.gunicorn.workers_total }}</div>
+          <div class="text-sm text-gray-600 dark:text-gray-400">Total Workers</div>
+        </div>
+        <div class="text-center">
+          <div class="text-2xl font-bold text-green-600 dark:text-green-400">{{ dashboard.gunicorn.workers_active }}</div>
+          <div class="text-sm text-gray-600 dark:text-gray-400">Active</div>
+        </div>
+        <div class="text-center">
+          <div class="text-2xl font-bold text-gray-500 dark:text-gray-400">{{ dashboard.gunicorn.workers_idle }}</div>
+          <div class="text-sm text-gray-600 dark:text-gray-400">Idle</div>
+        </div>
+        {% if dashboard.gunicorn.master_pid %}
+        <div class="text-center">
+          <div class="text-2xl font-bold font-mono text-gray-900 dark:text-gray-100">{{ dashboard.gunicorn.master_pid }}</div>
+          <div class="text-sm text-gray-600 dark:text-gray-400">Master PID</div>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Worker Details Table -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+      <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+        <h4 class="font-semibold text-gray-900 dark:text-gray-100">Worker Processes</h4>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead class="bg-gray-50 dark:bg-gray-900">
+            <tr>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">PID</th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">CPU %</th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Memory</th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Threads</th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Connections</th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Status</th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Uptime</th>
+            </tr>
+          </thead>
+          <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+            {% for worker in dashboard.workers %}
+            <tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
+              <td class="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-900 dark:text-gray-100">{{ worker.pid }}</td>
+              <td class="px-6 py-4 whitespace-nowrap text-sm">
+                <span class="{% if worker.cpu_percent > 80 %}text-red-600 dark:text-red-400{% elif worker.cpu_percent > 50 %}text-yellow-600 dark:text-yellow-400{% else %}text-gray-900 dark:text-gray-100{% endif %}">
+                  {{ "%.1f"|format(worker.cpu_percent) }}%
+                </span>
+              </td>
+              <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">{{ "%.1f"|format(worker.memory_rss_mb) }} MB</td>
+              <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">{{ worker.threads }}</td>
+              <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">{{ worker.connections }}</td>
+              <td class="px-6 py-4 whitespace-nowrap text-sm">
+                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if worker.status == 'running' %}bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200{% elif worker.status == 'sleeping' %}bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200{% else %}bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300{% endif %}">
+                  {{ worker.status }}
+                </span>
+              </td>
+              <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                {% if worker.uptime_seconds %}
+                {{ worker.uptime_seconds // 3600 }}h {{ (worker.uptime_seconds % 3600) // 60 }}m
+                {% else %}
+                -
+                {% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="7" class="px-6 py-4 text-center text-gray-500 dark:text-gray-400">No worker data available</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Requests Tab -->
+  <div x-show="activeTab === 'requests'" x-transition>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <!-- Request Statistics -->
+      <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+        <h4 class="font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center">
+          <span class="text-2xl mr-2">📈</span> Request Statistics
+        </h4>
+        <div class="space-y-3">
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">Total Requests</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "{:,}".format(dashboard.requests.requests_total) }}</span>
+          </div>
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">Requests/Second</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "%.2f"|format(dashboard.requests.requests_per_second) }}</span>
+          </div>
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">Active Requests</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ dashboard.requests.active_requests }}</span>
+          </div>
+          <div class="flex justify-between items-center py-2">
+            <span class="text-gray-600 dark:text-gray-400">Error Rate</span>
+            <span class="font-semibold {% if dashboard.requests.error_rate > 5 %}text-red-600 dark:text-red-400{% elif dashboard.requests.error_rate > 1 %}text-yellow-600 dark:text-yellow-400{% else %}text-green-600 dark:text-green-400{% endif %}">
+              {{ "%.2f"|format(dashboard.requests.error_rate) }}%
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Response Time Details -->
+      <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+        <h4 class="font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center">
+          <span class="text-2xl mr-2">⏱️</span> Response Times
+        </h4>
+        <div class="space-y-3">
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">Average</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "%.2f"|format(dashboard.requests.response_time_avg_ms) }} ms</span>
+          </div>
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">P50 (Median)</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "%.2f"|format(dashboard.requests.response_time_p50_ms) }} ms</span>
+          </div>
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">P95</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "%.2f"|format(dashboard.requests.response_time_p95_ms) }} ms</span>
+          </div>
+          <div class="flex justify-between items-center py-2">
+            <span class="text-gray-600 dark:text-gray-400">P99</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "%.2f"|format(dashboard.requests.response_time_p99_ms) }} ms</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Database Tab -->
+  <div x-show="activeTab === 'database'" x-transition>
+    <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+      <h4 class="font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center">
+        <span class="text-2xl mr-2">🗄️</span> Database Connection Pool
+      </h4>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div class="text-center p-4 bg-gray-50 dark:bg-gray-900 rounded-lg">
+          <div class="text-2xl font-bold text-gray-900 dark:text-gray-100">{{ dashboard.database.pool_size }}</div>
+          <div class="text-sm text-gray-600 dark:text-gray-400">Pool Size</div>
+        </div>
+        <div class="text-center p-4 bg-gray-50 dark:bg-gray-900 rounded-lg">
+          <div class="text-2xl font-bold text-green-600 dark:text-green-400">{{ dashboard.database.connections_available }}</div>
+          <div class="text-sm text-gray-600 dark:text-gray-400">Available</div>
+        </div>
+        <div class="text-center p-4 bg-gray-50 dark:bg-gray-900 rounded-lg">
+          <div class="text-2xl font-bold text-blue-600 dark:text-blue-400">{{ dashboard.database.connections_in_use }}</div>
+          <div class="text-sm text-gray-600 dark:text-gray-400">In Use</div>
+        </div>
+        <div class="text-center p-4 bg-gray-50 dark:bg-gray-900 rounded-lg">
+          <div class="text-2xl font-bold text-orange-600 dark:text-orange-400">{{ dashboard.database.overflow }}</div>
+          <div class="text-sm text-gray-600 dark:text-gray-400">Overflow</div>
+        </div>
+      </div>
+
+      <!-- Connection Pool Visualization -->
+      <div class="mb-4">
+        <div class="text-sm text-gray-600 dark:text-gray-400 mb-2">Pool Utilization</div>
+        <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-4">
+          {% set pool_pct = (dashboard.database.connections_in_use / dashboard.database.pool_size * 100) if dashboard.database.pool_size > 0 else 0 %}
+          <div class="{% if pool_pct > 80 %}bg-red-500{% elif pool_pct > 50 %}bg-yellow-500{% else %}bg-green-500{% endif %} h-4 rounded-full transition-all" style="width: {{ pool_pct }}%"></div>
+        </div>
+        <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ "%.1f"|format(pool_pct) }}% utilized</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cache Tab -->
+  <div x-show="activeTab === 'cache'" x-transition>
+    <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+      <h4 class="font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center">
+        <span class="text-2xl mr-2">🔴</span> Redis Cache
+      </h4>
+
+      {% if dashboard.cache.connected %}
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div class="text-center p-4 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
+          <div class="flex items-center justify-center mb-2">
+            <span class="w-3 h-3 bg-green-500 rounded-full animate-pulse mr-2"></span>
+            <span class="text-green-700 dark:text-green-300 font-medium">Connected</span>
+          </div>
+          <div class="text-xs text-green-600 dark:text-green-400">v{{ dashboard.cache.version or 'N/A' }}</div>
+        </div>
+        <div class="text-center p-4 bg-gray-50 dark:bg-gray-900 rounded-lg">
+          <div class="text-2xl font-bold text-gray-900 dark:text-gray-100">{{ "%.1f"|format(dashboard.cache.used_memory_mb) }}</div>
+          <div class="text-sm text-gray-600 dark:text-gray-400">Memory (MB)</div>
+        </div>
+        <div class="text-center p-4 bg-gray-50 dark:bg-gray-900 rounded-lg">
+          <div class="text-2xl font-bold text-gray-900 dark:text-gray-100">{{ "{:,}".format(dashboard.cache.ops_per_second) }}</div>
+          <div class="text-sm text-gray-600 dark:text-gray-400">Ops/sec</div>
+        </div>
+        <div class="text-center p-4 bg-gray-50 dark:bg-gray-900 rounded-lg">
+          <div class="text-2xl font-bold text-gray-900 dark:text-gray-100">{{ dashboard.cache.connected_clients }}</div>
+          <div class="text-sm text-gray-600 dark:text-gray-400">Clients</div>
+        </div>
+      </div>
+
+      <!-- Hit Rate -->
+      <div class="mb-4">
+        <div class="flex justify-between text-sm text-gray-600 dark:text-gray-400 mb-2">
+          <span>Cache Hit Rate</span>
+          <span class="font-medium">{{ "%.1f"|format(dashboard.cache.hit_rate) }}%</span>
+        </div>
+        <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-4">
+          <div class="{% if dashboard.cache.hit_rate > 80 %}bg-green-500{% elif dashboard.cache.hit_rate > 50 %}bg-yellow-500{% else %}bg-red-500{% endif %} h-4 rounded-full transition-all" style="width: {{ dashboard.cache.hit_rate }}%"></div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-4 text-sm">
+        <div class="flex justify-between py-2 border-b border-gray-100 dark:border-gray-700">
+          <span class="text-gray-600 dark:text-gray-400">Keyspace Hits</span>
+          <span class="font-semibold text-green-600 dark:text-green-400">{{ "{:,}".format(dashboard.cache.keyspace_hits) }}</span>
+        </div>
+        <div class="flex justify-between py-2 border-b border-gray-100 dark:border-gray-700">
+          <span class="text-gray-600 dark:text-gray-400">Keyspace Misses</span>
+          <span class="font-semibold text-red-600 dark:text-red-400">{{ "{:,}".format(dashboard.cache.keyspace_misses) }}</span>
+        </div>
+      </div>
+      {% else %}
+      <div class="text-center py-8">
+        <div class="flex items-center justify-center mb-4">
+          <span class="w-3 h-3 bg-gray-400 rounded-full mr-2"></span>
+          <span class="text-gray-500 dark:text-gray-400 font-medium">Not Connected</span>
+        </div>
+        <p class="text-sm text-gray-500 dark:text-gray-400">Redis cache is not configured or unavailable.</p>
+        <p class="text-xs text-gray-400 dark:text-gray-500 mt-2">Configure REDIS_URL to enable caching.</p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Auto-refresh mechanism -->
+  <div x-show="autoRefresh" x-init="
+    setInterval(() => {
+      if (autoRefresh) {
+        htmx.trigger('#performance-panel', 'refresh');
+      }
+    }, refreshInterval);
+  " class="hidden"></div>
+</div>
