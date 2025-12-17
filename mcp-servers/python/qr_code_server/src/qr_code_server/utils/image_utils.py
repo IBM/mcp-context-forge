@@ -3,7 +3,7 @@ import logging
 import os
 from collections.abc import Generator
 from io import BytesIO
-from typing import IO, Literal
+from typing import Any, Literal
 
 import cv2
 import numpy as np
@@ -39,7 +39,7 @@ class ImageAscii(BaseImage):
         mapped = block[img_arr.astype(int)]
         return "\n".join("".join(row) for row in mapped)
 
-    def save(self, stream: IO[bytes], kind: str | None = None) -> None:
+    def save(self, stream: Any, kind: Any = None) -> None:
         ascii_qr = self.to_string()
         try:
             if isinstance(stream, str):
