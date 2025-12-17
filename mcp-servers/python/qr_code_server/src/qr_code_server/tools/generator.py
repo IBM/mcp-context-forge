@@ -3,6 +3,7 @@ import logging
 import os
 import zipfile
 from io import BytesIO
+from typing import Literal
 
 from pydantic import BaseModel, field_validator
 from qrcode.image.pil import PilImage
@@ -16,12 +17,30 @@ logger = logging.getLogger(__name__)
 DEFAULT_ZIP_FILE_NAME = "qr.zip"
 
 
+class QRCodeResult(BaseModel):
+    success: bool
+    output_format: Literal["png", "svg", "ascii"] | None = None
+    file_path: str | None = None
+    image_base64: str | None = None
+    message: str | None = None
+    error: str | None = None
+
+
+class BatchQRCodeResult(BaseModel):
+    success: bool
+    message: str | None = None
+    error: str | None = None
+    zip_file_path: str | None = None
+    output_directory: str | None = None
+    files: list[str] | None = None
+
+
 class QRGenerationRequest(BaseModel):
     data: str
-    format: str = "png"
+    format: Literal["png", "svg", "ascii"] = "png"
     size: int = config.qr_generation.default_size
     border: int = config.qr_generation.default_border
-    error_correction: str = config.qr_generation.default_error_correction
+    error_correction: Literal["L", "M", "Q", "H"] = config.qr_generation.default_error_correction
     fill_color: str = "black"
     back_color: str = "white"
     save_path: str | None = None
@@ -38,7 +57,7 @@ class QRGenerationRequest(BaseModel):
 
 class BatchQRGenerationRequest(BaseModel):
     data_list: list[str]  # List of data to encode
-    format: str = "png"
+    format: Literal["png", "svg", "ascii"] = "png"
     size: int = config.qr_generation.default_size
     naming_pattern: str = "qr_{index}"
     output_directory: str = config.output.default_directory
@@ -68,7 +87,7 @@ class BatchQRGenerationRequest(BaseModel):
         return v
 
 
-def create_qr_code(request: QRGenerationRequest):
+def create_qr_code(request: QRGenerationRequest) -> QRCodeResult:
 
     img = create_qr_image(
         data=request.data,
@@ -89,12 +108,13 @@ def create_qr_code(request: QRGenerationRequest):
                 img.save(buffer)
                 img_base64 = base64.b64encode(buffer.getvalue()).decode()
             logger.info("Base64 QR code created successfully: format=%s", request.format)
-            return {
-                "success": True,
-                "output_format": request.format,
-                "image_base64": img_base64,
-                "message": "QR code generated as base64 image",
-            }
+            return QRCodeResult(
+                success=True,
+                output_format=request.format,
+                image_base64=img_base64,
+                message="QR code generated as base64 image"
+            )
+
         except Exception as e:
             logger.error(
                 "Failed to encode QR to base64: format=%s ec=%s error=%s",
@@ -102,7 +122,7 @@ def create_qr_code(request: QRGenerationRequest):
                 request.error_correction,
                 e,
             )
-            return {"success": False, "error": str(e)}
+            return QRCodeResult(success=False, error=str(e))
 
     try:
         save_path = resolve_output_path(
@@ -112,29 +132,31 @@ def create_qr_code(request: QRGenerationRequest):
     except Exception as e:
         # propagate as structured result so callers/tests can handle it
         logger.error("Error resolving output path: %s", e)
-        return {"success": False, "error": str(e)}
+        return QRCodeResult(success=False, error=str(e))
 
     try:
-        img.save(save_path)
-        return {
-            "success": True,
-            "output_format": request.format,
-            "message": f"QR code image saved at {save_path}",
-        }
+        img.save(save_path) # type: ignore[arg-type]
+        return QRCodeResult(
+            success=True,
+            output_format=request.format,
+            message=f"QR code image saved at {save_path}",
+        )
     except Exception as e:
         logger.error(
             "Failed to save QR code image: path=%s format=%s error=%s", save_path, request.format, e
         )
-        return {"success": False, "error": str(e)}
+        return QRCodeResult(success=False, error=str(e))
 
 
-def create_batch_qr_codes(request: BatchQRGenerationRequest):
+def create_batch_qr_codes(request: BatchQRGenerationRequest) -> BatchQRCodeResult:
 
     try:
         os.makedirs(request.output_directory, exist_ok=True)
     except OSError as e:
-        logger.error("Failed to create output directory %s: %s", request.output_directory, e)
-        return {"success": False, "error": str(e)}
+        logger.error(
+            "Failed to create output directory %s: %s", request.output_directory, e
+        )
+        return BatchQRCodeResult(success=False, error=str(e))
 
     if request.zip_output:
         zip_file_path = os.path.join(request.output_directory, DEFAULT_ZIP_FILE_NAME)
@@ -147,14 +169,17 @@ def create_batch_qr_codes(request: BatchQRGenerationRequest):
                 filename = f"{request.naming_pattern.format(index=index)}.{request.format}"
                 logger.info("Adding image index=%d filename=%s to zip", index, filename)
                 # yield acii as string and pil as bytes
+
                 if hasattr(img, "to_string"):
                     img = img.to_string()
                 elif isinstance(img, PilImage):
                     buffer = BytesIO()
                     img.save(buffer, format=request.format)
                     img = buffer.getvalue()
+                else:
+                    raise TypeError(f"Unsupported image type: {type(img)}")
                 try:
-                    zf.writestr(filename, img)
+                    zf.writestr(filename, img) # type: ignore[arg-type]
                 except Exception as e:
                     logger.error(
                         "Failed to add image to zip: index=%d filename=%s error=%s",
@@ -162,11 +187,11 @@ def create_batch_qr_codes(request: BatchQRGenerationRequest):
                         filename,
                         e,
                     )
-                    return {"success": False, "error": str(e)}
-        return {
-            "success": True,
-            "message": f"QR code images saved in zip archive at {zip_file_path}",
-        }
+                    return BatchQRCodeResult(success=False, error=str(e))
+        return BatchQRCodeResult(
+            success=True,
+            message=f"QR code images saved in zip archive at {zip_file_path}",
+        )
 
     else:
         for index, img in index_image_generator(
@@ -181,8 +206,8 @@ def create_batch_qr_codes(request: BatchQRGenerationRequest):
                 img.save(file_path)
             except Exception as e:
                 logger.error("Failed to save image: index=%d path=%s error=%s", index, file_path, e)
-                return {"success": False, "error": str(e)}
-        return {
-            "success": True,
-            "message": f"QR code images saved at {request.output_directory}",
-        }
+                return BatchQRCodeResult(success=False, error=str(e))
+        return BatchQRCodeResult(
+            success=True,
+            message=f"QR code images saved at {request.output_directory}",
+        )
