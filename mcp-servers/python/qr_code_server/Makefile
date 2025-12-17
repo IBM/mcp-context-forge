@@ -16,7 +16,7 @@ dev-install: ## Install with dev extras
 	$(PYTHON) -m pip install -e ".[dev]"
 
 format: ## Format (black + ruff --fix)
-	black . && ruff --fix .
+	black . && ruff check --fix .
 
 lint: ## Lint (ruff, mypy)
 	ruff check . && mypy src/qr_code_server
