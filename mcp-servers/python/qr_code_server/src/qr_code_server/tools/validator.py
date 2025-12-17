@@ -48,6 +48,11 @@ DATA_CODEWORDS = {
     40: {"L": 2956, "M": 2334, "Q": 1666, "H": 1276},
 }
 
+class QRValidationResult(BaseModel):
+    valid: bool
+    fits: bool | None = None
+    error: str | None = None
+    suggested_version: int | None = None
 
 class QRValidationRequest(BaseModel):
     data: str
@@ -127,26 +132,25 @@ def smallest_fitting_version(text: str, ecc: str) -> int | None:
     return None
 
 
-def validate(request: QRValidationRequest):
+def validate(request: QRValidationRequest) -> QRValidationResult:
     """
-        Validate whether the given request's text fits into the specified QR version
-        and error-correction level. Optionally returns suggestions for the smallest
-        fitting QR version.
-    `"""
+    Validate whether the given request's text fits into the specified QR version
+    and error-correction level. Optionally returns suggestions for the smallest
+    fitting QR version.
+    """
     text = request.data
     version = request.target_version
     ecc = request.error_correction.upper()
 
-    result = {"valid": True}
+    result = QRValidationResult(valid=True)
 
     if request.check_capacity:
         if version is None:
-            # “valid” means: string can fit in QR code in general
-            best = smallest_fitting_version(text, request.error_correction)
-            result["fits"] = best is not None
+            best = smallest_fitting_version(text, ecc)
+            result.fits = best is not None
             if best is None:
-                result["valid"] = False
-                result["error"] = "Data too large for any QR version"
+                result.valid = False
+                result.error = "Data too large for any QR version"
                 logger.warning(
                     "Validation failed: data too large (len=%d) for any QR version, ecc=%s",
                     len(text),
@@ -160,13 +164,12 @@ def validate(request: QRValidationRequest):
                     ecc,
                 )
         else:
-            capacity_bits = DATA_CODEWORDS[request.target_version][request.error_correction] * 8
-            needed_bits = encoded_bits(text, request.target_version)
-            fits = needed_bits <= capacity_bits
-            result["fits"] = fits
-            if not fits:
-                result["valid"] = False
-                result["error"] = "Data does not fit in specified version"
+            capacity_bits = DATA_CODEWORDS[version][ecc] * 8
+            needed_bits = encoded_bits(text, version)
+            result.fits = needed_bits <= capacity_bits
+            if not result.fits:
+                result.valid = False
+                result.error = "Data does not fit in specified version"
                 logger.info(
                     "Data did not fit: version=%d ecc=%s needed_bits=%d capacity_bits=%d",
                     version,
@@ -177,7 +180,7 @@ def validate(request: QRValidationRequest):
 
     if request.suggest_optimization:
         suggested = smallest_fitting_version(text, ecc)
-        result["suggested_version"] = suggested
+        result.suggested_version = suggested
         logger.info(
             "Suggested optimal version=%s for data length=%d ecc=%s",
             suggested,
