@@ -79,7 +79,7 @@ def test_decode_non_qr_image(tmp_path):
 
 def test_decode_multiple_qr_codes():
     """Test decoder decode multiple qr code"""
-    image_file = f"two_qr_test1_test2.png"
+    image_file = "two_qr_test1_test2.png"
     image_path = Path(__file__).parent / "fixtures" / "test_images" / image_file
     dec_req = QRDecodingRequest(
         image_data=str(image_path),

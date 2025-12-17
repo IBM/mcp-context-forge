@@ -160,12 +160,6 @@ async def validate_qr_data(
         return {"success": False, "error": str(e)}
 
 
-@mcp.custom_route("/health", methods=["GET"])
-async def health_check():
-    """Health check endpoint."""
-    return {"status": "healthy", "version": "1.0.0"}
-
-
 def main():
     """Main entry point for the FastMCP server."""
     import argparse

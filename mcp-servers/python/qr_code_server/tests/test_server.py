@@ -379,3 +379,4 @@ async def test_queue_limit_rejects_overload():
         server_module._request_semaphore = original_semaphore
         server_module._pending_requests = original_pending
         server_module._max_queue_size = original_max_queue
+
