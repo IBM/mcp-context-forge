@@ -17,7 +17,7 @@ from qr_code_server.tools.generator import (
 
 def test_qr_code_tool_schema_importable():
     # Basic import test ensures package structure is valid
-    mod = __import__('qr_code_server.server', fromlist=['server'])
+    mod = __import__("qr_code_server.server", fromlist=["server"])
     assert isinstance(mod, types.ModuleType)
 
 
@@ -27,11 +27,7 @@ def test_create_qr_saves_file_different_formats(tmp_path, file_format):
 
     file_path = tmp_path
 
-    req = QRGenerationRequest(
-        data="https://test.com",
-        format=file_format,
-        save_path=str(file_path)
-    )
+    req = QRGenerationRequest(data="https://test.com", format=file_format, save_path=str(file_path))
     result = create_qr_code(req)
     assert result["success"] is True
     assert result["output_format"] is req.format
@@ -44,10 +40,7 @@ def test_create_qr_saves_file_different_formats_base_64(tmp_path, file_format):
     file_path = tmp_path
 
     req = QRGenerationRequest(
-        data="https://test.com",
-        format=file_format,
-        return_base64=True,
-        save_path=str(file_path)
+        data="https://test.com", format=file_format, return_base64=True, save_path=str(file_path)
     )
 
     result = create_qr_code(req)
@@ -60,10 +53,7 @@ def test_create_qr_fail_to_save_file(tmp_path):
     """Test that create_qr handles file save errors gracefully."""
 
     file_path = tmp_path
-    req = QRGenerationRequest(
-        data="https://test.com",
-        save_path=str(file_path)
-    )
+    req = QRGenerationRequest(data="https://test.com", save_path=str(file_path))
     dummy_img = MagicMock()
     dummy_img.save.side_effect = OSError("file error")
     with patch("qr_code_server.tools.generator.create_qr_image", return_value=dummy_img):
@@ -76,11 +66,7 @@ def test_create_qr_fail_to_save_file(tmp_path):
 def test_create_qr_fails_to_create_ascii_image(tmp_path):
     """Test that create_qr handles ascii image creation errors gracefully."""
     file_path = tmp_path
-    req = QRGenerationRequest(
-        data="https://test.com",
-        format="ascii",
-        save_path=str(file_path)
-    )
+    req = QRGenerationRequest(data="https://test.com", format="ascii", save_path=str(file_path))
     with patch("builtins.open", side_effect=OSError("file error")):
         result = create_qr_code(req)
     assert result["error"] == "Error saving ASCII image: file error"
@@ -105,10 +91,7 @@ def test_create_qr_returns_valid_base64_png():
 
 def test_return_base_64_fail_encoding():
     """Test that create_qr handles base64 encoding errors gracefully."""
-    req = QRGenerationRequest(
-        data="https://test.com",
-        return_base64=True
-    )
+    req = QRGenerationRequest(data="https://test.com", return_base64=True)
     dummy_img = MagicMock()
     dummy_img.save.side_effect = Exception("encoding error")
     with patch("qr_code_server.tools.generator.create_qr_image", return_value=dummy_img):
@@ -119,10 +102,7 @@ def test_return_base_64_fail_encoding():
 
 def test_create_qr_invalid_error_correction():
     """Test that create_qr handles invalid error correction level."""
-    req = QRGenerationRequest(
-        data="https://test.com",
-        error_correction="Z"
-    )
+    req = QRGenerationRequest(data="https://test.com", error_correction="Z")
     try:
         create_qr_code(req)
     except KeyError as e:
@@ -131,12 +111,10 @@ def test_create_qr_invalid_error_correction():
 
 def test_resolve_output_path_fail():
     """Test that create_qr handles resolve output path errors gracefully."""
-    req = QRGenerationRequest(
-        data="https://test.com",
-        save_path="/invalid_path/qr_code.png"
-    )
-    with patch("qr_code_server.tools.generator.resolve_output_path",
-               side_effect=Exception("path error")):
+    req = QRGenerationRequest(data="https://test.com", save_path="/invalid_path/qr_code.png")
+    with patch(
+        "qr_code_server.tools.generator.resolve_output_path", side_effect=Exception("path error")
+    ):
         result = create_qr_code(req)
     assert result["success"] is False
     assert result["error"] == "path error"
@@ -144,14 +122,12 @@ def test_resolve_output_path_fail():
 
 # Batch gereration tests
 
+
 def test_create_batch_qr_codes_creates_output_directory(tmp_path):
     """Test that create_batch_qr_codes creates the output directory if it doesn't exist."""
     output_dir = tmp_path / "new_folder"
 
-    req = BatchQRGenerationRequest(
-        data_list=["https://test.com"],
-        output_directory=str(output_dir)
-    )
+    req = BatchQRGenerationRequest(data_list=["https://test.com"], output_directory=str(output_dir))
     result = create_batch_qr_codes(req)
     assert result["success"] is True
     assert output_dir.exists()
@@ -162,11 +138,9 @@ def test_create_batch_qr_codes_fail_create_output_directory(tmp_path):
     """Test that create_batch_qr_codes handles failure to create output directory."""
     output_dir = tmp_path / "new_folder"
 
-    req = BatchQRGenerationRequest(
-        data_list=["https://test.com"],
-        output_directory=str(output_dir)
-    )
+    req = BatchQRGenerationRequest(data_list=["https://test.com"], output_directory=str(output_dir))
     from qr_code_server.tools.generator import create_batch_qr_codes
+
     with patch("os.makedirs", side_effect=OSError("disk error")):
         result = create_batch_qr_codes(req)
     assert result["success"] is False
@@ -202,7 +176,7 @@ def test_create_batch_qr_codes_different_formats_zipped(file_format, tmp_path):
         data_list=["test1", "test2"],
         format=file_format,
         output_directory=str(output_dir),
-        zip_output=True
+        zip_output=True,
     )
     result = create_batch_qr_codes(req)
     assert result["success"] is True
@@ -234,9 +208,7 @@ def test_create_batch_qr_codes_fail_add_to_zip(tmp_path):
     output_dir = tmp_path
 
     req = BatchQRGenerationRequest(
-        data_list=["test1", "test2"],
-        output_directory=str(output_dir),
-        zip_output=True
+        data_list=["test1", "test2"], output_directory=str(output_dir), zip_output=True
     )
     dummy_img = MagicMock()
     with patch("qr_code_server.utils.image_utils.create_qr_image", return_value=dummy_img):
@@ -249,13 +221,12 @@ def test_create_batch_qr_codes_fail_add_to_zip(tmp_path):
 def test_batch_generator_unziped_valid_png_images(tmp_path):
     """Test that batch generator zipped folder contains valid png images"""
     import puremagic
+
     output_dir = tmp_path
     unziped_path = Path(tmp_path / "extracted")
 
     req = BatchQRGenerationRequest(
-        data_list=["test1", "test2"],
-        output_directory=str(output_dir),
-        format="png"
+        data_list=["test1", "test2"], output_directory=str(output_dir), format="png"
     )
     _ = create_batch_qr_codes(req)
     with zipfile.ZipFile(Path(tmp_path / "qr.zip"), "r") as zip:
@@ -266,4 +237,3 @@ def test_batch_generator_unziped_valid_png_images(tmp_path):
         assert file_path.is_file()
         # check if file is png image
         assert puremagic.from_file(file_path) == ".png"
-

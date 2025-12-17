@@ -83,4 +83,3 @@ def qr_decode(request: QRDecodingRequest) -> dict[str, Any]:
             response["positions"] = positions[0]
 
     return response
-

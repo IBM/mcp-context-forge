@@ -77,7 +77,7 @@ def create_qr_code(request: QRGenerationRequest):
         size=request.size,
         border=request.border,
         fill_color=request.fill_color,
-        back_color=request.back_color
+        back_color=request.back_color,
     )
 
     if request.return_base64:
@@ -100,14 +100,14 @@ def create_qr_code(request: QRGenerationRequest):
                 "Failed to encode QR to base64: format=%s ec=%s error=%s",
                 request.format,
                 request.error_correction,
-                e
+                e,
             )
             return {"success": False, "error": str(e)}
 
     try:
         save_path = resolve_output_path(
             output_path=request.save_path or config.output.default_directory,
-            file_extension=request.format
+            file_extension=request.format,
         )
     except Exception as e:
         # propagate as structured result so callers/tests can handle it
@@ -123,10 +123,7 @@ def create_qr_code(request: QRGenerationRequest):
         }
     except Exception as e:
         logger.error(
-            "Failed to save QR code image: path=%s format=%s error=%s",
-            save_path,
-            request.format,
-            e
+            "Failed to save QR code image: path=%s format=%s error=%s", save_path, request.format, e
         )
         return {"success": False, "error": str(e)}
 
@@ -162,7 +159,8 @@ def create_batch_qr_codes(request: BatchQRGenerationRequest):
                     logger.error(
                         "Failed to add image to zip: index=%d filename=%s error=%s",
                         index,
-                        filename, e
+                        filename,
+                        e,
                     )
                     return {"success": False, "error": str(e)}
         return {

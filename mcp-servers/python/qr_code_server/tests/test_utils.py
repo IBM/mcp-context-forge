@@ -91,7 +91,7 @@ def test_convert_to_bytes():
     assert convert_to_bytes("100") == 100
     assert convert_to_bytes("  50b  ") == 50
     assert convert_to_bytes("2.5kb") == int(2.5 * 1024)
-    assert convert_to_bytes("0.5gb") == int(0.5 * 1024 ** 3)
+    assert convert_to_bytes("0.5gb") == int(0.5 * 1024**3)
 
 
 def test_convert_to_bytes_wrong_input():
@@ -109,6 +109,7 @@ def test_convert_to_bytes_wrong_input():
 
 def test_load_config_defaults(tmp_path, monkeypatch):
     import qr_code_server.config as cfg
+
     fake_config = tmp_path / "config.yaml"
 
     monkeypatch.setattr(cfg, "CONFIG_PATH", fake_config)
@@ -122,9 +123,10 @@ def test_load_config_defaults(tmp_path, monkeypatch):
 
 def test_invalid_config_raises(tmp_path, monkeypatch):
     import qr_code_server.config as cfg
+
     config_file = tmp_path / "config.yaml"
     config_file.write_text(
-    """
+        """
     output:
     max_batch_size: "not-an-int"
     """
