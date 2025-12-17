@@ -58,8 +58,9 @@ services:
       context: .
       dockerfile: Containerfile.lite     # Same one the Makefile builds
     restart: unless-stopped
-    ports:
-      - "4444:4444"                 # HTTP (or HTTPS if SSL=true is set)
+    # NOTE: When using replicas > 1, access via nginx:8080 instead of direct port 4444
+    # ports:
+    #   - "4444:4444"               # Disabled for multi-replica mode
     networks: [mcpnet]
 
     # ──────────────────────────────────────────────────────────────────────
@@ -112,6 +113,14 @@ services:
       # Logging configuration
       - LOG_LEVEL=ERROR  # Default to ERROR for production performance
       - DISABLE_ACCESS_LOG=true  # Disable uvicorn access logs for performance (massive I/O overhead)
+      # Database pool tuning: 16 workers × 50 pool = 800 connections (< 1000 max)
+      - DB_POOL_SIZE=50
+      - DB_MAX_OVERFLOW=20
+      - DB_POOL_TIMEOUT=30
+      - DB_POOL_RECYCLE=1800
+      # Gunicorn workers - critical for throughput!
+      # Rule of thumb: 2 * CPU cores for async workers
+      - GUNICORN_WORKERS=16
 
       # Phoenix Observability Integration (uncomment when using Phoenix)
       # - PHOENIX_ENDPOINT=${PHOENIX_ENDPOINT:-http://phoenix:6006}
@@ -141,6 +150,20 @@ services:
       retries: 5
       start_period: 30s
 
+    # Scaling options:
+    # - Single instance: use port 4444 directly, replicas: 1
+    # - Multi-instance: comment out ports, set replicas: 2+, access via nginx:8080
+    deploy:
+      mode: replicated
+      replicas: 2
+      resources:
+        limits:
+          cpus: '8'
+          memory: 8G
+        reservations:
+          cpus: '4'
+          memory: 4G
+
     # ──────────────────────────────────────────────────────────────────────
     # Volume Mounts
     # ──────────────────────────────────────────────────────────────────────
@@ -168,6 +191,33 @@ services:
 
   postgres:
     image: postgres:17
+    # Performance tuning for high-load (16 workers × pool)
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=1000"
+      - "-c"
+      - "shared_buffers=512MB"
+      - "-c"
+      - "work_mem=16MB"
+      - "-c"
+      - "effective_cache_size=1536MB"
+      - "-c"
+      - "maintenance_work_mem=128MB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "wal_buffers=16MB"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "effective_io_concurrency=200"
+      - "-c"
+      - "max_worker_processes=4"
+      - "-c"
+      - "max_parallel_workers_per_gather=2"
+      - "-c"
+      - "max_parallel_workers=4"
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=mysecretpassword
@@ -182,6 +232,14 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
+        reservations:
+          cpus: '2'
+          memory: 2G
 
   mariadb:
     image: mariadb:10.6
@@ -259,9 +317,32 @@ services:
 ###############################################################################
   redis:
     image: redis:latest
+    # Performance tuning for 1000 RPS (memory-constrained)
+    command:
+      - "redis-server"
+      - "--maxmemory"
+      - "512mb"
+      - "--maxmemory-policy"
+      - "allkeys-lru"
+      - "--tcp-backlog"
+      - "1024"
+      - "--timeout"
+      - "0"
+      - "--tcp-keepalive"
+      - "300"
+      - "--maxclients"
+      - "5000"
     ports:
       - "6379:6379"      # expose only if you want host access
     networks: [mcpnet]
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
 
 ###############################################################################
 #  OPTIONAL ADMIN TOOLS - handy web UIs for DB & cache (disabled by default)
