@@ -223,9 +223,7 @@ async def test_broadcast_redis_input(monkeypatch, registry: SessionRegistry):
     monkeypatch.setattr("mcpgateway.cache.session_registry.time.time", lambda: fixed_ts)
 
     msg = {"a": 1}
-    expected_msg_json = json.dumps(msg)
-
-    expected_payload = json.dumps({"type": "message", "message": expected_msg_json, "timestamp": fixed_ts})
+    expected_payload = json.dumps({"type": "message", "message": msg, "timestamp": fixed_ts})
 
     await registry.broadcast("B", msg)
 
@@ -234,9 +232,7 @@ async def test_broadcast_redis_input(monkeypatch, registry: SessionRegistry):
     mock_redis.publish.reset_mock()
 
     msg = ["a", "b", "c"]
-    expected_msg_json = json.dumps(msg)
-
-    expected_payload = json.dumps({"type": "message", "message": expected_msg_json, "timestamp": fixed_ts})
+    expected_payload = json.dumps({"type": "message", "message": msg, "timestamp": fixed_ts})
 
     await registry.broadcast("B", msg)
 
@@ -245,9 +241,7 @@ async def test_broadcast_redis_input(monkeypatch, registry: SessionRegistry):
     mock_redis.publish.reset_mock()
 
     msg = 123
-    expected_msg_json = json.dumps(str(msg))
-
-    expected_payload = json.dumps({"type": "message", "message": expected_msg_json, "timestamp": fixed_ts})
+    expected_payload = json.dumps({"type": "message", "message": msg, "timestamp": fixed_ts})
 
     await registry.broadcast("B", msg)
 
@@ -256,9 +250,7 @@ async def test_broadcast_redis_input(monkeypatch, registry: SessionRegistry):
     mock_redis.publish.reset_mock()
 
     msg = "hello\nworld"
-    expected_msg_json = json.dumps(str(msg))
-
-    expected_payload = json.dumps({"type": "message", "message": expected_msg_json, "timestamp": fixed_ts})
+    expected_payload = json.dumps({"type": "message", "message": msg, "timestamp": fixed_ts})
 
     await registry.broadcast("B", msg)
 
