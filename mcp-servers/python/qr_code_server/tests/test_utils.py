@@ -1,5 +1,5 @@
-from pydantic_core import ValidationError
 import pytest
+from pydantic_core import ValidationError
 
 from qr_code_server.utils.file_utils import DEFAULT_FILE_NAME, convert_to_bytes, resolve_output_path
 
