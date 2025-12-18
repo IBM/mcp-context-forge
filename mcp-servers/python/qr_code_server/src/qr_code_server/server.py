@@ -77,7 +77,10 @@ async def generate_qr_code(
                 save_path=save_path,
                 return_base64=return_base64,
             )
-            return create_qr_code(request)
+            result = create_qr_code(request)
+            logger.info(f"QR code generated successfully (path={result.file_path})")
+            return result
+
     except RuntimeError as e:
         return QRCodeResult(
             success=False,
@@ -110,7 +113,13 @@ async def generate_batch_qr_codes(
                 output_directory=output_directory,
                 zip_output=zip_output,
             )
-            return create_batch_qr_codes(request)
+            result = create_batch_qr_codes(request)
+            logger.info(
+                f"Batch QR codes generated successfully "
+                f"(files={len(result.files)}, zip={result.zip_file_path})"
+            )
+            return result
+
     except RuntimeError as e:
         return BatchQRCodeResult(
             success=False,
@@ -141,7 +150,14 @@ async def decode_qr_code(
                 return_positions=return_positions,
                 preprocessing=preprocessing,
             )
-            return qr_decode(request)
+            result = qr_decode(request)
+            if result.success:
+                data_preview = str(result.data)[:50] + "..." if len(str(result.data)) > 50 else result.data
+                logger.info(f"QR code decoded successfully (data preview: {data_preview})")
+            else:
+                logger.warning(f"QR decode failed: {result.error}")
+            return result
+
     except RuntimeError as e:
         return QRCodeDecodeResult(
             success=False,
@@ -172,7 +188,16 @@ async def validate_qr_data(
                 check_capacity=check_capacity,
                 suggest_optimization=suggest_optimization,
             )
-            return validate(request)
+            result = validate(request)
+            if result.valid:
+                logger.info(
+                    f"QR data validated successfully "
+                    f"(valid={result.valid}, fits={result.fits}, suggested_version={result.suggested_version})"
+                )
+            else:
+                logger.warning(f"QR data validation failed: {result.error}")
+            return result
+
     except RuntimeError as e:
         return QRValidationResult(
             valid=False,
