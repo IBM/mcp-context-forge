@@ -50,8 +50,8 @@ volumes:
 
 GATEWAY_SERVICE_TEMPLATE = """  gateway{instance_suffix}:
     build:
-      context: ../..
-      dockerfile: Dockerfile
+      context: ../../..
+      dockerfile: Containerfile.lite
     container_name: gateway{instance_suffix}
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/mcpgateway
@@ -99,7 +99,7 @@ NGINX_LOAD_BALANCER = """  nginx:
     image: nginx:alpine
     container_name: nginx_lb
     ports:
-      - "4444:80"
+      - "8000:80"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
