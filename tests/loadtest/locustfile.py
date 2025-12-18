@@ -225,7 +225,7 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
 
 
 @events.test_stop.add_listener
-def on_test_stop(_environment, **_kwargs):  # pylint: disable=unused-argument
+def on_test_stop(environment, **kwargs):  # pylint: disable=unused-argument
     """Clean up after test."""
     logger.info("Test stopped")
     TOOL_IDS.clear()
