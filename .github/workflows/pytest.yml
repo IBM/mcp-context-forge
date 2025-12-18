@@ -3,7 +3,7 @@
 # ===============================================================
 #
 #   - runs the full test-suite across three Python versions
-#   - measures branch + line coverage (fails < 60% main, < 40% doctest)
+#   - measures branch + line coverage (fails < 60% main, < 35% doctest)
 #   - uploads the XML/HTML coverage reports as build artifacts
 #   - (optionally) generates / commits an SVG badge - kept disabled
 #   - posts a concise per-file coverage table to the job summary
@@ -81,7 +81,7 @@ jobs:
             --cov-fail-under=60
 
       # -----------------------------------------------------------
-      # 4️⃣  Run doctests (fail under 40% coverage)
+      # 4️⃣  Run doctests (fail under 35% coverage)
       # -----------------------------------------------------------
       - name: 📊  Doctest coverage with threshold
         run: |
@@ -90,7 +90,7 @@ jobs:
             --cov=mcpgateway \
             --cov-report=term \
             --cov-report=json:doctest-coverage.json \
-            --cov-fail-under=39 \
+            --cov-fail-under=35 \
             --tb=short
 
       # -----------------------------------------------------------

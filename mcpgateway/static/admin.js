@@ -18477,6 +18477,134 @@ function showNotification(message, type = "info") {
 }
 
 /**
+ * Show a modal dialog with copyable content.
+ *
+ * @param {string} title - The modal title.
+ * @param {string} message - The message to display (can be multi-line).
+ * @param {string} type - The type of modal: 'success', 'error', or 'info'.
+ */
+function showCopyableModal(title, message, type = "info") {
+    // Remove any existing modal
+    const existingModal = document.getElementById("copyable-modal-overlay");
+    if (existingModal) {
+        existingModal.remove();
+    }
+
+    // Color schemes based on type
+    const colors = {
+        success: {
+            bg: "bg-green-50 dark:bg-green-900/20",
+            border: "border-green-500",
+            title: "text-green-800 dark:text-green-200",
+            icon: `<svg class="h-6 w-6 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+            </svg>`,
+        },
+        error: {
+            bg: "bg-red-50 dark:bg-red-900/20",
+            border: "border-red-500",
+            title: "text-red-800 dark:text-red-200",
+            icon: `<svg class="h-6 w-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+            </svg>`,
+        },
+        info: {
+            bg: "bg-blue-50 dark:bg-blue-900/20",
+            border: "border-blue-500",
+            title: "text-blue-800 dark:text-blue-200",
+            icon: `<svg class="h-6 w-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>`,
+        },
+    };
+
+    const colorScheme = colors[type] || colors.info;
+
+    // Create modal overlay
+    const overlay = document.createElement("div");
+    overlay.id = "copyable-modal-overlay";
+    overlay.className =
+        "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50";
+    overlay.onclick = (e) => {
+        if (e.target === overlay) {
+            overlay.remove();
+        }
+    };
+
+    // Create modal content
+    const modal = document.createElement("div");
+    modal.className = `${colorScheme.bg} border-l-4 ${colorScheme.border} rounded-lg shadow-xl max-w-lg w-full mx-4 overflow-hidden`;
+
+    modal.innerHTML = `
+        <div class="p-4">
+            <div class="flex items-start">
+                <div class="flex-shrink-0">
+                    ${colorScheme.icon}
+                </div>
+                <div class="ml-3 flex-1">
+                    <h3 class="text-lg font-medium ${colorScheme.title}">${escapeHtml(title)}</h3>
+                    <div class="mt-2">
+                        <pre id="copyable-modal-content" class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap font-mono bg-white dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-600 max-h-64 overflow-auto select-all cursor-text">${escapeHtml(message)}</pre>
+                    </div>
+                    <div class="mt-4 flex justify-end space-x-3">
+                        <button id="copyable-modal-copy" class="inline-flex items-center px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                            <svg class="h-4 w-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                            </svg>
+                            Copy
+                        </button>
+                        <button id="copyable-modal-close" class="inline-flex items-center px-3 py-1.5 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                            Close
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    // Add event listeners
+    document.getElementById("copyable-modal-close").onclick = () =>
+        overlay.remove();
+
+    document.getElementById("copyable-modal-copy").onclick = async () => {
+        const content = document.getElementById("copyable-modal-content");
+        try {
+            await navigator.clipboard.writeText(content.textContent);
+            const copyBtn = document.getElementById("copyable-modal-copy");
+            const originalText = copyBtn.innerHTML;
+            copyBtn.innerHTML = `<svg class="h-4 w-4 mr-1.5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+            </svg> Copied!`;
+            setTimeout(() => {
+                copyBtn.innerHTML = originalText;
+            }, 2000);
+        } catch (err) {
+            console.error("Failed to copy:", err);
+            // Fallback: select the text
+            const range = document.createRange();
+            range.selectNodeContents(content);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }
+    };
+
+    // Close on Escape key
+    const handleEscape = (e) => {
+        if (e.key === "Escape") {
+            overlay.remove();
+            document.removeEventListener("keydown", handleEscape);
+        }
+    };
+    document.addEventListener("keydown", handleEscape);
+}
+
+window.showCopyableModal = showCopyableModal;
+
+/**
  * Utility function to get cookie value
  */
 function getCookie(name) {
@@ -26829,3 +26957,1022 @@ window.handlePerformanceAggregationChange = handlePerformanceAggregationChange;
 window.previousLogPage = previousLogPage;
 window.nextLogPage = nextLogPage;
 window.showLogDetails = showLogDetails;
+
+// ===================================================================
+// LLM SETTINGS FUNCTIONS
+// ===================================================================
+
+/**
+ * Switch between LLM Settings tabs (providers/models)
+ */
+function switchLLMSettingsTab(tabName) {
+    // Hide all content panels
+    const panels = document.querySelectorAll(".llm-settings-content");
+    panels.forEach((panel) => panel.classList.add("hidden"));
+
+    // Remove active state from all tabs
+    const tabs = document.querySelectorAll(".llm-settings-tab");
+    tabs.forEach((tab) => {
+        tab.classList.remove(
+            "border-indigo-500",
+            "text-indigo-600",
+            "dark:text-indigo-400",
+        );
+        tab.classList.add(
+            "border-transparent",
+            "text-gray-500",
+            "hover:text-gray-700",
+            "hover:border-gray-300",
+            "dark:text-gray-400",
+            "dark:hover:text-gray-300",
+        );
+    });
+
+    // Show selected panel
+    const selectedPanel = document.getElementById(
+        `llm-settings-content-${tabName}`,
+    );
+    if (selectedPanel) {
+        selectedPanel.classList.remove("hidden");
+        // Trigger HTMX load if not yet loaded
+        htmx.trigger(selectedPanel, "revealed");
+    }
+
+    // Activate selected tab
+    const selectedTab = document.getElementById(`llm-settings-tab-${tabName}`);
+    if (selectedTab) {
+        selectedTab.classList.remove(
+            "border-transparent",
+            "text-gray-500",
+            "hover:text-gray-700",
+            "hover:border-gray-300",
+            "dark:text-gray-400",
+            "dark:hover:text-gray-300",
+        );
+        selectedTab.classList.add(
+            "border-indigo-500",
+            "text-indigo-600",
+            "dark:text-indigo-400",
+        );
+    }
+}
+
+// Cache for provider defaults
+let llmProviderDefaults = null;
+
+/**
+ * Load provider defaults from the server
+ */
+async function loadLLMProviderDefaults() {
+    if (llmProviderDefaults) {
+        return llmProviderDefaults;
+    }
+    try {
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/llm/provider-defaults`,
+            {
+                headers: {
+                    Authorization: `Bearer ${await getAuthToken()}`,
+                },
+            },
+        );
+        if (response.ok) {
+            llmProviderDefaults = await response.json();
+        }
+    } catch (error) {
+        console.error("Failed to load provider defaults:", error);
+    }
+    return llmProviderDefaults || {};
+}
+
+// Track previous provider type for smart auto-fill
+let previousProviderType = null;
+
+/**
+ * Handle provider type change - auto-fill defaults
+ */
+async function onLLMProviderTypeChange() {
+    const providerType = document.getElementById("llm-provider-type").value;
+    if (!providerType) {
+        return;
+    }
+
+    const defaults = await loadLLMProviderDefaults();
+    const config = defaults[providerType];
+
+    if (!config) {
+        return;
+    }
+
+    // Only auto-fill if creating new provider (not editing)
+    const providerId = document.getElementById("llm-provider-id").value;
+    if (providerId) {
+        return;
+    }
+
+    const apiBaseField = document.getElementById("llm-provider-api-base");
+    const defaultModelField = document.getElementById(
+        "llm-provider-default-model",
+    );
+
+    // Check if current values match previous provider's defaults
+    const previousConfig = previousProviderType
+        ? defaults[previousProviderType]
+        : null;
+    const apiBaseMatchesPrevious =
+        previousConfig &&
+        (apiBaseField.value === previousConfig.api_base ||
+            apiBaseField.value === "");
+    const modelMatchesPrevious =
+        previousConfig &&
+        (defaultModelField.value === previousConfig.default_model ||
+            defaultModelField.value === "");
+
+    // Auto-fill API base if empty or matches previous provider's default
+    if ((apiBaseMatchesPrevious || !apiBaseField.value) && config.api_base) {
+        apiBaseField.value = config.api_base;
+    }
+
+    // Auto-fill default model if empty or matches previous provider's default
+    if (
+        (modelMatchesPrevious || !defaultModelField.value) &&
+        config.default_model
+    ) {
+        defaultModelField.value = config.default_model;
+    }
+
+    // Remember this provider type for next change
+    previousProviderType = providerType;
+
+    // Update description/help text
+    const descEl = document.getElementById("llm-provider-type-description");
+    if (descEl && config.description) {
+        descEl.textContent = config.description;
+        descEl.classList.remove("hidden");
+    }
+
+    // Show/hide API key requirement indicator
+    const apiKeyRequired = document.getElementById(
+        "llm-provider-api-key-required",
+    );
+    if (apiKeyRequired) {
+        if (config.requires_api_key) {
+            apiKeyRequired.classList.remove("hidden");
+        } else {
+            apiKeyRequired.classList.add("hidden");
+        }
+    }
+}
+
+/**
+ * Show Add Provider Modal
+ */
+async function showAddProviderModal() {
+    document.getElementById("llm-provider-id").value = "";
+    document.getElementById("llm-provider-form").reset();
+    document.getElementById("llm-provider-modal-title").textContent =
+        "Add LLM Provider";
+
+    // Reset helper elements
+    const descEl = document.getElementById("llm-provider-type-description");
+    if (descEl) {
+        descEl.classList.add("hidden");
+    }
+
+    // Reset provider type tracker for smart auto-fill
+    previousProviderType = null;
+
+    // Load defaults for quick access
+    await loadLLMProviderDefaults();
+
+    document.getElementById("llm-provider-modal").classList.remove("hidden");
+}
+
+/**
+ * Close Provider Modal
+ */
+function closeLLMProviderModal() {
+    document.getElementById("llm-provider-modal").classList.add("hidden");
+}
+
+/**
+ * Fetch models from a provider's API
+ */
+async function fetchLLMProviderModels(providerId) {
+    try {
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/llm/providers/${providerId}/fetch-models`,
+            {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${await getAuthToken()}`,
+                },
+            },
+        );
+
+        const result = await response.json();
+
+        if (result.success) {
+            const modelList = result.models
+                .map((m) => `- ${m.id} (${m.owned_by || "unknown"})`)
+                .join("\n");
+            showCopyableModal(
+                `Found ${result.count} Models`,
+                modelList || "No models found",
+                "success",
+            );
+        } else {
+            showCopyableModal("Failed to Fetch Models", result.error, "error");
+        }
+
+        return result;
+    } catch (error) {
+        console.error("Error fetching models:", error);
+        showCopyableModal(
+            "Failed to Fetch Models",
+            `Error: ${error.message}`,
+            "error",
+        );
+        return { success: false, error: error.message, models: [] };
+    }
+}
+
+/**
+ * Sync models from provider API to database
+ */
+async function syncLLMProviderModels(providerId) {
+    try {
+        showToast("Syncing models...", "info");
+
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/llm/providers/${providerId}/sync-models`,
+            {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${await getAuthToken()}`,
+                },
+            },
+        );
+
+        const result = await response.json();
+
+        if (result.success) {
+            showCopyableModal(
+                "Models Synced Successfully",
+                `${result.message}\n\nTotal available: ${result.total || 0}`,
+                "success",
+            );
+            // Refresh the models list
+            refreshLLMModels();
+        } else {
+            showCopyableModal("Failed to Sync Models", result.error, "error");
+        }
+
+        return result;
+    } catch (error) {
+        console.error("Error syncing models:", error);
+        showCopyableModal(
+            "Failed to Sync Models",
+            `Error: ${error.message}`,
+            "error",
+        );
+        return { success: false, error: error.message };
+    }
+}
+
+/**
+ * Edit LLM Provider
+ */
+async function editLLMProvider(providerId) {
+    try {
+        const response = await fetch(
+            `${window.ROOT_PATH}/llm/providers/${providerId}`,
+            {
+                headers: {
+                    Authorization: `Bearer ${await getAuthToken()}`,
+                },
+            },
+        );
+        if (!response.ok) {
+            throw new Error("Failed to fetch provider details");
+        }
+        const provider = await response.json();
+
+        document.getElementById("llm-provider-id").value = provider.id;
+        document.getElementById("llm-provider-name").value = provider.name;
+        document.getElementById("llm-provider-type").value =
+            provider.provider_type;
+        document.getElementById("llm-provider-description").value =
+            provider.description || "";
+        document.getElementById("llm-provider-api-key").value = "";
+        document.getElementById("llm-provider-api-base").value =
+            provider.api_base || "";
+        document.getElementById("llm-provider-default-model").value =
+            provider.default_model || "";
+        document.getElementById("llm-provider-temperature").value =
+            provider.default_temperature || 0.7;
+        document.getElementById("llm-provider-max-tokens").value =
+            provider.default_max_tokens || "";
+        document.getElementById("llm-provider-enabled").checked =
+            provider.enabled;
+
+        document.getElementById("llm-provider-modal-title").textContent =
+            "Edit LLM Provider";
+        document
+            .getElementById("llm-provider-modal")
+            .classList.remove("hidden");
+    } catch (error) {
+        console.error("Error fetching provider:", error);
+        showToast("Failed to load provider details", "error");
+    }
+}
+
+/**
+ * Save LLM Provider (create or update)
+ */
+async function saveLLMProvider(event) {
+    event.preventDefault();
+
+    const providerId = document.getElementById("llm-provider-id").value;
+    const isUpdate = providerId !== "";
+
+    const formData = {
+        name: document.getElementById("llm-provider-name").value,
+        provider_type: document.getElementById("llm-provider-type").value,
+        description:
+            document.getElementById("llm-provider-description").value || null,
+        api_base:
+            document.getElementById("llm-provider-api-base").value || null,
+        default_model:
+            document.getElementById("llm-provider-default-model").value || null,
+        default_temperature: parseFloat(
+            document.getElementById("llm-provider-temperature").value,
+        ),
+        enabled: document.getElementById("llm-provider-enabled").checked,
+    };
+
+    const apiKey = document.getElementById("llm-provider-api-key").value;
+    if (apiKey) {
+        formData.api_key = apiKey;
+    }
+
+    const maxTokens = document.getElementById("llm-provider-max-tokens").value;
+    if (maxTokens) {
+        formData.default_max_tokens = parseInt(maxTokens, 10);
+    }
+
+    try {
+        const url = isUpdate
+            ? `${window.ROOT_PATH}/llm/providers/${providerId}`
+            : `${window.ROOT_PATH}/llm/providers`;
+        const method = isUpdate ? "PATCH" : "POST";
+
+        const response = await fetch(url, {
+            method,
+            headers: {
+                Authorization: `Bearer ${await getAuthToken()}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(formData),
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || "Failed to save provider");
+        }
+
+        closeLLMProviderModal();
+        showToast(
+            isUpdate
+                ? "Provider updated successfully"
+                : "Provider created successfully",
+            "success",
+        );
+        refreshLLMProviders();
+    } catch (error) {
+        console.error("Error saving provider:", error);
+        showToast(error.message || "Failed to save provider", "error");
+    }
+}
+
+/**
+ * Delete LLM Provider
+ */
+async function deleteLLMProvider(providerId, providerName) {
+    if (
+        !confirm(
+            `Are you sure you want to delete the provider "${providerName}"? This will also delete all associated models.`,
+        )
+    ) {
+        return;
+    }
+
+    try {
+        const response = await fetch(
+            `${window.ROOT_PATH}/llm/providers/${providerId}`,
+            {
+                method: "DELETE",
+                headers: {
+                    Authorization: `Bearer ${await getAuthToken()}`,
+                },
+            },
+        );
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || "Failed to delete provider");
+        }
+
+        showToast("Provider deleted successfully", "success");
+        refreshLLMProviders();
+    } catch (error) {
+        console.error("Error deleting provider:", error);
+        showToast(error.message || "Failed to delete provider", "error");
+    }
+}
+
+/**
+ * Toggle LLM Provider enabled state
+ */
+async function toggleLLMProvider(providerId) {
+    try {
+        const response = await fetch(
+            `${window.ROOT_PATH}/llm/providers/${providerId}/toggle`,
+            {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${await getAuthToken()}`,
+                },
+            },
+        );
+
+        if (!response.ok) {
+            throw new Error("Failed to toggle provider");
+        }
+
+        refreshLLMProviders();
+    } catch (error) {
+        console.error("Error toggling provider:", error);
+        showToast("Failed to toggle provider", "error");
+    }
+}
+
+/**
+ * Check LLM Provider health
+ */
+async function checkLLMProviderHealth(providerId) {
+    try {
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/llm/providers/${providerId}/health`,
+            {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${await getAuthToken()}`,
+                },
+            },
+        );
+
+        const result = await response.json();
+
+        // Show result message with details using copyable modal
+        if (result.status === "healthy") {
+            const message = `Status: ${result.status}\nLatency: ${result.latency_ms}ms`;
+            showCopyableModal("Health Check Passed", message, "success");
+        } else {
+            // Show error details for unhealthy status
+            let message = `Status: ${result.status}`;
+            if (result.latency_ms) {
+                message += `\nLatency: ${result.latency_ms}ms`;
+            }
+            if (result.error) {
+                message += `\n\nError:\n${result.error}`;
+            }
+            showCopyableModal("Health Check Failed", message, "error");
+        }
+
+        // Refresh providers to update status
+        refreshLLMProviders();
+    } catch (error) {
+        console.error("Error checking provider health:", error);
+        showCopyableModal(
+            "Health Check Request Failed",
+            `Error: ${error.message}`,
+            "error",
+        );
+    }
+}
+
+/**
+ * Refresh LLM Providers list
+ */
+function refreshLLMProviders() {
+    const container = document.getElementById("llm-providers-container");
+    if (container) {
+        htmx.ajax("GET", `${window.ROOT_PATH}/admin/llm/providers/html`, {
+            target: "#llm-providers-container",
+            swap: "innerHTML",
+        });
+    }
+}
+
+/**
+ * Show Add Model Modal
+ */
+async function showAddModelModal() {
+    document.getElementById("llm-model-id").value = "";
+    document.getElementById("llm-model-form").reset();
+    document.getElementById("llm-model-modal-title").textContent =
+        "Add LLM Model";
+
+    // Populate providers dropdown
+    await populateProviderDropdown();
+
+    document.getElementById("llm-model-modal").classList.remove("hidden");
+}
+
+/**
+ * Populate provider dropdown in model modal
+ */
+async function populateProviderDropdown() {
+    try {
+        const response = await fetch(`${window.ROOT_PATH}/llm/providers`, {
+            headers: {
+                Authorization: `Bearer ${await getAuthToken()}`,
+            },
+        });
+        if (!response.ok) {
+            throw new Error("Failed to fetch providers");
+        }
+        const data = await response.json();
+
+        const select = document.getElementById("llm-model-provider");
+        select.innerHTML = '<option value="">Select provider</option>';
+
+        data.providers.forEach((provider) => {
+            const option = document.createElement("option");
+            option.value = provider.id;
+            option.textContent = `${provider.name} (${provider.provider_type})`;
+            select.appendChild(option);
+        });
+    } catch (error) {
+        console.error("Error fetching providers:", error);
+    }
+}
+
+/**
+ * Close Model Modal
+ */
+function closeLLMModelModal() {
+    document.getElementById("llm-model-modal").classList.add("hidden");
+}
+
+/**
+ * Handle provider change in model modal - auto-fetch models
+ */
+async function onModelProviderChange() {
+    const providerId = document.getElementById("llm-model-provider").value;
+    const modelInput = document.getElementById("llm-model-model-id");
+    const datalist = document.getElementById("llm-model-suggestions");
+    const statusEl = document.getElementById("llm-model-fetch-status");
+
+    // Clear existing suggestions
+    datalist.innerHTML = "";
+
+    if (!providerId) {
+        modelInput.placeholder = "Select provider first...";
+        statusEl.classList.add("hidden");
+        return;
+    }
+
+    modelInput.placeholder = "Type or select a model...";
+
+    // Auto-fetch models when provider is selected
+    await fetchModelsForModelModal();
+}
+
+/**
+ * Fetch available models for the model modal
+ */
+async function fetchModelsForModelModal() {
+    const providerId = document.getElementById("llm-model-provider").value;
+    const datalist = document.getElementById("llm-model-suggestions");
+    const statusEl = document.getElementById("llm-model-fetch-status");
+
+    if (!providerId) {
+        showToast("Please select a provider first", "warning");
+        return;
+    }
+
+    statusEl.textContent = "Fetching models...";
+    statusEl.classList.remove("hidden");
+
+    try {
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/llm/providers/${providerId}/fetch-models`,
+            {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${await getAuthToken()}`,
+                },
+            },
+        );
+
+        const result = await response.json();
+
+        if (result.success && result.models && result.models.length > 0) {
+            // Populate datalist with model suggestions
+            datalist.innerHTML = "";
+            result.models.forEach((model) => {
+                const option = document.createElement("option");
+                option.value = model.id;
+                option.textContent = model.name || model.id;
+                datalist.appendChild(option);
+            });
+
+            statusEl.textContent = `Found ${result.models.length} models. Type to filter or enter custom.`;
+            statusEl.classList.remove("hidden");
+        } else {
+            statusEl.textContent =
+                result.error || "No models found. Enter model ID manually.";
+            statusEl.classList.remove("hidden");
+        }
+    } catch (error) {
+        console.error("Error fetching models:", error);
+        statusEl.textContent =
+            "Failed to fetch models. Enter model ID manually.";
+        statusEl.classList.remove("hidden");
+    }
+}
+
+window.onModelProviderChange = onModelProviderChange;
+window.fetchModelsForModelModal = fetchModelsForModelModal;
+
+/**
+ * Edit LLM Model
+ */
+async function editLLMModel(modelId) {
+    try {
+        const response = await fetch(
+            `${window.ROOT_PATH}/llm/models/${modelId}`,
+            {
+                headers: {
+                    Authorization: `Bearer ${await getAuthToken()}`,
+                },
+            },
+        );
+        if (!response.ok) {
+            throw new Error("Failed to fetch model details");
+        }
+        const model = await response.json();
+
+        await populateProviderDropdown();
+
+        document.getElementById("llm-model-id").value = model.id;
+        document.getElementById("llm-model-provider").value = model.provider_id;
+        document.getElementById("llm-model-model-id").value = model.model_id;
+        document.getElementById("llm-model-name").value = model.model_name;
+        document.getElementById("llm-model-alias").value =
+            model.model_alias || "";
+        document.getElementById("llm-model-description").value =
+            model.description || "";
+        document.getElementById("llm-model-context-window").value =
+            model.context_window || "";
+        document.getElementById("llm-model-max-output").value =
+            model.max_output_tokens || "";
+        document.getElementById("llm-model-supports-chat").checked =
+            model.supports_chat;
+        document.getElementById("llm-model-supports-streaming").checked =
+            model.supports_streaming;
+        document.getElementById("llm-model-supports-functions").checked =
+            model.supports_function_calling;
+        document.getElementById("llm-model-supports-vision").checked =
+            model.supports_vision;
+        document.getElementById("llm-model-enabled").checked = model.enabled;
+        document.getElementById("llm-model-deprecated").checked =
+            model.deprecated;
+
+        document.getElementById("llm-model-modal-title").textContent =
+            "Edit LLM Model";
+        document.getElementById("llm-model-modal").classList.remove("hidden");
+    } catch (error) {
+        console.error("Error fetching model:", error);
+        showToast("Failed to load model details", "error");
+    }
+}
+
+/**
+ * Save LLM Model (create or update)
+ */
+async function saveLLMModel(event) {
+    event.preventDefault();
+
+    const modelId = document.getElementById("llm-model-id").value;
+    const isUpdate = modelId !== "";
+
+    const formData = {
+        provider_id: document.getElementById("llm-model-provider").value,
+        model_id: document.getElementById("llm-model-model-id").value,
+        model_name: document.getElementById("llm-model-name").value,
+        model_alias: document.getElementById("llm-model-alias").value || null,
+        description:
+            document.getElementById("llm-model-description").value || null,
+        supports_chat: document.getElementById("llm-model-supports-chat")
+            .checked,
+        supports_streaming: document.getElementById(
+            "llm-model-supports-streaming",
+        ).checked,
+        supports_function_calling: document.getElementById(
+            "llm-model-supports-functions",
+        ).checked,
+        supports_vision: document.getElementById("llm-model-supports-vision")
+            .checked,
+        enabled: document.getElementById("llm-model-enabled").checked,
+        deprecated: document.getElementById("llm-model-deprecated").checked,
+    };
+
+    const contextWindow = document.getElementById(
+        "llm-model-context-window",
+    ).value;
+    if (contextWindow) {
+        formData.context_window = parseInt(contextWindow, 10);
+    }
+
+    const maxOutput = document.getElementById("llm-model-max-output").value;
+    if (maxOutput) {
+        formData.max_output_tokens = parseInt(maxOutput, 10);
+    }
+
+    try {
+        const url = isUpdate
+            ? `${window.ROOT_PATH}/llm/models/${modelId}`
+            : `${window.ROOT_PATH}/llm/models`;
+        const method = isUpdate ? "PATCH" : "POST";
+
+        const response = await fetch(url, {
+            method,
+            headers: {
+                Authorization: `Bearer ${await getAuthToken()}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(formData),
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || "Failed to save model");
+        }
+
+        closeLLMModelModal();
+        showToast(
+            isUpdate
+                ? "Model updated successfully"
+                : "Model created successfully",
+            "success",
+        );
+        refreshLLMModels();
+    } catch (error) {
+        console.error("Error saving model:", error);
+        showToast(error.message || "Failed to save model", "error");
+    }
+}
+
+/**
+ * Delete LLM Model
+ */
+async function deleteLLMModel(modelId, modelName) {
+    if (!confirm(`Are you sure you want to delete the model "${modelName}"?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(
+            `${window.ROOT_PATH}/llm/models/${modelId}`,
+            {
+                method: "DELETE",
+                headers: {
+                    Authorization: `Bearer ${await getAuthToken()}`,
+                },
+            },
+        );
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || "Failed to delete model");
+        }
+
+        showToast("Model deleted successfully", "success");
+        refreshLLMModels();
+    } catch (error) {
+        console.error("Error deleting model:", error);
+        showToast(error.message || "Failed to delete model", "error");
+    }
+}
+
+/**
+ * Toggle LLM Model enabled state
+ */
+async function toggleLLMModel(modelId) {
+    try {
+        const response = await fetch(
+            `${window.ROOT_PATH}/llm/models/${modelId}/toggle`,
+            {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${await getAuthToken()}`,
+                },
+            },
+        );
+
+        if (!response.ok) {
+            throw new Error("Failed to toggle model");
+        }
+
+        refreshLLMModels();
+    } catch (error) {
+        console.error("Error toggling model:", error);
+        showToast("Failed to toggle model", "error");
+    }
+}
+
+/**
+ * Refresh LLM Models list
+ */
+function refreshLLMModels() {
+    const container = document.getElementById("llm-models-container");
+    if (container) {
+        htmx.ajax("GET", `${window.ROOT_PATH}/admin/llm/models/html`, {
+            target: "#llm-models-container",
+            swap: "innerHTML",
+        });
+    }
+}
+
+/**
+ * Filter models by provider
+ */
+function filterModelsByProvider(providerId) {
+    const url = providerId
+        ? `${window.ROOT_PATH}/admin/llm/models/html?provider_id=${providerId}`
+        : `${window.ROOT_PATH}/admin/llm/models/html`;
+
+    htmx.ajax("GET", url, {
+        target: "#llm-models-container",
+        swap: "innerHTML",
+    });
+}
+
+/**
+ * Alpine.js component for LLM API Info & Test
+ */
+function llmApiInfoApp() {
+    return {
+        testType: "models",
+        testModel: "",
+        testMessage: "Hello! Please respond with a short greeting.",
+        testing: false,
+        testResult: null,
+        testSuccess: false,
+        testMetrics: null,
+        assistantMessage: null,
+        modelList: null,
+
+        formatDuration(ms) {
+            if (ms < 1000) {
+                return `${ms}ms`;
+            }
+            return `${(ms / 1000).toFixed(2)}s`;
+        },
+
+        formatBytes(bytes) {
+            if (bytes === 0) {
+                return "0 B";
+            }
+            if (bytes < 1024) {
+                return `${bytes} B`;
+            } else if (bytes < 1024 * 1024) {
+                return `${(bytes / 1024).toFixed(2)} KB`;
+            } else {
+                return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+            }
+        },
+
+        async runTest() {
+            // Use admin test endpoint directly
+            this.testing = true;
+            this.testResult = null;
+            this.testSuccess = false;
+            this.testMetrics = null;
+            this.assistantMessage = null;
+            this.modelList = null;
+
+            try {
+                const requestBody = {
+                    test_type: this.testType,
+                };
+
+                if (this.testType === "chat") {
+                    if (!this.testModel) {
+                        this.testResult = JSON.stringify(
+                            { error: "Please select a model" },
+                            null,
+                            2,
+                        );
+                        this.testSuccess = false;
+                        this.testMetrics = {
+                            httpStatus: 400,
+                            httpStatusText: "Bad Request",
+                        };
+                        return;
+                    }
+                    requestBody.model_id = this.testModel;
+                    requestBody.message = this.testMessage;
+                    requestBody.max_tokens = 100;
+                }
+
+                const requestBodyStr = JSON.stringify(requestBody);
+                const startTime = performance.now();
+
+                const response = await fetch(
+                    `${window.ROOT_PATH}/admin/llm/test`,
+                    {
+                        method: "POST",
+                        headers: {
+                            Authorization: `Bearer ${await getAuthToken()}`,
+                            "Content-Type": "application/json",
+                        },
+                        body: requestBodyStr,
+                    },
+                );
+
+                const endTime = performance.now();
+                const data = await response.json();
+
+                this.testSuccess = data.success === true;
+                this.testResult = JSON.stringify(data, null, 2);
+
+                // Build metrics
+                this.testMetrics = {
+                    duration:
+                        data.metrics?.duration ||
+                        Math.round(endTime - startTime),
+                    httpStatus: response.status,
+                    httpStatusText: response.statusText,
+                    requestSize: requestBodyStr.length,
+                    responseSize: JSON.stringify(data).length,
+                };
+
+                if (this.testType === "chat" && data.metrics) {
+                    this.testMetrics.promptTokens =
+                        data.metrics.promptTokens || 0;
+                    this.testMetrics.completionTokens =
+                        data.metrics.completionTokens || 0;
+                    this.testMetrics.totalTokens =
+                        data.metrics.totalTokens || 0;
+                    this.testMetrics.responseModel = data.metrics.responseModel;
+                    this.assistantMessage = data.assistant_message;
+                }
+
+                if (this.testType === "models" && data.metrics) {
+                    this.testMetrics.modelCount = data.metrics.modelCount;
+                    this.modelList = data.data?.data || [];
+                }
+            } catch (error) {
+                this.testResult = JSON.stringify(
+                    { error: error.message },
+                    null,
+                    2,
+                );
+                this.testSuccess = false;
+                this.testMetrics = {
+                    httpStatus: 0,
+                    httpStatusText: "Network Error",
+                };
+            } finally {
+                this.testing = false;
+            }
+        },
+    };
+}
+
+// Make LLM functions globally available
+window.switchLLMSettingsTab = switchLLMSettingsTab;
+window.showAddProviderModal = showAddProviderModal;
+window.closeLLMProviderModal = closeLLMProviderModal;
+window.editLLMProvider = editLLMProvider;
+window.saveLLMProvider = saveLLMProvider;
+window.deleteLLMProvider = deleteLLMProvider;
+window.toggleLLMProvider = toggleLLMProvider;
+window.checkLLMProviderHealth = checkLLMProviderHealth;
+window.refreshLLMProviders = refreshLLMProviders;
+window.onLLMProviderTypeChange = onLLMProviderTypeChange;
+window.fetchLLMProviderModels = fetchLLMProviderModels;
+window.syncLLMProviderModels = syncLLMProviderModels;
+window.showAddModelModal = showAddModelModal;
+window.closeLLMModelModal = closeLLMModelModal;
+window.editLLMModel = editLLMModel;
+window.saveLLMModel = saveLLMModel;
+window.deleteLLMModel = deleteLLMModel;
+window.toggleLLMModel = toggleLLMModel;
+window.refreshLLMModels = refreshLLMModels;
+window.filterModelsByProvider = filterModelsByProvider;
+window.llmApiInfoApp = llmApiInfoApp;

@@ -7,8 +7,8 @@ metadata:
     {{- include "mcp-stack.labels" . | nindent 4 }}
     app.kubernetes.io/component: migration
   annotations:
-    # Run this Job before install/upgrade
-    "helm.sh/hook": pre-install,pre-upgrade
+    # Run after install (so Postgres exists) and before upgrade (so new app has migrated DB)
+    "helm.sh/hook": post-install,pre-upgrade
     # Delete old Job before new one and clean up succeeded ones
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
@@ -28,12 +28,6 @@ spec:
         - name: migration
           image: "{{ .Values.migration.image.repository }}:{{ .Values.migration.image.tag }}"
           imagePullPolicy: {{ .Values.migration.image.pullPolicy }}
-
-          # Image pull secrets
-          imagePullSecrets:
-            {{- range .Values.global.imagePullSecrets }}
-            - name: {{ . }}
-            {{- end }}
 
           # Migration workflow: wait for DB → run migrations
           command: ["/bin/sh"]

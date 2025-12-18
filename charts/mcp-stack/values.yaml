@@ -195,6 +195,18 @@ mcpContextForge:
     # ─ LLM Chat Feature ─
     LLMCHAT_ENABLED: "false"            # enable LLM Chat feature
 
+    # ─ LLM Settings (Internal API) ─
+    # These settings control the internal LLM API that allows the gateway to
+    # act as a unified LLM provider. Configure external providers in the Admin UI.
+    LLM_API_PREFIX: "/v1"               # API prefix for internal LLM endpoints (OpenAI-compatible)
+    LLM_REQUEST_TIMEOUT: "120"          # request timeout in seconds for LLM API calls
+    LLM_STREAMING_ENABLED: "true"       # enable streaming responses for LLM Chat
+    LLM_HEALTH_CHECK_INTERVAL: "300"    # provider health check interval in seconds (5 minutes)
+    # Gateway provider settings (used when provider=gateway in LLM Chat)
+    GATEWAY_MODEL: "gpt-4o"             # default model for gateway provider
+    # GATEWAY_BASE_URL: ""              # optional, defaults to internal API
+    GATEWAY_TEMPERATURE: "0.7"          # sampling temperature for gateway provider
+
     # ─ Default Configuration ─
     DEFAULT_ROOTS: "[]"                 # default roots configuration (JSON array)
 

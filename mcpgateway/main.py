@@ -1287,6 +1287,17 @@ if settings.observability_enabled:
 else:
     logger.info("🔍 Observability middleware disabled")
 
+# Database query logging middleware (for N+1 detection)
+if settings.db_query_log_enabled:
+    # First-Party
+    from mcpgateway.db import engine
+    from mcpgateway.middleware.db_query_logging import setup_query_logging
+
+    setup_query_logging(app, engine)
+    logger.info(f"📊 Database query logging enabled - logs: {settings.db_query_log_file}")
+else:
+    logger.debug("📊 Database query logging disabled (enable with DB_QUERY_LOG_ENABLED=true)")
+
 # Set up Jinja2 templates and store in app state for later use
 templates = Jinja2Templates(directory=str(settings.templates_dir))
 app.state.templates = templates
@@ -2597,7 +2608,6 @@ async def create_tool(
     tool: ToolCreate,
     request: Request,
     team_id: Optional[str] = Body(None, description="Team ID to assign tool to"),
-    visibility: Optional[str] = Body("public", description="Tool visibility: private, team, public"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> ToolRead:
@@ -2608,7 +2618,6 @@ async def create_tool(
         tool (ToolCreate): The data needed to create the tool.
         request (Request): The FastAPI request object for metadata extraction.
         team_id (Optional[str]): Team ID to assign the tool to.
-        visibility (str): Tool visibility (private, team, public).
         db (Session): The database session dependency.
         user: The authenticated user making the request.
 
@@ -2649,7 +2658,7 @@ async def create_tool(
             federation_source=metadata["federation_source"],
             team_id=team_id,
             owner_email=user_email,
-            visibility=visibility,
+            visibility=tool.visibility,
         )
     except Exception as ex:
         logger.error(f"Error while creating tool: {ex}")
@@ -5210,6 +5219,20 @@ if settings.llmchat_enabled:
         logger.info("LLM Chat router included")
     except ImportError:
         logger.debug("LLM Chat router not available")
+
+    # Include LLM configuration and proxy routers (internal API)
+    try:
+        # First-Party
+        from mcpgateway.routers.llm_admin_router import llm_admin_router
+        from mcpgateway.routers.llm_config_router import llm_config_router
+        from mcpgateway.routers.llm_proxy_router import llm_proxy_router
+
+        app.include_router(llm_config_router, prefix="/llm", tags=["LLM Configuration"])
+        app.include_router(llm_proxy_router, prefix=settings.llm_api_prefix, tags=["LLM Proxy"])
+        app.include_router(llm_admin_router, prefix="/admin/llm", tags=["LLM Admin"])
+        logger.info("LLM configuration, proxy, and admin routers included")
+    except ImportError as e:
+        logger.debug(f"LLM routers not available: {e}")
 
 # Include Toolops router
 if settings.toolops_enabled:

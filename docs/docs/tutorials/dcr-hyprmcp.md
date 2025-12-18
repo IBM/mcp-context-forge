@@ -185,7 +185,7 @@ Add the ContextForge service to your compose file (put it in the `services` sect
 
 ```yaml
 context-forge:
-    image: ghcr.io/ibm/mcp-context-forge:0.9.0
+    image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
     ports:
 
         - 4444:4444
@@ -347,7 +347,7 @@ services:
         network_mode: host
 
     context-forge:
-        image: ghcr.io/ibm/mcp-context-forge:0.9.0
+        image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
         ports:
 
             - 4444:4444

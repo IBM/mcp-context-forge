@@ -10,6 +10,7 @@ Welcome! This guide is for developers contributing to MCP Gateway. Whether you'r
 | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | [Building Locally](building.md)                                                   | How to install dependencies, set up a virtual environment, and run the gateway |
 | [Packaging](packaging.md)                                                         | How to build a release, container image, or prebuilt binary                    |
+| [Database Performance](db-performance.md)                                         | N+1 query detection, query logging, and database optimization                  |
 | [Doctest Coverage](doctest-coverage.md)                                           | Comprehensive doctest coverage implementation and guidelines                    |
 | [DEVELOPING.md](https://github.com/IBM/mcp-context-forge/blob/main/DEVELOPING.md) | Coding standards, commit conventions, and review workflow                      |
 
@@ -56,6 +57,17 @@ make test                  # run full suite
 python3 -m pytest tests/unit     # run only unit tests
 python3 -m pytest tests/e2e      # run end-to-end scenarios
 ```
+
+### Database Performance Testing
+
+```bash
+make dev-query-log         # start server with query logging
+make query-log-tail        # watch query log in real-time
+make query-log-analyze     # analyze logs for N+1 patterns
+make test-db-perf          # run N+1 detection tests
+```
+
+See [Database Performance](db-performance.md) for details.
 
 ---
 

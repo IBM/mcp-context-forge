@@ -6715,3 +6715,208 @@ class ObservabilityQueryParams(BaseModel):
     trace_id: Optional[str] = Field(None, description="Filter by trace ID")
     limit: int = Field(default=100, ge=1, le=1000, description="Maximum number of results")
     offset: int = Field(default=0, ge=0, description="Result offset for pagination")
+
+
+# --- Performance Monitoring Schemas ---
+
+
+class WorkerMetrics(BaseModel):
+    """Metrics for a single worker process."""
+
+    pid: int = Field(..., description="Process ID")
+    cpu_percent: float = Field(..., description="CPU utilization percentage")
+    memory_rss_mb: float = Field(..., description="Resident Set Size memory in MB")
+    memory_vms_mb: float = Field(..., description="Virtual Memory Size in MB")
+    threads: int = Field(..., description="Number of threads")
+    connections: int = Field(0, description="Number of network connections")
+    open_fds: Optional[int] = Field(None, description="Number of open file descriptors")
+    status: str = Field("running", description="Worker status")
+    create_time: Optional[datetime] = Field(None, description="Worker start time")
+    uptime_seconds: Optional[int] = Field(None, description="Worker uptime in seconds")
+
+
+class SystemMetricsSchema(BaseModel):
+    """System-wide resource metrics."""
+
+    # CPU metrics
+    cpu_percent: float = Field(..., description="Total CPU utilization percentage")
+    cpu_count: int = Field(..., description="Number of logical CPU cores")
+    cpu_freq_mhz: Optional[float] = Field(None, description="Current CPU frequency in MHz")
+    load_avg_1m: Optional[float] = Field(None, description="1-minute load average")
+    load_avg_5m: Optional[float] = Field(None, description="5-minute load average")
+    load_avg_15m: Optional[float] = Field(None, description="15-minute load average")
+
+    # Memory metrics
+    memory_total_mb: int = Field(..., description="Total physical memory in MB")
+    memory_used_mb: int = Field(..., description="Used physical memory in MB")
+    memory_available_mb: int = Field(..., description="Available memory in MB")
+    memory_percent: float = Field(..., description="Memory utilization percentage")
+    swap_total_mb: int = Field(0, description="Total swap space in MB")
+    swap_used_mb: int = Field(0, description="Used swap space in MB")
+
+    # Disk metrics
+    disk_total_gb: float = Field(..., description="Total disk space in GB")
+    disk_used_gb: float = Field(..., description="Used disk space in GB")
+    disk_percent: float = Field(..., description="Disk utilization percentage")
+
+    # Network metrics
+    network_bytes_sent: int = Field(0, description="Total network bytes sent")
+    network_bytes_recv: int = Field(0, description="Total network bytes received")
+    network_connections: int = Field(0, description="Active network connections")
+
+    # Process info
+    boot_time: Optional[datetime] = Field(None, description="System boot time")
+
+
+class RequestMetricsSchema(BaseModel):
+    """HTTP request performance metrics."""
+
+    requests_total: int = Field(0, description="Total HTTP requests")
+    requests_per_second: float = Field(0, description="Current request rate")
+    requests_1xx: int = Field(0, description="1xx informational responses")
+    requests_2xx: int = Field(0, description="2xx success responses")
+    requests_3xx: int = Field(0, description="3xx redirect responses")
+    requests_4xx: int = Field(0, description="4xx client error responses")
+    requests_5xx: int = Field(0, description="5xx server error responses")
+
+    # Response time percentiles
+    response_time_avg_ms: float = Field(0, description="Average response time in ms")
+    response_time_p50_ms: float = Field(0, description="50th percentile response time")
+    response_time_p95_ms: float = Field(0, description="95th percentile response time")
+    response_time_p99_ms: float = Field(0, description="99th percentile response time")
+
+    # Error rate
+    error_rate: float = Field(0, description="Percentage of 4xx/5xx responses")
+
+    # Active requests
+    active_requests: int = Field(0, description="Currently processing requests")
+
+
+class DatabaseMetricsSchema(BaseModel):
+    """Database connection pool metrics."""
+
+    pool_size: int = Field(0, description="Connection pool size")
+    connections_in_use: int = Field(0, description="Active connections")
+    connections_available: int = Field(0, description="Available connections")
+    overflow: int = Field(0, description="Overflow connections")
+    query_count: int = Field(0, description="Total queries executed")
+    query_avg_time_ms: float = Field(0, description="Average query time in ms")
+
+
+class CacheMetricsSchema(BaseModel):
+    """Redis cache metrics."""
+
+    connected: bool = Field(False, description="Redis connection status")
+    version: Optional[str] = Field(None, description="Redis version")
+    used_memory_mb: float = Field(0, description="Redis memory usage in MB")
+    connected_clients: int = Field(0, description="Connected Redis clients")
+    ops_per_second: int = Field(0, description="Redis operations per second")
+    hit_rate: float = Field(0, description="Cache hit rate percentage")
+    keyspace_hits: int = Field(0, description="Successful key lookups")
+    keyspace_misses: int = Field(0, description="Failed key lookups")
+
+
+class GunicornMetricsSchema(BaseModel):
+    """Gunicorn server metrics."""
+
+    master_pid: Optional[int] = Field(None, description="Master process PID")
+    workers_total: int = Field(0, description="Total configured workers")
+    workers_active: int = Field(0, description="Currently active workers")
+    workers_idle: int = Field(0, description="Idle workers")
+    max_requests: int = Field(0, description="Max requests before worker restart")
+
+
+class PerformanceSnapshotCreate(BaseModel):
+    """Schema for creating a performance snapshot."""
+
+    host: str = Field(..., description="Hostname")
+    worker_id: Optional[str] = Field(None, description="Worker identifier")
+    metrics_json: Dict[str, Any] = Field(..., description="Serialized metrics data")
+
+
+class PerformanceSnapshotRead(BaseModel):
+    """Schema for reading a performance snapshot."""
+
+    id: int = Field(..., description="Snapshot ID")
+    timestamp: datetime = Field(..., description="Snapshot timestamp")
+    host: str = Field(..., description="Hostname")
+    worker_id: Optional[str] = Field(None, description="Worker identifier")
+    metrics_json: Dict[str, Any] = Field(..., description="Serialized metrics data")
+    created_at: datetime = Field(..., description="Creation timestamp")
+
+    model_config = {"from_attributes": True}
+
+
+class PerformanceAggregateBase(BaseModel):
+    """Base schema for performance aggregates."""
+
+    period_start: datetime = Field(..., description="Start of aggregation period")
+    period_end: datetime = Field(..., description="End of aggregation period")
+    period_type: str = Field(..., description="Aggregation type (hourly, daily)")
+    host: Optional[str] = Field(None, description="Host (None for cluster-wide)")
+
+    # Request aggregates
+    requests_total: int = Field(0, description="Total requests in period")
+    requests_2xx: int = Field(0, description="2xx responses in period")
+    requests_4xx: int = Field(0, description="4xx responses in period")
+    requests_5xx: int = Field(0, description="5xx responses in period")
+    avg_response_time_ms: float = Field(0, description="Average response time")
+    p95_response_time_ms: float = Field(0, description="95th percentile response time")
+    peak_requests_per_second: float = Field(0, description="Peak request rate")
+
+    # Resource aggregates
+    avg_cpu_percent: float = Field(0, description="Average CPU utilization")
+    avg_memory_percent: float = Field(0, description="Average memory utilization")
+    peak_cpu_percent: float = Field(0, description="Peak CPU utilization")
+    peak_memory_percent: float = Field(0, description="Peak memory utilization")
+
+
+class PerformanceAggregateCreate(PerformanceAggregateBase):
+    """Schema for creating a performance aggregate."""
+
+
+class PerformanceAggregateRead(PerformanceAggregateBase):
+    """Schema for reading a performance aggregate."""
+
+    id: int = Field(..., description="Aggregate ID")
+    created_at: datetime = Field(..., description="Creation timestamp")
+
+    model_config = {"from_attributes": True}
+
+
+class PerformanceDashboard(BaseModel):
+    """Complete performance dashboard data."""
+
+    timestamp: datetime = Field(..., description="Dashboard generation timestamp")
+    uptime_seconds: int = Field(0, description="Application uptime in seconds")
+    host: str = Field(..., description="Current hostname")
+
+    # Current metrics
+    system: SystemMetricsSchema = Field(..., description="Current system metrics")
+    requests: RequestMetricsSchema = Field(..., description="Current request metrics")
+    database: DatabaseMetricsSchema = Field(..., description="Current database metrics")
+    cache: CacheMetricsSchema = Field(..., description="Current cache metrics")
+    gunicorn: GunicornMetricsSchema = Field(..., description="Current Gunicorn metrics")
+    workers: List[WorkerMetrics] = Field(default_factory=list, description="Per-worker metrics")
+
+    # Cluster info (for distributed mode)
+    cluster_hosts: List[str] = Field(default_factory=list, description="Known cluster hosts")
+    is_distributed: bool = Field(False, description="Running in distributed mode")
+
+
+class PerformanceHistoryParams(BaseModel):
+    """Query parameters for historical performance data."""
+
+    start_time: Optional[datetime] = Field(None, description="Start of time range")
+    end_time: Optional[datetime] = Field(None, description="End of time range")
+    period_type: str = Field("hourly", description="Aggregation period (hourly, daily)")
+    host: Optional[str] = Field(None, description="Filter by host")
+    limit: int = Field(default=168, ge=1, le=1000, description="Maximum results")
+
+
+class PerformanceHistoryResponse(BaseModel):
+    """Response for historical performance data."""
+
+    aggregates: List[PerformanceAggregateRead] = Field(default_factory=list, description="Historical aggregates")
+    period_type: str = Field(..., description="Aggregation period type")
+    total_count: int = Field(0, description="Total matching records")
