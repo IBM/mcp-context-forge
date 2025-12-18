@@ -1094,65 +1094,7 @@ class SessionRegistry(SessionBackend):
                     logger.info(f"Cleaned up {deleted} expired database sessions")
 
                 # Check local sessions against database
-                local_transports = {}
-                async with self._lock:
-                    local_transports = self._sessions.copy()
-
-                for session_id, transport in local_transports.items():
-                    try:
-                        if not await transport.is_connected():
-                            await self.remove_session(session_id)
-                            continue
-
-                        # Refresh session in database
-                        def _refresh_session(session_id: str = session_id) -> bool:
-                            """Update session's last accessed timestamp in the database.
-
-                            Refreshes the last_accessed field for an active session to
-                            prevent it from being cleaned up as expired. This is called
-                            periodically for all local sessions with active transports.
-
-                            This inner function is designed to be run in a thread executor
-                            to avoid blocking the async event loop during database updates.
-
-                            Args:
-                                session_id: The session identifier to refresh (default from closure).
-
-                            Returns:
-                                bool: True if the session was found and updated, False if not found.
-
-                            Raises:
-                                Exception: Any database error is re-raised after rollback.
-
-                            Examples:
-                                >>> # This function is called for each active local session
-                                >>> # Updates SessionRecord.last_accessed to current time
-                                >>> # Returns True if session exists and was refreshed
-                                >>> # Returns False if session no longer exists in database
-                            """
-                            db_session = next(get_db())
-                            try:
-                                session = db_session.query(SessionRecord).filter(SessionRecord.session_id == session_id).first()
-
-                                if session:
-                                    # Update last_accessed
-                                    session.last_accessed = func.now()  # pylint: disable=not-callable
-                                    db_session.commit()
-                                    return True
-                                return False
-                            except Exception as ex:
-                                db_session.rollback()
-                                raise ex
-                            finally:
-                                db_session.close()
-
-                        session_exists = await asyncio.to_thread(_refresh_session)
-                        if not session_exists:
-                            # Session no longer in database, remove locally
-                            await self.remove_session(session_id)
-
-                    except Exception as e:
-                        logger.error(f"Error checking session {session_id}: {e}")
+                await self._cleanup_database_sessions()
 
                 await asyncio.sleep(300)  # Run every 5 minutes
 
@@ -1162,6 +1104,73 @@ class SessionRegistry(SessionBackend):
             except Exception as e:
                 logger.error(f"Error in database cleanup task: {e}")
                 await asyncio.sleep(600)  # Sleep longer on error
+
+    def _refresh_session_db(self, session_id: str) -> bool:
+        """Update session's last accessed timestamp in the database.
+
+        Refreshes the last_accessed field for an active session to
+        prevent it from being cleaned up as expired. This is called
+        periodically for all local sessions with active transports.
+
+        Args:
+            session_id: The session identifier to refresh.
+
+        Returns:
+            bool: True if the session was found and updated, False if not found.
+
+        Raises:
+            Exception: Any database error is re-raised after rollback.
+        """
+        db_session = next(get_db())
+        try:
+            session = db_session.query(SessionRecord).filter(SessionRecord.session_id == session_id).first()
+            if session:
+                session.last_accessed = func.now()  # pylint: disable=not-callable
+                db_session.commit()
+                return True
+            return False
+        except Exception as ex:
+            db_session.rollback()
+            raise ex
+        finally:
+            db_session.close()
+
+    async def _cleanup_database_sessions(self) -> None:
+        """Parallelize session cleanup with asyncio.gather().
+
+        Checks connection status first (fast), then refreshes connected sessions
+        in parallel using asyncio.gather() for optimal performance.
+        """
+        async with self._lock:
+            local_transports = self._sessions.copy()
+
+        # Check connections first (fast)
+        connected: list[str] = []
+        for session_id, transport in local_transports.items():
+            try:
+                if not await transport.is_connected():
+                    await self.remove_session(session_id)
+                else:
+                    connected.append(session_id)
+            except Exception as e:
+                logger.error(f"Error checking connection for session {session_id}: {e}")
+                await self.remove_session(session_id)
+
+        # Parallel refresh of connected sessions
+        if connected:
+            refresh_tasks = [asyncio.to_thread(self._refresh_session_db, session_id) for session_id in connected]
+            results = await asyncio.gather(*refresh_tasks, return_exceptions=True)
+
+            for session_id, result in zip(connected, results):
+                try:
+                    if isinstance(result, Exception):
+                        logger.error(f"Error refreshing session {session_id}: {result}")
+                        await self.remove_session(session_id)
+                    elif not result:
+                        # Session no longer in database, remove locally
+                        await self.remove_session(session_id)
+                except Exception as e:
+                    logger.error(f"Error processing refresh result for session {session_id}: {e}")
 
     async def _memory_cleanup_task(self) -> None:
         """Background task to clean up disconnected sessions in memory backend.
