@@ -116,7 +116,6 @@ async def generate_batch_qr_codes(
             result = create_batch_qr_codes(request)
             logger.info(
                 f"Batch QR codes generated successfully "
-                f"(files={len(result.files)}, zip={result.zip_file_path})"
             )
             return result
 
