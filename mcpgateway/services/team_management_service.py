@@ -22,6 +22,7 @@ from datetime import timedelta
 from typing import List, Optional, Tuple
 
 # Third-Party
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -375,11 +376,15 @@ class TeamManagementService:
             team.is_active = False
             team.updated_at = utc_now()
 
-            # Deactivate all memberships and log deactivation in history
+            # Get all active memberships before deactivating (for history logging)
             memberships = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)).all()
+
+            # Log history for each membership (before bulk update)
             for membership in memberships:
-                membership.is_active = False
                 self._log_team_member_action(membership.id, team_id, membership.user_email, membership.role, "team-deleted", deleted_by)
+
+            # Bulk update: deactivate all memberships in single query instead of looping
+            self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)).update({EmailTeamMember.is_active: False}, synchronize_session=False)
 
             self.db.commit()
 
@@ -642,9 +647,7 @@ class TeamManagementService:
             Verifies user team if team_id provided otherwise finds its personal id.
         """
         try:
-            # First-Party
-            user_teams = await self.get_user_teams(user_email, include_personal=True)
-
+            # Get all teams the user belongs to in a single query
             try:
                 query = self.db.query(EmailTeam).join(EmailTeamMember).filter(EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True), EmailTeam.is_active.is_(True))
                 user_teams = query.all()
@@ -760,13 +763,10 @@ class TeamManagementService:
             Exception: If discovery fails
         """
         try:
-            # Get teams where user is not already a member
-            user_team_ids = [result[0] for result in self.db.query(EmailTeamMember.team_id).filter(EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)).all()]
+            # Optimized: Use subquery instead of loading all IDs into memory (2 queries → 1)
+            user_team_subquery = select(EmailTeamMember.team_id).where(EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)).scalar_subquery()
 
-            query = self.db.query(EmailTeam).filter(EmailTeam.visibility == "public", EmailTeam.is_active.is_(True), EmailTeam.is_personal.is_(False))
-
-            if user_team_ids:
-                query = query.filter(EmailTeam.id.notin_(user_team_ids))
+            query = self.db.query(EmailTeam).filter(EmailTeam.visibility == "public", EmailTeam.is_active.is_(True), EmailTeam.is_personal.is_(False), ~EmailTeam.id.in_(user_team_subquery))
 
             return query.offset(skip).limit(limit).all()
 
