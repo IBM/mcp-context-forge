@@ -59,6 +59,7 @@ class QRGenerationRequest(BaseModel):
     def validate_border_size(cls, v: int) -> int:
         return min(v, 100)
 
+
 class BatchQRGenerationRequest(BaseModel):
     data_list: list[str]  # List of data to encode
     format: Literal["png", "svg", "ascii"] = "png"
@@ -92,7 +93,6 @@ class BatchQRGenerationRequest(BaseModel):
 
 
 def create_qr_code(request: QRGenerationRequest) -> QRCodeResult:
-
     img = create_qr_image(
         data=request.data,
         format=request.format,
@@ -116,7 +116,7 @@ def create_qr_code(request: QRGenerationRequest) -> QRCodeResult:
                 success=True,
                 output_format=request.format,
                 image_base64=img_base64,
-                message="QR code generated as base64 image"
+                message="QR code generated as base64 image",
             )
 
         except Exception as e:
@@ -139,7 +139,7 @@ def create_qr_code(request: QRGenerationRequest) -> QRCodeResult:
         return QRCodeResult(success=False, error=str(e))
 
     try:
-        img.save(save_path) # type: ignore[arg-type]
+        img.save(save_path)  # type: ignore[arg-type]
         return QRCodeResult(
             success=True,
             output_format=request.format,
@@ -153,13 +153,10 @@ def create_qr_code(request: QRGenerationRequest) -> QRCodeResult:
 
 
 def create_batch_qr_codes(request: BatchQRGenerationRequest) -> BatchQRCodeResult:
-
     try:
         os.makedirs(request.output_directory, exist_ok=True)
     except OSError as e:
-        logger.error(
-            "Failed to create output directory %s: %s", request.output_directory, e
-        )
+        logger.error("Failed to create output directory %s: %s", request.output_directory, e)
         return BatchQRCodeResult(success=False, error=str(e))
 
     if request.zip_output:
@@ -183,7 +180,7 @@ def create_batch_qr_codes(request: BatchQRGenerationRequest) -> BatchQRCodeResul
                 else:
                     raise TypeError(f"Unsupported image type: {type(img)}")
                 try:
-                    zf.writestr(filename, img) # type: ignore[arg-type]
+                    zf.writestr(filename, img)  # type: ignore[arg-type]
                 except Exception as e:
                     logger.error(
                         "Failed to add image to zip: index=%d filename=%s error=%s",

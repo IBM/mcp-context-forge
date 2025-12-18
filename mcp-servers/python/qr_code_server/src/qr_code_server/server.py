@@ -82,16 +82,10 @@ async def generate_qr_code(
             return result
 
     except RuntimeError as e:
-        return QRCodeResult(
-            success=False,
-            error=str(e)
-        )
+        return QRCodeResult(success=False, error=str(e))
     except Exception as e:
         logger.error(f"generate_qr_code error: {e}")
-        return QRCodeResult(
-            success=False,
-            error=str(e)
-        )
+        return QRCodeResult(success=False, error=str(e))
 
 
 @mcp.tool(description="Generate multiple QR codes")
@@ -114,22 +108,14 @@ async def generate_batch_qr_codes(
                 zip_output=zip_output,
             )
             result = create_batch_qr_codes(request)
-            logger.info(
-                "Batch QR codes generated successfully "
-            )
+            logger.info("Batch QR codes generated successfully ")
             return result
 
     except RuntimeError as e:
-        return BatchQRCodeResult(
-            success=False,
-            error=str(e)
-        )
+        return BatchQRCodeResult(success=False, error=str(e))
     except Exception as e:
         logger.error(f"generate_batch_qr_codes error: {e}")
-        return BatchQRCodeResult(
-            success=False,
-            error=str(e)
-        )
+        return BatchQRCodeResult(success=False, error=str(e))
 
 
 @mcp.tool(description="Decode QR code from image file")
@@ -152,26 +138,18 @@ async def decode_qr_code(
             result = qr_decode(request)
             if result.success:
                 data_preview = (
-                str(result.data)[:50] + "..."
-                if len(str(result.data)) > 50
-                else result.data
-            )
+                    str(result.data)[:50] + "..." if len(str(result.data)) > 50 else result.data
+                )
                 logger.info(f"QR code decoded successfully (data preview: {data_preview})")
             else:
                 logger.warning(f"QR decode failed: {result.error}")
             return result
 
     except RuntimeError as e:
-        return QRCodeDecodeResult(
-            success=False,
-            error=str(e)
-        )
+        return QRCodeDecodeResult(success=False, error=str(e))
     except Exception as e:
         logger.error(f"Decode QR code data error: {e}")
-        return QRCodeDecodeResult(
-            success=False,
-            error=str(e)
-        )
+        return QRCodeDecodeResult(success=False, error=str(e))
 
 
 @mcp.tool(description="Validate and analyze QR code data before generation")
@@ -194,28 +172,20 @@ async def validate_qr_data(
             result = validate(request)
             if result.valid:
                 logger.info(
-
-                        "QR data validated successfully "
-                        f"(valid={result.valid}, "
-                        f"fits={result.fits}, "
-                        f"suggested_version={result.suggested_version})"
-
+                    "QR data validated successfully "
+                    f"(valid={result.valid}, "
+                    f"fits={result.fits}, "
+                    f"suggested_version={result.suggested_version})"
                 )
             else:
                 logger.warning(f"QR data validation failed: {result.error}")
             return result
 
     except RuntimeError as e:
-        return QRValidationResult(
-            valid=False,
-            error=str(e)
-        )
+        return QRValidationResult(valid=False, error=str(e))
     except Exception as e:
         logger.error(f"Validate QR code data error: {e}")
-        return QRValidationResult(
-            valid=False,
-            error=str(e)
-        )
+        return QRValidationResult(valid=False, error=str(e))
 
 
 def main():
