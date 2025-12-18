@@ -12,6 +12,7 @@ MCP server that provides QR code generation, decoding, and validation capabiliti
 - [MCP Client Setup](#mcp-client-setup)
 - [Troubleshooting](#troubleshooting)
 
+
 ## Installation
 
 ```bash
@@ -78,26 +79,46 @@ decoding:
   supported_image_formats: ["png", "jpg", "jpeg", "gif", "bmp", "tiff"]
 
 performance:
-  cache_generated_codes: false        # Disable caching (security)
   max_concurrent_requests: 10         # Concurrent request limit
 ```
 
 ## Tools
+
+All tools return normalized Pydantic models.
+Failures are always reported via success=false or error.
 
 ### 1. generate_qr_code
 
 Generate a single QR code.
 
 **Parameters:**
-- `data` (str, required): Content to encode
-- `format` (str): Output format - "png", "svg", "ascii" (default: "png")
-- `size` (int): Box size in pixels (default: 10)
-- `border` (int): Border size in boxes (default: 4)
-- `error_correction` (str): Error correction level - "L", "M", "Q", "H" (default: "M")
-- `fill_color` (str): Foreground color (default: "black")
-- `back_color` (str): Background color (default: "white")
-- `save_path` (str|null): Save directory (default: "./output/")
-- `return_base64` (bool): Return base64 encoded data (default: false)
+- data (str, required)
+- format ("png" | "svg" | "ascii", default "png")
+- size (int, default from config)
+- border (int, default from config)
+- error_correction ("L" | "M" | "Q" | "H", default "M")
+- fill_color (str, default "black")
+- back_color (str, default "white")
+- save_path (str | null)
+- return_base64 (bool, default false)
+
+#### Returns — QRCodeResult
+
+```json 
+{  
+    "success": true,  
+    "output_format": "png",  
+    "file_path": "./output/qr_0.png",  
+    "image_base64": null,  
+    "message": "QR code generated successfully", 
+    "error": null 
+} ```
+
+Notes
+- file_path is set when saved to disk
+- image_base64 is set only if return_base64=true
+- On failure, success=false and error is populated
+
 
 
 ### 2. generate_batch_qr_codes
@@ -105,12 +126,28 @@ Generate a single QR code.
 Generate multiple QR codes at once.
 
 **Parameters:**
-- `data_list` (list[str], required): List of data to encode
-- `format` (str): Output format (default: "png")
-- `size` (int): Box size in pixels (default: 10)
-- `naming_pattern` (str): File naming pattern with {index} placeholder (default: "qr_{index}")
-- `output_directory` (str): Output directory (default: "./qr_codes/")
-- `zip_output` (bool): Create ZIP archive (default: false)
+- data_list (list[str], required, must not be empty)
+- format ("png" | "svg" | "ascii", default "png")
+- size (int, default from config)
+- naming_pattern (str, default "qr_{index}")
+- output_directory (str, default from config)
+- zip_output (bool, default true)
+
+#### Validation
+- Batch size ≤ output.max_batch_size
+- Each item length ≤ qr_generation.max_data_length
+
+#### Returns — BatchQRCodeResult
+
+```json 
+{ 
+    "success": true, 
+    "zip_file_path": "./output/qr_batch.zip",  
+    "output_directory": "./output/", 
+    "files": ["qr_0.png", "qr_1.png"], 
+    "message": "Batch generated successfully", 
+    "error": null 
+}``` 
 
 
 ### 3. decode_qr_code
@@ -118,11 +155,26 @@ Generate multiple QR codes at once.
 Decode QR code(s) from an image.
 
 **Parameters:**
-- `image_data` (str, required): Base64 encoded image or file path
-- `image_format` (str): Image format - "auto", "png", "jpg", etc. (default: "auto")
-- `multiple_codes` (bool): Detect multiple QR codes (default: false)
-- `return_positions` (bool): Return QR code positions (default: false)
-- `preprocessing` (bool): Enable image preprocessing (default: true)
+- image_data (base64 string or file path, required)
+- image_format ("auto", "png", "jpg", "jpeg", "gif", "bmp", "tiff")
+- multiple_codes (bool, default false)
+- return_positions (bool, default false)
+- preprocessing (bool, default true)
+
+#### Returns — QRCodeDecodeResult
+
+
+```json 
+{  
+    "success": true, 
+    "data": "https://example.com", 
+    "positions": null, 
+    "error": null 
+}``` 
+
+Notes
+- data is a string for single QR, list[str] when multiple_codes=true
+- positions is returned only if return_positions=true
 
 
 ### 4. validate_qr_data
@@ -130,11 +182,28 @@ Decode QR code(s) from an image.
 Validate and analyze data before generating QR code.
 
 **Parameters:**
-- `data` (str, required): Data to validate
-- `target_version` (int|null): Target QR version 1-40 (default: null)
-- `error_correction` (str): Error correction level (default: "M")
-- `check_capacity` (bool): Check if data fits (default: true)
-- `suggest_optimization` (bool): Suggest optimizations (default: true)
+- data (str, required)
+- target_version (int | null, 1–40)
+- error_correction ("L" | "M" | "Q" | "H", default "M")
+- check_capacity (bool, default true)
+- suggest_optimization (bool, default true)
+
+#### Returns — QRValidationResult
+
+```json 
+{ 
+    "valid": true, 
+    "fits": true, 
+    "suggested_version": 7, 
+    "error": null 
+}```
+
+Notes
+- valid → data is syntactically acceptable
+- fits → data fits QR capacity constraints
+- suggested_version is provided when optimization is enabled
+
+
 
 ## Development
 
@@ -203,8 +272,6 @@ make lint
     "https://example.com/page3"
   ],
   "naming_pattern": "url_qr_{index}",
-  "output_directory": "./batch_qr/",
-  "zip_output": true
 }
 
 ```
@@ -266,21 +333,6 @@ make lint
   "tool": "generate_qr_code",
   "data": "ASCII QR",
   "format": "ascii",
-  "return_base64": false
-}
-
-```
-
-### Example 10: Batch with Custom Pattern
-
-```python
-# Tool call
-{
-  "tool": "generate_batch_qr_codes",
-  "data_list": ["Product A", "Product B", "Product C"],
-  "naming_pattern": "product_tag_{index}",
-  "size": 20,
-  "output_directory": "./product_qrs/"
 }
 
 ```
