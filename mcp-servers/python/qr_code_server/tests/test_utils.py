@@ -10,7 +10,6 @@ def tmp(tmp_path):
 
 
 def test_empty_string(tmp, monkeypatch):
-
     monkeypatch.chdir(tmp)
     out = resolve_output_path("", "png")
     assert out == str(tmp / f"{DEFAULT_FILE_NAME}.png")

@@ -13,7 +13,7 @@ CONFIG_PATH = Path(__file__).parent / "config.yaml"
 class QRGenerationConfig(BaseModel):
     default_size: int = Field(default=10)
     default_border: int = Field(default=4)
-    default_error_correction: Literal["L", "M", "Q", "H"]  = Field(default="M")
+    default_error_correction: Literal["L", "M", "Q", "H"] = Field(default="M")
     max_data_length: int = Field(default=4296)
     supported_formats: list[str] = Field(default_factory=lambda: ["png", "svg", "ascii"])
 

@@ -48,11 +48,13 @@ DATA_CODEWORDS = {
     40: {"L": 2956, "M": 2334, "Q": 1666, "H": 1276},
 }
 
+
 class QRValidationResult(BaseModel):
     valid: bool
     fits: bool | None = None
     error: str | None = None
     suggested_version: int | None = None
+
 
 class QRValidationRequest(BaseModel):
     data: str

@@ -29,11 +29,11 @@ class ImageAscii(BaseImage):
 
     def __init__(
         self,
-            border: int,
-            width: int,
-            box_size: int,
-            qrcode_modules: np.ndarray | None = None,
-            **kwargs: object
+        border: int,
+        width: int,
+        box_size: int,
+        qrcode_modules: np.ndarray | None = None,
+        **kwargs: object,
     ) -> None:
         self.border = border
         self.width = width
