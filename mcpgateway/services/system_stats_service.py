@@ -31,7 +31,7 @@ import logging
 from typing import Any, Dict
 
 # Third-Party
-from sqlalchemy import case, func, select, literal
+from sqlalchemy import case, func, literal, select
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -190,23 +190,25 @@ class SystemStatsService:
 
     def _get_mcp_resource_stats(self, db: Session) -> Dict[str, Any]:
         """Get MCP resource metrics in a SINGLE query using UNION ALL.
-        
+
         Optimized from 6 queries to 1.
         """
         # Create a single query that combines counts from all tables with consistent column labels
-        stmt = select(
-            literal("servers").label("type"), func.count(Server.id).label("cnt")
-        ).select_from(Server).union_all(
-            select(literal("gateways").label("type"), func.count(Gateway.id).label("cnt")).select_from(Gateway),
-            select(literal("tools").label("type"), func.count(Tool.id).label("cnt")).select_from(Tool),
-            select(literal("resources").label("type"), func.count(Resource.uri).label("cnt")).select_from(Resource),
-            select(literal("prompts").label("type"), func.count(Prompt.name).label("cnt")).select_from(Prompt),
-            select(literal("a2a_agents").label("type"), func.count(A2AAgent.id).label("cnt")).select_from(A2AAgent),
+        stmt = (
+            select(literal("servers").label("type"), func.count(Server.id).label("cnt"))
+            .select_from(Server)
+            .union_all(
+                select(literal("gateways").label("type"), func.count(Gateway.id).label("cnt")).select_from(Gateway),
+                select(literal("tools").label("type"), func.count(Tool.id).label("cnt")).select_from(Tool),
+                select(literal("resources").label("type"), func.count(Resource.uri).label("cnt")).select_from(Resource),
+                select(literal("prompts").label("type"), func.count(Prompt.name).label("cnt")).select_from(Prompt),
+                select(literal("a2a_agents").label("type"), func.count(A2AAgent.id).label("cnt")).select_from(A2AAgent),
+            )
         )
 
         # Execute once - this is now a single database query instead of 6 separate queries
         results = db.execute(stmt).all()
-        
+
         # Convert list of rows to a dictionary
         counts = {row.type: row.cnt for row in results}
 
@@ -220,17 +222,8 @@ class SystemStatsService:
 
         total = servers + gateways + tools + resources + prompts + agents
 
-        return {
-            "total": total,
-            "breakdown": {
-                "servers": servers,
-                "gateways": gateways,
-                "tools": tools,
-                "resources": resources,
-                "prompts": prompts,
-                "a2a_agents": agents
-            }
-        }
+        return {"total": total, "breakdown": {"servers": servers, "gateways": gateways, "tools": tools, "resources": resources, "prompts": prompts, "a2a_agents": agents}}
+
     def _get_token_stats(self, db: Session) -> Dict[str, Any]:
         """Get API token metrics.
 

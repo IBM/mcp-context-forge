@@ -879,9 +879,7 @@ class ToolService:
         logger.debug(f"Listing tools with include_inactive={include_inactive}, cursor={cursor}, tags={tags}, page_size={page_size}")
 
         # Build query with LEFT JOIN for team names in single query instead of batch fetching
-        query = select(DbTool, EmailTeam.name.label("team_name")).outerjoin(
-            EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True))
-        ).order_by(DbTool.id)
+        query = select(DbTool, EmailTeam.name.label("team_name")).outerjoin(EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True))).order_by(DbTool.id)
 
         # Apply cursor filter (WHERE id > last_id)
         if last_id:
@@ -976,9 +974,7 @@ class ToolService:
             query = query.where(DbTool.enabled)
 
         # Execute the query with LEFT JOIN for team names in single query
-        query_with_join = query.outerjoin(
-            EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True))
-        ).add_columns(EmailTeam.name.label("team_name"))
+        query_with_join = query.outerjoin(EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True))).add_columns(EmailTeam.name.label("team_name"))
 
         rows = db.execute(query_with_join).all()
 
@@ -1066,9 +1062,7 @@ class ToolService:
         # query = query.offset(skip).limit(limit)
 
         # Execute query with LEFT JOIN for team names in single query
-        query_with_join = query.outerjoin(
-            EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True))
-        ).add_columns(EmailTeam.name.label("team_name"))
+        query_with_join = query.outerjoin(EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True))).add_columns(EmailTeam.name.label("team_name"))
 
         rows = db.execute(query_with_join).all()
 

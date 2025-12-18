@@ -378,16 +378,13 @@ class TeamManagementService:
 
             # Get all active memberships before deactivating (for history logging)
             memberships = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)).all()
-            
+
             # Log history for each membership (before bulk update)
             for membership in memberships:
                 self._log_team_member_action(membership.id, team_id, membership.user_email, membership.role, "team-deleted", deleted_by)
-            
+
             # Bulk update: deactivate all memberships in single query instead of looping
-            self.db.query(EmailTeamMember).filter(
-                EmailTeamMember.team_id == team_id,
-                EmailTeamMember.is_active.is_(True)
-            ).update({EmailTeamMember.is_active: False}, synchronize_session=False)
+            self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)).update({EmailTeamMember.is_active: False}, synchronize_session=False)
 
             self.db.commit()
 
@@ -652,11 +649,7 @@ class TeamManagementService:
         try:
             # Get all teams the user belongs to in a single query
             try:
-                query = self.db.query(EmailTeam).join(EmailTeamMember).filter(
-                    EmailTeamMember.user_email == user_email,
-                    EmailTeamMember.is_active.is_(True),
-                    EmailTeam.is_active.is_(True)
-                )
+                query = self.db.query(EmailTeam).join(EmailTeamMember).filter(EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True), EmailTeam.is_active.is_(True))
                 user_teams = query.all()
             except Exception as e:
                 logger.error(f"Failed to get teams for user {user_email}: {e}")
@@ -771,21 +764,9 @@ class TeamManagementService:
         """
         try:
             # Optimized: Use subquery instead of loading all IDs into memory (2 queries → 1)
-            user_team_subquery = (
-                select(EmailTeamMember.team_id)
-                .where(
-                    EmailTeamMember.user_email == user_email,
-                    EmailTeamMember.is_active.is_(True)
-                )
-                .scalar_subquery()
-            )
+            user_team_subquery = select(EmailTeamMember.team_id).where(EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)).scalar_subquery()
 
-            query = self.db.query(EmailTeam).filter(
-                EmailTeam.visibility == "public",
-                EmailTeam.is_active.is_(True),
-                EmailTeam.is_personal.is_(False),
-                ~EmailTeam.id.in_(user_team_subquery)
-            )
+            query = self.db.query(EmailTeam).filter(EmailTeam.visibility == "public", EmailTeam.is_active.is_(True), EmailTeam.is_personal.is_(False), ~EmailTeam.id.in_(user_team_subquery))
 
             return query.offset(skip).limit(limit).all()
 
