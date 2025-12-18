@@ -6,14 +6,16 @@ from contextlib import asynccontextmanager
 from fastmcp import FastMCP
 
 from qr_code_server.config import config
-from qr_code_server.tools.decoder import QRDecodingRequest, qr_decode
+from qr_code_server.tools.decoder import QRCodeDecodeResult, QRDecodingRequest, qr_decode
 from qr_code_server.tools.generator import (
+    BatchQRCodeResult,
     BatchQRGenerationRequest,
+    QRCodeResult,
     QRGenerationRequest,
     create_batch_qr_codes,
     create_qr_code,
 )
-from qr_code_server.tools.validator import QRValidationRequest, validate
+from qr_code_server.tools.validator import QRValidationRequest, QRValidationResult, validate
 
 logging.basicConfig(
     level=logging.INFO,
@@ -61,7 +63,7 @@ async def generate_qr_code(
     back_color: str = "white",
     save_path: str | None = config.output.default_directory,
     return_base64: bool = False,
-):
+) -> QRCodeResult:
     try:
         async with _acquire_request_slot("generate_qr_code"):
             request = QRGenerationRequest(
@@ -91,7 +93,7 @@ async def generate_batch_qr_codes(
     naming_pattern: str = "qr_{index}",
     output_directory: str = "./qr_codes/",
     zip_output: bool = False,
-):
+) -> BatchQRCodeResult:
     try:
         async with _acquire_request_slot("generate_batch_qr_codes"):
             request = BatchQRGenerationRequest(
@@ -117,7 +119,7 @@ async def decode_qr_code(
     multiple_codes: bool = False,
     return_positions: bool = False,
     preprocessing: bool = True,
-):
+) -> QRCodeDecodeResult:
     try:
         async with _acquire_request_slot("generate_batch_qr_codes"):
             request = QRDecodingRequest(
@@ -142,7 +144,7 @@ async def validate_qr_data(
     error_correction: str = "M",
     check_capacity: bool = True,
     suggest_optimization: bool = True,
-):
+) -> QRValidationResult:
     try:
         async with _acquire_request_slot("generate_batch_qr_codes"):
             request = QRValidationRequest(
