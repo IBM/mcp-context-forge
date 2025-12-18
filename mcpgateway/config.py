@@ -154,7 +154,15 @@ class Settings(BaseSettings):
     port: PositiveInt = Field(default=4444, ge=1, le=65535)
     client_mode: bool = False
     docs_allow_basic_auth: bool = False  # Allow basic auth for docs
-    database_url: str = "sqlite:///./mcp.db"
+    database_url: str = Field(
+        default="sqlite:///./mcp.db",
+        description=(
+            "Database connection URL. Supports SQLite, PostgreSQL, MySQL/MariaDB. "
+            "For PostgreSQL with custom schema, use the 'options' query parameter: "
+            "postgresql://user:pass@host:5432/db?options=-c%20search_path=schema_name "
+            "(See Issue #1535 for details)"
+        ),
+    )
 
     # Absolute paths resolved at import-time (still override-able via env vars)
     templates_dir: Path = Field(default_factory=lambda: Path(str(files("mcpgateway") / "templates")))
@@ -361,6 +369,16 @@ class Settings(BaseSettings):
     mcpgateway_grpc_timeout: int = Field(default=30, description="Default gRPC call timeout in seconds")
     mcpgateway_grpc_tls_enabled: bool = Field(default=False, description="Enable TLS for gRPC connections by default")
 
+    # ===================================
+    # Performance Monitoring Configuration
+    # ===================================
+    mcpgateway_performance_tracking: bool = Field(default=False, description="Enable performance tracking tab in admin UI")
+    mcpgateway_performance_collection_interval: int = Field(default=10, ge=1, le=300, description="Metric collection interval in seconds")
+    mcpgateway_performance_retention_hours: int = Field(default=24, ge=1, le=168, description="Snapshot retention period in hours")
+    mcpgateway_performance_retention_days: int = Field(default=90, ge=1, le=365, description="Aggregate retention period in days")
+    mcpgateway_performance_max_snapshots: int = Field(default=10000, ge=100, le=1000000, description="Maximum performance snapshots to retain")
+    mcpgateway_performance_distributed: bool = Field(default=False, description="Enable distributed mode metrics aggregation via Redis")
+
     # MCP Server Catalog Configuration
     mcpgateway_catalog_enabled: bool = Field(default=True, description="Enable MCP server catalog feature")
     mcpgateway_catalog_file: str = Field(default="mcp-catalog.yml", description="Path to catalog configuration file")
@@ -446,6 +464,12 @@ class Settings(BaseSettings):
     llmchat_session_lock_wait: float = Field(default=0.2, description="Seconds between polls")
     llmchat_chat_history_ttl: int = Field(default=3600, description="Seconds for chat history expiry")
     llmchat_chat_history_max_messages: int = Field(default=50, description="Maximum message history to store per user")
+
+    # LLM Settings (Internal API for LLM Chat)
+    llm_api_prefix: str = Field(default="/v1", description="API prefix for internal LLM endpoints")
+    llm_request_timeout: int = Field(default=120, description="Request timeout in seconds for LLM API calls")
+    llm_streaming_enabled: bool = Field(default=True, description="Enable streaming responses for LLM Chat")
+    llm_health_check_interval: int = Field(default=300, description="Provider health check interval in seconds")
 
     @field_validator("allowed_roots", mode="before")
     @classmethod
@@ -827,6 +851,18 @@ class Settings(BaseSettings):
     correlation_id_header: str = Field(default="X-Correlation-ID", description="HTTP header name for correlation ID")
     correlation_id_preserve: bool = Field(default=True, description="Preserve correlation IDs from incoming requests")
     correlation_id_response_header: bool = Field(default=True, description="Include correlation ID in response headers")
+
+    # ===================================
+    # Database Query Logging (N+1 Detection)
+    # ===================================
+    db_query_log_enabled: bool = Field(default=False, description="Enable database query logging to file (for N+1 detection)")
+    db_query_log_file: str = Field(default="logs/db-queries.log", description="Path to database query log file")
+    db_query_log_json_file: str = Field(default="logs/db-queries.jsonl", description="Path to JSON Lines query log file")
+    db_query_log_format: str = Field(default="both", description="Log format: 'json', 'text', or 'both'")
+    db_query_log_min_queries: int = Field(default=1, ge=1, description="Only log requests with >= N queries")
+    db_query_log_include_params: bool = Field(default=False, description="Include query parameters (may expose sensitive data)")
+    db_query_log_detect_n1: bool = Field(default=True, description="Automatically detect and flag N+1 query patterns")
+    db_query_log_n1_threshold: int = Field(default=3, ge=2, description="Number of similar queries to flag as potential N+1")
 
     # Structured Logging Configuration
     structured_logging_enabled: bool = Field(default=True, description="Enable structured JSON logging with database persistence")

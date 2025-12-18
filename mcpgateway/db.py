@@ -24,6 +24,7 @@ Examples:
 # Standard
 from datetime import datetime, timedelta, timezone
 import logging
+import os
 from typing import Any, cast, Dict, Generator, List, Optional, TYPE_CHECKING
 import uuid
 
@@ -69,6 +70,10 @@ connect_args: dict[str, object] = {}
 # 2. PostgreSQL (synchronous psycopg2 only)
 #    The keep-alive parameters below are recognised exclusively by libpq /
 #    psycopg2 and let the kernel detect broken network links quickly.
+#
+#    Additionally, support PostgreSQL-specific options like search_path
+#    via the 'options' query parameter in DATABASE_URL.
+#    Example: postgresql://user:pass@host/db?options=-c%20search_path=mcp_gateway
 # ---------------------------------------------------------------------------
 if backend == "postgresql" and driver in ("psycopg2", "default", ""):
     connect_args.update(
@@ -77,6 +82,13 @@ if backend == "postgresql" and driver in ("psycopg2", "default", ""):
         keepalives_interval=5,  # seconds between probes
         keepalives_count=5,  # drop the link after N failed probes
     )
+
+    # Extract and apply PostgreSQL options from URL query parameters
+    # This allows users to specify search_path for custom schema support (Issue #1535)
+    url_options = url.query.get("options")
+    if url_options:
+        connect_args["options"] = url_options
+        logger.info(f"PostgreSQL connection options applied: {url_options}")
 
 # ---------------------------------------------------------------------------
 # 3. SQLite (optional) - only one extra flag and it is *SQLite-specific*.
@@ -91,6 +103,10 @@ elif backend == "sqlite":
 # 5. Build the Engine with a single, clean connect_args mapping.
 # ---------------------------------------------------------------------------
 
+# Check for SQLALCHEMY_ECHO environment variable for query debugging
+# This is useful for N+1 detection and performance analysis
+_sqlalchemy_echo = os.getenv("SQLALCHEMY_ECHO", "").lower() in ("true", "1", "yes")
+
 
 def build_engine() -> Engine:
     """Build the SQLAlchemy engine with appropriate settings.
@@ -99,9 +115,15 @@ def build_engine() -> Engine:
     and connection arguments determined by the backend type. It also configures
     the connection pool size and timeout based on application settings.
 
+    Environment variables:
+        SQLALCHEMY_ECHO: Set to 'true' to log all SQL queries (useful for N+1 detection)
+
     Returns:
         SQLAlchemy Engine instance configured for the specified database.
     """
+    if _sqlalchemy_echo:
+        logger.info("SQLALCHEMY_ECHO enabled - all SQL queries will be logged")
+
     if backend == "sqlite":
         # SQLite supports connection pooling with proper configuration
         # For SQLite, we use a smaller pool size since it's file-based
@@ -122,6 +144,8 @@ def build_engine() -> Engine:
             connect_args=connect_args,
             # Log pool events in debug mode
             echo_pool=settings.log_level == "DEBUG",
+            # Log all SQL queries when SQLALCHEMY_ECHO=true (useful for N+1 detection)
+            echo=_sqlalchemy_echo,
         )
 
     if backend in ("mysql", "mariadb"):
@@ -137,6 +161,8 @@ def build_engine() -> Engine:
             pool_recycle=settings.db_pool_recycle,
             connect_args=connect_args,
             isolation_level="READ_COMMITTED",  # Fix PyMySQL sync issues
+            # Log all SQL queries when SQLALCHEMY_ECHO=true (useful for N+1 detection)
+            echo=_sqlalchemy_echo,
         )
 
     # Other databases support full pooling configuration
@@ -148,6 +174,8 @@ def build_engine() -> Engine:
         pool_timeout=settings.db_pool_timeout,
         pool_recycle=settings.db_pool_recycle,
         connect_args=connect_args,
+        # Log all SQL queries when SQLALCHEMY_ECHO=true (useful for N+1 detection)
+        echo=_sqlalchemy_echo,
     )
 
 
@@ -1896,6 +1924,105 @@ class ObservabilitySavedQuery(Base):
         Index("idx_observability_saved_queries_user_email", "user_email"),
         Index("idx_observability_saved_queries_is_shared", "is_shared"),
         Index("idx_observability_saved_queries_created_at", "created_at"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Performance Monitoring Models
+# ---------------------------------------------------------------------------
+
+
+class PerformanceSnapshot(Base):
+    """
+    ORM model for point-in-time performance snapshots.
+
+    Stores comprehensive system, request, and worker metrics at regular intervals
+    for historical analysis and trend detection.
+
+    Attributes:
+        id (int): Auto-incrementing primary key.
+        timestamp (datetime): When the snapshot was taken.
+        host (str): Hostname of the machine.
+        worker_id (str): Worker identifier (PID or UUID).
+        metrics_json (dict): JSON blob containing all metrics data.
+        created_at (datetime): Record creation timestamp.
+    """
+
+    __tablename__ = "performance_snapshots"
+
+    # Primary key
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    # Snapshot metadata
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    host: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    worker_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+
+    # Metrics data (JSON blob)
+    metrics_json: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    # Indexes for efficient querying
+    __table_args__ = (
+        Index("idx_performance_snapshots_timestamp", "timestamp"),
+        Index("idx_performance_snapshots_host_timestamp", "host", "timestamp"),
+        Index("idx_performance_snapshots_created_at", "created_at"),
+    )
+
+
+class PerformanceAggregate(Base):
+    """
+    ORM model for aggregated performance metrics.
+
+    Stores hourly and daily aggregations of performance data for efficient
+    historical reporting and trend analysis.
+
+    Attributes:
+        id (int): Auto-incrementing primary key.
+        period_start (datetime): Start of the aggregation period.
+        period_end (datetime): End of the aggregation period.
+        period_type (str): Type of aggregation (hourly, daily).
+        host (str): Hostname (None for cluster-wide aggregates).
+        Various aggregate metrics for requests and resources.
+        created_at (datetime): Record creation timestamp.
+    """
+
+    __tablename__ = "performance_aggregates"
+
+    # Primary key
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    # Period metadata
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    period_type: Mapped[str] = mapped_column(String(20), nullable=False, index=True)  # hourly, daily
+    host: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+
+    # Request aggregates
+    requests_total: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    requests_2xx: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    requests_4xx: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    requests_5xx: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    avg_response_time_ms: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    p95_response_time_ms: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    peak_requests_per_second: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+
+    # Resource aggregates
+    avg_cpu_percent: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    avg_memory_percent: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    peak_cpu_percent: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    peak_memory_percent: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    # Indexes and constraints
+    __table_args__ = (
+        Index("idx_performance_aggregates_period", "period_type", "period_start"),
+        Index("idx_performance_aggregates_host_period", "host", "period_type", "period_start"),
+        UniqueConstraint("period_type", "period_start", "host", name="uq_performance_aggregate_period_host"),
     )
 
 
@@ -4013,6 +4140,309 @@ class SecurityEvent(Base):
     )
 
 
+# ---------------------------------------------------------------------------
+# LLM Provider Configuration Models
+# ---------------------------------------------------------------------------
+
+
+class LLMProviderType:
+    """Constants for LLM provider types."""
+
+    OPENAI = "openai"
+    AZURE_OPENAI = "azure_openai"
+    ANTHROPIC = "anthropic"
+    BEDROCK = "bedrock"
+    GOOGLE_VERTEX = "google_vertex"
+    WATSONX = "watsonx"
+    OLLAMA = "ollama"
+    OPENAI_COMPATIBLE = "openai_compatible"
+    COHERE = "cohere"
+    MISTRAL = "mistral"
+    GROQ = "groq"
+    TOGETHER = "together"
+
+    @classmethod
+    def get_all_types(cls) -> List[str]:
+        """Get list of all supported provider types.
+
+        Returns:
+            List of provider type strings.
+        """
+        return [
+            cls.OPENAI,
+            cls.AZURE_OPENAI,
+            cls.ANTHROPIC,
+            cls.BEDROCK,
+            cls.GOOGLE_VERTEX,
+            cls.WATSONX,
+            cls.OLLAMA,
+            cls.OPENAI_COMPATIBLE,
+            cls.COHERE,
+            cls.MISTRAL,
+            cls.GROQ,
+            cls.TOGETHER,
+        ]
+
+    @classmethod
+    def get_provider_defaults(cls) -> Dict[str, Dict[str, Any]]:
+        """Get default configuration for each provider type.
+
+        Returns:
+            Dictionary mapping provider type to default config.
+        """
+        return {
+            cls.OPENAI: {
+                "api_base": "https://api.openai.com/v1",
+                "default_model": "gpt-4o",
+                "supports_model_list": True,
+                "models_endpoint": "/models",
+                "requires_api_key": True,
+                "description": "OpenAI GPT models (GPT-4, GPT-4o, etc.)",
+            },
+            cls.AZURE_OPENAI: {
+                "api_base": "https://{resource}.openai.azure.com/openai/deployments/{deployment}",
+                "default_model": "",
+                "supports_model_list": False,
+                "requires_api_key": True,
+                "description": "Azure OpenAI Service",
+            },
+            cls.ANTHROPIC: {
+                "api_base": "https://api.anthropic.com",
+                "default_model": "claude-sonnet-4-20250514",
+                "supports_model_list": False,
+                "requires_api_key": True,
+                "description": "Anthropic Claude models",
+            },
+            cls.OLLAMA: {
+                "api_base": "http://localhost:11434/v1",
+                "default_model": "llama3.2",
+                "supports_model_list": True,
+                "models_endpoint": "/models",
+                "requires_api_key": False,
+                "description": "Local Ollama server (OpenAI-compatible)",
+            },
+            cls.OPENAI_COMPATIBLE: {
+                "api_base": "http://localhost:8080/v1",
+                "default_model": "",
+                "supports_model_list": True,
+                "models_endpoint": "/models",
+                "requires_api_key": False,
+                "description": "Any OpenAI-compatible API server",
+            },
+            cls.COHERE: {
+                "api_base": "https://api.cohere.ai/v1",
+                "default_model": "command-r-plus",
+                "supports_model_list": True,
+                "models_endpoint": "/models",
+                "requires_api_key": True,
+                "description": "Cohere Command models",
+            },
+            cls.MISTRAL: {
+                "api_base": "https://api.mistral.ai/v1",
+                "default_model": "mistral-large-latest",
+                "supports_model_list": True,
+                "models_endpoint": "/models",
+                "requires_api_key": True,
+                "description": "Mistral AI models",
+            },
+            cls.GROQ: {
+                "api_base": "https://api.groq.com/openai/v1",
+                "default_model": "llama-3.3-70b-versatile",
+                "supports_model_list": True,
+                "models_endpoint": "/models",
+                "requires_api_key": True,
+                "description": "Groq high-speed inference",
+            },
+            cls.TOGETHER: {
+                "api_base": "https://api.together.xyz/v1",
+                "default_model": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+                "supports_model_list": True,
+                "models_endpoint": "/models",
+                "requires_api_key": True,
+                "description": "Together AI inference",
+            },
+            cls.BEDROCK: {
+                "api_base": "",
+                "default_model": "anthropic.claude-3-sonnet-20240229-v1:0",
+                "supports_model_list": False,
+                "requires_api_key": False,
+                "description": "AWS Bedrock (uses IAM credentials)",
+            },
+            cls.GOOGLE_VERTEX: {
+                "api_base": "",
+                "default_model": "gemini-1.5-pro",
+                "supports_model_list": False,
+                "requires_api_key": False,
+                "description": "Google Vertex AI (uses service account)",
+            },
+            cls.WATSONX: {
+                "api_base": "https://us-south.ml.cloud.ibm.com",
+                "default_model": "ibm/granite-13b-chat-v2",
+                "supports_model_list": False,
+                "requires_api_key": True,
+                "description": "IBM watsonx.ai",
+            },
+        }
+
+
+class LLMProvider(Base):
+    """ORM model for LLM provider configurations.
+
+    Stores credentials and settings for external LLM providers
+    used by the internal LLM Chat feature.
+
+    Attributes:
+        id: Unique identifier (UUID)
+        name: Display name (unique)
+        slug: URL-safe identifier (unique)
+        provider_type: Provider type (openai, anthropic, etc.)
+        api_key: Encrypted API key
+        api_base: Base URL for API requests
+        api_version: API version (for Azure OpenAI)
+        config: Provider-specific settings (JSON)
+        default_model: Default model ID
+        default_temperature: Default temperature (0.0-2.0)
+        default_max_tokens: Default max tokens
+        enabled: Whether provider is enabled
+        health_status: Current health status (healthy/unhealthy/unknown)
+        last_health_check: Last health check timestamp
+        plugin_ids: Attached plugin IDs (JSON)
+    """
+
+    __tablename__ = "llm_providers"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+
+    # Basic info
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    slug: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Provider type
+    provider_type: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    # Credentials (encrypted)
+    api_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    api_base: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    api_version: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+
+    # Provider-specific configuration
+    config: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+
+    # Default settings
+    default_model: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    default_temperature: Mapped[float] = mapped_column(Float, default=0.7, nullable=False)
+    default_max_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Status
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    health_status: Mapped[str] = mapped_column(String(20), default="unknown", nullable=False)
+    last_health_check: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Plugin integration
+    plugin_ids: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    # Audit fields
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    modified_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    # Relationships
+    models: Mapped[List["LLMModel"]] = relationship("LLMModel", back_populates="provider", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_llm_providers_name"),
+        UniqueConstraint("slug", name="uq_llm_providers_slug"),
+        Index("idx_llm_providers_enabled", "enabled"),
+        Index("idx_llm_providers_type", "provider_type"),
+        Index("idx_llm_providers_health", "health_status"),
+    )
+
+    def __repr__(self) -> str:
+        """Return string representation.
+
+        Returns:
+            String representation of the provider.
+        """
+        return f"<LLMProvider(id='{self.id}', name='{self.name}', type='{self.provider_type}')>"
+
+
+class LLMModel(Base):
+    """ORM model for LLM model definitions.
+
+    Stores model metadata and capabilities for each provider.
+
+    Attributes:
+        id: Unique identifier (UUID)
+        provider_id: Foreign key to llm_providers
+        model_id: Provider's model ID (e.g., gpt-4o)
+        model_name: Display name
+        model_alias: Optional routing alias
+        supports_chat: Whether model supports chat completions
+        supports_streaming: Whether model supports streaming
+        supports_function_calling: Whether model supports function/tool calling
+        supports_vision: Whether model supports vision/images
+        context_window: Maximum context tokens
+        max_output_tokens: Maximum output tokens
+        enabled: Whether model is enabled
+        deprecated: Whether model is deprecated
+    """
+
+    __tablename__ = "llm_models"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+
+    # Provider relationship
+    provider_id: Mapped[str] = mapped_column(String(36), ForeignKey("llm_providers.id", ondelete="CASCADE"), nullable=False)
+
+    # Model identification
+    model_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    model_alias: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Capabilities
+    supports_chat: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    supports_streaming: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    supports_function_calling: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    supports_vision: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Limits
+    context_window: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    max_output_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Status
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    deprecated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    # Relationship
+    provider: Mapped["LLMProvider"] = relationship("LLMProvider", back_populates="models")
+
+    __table_args__ = (
+        UniqueConstraint("provider_id", "model_id", name="uq_llm_models_provider_model"),
+        Index("idx_llm_models_provider", "provider_id"),
+        Index("idx_llm_models_enabled", "enabled"),
+        Index("idx_llm_models_deprecated", "deprecated"),
+    )
+
+    def __repr__(self) -> str:
+        """Return string representation.
+
+        Returns:
+            String representation of the model.
+        """
+        return f"<LLMModel(id='{self.id}', model_id='{self.model_id}', provider_id='{self.provider_id}')>"
+
+
 class AuditTrail(Base):
     """Comprehensive audit trail for data access and changes.
 
@@ -4114,6 +4544,18 @@ def set_grpc_service_slug(_mapper, _conn, target):
         _mapper: Mapper
         _conn: Connection
         target: Target GrpcService instance
+    """
+    target.slug = slugify(target.name)
+
+
+@event.listens_for(LLMProvider, "before_insert")
+def set_llm_provider_slug(_mapper, _conn, target):
+    """Set the slug for an LLMProvider before insert.
+
+    Args:
+        _mapper: Mapper
+        _conn: Connection
+        target: Target LLMProvider instance
     """
     target.slug = slugify(target.name)
 

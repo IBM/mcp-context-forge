@@ -584,7 +584,7 @@ docker run -d --name mcpgateway \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   -e DATABASE_URL=sqlite:///./mcp.db \
   -e SECURE_COOKIES=false \
-  ghcr.io/ibm/mcp-context-forge:0.9.0
+  ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
 
 # Note: when not running over SSL, use SECURE_COOKIES=false to prevent the browser denying access.
 
@@ -592,7 +592,7 @@ docker run -d --name mcpgateway \
 docker logs -f mcpgateway
 
 # Generating an API key
-docker run --rm -it ghcr.io/ibm/mcp-context-forge:0.9.0 \
+docker run --rm -it ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1 \
   python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 0 --secret my-test-key
 ```
 
@@ -623,7 +623,7 @@ docker run -d --name mcpgateway \
   -e PLATFORM_ADMIN_EMAIL=admin@example.com \
   -e PLATFORM_ADMIN_PASSWORD=changeme \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
-  ghcr.io/ibm/mcp-context-forge:0.9.0
+  ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
 ```
 
 SQLite now lives on the host at `./data/mcp.db`.
@@ -650,7 +650,7 @@ docker run -d --name mcpgateway \
   -e PLATFORM_ADMIN_PASSWORD=changeme \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   -v $(pwd)/data:/data \
-  ghcr.io/ibm/mcp-context-forge:0.9.0
+  ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
 ```
 
 Using `--network=host` allows Docker to access the local network, allowing you to add MCP servers running on your host. See [Docker Host network driver documentation](https://docs.docker.com/engine/network/drivers/host/) for more details.
@@ -691,7 +691,7 @@ podman run -d --name mcpgateway \
   -p 4444:4444 \
   -e HOST=0.0.0.0 \
   -e DATABASE_URL=sqlite:///./mcp.db \
-  ghcr.io/ibm/mcp-context-forge:0.9.0
+  ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
 ```
 
 #### 2 - Persist SQLite
@@ -710,7 +710,7 @@ podman run -d --name mcpgateway \
   -p 4444:4444 \
   -v $(pwd)/data:/data \
   -e DATABASE_URL=sqlite:////data/mcp.db \
-  ghcr.io/ibm/mcp-context-forge:0.9.0
+  ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
 ```
 
 #### 3 - Host networking (rootless)
@@ -728,7 +728,7 @@ podman run -d --name mcpgateway \
   --network=host \
   -v $(pwd)/data:/data \
   -e DATABASE_URL=sqlite:////data/mcp.db \
-  ghcr.io/ibm/mcp-context-forge:0.9.0
+  ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
 ```
 
 ---
@@ -783,7 +783,7 @@ docker run --rm -i \
   -e MCP_SERVER_URL=http://host.docker.internal:4444/servers/UUID_OF_SERVER_1/mcp \
   -e MCP_TOOL_CALL_TIMEOUT=120 \
   -e MCP_WRAPPER_LOG_LEVEL=DEBUG \
-  ghcr.io/ibm/mcp-context-forge:0.9.0 \
+  ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1 \
   python3 -m mcpgateway.wrapper
 ```
 
@@ -865,7 +865,7 @@ docker run -i --rm \
   -e MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1/mcp \
   -e MCP_AUTH=${MCP_AUTH} \
   -e MCP_TOOL_CALL_TIMEOUT=120 \
-  ghcr.io/ibm/mcp-context-forge:0.9.0 \
+  ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1 \
   python3 -m mcpgateway.wrapper
 ```
 
@@ -1422,6 +1422,51 @@ The LLM Chat MCP Client allows you to interact with MCP servers using conversati
 
 **Documentation:**
 - [LLM Chat Guide](https://ibm.github.io/mcp-context-forge/using/clients/llm-chat) - Complete LLM Chat setup and provider configuration
+
+### LLM Settings (Internal API)
+
+The LLM Settings feature enables MCP Gateway to act as a unified LLM provider with an OpenAI-compatible API. Configure multiple external LLM providers through the Admin UI and expose them through a single proxy endpoint.
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `LLM_API_PREFIX`              | API prefix for internal LLM endpoints  | `/v1`   | string  |
+| `LLM_REQUEST_TIMEOUT`         | Request timeout for LLM API calls (seconds) | `120` | int     |
+| `LLM_STREAMING_ENABLED`       | Enable streaming responses             | `true`  | bool    |
+| `LLM_HEALTH_CHECK_INTERVAL`   | Provider health check interval (seconds) | `300` | int     |
+
+**Gateway Provider Settings (for LLM Chat with provider=gateway):**
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `GATEWAY_MODEL`               | Default model to use                   | `gpt-4o` | string |
+| `GATEWAY_BASE_URL`            | Base URL for gateway LLM API           | (auto)  | string  |
+| `GATEWAY_TEMPERATURE`         | Sampling temperature                   | `0.7`   | float   |
+
+**Features:**
+
+- **OpenAI-Compatible API**: Exposes `/v1/chat/completions` and `/v1/models` endpoints compatible with any OpenAI client
+- **Multi-Provider Support**: Configure OpenAI, Azure OpenAI, Anthropic, Ollama, Google, Mistral, Cohere, AWS Bedrock, Groq, and more
+- **Admin UI Management**: Add, edit, enable/disable, and test providers through the Admin UI (LLM Settings tab)
+- **Model Discovery**: Fetch available models from providers and sync them to the database
+- **Health Monitoring**: Automatic health checks with status indicators
+- **Unified Interface**: Route requests to any configured provider through a single API
+
+**API Endpoints:**
+
+```bash
+# List available models
+curl -H "Authorization: Bearer $TOKEN" http://localhost:4444/v1/models
+
+# Chat completion
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gpt-4o", "messages": [{"role": "user", "content": "Hello"}]}' \
+  http://localhost:4444/v1/chat/completions
+```
+
+> 🔧 **Configuration**: Providers are managed through the Admin UI under "LLM Settings > Providers"
+> 📋 **Models**: View and manage models under "LLM Settings > Models"
+> ⚡ **Testing**: Test models directly from the Admin UI with the "Test" feature
 
 ### Email-Based Authentication & User Management
 

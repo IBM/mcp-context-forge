@@ -524,6 +524,43 @@ class WatsonxConfig(BaseModel):
     }
 
 
+class GatewayConfig(BaseModel):
+    """
+    Configuration for MCP Gateway internal LLM provider.
+
+    Allows LLM Chat to use models configured in the gateway's LLM Settings.
+    The gateway routes requests to the appropriate configured provider.
+
+    Attributes:
+        model: Model ID (gateway model ID or provider model ID).
+        base_url: Gateway internal API URL (defaults to self).
+        temperature: Sampling temperature for response generation.
+        max_tokens: Maximum tokens to generate.
+        timeout: Request timeout in seconds.
+
+    Examples:
+        >>> config = GatewayConfig(model="gpt-4o")
+        >>> config.model
+        'gpt-4o'
+    """
+
+    model: str = Field(..., description="Gateway model ID to use")
+    base_url: Optional[str] = Field(None, description="Gateway internal API URL (optional, defaults to self)")
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0, description="Sampling temperature")
+    max_tokens: Optional[int] = Field(None, gt=0, description="Maximum tokens to generate")
+    timeout: Optional[float] = Field(None, gt=0, description="Request timeout in seconds")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "model": "gpt-4o",
+                "temperature": 0.7,
+                "max_tokens": 4096,
+            }
+        }
+    }
+
+
 class LLMConfig(BaseModel):
     """
     Configuration for LLM provider.
@@ -580,12 +617,12 @@ class LLMConfig(BaseModel):
         'watsonx'
     """
 
-    provider: Literal["azure_openai", "openai", "anthropic", "aws_bedrock", "ollama", "watsonx"] = Field(..., description="LLM provider type")
-    config: Union[AzureOpenAIConfig, OpenAIConfig, AnthropicConfig, AWSBedrockConfig, OllamaConfig, WatsonxConfig] = Field(..., description="Provider-specific configuration")
+    provider: Literal["azure_openai", "openai", "anthropic", "aws_bedrock", "ollama", "watsonx", "gateway"] = Field(..., description="LLM provider type")
+    config: Union[AzureOpenAIConfig, OpenAIConfig, AnthropicConfig, AWSBedrockConfig, OllamaConfig, WatsonxConfig, GatewayConfig] = Field(..., description="Provider-specific configuration")
 
     @field_validator("config", mode="before")
     @classmethod
-    def validate_config_type(cls, v: Any, info) -> Union[AzureOpenAIConfig, OpenAIConfig, AnthropicConfig, AWSBedrockConfig, OllamaConfig, WatsonxConfig]:
+    def validate_config_type(cls, v: Any, info) -> Union[AzureOpenAIConfig, OpenAIConfig, AnthropicConfig, AWSBedrockConfig, OllamaConfig, WatsonxConfig, GatewayConfig]:
         """
         Validate and convert config dictionary to appropriate provider type.
 
@@ -620,6 +657,8 @@ class LLMConfig(BaseModel):
                 return OllamaConfig(**v)
             if provider == "watsonx":
                 return WatsonxConfig(**v)
+            if provider == "gateway":
+                return GatewayConfig(**v)
 
         return v
 

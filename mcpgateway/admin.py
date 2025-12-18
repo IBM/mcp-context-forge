@@ -116,6 +116,7 @@ from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
+from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.plugin_service import get_plugin_service
 from mcpgateway.services.prompt_service import PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError
@@ -464,6 +465,55 @@ def get_user_email(user: Union[str, dict, object] = None) -> str:
         return "unknown"
 
     return str(user)
+
+
+def get_user_id(user: Union[str, dict[str, Any], object] = None) -> str:
+    """Return the user ID from a JWT payload, user object, or string.
+
+    Args:
+        user (Union[str, dict, object], optional): User object from JWT token
+            (from get_current_user_with_permissions). Can be:
+            - dict: representing JWT payload with 'id', 'user_id', or 'sub'
+            - object: with an `id` attribute
+            - str: a user ID string
+            - None: will return "unknown"
+            Defaults to None.
+
+    Returns:
+        str: User ID, or "unknown" if no ID can be determined.
+             - If `user` is a dict, returns `id` if present, else `user_id`, else `sub`, else email as fallback, else "unknown".
+             - If `user` has an `id` attribute, returns that.
+             - If `user` is a string, returns it.
+             - If `user` is None, returns "unknown".
+             - Otherwise, returns str(user).
+
+    Examples:
+        >>> get_user_id({'id': '123'})
+        '123'
+        >>> get_user_id({'user_id': '456'})
+        '456'
+        >>> get_user_id({'sub': 'alice@example.com'})
+        'alice@example.com'
+        >>> get_user_id({'email': 'bob@company.com'})
+        'bob@company.com'
+        >>> class MockUser:
+        ...     def __init__(self, user_id):
+        ...         self.id = user_id
+        >>> get_user_id(MockUser('789'))
+        '789'
+        >>> get_user_id(None)
+        'unknown'
+        >>> get_user_id('user-xyz')
+        'user-xyz'
+        >>> get_user_id({})
+        'unknown'
+    """
+    if isinstance(user, dict):
+        # Try multiple possible ID fields in order of preference.
+        # Email is the primary key in the model, so that's our mostly likely result.
+        return user.get("id") or user.get("user_id") or user.get("sub") or user.get("email") or "unknown"
+
+    return "unknown" if user is None else str(getattr(user, "id", user))
 
 
 def serialize_datetime(obj):
@@ -2670,6 +2720,7 @@ async def admin_ui(
             "llmchat_enabled": getattr(settings, "llmchat_enabled", False),
             "toolops_enabled": getattr(settings, "toolops_enabled", False),
             "observability_enabled": getattr(settings, "observability_enabled", False),
+            "performance_enabled": getattr(settings, "mcpgateway_performance_tracking", False),
             "current_user": get_user_email(user),
             "email_auth_enabled": getattr(settings, "email_auth_enabled", False),
             "is_admin": bool(user.get("is_admin") if isinstance(user, dict) else False),
@@ -12761,7 +12812,7 @@ async def list_plugins(
         # Log plugin marketplace browsing activity
         structured_logger.info(
             "User browsed plugin marketplace",
-            user_id=str(user.id),
+            user_id=get_user_id(user),
             user_email=get_user_email(user),
             component="plugin_marketplace",
             category="business_logic",
@@ -12785,7 +12836,7 @@ async def list_plugins(
     except Exception as e:
         LOGGER.error(f"Error listing plugins: {e}")
         structured_logger.error(
-            "Failed to list plugins in marketplace", user_id=str(user.id), user_email=get_user_email(user), error=e, component="plugin_marketplace", category="business_logic", db=db
+            "Failed to list plugins in marketplace", user_id=get_user_id(user), user_email=get_user_email(user), error=e, component="plugin_marketplace", category="business_logic", db=db
         )
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -12823,7 +12874,7 @@ async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user
         # Log marketplace analytics access
         structured_logger.info(
             "User accessed plugin marketplace statistics",
-            user_id=str(user.id),
+            user_id=get_user_id(user),
             user_email=get_user_email(user),
             component="plugin_marketplace",
             category="business_logic",
@@ -12845,7 +12896,7 @@ async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user
     except Exception as e:
         LOGGER.error(f"Error getting plugin statistics: {e}")
         structured_logger.error(
-            "Failed to get plugin marketplace statistics", user_id=str(user.id), user_email=get_user_email(user), error=e, component="plugin_marketplace", category="business_logic", db=db
+            "Failed to get plugin marketplace statistics", user_id=get_user_id(user), user_email=get_user_email(user), error=e, component="plugin_marketplace", category="business_logic", db=db
         )
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -12885,7 +12936,7 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
         if not plugin:
             structured_logger.warning(
                 f"Plugin '{name}' not found in marketplace",
-                user_id=str(user.id),
+                user_id=get_user_id(user),
                 user_email=get_user_email(user),
                 component="plugin_marketplace",
                 category="business_logic",
@@ -12897,7 +12948,7 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
         # Log plugin view activity
         structured_logger.info(
             f"User viewed plugin details: '{name}'",
-            user_id=str(user.id),
+            user_id=get_user_id(user),
             user_email=get_user_email(user),
             component="plugin_marketplace",
             category="business_logic",
@@ -12918,7 +12969,7 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
 
         # Create audit trail for plugin access
         audit_service.log_audit(
-            user_id=str(user.id), user_email=get_user_email(user), resource_type="plugin", resource_id=name, action="view", description=f"Viewed plugin '{name}' details in marketplace", db=db
+            user_id=get_user_id(user), user_email=get_user_email(user), resource_type="plugin", resource_id=name, action="view", description=f"Viewed plugin '{name}' details in marketplace", db=db
         )
 
         return PluginDetail(**plugin)
@@ -12928,7 +12979,7 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
     except Exception as e:
         LOGGER.error(f"Error getting plugin details: {e}")
         structured_logger.error(
-            f"Failed to get plugin details: '{name}'", user_id=str(user.id), user_email=get_user_email(user), error=e, component="plugin_marketplace", category="business_logic", db=db
+            f"Failed to get plugin details: '{name}'", user_id=get_user_id(user), user_email=get_user_email(user), error=e, component="plugin_marketplace", category="business_logic", db=db
         )
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -14992,3 +15043,205 @@ async def get_resources_partial(
             "root_path": root_path,
         },
     )
+
+
+# ===================================
+# Performance Monitoring Endpoints
+# ===================================
+
+
+@admin_router.get("/performance/stats", response_class=HTMLResponse)
+async def get_performance_stats(
+    request: Request,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get comprehensive performance metrics for the dashboard.
+
+    Returns either an HTML partial for HTMX requests or JSON for API requests.
+    Includes system metrics, request metrics, worker status, and cache stats.
+
+    Args:
+        request: FastAPI request object
+        db: Database session dependency
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        HTMLResponse or JSONResponse: Performance dashboard data
+
+    Raises:
+        HTTPException: 404 if performance tracking is disabled, 500 on retrieval error
+    """
+    if not settings.mcpgateway_performance_tracking:
+        if request.headers.get("hx-request"):
+            return HTMLResponse(content='<div class="text-center py-8 text-gray-500">Performance tracking is disabled. Enable with MCPGATEWAY_PERFORMANCE_TRACKING=true</div>')
+        raise HTTPException(status_code=404, detail="Performance monitoring is disabled")
+
+    try:
+        service = get_performance_service(db)
+        dashboard = await service.get_dashboard()
+
+        # Convert to dict for template
+        dashboard_data = dashboard.model_dump()
+
+        # Format datetime fields for display
+        if dashboard_data.get("timestamp"):
+            dashboard_data["timestamp"] = dashboard_data["timestamp"].isoformat()
+        if dashboard_data.get("system", {}).get("boot_time"):
+            dashboard_data["system"]["boot_time"] = dashboard_data["system"]["boot_time"].isoformat()
+        for worker in dashboard_data.get("workers", []):
+            if worker.get("create_time"):
+                worker["create_time"] = worker["create_time"].isoformat()
+
+        if request.headers.get("hx-request"):
+            root_path = request.scope.get("root_path", "")
+            return request.app.state.templates.TemplateResponse(
+                "performance_partial.html",
+                {
+                    "request": request,
+                    "dashboard": dashboard_data,
+                    "root_path": root_path,
+                },
+            )
+
+        return JSONResponse(content=dashboard_data)
+
+    except Exception as e:
+        LOGGER.error(f"Performance metrics retrieval failed: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve performance metrics: {str(e)}")
+
+
+@admin_router.get("/performance/system")
+async def get_performance_system(
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get current system resource metrics.
+
+    Args:
+        db: Database session dependency
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        JSONResponse: System metrics (CPU, memory, disk, network)
+
+    Raises:
+        HTTPException: 404 if performance tracking is disabled
+    """
+    if not settings.mcpgateway_performance_tracking:
+        raise HTTPException(status_code=404, detail="Performance tracking is disabled")
+
+    service = get_performance_service(db)
+    metrics = service.get_system_metrics()
+    return JSONResponse(content=metrics.model_dump())
+
+
+@admin_router.get("/performance/workers")
+async def get_performance_workers(
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get metrics for all worker processes.
+
+    Args:
+        db: Database session dependency
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        JSONResponse: List of worker metrics
+
+    Raises:
+        HTTPException: 404 if performance tracking is disabled
+    """
+    if not settings.mcpgateway_performance_tracking:
+        raise HTTPException(status_code=404, detail="Performance tracking is disabled")
+
+    service = get_performance_service(db)
+    workers = service.get_worker_metrics()
+    return JSONResponse(content=[w.model_dump() for w in workers])
+
+
+@admin_router.get("/performance/requests")
+async def get_performance_requests(
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get HTTP request performance metrics.
+
+    Args:
+        db: Database session dependency
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        JSONResponse: Request metrics from Prometheus
+
+    Raises:
+        HTTPException: 404 if performance tracking is disabled
+    """
+    if not settings.mcpgateway_performance_tracking:
+        raise HTTPException(status_code=404, detail="Performance tracking is disabled")
+
+    service = get_performance_service(db)
+    metrics = service.get_request_metrics()
+    return JSONResponse(content=metrics.model_dump())
+
+
+@admin_router.get("/performance/cache")
+async def get_performance_cache(
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get Redis cache metrics.
+
+    Args:
+        db: Database session dependency
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        JSONResponse: Redis cache metrics
+
+    Raises:
+        HTTPException: 404 if performance tracking is disabled
+    """
+    if not settings.mcpgateway_performance_tracking:
+        raise HTTPException(status_code=404, detail="Performance tracking is disabled")
+
+    service = get_performance_service(db)
+    metrics = await service.get_cache_metrics()
+    return JSONResponse(content=metrics.model_dump())
+
+
+@admin_router.get("/performance/history")
+async def get_performance_history(
+    period_type: str = Query("hourly", description="Aggregation period: hourly or daily"),
+    hours: int = Query(24, ge=1, le=168, description="Number of hours to look back"),
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get historical performance aggregates.
+
+    Args:
+        period_type: Aggregation type (hourly, daily)
+        hours: Hours of history to retrieve
+        db: Database session dependency
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        JSONResponse: Historical performance aggregates
+
+    Raises:
+        HTTPException: 404 if performance tracking is disabled
+    """
+    if not settings.mcpgateway_performance_tracking:
+        raise HTTPException(status_code=404, detail="Performance tracking is disabled")
+
+    service = get_performance_service(db)
+    start_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+    history = service.get_history(
+        db=db,
+        period_type=period_type,
+        start_time=start_time,
+    )
+
+    return JSONResponse(content=history.model_dump())

@@ -1,0 +1,308 @@
+<!-- htmlhint doctype-first:false -->
+<div class="space-y-6" x-data="llmApiInfoApp()">
+  <!-- Overview Card -->
+  <div
+    class="bg-gradient-to-r from-blue-500 to-indigo-600 rounded-lg shadow-lg p-6 text-white"
+  >
+    <h2 class="text-2xl font-bold mb-4 flex items-center">
+      <svg
+        class="h-8 w-8 mr-3"
+        xmlns="http://www.w3.org/2000/svg"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+      >
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+        />
+      </svg>
+      Test LLM Models
+    </h2>
+
+    {% if not llmchat_enabled %}
+    <div
+      class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 rounded mb-4"
+    >
+      <p class="font-bold">LLM Chat is currently disabled</p>
+    </div>
+    {% else %}
+    <p class="text-blue-100 mb-4">
+      Test configured LLM providers and models.
+    </p>
+    <div class="grid grid-cols-2 gap-4">
+      <div class="text-center">
+        <div class="text-3xl font-bold">{{ stats.total_providers }}</div>
+        <div class="text-blue-100 text-sm">Providers</div>
+      </div>
+      <div class="text-center">
+        <div class="text-3xl font-bold">{{ stats.total_models }}</div>
+        <div class="text-blue-100 text-sm">Models</div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if llmchat_enabled %}
+  <!-- Available Models Quick Reference -->
+  <div class="bg-white rounded-lg shadow dark:bg-gray-800 p-6">
+    <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">Available Models</h3>
+    {% if models %}
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <thead class="bg-gray-50 dark:bg-gray-700">
+          <tr>
+            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-gray-300">Provider</th>
+            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-gray-300">Model Name</th>
+            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-gray-300">Model ID</th>
+            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-gray-300">Capabilities</th>
+          </tr>
+        </thead>
+        <tbody class="bg-white divide-y divide-gray-200 dark:bg-gray-800 dark:divide-gray-700">
+          {% for model in models %}
+          <tr>
+            <td class="px-4 py-2 whitespace-nowrap">
+              <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                {{ model.provider.name if model.provider else 'Unknown' }}
+              </span>
+            </td>
+            <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">{{ model.model_name }}</td>
+            <td class="px-4 py-2 whitespace-nowrap">
+              <code class="text-sm bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded font-mono text-gray-800 dark:text-gray-200">{{ model.model_id }}</code>
+            </td>
+            <td class="px-4 py-2 whitespace-nowrap text-xs text-gray-500 dark:text-gray-400">
+              {% if model.supports_chat %}<span class="mr-1">Chat</span>{% endif %}
+              {% if model.supports_streaming %}<span class="mr-1">Stream</span>{% endif %}
+              {% if model.supports_vision %}<span class="mr-1">Vision</span>{% endif %}
+              {% if model.supports_function_calling %}<span class="mr-1">Tools</span>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="text-gray-500 dark:text-gray-400 text-sm">No models configured. Add models in the Models tab.</p>
+    {% endif %}
+  </div>
+
+  <!-- Test Panel -->
+  <div class="bg-white rounded-lg shadow dark:bg-gray-800 p-6">
+    <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">Test Model</h3>
+
+    <div class="space-y-4">
+      <!-- Test Type -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Test Type</label>
+        <div class="flex space-x-4">
+          <label class="inline-flex items-center">
+            <input type="radio" x-model="testType" value="models" class="form-radio text-blue-600">
+            <span class="ml-2 text-sm text-gray-700 dark:text-gray-300">List Models</span>
+          </label>
+          <label class="inline-flex items-center">
+            <input type="radio" x-model="testType" value="chat" class="form-radio text-blue-600">
+            <span class="ml-2 text-sm text-gray-700 dark:text-gray-300">Chat Completion</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Model Selection (for chat) -->
+      <div x-show="testType === 'chat'">
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Model</label>
+        <select
+          x-model="testModel"
+          class="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+        >
+          <option value="">Select a model...</option>
+          {% for model in models %}
+          <option value="{{ model.model_id }}">{{ model.model_name }} ({{ model.provider.name if model.provider else 'Unknown' }})</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <!-- Test Message (for chat) -->
+      <div x-show="testType === 'chat'">
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Test Message</label>
+        <input
+          type="text"
+          x-model="testMessage"
+          class="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+          placeholder="Hello, how are you?"
+        />
+      </div>
+
+      <!-- Run Test Button -->
+      <div>
+        <button
+          @click="runTest()"
+          :disabled="testing"
+          class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          <span x-show="!testing">Run Test</span>
+          <span x-show="testing" class="flex items-center">
+            <svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            Testing...
+          </span>
+        </button>
+      </div>
+
+      <!-- Test Results -->
+      <template x-if="testResult !== null && testMetrics !== null">
+        <div class="mt-4 space-y-4">
+          <!-- Metrics Summary -->
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <!-- Duration -->
+            <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-3 text-center">
+              <div class="flex items-center justify-center mb-1">
+                <svg class="h-4 w-4 text-blue-500 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span class="text-xs font-medium text-gray-500 dark:text-gray-400">Duration</span>
+              </div>
+              <div class="text-lg font-bold text-gray-900 dark:text-white" x-text="formatDuration(testMetrics.duration)"></div>
+            </div>
+
+            <!-- HTTP Status -->
+            <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-3 text-center">
+              <div class="flex items-center justify-center mb-1">
+                <svg class="h-4 w-4 mr-1" :class="testSuccess ? 'text-green-500' : 'text-red-500'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span class="text-xs font-medium text-gray-500 dark:text-gray-400">Status</span>
+              </div>
+              <div class="text-lg font-bold" :class="testSuccess ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'">
+                <span x-text="testMetrics.httpStatus"></span>
+                <span class="text-xs font-normal" x-text="testMetrics.httpStatusText"></span>
+              </div>
+            </div>
+
+            <!-- Request Size (for POST) -->
+            <div x-show="testMetrics.requestSize > 0" class="bg-gray-50 dark:bg-gray-700 rounded-lg p-3 text-center">
+              <div class="flex items-center justify-center mb-1">
+                <svg class="h-4 w-4 text-purple-500 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+                <span class="text-xs font-medium text-gray-500 dark:text-gray-400">Request</span>
+              </div>
+              <div class="text-lg font-bold text-gray-900 dark:text-white" x-text="formatBytes(testMetrics.requestSize)"></div>
+            </div>
+
+            <!-- Response Size -->
+            <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-3 text-center">
+              <div class="flex items-center justify-center mb-1">
+                <svg class="h-4 w-4 text-indigo-500 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+                </svg>
+                <span class="text-xs font-medium text-gray-500 dark:text-gray-400">Response</span>
+              </div>
+              <div class="text-lg font-bold text-gray-900 dark:text-white" x-text="formatBytes(testMetrics.responseSize)"></div>
+            </div>
+          </div>
+
+          <!-- Token Usage (for chat completions) -->
+          <template x-if="testMetrics.totalTokens !== null && testMetrics.totalTokens !== undefined">
+            <div class="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+              <div class="flex items-center mb-2">
+                <svg class="h-5 w-5 text-blue-600 dark:text-blue-400 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
+                </svg>
+                <span class="font-medium text-blue-800 dark:text-blue-200">Token Usage</span>
+              </div>
+              <div class="grid grid-cols-3 gap-4 text-center">
+                <div>
+                  <div class="text-2xl font-bold text-blue-700 dark:text-blue-300" x-text="testMetrics.promptTokens"></div>
+                  <div class="text-xs text-blue-600 dark:text-blue-400">Prompt</div>
+                </div>
+                <div>
+                  <div class="text-2xl font-bold text-blue-700 dark:text-blue-300" x-text="testMetrics.completionTokens"></div>
+                  <div class="text-xs text-blue-600 dark:text-blue-400">Completion</div>
+                </div>
+                <div>
+                  <div class="text-2xl font-bold text-blue-700 dark:text-blue-300" x-text="testMetrics.totalTokens"></div>
+                  <div class="text-xs text-blue-600 dark:text-blue-400">Total</div>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <!-- Model Count (for list models) -->
+          <template x-if="testMetrics.modelCount !== undefined">
+            <div class="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-4">
+              <div class="flex items-center">
+                <svg class="h-5 w-5 text-green-600 dark:text-green-400 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                </svg>
+                <span class="font-medium text-green-800 dark:text-green-200">Found <span x-text="testMetrics.modelCount" class="font-bold"></span> models available</span>
+              </div>
+            </div>
+          </template>
+
+          <!-- Assistant Response (for chat completions) -->
+          <template x-if="testSuccess && assistantMessage">
+            <div class="bg-gradient-to-r from-purple-50 to-indigo-50 dark:from-purple-900/20 dark:to-indigo-900/20 border border-purple-200 dark:border-purple-800 rounded-lg p-4">
+              <div class="flex items-start mb-2">
+                <div class="flex-shrink-0 w-8 h-8 bg-purple-600 rounded-full flex items-center justify-center mr-3">
+                  <svg class="h-5 w-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                  </svg>
+                </div>
+                <div class="flex-1">
+                  <div class="flex items-center mb-1">
+                    <span class="font-semibold text-purple-800 dark:text-purple-200">Assistant</span>
+                    <span x-show="testMetrics && testMetrics.responseModel" class="ml-2 text-xs text-purple-600 dark:text-purple-400 bg-purple-100 dark:bg-purple-800 px-2 py-0.5 rounded" x-text="testMetrics ? testMetrics.responseModel : ''"></span>
+                  </div>
+                  <div class="text-gray-800 dark:text-gray-200 whitespace-pre-wrap" x-text="assistantMessage"></div>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <!-- Model List Summary (for list models) -->
+          <template x-if="testSuccess && modelList && modelList.length > 0">
+            <div class="bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 border border-green-200 dark:border-green-800 rounded-lg p-4">
+              <div class="flex items-center mb-3">
+                <svg class="h-5 w-5 text-green-600 dark:text-green-400 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                </svg>
+                <span class="font-semibold text-green-800 dark:text-green-200">Available Models</span>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <template x-for="model in modelList" :key="model.id">
+                  <span class="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-white dark:bg-gray-800 border border-green-300 dark:border-green-700 text-green-800 dark:text-green-200">
+                    <span x-text="model.id"></span>
+                    <span class="ml-1 text-green-500 dark:text-green-400" x-text="'(' + model.owned_by + ')'"></span>
+                  </span>
+                </template>
+              </div>
+            </div>
+          </template>
+
+          <!-- Response JSON (collapsible) -->
+          <div x-data="{ showRaw: false }">
+            <button
+              @click="showRaw = !showRaw"
+              class="flex items-center text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 hover:text-blue-600 dark:hover:text-blue-400"
+            >
+              <svg class="h-4 w-4 mr-1 transition-transform" :class="showRaw ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+              </svg>
+              Raw JSON Response
+            </button>
+            <div x-show="showRaw" x-transition
+              :class="testSuccess ? 'bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-800' : 'bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-800'"
+              class="border rounded-lg p-4"
+            >
+              <pre class="text-sm overflow-x-auto whitespace-pre-wrap" :class="testSuccess ? 'text-green-800 dark:text-green-200' : 'text-red-800 dark:text-red-200'" x-text="testResult"></pre>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+  {% endif %}
+</div>

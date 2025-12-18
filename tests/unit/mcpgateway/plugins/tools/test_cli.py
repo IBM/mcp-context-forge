@@ -35,6 +35,7 @@ def test_bootrap_command_help(runner: CliRunner):
 
 def test_bootstrap_command_dry_run(runner: CliRunner):
     """Boostrapping dry run."""
+    pytest.importorskip("copier")
     raw = ["bootstrap", "--destination", "/tmp/myplugin", "--template_url", ".", "--defaults", "--dry_run"]
     result = runner.invoke(cli.app, raw)
     assert result.exit_code == 0

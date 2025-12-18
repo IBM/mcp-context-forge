@@ -306,8 +306,8 @@ class MCPStackPython(CICDModule):
             True
             >>> 'output_dir' in sig.parameters
             True
-            >>> sig.return_annotation
-            <class 'pathlib.Path'>
+            >>> sig.return_annotation == Path
+            True
 
             >>> # Test that method exists and is callable
             >>> callable(deployer.generate_manifests)
