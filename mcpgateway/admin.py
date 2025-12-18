@@ -4011,7 +4011,7 @@ async def admin_delete_team(
 
 
 @admin_router.post("/teams/{team_id}/add-member")
-@require_permission("teams.write")  # Team write permission instead of admin user management
+@require_permission("teams.manage_members")
 async def admin_add_team_member(
     team_id: str,
     request: Request,
@@ -4095,7 +4095,7 @@ async def admin_add_team_member(
 
 
 @admin_router.post("/teams/{team_id}/update-member-role")
-@require_permission("teams.write")
+@require_permission("teams.manage_members")
 async def admin_update_team_member_role(
     team_id: str,
     request: Request,
@@ -4180,7 +4180,7 @@ async def admin_update_team_member_role(
 
 
 @admin_router.post("/teams/{team_id}/remove-member")
-@require_permission("teams.write")  # Team write permission instead of admin user management
+@require_permission("teams.manage_members")
 async def admin_remove_team_member(
     team_id: str,
     request: Request,
