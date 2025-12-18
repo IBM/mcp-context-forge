@@ -18,6 +18,7 @@ nav:
   - proxy.md
   - dcr.md
   - oauth.md
+  - oauth-troubleshooting.md
   - securing.md
   - sso.md
   - sso-github-tutorial.md
