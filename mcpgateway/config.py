@@ -70,7 +70,7 @@ if not logging.getLogger().handlers:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%H:%M:%S",
+        datefmt="%Y-%m-%dT%H:%M:%S",
     )
 
 logger = logging.getLogger(__name__)

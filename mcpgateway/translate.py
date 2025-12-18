@@ -2321,7 +2321,8 @@ def main(argv: Optional[Sequence[str]] | None = None) -> None:
     args = _parse_args(argv or sys.argv[1:])
     logging.basicConfig(
         level=getattr(logging, args.logLevel.upper(), logging.INFO),
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
     )
 
     # Parse header mappings if dynamic environment injection is enabled

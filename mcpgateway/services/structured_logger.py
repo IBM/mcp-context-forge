@@ -55,6 +55,38 @@ class LogCategory(str, Enum):
     SYSTEM = "system"
 
 
+# Log level numeric values for comparison (matches Python logging module)
+_LOG_LEVEL_VALUES: Dict[str, int] = {
+    "DEBUG": logging.DEBUG,  # 10
+    "INFO": logging.INFO,  # 20
+    "WARNING": logging.WARNING,  # 30
+    "ERROR": logging.ERROR,  # 40
+    "CRITICAL": logging.CRITICAL,  # 50
+}
+
+
+def _should_log(level: Union[LogLevel, str]) -> bool:
+    """Check if a log level should be processed based on settings.log_level.
+
+    This enables early termination of log processing to avoid expensive
+    enrichment and database operations for messages below the configured threshold.
+
+    Args:
+        level: The log level to check (LogLevel enum or string)
+
+    Returns:
+        True if the level meets or exceeds the configured threshold
+    """
+    # Get string value from enum if needed
+    level_str = level.value if isinstance(level, LogLevel) else str(level).upper()
+
+    # Get numeric values for comparison
+    entry_level = _LOG_LEVEL_VALUES.get(level_str, logging.INFO)
+    config_level = _LOG_LEVEL_VALUES.get(settings.log_level.upper(), logging.INFO)
+
+    return entry_level >= config_level
+
+
 class LogEnricher:
     """Enriches log entries with contextual information."""
 
@@ -326,6 +358,11 @@ class StructuredLogger:
             db: Optional database session
             **kwargs: Additional fields to include
         """
+        # Early termination if log level is below configured threshold
+        # This avoids expensive enrichment and database operations for filtered messages
+        if not _should_log(level):
+            return
+
         # Build base entry
         entry: Dict[str, Any] = {
             "level": level.value if isinstance(level, LogLevel) else level,

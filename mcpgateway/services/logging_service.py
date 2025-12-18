@@ -44,8 +44,12 @@ except Exception:  # pragma: no cover - environment without anyio
     AnyioClosedResourceError = None  # pylint: disable=invalid-name
 
 # First-Party
-# Create a text formatter
-text_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+# Standard log format used across the codebase
+LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+LOG_DATE_FORMAT = "%Y-%m-%dT%H:%M:%S"
+
+# Create a text formatter with standard format
+text_formatter = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
 
 
 class CorrelationIdJsonFormatter(jsonlogger.JsonFormatter):
@@ -91,8 +95,8 @@ class CorrelationIdJsonFormatter(jsonlogger.JsonFormatter):
                 pass
 
 
-# Create a JSON formatter with correlation ID support
-json_formatter = CorrelationIdJsonFormatter("%(asctime)s %(name)s %(levelname)s %(message)s")
+# Create a JSON formatter with correlation ID support (uses same base format)
+json_formatter = CorrelationIdJsonFormatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
 
 # Note: Don't use basicConfig here as it conflicts with our custom dual logging setup
 # The LoggingService.initialize() method will properly configure all handlers
@@ -280,13 +284,21 @@ class LoggingService:
         # Clear existing handlers to avoid duplicates
         root_logger.handlers.clear()
 
+        # Set root logger level to match settings - this is critical for LOG_LEVEL to work
+        log_level = getattr(logging, settings.log_level.upper())
+        root_logger.setLevel(log_level)
+
         # Always add console/text handler for stdout/stderr
-        root_logger.addHandler(_get_text_handler())
+        text_handler = _get_text_handler()
+        text_handler.setLevel(log_level)
+        root_logger.addHandler(text_handler)
 
         # Only add file handler if enabled
         if settings.log_to_file and settings.log_file:
             try:
-                root_logger.addHandler(_get_file_handler())
+                file_handler = _get_file_handler()
+                file_handler.setLevel(log_level)
+                root_logger.addHandler(file_handler)
                 if settings.log_rotation_enabled:
                     logging.info(f"File logging enabled with rotation: {settings.log_folder or '.'}/{settings.log_file} (max: {settings.log_max_size_mb}MB, backups: {settings.log_backup_count})")
                 else:
@@ -307,7 +319,7 @@ class LoggingService:
             # Add storage handler to capture all logs
             self._storage_handler = StorageHandler(self._storage)
             self._storage_handler.setFormatter(text_formatter)
-            self._storage_handler.setLevel(getattr(logging, settings.log_level.upper()))
+            self._storage_handler.setLevel(log_level)
             root_logger.addHandler(self._storage_handler)
 
             logging.info(f"Log storage initialized with {settings.log_buffer_size_mb}MB buffer")

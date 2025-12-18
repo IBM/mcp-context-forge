@@ -738,7 +738,8 @@ async def main(argv: Optional[List[str]] = None) -> None:
     # Configure logging
     logging.basicConfig(
         level=getattr(logging, args.log_level),
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
         stream=sys.stderr,
     )
 

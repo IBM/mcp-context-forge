@@ -146,7 +146,10 @@ def setup_logging(level: Optional[str]) -> None:
         return
 
     logger.setLevel(getattr(logging, log_level, logging.INFO))
-    formatter = logging.Formatter("%(asctime)s %(levelname)-8s %(name)s: %(message)s")
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    )
     for handler in logger.handlers:
         handler.setFormatter(formatter)
     logger.disabled = False
