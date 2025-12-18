@@ -690,37 +690,44 @@ class SessionRegistry(SessionBackend):
             True
             >>> reg._session_message['session_id']
             'session-789'
-            >>> json.loads(reg._session_message['message']) == message
+            >>> json.loads(reg._session_message['message'])['message'] == message
             True
         """
         # Skip for none backend only
         if self._backend == "none":
             return
 
-        if self._backend == "memory":
-            if isinstance(message, (dict, list)):
-                msg_json = json.dumps(message)
-            else:
-                msg_json = json.dumps(str(message))
+        def _build_payload(msg: Any) -> str:
+            """Build a JSON payload for message broadcasting.
 
-            self._session_message: Dict[str, Any] | None = {"session_id": session_id, "message": msg_json}
+            Args:
+                msg: Message to wrap in payload envelope.
+
+            Returns:
+                JSON-encoded string containing type, message, and timestamp.
+            """
+            payload = {"type": "message", "message": msg, "timestamp": time.time()}
+            return json.dumps(payload)
+
+        if self._backend == "memory":
+            payload_json = _build_payload(message)
+            self._session_message: Dict[str, Any] | None = {"session_id": session_id, "message": payload_json}
 
         elif self._backend == "redis":
             try:
-                if isinstance(message, (dict, list)):
-                    msg_json = json.dumps(message)
-                else:
-                    msg_json = json.dumps(str(message))
-
-                await self._redis.publish(session_id, json.dumps({"type": "message", "message": msg_json, "timestamp": time.time()}))
+                broadcast_payload = {
+                    "type": "message",
+                    "message": message,  # Keep as original type, not pre-encoded
+                    "timestamp": time.time(),
+                }
+                # Single encode
+                payload_json = json.dumps(broadcast_payload)
+                await self._redis.publish(session_id, payload_json)  # Single encode
             except Exception as e:
                 logger.error(f"Redis error during broadcast: {e}")
         elif self._backend == "database":
             try:
-                if isinstance(message, (dict, list)):
-                    msg_json = json.dumps(message)
-                else:
-                    msg_json = json.dumps(str(message))
+                msg_json = _build_payload(message)
 
                 def _db_add() -> None:
                     """Store message in the database for inter-process communication.
@@ -839,10 +846,13 @@ class SessionRegistry(SessionBackend):
             pass
 
         elif self._backend == "memory":
-            # if self._session_message:
             transport = self.get_session_sync(session_id)
             if transport and self._session_message:
-                message = json.loads(str(self._session_message.get("message")))
+                data = json.loads(self._session_message.get("message"))
+                if isinstance(data, dict) and "message" in data:
+                    message = data["message"]
+                else:
+                    message = data
                 await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
 
         elif self._backend == "redis":
@@ -855,8 +865,6 @@ class SessionRegistry(SessionBackend):
                         continue
                     data = json.loads(msg["data"])
                     message = data.get("message", {})
-                    if isinstance(message, str):
-                        message = json.loads(message)
                     transport = self.get_session_sync(session_id)
                     if transport:
                         await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
@@ -864,7 +872,10 @@ class SessionRegistry(SessionBackend):
                 logger.info(f"PubSub listener for session {session_id} cancelled")
             finally:
                 await pubsub.unsubscribe(session_id)
-                await pubsub.close()
+                try:
+                    await pubsub.aclose()
+                except AttributeError:
+                    await pubsub.close()
                 logger.info(f"Cleaned up pubsub for session {session_id}")
 
         elif self._backend == "database":
@@ -997,7 +1008,11 @@ class SessionRegistry(SessionBackend):
                     record = await asyncio.to_thread(_db_read, session_id)
 
                     if record:
-                        message = json.loads(record.message)
+                        data = json.loads(record.message)
+                        if isinstance(data, dict) and "message" in data:
+                            message = data["message"]
+                        else:
+                            message = data
                         transport = self.get_session_sync(session_id)
                         if transport:
                             logger.info("Ready to respond")
