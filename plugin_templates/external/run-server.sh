@@ -4,13 +4,11 @@
 #  Purpose: Launch the MCP Gateway's Plugin API
 #
 #  Description:
-#    This script launches an API server using
-#    chuck runtime.
+#    This script launches a plugin API server
 #
 #  Environment Variables:
 #    API_SERVER_SCRIPT              : Path to the server script (optional, auto-detected)
 #    PLUGINS_CONFIG_PATH            : Path to the plugin config (optional, default: ./resources/plugins/config.yaml)
-#    CHUK_MCP_CONFIG_PATH           : Path to the chuck-mcp-runtime config (optional, default: ./resources/runtime/config.yaml)
 #
 #  Usage:
 #    ./run-server.sh                # Run server
@@ -36,8 +34,6 @@ fi
 #────────────────────────────────────────────────────────────────────────────────
 
 PLUGINS_CONFIG_PATH=${PLUGINS_CONFIG_PATH:-./resources/plugins/config.yaml}
-CHUK_MCP_CONFIG_PATH=${CHUK_MCP_CONFIG_PATH:-./resources/runtime/config.yaml}
 
 echo "✓  Using plugin config from: ${PLUGINS_CONFIG_PATH}"
-echo "✓  Running API server with config from: ${CHUK_MCP_CONFIG_PATH}"
 python ${API_SERVER_SCRIPT}

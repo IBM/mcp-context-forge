@@ -36,9 +36,10 @@ Examples:
 
 # Standard
 import asyncio
+from collections import OrderedDict
 from dataclasses import dataclass
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
@@ -54,7 +55,6 @@ class CacheEntry:
 
     value: Any
     expires_at: float
-    last_access: float
 
 
 class ResourceCache:
@@ -99,7 +99,7 @@ class ResourceCache:
         """
         self.max_size = max_size
         self.ttl = ttl
-        self._cache: Dict[str, CacheEntry] = {}
+        self._cache: OrderedDict[str, CacheEntry] = OrderedDict()
         self._lock = asyncio.Lock()
 
     async def initialize(self) -> None:
@@ -156,8 +156,8 @@ class ResourceCache:
             del self._cache[key]
             return None
 
-        # Update access time
-        entry.last_access = now
+        self._cache.move_to_end(key)
+
         return entry.value
 
     def set(self, key: str, value: Any) -> None:
@@ -175,16 +175,13 @@ class ResourceCache:
             >>> cache.get('a')
             1
         """
-        now = time.time()
-
-        # Check size limit
-        if len(self._cache) >= self.max_size:
-            # Remove least recently used
-            lru_key = min(self._cache.keys(), key=lambda k: self._cache[k].last_access)
-            del self._cache[lru_key]
+        if key in self._cache:
+            self._cache.move_to_end(key)
+        elif len(self._cache) >= self.max_size:
+            self._cache.popitem(last=False)
 
         # Add new entry
-        self._cache[key] = CacheEntry(value=value, expires_at=now + self.ttl, last_access=now)
+        self._cache[key] = CacheEntry(value=value, expires_at=time.time() + self.ttl)
 
     def delete(self, key: str) -> None:
         """
@@ -234,3 +231,22 @@ class ResourceCache:
                 logger.error(f"Cache cleanup error: {e}")
 
             await asyncio.sleep(60)  # Run every minute
+
+    def __len__(self) -> int:
+        """
+        Get the number of entries in cache.
+
+        Args:
+            None
+
+        Returns:
+            int: Number of entries in cache
+
+        Examples:
+            >>> from mcpgateway.cache.resource_cache import ResourceCache
+            >>> cache = ResourceCache(max_size=2, ttl=1)
+            >>> cache.set('a', 1)
+            >>> len(cache)
+            1
+        """
+        return len(self._cache)
