@@ -495,7 +495,7 @@ class TestDatabaseCleanupTask:
             else:
                 return 0  # No more expired sessions
 
-        def mock_refresh_session(session_id):
+        def mock_refresh_session_db(session_id):
             return True  # Session exists and was refreshed
 
         with patch("mcpgateway.cache.session_registry.SQLALCHEMY_AVAILABLE", True):
@@ -505,8 +505,8 @@ class TestDatabaseCleanupTask:
                     def side_effect(func, *args):
                         if func.__name__ == "_db_cleanup":
                             return mock_db_cleanup()
-                        elif func.__name__ == "_refresh_session":
-                            return mock_refresh_session(*args)
+                        elif func.__name__ == "_refresh_session_db":
+                            return mock_refresh_session_db(*args)
                         else:
                             return func(*args)
 
@@ -543,7 +543,7 @@ class TestDatabaseCleanupTask:
         def mock_db_cleanup():
             return 0  # No expired sessions
 
-        def mock_refresh_session(*args, **kwargs):
+        def mock_refresh_session_db(*args, **kwargs):
             nonlocal refresh_called
             refresh_called = True
             return True  # Session exists and was refreshed
@@ -555,8 +555,8 @@ class TestDatabaseCleanupTask:
                     def side_effect(func, *args):
                         if func.__name__ == "_db_cleanup":
                             return mock_db_cleanup()
-                        elif func.__name__ == "_refresh_session":
-                            return mock_refresh_session(*args)
+                        elif func.__name__ == "_refresh_session_db":
+                            return mock_refresh_session_db(*args)
                         else:
                             return func(*args)
 
@@ -592,7 +592,7 @@ class TestDatabaseCleanupTask:
         def mock_db_cleanup():
             return 0  # No expired sessions
 
-        def mock_refresh_session(*args, **kwargs):
+        def mock_refresh_session_db(*args, **kwargs):
             return False  # Session doesn't exist in database
 
         with patch("mcpgateway.cache.session_registry.SQLALCHEMY_AVAILABLE", True):
@@ -602,8 +602,8 @@ class TestDatabaseCleanupTask:
                     def side_effect(func, *args):
                         if func.__name__ == "_db_cleanup":
                             return mock_db_cleanup()
-                        elif func.__name__ == "_refresh_session":
-                            return mock_refresh_session(*args)
+                        elif func.__name__ == "_refresh_session_db":
+                            return mock_refresh_session_db(*args)
                         else:
                             return func(*args)
 
