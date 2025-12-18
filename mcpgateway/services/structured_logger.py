@@ -27,7 +27,21 @@ from mcpgateway.db import SessionLocal, StructuredLogEntry
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.utils.correlation_id import get_correlation_id
 
+# Optional OpenTelemetry support - import once at module level for performance
+try:
+    # Third-Party
+    from opentelemetry import trace as otel_trace
+
+    _OTEL_AVAILABLE = True
+except ImportError:
+    otel_trace = None  # type: ignore[assignment]
+    _OTEL_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
+
+# Cache static values at module load - these don't change during process lifetime
+_CACHED_HOSTNAME: str = socket.gethostname()
+_CACHED_PID: int = os.getpid()
 
 
 class LogLevel(str, Enum):
@@ -105,15 +119,15 @@ class LogEnricher:
         if correlation_id:
             entry["correlation_id"] = correlation_id
 
-        # Add hostname and process info
-        entry.setdefault("hostname", socket.gethostname())
-        entry.setdefault("process_id", os.getpid())
+        # Add hostname and process info - use cached values for performance
+        entry.setdefault("hostname", _CACHED_HOSTNAME)
+        entry.setdefault("process_id", _CACHED_PID)
 
         # Add timestamp if not present
         if "timestamp" not in entry:
             entry["timestamp"] = datetime.now(timezone.utc)
 
-        # Add performance metrics if available
+        # Add performance metrics if available (skip if tracker not initialized)
         try:
             perf_tracker = get_performance_tracker()
             if correlation_id and perf_tracker and hasattr(perf_tracker, "get_current_operations"):
@@ -121,21 +135,18 @@ class LogEnricher:
                 if current_ops:
                     entry["active_operations"] = len(current_ops)
         except Exception:  # nosec B110 - Graceful degradation if performance tracker unavailable
-            # Silently skip if performance tracker is unavailable or method doesn't exist
             pass
 
-        # Add OpenTelemetry trace context if available
-        try:
-            # Third-Party
-            from opentelemetry import trace  # pylint: disable=import-outside-toplevel
-
-            span = trace.get_current_span()
-            if span and span.get_span_context().is_valid:
-                ctx = span.get_span_context()
-                entry["trace_id"] = format(ctx.trace_id, "032x")
-                entry["span_id"] = format(ctx.span_id, "016x")
-        except (ImportError, Exception):
-            pass
+        # Add OpenTelemetry trace context if available (uses module-level import)
+        if _OTEL_AVAILABLE:
+            try:
+                span = otel_trace.get_current_span()
+                if span and span.get_span_context().is_valid:
+                    ctx = span.get_span_context()
+                    entry["trace_id"] = format(ctx.trace_id, "032x")
+                    entry["span_id"] = format(ctx.span_id, "016x")
+            except Exception:  # nosec B110 - Graceful degradation
+                pass
 
         return entry
 

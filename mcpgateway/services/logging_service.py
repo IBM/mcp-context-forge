@@ -48,6 +48,10 @@ except Exception:  # pragma: no cover - environment without anyio
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%dT%H:%M:%S"
 
+# Cache static values at module load - these don't change during process lifetime
+_CACHED_HOSTNAME: str = socket.gethostname()
+_CACHED_PID: int = os.getpid()
+
 # Create a text formatter with standard format
 text_formatter = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
 
@@ -70,9 +74,9 @@ class CorrelationIdJsonFormatter(jsonlogger.JsonFormatter):
         dt = datetime.fromtimestamp(record.created, tz=timezone.utc)
         log_record["@timestamp"] = dt.isoformat().replace("+00:00", "Z")
 
-        # Add hostname and process ID for log aggregation
-        log_record["hostname"] = socket.gethostname()
-        log_record["process_id"] = os.getpid()
+        # Add hostname and process ID for log aggregation - use cached values for performance
+        log_record["hostname"] = _CACHED_HOSTNAME
+        log_record["process_id"] = _CACHED_PID
 
         # Add correlation ID from context
         correlation_id = get_correlation_id()
