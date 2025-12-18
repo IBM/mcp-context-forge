@@ -288,6 +288,7 @@ class CopyOnWriteDict(dict):
 
         Raises:
             KeyError: If key is not found and no default is provided.
+            TypeError: If more than one default argument is provided.
 
         Examples:
             >>> cow = CopyOnWriteDict({"a": 1, "b": 2})
@@ -353,7 +354,18 @@ class CopyOnWriteDict(dict):
 
 
 def copyonwrite(o: T) -> T:
-    """Returns a copy-on-write wrapper of the original object."""
+    """
+    Returns a copy-on-write wrapper of the original object.
+
+    Args:
+        o: The object to wrap. Currently only supports dict objects.
+
+    Returns:
+        A copy-on-write wrapper around the object.
+
+    Raises:
+        TypeError: If the object type is not supported for copy-on-write wrapping.
+    """
     if isinstance(o, dict):
         return CopyOnWriteDict(o)
     raise TypeError(f"No copy-on-write wrapper available for {type(o)}")
