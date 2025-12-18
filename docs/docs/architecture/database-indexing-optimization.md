@@ -83,36 +83,114 @@ The following foreign keys already had indexes (marked with `index=True` in mode
 - `email_api_tokens.team_id`
 - `registered_oauth_clients.gateway_id`
 
-### Phase 2: Composite Indexes (Planned)
+### Phase 2: Composite Indexes (Completed)
 
-Future phases will add composite indexes for common query patterns:
-- Multi-column WHERE clauses
-- ORDER BY with filtering
-- Covering indexes for frequently accessed columns
+**Migration**: `o9i0j1k2l3m4_add_composite_indexes_phase2.py`
+
+This phase adds **37 composite indexes** for common query patterns identified in the service layer. Composite indexes significantly improve performance when queries filter on multiple columns or filter on one column and sort by another.
+
+#### Team Management Composite Indexes (8 indexes)
+- `ix_email_team_members_user_team_active` - User + team + active status lookups
+- `ix_email_team_members_team_role_active` - Team role queries
+- `ix_email_team_invitations_team_active_created` - Team invitation listing
+- `ix_email_team_invitations_email_active_created` - User invitation queries
+- `ix_email_team_join_requests_team_status_time` - Team join request management
+- `ix_email_team_join_requests_user_status_time` - User join request tracking
+- `ix_email_teams_visibility_active_created` - Public team discovery
+- `ix_email_teams_creator_personal_active` - Personal team lookups
+
+#### Core Entity Composite Indexes (12 indexes)
+For each entity type (Tools, Resources, Prompts, Servers, Gateways, A2A Agents):
+- `ix_{entity}_team_visibility_active_created` - Team-scoped entity listing
+- `ix_{entity}_visibility_active_created` - Public entity discovery
+
+These indexes optimize the most common query pattern: filtering by visibility and active status, then ordering by creation time.
+
+#### Observability Composite Indexes (4 indexes)
+- `ix_observability_traces_user_status_time` - User activity analysis
+- `ix_observability_traces_status_method_time` - Error analysis by HTTP method
+- `ix_observability_spans_trace_resource_time` - Trace span analysis
+- `ix_observability_spans_resource_status_time` - Resource monitoring
+
+#### Authentication & Token Composite Indexes (5 indexes)
+- `ix_email_api_tokens_user_active_created` - User token listing
+- `ix_email_api_tokens_team_active_created` - Team token management
+- `ix_email_auth_events_user_type_time` - User activity audit
+- `ix_sso_auth_sessions_provider_user_created` - SSO session lookup
+- `ix_oauth_tokens_gateway_user_created` - OAuth token management
+
+#### Metrics Composite Indexes (4 indexes)
+- `ix_tool_metrics_tool_timestamp` - Tool usage time-series
+- `ix_resource_metrics_resource_timestamp` - Resource access time-series
+- `ix_server_metrics_server_timestamp` - Server performance time-series
+- `ix_prompt_metrics_prompt_timestamp` - Prompt usage time-series
+
+#### RBAC Composite Indexes (2 indexes)
+- `ix_user_roles_user_scope_active` - User permission checks
+- `ix_user_roles_role_scope_active` - Role membership queries
 
 ## Performance Impact
 
-### Expected Improvements
+### Phase 1: Foreign Key Indexes
 
+**Expected Improvements:**
 1. **JOIN Performance**: 10-100x faster for queries joining on foreign keys
 2. **Constraint Checks**: 5-50x faster for INSERT/UPDATE/DELETE operations
 3. **Cascade Operations**: Significant improvement for bulk deletes with cascades
 4. **Query Planning**: Better execution plans with index statistics
 
-### Storage Impact
-
+**Storage Impact:**
 - Each index adds approximately 10-30% of the table size
-- Total estimated storage increase: 15-25% of current database size
-- Trade-off: Storage cost vs. query performance improvement
+- Phase 1 storage increase: ~10-15% of current database size
+
+### Phase 2: Composite Indexes
+
+**Expected Improvements:**
+1. **Multi-Column Filtering**: 5-50x faster for queries with multiple WHERE conditions
+2. **Filtered Sorting**: 10-100x faster for queries that filter and sort
+3. **Team-Scoped Queries**: Dramatic improvement for multi-tenant queries
+4. **Time-Series Queries**: Significant speedup for metrics and observability queries
+5. **Index-Only Scans**: Some queries can be satisfied entirely from the index
+
+**Storage Impact:**
+- Composite indexes are larger than single-column indexes
+- Phase 2 storage increase: ~15-20% of current database size
+- **Total storage increase (both phases): 25-35% of original database size**
+
+**Query Pattern Examples:**
+
+```sql
+-- Before: Full table scan + sort
+-- After: Index scan on ix_tools_team_visibility_active_created
+SELECT * FROM tools 
+WHERE team_id = 'abc123' 
+  AND visibility = 'team' 
+  AND is_active = true 
+ORDER BY created_at DESC;
+
+-- Before: Multiple index scans + merge
+-- After: Single index scan on ix_email_team_members_user_team_active
+SELECT * FROM email_team_members 
+WHERE user_email = 'user@example.com' 
+  AND team_id = 'team123' 
+  AND is_active = true;
+
+-- Before: Full table scan on metrics
+-- After: Index range scan on ix_tool_metrics_tool_timestamp
+SELECT * FROM tool_metrics 
+WHERE tool_id = 'tool123' 
+  AND timestamp >= '2025-01-01' 
+ORDER BY timestamp DESC;
+```
 
 ## Migration Instructions
 
 ### Automatic Migration (Recommended)
 
-The migration runs automatically on gateway startup:
+Both migrations run automatically on gateway startup:
 
 ```bash
-# Start the gateway (migration runs automatically)
+# Start the gateway (migrations run automatically)
 mcpgateway
 
 # Or explicitly run migrations
@@ -121,7 +199,7 @@ alembic upgrade head
 
 ### Manual Migration
 
-For production environments with large databases:
+For production environments with large databases, run migrations during maintenance window:
 
 ```bash
 # 1. Backup database
@@ -129,24 +207,59 @@ cp mcp.db mcp.db.backup  # SQLite
 # OR
 pg_dump -h localhost -U user dbname > backup.sql  # PostgreSQL
 
-# 2. Run migration
+# 2. Run Phase 1 (foreign key indexes)
 alembic upgrade n8h9i0j1k2l3
 
-# 3. Verify indexes were created
+# 3. Verify Phase 1
 alembic current
+
+# 4. Run Phase 2 (composite indexes)
+alembic upgrade o9i0j1k2l3m4
+
+# 5. Verify Phase 2
+alembic current
+
+# 6. Update statistics (important for query planner)
+# PostgreSQL:
+psql -d dbname -c "ANALYZE;"
+# SQLite:
+sqlite3 mcp.db "ANALYZE;"
 ```
 
 ### Rollback
 
-If issues occur, rollback the migration:
+If issues occur, rollback the migrations:
 
 ```bash
-# Rollback to previous version
-alembic downgrade -1
+# Rollback Phase 2 only
+alembic downgrade n8h9i0j1k2l3
 
-# Or rollback to specific version
+# Rollback both phases
 alembic downgrade m7g8h9i0j1k2
+
+# Or rollback one step at a time
+alembic downgrade -1
 ```
+
+### Production Considerations
+
+For large databases (>1GB), consider:
+
+1. **Create indexes concurrently** (PostgreSQL only):
+   ```sql
+   -- Modify migration to use concurrent index creation
+   CREATE INDEX CONCURRENTLY ix_name ON table (column);
+   ```
+
+2. **Monitor disk space**: Ensure 30-40% free space for index creation
+
+3. **Schedule during low-traffic period**: Index creation can lock tables briefly
+
+4. **Monitor progress**:
+   ```sql
+   -- PostgreSQL: Check index creation progress
+   SELECT * FROM pg_stat_progress_create_index;
+   ```
 
 ## Monitoring
 
@@ -158,22 +271,36 @@ alembic downgrade m7g8h9i0j1k2
 -- Check index usage
 SELECT 
     schemaname,
-    tablename,
-    indexname,
+    relname as tablename,
+    indexrelname as indexname,
     idx_scan as index_scans,
     idx_tup_read as tuples_read,
     idx_tup_fetch as tuples_fetched
 FROM pg_stat_user_indexes
-WHERE indexname LIKE 'ix_%'
+WHERE indexrelname LIKE 'ix_%'
 ORDER BY idx_scan DESC;
 
 -- Check index size
 SELECT
-    indexname,
-    pg_size_pretty(pg_relation_size(indexrelid)) as index_size
-FROM pg_stat_user_indexes
-WHERE indexname LIKE 'ix_%'
-ORDER BY pg_relation_size(indexrelid) DESC;
+    i.indexrelname as indexname,
+    pg_size_pretty(pg_relation_size(i.indexrelid)) as index_size
+FROM pg_stat_user_indexes i
+WHERE i.indexrelname LIKE 'ix_%'
+ORDER BY pg_relation_size(i.indexrelid) DESC;
+
+-- Alternative: Check all indexes with their table sizes
+SELECT
+    t.tablename,
+    i.indexrelname as indexname,
+    pg_size_pretty(pg_total_relation_size(quote_ident(t.tablename)::regclass)) as table_size,
+    pg_size_pretty(pg_relation_size(i.indexrelid)) as index_size,
+    i.idx_scan as times_used
+FROM pg_tables t
+LEFT JOIN pg_indexes idx ON t.tablename = idx.tablename
+LEFT JOIN pg_stat_user_indexes i ON i.indexrelname = idx.indexname
+WHERE i.indexrelname LIKE 'ix_%'
+ORDER BY pg_relation_size(i.indexrelid) DESC;</search>
+</search_and_replace>
 ```
 
 #### SQLite
@@ -292,8 +419,26 @@ DROP INDEX IF EXISTS ix_unused_index;
 - [Observability](../manage/observability/internal-observability.md)
 - [Migration Guide](../manage/upgrade.md)
 
+## Summary
+
+The database indexing optimization initiative (Issue #1353) has been completed in two phases:
+
+- **Phase 1**: 47 foreign key indexes for improved JOIN and constraint performance
+- **Phase 2**: 37 composite indexes for optimized multi-column queries
+
+**Total**: 84 new indexes across the database schema
+
+**Expected Performance Gains**:
+- JOIN queries: 10-100x faster
+- Multi-column filtering: 5-50x faster
+- Team-scoped queries: Dramatic improvement
+- Time-series queries: Significant speedup
+
+**Storage Cost**: 25-35% increase in database size
+
 ## References
 
 - Issue: [#1353 - Database Indexing Optimization](https://github.com/IBM/mcp-context-forge/issues/1353)
-- Migration: `mcpgateway/alembic/versions/n8h9i0j1k2l3_add_foreign_key_indexes_phase1.py`
+- Phase 1 Migration: `mcpgateway/alembic/versions/n8h9i0j1k2l3_add_foreign_key_indexes_phase1.py`
+- Phase 2 Migration: `mcpgateway/alembic/versions/o9i0j1k2l3m4_add_composite_indexes_phase2.py`
 - Related ADR: [002 - Use Async SQLAlchemy ORM](adr/002-use-async-sqlalchemy-orm.md)
