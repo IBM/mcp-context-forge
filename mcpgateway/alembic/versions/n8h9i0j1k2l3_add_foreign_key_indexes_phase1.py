@@ -32,7 +32,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Add indexes on foreign key columns for improved query performance.
-    
+
     Note: Some foreign keys already have indexes (marked with index=True in models):
     - observability_spans.trace_id
     - observability_spans.parent_span_id
@@ -42,48 +42,48 @@ def upgrade() -> None:
     - email_api_tokens.user_email
     - email_api_tokens.team_id
     - registered_oauth_clients.gateway_id
-    
+
     This migration adds indexes for the remaining foreign keys.
     """
-    
+
     # Role and RBAC foreign keys
     op.create_index("ix_roles_inherits_from", "roles", ["inherits_from"], unique=False)
     op.create_index("ix_roles_created_by", "roles", ["created_by"], unique=False)
     op.create_index("ix_user_roles_user_email", "user_roles", ["user_email"], unique=False)
     op.create_index("ix_user_roles_role_id", "user_roles", ["role_id"], unique=False)
     op.create_index("ix_user_roles_granted_by", "user_roles", ["granted_by"], unique=False)
-    
+
     # Team management foreign keys
     op.create_index("ix_email_teams_created_by", "email_teams", ["created_by"], unique=False)
     op.create_index("ix_email_team_members_team_id", "email_team_members", ["team_id"], unique=False)
     op.create_index("ix_email_team_members_user_email", "email_team_members", ["user_email"], unique=False)
     op.create_index("ix_email_team_members_invited_by", "email_team_members", ["invited_by"], unique=False)
-    
+
     # Team member history foreign keys
     op.create_index("ix_email_team_member_history_team_member_id", "email_team_member_history", ["team_member_id"], unique=False)
     op.create_index("ix_email_team_member_history_team_id", "email_team_member_history", ["team_id"], unique=False)
     op.create_index("ix_email_team_member_history_user_email", "email_team_member_history", ["user_email"], unique=False)
     op.create_index("ix_email_team_member_history_action_by", "email_team_member_history", ["action_by"], unique=False)
-    
+
     # Team invitation foreign keys
     op.create_index("ix_email_team_invitations_team_id", "email_team_invitations", ["team_id"], unique=False)
     op.create_index("ix_email_team_invitations_invited_by", "email_team_invitations", ["invited_by"], unique=False)
-    
+
     # Team join request foreign keys
     op.create_index("ix_email_team_join_requests_team_id", "email_team_join_requests", ["team_id"], unique=False)
     op.create_index("ix_email_team_join_requests_user_email", "email_team_join_requests", ["user_email"], unique=False)
     op.create_index("ix_email_team_join_requests_reviewed_by", "email_team_join_requests", ["reviewed_by"], unique=False)
-    
+
     # Pending user approval foreign keys
     op.create_index("ix_pending_user_approvals_approved_by", "pending_user_approvals", ["approved_by"], unique=False)
-    
+
     # Metrics foreign keys
     op.create_index("ix_tool_metrics_tool_id", "tool_metrics", ["tool_id"], unique=False)
     op.create_index("ix_resource_metrics_resource_id", "resource_metrics", ["resource_id"], unique=False)
     op.create_index("ix_server_metrics_server_id", "server_metrics", ["server_id"], unique=False)
     op.create_index("ix_prompt_metrics_prompt_id", "prompt_metrics", ["prompt_id"], unique=False)
     op.create_index("ix_a2a_agent_metrics_a2a_agent_id", "a2a_agent_metrics", ["a2a_agent_id"], unique=False)
-    
+
     # Core entity foreign keys (gateway_id, team_id)
     op.create_index("ix_tools_gateway_id", "tools", ["gateway_id"], unique=False)
     op.create_index("ix_tools_team_id", "tools", ["team_id"], unique=False)
@@ -95,33 +95,32 @@ def upgrade() -> None:
     op.create_index("ix_gateways_team_id", "gateways", ["team_id"], unique=False)
     op.create_index("ix_a2a_agents_team_id", "a2a_agents", ["team_id"], unique=False)
     op.create_index("ix_grpc_services_team_id", "grpc_services", ["team_id"], unique=False)
-    
+
     # Resource subscription foreign keys
     op.create_index("ix_resource_subscriptions_resource_id", "resource_subscriptions", ["resource_id"], unique=False)
-    
-    
+
     # OAuth foreign keys
     op.create_index("ix_oauth_tokens_gateway_id", "oauth_tokens", ["gateway_id"], unique=False)
     op.create_index("ix_oauth_tokens_app_user_email", "oauth_tokens", ["app_user_email"], unique=False)
     op.create_index("ix_oauth_states_gateway_id", "oauth_states", ["gateway_id"], unique=False)
-    
+
     # API token foreign keys
     op.create_index("ix_email_api_tokens_server_id", "email_api_tokens", ["server_id"], unique=False)
-    
+
     # Token revocation foreign keys
     op.create_index("ix_token_revocations_revoked_by", "token_revocations", ["revoked_by"], unique=False)
-    
+
     # SSO foreign keys
     op.create_index("ix_sso_auth_sessions_provider_id", "sso_auth_sessions", ["provider_id"], unique=False)
     op.create_index("ix_sso_auth_sessions_user_email", "sso_auth_sessions", ["user_email"], unique=False)
-    
+
     # LLM provider foreign keys
     op.create_index("ix_llm_models_provider_id", "llm_models", ["provider_id"], unique=False)
 
 
 def downgrade() -> None:
     """Remove foreign key indexes."""
-    
+
     # Remove indexes in reverse order
     op.drop_index("ix_llm_models_provider_id", table_name="llm_models")
     op.drop_index("ix_sso_auth_sessions_user_email", table_name="sso_auth_sessions")
@@ -166,5 +165,3 @@ def downgrade() -> None:
     op.drop_index("ix_user_roles_user_email", table_name="user_roles")
     op.drop_index("ix_roles_created_by", table_name="roles")
     op.drop_index("ix_roles_inherits_from", table_name="roles")
-
-# Made with Bob
