@@ -27,7 +27,14 @@ class LoadImageError(Exception):
 class ImageAscii(BaseImage):
     """Custom ASCII QR code image."""
 
-    def __init__(self, border: int, width: int, box_size: int, qrcode_modules: np.ndarray | None = None, **kwargs: object) -> None:
+    def __init__(
+        self,
+            border: int,
+            width: int,
+            box_size: int,
+            qrcode_modules: np.ndarray | None = None,
+            **kwargs: object
+    ) -> None:
         self.border = border
         self.width = width
         self.box_size = box_size

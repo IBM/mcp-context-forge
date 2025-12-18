@@ -115,7 +115,7 @@ async def generate_batch_qr_codes(
             )
             result = create_batch_qr_codes(request)
             logger.info(
-                f"Batch QR codes generated successfully "
+                "Batch QR codes generated successfully "
             )
             return result
 
@@ -151,7 +151,11 @@ async def decode_qr_code(
             )
             result = qr_decode(request)
             if result.success:
-                data_preview = str(result.data)[:50] + "..." if len(str(result.data)) > 50 else result.data
+                data_preview = (
+                str(result.data)[:50] + "..."
+                if len(str(result.data)) > 50
+                else result.data
+            )
                 logger.info(f"QR code decoded successfully (data preview: {data_preview})")
             else:
                 logger.warning(f"QR decode failed: {result.error}")
@@ -190,8 +194,12 @@ async def validate_qr_data(
             result = validate(request)
             if result.valid:
                 logger.info(
-                    f"QR data validated successfully "
-                    f"(valid={result.valid}, fits={result.fits}, suggested_version={result.suggested_version})"
+
+                        "QR data validated successfully "
+                        f"(valid={result.valid}, "
+                        f"fits={result.fits}, "
+                        f"suggested_version={result.suggested_version})"
+
                 )
             else:
                 logger.warning(f"QR data validation failed: {result.error}")
