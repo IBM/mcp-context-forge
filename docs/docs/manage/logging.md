@@ -53,6 +53,7 @@ MCP Gateway provides flexible logging with **stdout/stderr by default** and **op
 | `LOG_ROTATION_ENABLED`  | **Enable log file rotation**       | **`false`**       | **`true`, `false`**         |
 | `LOG_MAX_SIZE_MB`       | Max file size before rotation (MB) | `1`               | `10`, `50`, `100`           |
 | `LOG_BACKUP_COUNT`      | Number of backup files to keep     | `5`               | `3`, `10`, `0` (no backups) |
+| `STRUCTURED_LOGGING_DATABASE_ENABLED` | **Persist logs to database** | **`false`** | **`true`, `false`** |
 
 ### Logging Behavior
 
@@ -295,6 +296,71 @@ You can:
 * Mount log files to a sidecar container
 * Use a logging agent (e.g., Filebeat)
 * Pipe logs to syslog-compatible services
+
+---
+
+## 🗄️ Database Log Persistence
+
+MCP Gateway can optionally persist structured logs to the database for advanced search, request tracing, and performance metrics. **This feature is disabled by default for performance reasons.**
+
+### Enabling Database Logging
+
+```bash
+# Enable database persistence for logs
+STRUCTURED_LOGGING_DATABASE_ENABLED=true
+```
+
+### Features When Enabled
+
+When `STRUCTURED_LOGGING_DATABASE_ENABLED=true`, you get:
+
+| Feature | API Endpoint | Description |
+|---------|--------------|-------------|
+| **Log Search** | `POST /api/logs/search` | Search logs by level, component, user, time range, correlation ID |
+| **Request Tracing** | `GET /api/logs/trace/{correlation_id}` | View all logs, security events, and audit trails for a single request |
+| **Performance Metrics** | `GET /api/logs/performance-metrics` | Aggregated p50/p95/p99 latencies, error rates by component |
+| **Security Events** | `GET /api/logs/security-events` | Authentication failures, threat detection, security audit |
+| **Audit Trails** | `GET /api/logs/audit-trails` | CRUD operations, data access compliance logging |
+
+### Example: Search Logs via API
+
+```bash
+# Search for error logs in the last hour
+curl -X POST "http://localhost:4444/api/logs/search" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "level": ["ERROR", "CRITICAL"],
+    "limit": 50,
+    "sort_order": "desc"
+  }'
+
+# Trace all logs for a specific request
+curl "http://localhost:4444/api/logs/trace/abc-123-correlation-id" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Performance Considerations
+
+!!! warning "Performance Impact"
+    When enabled, **each log entry triggers a synchronous database write**. This can significantly impact performance under high load.
+
+**Recommendations:**
+
+- **Disable in production** if you use an external log aggregator (ELK, Datadog, Splunk)
+- **Enable for development** or low-traffic deployments where built-in search is useful
+- **Consider external logging** for high-throughput production environments
+
+### When to Enable vs Disable
+
+| Scenario | Recommendation |
+|----------|----------------|
+| Development/testing | ✅ Enable - useful for debugging |
+| Low-traffic production | ✅ Enable - built-in observability |
+| High-traffic production | ❌ Disable - use external aggregator |
+| Using ELK/Datadog/Splunk | ❌ Disable - redundant storage |
+| Need request tracing | ✅ Enable - correlation ID tracing |
+| Performance-critical | ❌ Disable - avoid DB I/O overhead |
 
 ---
 

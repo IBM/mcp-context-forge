@@ -44,8 +44,50 @@ except Exception:  # pragma: no cover - environment without anyio
     AnyioClosedResourceError = None  # pylint: disable=invalid-name
 
 # First-Party
-# Create a text formatter
-text_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+# Standard log format used across the codebase
+LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+LOG_DATE_FORMAT = "%Y-%m-%dT%H:%M:%S"
+
+# Cache static values at module load - these don't change during process lifetime
+_CACHED_HOSTNAME: str = socket.gethostname()
+_CACHED_PID: int = os.getpid()
+
+# Cache level mapping dictionaries at module load to avoid recreation on every log call
+# Maps Python log level names to MCP LogLevel enum (used in StorageHandler.emit)
+_PYTHON_TO_MCP_LEVEL_MAP: Dict[str, LogLevel] = {
+    "DEBUG": LogLevel.DEBUG,
+    "INFO": LogLevel.INFO,
+    "WARNING": LogLevel.WARNING,
+    "ERROR": LogLevel.ERROR,
+    "CRITICAL": LogLevel.CRITICAL,
+}
+
+# Maps MCP LogLevel to Python logging method names (used in notify)
+_MCP_TO_PYTHON_METHOD_MAP: Dict[LogLevel, str] = {
+    LogLevel.DEBUG: "debug",
+    LogLevel.INFO: "info",
+    LogLevel.NOTICE: "info",  # Map NOTICE to INFO
+    LogLevel.WARNING: "warning",
+    LogLevel.ERROR: "error",
+    LogLevel.CRITICAL: "critical",
+    LogLevel.ALERT: "critical",  # Map ALERT to CRITICAL
+    LogLevel.EMERGENCY: "critical",  # Map EMERGENCY to CRITICAL
+}
+
+# Maps MCP LogLevel to numeric values for comparison (used in _should_log)
+_MCP_LEVEL_VALUES: Dict[LogLevel, int] = {
+    LogLevel.DEBUG: 0,
+    LogLevel.INFO: 1,
+    LogLevel.NOTICE: 2,
+    LogLevel.WARNING: 3,
+    LogLevel.ERROR: 4,
+    LogLevel.CRITICAL: 5,
+    LogLevel.ALERT: 6,
+    LogLevel.EMERGENCY: 7,
+}
+
+# Create a text formatter with standard format
+text_formatter = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
 
 
 class CorrelationIdJsonFormatter(jsonlogger.JsonFormatter):
@@ -66,9 +108,9 @@ class CorrelationIdJsonFormatter(jsonlogger.JsonFormatter):
         dt = datetime.fromtimestamp(record.created, tz=timezone.utc)
         log_record["@timestamp"] = dt.isoformat().replace("+00:00", "Z")
 
-        # Add hostname and process ID for log aggregation
-        log_record["hostname"] = socket.gethostname()
-        log_record["process_id"] = os.getpid()
+        # Add hostname and process ID for log aggregation - use cached values for performance
+        log_record["hostname"] = _CACHED_HOSTNAME
+        log_record["process_id"] = _CACHED_PID
 
         # Add correlation ID from context
         correlation_id = get_correlation_id()
@@ -91,8 +133,8 @@ class CorrelationIdJsonFormatter(jsonlogger.JsonFormatter):
                 pass
 
 
-# Create a JSON formatter with correlation ID support
-json_formatter = CorrelationIdJsonFormatter("%(asctime)s %(name)s %(levelname)s %(message)s")
+# Create a JSON formatter with correlation ID support (uses same base format)
+json_formatter = CorrelationIdJsonFormatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
 
 # Note: Don't use basicConfig here as it conflicts with our custom dual logging setup
 # The LoggingService.initialize() method will properly configure all handlers
@@ -174,16 +216,8 @@ class StorageHandler(logging.Handler):
         if not self.storage:
             return
 
-        # Map Python log levels to MCP LogLevel
-        level_map = {
-            "DEBUG": LogLevel.DEBUG,
-            "INFO": LogLevel.INFO,
-            "WARNING": LogLevel.WARNING,
-            "ERROR": LogLevel.ERROR,
-            "CRITICAL": LogLevel.CRITICAL,
-        }
-
-        log_level = level_map.get(record.levelname, LogLevel.INFO)
+        # Map Python log levels to MCP LogLevel (uses module-level cached dict)
+        log_level = _PYTHON_TO_MCP_LEVEL_MAP.get(record.levelname, LogLevel.INFO)
 
         # Extract entity context from record if available
         entity_type = getattr(record, "entity_type", None)
@@ -280,13 +314,21 @@ class LoggingService:
         # Clear existing handlers to avoid duplicates
         root_logger.handlers.clear()
 
+        # Set root logger level to match settings - this is critical for LOG_LEVEL to work
+        log_level = getattr(logging, settings.log_level.upper())
+        root_logger.setLevel(log_level)
+
         # Always add console/text handler for stdout/stderr
-        root_logger.addHandler(_get_text_handler())
+        text_handler = _get_text_handler()
+        text_handler.setLevel(log_level)
+        root_logger.addHandler(text_handler)
 
         # Only add file handler if enabled
         if settings.log_to_file and settings.log_file:
             try:
-                root_logger.addHandler(_get_file_handler())
+                file_handler = _get_file_handler()
+                file_handler.setLevel(log_level)
+                root_logger.addHandler(file_handler)
                 if settings.log_rotation_enabled:
                     logging.info(f"File logging enabled with rotation: {settings.log_folder or '.'}/{settings.log_file} (max: {settings.log_max_size_mb}MB, backups: {settings.log_backup_count})")
                 else:
@@ -307,7 +349,7 @@ class LoggingService:
             # Add storage handler to capture all logs
             self._storage_handler = StorageHandler(self._storage)
             self._storage_handler.setFormatter(text_formatter)
-            self._storage_handler.setLevel(getattr(logging, settings.log_level.upper()))
+            self._storage_handler.setLevel(log_level)
             root_logger.addHandler(self._storage_handler)
 
             logging.info(f"Log storage initialized with {settings.log_buffer_size_mb}MB buffer")
@@ -532,20 +574,8 @@ class LoggingService:
         # Log through standard logging
         logger = self.get_logger(logger_name or "")
 
-        # Map MCP log levels to Python logging levels
-        # NOTICE, ALERT, and EMERGENCY don't have direct Python equivalents
-        level_map = {
-            LogLevel.DEBUG: "debug",
-            LogLevel.INFO: "info",
-            LogLevel.NOTICE: "info",  # Map NOTICE to INFO
-            LogLevel.WARNING: "warning",
-            LogLevel.ERROR: "error",
-            LogLevel.CRITICAL: "critical",
-            LogLevel.ALERT: "critical",  # Map ALERT to CRITICAL
-            LogLevel.EMERGENCY: "critical",  # Map EMERGENCY to CRITICAL
-        }
-
-        log_method = level_map.get(level, "info")
+        # Map MCP log levels to Python logging levels (uses module-level cached dict)
+        log_method = _MCP_TO_PYTHON_METHOD_MAP.get(level, "info")
         log_func = getattr(logger, log_method)
         log_func(data)
 
@@ -613,18 +643,8 @@ class LoggingService:
             False
 
         """
-        level_values = {
-            LogLevel.DEBUG: 0,
-            LogLevel.INFO: 1,
-            LogLevel.NOTICE: 2,
-            LogLevel.WARNING: 3,
-            LogLevel.ERROR: 4,
-            LogLevel.CRITICAL: 5,
-            LogLevel.ALERT: 6,
-            LogLevel.EMERGENCY: 7,
-        }
-
-        return level_values[level] >= level_values[self._level]
+        # Uses module-level cached dict for performance
+        return _MCP_LEVEL_VALUES[level] >= _MCP_LEVEL_VALUES[self._level]
 
     def _configure_uvicorn_loggers(self) -> None:
         """Configure uvicorn loggers to use our dual logging setup.
