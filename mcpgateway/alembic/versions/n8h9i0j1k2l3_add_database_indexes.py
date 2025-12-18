@@ -9,6 +9,13 @@ Complete Database Indexing Optimization (Issue #1353)
 This migration adds both foreign key indexes and composite indexes to improve
 query performance across the entire application.
 
+Phase 0 - Index Naming Standardization:
+Renames all existing 'ix_' prefixed indexes to 'idx_' for consistency.
+
+Phase 0.5 - Duplicate Index Cleanup:
+Detects and drops duplicate indexes where the same columns have multiple indexes
+and one starts with 'ix_'. This prevents index duplication and saves storage space.
+
 Phase 1 - Foreign Key Indexes:
 Foreign keys without indexes can cause performance issues because:
 1. JOIN queries need to scan the entire table
@@ -34,12 +41,220 @@ from typing import Sequence, Union
 
 # Third-Party
 from alembic import op
+from sqlalchemy import inspect
 
 # revision identifiers, used by Alembic.
 revision: str = "n8h9i0j1k2l3"
 down_revision: Union[str, Sequence[str], None] = "m7g8h9i0j1k2"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
+
+
+def _rename_existing_ix_indexes() -> None:
+    """Rename all existing indexes with 'ix_' prefix to 'idx_' prefix.
+
+    This ensures consistency with the new naming convention before creating new indexes.
+    """
+    conn = op.get_bind()
+    inspector = inspect(conn)
+
+    # Get all table names
+    try:
+        table_names = inspector.get_table_names()
+    except Exception as e:
+        print(f"⚠️  Could not get table names: {e}")
+        return
+
+    renamed_count = 0
+    for table_name in table_names:
+        try:
+            existing_indexes = inspector.get_indexes(table_name)
+
+            for idx in existing_indexes:
+                index_name = idx["name"]
+
+                # Check if index starts with 'ix_' prefix
+                if index_name and index_name.startswith("ix_"):
+                    new_index_name = "idx_" + index_name[3:]  # Replace 'ix_' with 'idx_'
+
+                    # Check if the new name already exists
+                    if any(i["name"] == new_index_name for i in existing_indexes):
+                        print(f"⚠️  Skipping rename of {index_name}: {new_index_name} already exists on {table_name}")
+                        continue
+
+                    try:
+                        # Rename the index
+                        # Note: Different databases have different syntax for renaming indexes
+                        # SQLite doesn't support ALTER INDEX RENAME, so we need to recreate
+                        dialect_name = conn.dialect.name
+
+                        if dialect_name == "postgresql":
+                            op.execute(f"ALTER INDEX {index_name} RENAME TO {new_index_name}")
+                            print(f"✓ Renamed index {index_name} → {new_index_name} on {table_name}")
+                            renamed_count += 1
+                        elif dialect_name == "mysql":
+                            op.execute(f"ALTER TABLE {table_name} RENAME INDEX {index_name} TO {new_index_name}")
+                            print(f"✓ Renamed index {index_name} → {new_index_name} on {table_name}")
+                            renamed_count += 1
+                        elif dialect_name == "sqlite":
+                            # SQLite requires recreating the index
+                            # Get index details
+                            columns = idx["column_names"]
+                            unique = idx.get("unique", False)
+
+                            # Drop old index and create new one
+                            op.drop_index(index_name, table_name=table_name)
+                            op.create_index(new_index_name, table_name, columns, unique=unique)
+                            print(f"✓ Recreated index {index_name} → {new_index_name} on {table_name}")
+                            renamed_count += 1
+                        else:
+                            print(f"⚠️  Unsupported database dialect '{dialect_name}' for renaming {index_name}")
+
+                    except Exception as e:
+                        print(f"⚠️  Failed to rename {index_name} on {table_name}: {e}")
+
+        except Exception as e:
+            print(f"⚠️  Could not process table {table_name}: {e}")
+
+    if renamed_count > 0:
+        print(f"\n✓ Successfully renamed {renamed_count} indexes from 'ix_' to 'idx_' prefix")
+    else:
+        print("\n✓ No indexes with 'ix_' prefix found to rename")
+
+
+def _drop_duplicate_ix_indexes() -> None:
+    """Detect and drop duplicate indexes where ix_ prefix exists alongside idx_ prefix.
+
+    When the same columns have multiple indexes and one starts with 'ix_', drop the ix_ one.
+    This handles cases where both ix_ and idx_ indexes exist on the same columns.
+    """
+    conn = op.get_bind()
+    inspector = inspect(conn)
+
+    # Get all table names
+    try:
+        table_names = inspector.get_table_names()
+    except Exception as e:
+        print(f"⚠️  Could not get table names: {e}")
+        return
+
+    dropped_count = 0
+    for table_name in table_names:
+        try:
+            existing_indexes = inspector.get_indexes(table_name)
+
+            # Group indexes by their columns
+            column_to_indexes: dict[tuple, list[dict]] = {}
+            for idx in existing_indexes:
+                columns_tuple = tuple(sorted(idx["column_names"]))
+                if columns_tuple not in column_to_indexes:
+                    column_to_indexes[columns_tuple] = []
+                column_to_indexes[columns_tuple].append(idx)
+
+            # Find duplicates (same columns, multiple indexes)
+            for columns, indexes in column_to_indexes.items():
+                if len(indexes) > 1:
+                    # Check if we have both ix_ and idx_ (or other) indexes
+                    ix_indexes = [idx for idx in indexes if idx["name"] and idx["name"].startswith("ix_")]
+                    non_ix_indexes = [idx for idx in indexes if idx["name"] and not idx["name"].startswith("ix_")]
+
+                    # Only drop ix_ indexes if there are other indexes on the same columns
+                    if ix_indexes and non_ix_indexes:
+                        for ix_idx in ix_indexes:
+                            try:
+                                op.drop_index(ix_idx["name"], table_name=table_name)
+                                print(f"✓ Dropped duplicate index {ix_idx['name']} from {table_name} (columns: {', '.join(columns)})")
+                                dropped_count += 1
+                            except Exception as e:
+                                print(f"⚠️  Failed to drop {ix_idx['name']} from {table_name}: {e}")
+
+        except Exception as e:
+            print(f"⚠️  Could not process table {table_name}: {e}")
+
+    if dropped_count > 0:
+        print(f"\n✓ Successfully dropped {dropped_count} duplicate ix_ indexes")
+    else:
+        print("\n✓ No duplicate ix_ indexes found to drop")
+
+
+def _index_exists_on_columns(table_name: str, columns: list[str]) -> tuple[bool, str | None]:
+    """Check if an index already exists on the specified columns.
+
+    Args:
+        table_name: Name of the table to check
+        columns: List of column names to check for existing index
+
+    Returns:
+        Tuple of (exists: bool, existing_index_name: str | None)
+    """
+    conn = op.get_bind()
+    inspector = inspect(conn)
+
+    try:
+        existing_indexes = inspector.get_indexes(table_name)
+    except Exception:
+        # Table might not exist yet, or other error
+        return False, None
+
+    # Check if any existing index covers these exact columns
+    columns_set = set(columns)
+    for idx in existing_indexes:
+        if set(idx["column_names"]) == columns_set:
+            return True, idx["name"]
+
+    return False, None
+
+
+def _create_index_safe(index_name: str, table_name: str, columns: list[str], unique: bool = False) -> bool:
+    """Create an index only if it doesn't already exist on the same columns.
+
+    Args:
+        index_name: Name for the new index
+        table_name: Table to create index on
+        columns: List of column names to index
+        unique: Whether the index should be unique
+
+    Returns:
+        True if index was created, False if it already existed
+    """
+    exists, existing_name = _index_exists_on_columns(table_name, columns)
+
+    if exists:
+        print(f"⚠️  Skipping {index_name}: Index '{existing_name}' already exists on {table_name}({', '.join(columns)})")
+        return False
+
+    op.create_index(index_name, table_name, columns, unique=unique)
+    print(f"✓ Created index {index_name} on {table_name}({', '.join(columns)})")
+    return True
+
+
+def _drop_index_safe(index_name: str, table_name: str) -> bool:
+    """Drop an index only if it exists.
+
+    Args:
+        index_name: Name of the index to drop
+        table_name: Table the index is on
+
+    Returns:
+        True if index was dropped, False if it didn't exist
+    """
+    conn = op.get_bind()
+    inspector = inspect(conn)
+
+    try:
+        existing_indexes = inspector.get_indexes(table_name)
+        index_exists = any(idx["name"] == index_name for idx in existing_indexes)
+
+        if not index_exists:
+            print(f"⚠️  Skipping drop of {index_name}: Index does not exist on {table_name}")
+            return False
+
+        op.drop_index(index_name, table_name=table_name)
+        print(f"✓ Dropped index {index_name} from {table_name}")
+        return True
+    except Exception:
+        # Table might not exist, or other error
+        return False
 
 
 def upgrade() -> None:
@@ -60,488 +275,475 @@ def upgrade() -> None:
     """
 
     # ========================================================================
+    # PHASE 0: Rename Existing Indexes (ix_ → idx_)
+    # ========================================================================
+    print("\n" + "=" * 80)
+    print("PHASE 0: Renaming existing indexes from 'ix_' to 'idx_' prefix")
+    print("=" * 80)
+    _rename_existing_ix_indexes()
+
+    # ========================================================================
+    # PHASE 0.5: Drop Duplicate ix_ Indexes
+    # ========================================================================
+    print("\n" + "=" * 80)
+    print("PHASE 0.5: Dropping duplicate ix_ indexes (where idx_ already exists)")
+    print("=" * 80)
+    _drop_duplicate_ix_indexes()
+
+    # ========================================================================
     # PHASE 1: Foreign Key Indexes
     # ========================================================================
+    print("\n" + "=" * 80)
+    print("PHASE 1: Creating Foreign Key Indexes")
+    print("=" * 80)
 
     # Role and RBAC foreign keys
-    op.create_index("ix_roles_inherits_from", "roles", ["inherits_from"], unique=False)
-    op.create_index("ix_roles_created_by", "roles", ["created_by"], unique=False)
-    op.create_index("ix_user_roles_user_email", "user_roles", ["user_email"], unique=False)
-    op.create_index("ix_user_roles_role_id", "user_roles", ["role_id"], unique=False)
-    op.create_index("ix_user_roles_granted_by", "user_roles", ["granted_by"], unique=False)
+    _create_index_safe("idx_roles_inherits_from", "roles", ["inherits_from"])
+    _create_index_safe("idx_roles_created_by", "roles", ["created_by"])
+    _create_index_safe("idx_user_roles_user_email", "user_roles", ["user_email"])
+    _create_index_safe("idx_user_roles_role_id", "user_roles", ["role_id"])
+    _create_index_safe("idx_user_roles_granted_by", "user_roles", ["granted_by"])
 
     # Team management foreign keys
-    op.create_index("ix_email_teams_created_by", "email_teams", ["created_by"], unique=False)
-    op.create_index("ix_email_team_members_team_id", "email_team_members", ["team_id"], unique=False)
-    op.create_index("ix_email_team_members_user_email", "email_team_members", ["user_email"], unique=False)
-    op.create_index("ix_email_team_members_invited_by", "email_team_members", ["invited_by"], unique=False)
+    _create_index_safe("idx_email_teams_created_by", "email_teams", ["created_by"])
+    _create_index_safe("idx_email_team_members_team_id", "email_team_members", ["team_id"])
+    _create_index_safe("idx_email_team_members_user_email", "email_team_members", ["user_email"])
+    _create_index_safe("idx_email_team_members_invited_by", "email_team_members", ["invited_by"])
 
     # Team member history foreign keys
-    op.create_index("ix_email_team_member_history_team_member_id", "email_team_member_history", ["team_member_id"], unique=False)
-    op.create_index("ix_email_team_member_history_team_id", "email_team_member_history", ["team_id"], unique=False)
-    op.create_index("ix_email_team_member_history_user_email", "email_team_member_history", ["user_email"], unique=False)
-    op.create_index("ix_email_team_member_history_action_by", "email_team_member_history", ["action_by"], unique=False)
+    _create_index_safe("idx_email_team_member_history_team_member_id", "email_team_member_history", ["team_member_id"])
+    _create_index_safe("idx_email_team_member_history_team_id", "email_team_member_history", ["team_id"])
+    _create_index_safe("idx_email_team_member_history_user_email", "email_team_member_history", ["user_email"])
+    _create_index_safe("idx_email_team_member_history_action_by", "email_team_member_history", ["action_by"])
 
     # Team invitation foreign keys
-    op.create_index("ix_email_team_invitations_team_id", "email_team_invitations", ["team_id"], unique=False)
-    op.create_index("ix_email_team_invitations_invited_by", "email_team_invitations", ["invited_by"], unique=False)
+    _create_index_safe("idx_email_team_invitations_team_id", "email_team_invitations", ["team_id"])
+    _create_index_safe("idx_email_team_invitations_invited_by", "email_team_invitations", ["invited_by"])
 
     # Team join request foreign keys
-    op.create_index("ix_email_team_join_requests_team_id", "email_team_join_requests", ["team_id"], unique=False)
-    op.create_index("ix_email_team_join_requests_user_email", "email_team_join_requests", ["user_email"], unique=False)
-    op.create_index("ix_email_team_join_requests_reviewed_by", "email_team_join_requests", ["reviewed_by"], unique=False)
+    _create_index_safe("idx_email_team_join_requests_team_id", "email_team_join_requests", ["team_id"])
+    _create_index_safe("idx_email_team_join_requests_user_email", "email_team_join_requests", ["user_email"])
+    _create_index_safe("idx_email_team_join_requests_reviewed_by", "email_team_join_requests", ["reviewed_by"])
 
     # Pending user approval foreign keys
-    op.create_index("ix_pending_user_approvals_approved_by", "pending_user_approvals", ["approved_by"], unique=False)
+    _create_index_safe("idx_pending_user_approvals_approved_by", "pending_user_approvals", ["approved_by"])
 
     # Metrics foreign keys
-    op.create_index("ix_tool_metrics_tool_id", "tool_metrics", ["tool_id"], unique=False)
-    op.create_index("ix_resource_metrics_resource_id", "resource_metrics", ["resource_id"], unique=False)
-    op.create_index("ix_server_metrics_server_id", "server_metrics", ["server_id"], unique=False)
-    op.create_index("ix_prompt_metrics_prompt_id", "prompt_metrics", ["prompt_id"], unique=False)
-    op.create_index("ix_a2a_agent_metrics_a2a_agent_id", "a2a_agent_metrics", ["a2a_agent_id"], unique=False)
+    _create_index_safe("idx_tool_metrics_tool_id", "tool_metrics", ["tool_id"])
+    _create_index_safe("idx_resource_metrics_resource_id", "resource_metrics", ["resource_id"])
+    _create_index_safe("idx_server_metrics_server_id", "server_metrics", ["server_id"])
+    _create_index_safe("idx_prompt_metrics_prompt_id", "prompt_metrics", ["prompt_id"])
+    _create_index_safe("idx_a2a_agent_metrics_a2a_agent_id", "a2a_agent_metrics", ["a2a_agent_id"])
 
     # Core entity foreign keys (gateway_id, team_id)
-    op.create_index("ix_tools_gateway_id", "tools", ["gateway_id"], unique=False)
-    op.create_index("ix_tools_team_id", "tools", ["team_id"], unique=False)
-    op.create_index("ix_resources_gateway_id", "resources", ["gateway_id"], unique=False)
-    op.create_index("ix_resources_team_id", "resources", ["team_id"], unique=False)
-    op.create_index("ix_prompts_gateway_id", "prompts", ["gateway_id"], unique=False)
-    op.create_index("ix_prompts_team_id", "prompts", ["team_id"], unique=False)
-    op.create_index("ix_servers_team_id", "servers", ["team_id"], unique=False)
-    op.create_index("ix_gateways_team_id", "gateways", ["team_id"], unique=False)
-    op.create_index("ix_a2a_agents_team_id", "a2a_agents", ["team_id"], unique=False)
-    op.create_index("ix_grpc_services_team_id", "grpc_services", ["team_id"], unique=False)
+    _create_index_safe("idx_tools_gateway_id", "tools", ["gateway_id"])
+    _create_index_safe("idx_tools_team_id", "tools", ["team_id"])
+    _create_index_safe("idx_resources_gateway_id", "resources", ["gateway_id"])
+    _create_index_safe("idx_resources_team_id", "resources", ["team_id"])
+    _create_index_safe("idx_prompts_gateway_id", "prompts", ["gateway_id"])
+    _create_index_safe("idx_prompts_team_id", "prompts", ["team_id"])
+    _create_index_safe("idx_servers_team_id", "servers", ["team_id"])
+    _create_index_safe("idx_gateways_team_id", "gateways", ["team_id"])
+    _create_index_safe("idx_a2a_agents_team_id", "a2a_agents", ["team_id"])
+    _create_index_safe("idx_grpc_services_team_id", "grpc_services", ["team_id"])
 
     # Resource subscription foreign keys
-    op.create_index("ix_resource_subscriptions_resource_id", "resource_subscriptions", ["resource_id"], unique=False)
+    _create_index_safe("idx_resource_subscriptions_resource_id", "resource_subscriptions", ["resource_id"])
 
     # OAuth foreign keys
-    op.create_index("ix_oauth_tokens_gateway_id", "oauth_tokens", ["gateway_id"], unique=False)
-    op.create_index("ix_oauth_tokens_app_user_email", "oauth_tokens", ["app_user_email"], unique=False)
-    op.create_index("ix_oauth_states_gateway_id", "oauth_states", ["gateway_id"], unique=False)
+    _create_index_safe("idx_oauth_tokens_gateway_id", "oauth_tokens", ["gateway_id"])
+    _create_index_safe("idx_oauth_tokens_app_user_email", "oauth_tokens", ["app_user_email"])
+    _create_index_safe("idx_oauth_states_gateway_id", "oauth_states", ["gateway_id"])
 
     # API token foreign keys
-    op.create_index("ix_email_api_tokens_server_id", "email_api_tokens", ["server_id"], unique=False)
+    _create_index_safe("idx_email_api_tokens_server_id", "email_api_tokens", ["server_id"])
 
     # Token revocation foreign keys
-    op.create_index("ix_token_revocations_revoked_by", "token_revocations", ["revoked_by"], unique=False)
+    _create_index_safe("idx_token_revocations_revoked_by", "token_revocations", ["revoked_by"])
 
     # SSO foreign keys
-    op.create_index("ix_sso_auth_sessions_provider_id", "sso_auth_sessions", ["provider_id"], unique=False)
-    op.create_index("ix_sso_auth_sessions_user_email", "sso_auth_sessions", ["user_email"], unique=False)
+    _create_index_safe("idx_sso_auth_sessions_provider_id", "sso_auth_sessions", ["provider_id"])
+    _create_index_safe("idx_sso_auth_sessions_user_email", "sso_auth_sessions", ["user_email"])
 
     # LLM provider foreign keys
-    op.create_index("ix_llm_models_provider_id", "llm_models", ["provider_id"], unique=False)
+    _create_index_safe("idx_llm_models_provider_id", "llm_models", ["provider_id"])
 
     # ========================================================================
     # PHASE 2: Composite Indexes
     # ========================================================================
-    
+    print("\n" + "=" * 80)
+    print("PHASE 2: Creating Composite Indexes")
+    print("=" * 80)
+
     # ------------------------------------------------------------------------
     # Team Management Composite Indexes
     # ------------------------------------------------------------------------
-    
+    print("\n--- Team Management Composite Indexes ---")
+
     # Team membership queries (user + team + active status)
-    op.create_index(
-        "ix_email_team_members_user_team_active",
+    _create_index_safe(
+        "idx_email_team_members_user_team_active",
         "email_team_members",
         ["user_email", "team_id", "is_active"],
-        unique=False,
     )
-    
+
     # Team member role queries (team + role + active)
-    op.create_index(
-        "ix_email_team_members_team_role_active",
+    _create_index_safe(
+        "idx_email_team_members_team_role_active",
         "email_team_members",
         ["team_id", "role", "is_active"],
-        unique=False,
     )
-    
+
     # Team invitations (team + active + created timestamp)
-    op.create_index(
-        "ix_email_team_invitations_team_active_created",
+    _create_index_safe(
+        "idx_email_team_invitations_team_active_created",
         "email_team_invitations",
         ["team_id", "is_active", "invited_at"],
-        unique=False,
     )
-    
+
     # Team invitations by email (email + active + created)
-    op.create_index(
-        "ix_email_team_invitations_email_active_created",
+    _create_index_safe(
+        "idx_email_team_invitations_email_active_created",
         "email_team_invitations",
         ["email", "is_active", "invited_at"],
-        unique=False,
     )
-    
+
     # Team join requests (team + status + timestamp)
-    op.create_index(
-        "ix_email_team_join_requests_team_status_time",
+    _create_index_safe(
+        "idx_email_team_join_requests_team_status_time",
         "email_team_join_requests",
         ["team_id", "status", "requested_at"],
-        unique=False,
     )
-    
+
     # Team join requests by user (user + status + timestamp)
-    op.create_index(
-        "ix_email_team_join_requests_user_status_time",
+    _create_index_safe(
+        "idx_email_team_join_requests_user_status_time",
         "email_team_join_requests",
         ["user_email", "status", "requested_at"],
-        unique=False,
     )
-    
+
     # Team listing (visibility + is_active + created)
-    op.create_index(
-        "ix_email_teams_visibility_active_created",
+    _create_index_safe(
+        "idx_email_teams_visibility_active_created",
         "email_teams",
         ["visibility", "is_active", "created_at"],
-        unique=False,
     )
-    
+
     # Personal team lookup (created_by + is_personal + active)
-    op.create_index(
-        "ix_email_teams_creator_personal_active",
+    _create_index_safe(
+        "idx_email_teams_creator_personal_active",
         "email_teams",
         ["created_by", "is_personal", "is_active"],
-        unique=False,
     )
-    
+
     # ------------------------------------------------------------------------
     # Core Entity Composite Indexes (Tools, Resources, Prompts, Servers)
     # ------------------------------------------------------------------------
-    
+
     # Tools: team + visibility + enabled + created (common listing query)
-    op.create_index(
-        "ix_tools_team_visibility_active_created",
+    _create_index_safe(
+        "idx_tools_team_visibility_active_created",
         "tools",
         ["team_id", "visibility", "enabled", "created_at"],
-        unique=False,
     )
-    
+
     # Tools: visibility + enabled + created (public listing)
-    op.create_index(
-        "ix_tools_visibility_active_created",
+    _create_index_safe(
+        "idx_tools_visibility_active_created",
         "tools",
         ["visibility", "enabled", "created_at"],
-        unique=False,
     )
-    
+
     # Resources: team + visibility + enabled + created
-    op.create_index(
-        "ix_resources_team_visibility_active_created",
+    _create_index_safe(
+        "idx_resources_team_visibility_active_created",
         "resources",
         ["team_id", "visibility", "enabled", "created_at"],
-        unique=False,
     )
-    
+
     # Resources: visibility + enabled + created
-    op.create_index(
-        "ix_resources_visibility_active_created",
+    _create_index_safe(
+        "idx_resources_visibility_active_created",
         "resources",
         ["visibility", "enabled", "created_at"],
-        unique=False,
     )
-    
+
     # Prompts: team + visibility + enabled + created
-    op.create_index(
-        "ix_prompts_team_visibility_active_created",
+    _create_index_safe(
+        "idx_prompts_team_visibility_active_created",
         "prompts",
         ["team_id", "visibility", "enabled", "created_at"],
-        unique=False,
     )
-    
+
     # Prompts: visibility + enabled + created
-    op.create_index(
-        "ix_prompts_visibility_active_created",
+    _create_index_safe(
+        "idx_prompts_visibility_active_created",
         "prompts",
         ["visibility", "enabled", "created_at"],
-        unique=False,
     )
-    
+
     # Servers: team + visibility + enabled + created
-    op.create_index(
-        "ix_servers_team_visibility_active_created",
+    _create_index_safe(
+        "idx_servers_team_visibility_active_created",
         "servers",
         ["team_id", "visibility", "enabled", "created_at"],
-        unique=False,
     )
-    
+
     # Servers: visibility + enabled + created
-    op.create_index(
-        "ix_servers_visibility_active_created",
+    _create_index_safe(
+        "idx_servers_visibility_active_created",
         "servers",
         ["visibility", "enabled", "created_at"],
-        unique=False,
     )
-    
+
     # Gateways: team + visibility + enabled + created
-    op.create_index(
-        "ix_gateways_team_visibility_active_created",
+    _create_index_safe(
+        "idx_gateways_team_visibility_active_created",
         "gateways",
         ["team_id", "visibility", "enabled", "created_at"],
-        unique=False,
     )
-    
+
     # Gateways: visibility + enabled + created
-    op.create_index(
-        "ix_gateways_visibility_active_created",
+    _create_index_safe(
+        "idx_gateways_visibility_active_created",
         "gateways",
         ["visibility", "enabled", "created_at"],
-        unique=False,
     )
-    
+
     # A2A Agents: team + visibility + enabled + created
-    op.create_index(
-        "ix_a2a_agents_team_visibility_active_created",
+    _create_index_safe(
+        "idx_a2a_agents_team_visibility_active_created",
         "a2a_agents",
         ["team_id", "visibility", "enabled", "created_at"],
-        unique=False,
     )
-    
+
     # A2A Agents: visibility + enabled + created
-    op.create_index(
-        "ix_a2a_agents_visibility_active_created",
+    _create_index_safe(
+        "idx_a2a_agents_visibility_active_created",
         "a2a_agents",
         ["visibility", "enabled", "created_at"],
-        unique=False,
     )
-    
+
     # ------------------------------------------------------------------------
     # Observability Composite Indexes
     # ------------------------------------------------------------------------
-    
+
     # Traces: user + status + time (user activity queries)
-    op.create_index(
-        "ix_observability_traces_user_status_time",
+    _create_index_safe(
+        "idx_observability_traces_user_status_time",
         "observability_traces",
         ["user_email", "status", "start_time"],
-        unique=False,
     )
-    
+
     # Traces: status + http_method + time (error analysis)
-    op.create_index(
-        "ix_observability_traces_status_method_time",
+    _create_index_safe(
+        "idx_observability_traces_status_method_time",
         "observability_traces",
         ["status", "http_method", "start_time"],
-        unique=False,
     )
-    
+
     # Spans: trace + resource_type + time (trace analysis)
-    op.create_index(
-        "ix_observability_spans_trace_resource_time",
+    _create_index_safe(
+        "idx_observability_spans_trace_resource_time",
         "observability_spans",
         ["trace_id", "resource_type", "start_time"],
-        unique=False,
     )
-    
+
     # Spans: resource_type + status + time (resource monitoring)
-    op.create_index(
-        "ix_observability_spans_resource_status_time",
+    _create_index_safe(
+        "idx_observability_spans_resource_status_time",
         "observability_spans",
         ["resource_type", "status", "start_time"],
-        unique=False,
     )
-    
+
     # ------------------------------------------------------------------------
     # Authentication & Token Composite Indexes
     # ------------------------------------------------------------------------
-    
+
     # API Tokens: user + active + created (user token listing)
-    op.create_index(
-        "ix_email_api_tokens_user_active_created",
+    _create_index_safe(
+        "idx_email_api_tokens_user_active_created",
         "email_api_tokens",
         ["user_email", "is_active", "created_at"],
-        unique=False,
     )
-    
+
     # API Tokens: team + active + created (team token listing)
-    op.create_index(
-        "ix_email_api_tokens_team_active_created",
+    _create_index_safe(
+        "idx_email_api_tokens_team_active_created",
         "email_api_tokens",
         ["team_id", "is_active", "created_at"],
-        unique=False,
     )
-    
+
     # Auth Events: user + event_type + timestamp (user activity audit)
-    op.create_index(
-        "ix_email_auth_events_user_type_time",
+    _create_index_safe(
+        "idx_email_auth_events_user_type_time",
         "email_auth_events",
         ["user_email", "event_type", "timestamp"],
-        unique=False,
     )
-    
+
     # SSO Sessions: provider + user + created (session lookup)
-    op.create_index(
-        "ix_sso_auth_sessions_provider_user_created",
+    _create_index_safe(
+        "idx_sso_auth_sessions_provider_user_created",
         "sso_auth_sessions",
         ["provider_id", "user_email", "created_at"],
-        unique=False,
     )
-    
+
     # OAuth Tokens: gateway + user + created (token lookup)
-    op.create_index(
-        "ix_oauth_tokens_gateway_user_created",
+    _create_index_safe(
+        "idx_oauth_tokens_gateway_user_created",
         "oauth_tokens",
         ["gateway_id", "app_user_email", "created_at"],
-        unique=False,
     )
-    
+
     # ------------------------------------------------------------------------
     # Metrics Composite Indexes
     # ------------------------------------------------------------------------
-    
+
     # Tool Metrics: tool + timestamp (time-series queries)
-    op.create_index(
-        "ix_tool_metrics_tool_timestamp",
+    _create_index_safe(
+        "idx_tool_metrics_tool_timestamp",
         "tool_metrics",
         ["tool_id", "timestamp"],
-        unique=False,
     )
-    
+
     # Resource Metrics: resource + timestamp
-    op.create_index(
-        "ix_resource_metrics_resource_timestamp",
+    _create_index_safe(
+        "idx_resource_metrics_resource_timestamp",
         "resource_metrics",
         ["resource_id", "timestamp"],
-        unique=False,
     )
-    
+
     # Server Metrics: server + timestamp
-    op.create_index(
-        "ix_server_metrics_server_timestamp",
+    _create_index_safe(
+        "idx_server_metrics_server_timestamp",
         "server_metrics",
         ["server_id", "timestamp"],
-        unique=False,
     )
-    
+
     # Prompt Metrics: prompt + timestamp
-    op.create_index(
-        "ix_prompt_metrics_prompt_timestamp",
+    _create_index_safe(
+        "idx_prompt_metrics_prompt_timestamp",
         "prompt_metrics",
         ["prompt_id", "timestamp"],
-        unique=False,
     )
-    
+
     # ------------------------------------------------------------------------
     # RBAC Composite Indexes
     # ------------------------------------------------------------------------
-    
+
     # User Roles: user + scope + active (permission checks)
-    op.create_index(
-        "ix_user_roles_user_scope_active",
+    _create_index_safe(
+        "idx_user_roles_user_scope_active",
         "user_roles",
         ["user_email", "scope", "is_active"],
-        unique=False,
     )
-    
+
     # User Roles: role + scope + active (role membership queries)
-    op.create_index(
-        "ix_user_roles_role_scope_active",
+    _create_index_safe(
+        "idx_user_roles_role_scope_active",
         "user_roles",
         ["role_id", "scope", "is_active"],
-        unique=False,
     )
 
 
 def downgrade() -> None:
     """Remove all foreign key and composite indexes."""
-    
+
     # ========================================================================
     # Remove Composite Indexes (Phase 2) - in reverse order
     # ========================================================================
-    
+
     # RBAC
-    op.drop_index("ix_user_roles_role_scope_active", table_name="user_roles")
-    op.drop_index("ix_user_roles_user_scope_active", table_name="user_roles")
-    
+    _drop_index_safe("idx_user_roles_role_scope_active", "user_roles")
+    _drop_index_safe("idx_user_roles_user_scope_active", "user_roles")
+
     # Metrics
-    op.drop_index("ix_prompt_metrics_prompt_timestamp", table_name="prompt_metrics")
-    op.drop_index("ix_server_metrics_server_timestamp", table_name="server_metrics")
-    op.drop_index("ix_resource_metrics_resource_timestamp", table_name="resource_metrics")
-    op.drop_index("ix_tool_metrics_tool_timestamp", table_name="tool_metrics")
-    
+    _drop_index_safe("idx_prompt_metrics_prompt_timestamp", "prompt_metrics")
+    _drop_index_safe("idx_server_metrics_server_timestamp", "server_metrics")
+    _drop_index_safe("idx_resource_metrics_resource_timestamp", "resource_metrics")
+    _drop_index_safe("idx_tool_metrics_tool_timestamp", "tool_metrics")
+
     # Authentication & Tokens
-    op.drop_index("ix_oauth_tokens_gateway_user_created", table_name="oauth_tokens")
-    op.drop_index("ix_sso_auth_sessions_provider_user_created", table_name="sso_auth_sessions")
-    op.drop_index("ix_email_auth_events_user_type_time", table_name="email_auth_events")
-    op.drop_index("ix_email_api_tokens_team_active_created", table_name="email_api_tokens")
-    op.drop_index("ix_email_api_tokens_user_active_created", table_name="email_api_tokens")
-    
+    _drop_index_safe("idx_oauth_tokens_gateway_user_created", "oauth_tokens")
+    _drop_index_safe("idx_sso_auth_sessions_provider_user_created", "sso_auth_sessions")
+    _drop_index_safe("idx_email_auth_events_user_type_time", "email_auth_events")
+    _drop_index_safe("idx_email_api_tokens_team_active_created", "email_api_tokens")
+    _drop_index_safe("idx_email_api_tokens_user_active_created", "email_api_tokens")
+
     # Observability
-    op.drop_index("ix_observability_spans_resource_status_time", table_name="observability_spans")
-    op.drop_index("ix_observability_spans_trace_resource_time", table_name="observability_spans")
-    op.drop_index("ix_observability_traces_status_method_time", table_name="observability_traces")
-    op.drop_index("ix_observability_traces_user_status_time", table_name="observability_traces")
-    
+    _drop_index_safe("idx_observability_spans_resource_status_time", "observability_spans")
+    _drop_index_safe("idx_observability_spans_trace_resource_time", "observability_spans")
+    _drop_index_safe("idx_observability_traces_status_method_time", "observability_traces")
+    _drop_index_safe("idx_observability_traces_user_status_time", "observability_traces")
+
     # Core Entities
-    op.drop_index("ix_a2a_agents_visibility_active_created", table_name="a2a_agents")
-    op.drop_index("ix_a2a_agents_team_visibility_active_created", table_name="a2a_agents")
-    op.drop_index("ix_gateways_visibility_active_created", table_name="gateways")
-    op.drop_index("ix_gateways_team_visibility_active_created", table_name="gateways")
-    op.drop_index("ix_servers_visibility_active_created", table_name="servers")
-    op.drop_index("ix_servers_team_visibility_active_created", table_name="servers")
-    op.drop_index("ix_prompts_visibility_active_created", table_name="prompts")
-    op.drop_index("ix_prompts_team_visibility_active_created", table_name="prompts")
-    op.drop_index("ix_resources_visibility_active_created", table_name="resources")
-    op.drop_index("ix_resources_team_visibility_active_created", table_name="resources")
-    op.drop_index("ix_tools_visibility_active_created", table_name="tools")
-    op.drop_index("ix_tools_team_visibility_active_created", table_name="tools")
-    
+    _drop_index_safe("idx_a2a_agents_visibility_active_created", "a2a_agents")
+    _drop_index_safe("idx_a2a_agents_team_visibility_active_created", "a2a_agents")
+    _drop_index_safe("idx_gateways_visibility_active_created", "gateways")
+    _drop_index_safe("idx_gateways_team_visibility_active_created", "gateways")
+    _drop_index_safe("idx_servers_visibility_active_created", "servers")
+    _drop_index_safe("idx_servers_team_visibility_active_created", "servers")
+    _drop_index_safe("idx_prompts_visibility_active_created", "prompts")
+    _drop_index_safe("idx_prompts_team_visibility_active_created", "prompts")
+    _drop_index_safe("idx_resources_visibility_active_created", "resources")
+    _drop_index_safe("idx_resources_team_visibility_active_created", "resources")
+    _drop_index_safe("idx_tools_visibility_active_created", "tools")
+    _drop_index_safe("idx_tools_team_visibility_active_created", "tools")
+
     # Team Management
-    op.drop_index("ix_email_teams_creator_personal_active", table_name="email_teams")
-    op.drop_index("ix_email_teams_visibility_active_created", table_name="email_teams")
-    op.drop_index("ix_email_team_join_requests_user_status_time", table_name="email_team_join_requests")
-    op.drop_index("ix_email_team_join_requests_team_status_time", table_name="email_team_join_requests")
-    op.drop_index("ix_email_team_invitations_email_active_created", table_name="email_team_invitations")
-    op.drop_index("ix_email_team_invitations_team_active_created", table_name="email_team_invitations")
-    op.drop_index("ix_email_team_members_team_role_active", table_name="email_team_members")
-    op.drop_index("ix_email_team_members_user_team_active", table_name="email_team_members")
-    
+    _drop_index_safe("idx_email_teams_creator_personal_active", "email_teams")
+    _drop_index_safe("idx_email_teams_visibility_active_created", "email_teams")
+    _drop_index_safe("idx_email_team_join_requests_user_status_time", "email_team_join_requests")
+    _drop_index_safe("idx_email_team_join_requests_team_status_time", "email_team_join_requests")
+    _drop_index_safe("idx_email_team_invitations_email_active_created", "email_team_invitations")
+    _drop_index_safe("idx_email_team_invitations_team_active_created", "email_team_invitations")
+    _drop_index_safe("idx_email_team_members_team_role_active", "email_team_members")
+    _drop_index_safe("idx_email_team_members_user_team_active", "email_team_members")
+
     # ========================================================================
     # Remove Foreign Key Indexes (Phase 1) - in reverse order
     # ========================================================================
-    
-    op.drop_index("ix_llm_models_provider_id", table_name="llm_models")
-    op.drop_index("ix_sso_auth_sessions_user_email", table_name="sso_auth_sessions")
-    op.drop_index("ix_sso_auth_sessions_provider_id", table_name="sso_auth_sessions")
-    op.drop_index("ix_token_revocations_revoked_by", table_name="token_revocations")
-    op.drop_index("ix_email_api_tokens_server_id", table_name="email_api_tokens")
-    op.drop_index("ix_oauth_states_gateway_id", table_name="oauth_states")
-    op.drop_index("ix_oauth_tokens_app_user_email", table_name="oauth_tokens")
-    op.drop_index("ix_oauth_tokens_gateway_id", table_name="oauth_tokens")
-    op.drop_index("ix_resource_subscriptions_resource_id", table_name="resource_subscriptions")
-    op.drop_index("ix_grpc_services_team_id", table_name="grpc_services")
-    op.drop_index("ix_a2a_agents_team_id", table_name="a2a_agents")
-    op.drop_index("ix_gateways_team_id", table_name="gateways")
-    op.drop_index("ix_servers_team_id", table_name="servers")
-    op.drop_index("ix_prompts_team_id", table_name="prompts")
-    op.drop_index("ix_prompts_gateway_id", table_name="prompts")
-    op.drop_index("ix_resources_team_id", table_name="resources")
-    op.drop_index("ix_resources_gateway_id", table_name="resources")
-    op.drop_index("ix_tools_team_id", table_name="tools")
-    op.drop_index("ix_tools_gateway_id", table_name="tools")
-    op.drop_index("ix_a2a_agent_metrics_a2a_agent_id", table_name="a2a_agent_metrics")
-    op.drop_index("ix_prompt_metrics_prompt_id", table_name="prompt_metrics")
-    op.drop_index("ix_server_metrics_server_id", table_name="server_metrics")
-    op.drop_index("ix_resource_metrics_resource_id", table_name="resource_metrics")
-    op.drop_index("ix_tool_metrics_tool_id", table_name="tool_metrics")
-    op.drop_index("ix_pending_user_approvals_approved_by", table_name="pending_user_approvals")
-    op.drop_index("ix_email_team_join_requests_reviewed_by", table_name="email_team_join_requests")
-    op.drop_index("ix_email_team_join_requests_user_email", table_name="email_team_join_requests")
-    op.drop_index("ix_email_team_join_requests_team_id", table_name="email_team_join_requests")
-    op.drop_index("ix_email_team_invitations_invited_by", table_name="email_team_invitations")
-    op.drop_index("ix_email_team_invitations_team_id", table_name="email_team_invitations")
-    op.drop_index("ix_email_team_member_history_action_by", table_name="email_team_member_history")
-    op.drop_index("ix_email_team_member_history_user_email", table_name="email_team_member_history")
-    op.drop_index("ix_email_team_member_history_team_id", table_name="email_team_member_history")
-    op.drop_index("ix_email_team_member_history_team_member_id", table_name="email_team_member_history")
-    op.drop_index("ix_email_team_members_invited_by", table_name="email_team_members")
-    op.drop_index("ix_email_team_members_user_email", table_name="email_team_members")
-    op.drop_index("ix_email_team_members_team_id", table_name="email_team_members")
-    op.drop_index("ix_email_teams_created_by", table_name="email_teams")
-    op.drop_index("ix_user_roles_granted_by", table_name="user_roles")
-    op.drop_index("ix_user_roles_role_id", table_name="user_roles")
-    op.drop_index("ix_user_roles_user_email", table_name="user_roles")
-    op.drop_index("ix_roles_created_by", table_name="roles")
-    op.drop_index("ix_roles_inherits_from", table_name="roles")
 
+    _drop_index_safe("idx_llm_models_provider_id", "llm_models")
+    _drop_index_safe("idx_sso_auth_sessions_user_email", "sso_auth_sessions")
+    _drop_index_safe("idx_sso_auth_sessions_provider_id", "sso_auth_sessions")
+    _drop_index_safe("idx_token_revocations_revoked_by", "token_revocations")
+    _drop_index_safe("idx_email_api_tokens_server_id", "email_api_tokens")
+    _drop_index_safe("idx_oauth_states_gateway_id", "oauth_states")
+    _drop_index_safe("idx_oauth_tokens_app_user_email", "oauth_tokens")
+    _drop_index_safe("idx_oauth_tokens_gateway_id", "oauth_tokens")
+    _drop_index_safe("idx_resource_subscriptions_resource_id", "resource_subscriptions")
+    _drop_index_safe("idx_grpc_services_team_id", "grpc_services")
+    _drop_index_safe("idx_a2a_agents_team_id", "a2a_agents")
+    _drop_index_safe("idx_gateways_team_id", "gateways")
+    _drop_index_safe("idx_servers_team_id", "servers")
+    _drop_index_safe("idx_prompts_team_id", "prompts")
+    _drop_index_safe("idx_prompts_gateway_id", "prompts")
+    _drop_index_safe("idx_resources_team_id", "resources")
+    _drop_index_safe("idx_resources_gateway_id", "resources")
+    _drop_index_safe("idx_tools_team_id", "tools")
+    _drop_index_safe("idx_tools_gateway_id", "tools")
+    _drop_index_safe("idx_a2a_agent_metrics_a2a_agent_id", "a2a_agent_metrics")
+    _drop_index_safe("idx_prompt_metrics_prompt_id", "prompt_metrics")
+    _drop_index_safe("idx_server_metrics_server_id", "server_metrics")
+    _drop_index_safe("idx_resource_metrics_resource_id", "resource_metrics")
+    _drop_index_safe("idx_tool_metrics_tool_id", "tool_metrics")
+    _drop_index_safe("idx_pending_user_approvals_approved_by", "pending_user_approvals")
+    _drop_index_safe("idx_email_team_join_requests_reviewed_by", "email_team_join_requests")
+    _drop_index_safe("idx_email_team_join_requests_user_email", "email_team_join_requests")
+    _drop_index_safe("idx_email_team_join_requests_team_id", "email_team_join_requests")
+    _drop_index_safe("idx_email_team_invitations_invited_by", "email_team_invitations")
+    _drop_index_safe("idx_email_team_invitations_team_id", "email_team_invitations")
+    _drop_index_safe("idx_email_team_member_history_action_by", "email_team_member_history")
+    _drop_index_safe("idx_email_team_member_history_user_email", "email_team_member_history")
+    _drop_index_safe("idx_email_team_member_history_team_id", "email_team_member_history")
+    _drop_index_safe("idx_email_team_member_history_team_member_id", "email_team_member_history")
+    _drop_index_safe("idx_email_team_members_invited_by", "email_team_members")
+    _drop_index_safe("idx_email_team_members_user_email", "email_team_members")
+    _drop_index_safe("idx_email_team_members_team_id", "email_team_members")
+    _drop_index_safe("idx_email_teams_created_by", "email_teams")
+    _drop_index_safe("idx_user_roles_granted_by", "user_roles")
+    _drop_index_safe("idx_user_roles_role_id", "user_roles")
+    _drop_index_safe("idx_user_roles_user_email", "user_roles")
+    _drop_index_safe("idx_roles_created_by", "roles")
+    _drop_index_safe("idx_roles_inherits_from", "roles")
