@@ -1209,7 +1209,6 @@ class TestResourceMetrics:
     """Test resource metrics functionality."""
 
     @pytest.mark.asyncio
-    @pytest.mark.asyncio
     async def test_aggregate_metrics(self, resource_service, mock_db):
         """Test metrics aggregation."""
         # Mock a single aggregated query result with .one() call
@@ -1226,8 +1225,7 @@ class TestResourceMetrics:
         execute_result.one.return_value = mock_result
         mock_db.execute.return_value = execute_result
 
-        # Call synchronous method directly (no await needed)
-        result = resource_service.aggregate_metrics(mock_db)
+        result = await resource_service.aggregate_metrics(mock_db)
 
         assert result.total_executions == 100
         assert result.successful_executions == 80
@@ -1254,8 +1252,7 @@ class TestResourceMetrics:
         execute_result.one.return_value = mock_result
         mock_db.execute.return_value = execute_result
 
-        # Call synchronous method directly (no await needed)
-        result = resource_service.aggregate_metrics(mock_db)
+        result = await resource_service.aggregate_metrics(mock_db)
 
         assert result.total_executions == 0
         assert result.failure_rate == 0.0
@@ -1264,8 +1261,7 @@ class TestResourceMetrics:
     @pytest.mark.asyncio
     async def test_reset_metrics(self, resource_service, mock_db):
         """Test metrics reset."""
-        # Call synchronous method directly (no await needed)
-        resource_service.reset_metrics(mock_db)
+        await resource_service.reset_metrics(mock_db)
 
         mock_db.execute.assert_called_once()
         mock_db.commit.assert_called_once()

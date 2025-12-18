@@ -173,18 +173,17 @@ class SystemStatsService:
             >>> # assert "personal" in stats["breakdown"]
             >>> # assert "organizational" in stats["breakdown"]
         """
-        # Optimized from 3 queries to 1 using aggregated SELECT
-        result = db.execute(
+        # Optimized from 3 queries to 2 using aggregated SELECT (separate tables need separate queries)
+        team_result = db.execute(
             select(
                 func.count(EmailTeam.id).label("total_teams"),
                 func.sum(case((EmailTeam.is_personal.is_(True), 1), else_=0)).label("personal_teams"),
-                func.count(EmailTeamMember.id).label("team_members"),
-            )
+            ).select_from(EmailTeam)
         ).one()
+        team_members = db.execute(select(func.count(EmailTeamMember.id))).scalar() or 0
 
-        total_teams = result.total_teams or 0
-        personal_teams = result.personal_teams or 0
-        team_members = result.team_members or 0
+        total_teams = team_result.total_teams or 0
+        personal_teams = team_result.personal_teams or 0
 
         return {"total": total_teams, "breakdown": {"personal": personal_teams, "organizational": total_teams - personal_teams, "members": team_members}}
 
@@ -192,6 +191,12 @@ class SystemStatsService:
         """Get MCP resource metrics in a SINGLE query using UNION ALL.
 
         Optimized from 6 queries to 1.
+
+        Args:
+            db: Database session
+
+        Returns:
+            Dictionary with total MCP resource count and breakdown by type
         """
         # Create a single query that combines counts from all tables with consistent column labels
         stmt = (
@@ -239,18 +244,17 @@ class SystemStatsService:
             >>> # assert stats["total"] >= 0
             >>> # assert "active" in stats["breakdown"]
         """
-        # Optimized from 3 queries to 1 using aggregated SELECT
-        result = db.execute(
+        # Optimized from 3 queries to 2 using aggregated SELECT (separate tables need separate queries)
+        token_result = db.execute(
             select(
                 func.count(EmailApiToken.id).label("total"),
                 func.sum(case((EmailApiToken.is_active.is_(True), 1), else_=0)).label("active"),
-                func.count(TokenRevocation.jti).label("revoked"),
-            )
+            ).select_from(EmailApiToken)
         ).one()
+        revoked = db.execute(select(func.count(TokenRevocation.jti))).scalar() or 0
 
-        total = result.total or 0
-        active = result.active or 0
-        revoked = result.revoked or 0
+        total = token_result.total or 0
+        active = token_result.active or 0
 
         return {"total": total, "breakdown": {"active": active, "inactive": total - active, "revoked": revoked}}
 
@@ -269,20 +273,23 @@ class SystemStatsService:
             >>> # assert stats["total"] >= 0
             >>> # assert "mcp_sessions" in stats["breakdown"]
         """
-        # Optimized from 4 queries to 1 using aggregated SELECT
-        result = db.execute(
-            select(
-                func.count(SessionRecord.session_id).label("mcp_sessions"),
-                func.count(SessionMessageRecord.id).label("mcp_messages"),
-                func.count(ResourceSubscription.id).label("subscriptions"),
-                func.count(OAuthToken.access_token).label("oauth_tokens"),
+        # Optimized from 4 queries to 1 using UNION ALL (separate tables need separate selects)
+        stmt = (
+            select(literal("mcp_sessions").label("type"), func.count(SessionRecord.session_id).label("cnt"))
+            .select_from(SessionRecord)
+            .union_all(
+                select(literal("mcp_messages").label("type"), func.count(SessionMessageRecord.id).label("cnt")).select_from(SessionMessageRecord),
+                select(literal("subscriptions").label("type"), func.count(ResourceSubscription.id).label("cnt")).select_from(ResourceSubscription),
+                select(literal("oauth_tokens").label("type"), func.count(OAuthToken.access_token).label("cnt")).select_from(OAuthToken),
             )
-        ).one()
+        )
+        results = db.execute(stmt).all()
+        counts = {row.type: row.cnt for row in results}
 
-        mcp_sessions = result.mcp_sessions or 0
-        mcp_messages = result.mcp_messages or 0
-        subscriptions = result.subscriptions or 0
-        oauth_tokens = result.oauth_tokens or 0
+        mcp_sessions = counts.get("mcp_sessions", 0)
+        mcp_messages = counts.get("mcp_messages", 0)
+        subscriptions = counts.get("subscriptions", 0)
+        oauth_tokens = counts.get("oauth_tokens", 0)
         total = mcp_sessions + mcp_messages + subscriptions + oauth_tokens
 
         return {"total": total, "breakdown": {"mcp_sessions": mcp_sessions, "mcp_messages": mcp_messages, "subscriptions": subscriptions, "oauth_tokens": oauth_tokens}}
@@ -302,24 +309,27 @@ class SystemStatsService:
             >>> # assert stats["total"] >= 0
             >>> # assert "tool_metrics" in stats["breakdown"]
         """
-        # Optimized from 6 queries to 1 using aggregated SELECT
-        result = db.execute(
-            select(
-                func.count(ToolMetric.id).label("tool_metrics"),
-                func.count(ResourceMetric.id).label("resource_metrics"),
-                func.count(PromptMetric.id).label("prompt_metrics"),
-                func.count(ServerMetric.id).label("server_metrics"),
-                func.count(A2AAgentMetric.id).label("a2a_agent_metrics"),
-                func.count(TokenUsageLog.id).label("token_usage_logs"),
+        # Optimized from 6 queries to 1 using UNION ALL (separate tables need separate selects)
+        stmt = (
+            select(literal("tool_metrics").label("type"), func.count(ToolMetric.id).label("cnt"))
+            .select_from(ToolMetric)
+            .union_all(
+                select(literal("resource_metrics").label("type"), func.count(ResourceMetric.id).label("cnt")).select_from(ResourceMetric),
+                select(literal("prompt_metrics").label("type"), func.count(PromptMetric.id).label("cnt")).select_from(PromptMetric),
+                select(literal("server_metrics").label("type"), func.count(ServerMetric.id).label("cnt")).select_from(ServerMetric),
+                select(literal("a2a_agent_metrics").label("type"), func.count(A2AAgentMetric.id).label("cnt")).select_from(A2AAgentMetric),
+                select(literal("token_usage_logs").label("type"), func.count(TokenUsageLog.id).label("cnt")).select_from(TokenUsageLog),
             )
-        ).one()
+        )
+        results = db.execute(stmt).all()
+        counts = {row.type: row.cnt for row in results}
 
-        tool_metrics = result.tool_metrics or 0
-        resource_metrics = result.resource_metrics or 0
-        prompt_metrics = result.prompt_metrics or 0
-        server_metrics = result.server_metrics or 0
-        a2a_agent_metrics = result.a2a_agent_metrics or 0
-        token_usage_logs = result.token_usage_logs or 0
+        tool_metrics = counts.get("tool_metrics", 0)
+        resource_metrics = counts.get("resource_metrics", 0)
+        prompt_metrics = counts.get("prompt_metrics", 0)
+        server_metrics = counts.get("server_metrics", 0)
+        a2a_agent_metrics = counts.get("a2a_agent_metrics", 0)
+        token_usage_logs = counts.get("token_usage_logs", 0)
         total = tool_metrics + resource_metrics + prompt_metrics + server_metrics + a2a_agent_metrics + token_usage_logs
 
         return {
@@ -349,20 +359,23 @@ class SystemStatsService:
             >>> # assert stats["total"] >= 0
             >>> # assert "auth_events" in stats["breakdown"]
         """
-        # Optimized from 4 queries to 1 using aggregated SELECT
-        result = db.execute(
-            select(
-                func.count(EmailAuthEvent.id).label("auth_events"),
-                func.count(PermissionAuditLog.id).label("audit_logs"),
-                func.sum(case((PendingUserApproval.status == "pending", 1), else_=0)).label("pending_approvals"),
-                func.sum(case((SSOProvider.is_enabled.is_(True), 1), else_=0)).label("sso_providers"),
+        # Optimized from 4 queries to 1 using UNION ALL (separate tables need separate selects)
+        stmt = (
+            select(literal("auth_events").label("type"), func.count(EmailAuthEvent.id).label("cnt"))
+            .select_from(EmailAuthEvent)
+            .union_all(
+                select(literal("audit_logs").label("type"), func.count(PermissionAuditLog.id).label("cnt")).select_from(PermissionAuditLog),
+                select(literal("pending_approvals").label("type"), func.count(PendingUserApproval.id).label("cnt")).select_from(PendingUserApproval).where(PendingUserApproval.status == "pending"),
+                select(literal("sso_providers").label("type"), func.count(SSOProvider.id).label("cnt")).select_from(SSOProvider).where(SSOProvider.is_enabled.is_(True)),
             )
-        ).one()
+        )
+        results = db.execute(stmt).all()
+        counts = {row.type: row.cnt for row in results}
 
-        auth_events = result.auth_events or 0
-        audit_logs = result.audit_logs or 0
-        pending_approvals = result.pending_approvals or 0
-        sso_providers = result.sso_providers or 0
+        auth_events = counts.get("auth_events", 0)
+        audit_logs = counts.get("audit_logs", 0)
+        pending_approvals = counts.get("pending_approvals", 0)
+        sso_providers = counts.get("sso_providers", 0)
         total = auth_events + audit_logs + pending_approvals
 
         return {"total": total, "breakdown": {"auth_events": auth_events, "audit_logs": audit_logs, "pending_approvals": pending_approvals, "sso_providers": sso_providers}}
@@ -382,16 +395,20 @@ class SystemStatsService:
             >>> # assert stats["total"] >= 0
             >>> # assert "team_invitations" in stats["breakdown"]
         """
-        # Optimized from 2 queries to 1 using aggregated SELECT
-        result = db.execute(
-            select(
-                func.sum(case((EmailTeamInvitation.is_active.is_(True), 1), else_=0)).label("invitations"),
-                func.sum(case((EmailTeamJoinRequest.status == "pending", 1), else_=0)).label("join_requests"),
+        # Optimized from 2 queries to 1 using UNION ALL (separate tables need separate selects)
+        stmt = (
+            select(literal("invitations").label("type"), func.count(EmailTeamInvitation.id).label("cnt"))
+            .select_from(EmailTeamInvitation)
+            .where(EmailTeamInvitation.is_active.is_(True))
+            .union_all(
+                select(literal("join_requests").label("type"), func.count(EmailTeamJoinRequest.id).label("cnt")).select_from(EmailTeamJoinRequest).where(EmailTeamJoinRequest.status == "pending"),
             )
-        ).one()
+        )
+        results = db.execute(stmt).all()
+        counts = {row.type: row.cnt for row in results}
 
-        invitations = result.invitations or 0
-        join_requests = result.join_requests or 0
+        invitations = counts.get("invitations", 0)
+        join_requests = counts.get("join_requests", 0)
         total = invitations + join_requests
 
         return {"total": total, "breakdown": {"team_invitations": invitations, "join_requests": join_requests}}

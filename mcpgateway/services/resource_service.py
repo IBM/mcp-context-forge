@@ -2519,7 +2519,7 @@ class ResourceService:
         return result
 
     # --- Metrics ---
-    def aggregate_metrics(self, db: Session) -> ResourceMetrics:
+    async def aggregate_metrics(self, db: Session) -> ResourceMetrics:
         """
         Aggregate metrics for all resource invocations across all resources.
 
@@ -2535,7 +2535,8 @@ class ResourceService:
             >>> service = ResourceService()
             >>> db = MagicMock()
             >>> db.execute.return_value.one.return_value = MagicMock(total_executions=0, successful_executions=0, failed_executions=0, min_response_time=None, max_response_time=None, avg_response_time=None, last_execution_time=None)
-            >>> result = service.aggregate_metrics(db)
+            >>> import asyncio
+            >>> result = asyncio.run(service.aggregate_metrics(db))
             >>> hasattr(result, 'total_executions')
             True
         """
@@ -2567,7 +2568,7 @@ class ResourceService:
             last_execution_time=result.last_execution_time,
         )
 
-    def reset_metrics(self, db: Session) -> None:
+    async def reset_metrics(self, db: Session) -> None:
         """
         Reset all resource metrics by deleting all records from the resource metrics table.
 
@@ -2581,7 +2582,8 @@ class ResourceService:
             >>> db = MagicMock()
             >>> db.execute = MagicMock()
             >>> db.commit = MagicMock()
-            >>> service.reset_metrics(db)
+            >>> import asyncio
+            >>> asyncio.run(service.reset_metrics(db))
         """
         db.execute(delete(ResourceMetric))
         db.commit()

@@ -1780,7 +1780,7 @@ class PromptService:
         await self._event_service.publish_event(event)
 
     # --- Metrics ---
-    def aggregate_metrics(self, db: Session) -> Dict[str, Any]:
+    async def aggregate_metrics(self, db: Session) -> Dict[str, Any]:
         """
         Aggregate metrics for all prompt invocations across all prompts.
 
@@ -1805,7 +1805,8 @@ class PromptService:
             >>> service = PromptService()
             >>> db = MagicMock()
             >>> db.execute.return_value.one.return_value = MagicMock(total_executions=0, successful_executions=0, failed_executions=0, min_response_time=None, max_response_time=None, avg_response_time=None, last_execution_time=None)
-            >>> result = service.aggregate_metrics(db)
+            >>> import asyncio
+            >>> result = asyncio.run(service.aggregate_metrics(db))
             >>> isinstance(result, dict)
             True
         """
@@ -1838,7 +1839,7 @@ class PromptService:
             "last_execution_time": result.last_execution_time,
         }
 
-    def reset_metrics(self, db: Session) -> None:
+    async def reset_metrics(self, db: Session) -> None:
         """
         Reset all prompt metrics by deleting all records from the prompt metrics table.
 
@@ -1852,7 +1853,8 @@ class PromptService:
             >>> db = MagicMock()
             >>> db.execute = MagicMock()
             >>> db.commit = MagicMock()
-            >>> service.reset_metrics(db)
+            >>> import asyncio
+            >>> asyncio.run(service.reset_metrics(db))
         """
 
         db.execute(delete(PromptMetric))

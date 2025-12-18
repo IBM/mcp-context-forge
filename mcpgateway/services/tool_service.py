@@ -905,7 +905,7 @@ class ToolService:
         result = []
         tools = []
         for row in rows:
-            tool, team_name = row.DbTool, row.team_name
+            tool, team_name = row[0], row.team_name
             tool.team = team_name
             tools.append(tool)
             result.append(self._convert_tool_to_read(tool))
@@ -981,7 +981,7 @@ class ToolService:
         # Add team names to tools based on join result
         result = []
         for row in rows:
-            tool = row.DbTool
+            tool = row[0]
             team_name = row.team_name
             tool.team = team_name
             result.append(self._convert_tool_to_read(tool, include_metrics=include_metrics))
@@ -1069,7 +1069,7 @@ class ToolService:
         # Convert to ToolRead objects with team names from join result
         result = []
         for row in rows:
-            tool = row.DbTool
+            tool = row[0]
             team_name = row.team_name
             tool.team = team_name
             result.append(self._convert_tool_to_read(tool))

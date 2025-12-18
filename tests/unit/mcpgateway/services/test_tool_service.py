@@ -39,8 +39,7 @@ from mcpgateway.utils.services_auth import encode_auth
 @pytest.fixture(autouse=True)
 def mock_logging_services():
     """Mock audit_trail and structured_logger to prevent database writes during tests."""
-    with patch("mcpgateway.services.tool_service.audit_trail") as mock_audit, \
-         patch("mcpgateway.services.tool_service.structured_logger") as mock_logger:
+    with patch("mcpgateway.services.tool_service.audit_trail") as mock_audit, patch("mcpgateway.services.tool_service.structured_logger") as mock_logger:
         mock_audit.log_action = MagicMock(return_value=None)
         mock_logger.log = MagicMock(return_value=None)
         yield {"audit_trail": mock_audit, "structured_logger": mock_logger}
@@ -531,7 +530,7 @@ class TestToolService:
 
         # Mock DB to return a tuple of (tool, team_name) from LEFT JOIN
         mock_row = MagicMock()
-        mock_row.DbTool = mock_tool
+        mock_row.__getitem__ = lambda self, idx: mock_tool if idx == 0 else None
         mock_row.team_name = None
         test_db.execute = Mock(return_value=MagicMock(all=Mock(return_value=[mock_row])))
 
@@ -553,7 +552,7 @@ class TestToolService:
         # Mock DB to return a tuple of (tool, team_name) from LEFT JOIN
         mock_tool.enabled = False
         mock_row = MagicMock()
-        mock_row.DbTool = mock_tool
+        mock_row.__getitem__ = lambda self, idx: mock_tool if idx == 0 else None
         mock_row.team_name = None
         mock_execute = Mock(return_value=MagicMock(all=Mock(return_value=[mock_row])))
         test_db.execute = mock_execute
@@ -610,9 +609,9 @@ class TestToolService:
         mock_db = Mock()
         mock_tool = Mock(enabled=True, team_id=None)
         mock_row = MagicMock()
-        mock_row.DbTool = mock_tool
+        mock_row.__getitem__ = lambda self, idx: mock_tool if idx == 0 else None
         mock_row.team_name = None
-        
+
         mock_db.execute.return_value.all.return_value = [mock_row]
 
         service = ToolService()
@@ -628,15 +627,15 @@ class TestToolService:
         mock_db = Mock()
         active_tool = Mock(enabled=True, reachable=True, team_id=None)
         inactive_tool = Mock(enabled=False, reachable=True, team_id=None)
-        
+
         active_row = MagicMock()
-        active_row.DbTool = active_tool
+        active_row.__getitem__ = lambda self, idx: active_tool if idx == 0 else None
         active_row.team_name = None
-        
+
         inactive_row = MagicMock()
-        inactive_row.DbTool = inactive_tool
+        inactive_row.__getitem__ = lambda self, idx: inactive_tool if idx == 0 else None
         inactive_row.team_name = None
-        
+
         mock_db.execute.return_value.all.return_value = [active_row, inactive_row]
 
         service = ToolService()
@@ -883,7 +882,6 @@ class TestToolService:
         assert calls[0][0][0]["data"]["enabled"] is True
 
         assert calls[3][0][0]["data"] == tool_info
-
 
     @pytest.mark.asyncio
     async def test_publish_event_with_real_queue(self, tool_service):
@@ -1646,7 +1644,7 @@ class TestToolService:
         mock_gateway.enabled = True
         mock_gateway.reachable = True
         mock_gateway.id = mock_tool.gateway_id
-        mock_gateway.slug="test-gateway"
+        mock_gateway.slug = "test-gateway"
         mock_gateway.capabilities = {"tools": {"listChanged": True}}
         mock_gateway.transport = "SSE"
         mock_gateway.passthrough_headers = []
@@ -2029,10 +2027,10 @@ class TestToolService:
         mock_query.limit.return_value = mock_query
 
         session = MagicMock()
-        
+
         # Mock LEFT JOIN row result
         mock_row = MagicMock()
-        mock_row.DbTool = mock_tool
+        mock_row.__getitem__ = lambda self, idx: mock_tool if idx == 0 else None
         mock_row.team_name = "test-team"
         session.execute.return_value.all.return_value = [mock_row]
 

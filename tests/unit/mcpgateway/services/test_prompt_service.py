@@ -528,8 +528,7 @@ class TestPromptService:
         execute_result.one.return_value = mock_result
         test_db.execute = Mock(return_value=execute_result)
 
-        # Call synchronous method directly (no await needed)
-        metrics = prompt_service.aggregate_metrics(test_db)
+        metrics = await prompt_service.aggregate_metrics(test_db)
         assert metrics["total_executions"] == 10
         assert metrics["successful_executions"] == 8
         assert metrics["failed_executions"] == 2
@@ -538,7 +537,7 @@ class TestPromptService:
         # reset_metrics
         test_db.execute = Mock()
         test_db.commit = Mock()
-        prompt_service.reset_metrics(test_db)
+        await prompt_service.reset_metrics(test_db)
         test_db.execute.assert_called()
         test_db.commit.assert_called_once()
 
