@@ -514,20 +514,22 @@ class TestPromptService:
 
     @pytest.mark.asyncio
     async def test_aggregate_and_reset_metrics(self, prompt_service, test_db):
-        # Metrics numbers to be returned by scalar() calls
-        test_db.execute = Mock(
-            side_effect=[
-                _make_execute_result(scalar=10),  # total
-                _make_execute_result(scalar=8),  # successful
-                _make_execute_result(scalar=2),  # failed
-                _make_execute_result(scalar=0.1),  # min_rt
-                _make_execute_result(scalar=0.9),  # max_rt
-                _make_execute_result(scalar=0.5),  # avg_rt
-                _make_execute_result(scalar=datetime(2025, 1, 1, tzinfo=timezone.utc)),  # last_time
-            ]
-        )
+        # Mock a single aggregated query result with .one() call
+        mock_result = MagicMock()
+        mock_result.total_executions = 10
+        mock_result.successful_executions = 8
+        mock_result.failed_executions = 2
+        mock_result.min_response_time = 0.1
+        mock_result.max_response_time = 0.9
+        mock_result.avg_response_time = 0.5
+        mock_result.last_execution_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
 
-        metrics = await prompt_service.aggregate_metrics(test_db)
+        execute_result = MagicMock()
+        execute_result.one.return_value = mock_result
+        test_db.execute = Mock(return_value=execute_result)
+
+        # Call synchronous method directly (no await needed)
+        metrics = prompt_service.aggregate_metrics(test_db)
         assert metrics["total_executions"] == 10
         assert metrics["successful_executions"] == 8
         assert metrics["failed_executions"] == 2
@@ -536,7 +538,7 @@ class TestPromptService:
         # reset_metrics
         test_db.execute = Mock()
         test_db.commit = Mock()
-        await prompt_service.reset_metrics(test_db)
+        prompt_service.reset_metrics(test_db)
         test_db.execute.assert_called()
         test_db.commit.assert_called_once()
 

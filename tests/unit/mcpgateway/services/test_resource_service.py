@@ -1209,20 +1209,25 @@ class TestResourceMetrics:
     """Test resource metrics functionality."""
 
     @pytest.mark.asyncio
+    @pytest.mark.asyncio
     async def test_aggregate_metrics(self, resource_service, mock_db):
         """Test metrics aggregation."""
-        # Mock database responses for metrics queries
-        mock_db.execute.side_effect = [
-            MagicMock(scalar=MagicMock(return_value=100)),  # total_executions
-            MagicMock(scalar=MagicMock(return_value=80)),  # successful_executions
-            MagicMock(scalar=MagicMock(return_value=20)),  # failed_executions
-            MagicMock(scalar=MagicMock(return_value=0.1)),  # min_response_time
-            MagicMock(scalar=MagicMock(return_value=2.5)),  # max_response_time
-            MagicMock(scalar=MagicMock(return_value=1.2)),  # avg_response_time
-            MagicMock(scalar=MagicMock(return_value=datetime.now(timezone.utc))),  # last_execution_time
-        ]
+        # Mock a single aggregated query result with .one() call
+        mock_result = MagicMock()
+        mock_result.total_executions = 100
+        mock_result.successful_executions = 80
+        mock_result.failed_executions = 20
+        mock_result.min_response_time = 0.1
+        mock_result.max_response_time = 2.5
+        mock_result.avg_response_time = 1.2
+        mock_result.last_execution_time = datetime.now(timezone.utc)
 
-        result = await resource_service.aggregate_metrics(mock_db)
+        execute_result = MagicMock()
+        execute_result.one.return_value = mock_result
+        mock_db.execute.return_value = execute_result
+
+        # Call synchronous method directly (no await needed)
+        result = resource_service.aggregate_metrics(mock_db)
 
         assert result.total_executions == 100
         assert result.successful_executions == 80
@@ -1235,18 +1240,22 @@ class TestResourceMetrics:
     @pytest.mark.asyncio
     async def test_aggregate_metrics_empty(self, resource_service, mock_db):
         """Test metrics aggregation with no data."""
-        # Mock empty database responses
-        mock_db.execute.side_effect = [
-            MagicMock(scalar=MagicMock(return_value=0)),  # total_executions
-            MagicMock(scalar=MagicMock(return_value=0)),  # successful_executions
-            MagicMock(scalar=MagicMock(return_value=0)),  # failed_executions
-            MagicMock(scalar=MagicMock(return_value=None)),  # min_response_time
-            MagicMock(scalar=MagicMock(return_value=None)),  # max_response_time
-            MagicMock(scalar=MagicMock(return_value=None)),  # avg_response_time
-            MagicMock(scalar=MagicMock(return_value=None)),  # last_execution_time
-        ]
+        # Mock empty database result
+        mock_result = MagicMock()
+        mock_result.total_executions = 0
+        mock_result.successful_executions = 0
+        mock_result.failed_executions = 0
+        mock_result.min_response_time = None
+        mock_result.max_response_time = None
+        mock_result.avg_response_time = None
+        mock_result.last_execution_time = None
 
-        result = await resource_service.aggregate_metrics(mock_db)
+        execute_result = MagicMock()
+        execute_result.one.return_value = mock_result
+        mock_db.execute.return_value = execute_result
+
+        # Call synchronous method directly (no await needed)
+        result = resource_service.aggregate_metrics(mock_db)
 
         assert result.total_executions == 0
         assert result.failure_rate == 0.0
@@ -1255,7 +1264,8 @@ class TestResourceMetrics:
     @pytest.mark.asyncio
     async def test_reset_metrics(self, resource_service, mock_db):
         """Test metrics reset."""
-        await resource_service.reset_metrics(mock_db)
+        # Call synchronous method directly (no await needed)
+        resource_service.reset_metrics(mock_db)
 
         mock_db.execute.assert_called_once()
         mock_db.commit.assert_called_once()

@@ -31,7 +31,7 @@ import logging
 from typing import Any, Dict
 
 # Third-Party
-from sqlalchemy import func
+from sqlalchemy import case, func, select, literal
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -142,9 +142,18 @@ class SystemStatsService:
             >>> # assert "breakdown" in stats
             >>> # assert "active" in stats["breakdown"]
         """
-        total = db.query(func.count(EmailUser.email)).scalar() or 0
-        active = db.query(func.count(EmailUser.email)).filter(EmailUser.is_active.is_(True)).scalar() or 0
-        admins = db.query(func.count(EmailUser.email)).filter(EmailUser.is_admin.is_(True)).scalar() or 0
+        # Optimized from 3 queries to 1 using aggregated SELECT
+        result = db.execute(
+            select(
+                func.count(EmailUser.email).label("total"),
+                func.sum(case((EmailUser.is_active.is_(True), 1), else_=0)).label("active"),
+                func.sum(case((EmailUser.is_admin.is_(True), 1), else_=0)).label("admins"),
+            )
+        ).one()
+
+        total = result.total or 0
+        active = result.active or 0
+        admins = result.admins or 0
 
         return {"total": total, "breakdown": {"active": active, "inactive": total - active, "admins": admins}}
 
@@ -164,39 +173,64 @@ class SystemStatsService:
             >>> # assert "personal" in stats["breakdown"]
             >>> # assert "organizational" in stats["breakdown"]
         """
-        total_teams = db.query(func.count(EmailTeam.id)).scalar() or 0
-        personal_teams = db.query(func.count(EmailTeam.id)).filter(EmailTeam.is_personal.is_(True)).scalar() or 0
-        team_members = db.query(func.count(EmailTeamMember.id)).scalar() or 0
+        # Optimized from 3 queries to 1 using aggregated SELECT
+        result = db.execute(
+            select(
+                func.count(EmailTeam.id).label("total_teams"),
+                func.sum(case((EmailTeam.is_personal.is_(True), 1), else_=0)).label("personal_teams"),
+                func.count(EmailTeamMember.id).label("team_members"),
+            )
+        ).one()
+
+        total_teams = result.total_teams or 0
+        personal_teams = result.personal_teams or 0
+        team_members = result.team_members or 0
 
         return {"total": total_teams, "breakdown": {"personal": personal_teams, "organizational": total_teams - personal_teams, "members": team_members}}
 
     def _get_mcp_resource_stats(self, db: Session) -> Dict[str, Any]:
-        """Get MCP resource metrics.
-
-        Args:
-            db: Database session
-
-        Returns:
-            Dictionary with total MCP resource count and breakdown by type
-
-        Examples:
-            >>> service = SystemStatsService()
-            >>> # stats = service._get_mcp_resource_stats(db)
-            >>> # assert stats["total"] >= 0
-            >>> # assert "tools" in stats["breakdown"]
-            >>> # assert "servers" in stats["breakdown"]
+        """Get MCP resource metrics in a SINGLE query using UNION ALL.
+        
+        Optimized from 6 queries to 1.
         """
-        servers = db.query(func.count(Server.id)).scalar() or 0
-        gateways = db.query(func.count(Gateway.id)).scalar() or 0
-        tools = db.query(func.count(Tool.id)).scalar() or 0
-        resources = db.query(func.count(Resource.uri)).scalar() or 0
-        prompts = db.query(func.count(Prompt.name)).scalar() or 0
-        a2a_agents = db.query(func.count(A2AAgent.id)).scalar() or 0
+        # Create a single query that combines counts from all tables with consistent column labels
+        stmt = select(
+            literal("servers").label("type"), func.count(Server.id).label("cnt")
+        ).select_from(Server).union_all(
+            select(literal("gateways").label("type"), func.count(Gateway.id).label("cnt")).select_from(Gateway),
+            select(literal("tools").label("type"), func.count(Tool.id).label("cnt")).select_from(Tool),
+            select(literal("resources").label("type"), func.count(Resource.uri).label("cnt")).select_from(Resource),
+            select(literal("prompts").label("type"), func.count(Prompt.name).label("cnt")).select_from(Prompt),
+            select(literal("a2a_agents").label("type"), func.count(A2AAgent.id).label("cnt")).select_from(A2AAgent),
+        )
 
-        total = servers + gateways + tools + resources + prompts + a2a_agents
+        # Execute once - this is now a single database query instead of 6 separate queries
+        results = db.execute(stmt).all()
+        
+        # Convert list of rows to a dictionary
+        counts = {row.type: row.cnt for row in results}
 
-        return {"total": total, "breakdown": {"servers": servers, "gateways": gateways, "tools": tools, "resources": resources, "prompts": prompts, "a2a_agents": a2a_agents}}
+        # Safe lookups (defaults to 0 if table is empty)
+        servers = counts.get("servers", 0)
+        gateways = counts.get("gateways", 0)
+        tools = counts.get("tools", 0)
+        resources = counts.get("resources", 0)
+        prompts = counts.get("prompts", 0)
+        agents = counts.get("a2a_agents", 0)
 
+        total = servers + gateways + tools + resources + prompts + agents
+
+        return {
+            "total": total,
+            "breakdown": {
+                "servers": servers,
+                "gateways": gateways,
+                "tools": tools,
+                "resources": resources,
+                "prompts": prompts,
+                "a2a_agents": agents
+            }
+        }
     def _get_token_stats(self, db: Session) -> Dict[str, Any]:
         """Get API token metrics.
 
@@ -212,9 +246,18 @@ class SystemStatsService:
             >>> # assert stats["total"] >= 0
             >>> # assert "active" in stats["breakdown"]
         """
-        total = db.query(func.count(EmailApiToken.id)).scalar() or 0
-        active = db.query(func.count(EmailApiToken.id)).filter(EmailApiToken.is_active.is_(True)).scalar() or 0
-        revoked = db.query(func.count(TokenRevocation.jti)).scalar() or 0
+        # Optimized from 3 queries to 1 using aggregated SELECT
+        result = db.execute(
+            select(
+                func.count(EmailApiToken.id).label("total"),
+                func.sum(case((EmailApiToken.is_active.is_(True), 1), else_=0)).label("active"),
+                func.count(TokenRevocation.jti).label("revoked"),
+            )
+        ).one()
+
+        total = result.total or 0
+        active = result.active or 0
+        revoked = result.revoked or 0
 
         return {"total": total, "breakdown": {"active": active, "inactive": total - active, "revoked": revoked}}
 
@@ -233,11 +276,20 @@ class SystemStatsService:
             >>> # assert stats["total"] >= 0
             >>> # assert "mcp_sessions" in stats["breakdown"]
         """
-        mcp_sessions = db.query(func.count(SessionRecord.session_id)).scalar() or 0
-        mcp_messages = db.query(func.count(SessionMessageRecord.id)).scalar() or 0
-        subscriptions = db.query(func.count(ResourceSubscription.id)).scalar() or 0
-        oauth_tokens = db.query(func.count(OAuthToken.access_token)).scalar() or 0
+        # Optimized from 4 queries to 1 using aggregated SELECT
+        result = db.execute(
+            select(
+                func.count(SessionRecord.session_id).label("mcp_sessions"),
+                func.count(SessionMessageRecord.id).label("mcp_messages"),
+                func.count(ResourceSubscription.id).label("subscriptions"),
+                func.count(OAuthToken.access_token).label("oauth_tokens"),
+            )
+        ).one()
 
+        mcp_sessions = result.mcp_sessions or 0
+        mcp_messages = result.mcp_messages or 0
+        subscriptions = result.subscriptions or 0
+        oauth_tokens = result.oauth_tokens or 0
         total = mcp_sessions + mcp_messages + subscriptions + oauth_tokens
 
         return {"total": total, "breakdown": {"mcp_sessions": mcp_sessions, "mcp_messages": mcp_messages, "subscriptions": subscriptions, "oauth_tokens": oauth_tokens}}
@@ -257,13 +309,24 @@ class SystemStatsService:
             >>> # assert stats["total"] >= 0
             >>> # assert "tool_metrics" in stats["breakdown"]
         """
-        tool_metrics = db.query(func.count(ToolMetric.id)).scalar() or 0
-        resource_metrics = db.query(func.count(ResourceMetric.id)).scalar() or 0
-        prompt_metrics = db.query(func.count(PromptMetric.id)).scalar() or 0
-        server_metrics = db.query(func.count(ServerMetric.id)).scalar() or 0
-        a2a_agent_metrics = db.query(func.count(A2AAgentMetric.id)).scalar() or 0
-        token_usage_logs = db.query(func.count(TokenUsageLog.id)).scalar() or 0
+        # Optimized from 6 queries to 1 using aggregated SELECT
+        result = db.execute(
+            select(
+                func.count(ToolMetric.id).label("tool_metrics"),
+                func.count(ResourceMetric.id).label("resource_metrics"),
+                func.count(PromptMetric.id).label("prompt_metrics"),
+                func.count(ServerMetric.id).label("server_metrics"),
+                func.count(A2AAgentMetric.id).label("a2a_agent_metrics"),
+                func.count(TokenUsageLog.id).label("token_usage_logs"),
+            )
+        ).one()
 
+        tool_metrics = result.tool_metrics or 0
+        resource_metrics = result.resource_metrics or 0
+        prompt_metrics = result.prompt_metrics or 0
+        server_metrics = result.server_metrics or 0
+        a2a_agent_metrics = result.a2a_agent_metrics or 0
+        token_usage_logs = result.token_usage_logs or 0
         total = tool_metrics + resource_metrics + prompt_metrics + server_metrics + a2a_agent_metrics + token_usage_logs
 
         return {
@@ -293,11 +356,20 @@ class SystemStatsService:
             >>> # assert stats["total"] >= 0
             >>> # assert "auth_events" in stats["breakdown"]
         """
-        auth_events = db.query(func.count(EmailAuthEvent.id)).scalar() or 0
-        audit_logs = db.query(func.count(PermissionAuditLog.id)).scalar() or 0
-        pending_approvals = db.query(func.count(PendingUserApproval.id)).filter(PendingUserApproval.status == "pending").scalar() or 0
-        sso_providers = db.query(func.count(SSOProvider.id)).filter(SSOProvider.is_enabled.is_(True)).scalar() or 0
+        # Optimized from 4 queries to 1 using aggregated SELECT
+        result = db.execute(
+            select(
+                func.count(EmailAuthEvent.id).label("auth_events"),
+                func.count(PermissionAuditLog.id).label("audit_logs"),
+                func.sum(case((PendingUserApproval.status == "pending", 1), else_=0)).label("pending_approvals"),
+                func.sum(case((SSOProvider.is_enabled.is_(True), 1), else_=0)).label("sso_providers"),
+            )
+        ).one()
 
+        auth_events = result.auth_events or 0
+        audit_logs = result.audit_logs or 0
+        pending_approvals = result.pending_approvals or 0
+        sso_providers = result.sso_providers or 0
         total = auth_events + audit_logs + pending_approvals
 
         return {"total": total, "breakdown": {"auth_events": auth_events, "audit_logs": audit_logs, "pending_approvals": pending_approvals, "sso_providers": sso_providers}}
@@ -317,9 +389,16 @@ class SystemStatsService:
             >>> # assert stats["total"] >= 0
             >>> # assert "team_invitations" in stats["breakdown"]
         """
-        invitations = db.query(func.count(EmailTeamInvitation.id)).filter(EmailTeamInvitation.is_active.is_(True)).scalar() or 0
-        join_requests = db.query(func.count(EmailTeamJoinRequest.id)).filter(EmailTeamJoinRequest.status == "pending").scalar() or 0
+        # Optimized from 2 queries to 1 using aggregated SELECT
+        result = db.execute(
+            select(
+                func.sum(case((EmailTeamInvitation.is_active.is_(True), 1), else_=0)).label("invitations"),
+                func.sum(case((EmailTeamJoinRequest.status == "pending", 1), else_=0)).label("join_requests"),
+            )
+        ).one()
 
+        invitations = result.invitations or 0
+        join_requests = result.join_requests or 0
         total = invitations + join_requests
 
         return {"total": total, "breakdown": {"team_invitations": invitations, "join_requests": join_requests}}
