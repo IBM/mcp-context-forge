@@ -181,11 +181,16 @@ See also: [securing.md](./securing.md) for general hardening guidance and [proxy
 
 ## Troubleshooting
 
-- 401 from MCP after OAuth: verify scopes and that token is attached as `Authorization: Bearer` by the gateway
-- Provider denies callback: check exact Redirect URI match and HTTPS
-- Invalid client: confirm Client ID/Secret and application registration
-- State mismatch: ensure a single round-trip and correct domain/cookies
-- Timeouts: increase `OAUTH_REQUEST_TIMEOUT` or investigate provider availability
+Common issues and quick fixes:
+
+- **401 from MCP after OAuth**: Verify scopes and that token is attached as `Authorization: Bearer` by the gateway
+- **Provider denies callback**: Check exact Redirect URI match and HTTPS
+- **Invalid client**: Confirm Client ID/Secret and application registration
+- **State mismatch / "Invalid or expired state parameter"**: See the detailed [OAuth Troubleshooting Guide](oauth-troubleshooting.md)
+- **Timeouts**: Increase `OAUTH_REQUEST_TIMEOUT` or investigate provider availability
+
+!!! tip "Detailed Troubleshooting"
+    For comprehensive debugging steps, error message explanations, and state storage configuration, see the [OAuth Troubleshooting Guide](oauth-troubleshooting.md).
 
 ---
 
