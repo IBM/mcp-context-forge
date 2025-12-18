@@ -104,6 +104,12 @@ Generate a single QR code.
 - `save_path` (str | null)
 - `return_base64` (bool, default false)
 
+**Notes:**
+
+- `border` is capped at 100 to avoid memory overloading
+- `fill_color` and  `back_color` look at [Colors](#supported-colors)
+
+
 #### Returns — QRCodeResult
 
 ```json
