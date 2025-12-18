@@ -865,7 +865,6 @@ class ToolService:
             True
         """
         page_size = settings.pagination_default_page_size
-        query = select(DbTool).order_by(DbTool.id)  # Consistent ordering for cursor pagination
 
         # Decode cursor to get last_id if provided
         last_id = None
@@ -877,11 +876,14 @@ class ToolService:
             except ValueError as e:
                 logger.warning(f"Invalid cursor, ignoring: {e}")
 
+        logger.debug(f"Listing tools with include_inactive={include_inactive}, cursor={cursor}, tags={tags}, page_size={page_size}")
+
+        # Build query with LEFT JOIN for team names in single query instead of batch fetching
+        query = select(DbTool, EmailTeam.name.label("team_name")).outerjoin(EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True))).order_by(DbTool.id)
+
         # Apply cursor filter (WHERE id > last_id)
         if last_id:
             query = query.where(DbTool.id > last_id)
-
-        logger.debug(f"Listing tools with include_inactive={include_inactive}, cursor={cursor}, tags={tags}, page_size={page_size}")
 
         if not include_inactive:
             query = query.where(DbTool.enabled)
@@ -892,26 +894,21 @@ class ToolService:
 
         # Fetch page_size + 1 to determine if there are more results
         query = query.limit(page_size + 1)
-        tools = db.execute(query).scalars().all()
+        rows = db.execute(query).all()
 
         # Check if there are more results
-        has_more = len(tools) > page_size
+        has_more = len(rows) > page_size
         if has_more:
-            tools = tools[:page_size]  # Trim to page_size
+            rows = rows[:page_size]  # Trim to page_size
 
-        # Batch fetch team names for all tools at once
-        team_ids = {getattr(t, "team_id", None) for t in tools if getattr(t, "team_id", None)}
-        team_name_map = {}
-        if team_ids:
-            teams = db.query(EmailTeam.id, EmailTeam.name).filter(EmailTeam.id.in_(team_ids), EmailTeam.is_active.is_(True)).all()
-            team_name_map = {team.id: team.name for team in teams}
-
-        # Convert to ToolRead objects
+        # Convert to ToolRead objects with team names from join result
         result = []
-        for t in tools:
-            team_name = team_name_map.get(getattr(t, "team_id", None))
-            t.team = team_name
-            result.append(self._convert_tool_to_read(t))
+        tools = []
+        for row in rows:
+            tool, team_name = row[0], row.team_name
+            tool.team = team_name
+            tools.append(tool)
+            result.append(self._convert_tool_to_read(tool))
 
         # Generate next_cursor if there are more results
         next_cursor = None
@@ -976,24 +973,18 @@ class ToolService:
         if not include_inactive:
             query = query.where(DbTool.enabled)
 
-        # Execute the query and retrieve tools
-        tools = db.execute(query).scalars().all()
+        # Execute the query with LEFT JOIN for team names in single query
+        query_with_join = query.outerjoin(EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True))).add_columns(EmailTeam.name.label("team_name"))
 
-        team_ids = {getattr(t, "team_id", None) for t in tools if getattr(t, "team_id", None)}
+        rows = db.execute(query_with_join).all()
 
-        # If there are team_ids, fetch all corresponding team names at once
-        if team_ids:
-            teams = db.query(EmailTeam.id, EmailTeam.name).filter(EmailTeam.id.in_(team_ids), EmailTeam.is_active.is_(True)).all()
-            team_name_map = {team.id: team.name for team in teams}
-        else:
-            team_name_map = {}
-
-        # Add team names to tools based on the map
+        # Add team names to tools based on join result
         result = []
-        for t in tools:
-            team_name = team_name_map.get(getattr(t, "team_id", None))
-            t.team = team_name
-            result.append(self._convert_tool_to_read(t, include_metrics=include_metrics))
+        for row in rows:
+            tool = row[0]
+            team_name = row.team_name
+            tool.team = team_name
+            result.append(self._convert_tool_to_read(tool, include_metrics=include_metrics))
 
         return result
 
@@ -1070,20 +1061,18 @@ class ToolService:
         # # Apply pagination following existing patterns
         # query = query.offset(skip).limit(limit)
 
-        tools = db.execute(query).scalars().all()
+        # Execute query with LEFT JOIN for team names in single query
+        query_with_join = query.outerjoin(EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True))).add_columns(EmailTeam.name.label("team_name"))
 
-        # Batch fetch team names for all tools at once
-        tool_team_ids = {getattr(t, "team_id", None) for t in tools if getattr(t, "team_id", None)}
-        team_name_map = {}
-        if tool_team_ids:
-            teams = db.query(EmailTeam.id, EmailTeam.name).filter(EmailTeam.id.in_(tool_team_ids), EmailTeam.is_active.is_(True)).all()
-            team_name_map = {team.id: team.name for team in teams}
+        rows = db.execute(query_with_join).all()
 
+        # Convert to ToolRead objects with team names from join result
         result = []
-        for t in tools:
-            team_name = team_name_map.get(getattr(t, "team_id", None))
-            t.team = team_name
-            result.append(self._convert_tool_to_read(t))
+        for row in rows:
+            tool = row[0]
+            team_name = row.team_name
+            tool.team = team_name
+            result.append(self._convert_tool_to_read(tool))
         return result
 
     async def get_tool(self, db: Session, tool_id: str) -> ToolRead:

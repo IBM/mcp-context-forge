@@ -2534,35 +2534,38 @@ class ResourceService:
             >>> from unittest.mock import MagicMock
             >>> service = ResourceService()
             >>> db = MagicMock()
-            >>> db.execute.return_value.scalar.return_value = 0
+            >>> db.execute.return_value.one.return_value = MagicMock(total_executions=0, successful_executions=0, failed_executions=0, min_response_time=None, max_response_time=None, avg_response_time=None, last_execution_time=None)
             >>> import asyncio
             >>> result = asyncio.run(service.aggregate_metrics(db))
             >>> hasattr(result, 'total_executions')
             True
         """
-        total_executions = db.execute(select(func.count()).select_from(ResourceMetric)).scalar() or 0  # pylint: disable=not-callable
+        # Execute a single query to get all metrics at once
+        result = db.execute(
+            select(
+                func.count().label("total_executions"),  # pylint: disable=not-callable
+                func.sum(case((ResourceMetric.is_success.is_(True), 1), else_=0)).label("successful_executions"),  # pylint: disable=not-callable
+                func.sum(case((ResourceMetric.is_success.is_(False), 1), else_=0)).label("failed_executions"),  # pylint: disable=not-callable
+                func.min(ResourceMetric.response_time).label("min_response_time"),  # pylint: disable=not-callable
+                func.max(ResourceMetric.response_time).label("max_response_time"),  # pylint: disable=not-callable
+                func.avg(ResourceMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
+                func.max(ResourceMetric.timestamp).label("last_execution_time"),  # pylint: disable=not-callable
+            ).select_from(ResourceMetric)
+        ).one()
 
-        successful_executions = db.execute(select(func.count()).select_from(ResourceMetric).where(ResourceMetric.is_success.is_(True))).scalar() or 0  # pylint: disable=not-callable
-
-        failed_executions = db.execute(select(func.count()).select_from(ResourceMetric).where(ResourceMetric.is_success.is_(False))).scalar() or 0  # pylint: disable=not-callable
-
-        min_response_time = db.execute(select(func.min(ResourceMetric.response_time))).scalar()
-
-        max_response_time = db.execute(select(func.max(ResourceMetric.response_time))).scalar()
-
-        avg_response_time = db.execute(select(func.avg(ResourceMetric.response_time))).scalar()
-
-        last_execution_time = db.execute(select(func.max(ResourceMetric.timestamp))).scalar()
+        total_executions = result.total_executions or 0
+        successful_executions = result.successful_executions or 0
+        failed_executions = result.failed_executions or 0
 
         return ResourceMetrics(
             total_executions=total_executions,
             successful_executions=successful_executions,
             failed_executions=failed_executions,
             failure_rate=(failed_executions / total_executions) if total_executions > 0 else 0.0,
-            min_response_time=min_response_time,
-            max_response_time=max_response_time,
-            avg_response_time=avg_response_time,
-            last_execution_time=last_execution_time,
+            min_response_time=result.min_response_time,
+            max_response_time=result.max_response_time,
+            avg_response_time=result.avg_response_time,
+            last_execution_time=result.last_execution_time,
         )
 
     async def reset_metrics(self, db: Session) -> None:
