@@ -32,7 +32,6 @@ class BatchQRCodeResult(BaseModel):
     error: str | None = None
     zip_file_path: str | None = None
     output_directory: str | None = None
-    files: list[str] | None = None
 
 
 class QRGenerationRequest(BaseModel):
