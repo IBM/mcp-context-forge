@@ -1304,14 +1304,12 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
     try:
         user_email = get_user_email(user)
         # Determine personal team for default assignment
-        team_id_raw = form.get("team_id", None)
-        team_id = str(team_id_raw) if team_id_raw is not None else None
+        team_id = form.get("team_id", "public")
 
         # Extract metadata for server creation
         creation_metadata = MetadataCapture.extract_creation_metadata(request, user)
 
         # Ensure default visibility is private and assign to personal team when available
-        team_id_cast = typing_cast(Optional[str], team_id)
         allowed_team_ids = await get_allowed_team_ids(request)
         await server_service.register_server(
             db,
@@ -1320,7 +1318,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             created_from_ip=creation_metadata["created_from_ip"],
             created_via=creation_metadata["created_via"],
             created_user_agent=creation_metadata["created_user_agent"],
-            team_id=team_id_cast,
+            team_id=team_id,
             visibility=visibility,
             allowed_team_ids=allowed_team_ids,
         )
@@ -1471,8 +1469,7 @@ async def admin_edit_server(
         LOGGER.debug(f"User {get_user_email(user)} is editing server ID {server_id} with name: {form.get('name')}")
         visibility = str(form.get("visibility", "private"))
         user_email = get_user_email(user)
-        team_id_raw = form.get("team_id", None)
-        team_id = str(team_id_raw) if team_id_raw is not None else None
+        team_id = form.get("team_id", "public")
 
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
 
@@ -1665,8 +1662,10 @@ async def admin_toggle_server(
     LOGGER.debug(f"User {user_email} is toggling server ID {server_id} with activate: {form.get('activate')}")
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
+
+    allowed_team_ids = await get_allowed_team_ids(request)
     try:
-        await server_service.toggle_server_status(db, server_id, activate, user_email=user_email)
+        await server_service.toggle_server_status(db, server_id, activate, user_email=user_email, allowed_team_ids=allowed_team_ids)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} toggling servers {server_id}: {e}")
         error_message = str(e)
@@ -1764,7 +1763,9 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
     try:
         user_email = get_user_email(user)
         LOGGER.debug(f"User {user_email} is deleting server ID {server_id}")
-        await server_service.delete_server(db, server_id, user_email=user_email)
+
+        allowed_team_ids = await get_allowed_team_ids(request)
+        await server_service.delete_server(db, server_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {get_user_email(user)} deleting server {server_id}: {e}")
         error_message = str(e)
@@ -1909,6 +1910,7 @@ async def admin_list_resources(
 @admin_router.get("/prompts", response_model=List[PromptRead])
 @require_permission(Permissions.PROMPTS_READ)
 async def admin_list_prompts(
+    request: Request,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -1921,6 +1923,7 @@ async def admin_list_prompts(
     prompts that have been deactivated but not deleted from the system.
 
     Args:
+        request (Request): FastAPI request object, used to extract user permissions.
         include_inactive (bool): Whether to include inactive prompts in the results.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -2012,7 +2015,9 @@ async def admin_list_prompts(
     """
     LOGGER.debug(f"User {get_user_email(user)} requested prompt list")
     user_email = get_user_email(user)
-    prompts = await prompt_service.list_prompts_for_user(db, user_email, include_inactive=include_inactive)
+
+    allowed_team_ids = await get_allowed_team_ids(request)
+    prompts = await prompt_service.list_prompts_for_user(db, user_email, include_inactive=include_inactive, allowed_team_ids=allowed_team_ids)
     return [prompt.model_dump(by_alias=True) for prompt in prompts]
 
 
@@ -2481,7 +2486,6 @@ async def admin_ui(
     # Optionally you can raise HTTPException(403) if you prefer strict rejection.
     # --------------------------------------------------------------------------------
     selected_team_id = team_id
-    LOGGER.info(f'{selected_team_id=}')
     if team_id and getattr(settings, "email_auth_enabled", False):
         # If team list failed to load for some reason, be conservative and drop selection
         if not user_teams:
