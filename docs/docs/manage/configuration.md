@@ -294,7 +294,21 @@ LOG_FOLDER=logs
 
 # Structured Logging
 LOG_FORMAT=json                     # json, plain
+
+# Database Log Persistence (disabled by default for performance)
+STRUCTURED_LOGGING_DATABASE_ENABLED=false
 ```
+
+#### Structured Log Database Persistence
+
+When `STRUCTURED_LOGGING_DATABASE_ENABLED=true`, logs are persisted to the database enabling:
+
+- **Log Search API** (`/api/logs/search`) - Search logs by level, component, user, time range
+- **Request Tracing** (`/api/logs/trace/{correlation_id}`) - Trace all logs for a request
+- **Performance Metrics** - Aggregated p50/p95/p99 latencies and error rates
+- **Admin UI Log Viewer** - Browse and filter logs in the web interface
+
+When disabled (default), logs only go to console/file. This improves performance by avoiding synchronous database writes on each log entry. Use this setting if you have an external log aggregator (ELK, Datadog, Splunk, etc.).
 
 ### Development & Debug
 

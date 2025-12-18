@@ -153,6 +153,7 @@ LOG_TO_FILE=false                      # Enable file logging
 LOG_ROTATION_ENABLED=false             # Size-based rotation
 LOG_FILE=mcpgateway.log
 LOG_FOLDER=logs
+STRUCTURED_LOGGING_DATABASE_ENABLED=false  # Persist logs to DB (enables /api/logs/* endpoints)
 ```
 
 ## Common Development Tasks
