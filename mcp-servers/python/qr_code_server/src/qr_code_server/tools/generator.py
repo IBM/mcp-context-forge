@@ -53,6 +53,11 @@ class QRGenerationRequest(BaseModel):
             raise ValueError("Data length exceeds maximum allowed")
         return v
 
+    # Cap the border to avoid memory exploding
+    @field_validator("border")
+    @classmethod
+    def validate_border_size(cls, v: int) -> int:
+        return min(v, 100)
 
 class BatchQRGenerationRequest(BaseModel):
     data_list: list[str]  # List of data to encode
