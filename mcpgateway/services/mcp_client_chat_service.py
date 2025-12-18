@@ -2654,6 +2654,10 @@ class MCPChatService:
                         name = event.get("name") or event.get("data", {}).get("name") or event.get("data", {}).get("tool")
                         input_data = event.get("data", {}).get("input")
 
+                        # Filter out common metadata keys injected by LangChain/LangGraph
+                        if isinstance(input_data, dict):
+                            input_data = {k: v for k, v in input_data.items() if k not in ["runtime", "config", "run_manager", "callbacks"]}
+
                         tool_runs[run_id] = {"name": name, "start": now_iso, "input": input_data}
 
                         yield {"type": "tool_start", "id": run_id, "tool": name, "input": input_data, "start": now_iso}

@@ -21384,7 +21384,7 @@ async function loadVirtualServersForChat() {
         serversList.innerHTML = servers
             .map((server) => {
                 const toolCount = (server.associatedTools || []).length;
-                const isActive = server.isActive;
+                const isActive = server.isActive !== undefined ? server.isActive : server.enabled;
                 const visibility = server.visibility || "public";
                 const requiresToken =
                     visibility === "team" || visibility === "private";

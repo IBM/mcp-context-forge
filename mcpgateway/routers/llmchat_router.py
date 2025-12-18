@@ -765,6 +765,18 @@ async def token_streamer(chat_service: MCPChatService, message: str, user_id: st
         All exceptions are caught and converted to error events for client handling.
     """
 
+    def json_default(obj):
+        # Try common patterns first
+        if hasattr(obj, "model_dump"):  # pydantic v2
+            return obj.model_dump()
+        if hasattr(obj, "dict"):  # pydantic v1
+            return obj.dict()
+        if hasattr(obj, "__dict__"):
+            return obj.__dict__
+
+        # Fallback: string representation
+        return str(obj)
+
     async def sse(event_type: str, data: Dict[str, Any]):
         """Format data as Server-Sent Event.
 
