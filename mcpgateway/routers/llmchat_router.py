@@ -586,14 +586,29 @@ async def set_active_session(user_id: str, session: MCPChatService):
 
 
 async def delete_active_session(user_id: str):
-    """Remove active session locally and from Redis.
+    """Remove active session locally and from Redis atomically.
+
+    Uses a Lua script to ensure we only delete the Redis key if we own it,
+    preventing race conditions where another worker's session marker could
+    be deleted if our session expired and was recreated by another worker.
 
     Args:
         user_id: User identifier.
     """
     active_sessions.pop(user_id, None)
     if redis_client:
-        await redis_client.delete(_active_key(user_id))
+        try:
+            # Lua script for atomic check-and-delete (only delete if we own the key)
+            release_script = """
+            if redis.call("get", KEYS[1]) == ARGV[1] then
+                return redis.call("del", KEYS[1])
+            else
+                return 0
+            end
+            """
+            await redis_client.eval(release_script, 1, _active_key(user_id), WORKER_ID)
+        except Exception as e:
+            logger.warning(f"Failed to delete active session for user {user_id}: {e}")
 
 
 async def _try_acquire_lock(user_id: str) -> bool:
@@ -611,16 +626,29 @@ async def _try_acquire_lock(user_id: str) -> bool:
 
 
 async def _release_lock_safe(user_id: str):
-    """Release the lock only if we own it (best-effort).
+    """Release the lock atomically only if we own it.
+
+    Uses a Lua script to ensure atomic check-and-delete, preventing
+    the TOCTOU race condition where another worker's lock could be
+    deleted if the original lock expired between get() and delete().
 
     Args:
         user_id: User identifier.
     """
     if not redis_client:
         return
-    val = await redis_client.get(_lock_key(user_id))
-    if val == WORKER_ID:
-        await redis_client.delete(_lock_key(user_id))
+    try:
+        # Lua script for atomic check-and-delete (only delete if we own the key)
+        release_script = """
+        if redis.call("get", KEYS[1]) == ARGV[1] then
+            return redis.call("del", KEYS[1])
+        else
+            return 0
+        end
+        """
+        await redis_client.eval(release_script, 1, _lock_key(user_id), WORKER_ID)
+    except Exception as e:
+        logger.warning(f"Failed to release lock for user {user_id}: {e}")
 
 
 async def _create_local_session_from_config(user_id: str) -> Optional[MCPChatService]:

@@ -456,6 +456,23 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             except asyncio.CancelledError:
                 pass
 
+        # Release Redis leadership atomically if we hold it
+        if self._redis_client:
+            try:
+                # Lua script for atomic check-and-delete (only delete if we own the key)
+                release_script = """
+                if redis.call("get", KEYS[1]) == ARGV[1] then
+                    return redis.call("del", KEYS[1])
+                else
+                    return 0
+                end
+                """
+                result = self._redis_client.eval(release_script, 1, self._leader_key, self._instance_id)
+                if result:
+                    logger.info("Released Redis leadership on shutdown")
+            except Exception as e:
+                logger.warning(f"Failed to release Redis leader key on shutdown: {e}")
+
         await self._http_client.aclose()
         await self._event_service.shutdown()
         self._active_gateways.clear()
