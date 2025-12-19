@@ -1,5 +1,6 @@
 [flake8]
 max-line-length = 600
+jobs = 1
 exclude = mcp-servers
 extend-ignore =
     E203,

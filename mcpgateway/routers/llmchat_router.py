@@ -50,19 +50,32 @@ from mcpgateway.services.mcp_client_chat_service import (
     OpenAIConfig,
     WatsonxConfig,
 )
+from mcpgateway.utils.redis_client import get_redis_client
 
-# Load environment variables
-load_dotenv()
+# Load environment variables (wrapped to handle CI environments where cwd may not exist)
+try:
+    load_dotenv()
+except (OSError, FileNotFoundError):
+    pass  # Gracefully handle missing working directory in CI
 
 # Initialize router
 llmchat_router = APIRouter(prefix="/llmchat", tags=["llmchat"])
 
-# Redis client initialization
+# Redis client (initialized via init_redis() during app startup)
 redis_client = None
-if getattr(settings, "cache_type", None) == "redis" and getattr(settings, "redis_url", None):
-    if aioredis is None:
-        raise RuntimeError("Redis support requires 'redis' package. Install with: pip install redis[async]")
-    redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
+
+
+async def init_redis() -> None:
+    """Initialize Redis client using the shared factory.
+
+    Should be called during application startup from main.py lifespan.
+    """
+    global redis_client
+    if getattr(settings, "cache_type", None) == "redis" and getattr(settings, "redis_url", None):
+        redis_client = await get_redis_client()
+        if redis_client:
+            logger.info("LLMChat router connected to shared Redis client")
+
 
 # Fallback in-memory stores (used when Redis unavailable)
 # Store active chat sessions per user
@@ -586,14 +599,29 @@ async def set_active_session(user_id: str, session: MCPChatService):
 
 
 async def delete_active_session(user_id: str):
-    """Remove active session locally and from Redis.
+    """Remove active session locally and from Redis atomically.
+
+    Uses a Lua script to ensure we only delete the Redis key if we own it,
+    preventing race conditions where another worker's session marker could
+    be deleted if our session expired and was recreated by another worker.
 
     Args:
         user_id: User identifier.
     """
     active_sessions.pop(user_id, None)
     if redis_client:
-        await redis_client.delete(_active_key(user_id))
+        try:
+            # Lua script for atomic check-and-delete (only delete if we own the key)
+            release_script = """
+            if redis.call("get", KEYS[1]) == ARGV[1] then
+                return redis.call("del", KEYS[1])
+            else
+                return 0
+            end
+            """
+            await redis_client.eval(release_script, 1, _active_key(user_id), WORKER_ID)
+        except Exception as e:
+            logger.warning(f"Failed to delete active session for user {user_id}: {e}")
 
 
 async def _try_acquire_lock(user_id: str) -> bool:
@@ -611,16 +639,29 @@ async def _try_acquire_lock(user_id: str) -> bool:
 
 
 async def _release_lock_safe(user_id: str):
-    """Release the lock only if we own it (best-effort).
+    """Release the lock atomically only if we own it.
+
+    Uses a Lua script to ensure atomic check-and-delete, preventing
+    the TOCTOU race condition where another worker's lock could be
+    deleted if the original lock expired between get() and delete().
 
     Args:
         user_id: User identifier.
     """
     if not redis_client:
         return
-    val = await redis_client.get(_lock_key(user_id))
-    if val == WORKER_ID:
-        await redis_client.delete(_lock_key(user_id))
+    try:
+        # Lua script for atomic check-and-delete (only delete if we own the key)
+        release_script = """
+        if redis.call("get", KEYS[1]) == ARGV[1] then
+            return redis.call("del", KEYS[1])
+        else
+            return 0
+        end
+        """
+        await redis_client.eval(release_script, 1, _lock_key(user_id), WORKER_ID)
+    except Exception as e:
+        logger.warning(f"Failed to release lock for user {user_id}: {e}")
 
 
 async def _create_local_session_from_config(user_id: str) -> Optional[MCPChatService]:

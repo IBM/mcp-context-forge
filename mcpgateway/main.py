@@ -130,6 +130,7 @@ from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
+from mcpgateway.utils.redis_client import close_redis_client, get_redis_client
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.verify_credentials import require_auth, require_docs_auth_override, verify_jwt_token
@@ -417,6 +418,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await logging_service.initialize()
     logger.info("Starting MCP Gateway services")
 
+    # Initialize Redis client early (shared pool for all services)
+    await get_redis_client()
+
+    # Initialize LLM chat router Redis client
+    # First-Party
+    from mcpgateway.routers.llmchat_router import init_redis as init_llmchat_redis  # pylint: disable=import-outside-toplevel
+
+    await init_llmchat_redis()
+
     # Initialize observability (Phoenix tracing)
     init_telemetry()
     logger.info("Observability initialized")
@@ -447,6 +457,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await a2a_service.initialize()
         await resource_cache.initialize()
         await streamable_http_session.initialize()
+        await session_registry.initialize()
 
         # Initialize elicitation service
         if settings.mcpgateway_elicitation_enabled:
@@ -560,6 +571,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             resource_service,
             tool_service,
             streamable_http_session,
+            session_registry,
         ]
 
         if a2a_service:
@@ -574,6 +586,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             services_to_shutdown.insert(5, elicitation_service)
 
         await shutdown_services(services_to_shutdown)
+
+        # Close Redis client last (after all services that use it)
+        await close_redis_client()
 
         logger.info("Shutdown complete")
 

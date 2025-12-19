@@ -62,10 +62,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 try:
+    # Third-Party - check if redis is available
     # Third-Party
-    import redis
+    import redis.asyncio as _aioredis  # noqa: F401  # pylint: disable=unused-import
 
     REDIS_AVAILABLE = True
+    del _aioredis  # Only needed for availability check
 except ImportError:
     REDIS_AVAILABLE = False
     logging.info("Redis is not utilized in this environment.")
@@ -92,6 +94,7 @@ from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
+from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
@@ -337,14 +340,16 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         # For health checks, we determine the leader instance.
         self.redis_url = settings.redis_url if settings.cache_type == "redis" else None
 
-        # Initialize optional Redis client holder
+        # Initialize optional Redis client holder (set in initialize())
         self._redis_client: Optional[Any] = None
 
+        # Leader election settings from config
         if self.redis_url and REDIS_AVAILABLE:
-            self._redis_client = redis.from_url(self.redis_url)
             self._instance_id = str(uuid.uuid4())  # Unique ID for this process
-            self._leader_key = "gateway_service_leader"
-            self._leader_ttl = 40  # seconds
+            self._leader_key = settings.redis_leader_key
+            self._leader_ttl = settings.redis_leader_ttl
+            self._leader_heartbeat_interval = settings.redis_leader_heartbeat_interval
+            self._leader_heartbeat_task: Optional[asyncio.Task] = None
         elif settings.cache_type != "none":
             # Fallback: File-based lock
             temp_dir = tempfile.gettempdir()
@@ -414,21 +419,30 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         """
         logger.info("Initializing gateway service")
 
+        # Initialize event service with shared Redis client
+        await self._event_service.initialize()
+
         db_gen: Generator = get_db()
         db: Session = next(db_gen)
 
         user_email = settings.platform_admin_email
 
-        if self._redis_client:
-            # Check if Redis is available
-            pong = self._redis_client.ping()
-            if not pong:
-                raise ConnectionError("Redis ping failed.")
+        # Get shared Redis client from factory
+        if self.redis_url and REDIS_AVAILABLE:
+            self._redis_client = await get_redis_client()
 
-            is_leader = self._redis_client.set(self._leader_key, self._instance_id, ex=self._leader_ttl, nx=True)
+        if self._redis_client:
+            # Check if Redis is available (ping already done by factory, but verify)
+            try:
+                await self._redis_client.ping()
+            except Exception as e:
+                raise ConnectionError(f"Redis ping failed: {e}") from e
+
+            is_leader = await self._redis_client.set(self._leader_key, self._instance_id, ex=self._leader_ttl, nx=True)
             if is_leader:
-                logger.info("Acquired Redis leadership. Starting health check task.")
+                logger.info("Acquired Redis leadership. Starting health check and heartbeat tasks.")
                 self._health_check_task = asyncio.create_task(self._run_health_checks(db, user_email))
+                self._leader_heartbeat_task = asyncio.create_task(self._run_leader_heartbeat())
         else:
             # Always create the health check task in filelock mode; leader check is handled inside.
             self._health_check_task = asyncio.create_task(self._run_health_checks(db, user_email))
@@ -455,6 +469,31 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 await self._health_check_task
             except asyncio.CancelledError:
                 pass
+
+        # Cancel leader heartbeat task if running
+        if getattr(self, "_leader_heartbeat_task", None):
+            self._leader_heartbeat_task.cancel()
+            try:
+                await self._leader_heartbeat_task
+            except asyncio.CancelledError:
+                pass
+
+        # Release Redis leadership atomically if we hold it
+        if self._redis_client:
+            try:
+                # Lua script for atomic check-and-delete (only delete if we own the key)
+                release_script = """
+                if redis.call("get", KEYS[1]) == ARGV[1] then
+                    return redis.call("del", KEYS[1])
+                else
+                    return 0
+                end
+                """
+                result = await self._redis_client.eval(release_script, 1, self._leader_key, self._instance_id)
+                if result:
+                    logger.info("Released Redis leadership on shutdown")
+            except Exception as e:
+                logger.warning(f"Failed to release Redis leader key on shutdown: {e}")
 
         await self._http_client.aclose()
         await self._event_service.shutdown()
@@ -2999,6 +3038,36 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             return None
         return GatewayRead.model_validate(result)
 
+    async def _run_leader_heartbeat(self) -> None:
+        """Run leader heartbeat loop to keep leader key alive.
+
+        This runs independently from health checks to ensure the leader key
+        is refreshed frequently enough (every redis_leader_heartbeat_interval seconds)
+        to prevent expiration during long-running health check operations.
+
+        The loop exits if this instance loses leadership.
+        """
+        while True:
+            try:
+                await asyncio.sleep(self._leader_heartbeat_interval)
+
+                if not self._redis_client:
+                    return
+
+                # Check if we're still the leader
+                current_leader = await self._redis_client.get(self._leader_key)
+                if current_leader != self._instance_id:
+                    logger.info("Lost Redis leadership, stopping heartbeat")
+                    return
+
+                # Refresh the leader key TTL
+                await self._redis_client.expire(self._leader_key, self._leader_ttl)
+                logger.debug(f"Leader heartbeat: refreshed TTL to {self._leader_ttl}s")
+
+            except Exception as e:
+                logger.warning(f"Leader heartbeat error: {e}")
+                # Continue trying - the main health check loop will handle leadership loss
+
     async def _run_health_checks(self, db: Session, user_email: str) -> None:
         """Run health checks periodically,
         Uses Redis or FileLock - for multiple workers.
@@ -3026,11 +3095,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         while True:
             try:
                 if self._redis_client and settings.cache_type == "redis":
-                    # Redis-based leader check
-                    current_leader = self._redis_client.get(self._leader_key)
-                    if current_leader != self._instance_id.encode():
+                    # Redis-based leader check (async, decode_responses=True returns strings)
+                    # Note: Leader key TTL refresh is handled by _run_leader_heartbeat task
+                    current_leader = await self._redis_client.get(self._leader_key)
+                    if current_leader != self._instance_id:
                         return
-                    self._redis_client.expire(self._leader_key, self._leader_ttl)
 
                     # Run health checks
                     gateways = await asyncio.to_thread(self._get_gateways)

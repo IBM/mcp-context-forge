@@ -526,6 +526,17 @@ SESSION_TTL=3600
 MESSAGE_TTL=600
 REDIS_MAX_RETRIES=3
 REDIS_RETRY_INTERVAL_MS=2000
+
+# Connection pool (performance-tuned)
+REDIS_MAX_CONNECTIONS=50
+REDIS_SOCKET_TIMEOUT=2.0
+REDIS_SOCKET_CONNECT_TIMEOUT=2.0
+REDIS_RETRY_ON_TIMEOUT=true
+REDIS_HEALTH_CHECK_INTERVAL=30
+
+# Leader election (multi-node)
+REDIS_LEADER_TTL=15
+REDIS_LEADER_HEARTBEAT_INTERVAL=5
 ```
 
 #### Kubernetes Deployment
@@ -561,6 +572,22 @@ redis:
 - 10,000 users × 50KB = 500MB
 - 1,000 msg/min × 100KB × 10min = 1GB
 - **Total: 1.5GB + 50% overhead = 2.5GB**
+
+**Connection pool sizing:**
+
+- Formula: `REDIS_MAX_CONNECTIONS = (concurrent_requests / workers) × 1.5`
+- Default 50 handles ~500 concurrent requests with 10 workers
+- High-concurrency: increase to 100 and lower timeouts
+
+```bash
+# High-concurrency production overrides
+REDIS_MAX_CONNECTIONS=100
+REDIS_SOCKET_TIMEOUT=1.0
+REDIS_SOCKET_CONNECT_TIMEOUT=1.0
+REDIS_HEALTH_CHECK_INTERVAL=15
+REDIS_LEADER_TTL=10
+REDIS_LEADER_HEARTBEAT_INTERVAL=3
+```
 
 ### High Availability
 

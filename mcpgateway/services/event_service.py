@@ -54,20 +54,16 @@ Usage Guide:
 
 # Standard
 import asyncio
+import importlib.util
 import json
 from typing import Any, AsyncGenerator, Dict, List, Optional
-
-try:
-    # Third-Party
-    import redis
-
-    REDIS_AVAILABLE = True
-except ImportError:
-    REDIS_AVAILABLE = False
 
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.redis_client import get_redis_client
+
+REDIS_AVAILABLE = importlib.util.find_spec("redis.asyncio") is not None
 
 # Initialize logging
 logging_service = LoggingService()
@@ -104,14 +100,20 @@ class EventService:
 
         self.redis_url = settings.redis_url if settings.cache_type == "redis" else None
         self._redis_client: Optional[Any] = None
+        # Redis client is set in initialize() via the shared factory
 
+    async def initialize(self) -> None:
+        """Initialize the event service with shared Redis client.
+
+        Should be called during application startup to get the shared Redis client.
+        """
         if self.redis_url and REDIS_AVAILABLE:
             try:
-                self._redis_client = redis.from_url(self.redis_url)
-                # Quick ping to verify connection
-                self._redis_client.ping()
+                self._redis_client = await get_redis_client()
+                if self._redis_client:
+                    logger.info(f"EventService ({self.channel_name}) connected to Redis")
             except Exception as e:
-                logger.warning(f"Failed to initialize Redis for EventService ({channel_name}): {e}")
+                logger.warning(f"Failed to initialize Redis for EventService ({self.channel_name}): {e}")
                 self._redis_client = None
 
     async def publish_event(self, event: Dict[str, Any]) -> None:
@@ -141,7 +143,7 @@ class EventService:
         """
         if self._redis_client:
             try:
-                await asyncio.to_thread(self._redis_client.publish, self.channel_name, json.dumps(event))
+                await self._redis_client.publish(self.channel_name, json.dumps(event))
             except Exception as e:
                 logger.error(f"Failed to publish event to Redis channel {self.channel_name}: {e}")
                 # Fallback: push to local queues if Redis fails
@@ -195,35 +197,35 @@ class EventService:
         if self._redis_client:
 
             try:
-                # Import asyncio version of redis here to avoid top-level dependency issues
-                # Third-Party
-                import redis.asyncio as aioredis  # pylint: disable=import-outside-toplevel
+                # Get shared Redis client from factory
+                # PubSub uses the client's connection pool but creates dedicated subscription
+                client = await get_redis_client()
+                if not client:
+                    fallback_to_local = True
+                else:
+                    pubsub = client.pubsub()
 
-                # Create a dedicated async connection for this subscription
-                client = aioredis.from_url(self.redis_url, decode_responses=True)
-                pubsub = client.pubsub()
+                    await pubsub.subscribe(self.channel_name)
 
-                await pubsub.subscribe(self.channel_name)
-
-                try:
-                    async for message in pubsub.listen():
-                        if message["type"] == "message":
-                            # Yield the data portion
-                            yield json.loads(message["data"])
-                except asyncio.CancelledError:
-                    # Handle client disconnection
-                    logger.debug(f"Client disconnected from Redis subscription: {self.channel_name}")
-                    raise
-                except Exception as e:
-                    logger.error(f"Redis subscription error on {self.channel_name}: {e}")
-                    raise
-                finally:
-                    # Cleanup
                     try:
-                        await pubsub.unsubscribe(self.channel_name)
-                        await client.aclose()
+                        async for message in pubsub.listen():
+                            if message["type"] == "message":
+                                # Yield the data portion
+                                yield json.loads(message["data"])
+                    except asyncio.CancelledError:
+                        # Handle client disconnection
+                        logger.debug(f"Client disconnected from Redis subscription: {self.channel_name}")
+                        raise
                     except Exception as e:
-                        logger.warning(f"Error closing Redis subscription: {e}")
+                        logger.error(f"Redis subscription error on {self.channel_name}: {e}")
+                        raise
+                    finally:
+                        # Cleanup pubsub only (don't close shared client)
+                        try:
+                            await pubsub.unsubscribe(self.channel_name)
+                            await pubsub.aclose()
+                        except Exception as e:
+                            logger.warning(f"Error closing Redis subscription: {e}")
             except ImportError:
                 fallback_to_local = True
                 logger.error("Redis is configured but redis-py does not support asyncio or is not installed.")
@@ -269,7 +271,7 @@ class EventService:
     async def shutdown(self):
         """Cleanup resources.
 
-        Closes the synchronous Redis client connection and clears local subscribers.
+        Clears local subscribers. The shared Redis client is managed by the factory.
 
         Example:
             >>> import asyncio
@@ -280,8 +282,6 @@ class EventService:
             >>> asyncio.run(test_shutdown())
             True
         """
-        if self._redis_client:
-            # Sync client doesn't always need explicit close in this context,
-            # but good practice to clear references.
-            self._redis_client.close()
+        # Don't close the shared Redis client - it's managed by redis_client.py
+        self._redis_client = None
         self._event_subscribers.clear()

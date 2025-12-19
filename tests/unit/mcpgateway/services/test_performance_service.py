@@ -313,7 +313,7 @@ class TestCacheMetrics:
 
     @pytest.mark.asyncio
     async def test_get_cache_metrics_with_redis(self):
-        """Test cache metrics with Redis connection."""
+        """Test cache metrics with Redis connection via shared factory."""
         service = PerformanceService()
 
         # Create a proper async mock for the Redis client
@@ -326,18 +326,12 @@ class TestCacheMetrics:
             "keyspace_hits": 1000,
             "keyspace_misses": 100,
         })
-        mock_client.close = AsyncMock()
 
-        # Create a mock for the Redis class
-        mock_redis_class = MagicMock()
-        mock_redis_class.from_url.return_value = mock_client
-
-        # Create a mock module for aioredis
-        mock_aioredis = MagicMock()
-        mock_aioredis.Redis = mock_redis_class
+        async def mock_get_redis_client():
+            return mock_client
 
         with patch('mcpgateway.services.performance_service.REDIS_AVAILABLE', True):
-            with patch('mcpgateway.services.performance_service.aioredis', mock_aioredis):
+            with patch('mcpgateway.services.performance_service.get_redis_client', mock_get_redis_client):
                 with patch('mcpgateway.services.performance_service.settings') as mock_settings:
                     mock_settings.redis_url = "redis://localhost:6379"
                     mock_settings.cache_type = "redis"

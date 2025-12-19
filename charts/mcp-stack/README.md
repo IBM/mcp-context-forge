@@ -215,7 +215,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.PLUGINS_MTLS_CHECK_HOSTNAME | string | `"true"` |  |
 | mcpContextForge.config.PLUGINS_CLI_COMPLETION | string | `"false"` |  |
 | mcpContextForge.config.PLUGINS_CLI_MARKUP_MODE | string | `"rich"` |  |
-| mcpContextForge.config.OTEL_ENABLE_OBSERVABILITY | string | `"true"` |  |
+| mcpContextForge.config.OTEL_ENABLE_OBSERVABILITY | string | `"false"` |  |
 | mcpContextForge.config.OTEL_TRACES_EXPORTER | string | `"otlp"` |  |
 | mcpContextForge.config.OTEL_EXPORTER_OTLP_PROTOCOL | string | `"grpc"` |  |
 | mcpContextForge.config.OTEL_EXPORTER_OTLP_INSECURE | string | `"true"` |  |
