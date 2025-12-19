@@ -780,17 +780,20 @@ async def version_endpoint(
         >>> isinstance(response, HTMLResponse)
         True
 
-        >>> # Test with Redis available
+        >>> # Test with Redis available (using shared client factory)
         >>> async def test_with_redis():
         ...     mock_redis = AsyncMock()
         ...     mock_redis.ping = AsyncMock(return_value=True)
         ...     mock_redis.info = AsyncMock(return_value={"redis_version": "7.0.5"})
         ...
+        ...     async def mock_get_redis_client():
+        ...         return mock_redis
+        ...
         ...     with patch('mcpgateway.version.REDIS_AVAILABLE', True):
         ...         with patch('mcpgateway.version.settings') as mock_settings:
         ...             mock_settings.cache_type = "redis"
         ...             mock_settings.redis_url = "redis://localhost:6379"
-        ...             with patch('mcpgateway.version.aioredis.Redis.from_url', return_value=mock_redis):
+        ...             with patch('mcpgateway.version.get_redis_client', mock_get_redis_client):
         ...                 with patch('mcpgateway.version._build_payload') as mock_build:
         ...                     mock_build.return_value = {"redis": {"version": "7.0.5"}}
         ...                     response = await version_endpoint(mock_request, _user="testuser")
