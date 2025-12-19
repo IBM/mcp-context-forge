@@ -163,7 +163,7 @@ class TestBootstrapAdminUser:
             with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
                 with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
                     with patch("mcpgateway.db.utc_now", return_value="2024-01-01T00:00:00Z"):
-                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                        with patch("mcpgateway.bootstrap_db.logger"):
                             await bootstrap_admin_user(mock_conn)
 
                             # Verify that the user creation was attempted
@@ -318,7 +318,7 @@ class TestNormalizeTeamVisibility:
         mock_db_session.query.return_value = mock_query
 
         with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
-            with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+            with patch("mcpgateway.bootstrap_db.logger"):
                 result = normalize_team_visibility(mock_conn)
 
                 assert result == 0
