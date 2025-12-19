@@ -28,7 +28,7 @@ mcpgateway
 ### OpenTelemetry (External)
 
 ```bash
-# Enable OpenTelemetry (enabled by default)
+# Enable OpenTelemetry (disabled by default)
 export OTEL_ENABLE_OBSERVABILITY=true
 export OTEL_TRACES_EXPORTER=otlp
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317

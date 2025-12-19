@@ -53,6 +53,7 @@ from __future__ import annotations
 # Standard
 import asyncio
 from datetime import datetime, timezone
+import importlib.util
 import json
 import os
 import platform
@@ -81,14 +82,7 @@ try:
 except ImportError:
     psutil = None  # type: ignore
 
-try:
-    # Third-Party
-    import redis.asyncio as aioredis  # optional Redis health check
-
-    REDIS_AVAILABLE = True
-except ImportError:
-    aioredis = None  # type: ignore
-    REDIS_AVAILABLE = False
+REDIS_AVAILABLE = importlib.util.find_spec("redis.asyncio") is not None
 
 # Globals
 

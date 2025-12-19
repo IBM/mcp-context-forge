@@ -54,21 +54,16 @@ Usage Guide:
 
 # Standard
 import asyncio
+import importlib.util
 import json
 from typing import Any, AsyncGenerator, Dict, List, Optional
-
-try:
-    # Third-Party
-    import redis.asyncio as aioredis
-
-    REDIS_AVAILABLE = True
-except ImportError:
-    REDIS_AVAILABLE = False
 
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.redis_client import get_redis_client
+
+REDIS_AVAILABLE = importlib.util.find_spec("redis.asyncio") is not None
 
 # Initialize logging
 logging_service = LoggingService()

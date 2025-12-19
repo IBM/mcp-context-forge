@@ -136,7 +136,7 @@ def init_telemetry() -> Optional[Any]:
     - OTEL_EXPORTER_OTLP_ENDPOINT: OTLP endpoint (for otlp exporter)
     - OTEL_EXPORTER_JAEGER_ENDPOINT: Jaeger endpoint (for jaeger exporter)
     - OTEL_EXPORTER_ZIPKIN_ENDPOINT: Zipkin endpoint (for zipkin exporter)
-    - OTEL_ENABLE_OBSERVABILITY: Set to 'false' to disable completely
+    - OTEL_ENABLE_OBSERVABILITY: Set to 'true' to enable (disabled by default)
 
     Returns:
         The initialized tracer instance or None if disabled.
@@ -144,8 +144,8 @@ def init_telemetry() -> Optional[Any]:
     # pylint: disable=global-statement
     global _TRACER
 
-    # Check if observability is explicitly disabled
-    if os.getenv("OTEL_ENABLE_OBSERVABILITY", "true").lower() == "false":
+    # Check if observability is disabled (default: disabled)
+    if os.getenv("OTEL_ENABLE_OBSERVABILITY", "false").lower() == "false":
         logger.info("Observability disabled via OTEL_ENABLE_OBSERVABILITY=false")
         return None
 

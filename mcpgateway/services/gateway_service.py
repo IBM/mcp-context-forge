@@ -3064,8 +3064,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 await self._redis_client.expire(self._leader_key, self._leader_ttl)
                 logger.debug(f"Leader heartbeat: refreshed TTL to {self._leader_ttl}s")
 
-            except asyncio.CancelledError:
-                raise
             except Exception as e:
                 logger.warning(f"Leader heartbeat error: {e}")
                 # Continue trying - the main health check loop will handle leadership loss

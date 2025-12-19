@@ -339,7 +339,7 @@ mcpContextForge:
     PLUGINS_CLI_MARKUP_MODE: "rich"  # set markup mode for plugins CLI (rich, markdown, or disabled)
 
     # ─ OpenTelemetry Observability ─
-    OTEL_ENABLE_OBSERVABILITY: "true" # master switch for observability
+    OTEL_ENABLE_OBSERVABILITY: "false" # master switch for observability
     OTEL_TRACES_EXPORTER: "otlp"     # traces exporter: otlp, jaeger, zipkin, console, none
     OTEL_EXPORTER_OTLP_PROTOCOL: "grpc" # OTLP protocol: grpc or http
     OTEL_EXPORTER_OTLP_INSECURE: "true" # use insecure connection for OTLP

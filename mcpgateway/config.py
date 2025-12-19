@@ -1128,7 +1128,7 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # Observability (OpenTelemetry)
-    otel_enable_observability: bool = Field(default=True, description="Enable OpenTelemetry observability")
+    otel_enable_observability: bool = Field(default=False, description="Enable OpenTelemetry observability")
     otel_traces_exporter: str = Field(default="otlp", description="Traces exporter: otlp, jaeger, zipkin, console, none")
     otel_exporter_otlp_endpoint: Optional[str] = Field(default=None, description="OTLP endpoint (e.g., http://localhost:4317)")
     otel_exporter_otlp_protocol: str = Field(default="grpc", description="OTLP protocol: grpc or http")
