@@ -47,32 +47,34 @@ class TestEventService:
     @pytest.mark.asyncio
     async def test_init_with_redis_success(self, mock_settings, mock_redis_available):
         """Test initialization with successful Redis connection."""
-        with patch("mcpgateway.services.event_service.redis") as mock_redis_module:
-            mock_redis_client = MagicMock()
-            mock_redis_client.ping.return_value = True
-            mock_redis_module.from_url.return_value = mock_redis_client
+        mock_redis_client = AsyncMock()
 
+        async def mock_get_redis_client():
+            return mock_redis_client
+
+        with patch("mcpgateway.services.event_service.get_redis_client", mock_get_redis_client):
             from mcpgateway.services.event_service import EventService
 
             service = EventService("test:channel")
+            await service.initialize()
 
             assert service.channel_name == "test:channel"
             assert service.redis_url == "redis://localhost:6379"
             assert service._redis_client is not None
             assert service._event_subscribers == []
-            mock_redis_module.from_url.assert_called_once_with("redis://localhost:6379")
-            mock_redis_client.ping.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_init_with_redis_connection_failure(self, mock_settings, mock_redis_available):
         """Test initialization when Redis connection fails."""
-        with patch("mcpgateway.services.event_service.redis") as mock_redis_module:
-            with patch("mcpgateway.services.event_service.logger") as mock_logger:
-                mock_redis_module.from_url.side_effect = Exception("Connection failed")
+        async def mock_get_redis_client():
+            raise Exception("Connection failed")
 
+        with patch("mcpgateway.services.event_service.get_redis_client", mock_get_redis_client):
+            with patch("mcpgateway.services.event_service.logger") as mock_logger:
                 from mcpgateway.services.event_service import EventService
 
                 service = EventService("test:channel")
+                await service.initialize()
 
                 assert service._redis_client is None
                 mock_logger.warning.assert_called_once()
@@ -80,19 +82,17 @@ class TestEventService:
 
     @pytest.mark.asyncio
     async def test_init_with_redis_ping_failure(self, mock_settings, mock_redis_available):
-        """Test initialization when Redis ping fails."""
-        with patch("mcpgateway.services.event_service.redis") as mock_redis_module:
-            with patch("mcpgateway.services.event_service.logger") as mock_logger:
-                mock_redis_client = MagicMock()
-                mock_redis_client.ping.side_effect = Exception("Ping failed")
-                mock_redis_module.from_url.return_value = mock_redis_client
+        """Test initialization when shared client returns None (unavailable)."""
+        async def mock_get_redis_client():
+            return None
 
-                from mcpgateway.services.event_service import EventService
+        with patch("mcpgateway.services.event_service.get_redis_client", mock_get_redis_client):
+            from mcpgateway.services.event_service import EventService
 
-                service = EventService("test:channel")
+            service = EventService("test:channel")
+            await service.initialize()
 
-                assert service._redis_client is None
-                mock_logger.warning.assert_called_once()
+            assert service._redis_client is None
 
     @pytest.mark.asyncio
     async def test_init_without_redis_available(self, mock_settings, mock_redis_unavailable):
@@ -123,40 +123,43 @@ class TestEventService:
     @pytest.mark.asyncio
     async def test_publish_event_with_redis_success(self, mock_settings, mock_redis_available):
         """Test successful event publishing via Redis."""
-        with patch("mcpgateway.services.event_service.redis") as mock_redis_module:
-            mock_redis_client = MagicMock()
-            mock_redis_client.ping.return_value = True
-            mock_redis_client.publish = MagicMock()
-            mock_redis_module.from_url.return_value = mock_redis_client
+        mock_redis_client = AsyncMock()
+        mock_redis_client.publish = AsyncMock()
 
+        async def mock_get_redis_client():
+            return mock_redis_client
+
+        with patch("mcpgateway.services.event_service.get_redis_client", mock_get_redis_client):
             from mcpgateway.services.event_service import EventService
 
             service = EventService("test:channel")
+            await service.initialize()
             event_data = {"event": "test_event", "data": "test_data"}
 
-            with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
-                await service.publish_event(event_data)
+            await service.publish_event(event_data)
 
-                mock_to_thread.assert_called_once()
-                call_args = mock_to_thread.call_args[0]
-                assert call_args[0] == mock_redis_client.publish
-                assert call_args[1] == "test:channel"
-                assert json.loads(call_args[2]) == event_data
+            mock_redis_client.publish.assert_called_once()
+            call_args = mock_redis_client.publish.call_args[0]
+            assert call_args[0] == "test:channel"
+            assert json.loads(call_args[1]) == event_data
 
     @pytest.mark.asyncio
     async def test_publish_event_with_redis_failure_fallback_to_local(
         self, mock_settings, mock_redis_available
     ):
         """Test event publishing falls back to local queues when Redis fails."""
-        with patch("mcpgateway.services.event_service.redis") as mock_redis_module:
-            with patch("mcpgateway.services.event_service.logger") as mock_logger:
-                mock_redis_client = MagicMock()
-                mock_redis_client.ping.return_value = True
-                mock_redis_module.from_url.return_value = mock_redis_client
+        mock_redis_client = AsyncMock()
+        mock_redis_client.publish = AsyncMock(side_effect=Exception("Redis publish failed"))
 
+        async def mock_get_redis_client():
+            return mock_redis_client
+
+        with patch("mcpgateway.services.event_service.get_redis_client", mock_get_redis_client):
+            with patch("mcpgateway.services.event_service.logger") as mock_logger:
                 from mcpgateway.services.event_service import EventService
 
                 service = EventService("test:channel")
+                await service.initialize()
 
                 queue1 = asyncio.Queue()
                 queue2 = asyncio.Queue()
@@ -165,9 +168,7 @@ class TestEventService:
 
                 event_data = {"event": "test_event", "data": "test_data"}
 
-                with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
-                    mock_to_thread.side_effect = Exception("Redis publish failed")
-                    await service.publish_event(event_data)
+                await service.publish_event(event_data)
 
                 assert await queue1.get() == event_data
                 assert await queue2.get() == event_data
@@ -600,23 +601,25 @@ class TestEventService:
 
     @pytest.mark.asyncio
     async def test_shutdown_with_redis_client(self, mock_settings, mock_redis_available):
-        """Test shutdown with active Redis client."""
-        with patch("mcpgateway.services.event_service.redis") as mock_redis_module:
-            mock_redis_client = MagicMock()
-            mock_redis_client.ping.return_value = True
-            mock_redis_client.close = MagicMock()
-            mock_redis_module.from_url.return_value = mock_redis_client
+        """Test shutdown with active Redis client - does not close shared client."""
+        mock_redis_client = AsyncMock()
 
+        async def mock_get_redis_client():
+            return mock_redis_client
+
+        with patch("mcpgateway.services.event_service.get_redis_client", mock_get_redis_client):
             from mcpgateway.services.event_service import EventService
 
             service = EventService("test:channel")
+            await service.initialize()
 
             service._event_subscribers.append(asyncio.Queue())
             service._event_subscribers.append(asyncio.Queue())
 
             await service.shutdown()
 
-            mock_redis_client.close.assert_called_once()
+            # Should clear reference but NOT close shared client
+            assert service._redis_client is None
             assert len(service._event_subscribers) == 0
 
     @pytest.mark.asyncio

@@ -146,6 +146,7 @@ class PromptService:
     async def initialize(self) -> None:
         """Initialize the service."""
         logger.info("Initializing prompt service")
+        await self._event_service.initialize()
 
     async def shutdown(self) -> None:
         """Shutdown the service.

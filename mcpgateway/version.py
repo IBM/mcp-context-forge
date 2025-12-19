@@ -89,6 +89,10 @@ except ImportError:
     aioredis = None  # type: ignore
     REDIS_AVAILABLE = False
 
+# First-Party
+# First-Party - shared Redis client factory
+from mcpgateway.utils.redis_client import get_redis_client
+
 # Globals
 
 START_TIME = time.time()
@@ -801,21 +805,23 @@ async def version_endpoint(
         >>> isinstance(response, JSONResponse)
         True
     """
-    # Redis health check
+    # Redis health check - use shared client from factory
     redis_ok = False
     redis_version: Optional[str] = None
     if REDIS_AVAILABLE and aioredis and settings.cache_type.lower() == "redis" and settings.redis_url:
         try:
-            client = aioredis.Redis.from_url(settings.redis_url)
-
-            response = await asyncio.wait_for(client.ping(), timeout=3.0)
-            if response is True:
-                redis_ok = True
-                info = await asyncio.wait_for(client.info(), timeout=3.0)
-                redis_version = info.get("redis_version", "unknown")
+            client = await get_redis_client()
+            if client:
+                response = await asyncio.wait_for(client.ping(), timeout=3.0)
+                if response is True:
+                    redis_ok = True
+                    info = await asyncio.wait_for(client.info(), timeout=3.0)
+                    redis_version = info.get("redis_version", "unknown")
+                else:
+                    redis_ok = False
+                    redis_version = "Ping failed"
             else:
-                redis_ok = False
-                redis_version = "Ping failed"
+                redis_version = "Client not available"
         except Exception as exc:
             redis_ok = False
             redis_version = str(exc)

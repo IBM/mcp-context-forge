@@ -62,8 +62,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 try:
+    # Third-Party - check if redis is available
     # Third-Party
-    import redis
+    import redis.asyncio  # noqa: F401
 
     REDIS_AVAILABLE = True
 except ImportError:
@@ -92,6 +93,7 @@ from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
+from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
@@ -337,14 +339,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         # For health checks, we determine the leader instance.
         self.redis_url = settings.redis_url if settings.cache_type == "redis" else None
 
-        # Initialize optional Redis client holder
+        # Initialize optional Redis client holder (set in initialize())
         self._redis_client: Optional[Any] = None
 
+        # Leader election settings from config
         if self.redis_url and REDIS_AVAILABLE:
-            self._redis_client = redis.from_url(self.redis_url)
             self._instance_id = str(uuid.uuid4())  # Unique ID for this process
-            self._leader_key = "gateway_service_leader"
-            self._leader_ttl = 40  # seconds
+            self._leader_key = settings.redis_leader_key
+            self._leader_ttl = settings.redis_leader_ttl
         elif settings.cache_type != "none":
             # Fallback: File-based lock
             temp_dir = tempfile.gettempdir()
@@ -414,18 +416,26 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         """
         logger.info("Initializing gateway service")
 
+        # Initialize event service with shared Redis client
+        await self._event_service.initialize()
+
         db_gen: Generator = get_db()
         db: Session = next(db_gen)
 
         user_email = settings.platform_admin_email
 
-        if self._redis_client:
-            # Check if Redis is available
-            pong = self._redis_client.ping()
-            if not pong:
-                raise ConnectionError("Redis ping failed.")
+        # Get shared Redis client from factory
+        if self.redis_url and REDIS_AVAILABLE:
+            self._redis_client = await get_redis_client()
 
-            is_leader = self._redis_client.set(self._leader_key, self._instance_id, ex=self._leader_ttl, nx=True)
+        if self._redis_client:
+            # Check if Redis is available (ping already done by factory, but verify)
+            try:
+                await self._redis_client.ping()
+            except Exception as e:
+                raise ConnectionError(f"Redis ping failed: {e}") from e
+
+            is_leader = await self._redis_client.set(self._leader_key, self._instance_id, ex=self._leader_ttl, nx=True)
             if is_leader:
                 logger.info("Acquired Redis leadership. Starting health check task.")
                 self._health_check_task = asyncio.create_task(self._run_health_checks(db, user_email))
@@ -467,7 +477,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     return 0
                 end
                 """
-                result = self._redis_client.eval(release_script, 1, self._leader_key, self._instance_id)
+                result = await self._redis_client.eval(release_script, 1, self._leader_key, self._instance_id)
                 if result:
                     logger.info("Released Redis leadership on shutdown")
             except Exception as e:
@@ -3043,11 +3053,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         while True:
             try:
                 if self._redis_client and settings.cache_type == "redis":
-                    # Redis-based leader check
-                    current_leader = self._redis_client.get(self._leader_key)
-                    if current_leader != self._instance_id.encode():
+                    # Redis-based leader check (async, decode_responses=True returns strings)
+                    current_leader = await self._redis_client.get(self._leader_key)
+                    if current_leader != self._instance_id:
                         return
-                    self._redis_client.expire(self._leader_key, self._leader_ttl)
+                    await self._redis_client.expire(self._leader_key, self._leader_ttl)
 
                     # Run health checks
                     gateways = await asyncio.to_thread(self._get_gateways)

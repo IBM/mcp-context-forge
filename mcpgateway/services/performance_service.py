@@ -64,6 +64,9 @@ except ImportError:
     aioredis = None  # type: ignore
     REDIS_AVAILABLE = False
 
+# First-Party
+from mcpgateway.utils.redis_client import get_redis_client
+
 # Optional prometheus_client import
 try:
     # Third-Party
@@ -405,7 +408,11 @@ class PerformanceService:
             return metrics
 
         try:
-            client = aioredis.Redis.from_url(settings.redis_url)
+            # Use shared Redis client from factory
+            client = await get_redis_client()
+            if not client:
+                return metrics
+
             info = await client.info()
 
             metrics.connected = True
@@ -424,7 +431,7 @@ class PerformanceService:
             if total > 0:
                 metrics.hit_rate = round((hits / total) * 100, 2)
 
-            await client.close()
+            # Don't close the shared client
         except Exception as e:
             logger.warning(f"Error collecting Redis metrics: {e}")
             metrics.connected = False

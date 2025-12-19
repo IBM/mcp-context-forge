@@ -59,7 +59,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 try:
     # Third-Party
-    import redis
+    import redis.asyncio as aioredis
 
     REDIS_AVAILABLE = True
 except ImportError:
@@ -68,6 +68,7 @@ except ImportError:
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.redis_client import get_redis_client
 
 # Initialize logging
 logging_service = LoggingService()
@@ -104,14 +105,20 @@ class EventService:
 
         self.redis_url = settings.redis_url if settings.cache_type == "redis" else None
         self._redis_client: Optional[Any] = None
+        # Redis client is set in initialize() via the shared factory
 
+    async def initialize(self) -> None:
+        """Initialize the event service with shared Redis client.
+
+        Should be called during application startup to get the shared Redis client.
+        """
         if self.redis_url and REDIS_AVAILABLE:
             try:
-                self._redis_client = redis.from_url(self.redis_url)
-                # Quick ping to verify connection
-                self._redis_client.ping()
+                self._redis_client = await get_redis_client()
+                if self._redis_client:
+                    logger.info(f"EventService ({self.channel_name}) connected to Redis")
             except Exception as e:
-                logger.warning(f"Failed to initialize Redis for EventService ({channel_name}): {e}")
+                logger.warning(f"Failed to initialize Redis for EventService ({self.channel_name}): {e}")
                 self._redis_client = None
 
     async def publish_event(self, event: Dict[str, Any]) -> None:
@@ -141,7 +148,7 @@ class EventService:
         """
         if self._redis_client:
             try:
-                await asyncio.to_thread(self._redis_client.publish, self.channel_name, json.dumps(event))
+                await self._redis_client.publish(self.channel_name, json.dumps(event))
             except Exception as e:
                 logger.error(f"Failed to publish event to Redis channel {self.channel_name}: {e}")
                 # Fallback: push to local queues if Redis fails
@@ -195,12 +202,14 @@ class EventService:
         if self._redis_client:
 
             try:
-                # Import asyncio version of redis here to avoid top-level dependency issues
-                # Third-Party
-                import redis.asyncio as aioredis  # pylint: disable=import-outside-toplevel
-
-                # Create a dedicated async connection for this subscription
-                client = aioredis.from_url(self.redis_url, decode_responses=True)
+                # PubSub requires its own dedicated connection (can't share with pool)
+                # Use centralized settings for consistent configuration
+                client = aioredis.from_url(
+                    self.redis_url,
+                    decode_responses=settings.redis_decode_responses,
+                    socket_timeout=settings.redis_socket_timeout,
+                    socket_connect_timeout=settings.redis_socket_connect_timeout,
+                )
                 pubsub = client.pubsub()
 
                 await pubsub.subscribe(self.channel_name)
@@ -269,7 +278,7 @@ class EventService:
     async def shutdown(self):
         """Cleanup resources.
 
-        Closes the synchronous Redis client connection and clears local subscribers.
+        Clears local subscribers. The shared Redis client is managed by the factory.
 
         Example:
             >>> import asyncio
@@ -280,8 +289,6 @@ class EventService:
             >>> asyncio.run(test_shutdown())
             True
         """
-        if self._redis_client:
-            # Sync client doesn't always need explicit close in this context,
-            # but good practice to clear references.
-            self._redis_client.close()
+        # Don't close the shared Redis client - it's managed by redis_client.py
+        self._redis_client = None
         self._event_subscribers.clear()

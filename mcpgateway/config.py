@@ -1097,6 +1097,19 @@ class Settings(BaseSettings):
     redis_max_retries: int = 3
     redis_retry_interval_ms: int = 2000
 
+    # Redis Connection Pool - Performance Optimized
+    redis_decode_responses: bool = Field(default=True, description="Return strings instead of bytes")
+    redis_max_connections: int = Field(default=50, description="Connection pool size per worker")
+    redis_socket_timeout: float = Field(default=2.0, description="Socket read/write timeout in seconds")
+    redis_socket_connect_timeout: float = Field(default=2.0, description="Connection timeout in seconds")
+    redis_retry_on_timeout: bool = Field(default=True, description="Retry commands on timeout")
+    redis_health_check_interval: int = Field(default=30, description="Seconds between connection health checks (0=disabled)")
+
+    # Redis Leader Election - Multi-Node Deployments
+    redis_leader_ttl: int = Field(default=15, description="Leader election TTL in seconds")
+    redis_leader_key: str = Field(default="gateway_service_leader", description="Leader key name")
+    redis_leader_heartbeat_interval: int = Field(default=5, description="Seconds between leader heartbeats")
+
     # streamable http transport
     use_stateful_sessions: bool = False  # Set to False to use stateless sessions without event store
     json_response_enabled: bool = True  # Enable JSON responses instead of SSE streams

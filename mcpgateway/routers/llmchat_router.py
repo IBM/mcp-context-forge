@@ -50,6 +50,7 @@ from mcpgateway.services.mcp_client_chat_service import (
     OpenAIConfig,
     WatsonxConfig,
 )
+from mcpgateway.utils.redis_client import get_redis_client
 
 # Load environment variables
 load_dotenv()
@@ -57,12 +58,21 @@ load_dotenv()
 # Initialize router
 llmchat_router = APIRouter(prefix="/llmchat", tags=["llmchat"])
 
-# Redis client initialization
+# Redis client (initialized via init_redis() during app startup)
 redis_client = None
-if getattr(settings, "cache_type", None) == "redis" and getattr(settings, "redis_url", None):
-    if aioredis is None:
-        raise RuntimeError("Redis support requires 'redis' package. Install with: pip install redis[async]")
-    redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
+
+
+async def init_redis() -> None:
+    """Initialize Redis client using the shared factory.
+
+    Should be called during application startup from main.py lifespan.
+    """
+    global redis_client
+    if getattr(settings, "cache_type", None) == "redis" and getattr(settings, "redis_url", None):
+        redis_client = await get_redis_client()
+        if redis_client:
+            logger.info("LLMChat router connected to shared Redis client")
+
 
 # Fallback in-memory stores (used when Redis unavailable)
 # Store active chat sessions per user

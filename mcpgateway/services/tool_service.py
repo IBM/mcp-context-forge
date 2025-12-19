@@ -282,6 +282,7 @@ class ToolService:
             >>> asyncio.run(service.initialize())  # Should log "Initializing tool service"
         """
         logger.info("Initializing tool service")
+        await self._event_service.initialize()
 
     async def shutdown(self) -> None:
         """Shutdown the service.

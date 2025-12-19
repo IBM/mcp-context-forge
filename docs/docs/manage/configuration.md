@@ -326,6 +326,19 @@ CACHE_PREFIX=mcpgateway
 SESSION_TTL=3600
 MESSAGE_TTL=600
 RESOURCE_CACHE_TTL=1800
+
+# Redis Connection Pool (performance-tuned defaults)
+REDIS_MAX_CONNECTIONS=50            # Pool size per worker
+REDIS_SOCKET_TIMEOUT=2.0            # Read/write timeout (seconds)
+REDIS_SOCKET_CONNECT_TIMEOUT=2.0    # Connection timeout (seconds)
+REDIS_RETRY_ON_TIMEOUT=true         # Retry commands on timeout
+REDIS_HEALTH_CHECK_INTERVAL=30      # Health check interval (seconds, 0=disabled)
+REDIS_DECODE_RESPONSES=true         # Return strings instead of bytes
+
+# Redis Leader Election (multi-node deployments)
+REDIS_LEADER_TTL=15                 # Leader TTL (seconds)
+REDIS_LEADER_KEY=gateway_service_leader
+REDIS_LEADER_HEARTBEAT_INTERVAL=5   # Heartbeat interval (seconds)
 ```
 
 ### Logging Settings

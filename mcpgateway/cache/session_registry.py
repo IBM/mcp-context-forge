@@ -72,6 +72,7 @@ from mcpgateway.services import PromptService, ResourceService, ToolService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.transports import SSETransport
 from mcpgateway.utils.create_jwt_token import create_jwt_token
+from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.validation.jsonrpc import JSONRPCError
 
@@ -197,8 +198,9 @@ class SessionBackend:
             if not redis_url:
                 raise ValueError("Redis backend requires redis_url")
 
-            self._redis = Redis.from_url(redis_url)
-            self._pubsub = self._redis.pubsub()
+            # Redis client is set in initialize() via the shared factory
+            self._redis: Optional[Redis] = None
+            self._pubsub = None
 
         elif self._backend == "database":
             if not SQLALCHEMY_AVAILABLE:
@@ -326,7 +328,12 @@ class SessionRegistry(SessionBackend):
             logger.info("Database cleanup task started")
 
         elif self._backend == "redis":
-            await self._pubsub.subscribe("mcp_session_events")
+            # Get shared Redis client from factory
+            self._redis = await get_redis_client()
+            if self._redis:
+                self._pubsub = self._redis.pubsub()
+                await self._pubsub.subscribe("mcp_session_events")
+                logger.info("Session registry connected to shared Redis client")
 
         elif self._backend == "none":
             # Nothing to initialize for none backend
@@ -363,17 +370,15 @@ class SessionRegistry(SessionBackend):
             except asyncio.CancelledError:
                 pass
 
-        # Close Redis connections
-        if self._backend == "redis":
+        # Close Redis pubsub (but not the shared client)
+        if self._backend == "redis" and getattr(self, "_pubsub", None):
             try:
                 await self._pubsub.aclose()
-                await self._redis.aclose()
             except Exception as e:
-                logger.error(f"Error closing Redis connection: {e}")
-                # Error example:
-                # >>> import logging
-                # >>> logger = logging.getLogger(__name__)
-                # >>> logger.error(f"Error closing Redis connection: Connection lost")  # doctest: +SKIP
+                logger.error(f"Error closing Redis pubsub: {e}")
+            # Don't close self._redis - it's the shared client managed by redis_client.py
+            self._redis = None
+            self._pubsub = None
 
     async def add_session(self, session_id: str, transport: SSETransport) -> None:
         """Add a session to the registry.

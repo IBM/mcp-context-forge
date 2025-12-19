@@ -99,39 +99,53 @@ class TestRedisBackendErrors:
     @pytest.mark.asyncio
     async def test_redis_add_session_error(self, monkeypatch, caplog, mock_sse_transport):
         """Test Redis error during add_session."""
+        mock_pubsub = AsyncMock()
+        mock_pubsub.aclose = AsyncMock()
+
         mock_redis = AsyncMock()
         mock_redis.setex = AsyncMock(side_effect=Exception("Redis connection error"))
         mock_redis.publish = AsyncMock()
-        mock_redis.pubsub = Mock(return_value=AsyncMock())  # pubsub() is synchronous
+        mock_redis.pubsub = Mock(return_value=mock_pubsub)
+
+        async def mock_get_redis_client():
+            return mock_redis
 
         with patch("mcpgateway.cache.session_registry.REDIS_AVAILABLE", True):
-            with patch("mcpgateway.cache.session_registry.Redis") as MockRedis:
-                MockRedis.from_url.return_value = mock_redis
-
+            with patch("mcpgateway.cache.session_registry.get_redis_client", mock_get_redis_client):
                 registry = SessionRegistry(backend="redis", redis_url="redis://localhost")
+                await registry.initialize()
 
                 await registry.add_session("test_session", mock_sse_transport)
 
                 # Should log the Redis error
                 assert "Redis error adding session test_session: Redis connection error" in caplog.text
 
+                await registry.shutdown()
+
     @pytest.mark.asyncio
     async def test_redis_broadcast_error(self, monkeypatch, caplog):
         """Test Redis error during broadcast."""
+        mock_pubsub = AsyncMock()
+        mock_pubsub.aclose = AsyncMock()
+
         mock_redis = AsyncMock()
         mock_redis.publish = AsyncMock(side_effect=Exception("Redis publish error"))
-        mock_redis.pubsub = Mock(return_value=AsyncMock())  # pubsub() is synchronous
+        mock_redis.pubsub = Mock(return_value=mock_pubsub)
+
+        async def mock_get_redis_client():
+            return mock_redis
 
         with patch("mcpgateway.cache.session_registry.REDIS_AVAILABLE", True):
-            with patch("mcpgateway.cache.session_registry.Redis") as MockRedis:
-                MockRedis.from_url.return_value = mock_redis
-
+            with patch("mcpgateway.cache.session_registry.get_redis_client", mock_get_redis_client):
                 registry = SessionRegistry(backend="redis", redis_url="redis://localhost")
+                await registry.initialize()
 
                 await registry.broadcast("test_session", {"test": "message"})
 
                 # Should log the Redis error
                 assert "Redis error during broadcast: Redis publish error" in caplog.text
+
+                await registry.shutdown()
 
 
 class TestDatabaseBackendErrors:
@@ -775,15 +789,19 @@ class TestRedisSessionRefresh:
     @pytest.mark.asyncio
     async def test_refresh_redis_sessions_general_error(self, monkeypatch, caplog):
         """Test _refresh_redis_sessions handles general errors."""
+        mock_pubsub = AsyncMock()
+        mock_pubsub.aclose = AsyncMock()
+
         mock_redis = AsyncMock()
-        mock_redis.close = Mock()  # Redis close() is synchronous
-        mock_redis.pubsub = Mock(return_value=AsyncMock())  # pubsub() is synchronous, returns async object
+        mock_redis.pubsub = Mock(return_value=mock_pubsub)
+
+        async def mock_get_redis_client():
+            return mock_redis
 
         with patch("mcpgateway.cache.session_registry.REDIS_AVAILABLE", True):
-            with patch("mcpgateway.cache.session_registry.Redis") as MockRedis:
-                MockRedis.from_url = Mock(return_value=mock_redis)  # from_url is synchronous
-
+            with patch("mcpgateway.cache.session_registry.get_redis_client", mock_get_redis_client):
                 registry = SessionRegistry(backend="redis", redis_url="redis://localhost")
+                await registry.initialize()
 
                 # Mock _lock to raise exception
                 class MockLock:
@@ -799,6 +817,8 @@ class TestRedisSessionRefresh:
 
                 # Should log the error
                 assert "Error in Redis session refresh" in caplog.text
+
+                await registry.shutdown()
 
 
 class TestInitializationAndShutdown:
@@ -844,14 +864,17 @@ class TestInitializationAndShutdown:
     @pytest.mark.asyncio
     async def test_redis_initialization_subscribe(self, monkeypatch):
         """Test Redis backend initialization subscribes to events."""
-        mock_redis = AsyncMock()
         mock_pubsub = AsyncMock()
+        mock_pubsub.aclose = AsyncMock()
+
+        mock_redis = AsyncMock()
         mock_redis.pubsub = Mock(return_value=mock_pubsub)  # Use Mock for sync method
 
-        with patch("mcpgateway.cache.session_registry.REDIS_AVAILABLE", True):
-            with patch("mcpgateway.cache.session_registry.Redis") as MockRedis:
-                MockRedis.from_url = Mock(return_value=mock_redis)  # from_url is synchronous
+        async def mock_get_redis_client():
+            return mock_redis
 
+        with patch("mcpgateway.cache.session_registry.REDIS_AVAILABLE", True):
+            with patch("mcpgateway.cache.session_registry.get_redis_client", mock_get_redis_client):
                 registry = SessionRegistry(backend="redis", redis_url="redis://localhost")
                 await registry.initialize()
 
