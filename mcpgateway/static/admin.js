@@ -21325,6 +21325,9 @@ function initializeLLMChat() {
         loadVirtualServersForChat();
     }
 
+    // Load available LLM models from LLM Settings
+    loadLLMModels();
+
     // Initialize chat input resize behavior
     initializeChatInputResize();
 }
@@ -21562,42 +21565,51 @@ function toggleLLMConfig() {
 }
 
 /**
- * Handle LLM provider selection change
+ * Load available LLM models from the gateway's LLM Settings
  */
-// eslint-disable-next-line no-unused-vars
-function handleLLMProviderChange() {
-    const provider = document.getElementById("llm-provider").value;
-    const azureFields = document.getElementById("azure-openai-fields");
-    const openaiFields = document.getElementById("openai-fields");
-    const anthropicFields = document.getElementById("anthropic-fields");
-    const awsBedrockFields = document.getElementById("aws-bedrock-fields");
-    const watsonxFields = document.getElementById("watsonx-fields");
-    const ollamaFields = document.getElementById("ollama-fields");
+async function loadLLMModels() {
+    const modelSelect = document.getElementById("llm-model-select");
+    if (!modelSelect) return;
 
-    // Hide all fields first
-    azureFields.classList.add("hidden");
-    openaiFields.classList.add("hidden");
-    anthropicFields.classList.add("hidden");
-    awsBedrockFields.classList.add("hidden");
-    watsonxFields.classList.add("hidden");
-    ollamaFields.classList.add("hidden");
+    try {
+        const response = await fetch("/api/llm/models");
+        if (!response.ok) {
+            throw new Error("Failed to load models");
+        }
+        const data = await response.json();
 
-    // Show relevant fields
-    if (provider === "azure_openai") {
-        azureFields.classList.remove("hidden");
-    } else if (provider === "openai") {
-        openaiFields.classList.remove("hidden");
-    } else if (provider === "anthropic") {
-        anthropicFields.classList.remove("hidden");
-    } else if (provider === "aws_bedrock") {
-        awsBedrockFields.classList.remove("hidden");
-    } else if (provider === "watsonx") {
-        watsonxFields.classList.remove("hidden");
-    } else if (provider === "ollama") {
-        ollamaFields.classList.remove("hidden");
+        // Clear existing options except the placeholder
+        modelSelect.innerHTML = '<option value="">Select Model (configure in Settings → LLM Settings)</option>';
+
+        // Add enabled models from enabled providers
+        if (data.models && data.models.length > 0) {
+            data.models.forEach(model => {
+                if (model.is_enabled) {
+                    const option = document.createElement("option");
+                    option.value = model.model_id;
+                    option.textContent = `${model.model_id} (${model.provider_name || model.provider_type})`;
+                    modelSelect.appendChild(option);
+                }
+            });
+        }
+
+        if (modelSelect.options.length === 1) {
+            // Only placeholder exists - no models configured
+            modelSelect.innerHTML = '<option value="">No models configured - go to Settings → LLM Settings</option>';
+        }
+    } catch (error) {
+        console.error("Error loading LLM models:", error);
+        modelSelect.innerHTML = '<option value="">Error loading models</option>';
     }
 
-    // Update connect button state
+    updateConnectButtonState();
+}
+
+/**
+ * Handle LLM model selection change
+ */
+// eslint-disable-next-line no-unused-vars
+function handleLLMModelChange() {
     updateConnectButtonState();
 }
 
@@ -21606,11 +21618,12 @@ function handleLLMProviderChange() {
  */
 function updateConnectButtonState() {
     const connectBtn = document.getElementById("llm-connect-btn");
-    const provider = document.getElementById("llm-provider").value;
+    const modelSelect = document.getElementById("llm-model-select");
+    const selectedModel = modelSelect ? modelSelect.value : "";
     const hasServer = llmChatState.selectedServerId !== null;
 
     if (connectBtn) {
-        connectBtn.disabled = !hasServer || !provider;
+        connectBtn.disabled = !hasServer || !selectedModel;
     }
 }
 
@@ -21624,9 +21637,10 @@ async function connectLLMChat() {
         return;
     }
 
-    const provider = document.getElementById("llm-provider").value;
-    if (!provider) {
-        showErrorMessage("Please select an LLM provider");
+    const modelSelect = document.getElementById("llm-model-select");
+    const selectedModel = modelSelect ? modelSelect.value : "";
+    if (!selectedModel) {
+        showErrorMessage("Please select an LLM model");
         return;
     }
 
@@ -21647,8 +21661,8 @@ async function connectLLMChat() {
     }
 
     try {
-        // Build LLM config
-        const llmConfig = buildLLMConfig(provider);
+        // Build LLM config - now uses model ID from LLM Settings
+        const llmConfig = buildLLMConfig(selectedModel);
 
         // Build server URL
         const serverUrl = `${location.protocol}//${location.hostname}${![80, 443].includes(location.port) ? `:${location.port}` : ""}/servers/${llmChatState.selectedServerId}/mcp`;
@@ -21788,25 +21802,51 @@ async function connectLLMChat() {
 
 /**
  * Build LLM config object from form inputs
+ * Models are configured via Admin UI -> Settings -> LLM Settings
  */
-function buildLLMConfig(provider) {
+function buildLLMConfig(modelId) {
+    const config = {
+        model: modelId,
+    };
+
+    // Get optional temperature
+    const temperatureEl = document.getElementById("llm-temperature");
+    if (temperatureEl && temperatureEl.value.trim()) {
+        config.temperature = parseFloat(temperatureEl.value.trim());
+    }
+
+    // Get optional max tokens
+    const maxTokensEl = document.getElementById("llm-max-tokens");
+    if (maxTokensEl && maxTokensEl.value.trim()) {
+        config.max_tokens = parseInt(maxTokensEl.value.trim(), 10);
+    }
+
+    return config;
+}
+
+/**
+ * Legacy function - kept for compatibility but no longer used
+ * @deprecated Use buildLLMConfig(modelId) instead
+ */
+// eslint-disable-next-line no-unused-vars
+function buildLLMConfigLegacy(provider) {
     const config = {
         provider,
         config: {},
     };
 
     if (provider === "azure_openai") {
-        const apiKey = document.getElementById("azure-api-key").value.trim();
-        const endpoint = document.getElementById("azure-endpoint").value.trim();
+        const apiKey = document.getElementById("azure-api-key")?.value?.trim() || "";
+        const endpoint = document.getElementById("azure-endpoint")?.value?.trim() || "";
         const deployment = document
             .getElementById("azure-deployment")
-            .value.trim();
+            ?.value?.trim() || "";
         const apiVersion = document
             .getElementById("azure-api-version")
-            .value.trim();
+            ?.value?.trim() || "";
         const temperature = document
             .getElementById("azure-temperature")
-            .value.trim();
+            ?.value?.trim() || "";
 
         // Only include non-empty values
         if (apiKey) {
@@ -21825,8 +21865,8 @@ function buildLLMConfig(provider) {
             config.config.temperature = parseFloat(temperature);
         }
     } else if (provider === "openai") {
-        const apiKey = document.getElementById("openai-api-key").value.trim();
-        const model = document.getElementById("openai-model").value.trim();
+        const apiKey = document.getElementById("openai-api-key")?.value?.trim() || "";
+        const model = document.getElementById("openai-model")?.value?.trim() || "";
         const baseUrl = document.getElementById("openai-base-url").value.trim();
         const temperature = document
             .getElementById("openai-temperature")
