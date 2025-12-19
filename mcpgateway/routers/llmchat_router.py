@@ -52,8 +52,11 @@ from mcpgateway.services.mcp_client_chat_service import (
 )
 from mcpgateway.utils.redis_client import get_redis_client
 
-# Load environment variables
-load_dotenv()
+# Load environment variables (wrapped to handle CI environments where cwd may not exist)
+try:
+    load_dotenv()
+except (OSError, FileNotFoundError):
+    pass  # Gracefully handle missing working directory in CI
 
 # Initialize router
 llmchat_router = APIRouter(prefix="/llmchat", tags=["llmchat"])
