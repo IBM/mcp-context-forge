@@ -323,8 +323,8 @@
           "properties": {
             "GUNICORN_WORKERS": {
               "type": "string",
-              "description": "Number of Gunicorn worker processes",
-              "default": "2"
+              "description": "Number of Gunicorn worker processes (auto = 2*CPU+1, capped at 16)",
+              "default": "auto"
             },
             "GUNICORN_TIMEOUT": {
               "type": "string",
@@ -334,7 +334,7 @@
             "GUNICORN_MAX_REQUESTS": {
               "type": "string",
               "description": "Max requests per worker before restart",
-              "default": "10000"
+              "default": "100000"
             },
             "GUNICORN_MAX_REQUESTS_JITTER": {
               "type": "string",
@@ -345,6 +345,18 @@
               "type": "string",
               "enum": ["true", "false"],
               "description": "Preload app code before forking workers",
+              "default": "true"
+            },
+            "GUNICORN_DEV_MODE": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Developer mode with hot reload (not for production)",
+              "default": "false"
+            },
+            "DISABLE_ACCESS_LOG": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Disable access logging for performance",
               "default": "true"
             },
             "APP_NAME": {
