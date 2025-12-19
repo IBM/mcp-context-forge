@@ -6,82 +6,35 @@ The LLM Chat feature enables interactive conversations with AI language models w
 
 LLM Chat connects virtual servers created in MCP Context Forge Gateway with AI models/LLMs, allowing them to use tools exposed by those servers. The system supports multiple LLM providers and provides both streaming and non-streaming response modes for flexible user experiences.
 
-## 📋 Prerequisites :
+## 📋 Prerequisites
 
-### 🔐 Environment Variables for Configuration
+### 🔐 Enable LLM Chat
 
-1. To Enable the LLM Chat UI and backend:
+1. Enable the LLM Chat UI and backend in your `.env` file:
 ```bash
 LLMCHAT_ENABLED=true
 ```
 
-2. You can pre-configure LLM providers using environment variables. Click the provider buttons in the **Environment Variables** info card to copy the required variables:
+### ⚙️ Configure LLM Providers via Admin UI
 
-### ☁️ Azure OpenAI
+All LLM providers are configured via the Admin UI's LLM Settings. Navigate to **Admin UI → Settings → LLM Settings** to:
 
-```bash
-LLM_PROVIDER=azure_openai
-AZURE_OPENAI_API_KEY=your-api-key
-AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
-AZURE_OPENAI_DEPLOYMENT=gpt-4
-AZURE_OPENAI_API_VERSION=2024-05-01-preview
-AZURE_OPENAI_TEMPERATURE=0.7
-```
+1. **Add a Provider**: Click "Add Provider" and select your provider type
+2. **Configure Credentials**: Enter API keys, endpoints, and other provider-specific settings
+3. **Add Models**: Add one or more models to the provider
+4. **Enable Provider and Models**: Toggle the provider and models to enabled state
 
+### 🤖 Supported Providers
 
-### 🟢 OpenAI
-
-```bash
-LLM_PROVIDER=openai
-OPENAI_API_KEY=sk-...
-OPENAI_MODEL=gpt-4o-mini
-OPENAI_TEMPERATURE=0.7
-OPENAI_BASE_URL=https://api.openai.com/v1
-```
-
-
-### 🟣 Anthropic Claude
-
-```bash
-LLM_PROVIDER=anthropic
-ANTHROPIC_API_KEY=sk-ant-...
-ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
-ANTHROPIC_TEMPERATURE=0.7
-ANTHROPIC_MAX_TOKENS=4096
-```
-
-
-### 🟠 AWS Bedrock
-
-```bash
-LLM_PROVIDER=aws_bedrock
-AWS_BEDROCK_MODEL_ID=anthropic.claude-v2
-AWS_BEDROCK_REGION=us-east-1
-AWS_BEDROCK_TEMPERATURE=0.7
-AWS_BEDROCK_MAX_TOKENS=4096
-```
-
-
-### 🔵 IBM watsonx.ai
-
-```bash
-LLM_PROVIDER=watsonx
-WATSONX_APIKEY=your-api-key
-WATSONX_URL=https://us-south.ml.cloud.ibm.com
-WATSONX_PROJECT_ID=your-project-id
-WATSONX_MODEL_ID=ibm/granite-13b-chat-v2
-WATSONX_TEMPERATURE=0.7
-```
-
-
-### 🦙 Ollama
-
-```bash
-LLM_PROVIDER=ollama
-OLLAMA_MODEL=llama3
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_TEMPERATURE=0.7
-```
+| Provider Type | Description | Required Configuration |
+|--------------|-------------|----------------------|
+| `openai` | OpenAI API | API Key |
+| `azure_openai` | Azure OpenAI Service | API Key, Base URL (azure_endpoint), azure_deployment in additional_config |
+| `anthropic` | Anthropic Claude | API Key |
+| `bedrock` | AWS Bedrock | region_name in additional_config, optional AWS credentials |
+| `ollama` | Local Ollama | Base URL (default: http://localhost:11434) |
+| `watsonx` | IBM watsonx.ai | API Key, project_id in additional_config |
+| `openai_compatible` | OpenAI-compatible APIs (vLLM, LocalAI, etc.) | Base URL, optional API Key |
 
 ### 🗄️ Redis Configurations for Multi Worker Environment
 
@@ -140,20 +93,15 @@ Click the **Refresh Servers** button to reload available virtual servers, if nee
 
 **Note**: Team-level and private servers require authentication tokens for access.
 
-### Step 2: ⚙️ Configure Your LLM Provider
+### Step 2: ⚙️ Select Your LLM Model
 
-After selecting a server, expand the **LLM Configuration** section and choose your provider:
+After selecting a server, expand the **LLM Configuration** section and select your model:
 
-#### 🤖 Supported Providers
+1. **Model Selection**: Choose from models configured in Admin UI → Settings → LLM Settings
+2. **Temperature** (optional): Adjust sampling temperature (0.0-2.0)
+3. **Max Tokens** (optional): Set maximum response tokens
 
-1. Azure OpenAI
-2. OpenAI
-3. Anthropic Claude
-4. AWS Bedrock
-5. IBM watsonx.ai
-6. Ollama
-
-Select your preferred provider. If you've already configured LLM details like API key, URL, etc., in the environment variables, you can leave the next fields blank.
+**Note**: Models must be pre-configured in the Admin UI before they appear in the selection dropdown.
 
 
 ### Step 3: 🔗 Connect to the Chat Session
@@ -241,10 +189,9 @@ The LLM Chat functionality is powered by the following REST API endpoints:
     "auth_token": "optional-jwt-token"
   },
   "llm": {
-    "provider": "azure_openai|openai|anthropic|aws_bedrock|watsonx|ollama",
-    "config": {
-      // Provider-specific configuration
-    }
+    "model": "gpt-4o",
+    "temperature": 0.7,
+    "max_tokens": 4096
   },
   "streaming": false
 }
@@ -578,31 +525,33 @@ The LLM Chat system follows a **three-tier architecture** with clear separation 
 
 ### 🗂️ Configuration Management
 
-**Hierarchical Configuration Resolution**:
+**Configuration Flow**:
 
-```
-Explicit Input → Environment Variables → Hardcoded Defaults
-```
+All LLM configuration is managed through the Admin UI's LLM Settings:
 
-**Example** (Azure OpenAI API Key):
-
-1. Check `llm.config.api_key` from request body
-2. If None, check `AZURE_OPENAI_API_KEY` environment variable
-3. If None, raise validation error (no default for secrets)
+1. **Admin UI**: Configure providers and models with credentials
+2. **API Request**: Specify model ID (or model_id) and optional overrides
+3. **Gateway Provider**: Looks up model from database, decrypts credentials, creates LLM instance
 
 **Configuration Classes Hierarchy**:
 
 ```
 MCPClientConfig
 ├── MCPServerConfig (transport, url, auth_token)
-└── LLMConfig (provider, config)
-    ├── AzureOpenAIConfig
-    ├── OpenAIConfig
-    ├── AnthropicConfig
-    ├── AWSBedrockConfig
-    ├── OllamaConfig
-    └── WatsonxConfig
+└── LLMConfig (provider="gateway", config)
+    └── GatewayConfig (model, temperature, max_tokens)
+        └── Resolves to underlying provider via database lookup
 ```
+
+**Supported Provider Types** (configured in Admin UI):
+
+- `openai` - OpenAI API
+- `azure_openai` - Azure OpenAI Service
+- `anthropic` - Anthropic Claude
+- `bedrock` - AWS Bedrock
+- `ollama` - Local Ollama
+- `watsonx` - IBM watsonx.ai
+- `openai_compatible` - OpenAI-compatible APIs
 
 
 ### 🔐 Security Architecture
