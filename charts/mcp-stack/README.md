@@ -1,6 +1,6 @@
 # mcp-stack
 
-![Version: 0.9.0](https://img.shields.io/badge/Version-0.9.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 0.9.0](https://img.shields.io/badge/AppVersion-0.9.0-informational?style=flat-square)
+![Version: 1.0.0-BETA-1](https://img.shields.io/badge/Version-1.0.0--BETA--1-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.0.0-BETA-1](https://img.shields.io/badge/AppVersion-1.0.0--BETA--1-informational?style=flat-square)
 
 A full-stack Helm chart for IBM's **Model Context Protocol (MCP) Gateway
 & Registry - Context-Forge**.  It bundles:
@@ -23,7 +23,7 @@ A full-stack Helm chart for IBM's **Model Context Protocol (MCP) Gateway
 
 ## Requirements
 
-Kubernetes: `>=1.21.0`
+Kubernetes: `>=1.21.0-0`
 
 ## Values
 
@@ -32,6 +32,8 @@ Kubernetes: `>=1.21.0`
 | global.imagePullSecrets | list | `[]` |  |
 | global.nameOverride | string | `""` |  |
 | global.fullnameOverride | string | `""` |  |
+| mcpContextForge.pluginConfig.enabled | bool | `false` |  |
+| mcpContextForge.pluginConfig.plugins | string | `"# plugin file\n"` |  |
 | mcpContextForge.replicaCount | int | `2` |  |
 | mcpContextForge.hpa | object | `{"enabled":true,"maxReplicas":10,"minReplicas":2,"targetCPUUtilizationPercentage":90,"targetMemoryUtilizationPercentage":90}` | ------------------------------------------------------------------ |
 | mcpContextForge.image.repository | string | `"ghcr.io/ibm/mcp-context-forge"` |  |
@@ -40,6 +42,10 @@ Kubernetes: `>=1.21.0`
 | mcpContextForge.service.type | string | `"ClusterIP"` |  |
 | mcpContextForge.service.port | int | `80` |  |
 | mcpContextForge.containerPort | int | `4444` |  |
+| mcpContextForge.metrics.enabled | bool | `true` |  |
+| mcpContextForge.metrics.port | int | `8000` |  |
+| mcpContextForge.metrics.serviceMonitor.enabled | bool | `true` |  |
+| mcpContextForge.metrics.customLabels | object | `{}` |  |
 | mcpContextForge.probes.startup.type | string | `"exec"` |  |
 | mcpContextForge.probes.startup.command[0] | string | `"sh"` |  |
 | mcpContextForge.probes.startup.command[1] | string | `"-c"` |  |
@@ -72,18 +78,22 @@ Kubernetes: `>=1.21.0`
 | mcpContextForge.ingress.host | string | `"gateway.local"` |  |
 | mcpContextForge.ingress.path | string | `"/"` |  |
 | mcpContextForge.ingress.pathType | string | `"Prefix"` |  |
-| mcpContextForge.ingress.annotations."nginx.ingress.kubernetes.io/rewrite-target" | string | `"/"` |  |
+| mcpContextForge.ingress.annotations | object | `{}` |  |
+| mcpContextForge.ingress.tls.enabled | bool | `false` |  |
+| mcpContextForge.ingress.tls.secretName | string | `""` |  |
 | mcpContextForge.env.host | string | `"0.0.0.0"` |  |
 | mcpContextForge.env.postgres.port | int | `5432` |  |
 | mcpContextForge.env.postgres.db | string | `"postgresdb"` |  |
 | mcpContextForge.env.postgres.userKey | string | `"POSTGRES_USER"` |  |
 | mcpContextForge.env.postgres.passwordKey | string | `"POSTGRES_PASSWORD"` |  |
 | mcpContextForge.env.redis.port | int | `6379` |  |
-| mcpContextForge.config.GUNICORN_WORKERS | string | `"2"` |  |
+| mcpContextForge.config.GUNICORN_WORKERS | string | `"auto"` |  |
 | mcpContextForge.config.GUNICORN_TIMEOUT | string | `"600"` |  |
-| mcpContextForge.config.GUNICORN_MAX_REQUESTS | string | `"10000"` |  |
+| mcpContextForge.config.GUNICORN_MAX_REQUESTS | string | `"100000"` |  |
 | mcpContextForge.config.GUNICORN_MAX_REQUESTS_JITTER | string | `"100"` |  |
 | mcpContextForge.config.GUNICORN_PRELOAD_APP | string | `"true"` |  |
+| mcpContextForge.config.GUNICORN_DEV_MODE | string | `"false"` |  |
+| mcpContextForge.config.DISABLE_ACCESS_LOG | string | `"true"` |  |
 | mcpContextForge.config.APP_NAME | string | `"MCP_Gateway"` |  |
 | mcpContextForge.config.HOST | string | `"0.0.0.0"` |  |
 | mcpContextForge.config.PORT | string | `"4444"` |  |
@@ -93,7 +103,7 @@ Kubernetes: `>=1.21.0`
 | mcpContextForge.config.DB_POOL_TIMEOUT | string | `"30"` |  |
 | mcpContextForge.config.DB_POOL_RECYCLE | string | `"3600"` |  |
 | mcpContextForge.config.CACHE_TYPE | string | `"redis"` |  |
-| mcpContextForge.config.CACHE_PREFIX | string | `"mcpgw"` |  |
+| mcpContextForge.config.CACHE_PREFIX | string | `"mcpgw:"` |  |
 | mcpContextForge.config.SESSION_TTL | string | `"3600"` |  |
 | mcpContextForge.config.MESSAGE_TTL | string | `"600"` |  |
 | mcpContextForge.config.REDIS_MAX_RETRIES | string | `"3"` |  |
@@ -104,8 +114,31 @@ Kubernetes: `>=1.21.0`
 | mcpContextForge.config.MCPGATEWAY_UI_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.MCPGATEWAY_UI_AIRGAPPED | string | `"false"` |  |
 | mcpContextForge.config.MCPGATEWAY_ADMIN_API_ENABLED | string | `"true"` |  |
+| mcpContextForge.config.MCPGATEWAY_BULK_IMPORT_ENABLED | string | `"true"` |  |
+| mcpContextForge.config.MCPGATEWAY_BULK_IMPORT_MAX_TOOLS | string | `"200"` |  |
+| mcpContextForge.config.MCPGATEWAY_BULK_IMPORT_RATE_LIMIT | string | `"10"` |  |
+| mcpContextForge.config.MCPGATEWAY_A2A_ENABLED | string | `"true"` |  |
+| mcpContextForge.config.MCPGATEWAY_A2A_MAX_AGENTS | string | `"100"` |  |
+| mcpContextForge.config.MCPGATEWAY_A2A_DEFAULT_TIMEOUT | string | `"30"` |  |
+| mcpContextForge.config.MCPGATEWAY_A2A_MAX_RETRIES | string | `"3"` |  |
+| mcpContextForge.config.MCPGATEWAY_A2A_METRICS_ENABLED | string | `"true"` |  |
+| mcpContextForge.config.MCPGATEWAY_CATALOG_ENABLED | string | `"true"` |  |
+| mcpContextForge.config.MCPGATEWAY_CATALOG_FILE | string | `"mcp-catalog.yml"` |  |
+| mcpContextForge.config.MCPGATEWAY_CATALOG_AUTO_HEALTH_CHECK | string | `"true"` |  |
+| mcpContextForge.config.MCPGATEWAY_CATALOG_CACHE_TTL | string | `"3600"` |  |
+| mcpContextForge.config.MCPGATEWAY_CATALOG_PAGE_SIZE | string | `"100"` |  |
+| mcpContextForge.config.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT | string | `"60000"` |  |
+| mcpContextForge.config.TOOLOPS_ENABLED | string | `"false"` |  |
+| mcpContextForge.config.LLMCHAT_ENABLED | string | `"false"` |  |
+| mcpContextForge.config.LLM_API_PREFIX | string | `"/v1"` |  |
+| mcpContextForge.config.LLM_REQUEST_TIMEOUT | string | `"120"` |  |
+| mcpContextForge.config.LLM_STREAMING_ENABLED | string | `"true"` |  |
+| mcpContextForge.config.LLM_HEALTH_CHECK_INTERVAL | string | `"300"` |  |
+| mcpContextForge.config.GATEWAY_MODEL | string | `"gpt-4o"` |  |
+| mcpContextForge.config.GATEWAY_TEMPERATURE | string | `"0.7"` |  |
+| mcpContextForge.config.DEFAULT_ROOTS | string | `"[]"` |  |
 | mcpContextForge.config.ENVIRONMENT | string | `"development"` |  |
-| mcpContextForge.config.APP_DOMAIN | string | `"localhost"` |  |
+| mcpContextForge.config.APP_DOMAIN | string | `"http://localhost"` |  |
 | mcpContextForge.config.CORS_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.CORS_ALLOW_CREDENTIALS | string | `"true"` |  |
 | mcpContextForge.config.ALLOWED_ORIGINS | string | `"[\"http://localhost\",\"http://localhost:4444\"]"` |  |
@@ -123,15 +156,26 @@ Kubernetes: `>=1.21.0`
 | mcpContextForge.config.COOKIE_SAMESITE | string | `"lax"` |  |
 | mcpContextForge.config.LOG_LEVEL | string | `"INFO"` |  |
 | mcpContextForge.config.LOG_FORMAT | string | `"json"` |  |
+| mcpContextForge.config.LOG_TO_FILE | string | `"false"` |  |
+| mcpContextForge.config.LOG_REQUESTS | string | `"false"` |  |
+| mcpContextForge.config.LOG_FILEMODE | string | `"a+"` |  |
+| mcpContextForge.config.LOG_FILE | string | `""` |  |
+| mcpContextForge.config.LOG_FOLDER | string | `""` |  |
+| mcpContextForge.config.LOG_ROTATION_ENABLED | string | `"false"` |  |
+| mcpContextForge.config.LOG_MAX_SIZE_MB | string | `"1"` |  |
+| mcpContextForge.config.LOG_BACKUP_COUNT | string | `"5"` |  |
+| mcpContextForge.config.LOG_BUFFER_SIZE_MB | string | `"1.0"` |  |
 | mcpContextForge.config.TRANSPORT_TYPE | string | `"all"` |  |
 | mcpContextForge.config.WEBSOCKET_PING_INTERVAL | string | `"30"` |  |
 | mcpContextForge.config.SSE_RETRY_TIMEOUT | string | `"5000"` |  |
+| mcpContextForge.config.SSE_KEEPALIVE_ENABLED | string | `"true"` |  |
+| mcpContextForge.config.SSE_KEEPALIVE_INTERVAL | string | `"30"` |  |
 | mcpContextForge.config.USE_STATEFUL_SESSIONS | string | `"false"` |  |
 | mcpContextForge.config.JSON_RESPONSE_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.FEDERATION_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.FEDERATION_DISCOVERY | string | `"false"` |  |
 | mcpContextForge.config.FEDERATION_PEERS | string | `"[]"` |  |
-| mcpContextForge.config.FEDERATION_TIMEOUT | string | `"30"` |  |
+| mcpContextForge.config.FEDERATION_TIMEOUT | string | `"120"` |  |
 | mcpContextForge.config.FEDERATION_SYNC_INTERVAL | string | `"300"` |  |
 | mcpContextForge.config.RESOURCE_CACHE_SIZE | string | `"1000"` |  |
 | mcpContextForge.config.RESOURCE_CACHE_TTL | string | `"3600"` |  |
@@ -140,26 +184,198 @@ Kubernetes: `>=1.21.0`
 | mcpContextForge.config.MAX_TOOL_RETRIES | string | `"3"` |  |
 | mcpContextForge.config.TOOL_RATE_LIMIT | string | `"100"` |  |
 | mcpContextForge.config.TOOL_CONCURRENT_LIMIT | string | `"10"` |  |
+| mcpContextForge.config.GATEWAY_TOOL_NAME_SEPARATOR | string | `"-"` |  |
 | mcpContextForge.config.PROMPT_CACHE_SIZE | string | `"100"` |  |
 | mcpContextForge.config.MAX_PROMPT_SIZE | string | `"102400"` |  |
 | mcpContextForge.config.PROMPT_RENDER_TIMEOUT | string | `"10"` |  |
 | mcpContextForge.config.HEALTH_CHECK_INTERVAL | string | `"60"` |  |
 | mcpContextForge.config.HEALTH_CHECK_TIMEOUT | string | `"10"` |  |
 | mcpContextForge.config.UNHEALTHY_THRESHOLD | string | `"3"` |  |
+| mcpContextForge.config.GATEWAY_VALIDATION_TIMEOUT | string | `"5"` |  |
 | mcpContextForge.config.FILELOCK_NAME | string | `"gateway_healthcheck_init.lock"` |  |
 | mcpContextForge.config.DEV_MODE | string | `"false"` |  |
 | mcpContextForge.config.RELOAD | string | `"false"` |  |
 | mcpContextForge.config.DEBUG | string | `"false"` |  |
+| mcpContextForge.config.RETRY_MAX_ATTEMPTS | string | `"3"` |  |
+| mcpContextForge.config.RETRY_BASE_DELAY | string | `"1.0"` |  |
+| mcpContextForge.config.RETRY_MAX_DELAY | string | `"60"` |  |
+| mcpContextForge.config.RETRY_JITTER_MAX | string | `"0.5"` |  |
+| mcpContextForge.config.WELL_KNOWN_ENABLED | string | `"true"` |  |
+| mcpContextForge.config.WELL_KNOWN_ROBOTS_TXT | string | `"User-agent: *\nDisallow: /\n\n# MCP Gateway is a private API gateway\n# Public crawling is disabled by default\n"` |  |
+| mcpContextForge.config.WELL_KNOWN_SECURITY_TXT | string | `""` |  |
+| mcpContextForge.config.WELL_KNOWN_CUSTOM_FILES | string | `"{}"` |  |
+| mcpContextForge.config.WELL_KNOWN_CACHE_MAX_AGE | string | `"3600"` |  |
+| mcpContextForge.config.PLUGINS_ENABLED | string | `"false"` |  |
+| mcpContextForge.config.PLUGIN_CONFIG_FILE | string | `"plugins/config.yaml"` |  |
+| mcpContextForge.config.PLUGINS_MTLS_CA_BUNDLE | string | `""` |  |
+| mcpContextForge.config.PLUGINS_MTLS_CLIENT_CERT | string | `""` |  |
+| mcpContextForge.config.PLUGINS_MTLS_CLIENT_KEY | string | `""` |  |
+| mcpContextForge.config.PLUGINS_MTLS_CLIENT_KEY_PASSWORD | string | `""` |  |
+| mcpContextForge.config.PLUGINS_MTLS_VERIFY | string | `"true"` |  |
+| mcpContextForge.config.PLUGINS_MTLS_CHECK_HOSTNAME | string | `"true"` |  |
+| mcpContextForge.config.PLUGINS_CLI_COMPLETION | string | `"false"` |  |
+| mcpContextForge.config.PLUGINS_CLI_MARKUP_MODE | string | `"rich"` |  |
+| mcpContextForge.config.OTEL_ENABLE_OBSERVABILITY | string | `"true"` |  |
+| mcpContextForge.config.OTEL_TRACES_EXPORTER | string | `"otlp"` |  |
+| mcpContextForge.config.OTEL_EXPORTER_OTLP_PROTOCOL | string | `"grpc"` |  |
+| mcpContextForge.config.OTEL_EXPORTER_OTLP_INSECURE | string | `"true"` |  |
+| mcpContextForge.config.OTEL_SERVICE_NAME | string | `"mcp-gateway"` |  |
+| mcpContextForge.config.OTEL_BSP_MAX_QUEUE_SIZE | string | `"2048"` |  |
+| mcpContextForge.config.OTEL_BSP_MAX_EXPORT_BATCH_SIZE | string | `"512"` |  |
+| mcpContextForge.config.OTEL_BSP_SCHEDULE_DELAY | string | `"5000"` |  |
+| mcpContextForge.config.OBSERVABILITY_ENABLED | string | `"false"` |  |
+| mcpContextForge.config.OBSERVABILITY_TRACE_HTTP_REQUESTS | string | `"true"` |  |
+| mcpContextForge.config.OBSERVABILITY_TRACE_RETENTION_DAYS | string | `"7"` |  |
+| mcpContextForge.config.OBSERVABILITY_MAX_TRACES | string | `"100000"` |  |
+| mcpContextForge.config.OBSERVABILITY_SAMPLE_RATE | string | `"1.0"` |  |
+| mcpContextForge.config.OBSERVABILITY_EXCLUDE_PATHS | string | `"[\"/health\", \"/healthz\", \"/ready\", \"/metrics\", \"/static/.*\"]"` |  |
+| mcpContextForge.config.OBSERVABILITY_METRICS_ENABLED | string | `"true"` |  |
+| mcpContextForge.config.OBSERVABILITY_EVENTS_ENABLED | string | `"true"` |  |
+| mcpContextForge.config.ENABLE_METRICS | string | `"true"` |  |
+| mcpContextForge.config.METRICS_EXCLUDED_HANDLERS | string | `""` |  |
+| mcpContextForge.config.METRICS_NAMESPACE | string | `"default"` |  |
+| mcpContextForge.config.METRICS_SUBSYSTEM | string | `""` |  |
+| mcpContextForge.config.METRICS_CUSTOM_LABELS | string | `""` |  |
+| mcpContextForge.config.ENABLE_HEADER_PASSTHROUGH | string | `"false"` |  |
+| mcpContextForge.config.ENABLE_OVERWRITE_BASE_HEADERS | string | `"false"` |  |
+| mcpContextForge.config.DEFAULT_PASSTHROUGH_HEADERS | string | `"[\"X-Tenant-Id\", \"X-Trace-Id\"]"` |  |
+| mcpContextForge.config.VALIDATION_ALLOWED_URL_SCHEMES | string | `"[\"http://\", \"https://\", \"ws://\", \"wss://\"]"` |  |
+| mcpContextForge.config.VALIDATION_ALLOWED_MIME_TYPES | string | `"[\"text/plain\", \"text/html\", \"text/css\", \"text/markdown\", \"text/javascript\", \"application/json\", \"application/xml\", \"application/pdf\", \"image/png\", \"image/jpeg\", \"image/gif\", \"image/svg+xml\", \"application/octet-stream\"]"` |  |
+| mcpContextForge.config.VALIDATION_DANGEROUS_HTML_PATTERN | string | `"<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>"` |  |
+| mcpContextForge.config.VALIDATION_DANGEROUS_JS_PATTERN | string | `"(?i)(?:^|\\s|[\\\"'`<>=])(javascript:|vbscript:|data:\\s*[^,]*[;\\s]*(javascript|vbscript)|\\bon[a-z]+\\s*=|<\\s*script\\b)"` |  |
+| mcpContextForge.config.VALIDATION_NAME_PATTERN | string | `"^[a-zA-Z0-9_.\\-\\s]+$"` |  |
+| mcpContextForge.config.VALIDATION_IDENTIFIER_PATTERN | string | `"^[a-zA-Z0-9_\\-\\.]+$"` |  |
+| mcpContextForge.config.VALIDATION_SAFE_URI_PATTERN | string | `"^[a-zA-Z0-9_\\-.:/?=&%{}]+$"` |  |
+| mcpContextForge.config.VALIDATION_UNSAFE_URI_PATTERN | string | `"[<>\"'\\\\]"` |  |
+| mcpContextForge.config.VALIDATION_TOOL_NAME_PATTERN | string | `"^[a-zA-Z][a-zA-Z0-9._-]*$"` |  |
+| mcpContextForge.config.VALIDATION_TOOL_METHOD_PATTERN | string | `"^[a-zA-Z][a-zA-Z0-9_\\./-]*$"` |  |
+| mcpContextForge.config.VALIDATION_MAX_NAME_LENGTH | string | `"255"` |  |
+| mcpContextForge.config.VALIDATION_MAX_DESCRIPTION_LENGTH | string | `"8192"` |  |
+| mcpContextForge.config.VALIDATION_MAX_TEMPLATE_LENGTH | string | `"65536"` |  |
+| mcpContextForge.config.VALIDATION_MAX_CONTENT_LENGTH | string | `"1048576"` |  |
+| mcpContextForge.config.VALIDATION_MAX_JSON_DEPTH | string | `"10"` |  |
+| mcpContextForge.config.VALIDATION_MAX_URL_LENGTH | string | `"2048"` |  |
+| mcpContextForge.config.VALIDATION_MAX_RPC_PARAM_SIZE | string | `"262144"` |  |
+| mcpContextForge.config.VALIDATION_MAX_METHOD_LENGTH | string | `"128"` |  |
+| mcpContextForge.config.VALIDATION_MAX_REQUESTS_PER_MINUTE | string | `"60"` |  |
+| mcpContextForge.config.PAGINATION_DEFAULT_PAGE_SIZE | string | `"50"` |  |
+| mcpContextForge.config.PAGINATION_MAX_PAGE_SIZE | string | `"500"` |  |
+| mcpContextForge.config.PAGINATION_MIN_PAGE_SIZE | string | `"1"` |  |
+| mcpContextForge.config.PAGINATION_CURSOR_THRESHOLD | string | `"10000"` |  |
+| mcpContextForge.config.PAGINATION_CURSOR_ENABLED | string | `"true"` |  |
+| mcpContextForge.config.PAGINATION_DEFAULT_SORT_FIELD | string | `"created_at"` |  |
+| mcpContextForge.config.PAGINATION_DEFAULT_SORT_ORDER | string | `"desc"` |  |
+| mcpContextForge.config.PAGINATION_MAX_OFFSET | string | `"100000"` |  |
+| mcpContextForge.config.PAGINATION_COUNT_CACHE_TTL | string | `"300"` |  |
+| mcpContextForge.config.PAGINATION_INCLUDE_LINKS | string | `"true"` |  |
+| mcpContextForge.config.PAGINATION_BASE_URL | string | `""` |  |
 | mcpContextForge.secret.BASIC_AUTH_USER | string | `"admin"` |  |
 | mcpContextForge.secret.BASIC_AUTH_PASSWORD | string | `"changeme"` |  |
 | mcpContextForge.secret.AUTH_REQUIRED | string | `"true"` |  |
 | mcpContextForge.secret.JWT_SECRET_KEY | string | `"my-test-key"` |  |
 | mcpContextForge.secret.JWT_ALGORITHM | string | `"HS256"` |  |
+| mcpContextForge.secret.JWT_AUDIENCE | string | `"mcpgateway-api"` |  |
+| mcpContextForge.secret.JWT_ISSUER | string | `"mcpgateway"` |  |
 | mcpContextForge.secret.TOKEN_EXPIRY | string | `"10080"` |  |
+| mcpContextForge.secret.REQUIRE_TOKEN_EXPIRATION | string | `"false"` |  |
 | mcpContextForge.secret.AUTH_ENCRYPTION_SECRET | string | `"my-test-salt"` |  |
-| mcpContextForge.secret.ENABLE_ED25519_SIGNING | string | `"false"` | Enable Ed25519 signing for certificates |
-| mcpContextForge.secret.ED25519_PRIVATE_KEY | string | `""` | Ed25519 private key for signing (PEM format) |
-| mcpContextForge.secret.PREV_ED25519_PRIVATE_KEY | string | `""` | Previous Ed25519 private key for key rotation |
+| mcpContextForge.secret.EMAIL_AUTH_ENABLED | string | `"true"` |  |
+| mcpContextForge.secret.PLATFORM_ADMIN_EMAIL | string | `"admin@example.com"` |  |
+| mcpContextForge.secret.PLATFORM_ADMIN_PASSWORD | string | `"changeme"` |  |
+| mcpContextForge.secret.PLATFORM_ADMIN_FULL_NAME | string | `"Platform Administrator"` |  |
+| mcpContextForge.secret.ARGON2ID_TIME_COST | string | `"3"` |  |
+| mcpContextForge.secret.ARGON2ID_MEMORY_COST | string | `"65536"` |  |
+| mcpContextForge.secret.ARGON2ID_PARALLELISM | string | `"1"` |  |
+| mcpContextForge.secret.PASSWORD_MIN_LENGTH | string | `"8"` |  |
+| mcpContextForge.secret.PASSWORD_REQUIRE_UPPERCASE | string | `"false"` |  |
+| mcpContextForge.secret.PASSWORD_REQUIRE_LOWERCASE | string | `"false"` |  |
+| mcpContextForge.secret.PASSWORD_REQUIRE_NUMBERS | string | `"false"` |  |
+| mcpContextForge.secret.PASSWORD_REQUIRE_SPECIAL | string | `"false"` |  |
+| mcpContextForge.secret.MAX_FAILED_LOGIN_ATTEMPTS | string | `"5"` |  |
+| mcpContextForge.secret.ACCOUNT_LOCKOUT_DURATION_MINUTES | string | `"30"` |  |
+| mcpContextForge.secret.MIN_PASSWORD_LENGTH | string | `"12"` |  |
+| mcpContextForge.secret.MIN_SECRET_LENGTH | string | `"32"` |  |
+| mcpContextForge.secret.REQUIRE_STRONG_SECRETS | string | `"false"` |  |
+| mcpContextForge.secret.MCP_CLIENT_AUTH_ENABLED | string | `"true"` |  |
+| mcpContextForge.secret.TRUST_PROXY_AUTH | string | `"false"` |  |
+| mcpContextForge.secret.PROXY_USER_HEADER | string | `"X-Authenticated-User"` |  |
+| mcpContextForge.secret.OAUTH_REQUEST_TIMEOUT | string | `"30"` |  |
+| mcpContextForge.secret.OAUTH_MAX_RETRIES | string | `"3"` |  |
+| mcpContextForge.secret.OAUTH_DEFAULT_TIMEOUT | string | `"3600"` |  |
+| mcpContextForge.secret.DCR_ENABLED | string | `"true"` |  |
+| mcpContextForge.secret.DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS | string | `"true"` |  |
+| mcpContextForge.secret.DCR_DEFAULT_SCOPES | string | `"[\"mcp:read\"]"` |  |
+| mcpContextForge.secret.DCR_ALLOWED_ISSUERS | string | `"[]"` |  |
+| mcpContextForge.secret.DCR_TOKEN_ENDPOINT_AUTH_METHOD | string | `"client_secret_basic"` |  |
+| mcpContextForge.secret.DCR_METADATA_CACHE_TTL | string | `"3600"` |  |
+| mcpContextForge.secret.DCR_CLIENT_NAME_TEMPLATE | string | `"MCP Gateway ({gateway_name})"` |  |
+| mcpContextForge.secret.OAUTH_DISCOVERY_ENABLED | string | `"true"` |  |
+| mcpContextForge.secret.OAUTH_PREFERRED_CODE_CHALLENGE_METHOD | string | `"S256"` |  |
+| mcpContextForge.secret.JWT_AUDIENCE_VERIFICATION | string | `"true"` |  |
+| mcpContextForge.secret.JWT_PRIVATE_KEY_PATH | string | `""` |  |
+| mcpContextForge.secret.JWT_PUBLIC_KEY_PATH | string | `""` |  |
+| mcpContextForge.secret.SSO_ENABLED | string | `"false"` |  |
+| mcpContextForge.secret.SSO_AUTO_CREATE_USERS | string | `"true"` |  |
+| mcpContextForge.secret.SSO_TRUSTED_DOMAINS | string | `"[]"` |  |
+| mcpContextForge.secret.SSO_PRESERVE_ADMIN_AUTH | string | `"true"` |  |
+| mcpContextForge.secret.SSO_REQUIRE_ADMIN_APPROVAL | string | `"false"` |  |
+| mcpContextForge.secret.SSO_AUTO_ADMIN_DOMAINS | string | `"[]"` |  |
+| mcpContextForge.secret.SSO_ISSUERS | string | `""` |  |
+| mcpContextForge.secret.SSO_GITHUB_ENABLED | string | `"false"` |  |
+| mcpContextForge.secret.SSO_GITHUB_CLIENT_ID | string | `""` |  |
+| mcpContextForge.secret.SSO_GITHUB_CLIENT_SECRET | string | `""` |  |
+| mcpContextForge.secret.SSO_GITHUB_ADMIN_ORGS | string | `"[]"` |  |
+| mcpContextForge.secret.SSO_GOOGLE_ENABLED | string | `"false"` |  |
+| mcpContextForge.secret.SSO_GOOGLE_CLIENT_ID | string | `""` |  |
+| mcpContextForge.secret.SSO_GOOGLE_CLIENT_SECRET | string | `""` |  |
+| mcpContextForge.secret.SSO_GOOGLE_ADMIN_DOMAINS | string | `"[]"` |  |
+| mcpContextForge.secret.SSO_IBM_VERIFY_ENABLED | string | `"false"` |  |
+| mcpContextForge.secret.SSO_IBM_VERIFY_CLIENT_ID | string | `""` |  |
+| mcpContextForge.secret.SSO_IBM_VERIFY_CLIENT_SECRET | string | `""` |  |
+| mcpContextForge.secret.SSO_IBM_VERIFY_ISSUER | string | `""` |  |
+| mcpContextForge.secret.SSO_OKTA_ENABLED | string | `"false"` |  |
+| mcpContextForge.secret.SSO_OKTA_CLIENT_ID | string | `""` |  |
+| mcpContextForge.secret.SSO_OKTA_CLIENT_SECRET | string | `""` |  |
+| mcpContextForge.secret.SSO_OKTA_ISSUER | string | `""` |  |
+| mcpContextForge.secret.SSO_KEYCLOAK_ENABLED | string | `"false"` |  |
+| mcpContextForge.secret.SSO_KEYCLOAK_BASE_URL | string | `""` |  |
+| mcpContextForge.secret.SSO_KEYCLOAK_REALM | string | `"master"` |  |
+| mcpContextForge.secret.SSO_KEYCLOAK_CLIENT_ID | string | `""` |  |
+| mcpContextForge.secret.SSO_KEYCLOAK_CLIENT_SECRET | string | `""` |  |
+| mcpContextForge.secret.SSO_KEYCLOAK_MAP_REALM_ROLES | string | `"true"` |  |
+| mcpContextForge.secret.SSO_KEYCLOAK_MAP_CLIENT_ROLES | string | `"false"` |  |
+| mcpContextForge.secret.SSO_KEYCLOAK_USERNAME_CLAIM | string | `"preferred_username"` |  |
+| mcpContextForge.secret.SSO_KEYCLOAK_EMAIL_CLAIM | string | `"email"` |  |
+| mcpContextForge.secret.SSO_KEYCLOAK_GROUPS_CLAIM | string | `"groups"` |  |
+| mcpContextForge.secret.SSO_ENTRA_ENABLED | string | `"false"` |  |
+| mcpContextForge.secret.SSO_ENTRA_CLIENT_ID | string | `""` |  |
+| mcpContextForge.secret.SSO_ENTRA_CLIENT_SECRET | string | `""` |  |
+| mcpContextForge.secret.SSO_ENTRA_TENANT_ID | string | `""` |  |
+| mcpContextForge.secret.SSO_GENERIC_ENABLED | string | `"false"` |  |
+| mcpContextForge.secret.SSO_GENERIC_PROVIDER_ID | string | `""` |  |
+| mcpContextForge.secret.SSO_GENERIC_DISPLAY_NAME | string | `""` |  |
+| mcpContextForge.secret.SSO_GENERIC_CLIENT_ID | string | `""` |  |
+| mcpContextForge.secret.SSO_GENERIC_CLIENT_SECRET | string | `""` |  |
+| mcpContextForge.secret.SSO_GENERIC_AUTHORIZATION_URL | string | `""` |  |
+| mcpContextForge.secret.SSO_GENERIC_TOKEN_URL | string | `""` |  |
+| mcpContextForge.secret.SSO_GENERIC_USERINFO_URL | string | `""` |  |
+| mcpContextForge.secret.SSO_GENERIC_ISSUER | string | `""` |  |
+| mcpContextForge.secret.SSO_GENERIC_SCOPE | string | `"openid profile email"` |  |
+| mcpContextForge.secret.AUTO_CREATE_PERSONAL_TEAMS | string | `"true"` |  |
+| mcpContextForge.secret.PERSONAL_TEAM_PREFIX | string | `"personal"` |  |
+| mcpContextForge.secret.MAX_TEAMS_PER_USER | string | `"50"` |  |
+| mcpContextForge.secret.MAX_MEMBERS_PER_TEAM | string | `"100"` |  |
+| mcpContextForge.secret.INVITATION_EXPIRY_DAYS | string | `"7"` |  |
+| mcpContextForge.secret.REQUIRE_EMAIL_VERIFICATION_FOR_INVITES | string | `"true"` |  |
+| mcpContextForge.secret.ENABLE_ED25519_SIGNING | string | `"false"` |  |
+| mcpContextForge.secret.ED25519_PRIVATE_KEY | string | `""` |  |
+| mcpContextForge.secret.PREV_ED25519_PRIVATE_KEY | string | `""` |  |
+| mcpContextForge.secret.OTEL_EXPORTER_OTLP_ENDPOINT | string | `""` |  |
+| mcpContextForge.secret.OTEL_EXPORTER_OTLP_HEADERS | string | `""` |  |
+| mcpContextForge.secret.OTEL_EXPORTER_JAEGER_ENDPOINT | string | `""` |  |
+| mcpContextForge.secret.OTEL_EXPORTER_ZIPKIN_ENDPOINT | string | `""` |  |
+| mcpContextForge.secret.OTEL_RESOURCE_ATTRIBUTES | string | `""` |  |
+| mcpContextForge.secret.DOCS_ALLOW_BASIC_AUTH | string | `"false"` |  |
 | mcpContextForge.envFrom[0].secretRef.name | string | `"mcp-gateway-secret"` |  |
 | mcpContextForge.envFrom[1].configMapRef.name | string | `"mcp-gateway-config"` |  |
 | migration.enabled | bool | `true` |  |
@@ -182,9 +398,11 @@ Kubernetes: `>=1.21.0`
 | postgres.service.type | string | `"ClusterIP"` |  |
 | postgres.service.port | int | `5432` |  |
 | postgres.persistence.enabled | bool | `true` |  |
-| postgres.persistence.storageClassName | string | `"manual"` |  |
-| postgres.persistence.accessModes[0] | string | `"ReadWriteMany"` |  |
+| postgres.persistence.storageClassName | string | `""` |  |
+| postgres.persistence.accessModes[0] | string | `"ReadWriteOnce"` |  |
 | postgres.persistence.size | string | `"5Gi"` |  |
+| postgres.persistence.reclaimPolicy | string | `"Retain"` |  |
+| postgres.persistence.annotations | object | `{}` |  |
 | postgres.existingSecret | string | `""` |  |
 | postgres.credentials.database | string | `"postgresdb"` |  |
 | postgres.credentials.user | string | `"admin"` |  |
@@ -211,6 +429,9 @@ Kubernetes: `>=1.21.0`
 | postgres.probes.liveness.timeoutSeconds | int | `3` |  |
 | postgres.probes.liveness.successThreshold | int | `1` |  |
 | postgres.probes.liveness.failureThreshold | int | `5` |  |
+| postgres.upgrade.enabled | bool | `false` |  |
+| postgres.upgrade.targetVersion | string | `"18"` |  |
+| postgres.upgrade.backupCompleted | bool | `false` |  |
 | redis.enabled | bool | `true` |  |
 | redis.image.repository | string | `"redis"` |  |
 | redis.image.tag | string | `"latest"` |  |
@@ -237,6 +458,12 @@ Kubernetes: `>=1.21.0`
 | redis.probes.liveness.timeoutSeconds | int | `2` |  |
 | redis.probes.liveness.successThreshold | int | `1` |  |
 | redis.probes.liveness.failureThreshold | int | `5` |  |
+| redis.persistence.enabled | bool | `false` |  |
+| redis.persistence.storageClassName | string | `""` |  |
+| redis.persistence.accessModes[0] | string | `"ReadWriteOnce"` |  |
+| redis.persistence.size | string | `"1Gi"` |  |
+| redis.persistence.reclaimPolicy | string | `"Retain"` |  |
+| redis.persistence.annotations | object | `{}` |  |
 | pgadmin.enabled | bool | `true` |  |
 | pgadmin.image.repository | string | `"dpage/pgadmin4"` |  |
 | pgadmin.image.tag | string | `"latest"` |  |
@@ -252,19 +479,19 @@ Kubernetes: `>=1.21.0`
 | pgadmin.probes.readiness.type | string | `"http"` |  |
 | pgadmin.probes.readiness.path | string | `"/misc/ping"` |  |
 | pgadmin.probes.readiness.port | int | `80` |  |
-| pgadmin.probes.readiness.initialDelaySeconds | int | `15` |  |
+| pgadmin.probes.readiness.initialDelaySeconds | int | `60` |  |
 | pgadmin.probes.readiness.periodSeconds | int | `10` |  |
-| pgadmin.probes.readiness.timeoutSeconds | int | `2` |  |
+| pgadmin.probes.readiness.timeoutSeconds | int | `5` |  |
 | pgadmin.probes.readiness.successThreshold | int | `1` |  |
-| pgadmin.probes.readiness.failureThreshold | int | `3` |  |
+| pgadmin.probes.readiness.failureThreshold | int | `5` |  |
 | pgadmin.probes.liveness.type | string | `"http"` |  |
 | pgadmin.probes.liveness.path | string | `"/misc/ping"` |  |
 | pgadmin.probes.liveness.port | int | `80` |  |
-| pgadmin.probes.liveness.initialDelaySeconds | int | `10` |  |
-| pgadmin.probes.liveness.periodSeconds | int | `15` |  |
-| pgadmin.probes.liveness.timeoutSeconds | int | `2` |  |
+| pgadmin.probes.liveness.initialDelaySeconds | int | `90` |  |
+| pgadmin.probes.liveness.periodSeconds | int | `20` |  |
+| pgadmin.probes.liveness.timeoutSeconds | int | `5` |  |
 | pgadmin.probes.liveness.successThreshold | int | `1` |  |
-| pgadmin.probes.liveness.failureThreshold | int | `5` |  |
+| pgadmin.probes.liveness.failureThreshold | int | `3` |  |
 | redisCommander.enabled | bool | `true` |  |
 | redisCommander.image.repository | string | `"rediscommander/redis-commander"` |  |
 | redisCommander.image.tag | string | `"latest"` |  |
@@ -291,10 +518,29 @@ Kubernetes: `>=1.21.0`
 | redisCommander.probes.liveness.timeoutSeconds | int | `2` |  |
 | redisCommander.probes.liveness.successThreshold | int | `1` |  |
 | redisCommander.probes.liveness.failureThreshold | int | `5` |  |
+| minio.enabled | bool | `true` |  |
+| minio.image.repository | string | `"minio/minio"` |  |
+| minio.image.tag | string | `"RELEASE.2025-09-07T16-13-09Z-cpuv1"` |  |
+| minio.image.pullPolicy | string | `"IfNotPresent"` |  |
+| minio.existingSecret | string | `""` |  |
+| minio.credentials.rootUser | string | `"minioadmin"` |  |
+| minio.credentials.rootPassword | string | `"minioadminchangeme"` |  |
+| minio.service.type | string | `"ClusterIP"` |  |
+| minio.service.apiPort | int | `9000` |  |
+| minio.service.consolePort | int | `9001` |  |
+| minio.persistence.enabled | bool | `true` |  |
+| minio.persistence.storageClassName | string | `""` |  |
+| minio.persistence.accessModes[0] | string | `"ReadWriteOnce"` |  |
+| minio.persistence.size | string | `"10Gi"` |  |
+| minio.persistence.reclaimPolicy | string | `"Retain"` |  |
+| minio.resources.limits.cpu | string | `"500m"` |  |
+| minio.resources.limits.memory | string | `"1Gi"` |  |
+| minio.resources.requests.cpu | string | `"100m"` |  |
+| minio.resources.requests.memory | string | `"256Mi"` |  |
 | mcpFastTimeServer.enabled | bool | `true` |  |
 | mcpFastTimeServer.replicaCount | int | `2` |  |
 | mcpFastTimeServer.image.repository | string | `"ghcr.io/ibm/fast-time-server"` |  |
-| mcpFastTimeServer.image.tag | string | `"0.9.0"` |  |
+| mcpFastTimeServer.image.tag | string | `"latest"` |  |
 | mcpFastTimeServer.image.pullPolicy | string | `"IfNotPresent"` |  |
 | mcpFastTimeServer.port | int | `8080` |  |
 | mcpFastTimeServer.ingress.enabled | bool | `true` |  |
@@ -321,106 +567,3 @@ Kubernetes: `>=1.21.0`
 | mcpFastTimeServer.resources.limits.memory | string | `"64Mi"` |  |
 | mcpFastTimeServer.resources.requests.cpu | string | `"25m"` |  |
 | mcpFastTimeServer.resources.requests.memory | string | `"10Mi"` |  |
-
-----------------------------------------------
-
-## Ed25519 Certificate Signing
-
-The MCP Gateway supports **Ed25519 digital signatures** for certificate validation and integrity verification. This ensures that CA certificates used by the gateway are authentic and haven't been tampered with.
-
-### Configuration
-
-Ed25519 signing is configured through secret values in `mcpContextForge.secret`:
-
-```yaml
-mcpContextForge:
-  secret:
-    # Enable Ed25519 signing
-    ENABLE_ED25519_SIGNING: "true"
-
-    # Current signing key (PEM format)
-    ED25519_PRIVATE_KEY: |
-      -----BEGIN PRIVATE KEY-----
-      MC4CAQAwBQYDK2VwBCIEIJ5pW... (your key here)
-      -----END PRIVATE KEY-----
-
-    # Previous key for rotation (optional)
-    PREV_ED25519_PRIVATE_KEY: |
-      -----BEGIN PRIVATE KEY-----
-      MC4CAQAwBQYDK2VwBCIEIOld... (old key here)
-      -----END PRIVATE KEY-----
-```
-
-### How It Works
-
-1. **Certificate Signing** - When `ENABLE_ED25519_SIGNING=true`, the gateway signs the CA certificate of each MCP server/gateway using the Ed25519 private key.
-
-2. **Certificate Validation** - Before using a CA certificate for subsequent calls, the gateway validates its signature to ensure authenticity and integrity.
-
-3. **Disabled Mode** - When `ENABLE_ED25519_SIGNING=false` (default), certificates are neither signed nor validated.
-
-### Key Generation
-
-Generate a new Ed25519 key pair:
-
-```bash
-# Using the gateway's built-in utility
-kubectl exec -it deployment/mcp-context-forge -- \
-  python mcpgateway/utils/generate_keys.py
-
-# Or using a running pod
-kubectl exec -it <pod-name> -- \
-  python mcpgateway/utils/generate_keys.py
-```
-
-The output will show:
-- Private key (set this to `ED25519_PRIVATE_KEY`)
-- Public key (derived automatically from private key)
-
-### Key Rotation
-
-To rotate keys without invalidating existing signed certificates:
-
-1. Move the current `ED25519_PRIVATE_KEY` value to `PREV_ED25519_PRIVATE_KEY`
-2. Generate a new key pair using the command above
-3. Set the new private key to `ED25519_PRIVATE_KEY`
-4. Apply the updated Helm values
-
-The gateway will automatically re-sign valid certificates at the point of key change.
-
-### Best Practices
-
-- **Store keys securely**: Use Kubernetes Secrets or external secret management (Vault, AWS Secrets Manager, etc.)
-- **Rotate keys periodically**: Recommended every 90-180 days
-- **Never commit keys to Git**: Use encrypted values files or external secret injection
-- **Use separate keys per environment**: Development, staging, and production should have different keys
-
-### Example with External Secrets
-
-Using [External Secrets Operator](https://external-secrets.io/):
-
-```yaml
-apiVersion: external-secrets.io/v1beta1
-kind: ExternalSecret
-metadata:
-  name: mcp-gateway-ed25519-keys
-spec:
-  secretStoreRef:
-    name: vault-backend
-    kind: SecretStore
-  target:
-    name: mcp-gateway-secret
-    template:
-      mergePolicy: Merge
-  data:
-    - secretKey: ED25519_PRIVATE_KEY
-      remoteRef:
-        key: mcp-gateway/ed25519
-        property: private_key
-    - secretKey: PREV_ED25519_PRIVATE_KEY
-      remoteRef:
-        key: mcp-gateway/ed25519
-        property: prev_private_key
-```
-
-----------------------------------------------

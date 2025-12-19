@@ -174,10 +174,58 @@ PORT=4444
 ENVIRONMENT=development
 APP_DOMAIN=localhost
 APP_ROOT_PATH=
-
-# TLS helper (run-gunicorn.sh)
-# SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-gunicorn.sh
 ```
+
+### Gunicorn Production Server
+
+The production server uses Gunicorn with UVicorn workers. Configure via environment variables or `.env` file:
+
+```bash
+# Worker Configuration
+GUNICORN_WORKERS=auto                 # Number of workers ("auto" = 2*CPU+1, capped at 16)
+GUNICORN_TIMEOUT=600                  # Worker timeout in seconds (increase for long requests)
+GUNICORN_MAX_REQUESTS=100000          # Requests per worker before restart (prevents memory leaks)
+GUNICORN_MAX_REQUESTS_JITTER=100      # Random jitter to prevent thundering herd
+
+# Performance Options
+GUNICORN_PRELOAD_APP=true             # Preload app before forking (saves memory, runs migrations once)
+GUNICORN_DEV_MODE=false               # Enable hot reload (not for production!)
+DISABLE_ACCESS_LOG=true               # Disable access logs for performance (default: true)
+
+# TLS/SSL Configuration
+SSL=false                             # Enable TLS/SSL
+CERT_FILE=certs/cert.pem              # Path to SSL certificate
+KEY_FILE=certs/key.pem                # Path to SSL private key
+KEY_FILE_PASSWORD=                    # Passphrase for encrypted private key
+
+# Process Management
+FORCE_START=false                     # Bypass lock file check
+```
+
+**Starting the Production Server:**
+
+```bash
+# Basic startup
+./run-gunicorn.sh
+
+# With TLS
+SSL=true ./run-gunicorn.sh
+
+# With custom workers
+GUNICORN_WORKERS=8 ./run-gunicorn.sh
+
+# Use fixed worker count instead of auto-detection
+GUNICORN_WORKERS=4 ./run-gunicorn.sh
+
+# High-performance mode (disable access logs)
+DISABLE_ACCESS_LOG=true ./run-gunicorn.sh
+```
+
+!!! tip "Worker Count Recommendations"
+    - **CPU-bound workloads**: 2-4 × CPU cores
+    - **I/O-bound workloads**: 4-12 × CPU cores
+    - **Memory-constrained**: Start with 2 and monitor
+    - **Auto mode**: Uses formula `min(2*CPU+1, 16)`
 
 ### Authentication & Security
 

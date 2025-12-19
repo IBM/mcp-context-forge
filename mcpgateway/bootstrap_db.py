@@ -32,17 +32,25 @@ Examples:
 # Standard
 import asyncio
 from importlib.resources import files
+import os
+import tempfile
+import time
 from typing import Any, cast
 
 # Third-Party
 from alembic import command
 from alembic.config import Config
+from filelock import FileLock, Timeout
 from sqlalchemy import create_engine, inspect
 
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent, Base, EmailTeam, EmailUser, Gateway, Prompt, Resource, Server, SessionLocal, Tool
 from mcpgateway.services.logging_service import LoggingService
+
+# Migration lock to prevent concurrent migrations from multiple workers
+_MIGRATION_LOCK_PATH = os.path.join(tempfile.gettempdir(), "mcpgateway_migration.lock")
+_MIGRATION_LOCK_TIMEOUT = 300  # seconds to wait for lock (5 minutes for slow migrations)
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -240,6 +248,9 @@ async def main() -> None:
     executes `alembic upgrade head`, leaving application data intact.
     Also creates the platform admin user if email authentication is enabled.
 
+    Uses file locking to prevent race conditions when multiple workers start
+    simultaneously (e.g., with GUNICORN_PRELOAD_APP=false).
+
     Args:
         None
     """
@@ -248,33 +259,59 @@ async def main() -> None:
     cfg = Config(str(ini_path))  # path in container
     cfg.attributes["configure_logger"] = True
 
+    # Use file lock to prevent concurrent migrations from multiple workers
+    lock = FileLock(_MIGRATION_LOCK_PATH, timeout=_MIGRATION_LOCK_TIMEOUT)
+
     try:
-        with engine.begin() as conn:
-            cfg.attributes["connection"] = conn
-            # Escape '%' characters in URL to avoid configparser interpolation errors
-            # (e.g., URL-encoded passwords like %40 for '@')
-            escaped_url = settings.database_url.replace("%", "%%")
-            cfg.set_main_option("sqlalchemy.url", escaped_url)
+        # Try to acquire lock - if another process has it, wait up to timeout
+        with lock:
+            logger.info("Acquired migration lock, checking database schema...")
 
-            insp = inspect(conn)
+            with engine.begin() as conn:
+                cfg.attributes["connection"] = conn
+                # Escape '%' characters in URL to avoid configparser interpolation errors
+                # (e.g., URL-encoded passwords like %40 for '@')
+                escaped_url = settings.database_url.replace("%", "%%")
+                cfg.set_main_option("sqlalchemy.url", escaped_url)
 
-            if "gateways" not in insp.get_table_names():
-                logger.info("Empty DB detected - creating baseline schema")
-                # Apply MariaDB compatibility fixes if needed
-                if settings.database_url.startswith(("mariadb", "mysql")):
-                    # pylint: disable=import-outside-toplevel
-                    # First-Party
-                    from mcpgateway.alembic.env import _modify_metadata_for_mariadb, mariadb_naming_convention
+                insp = inspect(conn)
 
-                    _modify_metadata_for_mariadb()
-                    Base.metadata.naming_convention = mariadb_naming_convention
-                    logger.info("Applied MariaDB compatibility modifications")
+                if "gateways" not in insp.get_table_names():
+                    logger.info("Empty DB detected - creating baseline schema")
+                    # Apply MariaDB compatibility fixes if needed
+                    if settings.database_url.startswith(("mariadb", "mysql")):
+                        # pylint: disable=import-outside-toplevel
+                        # First-Party
+                        from mcpgateway.alembic.env import _modify_metadata_for_mariadb, mariadb_naming_convention
 
-                Base.metadata.create_all(bind=conn)
-                command.stamp(cfg, "head")
-            else:
-                logger.info("Running Alembic migrations to ensure schema is up to date")
-                command.upgrade(cfg, "head")
+                        _modify_metadata_for_mariadb()
+                        Base.metadata.naming_convention = mariadb_naming_convention
+                        logger.info("Applied MariaDB compatibility modifications")
+
+                    Base.metadata.create_all(bind=conn)
+                    command.stamp(cfg, "head")
+                else:
+                    logger.info("Running Alembic migrations to ensure schema is up to date")
+                    command.upgrade(cfg, "head")
+
+    except Timeout:
+        logger.warning(f"Could not acquire migration lock within {_MIGRATION_LOCK_TIMEOUT}s - another process may be migrating")
+        # Wait a bit and verify the schema is ready before continuing
+        logger.info("Waiting for schema to be ready...")
+
+        for attempt in range(30):  # Wait up to 60 seconds
+            try:
+                with engine.connect() as conn:
+                    insp = inspect(conn)
+                    if "gateways" in insp.get_table_names():
+                        logger.info("Schema verified - proceeding with bootstrap")
+                        break
+            except Exception as e:
+                logger.debug(f"Schema check attempt {attempt + 1} failed: {e}")
+            time.sleep(2)
+        else:
+            logger.error("Schema not ready after waiting - bootstrap may fail")
+
     finally:
         # Dispose the engine to close all connections in the pool
         engine.dispose()

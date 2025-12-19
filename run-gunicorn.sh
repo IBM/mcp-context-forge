@@ -20,16 +20,17 @@
 #  Environment Variables:
 #    PYTHON                        : Path to Python interpreter (optional)
 #    VIRTUAL_ENV                   : Path to active virtual environment (auto-detected)
-#    GUNICORN_WORKERS             : Number of worker processes (default: 2, or "auto")
+#    GUNICORN_WORKERS             : Number of worker processes (default: "auto" = 2*CPU+1, capped at 16)
 #    GUNICORN_TIMEOUT             : Worker timeout in seconds (default: 600)
-#    GUNICORN_MAX_REQUESTS        : Max requests per worker before restart (default: 1000)
+#    GUNICORN_MAX_REQUESTS        : Max requests per worker before restart (default: 100000)
 #    GUNICORN_MAX_REQUESTS_JITTER : Random jitter for max requests (default: 100)
-#    GUNICORN_PRELOAD_APP         : Preload app before forking workers (default: false)
+#    GUNICORN_PRELOAD_APP         : Preload app before forking workers (default: true)
 #    GUNICORN_DEV_MODE            : Enable developer mode with hot reload (default: false)
 #    SSL                          : Enable TLS/SSL (true/false, default: false)
 #    CERT_FILE                    : Path to SSL certificate (default: certs/cert.pem)
 #    KEY_FILE                     : Path to SSL private key (default: certs/key.pem)
 #    FORCE_START                  : Force start even if another instance is running (default: false)
+#    DISABLE_ACCESS_LOG           : Disable access logging for performance (default: true)
 #
 #  Usage:
 #    ./run-gunicorn.sh                     # Run with defaults
@@ -220,10 +221,8 @@ EOF
 # Number of worker processes (adjust based on CPU cores and expected load)
 # Default: 2 (safe default for most systems)
 # Set to "auto" for automatic detection based on CPU cores
-if [[ -z "${GUNICORN_WORKERS:-}" ]]; then
-    # Default to 2 workers if not specified
-    GUNICORN_WORKERS=2
-elif [[ "${GUNICORN_WORKERS}" == "auto" ]]; then
+if [[ -z "${GUNICORN_WORKERS:-}" || "${GUNICORN_WORKERS}" == "auto" ]]; then
+    # Auto-detect workers based on CPU cores (default behavior)
     # Try to detect CPU count
     if command -v nproc &>/dev/null; then
         CPU_COUNT=$(nproc)
@@ -251,7 +250,7 @@ GUNICORN_MAX_REQUESTS=${GUNICORN_MAX_REQUESTS:-100000}
 GUNICORN_MAX_REQUESTS_JITTER=${GUNICORN_MAX_REQUESTS_JITTER:-100}
 
 # Preload application before forking workers (saves memory but slower reload)
-GUNICORN_PRELOAD_APP=${GUNICORN_PRELOAD_APP:-false}
+GUNICORN_PRELOAD_APP=${GUNICORN_PRELOAD_APP:-true}
 
 # Developer mode with hot reload (disables preload, enables file watching)
 GUNICORN_DEV_MODE=${GUNICORN_DEV_MODE:-false}
@@ -365,7 +364,7 @@ cmd=(
 
 # Configure access logging based on DISABLE_ACCESS_LOG setting
 # For performance testing, disable access logs which cause significant I/O overhead
-DISABLE_ACCESS_LOG=${DISABLE_ACCESS_LOG:-false}
+DISABLE_ACCESS_LOG=${DISABLE_ACCESS_LOG:-true}
 if [[ "${DISABLE_ACCESS_LOG}" == "true" ]]; then
     cmd+=( --access-logfile /dev/null )
     echo "🚫  Access logging disabled for performance"

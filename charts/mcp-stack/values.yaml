@@ -132,12 +132,14 @@ mcpContextForge:
   # Rendered into a ConfigMap; readable by anyone with GET access.
   ####################################################################
   config:
-    # - Gunicorn settings ─
-    GUNICORN_WORKERS: "2"               # number of worker processes
+    # ─ Gunicorn settings ─
+    GUNICORN_WORKERS: "auto"            # number of worker processes ("auto" = 2*CPU+1, capped at 16)
     GUNICORN_TIMEOUT: "600"             # worker timeout in seconds
-    GUNICORN_MAX_REQUESTS: "10000"      # max requests per worker before restart
+    GUNICORN_MAX_REQUESTS: "100000"     # max requests per worker before restart
     GUNICORN_MAX_REQUESTS_JITTER: "100" # random jitter to avoid thundering herd
-    GUNICORN_PRELOAD_APP: "true"        # preload app code before forking workers (TODO: not implemented yet)
+    GUNICORN_PRELOAD_APP: "true"        # preload app code before forking workers
+    GUNICORN_DEV_MODE: "false"          # developer mode with hot reload (not for production)
+    DISABLE_ACCESS_LOG: "true"          # disable access logging for performance
 
     # ─ Basic application info ─
     APP_NAME: MCP_Gateway            # public-facing name of the gateway
