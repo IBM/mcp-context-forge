@@ -1,15 +1,15 @@
 <!-- htmlhint doctype-first:false -->
-<!-- Plugin management expandable row -->
-<tr id="plugins-tool-{{ tool_id }}" class="bg-gray-50 dark:bg-gray-800">
-  <td colspan="15" class="px-4 py-6">
+<!-- Generic plugin management expandable row for any entity type (tool, resource, prompt) -->
+<tr id="plugins-{{ entity_type }}-{{ entity_id }}" class="bg-gray-50 dark:bg-gray-800">
+  <td colspan="100" class="px-4 py-6">
     <div class="max-w-6xl mx-auto">
       <!-- Header with collapse button -->
       <div class="flex justify-between items-center mb-4">
         <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">
-          🔌 Plugin Configuration for: <span class="text-indigo-600 dark:text-indigo-400">{{ tool_name }}</span>
+          🔌 Plugin Configuration for: <span class="text-indigo-600 dark:text-indigo-400">{{ entity_name }}</span>
         </h3>
         <button
-          onclick="document.getElementById('plugins-tool-{{ tool_id }}').classList.add('hidden')"
+          onclick="document.getElementById('plugins-{{ entity_type }}-{{ entity_id }}').classList.add('hidden')"
           class="px-3 py-1 text-sm text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
         >
           ✕ Close
@@ -39,9 +39,9 @@
                   <input type="number"
                          name="priority"
                          value="{{ plugin.priority }}"
-                         hx-post="{{ root_path }}/admin/tools/{{ tool_id }}/plugins/{{ plugin.name }}/set-priority?hook=tool_pre_invoke"
+                         hx-post="{{ root_path }}/admin/{{ entity_type }}s/{{ entity_id }}/plugins/{{ plugin.name }}/set-priority?hook={{ pre_hook_name }}"
                          hx-trigger="blur changed"
-                         hx-target="#plugins-tool-{{ tool_id }}"
+                         hx-target="#plugins-{{ entity_type }}-{{ entity_id }}"
                          hx-swap="outerHTML"
                          min="0"
                          max="1000"
@@ -51,8 +51,8 @@
               <div class="flex items-center space-x-1">
                 <!-- Up/Down buttons -->
                 <button
-                  hx-post="{{ root_path }}/admin/tools/{{ tool_id }}/plugins/{{ plugin.name }}/priority?hook=tool_pre_invoke&direction=up"
-                  hx-target="#plugins-tool-{{ tool_id }}"
+                  hx-post="{{ root_path }}/admin/{{ entity_type }}s/{{ entity_id }}/plugins/{{ plugin.name }}/priority?hook={{ pre_hook_name }}&direction=up"
+                  hx-target="#plugins-{{ entity_type }}-{{ entity_id }}"
                   hx-swap="outerHTML"
                   class="px-1.5 py-0.5 text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-200 dark:text-gray-400 dark:hover:bg-gray-700 rounded transition-colors {% if loop.first %}opacity-30 cursor-not-allowed{% endif %}"
                   title="Move up (run earlier)"
@@ -61,8 +61,8 @@
                   ▲
                 </button>
                 <button
-                  hx-post="{{ root_path }}/admin/tools/{{ tool_id }}/plugins/{{ plugin.name }}/priority?hook=tool_pre_invoke&direction=down"
-                  hx-target="#plugins-tool-{{ tool_id }}"
+                  hx-post="{{ root_path }}/admin/{{ entity_type }}s/{{ entity_id }}/plugins/{{ plugin.name }}/priority?hook={{ pre_hook_name }}&direction=down"
+                  hx-target="#plugins-{{ entity_type }}-{{ entity_id }}"
                   hx-swap="outerHTML"
                   class="px-1.5 py-0.5 text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-200 dark:text-gray-400 dark:hover:bg-gray-700 rounded transition-colors {% if loop.last %}opacity-30 cursor-not-allowed{% endif %}"
                   title="Move down (run later)"
@@ -72,9 +72,9 @@
                 </button>
                 <!-- Delete button -->
                 <button
-                  hx-delete="{{ root_path }}/admin/tools/{{ tool_id }}/plugins/{{ plugin.name }}?hook=tool_pre_invoke"
+                  hx-delete="{{ root_path }}/admin/{{ entity_type }}s/{{ entity_id }}/plugins/{{ plugin.name }}?hook={{ pre_hook_name }}"
                   hx-confirm="Remove plugin '{{ plugin.name }}' from pre-invoke hook?"
-                  hx-target="#plugins-tool-{{ tool_id }}"
+                  hx-target="#plugins-{{ entity_type }}-{{ entity_id }}"
                   hx-swap="outerHTML"
                   class="px-2 py-1 text-xs text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 rounded transition-colors"
                   title="Remove from pre-invoke"
@@ -102,8 +102,8 @@
             </h4>
             <!-- Reverse Order Toggle -->
             <button
-              hx-post="{{ root_path }}/admin/tools/{{ tool_id }}/plugins/reverse-post-hooks"
-              hx-target="#plugins-tool-{{ tool_id }}"
+              hx-post="{{ root_path }}/admin/{{ entity_type }}s/{{ entity_id }}/plugins/reverse-post-hooks"
+              hx-target="#plugins-{{ entity_type }}-{{ entity_id }}"
               hx-swap="outerHTML"
               class="flex items-center space-x-1 px-2 py-1 text-xs rounded-md transition-colors
                      {% if reverse_post_hooks %}
@@ -132,9 +132,9 @@
                   <input type="number"
                          name="priority"
                          value="{{ plugin.priority }}"
-                         hx-post="{{ root_path }}/admin/tools/{{ tool_id }}/plugins/{{ plugin.name }}/set-priority?hook=tool_post_invoke"
+                         hx-post="{{ root_path }}/admin/{{ entity_type }}s/{{ entity_id }}/plugins/{{ plugin.name }}/set-priority?hook={{ post_hook_name }}"
                          hx-trigger="blur changed"
-                         hx-target="#plugins-tool-{{ tool_id }}"
+                         hx-target="#plugins-{{ entity_type }}-{{ entity_id }}"
                          hx-swap="outerHTML"
                          min="0"
                          max="1000"
@@ -144,8 +144,8 @@
               <div class="flex items-center space-x-1">
                 <!-- Up/Down buttons -->
                 <button
-                  hx-post="{{ root_path }}/admin/tools/{{ tool_id }}/plugins/{{ plugin.name }}/priority?hook=tool_post_invoke&direction=up"
-                  hx-target="#plugins-tool-{{ tool_id }}"
+                  hx-post="{{ root_path }}/admin/{{ entity_type }}s/{{ entity_id }}/plugins/{{ plugin.name }}/priority?hook={{ post_hook_name }}&direction=up"
+                  hx-target="#plugins-{{ entity_type }}-{{ entity_id }}"
                   hx-swap="outerHTML"
                   class="px-1.5 py-0.5 text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-200 dark:text-gray-400 dark:hover:bg-gray-700 rounded transition-colors {% if loop.first %}opacity-30 cursor-not-allowed{% endif %}"
                   title="Move up (run earlier)"
@@ -154,8 +154,8 @@
                   ▲
                 </button>
                 <button
-                  hx-post="{{ root_path }}/admin/tools/{{ tool_id }}/plugins/{{ plugin.name }}/priority?hook=tool_post_invoke&direction=down"
-                  hx-target="#plugins-tool-{{ tool_id }}"
+                  hx-post="{{ root_path }}/admin/{{ entity_type }}s/{{ entity_id }}/plugins/{{ plugin.name }}/priority?hook={{ post_hook_name }}&direction=down"
+                  hx-target="#plugins-{{ entity_type }}-{{ entity_id }}"
                   hx-swap="outerHTML"
                   class="px-1.5 py-0.5 text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-200 dark:text-gray-400 dark:hover:bg-gray-700 rounded transition-colors {% if loop.last %}opacity-30 cursor-not-allowed{% endif %}"
                   title="Move down (run later)"
@@ -165,9 +165,9 @@
                 </button>
                 <!-- Delete button -->
                 <button
-                  hx-delete="{{ root_path }}/admin/tools/{{ tool_id }}/plugins/{{ plugin.name }}?hook=tool_post_invoke"
+                  hx-delete="{{ root_path }}/admin/{{ entity_type }}s/{{ entity_id }}/plugins/{{ plugin.name }}?hook={{ post_hook_name }}"
                   hx-confirm="Remove plugin '{{ plugin.name }}' from post-invoke hook?"
-                  hx-target="#plugins-tool-{{ tool_id }}"
+                  hx-target="#plugins-{{ entity_type }}-{{ entity_id }}"
                   hx-swap="outerHTML"
                   class="px-2 py-1 text-xs text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 rounded transition-colors"
                   title="Remove from post-invoke"
@@ -187,8 +187,8 @@
       <!-- Add Plugin Form -->
       <div class="mt-6 bg-white dark:bg-gray-900 rounded-lg shadow p-4">
         <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">➕ Add Plugin</h4>
-        <form hx-post="{{ root_path }}/admin/tools/{{ tool_id }}/plugins"
-              hx-target="#plugins-tool-{{ tool_id }}"
+        <form hx-post="{{ root_path }}/admin/{{ entity_type }}s/{{ entity_id }}/plugins"
+              hx-target="#plugins-{{ entity_type }}-{{ entity_id }}"
               hx-swap="outerHTML"
               class="flex flex-wrap items-end gap-3">
 
@@ -214,8 +214,8 @@
             <select name="hooks" multiple
                     class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500"
                     title="Hold Ctrl/Cmd to select multiple">
-              <option value="tool_pre_invoke">tool_pre_invoke</option>
-              <option value="tool_post_invoke">tool_post_invoke</option>
+              <option value="{{ pre_hook_name }}">{{ pre_hook_name }}</option>
+              <option value="{{ post_hook_name }}">{{ post_hook_name }}</option>
             </select>
             <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Leave empty to apply to all hooks</p>
           </div>
@@ -244,9 +244,9 @@
               <div class="grid grid-cols-2 gap-3">
                 <!-- Override -->
                 <div class="flex items-center space-x-2">
-                  <input type="checkbox" name="override" id="tool_override_{{ tool_id }}" value="true"
+                  <input type="checkbox" name="override" id="{{ entity_type }}_override_{{ entity_id }}" value="true"
                          class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 dark:border-gray-600 dark:bg-gray-700">
-                  <label for="tool_override_{{ tool_id }}" class="text-xs text-gray-600 dark:text-gray-400">
+                  <label for="{{ entity_type }}_override_{{ entity_id }}" class="text-xs text-gray-600 dark:text-gray-400">
                     Override
                     <span class="block text-gray-500">Replace existing config</span>
                   </label>

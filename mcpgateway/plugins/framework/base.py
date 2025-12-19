@@ -52,7 +52,7 @@ class Plugin(ABC):
         >>> plugin.priority
         50
         >>> plugin.mode
-        <PluginMode.ENFORCE: 'enforce'>
+        'enforce'
         >>> PromptHookType.PROMPT_PRE_FETCH in plugin.hooks
         True
     """
@@ -265,7 +265,7 @@ class PluginRef:
         >>> ref.priority
         100
         >>> ref.mode
-        <PluginMode.PERMISSIVE: 'permissive'>
+        'permissive'
         >>> len(ref.uuid)  # UUID is a 32-character hex string
         32
         >>> ref.tags

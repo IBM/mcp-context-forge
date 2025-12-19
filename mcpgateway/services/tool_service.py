@@ -1104,6 +1104,8 @@ class ToolService:
             >>> service = ToolService()
             >>> db = MagicMock()
             >>> tool = MagicMock()
+            >>> tool.name = 'tool_name'
+            >>> tool.id = 'tool-123'
             >>> db.execute.return_value.scalar_one_or_none.side_effect = [tool, None]
             >>> tool.reachable = True
             >>> import asyncio

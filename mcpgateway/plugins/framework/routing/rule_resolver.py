@@ -274,7 +274,6 @@ class RuleBasedResolver:
                         name=plugin_attachment.name,
                         priority=plugin_attachment.priority,
                         post_priority=plugin_attachment.post_priority,
-                        scope=plugin_attachment.scope,
                         hooks=plugin_attachment.hooks,
                         when=rule.when,  # Transfer from rule for runtime evaluation
                         apply_to=plugin_attachment.apply_to,

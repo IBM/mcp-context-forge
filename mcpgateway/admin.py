@@ -31,7 +31,7 @@ import os
 from pathlib import Path
 import tempfile
 import time
-from typing import Any
+from typing import Any, Callable
 from typing import cast as typing_cast
 from typing import Dict, List, Optional, Union
 import urllib.parse
@@ -51,6 +51,14 @@ from sqlalchemy.sql.functions import coalesce
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 # First-Party
+from mcpgateway.admin_helpers import (
+    build_bulk_operation_response,
+    parse_bulk_plugin_form_data,
+    parse_plugin_config,
+    parse_remove_plugin_form_data,
+    validate_bulk_plugin_inputs,
+    validate_remove_plugin_inputs,
+)
 from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
 from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
@@ -11517,22 +11525,22 @@ async def get_entities_by_type(
         for entity_type in types:
             entities = []
             if entity_type == "tool":
-                tools = db.query(Tool).filter(Tool.enabled == True).all()
+                tools = db.query(Tool).filter(Tool.enabled).all()
                 entities = [{"id": t.id, "name": t.name, "display_name": t.original_name} for t in tools]
             elif entity_type == "prompt":
-                prompts = db.query(Prompt).filter(Prompt.is_active == True).all()
+                prompts = db.query(Prompt).filter(Prompt.is_active).all()
                 entities = [{"id": p.id, "name": p.name, "display_name": p.name} for p in prompts]
             elif entity_type == "resource":
-                resources = db.query(Resource).filter(Resource.is_active == True).all()
+                resources = db.query(Resource).filter(Resource.is_active).all()
                 entities = [{"id": r.id, "name": r.name, "display_name": r.name} for r in resources]
             elif entity_type == "agent":
-                agents = db.query(A2AAgent).filter(A2AAgent.enabled == True).all()
+                agents = db.query(A2AAgent).filter(A2AAgent.enabled).all()
                 entities = [{"id": a.id, "name": a.name, "display_name": a.name} for a in agents]
             elif entity_type == "virtual_server":
-                servers = db.query(Server).filter(Server.is_active == True).all()
+                servers = db.query(Server).filter(Server.is_active).all()
                 entities = [{"id": s.id, "name": s.name, "display_name": s.name} for s in servers]
             elif entity_type == "mcp_server":
-                gateways = db.query(Gateway).filter(Gateway.enabled == True).all()
+                gateways = db.query(Gateway).filter(Gateway.enabled).all()
                 entities = [{"id": g.id, "name": g.name, "display_name": g.name} for g in gateways]
 
             result[entity_type] = entities
@@ -11799,26 +11807,12 @@ async def create_or_update_routing_rule(
         reverse_order_on_post = form_data.get("reverse_order_on_post") == "true"
 
         # Debug logging to see what we received
-        LOGGER.info(
-            f"Parsed routing rule data: entities={entity_types}, name_list={name_list}, "
-            f"tags={tags}, hooks={hooks}, when={when_expression}"
-        )
+        LOGGER.info(f"Parsed routing rule data: entities={entity_types}, name_list={name_list}, " f"tags={tags}, hooks={hooks}, when={when_expression}")
 
-        # Validate that at least one matching criterion is provided
-        has_criteria = (
-            (entity_types is not None and len(entity_types) > 0)
-            or name_list is not None
-            or (tags is not None and len(tags) > 0)
-            or (hooks is not None and len(hooks) > 0)
-            or (when_expression is not None and len(when_expression) > 0)
-        )
-        if not has_criteria:
-            error_msg = (
-                "Routing rule must have at least one matching criterion. "
-                "Please specify: entity types, entity names, tags, hooks, or a condition expression."
-            )
-            LOGGER.error(f"Validation failed: {error_msg}")
-            return HTMLResponse(content=error_msg, status_code=400)
+        # Global rules support: Allow rules with no matching criteria
+        # Empty rules (no filters) will match ALL entities and hooks globally
+        # This enables baseline/default plugin configurations that apply everywhere
+        # The rule_resolver.py matching logic handles empty rules correctly
 
         # Parse plugins JSON
         # Standard
@@ -12015,6 +12009,385 @@ async def _get_plugins_for_entity_and_hook(
     )
 
     return [{"name": p.name, "priority": p.priority, "config": p.config} for p in plugins]
+
+
+async def _get_entity_plugins_ui_context(
+    request: Request,
+    entity_type: str,
+    entity_id: str,
+    db: Session,
+) -> dict:
+    """Generic helper to get plugin UI context for any entity type.
+
+    This function extracts the common logic for displaying plugin management UI
+    across tools, resources, and prompts.
+
+    Args:
+        request: FastAPI request object.
+        entity_type: Type of entity (tool, resource, prompt).
+        entity_id: Entity ID (UUID string).
+        db: Database session.
+
+    Returns:
+        Context dict for rendering the entity_plugins_partial.html template.
+
+    Raises:
+        HTTPException: If entity not found or other errors occur.
+    """
+    # First-Party
+    from mcpgateway.plugins.framework import get_plugin_manager
+    from mcpgateway.plugins.framework.hooks.registry import get_hook_registry, HookPhase
+    from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+    # Get entity from database
+    entity = await _get_entity_by_id(db, entity_type, entity_id)
+
+    # Get services
+    route_service = get_plugin_route_service()
+    hook_registry = get_hook_registry()
+
+    # Reload config from disk to see changes from other workers
+    plugin_manager = get_plugin_manager()
+    if plugin_manager:
+        plugin_manager.reload_config()
+
+    # Get pre and post hook types for this entity using the registry
+    pre_hook_types = hook_registry.get_hooks_for_entity_type(entity_type, HookPhase.PRE)
+    post_hook_types = hook_registry.get_hooks_for_entity_type(entity_type, HookPhase.POST)
+
+    # Get plugins for each hook type (resolver applies correct ordering)
+    pre_hooks = []
+    post_hooks = []
+
+    # Get first server if entity has server relationship
+    first_server = entity.servers[0] if hasattr(entity, "servers") and entity.servers else None
+
+    # Use first pre-hook type (typically {entity}_pre_invoke)
+    if pre_hook_types:
+        pre_hook_value = pre_hook_types[0].value if hasattr(pre_hook_types[0], "value") else pre_hook_types[0]
+        pre_hooks = await _get_plugins_for_entity_and_hook(
+            route_service,
+            entity_type=entity_type,
+            entity_name=entity.name,
+            entity_id=str(entity.id),
+            tags=entity.tags or [],
+            server_name=first_server.name if first_server else None,
+            server_id=str(first_server.id) if first_server else None,
+            hook_type=str(pre_hook_value),
+        )
+
+    # Use first post-hook type (typically {entity}_post_invoke)
+    if post_hook_types:
+        post_hook_value = post_hook_types[0].value if hasattr(post_hook_types[0], "value") else post_hook_types[0]
+        post_hooks = await _get_plugins_for_entity_and_hook(
+            route_service,
+            entity_type=entity_type,
+            entity_name=entity.name,
+            entity_id=str(entity.id),
+            tags=entity.tags or [],
+            server_name=first_server.name if first_server else None,
+            server_id=str(first_server.id) if first_server else None,
+            hook_type=str(post_hook_value),
+        )
+
+    # Get available plugins from plugin manager
+    available_plugins = []
+    if plugin_manager:
+        available_plugins = [{"name": name} for name in plugin_manager.get_plugin_names()]
+
+    # Get reverse post-hooks state for this entity
+    reverse_post_hooks = route_service.get_reverse_post_hooks_state(
+        entity_type=entity_type,
+        entity_name=entity.name,
+    )
+
+    # Calculate next suggested priority (max existing + 10, or 10 if none)
+    all_plugins = pre_hooks + post_hooks
+    max_priority = max((p.get("priority", 0) or 0 for p in all_plugins), default=0)
+    next_priority = max_priority + 10 if max_priority > 0 else 10
+
+    # Get root_path for URL generation
+    root_path = request.scope.get("root_path", "")
+
+    # Get hook type names for display (convert enums to string values)
+    if pre_hook_types:
+        pre_hook_name = str(pre_hook_types[0].value if hasattr(pre_hook_types[0], "value") else pre_hook_types[0])
+    else:
+        pre_hook_name = f"{entity_type}_pre_invoke"
+
+    if post_hook_types:
+        post_hook_name = str(post_hook_types[0].value if hasattr(post_hook_types[0], "value") else post_hook_types[0])
+    else:
+        post_hook_name = f"{entity_type}_post_invoke"
+
+    return {
+        "request": request,
+        "root_path": root_path,
+        "entity_type": entity_type,
+        "entity_id": entity.id,
+        "entity_name": entity.name,
+        "pre_hooks": pre_hooks,
+        "post_hooks": post_hooks,
+        "pre_hook_name": pre_hook_name,
+        "post_hook_name": post_hook_name,
+        "available_plugins": available_plugins,
+        "reverse_post_hooks": reverse_post_hooks,
+        "next_priority": next_priority,
+    }
+
+
+async def _add_entity_plugin_handler(
+    request: Request,
+    entity_type: str,
+    entity_id: str,
+    db: Session,
+    plugins_ui_getter: Callable,
+):
+    """Generic handler to add a plugin to any entity type."""
+    try:
+        # First-Party
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        # Parse form data
+        form_data = await request.form()
+        plugin_name = form_data.get("plugin_name")
+        priority = int(form_data.get("priority", 10))
+        hooks = form_data.getlist("hooks") if "hooks" in form_data else None
+        reverse_order_on_post = form_data.get("reverse_order_on_post") == "true"
+
+        # Parse advanced fields
+        config_str = form_data.get("config", "").strip()
+        config = None
+        if config_str:
+            try:
+                config = json.loads(config_str)
+            except json.JSONDecodeError as e:
+                raise HTTPException(status_code=400, detail=f"Invalid JSON in config: {e}")
+
+        override = form_data.get("override") == "true"
+        mode = form_data.get("mode") or None
+
+        if not plugin_name:
+            raise HTTPException(status_code=400, detail="Plugin name is required")
+
+        # Get entity from database
+        entity = await _get_entity_by_id(db, entity_type, entity_id)
+
+        # Get plugin route service
+        route_service = get_plugin_route_service()
+
+        # Add simple route
+        await route_service.add_simple_route(
+            entity_type=entity_type,
+            entity_name=entity.name,
+            plugin_name=plugin_name,
+            priority=priority,
+            hooks=hooks if hooks else None,
+            reverse_order_on_post=reverse_order_on_post,
+            config=config,
+            override=override,
+            mode=mode,
+        )
+
+        # Save configuration
+        await route_service.save_config()
+
+        LOGGER.info(f"Added plugin {plugin_name} to {entity_type} {entity.name}")
+
+        # Return updated plugins UI
+        return await plugins_ui_getter(request, entity_id, db)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        LOGGER.error(f"Error adding {entity_type} plugin: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def _remove_entity_plugin_handler(
+    request: Request,
+    entity_type: str,
+    entity_id: str,
+    plugin_name: str,
+    hook: Optional[str],
+    db: Session,
+    plugins_ui_getter: Callable,
+):
+    """Generic handler to remove a plugin from any entity type."""
+    try:
+        # First-Party
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        # Get entity from database
+        entity = await _get_entity_by_id(db, entity_type, entity_id)
+
+        # Get plugin route service
+        route_service = get_plugin_route_service()
+
+        # Remove plugin from entity
+        removed = await route_service.remove_plugin_from_entity(
+            entity_type=entity_type,
+            entity_name=entity.name,
+            plugin_name=plugin_name,
+            hook=hook,
+        )
+
+        if not removed:
+            hook_msg = f" for hook {hook}" if hook else ""
+            raise HTTPException(
+                status_code=404,
+                detail=f"Plugin {plugin_name} not found in simple rules for {entity_type} {entity.name}{hook_msg}",
+            )
+
+        # Save configuration
+        await route_service.save_config()
+
+        hook_msg = f" from {hook}" if hook else ""
+        LOGGER.info(f"Removed plugin {plugin_name}{hook_msg} from {entity_type} {entity.name}")
+
+        # Return updated plugins UI
+        return await plugins_ui_getter(request, entity_id, db)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        LOGGER.error(f"Error removing {entity_type} plugin: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def _toggle_entity_reverse_post_hooks_handler(
+    request: Request,
+    entity_type: str,
+    entity_id: str,
+    db: Session,
+    plugins_ui_getter: Callable,
+):
+    """Generic handler to toggle reverse_order_on_post for any entity type."""
+    try:
+        # First-Party
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        # Get entity from database
+        entity = await _get_entity_by_id(db, entity_type, entity_id)
+
+        # Get plugin route service
+        route_service = get_plugin_route_service()
+
+        # Toggle reverse_order_on_post
+        new_state = await route_service.toggle_reverse_post_hooks(
+            entity_type=entity_type,
+            entity_name=entity.name,
+        )
+
+        LOGGER.info(f"Toggled reverse_order_on_post to {new_state} for {entity_type} {entity.name}")
+
+        # Return updated plugins UI
+        return await plugins_ui_getter(request, entity_id, db)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        LOGGER.error(f"Error toggling reverse post hooks for {entity_type}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def _change_entity_plugin_priority_handler(
+    request: Request,
+    entity_type: str,
+    entity_id: str,
+    plugin_name: str,
+    hook: str,
+    direction: str,
+    db: Session,
+    plugins_ui_getter: Callable,
+):
+    """Generic handler to change plugin priority (up/down) for any entity type."""
+    try:
+        # First-Party
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        # Get entity from database
+        entity = await _get_entity_by_id(db, entity_type, entity_id)
+
+        # Get plugin route service
+        route_service = get_plugin_route_service()
+
+        # Change priority
+        success = await route_service.change_plugin_priority(
+            entity_type=entity_type,
+            entity_name=entity.name,
+            plugin_name=plugin_name,
+            hook=hook,
+            direction=direction,
+        )
+
+        if not success:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Plugin {plugin_name} not found or cannot be moved {direction}",
+            )
+
+        LOGGER.info(f"Changed priority of plugin {plugin_name} ({direction}) for {entity_type} {entity.name}")
+
+        # Return updated plugins UI
+        return await plugins_ui_getter(request, entity_id, db)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        LOGGER.error(f"Error changing {entity_type} plugin priority: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def _set_entity_plugin_priority_handler(
+    request: Request,
+    entity_type: str,
+    entity_id: str,
+    plugin_name: str,
+    hook: str,
+    db: Session,
+    plugins_ui_getter: Callable,
+):
+    """Generic handler to set plugin priority to absolute value for any entity type."""
+    try:
+        # First-Party
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        # Parse form data
+        form_data = await request.form()
+        new_priority = int(form_data.get("priority", 10))
+
+        # Get entity from database
+        entity = await _get_entity_by_id(db, entity_type, entity_id)
+
+        # Get plugin route service
+        route_service = get_plugin_route_service()
+
+        # Update priority
+        success = await route_service.update_plugin_priority(
+            entity_type=entity_type,
+            entity_name=entity.name,
+            plugin_name=plugin_name,
+            new_priority=new_priority,
+            hook=hook,
+        )
+
+        if not success:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Plugin {plugin_name} not found for {entity_type} {entity.name}",
+            )
+
+        LOGGER.info(f"Set priority of plugin {plugin_name} to {new_priority} for {entity_type} {entity.name}")
+
+        # Return updated plugins UI
+        return await plugins_ui_getter(request, entity_id, db)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        LOGGER.error(f"Error setting {entity_type} plugin priority: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @admin_router.get("/tools/{tool_id}/plugins", response_class=JSONResponse)
@@ -12252,6 +12625,276 @@ async def get_bulk_plugin_status(
         )
     except Exception as e:
         LOGGER.error(f"Error getting bulk plugin status: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": str(e)},
+        )
+
+
+@admin_router.get("/prompts/bulk/plugins/status", response_class=JSONResponse)
+async def get_bulk_plugin_status_prompts(
+    request: Request,
+    prompt_ids: str = Query(..., description="Comma-separated list of prompt IDs"),
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get plugin configuration status for multiple prompts."""
+    try:
+        # First-Party
+        from mcpgateway.plugins.framework import get_plugin_manager
+        from mcpgateway.plugins.framework.hooks.registry import get_hook_registry, HookPhase
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        prompt_id_list = [pid.strip() for pid in prompt_ids.split(",") if pid.strip()]
+
+        if not prompt_id_list:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "message": "No prompt IDs provided"},
+            )
+
+        route_service = get_plugin_route_service()
+        hook_registry = get_hook_registry()
+
+        plugin_manager = get_plugin_manager()
+        if plugin_manager:
+            plugin_manager.reload_config()
+
+        prompt_plugins = {}
+        prompt_names = {}
+
+        for prompt_id in prompt_id_list:
+            try:
+                prompt = await _get_entity_by_id(db, "prompt", prompt_id)
+                prompt_names[prompt_id] = prompt.name
+
+                pre_hook_types = hook_registry.get_hooks_for_entity_type("prompt", HookPhase.PRE)
+                post_hook_types = hook_registry.get_hooks_for_entity_type("prompt", HookPhase.POST)
+
+                pre_plugins = []
+                post_plugins = []
+
+                if pre_hook_types:
+                    pre_plugins = await _get_plugins_for_entity_and_hook(
+                        route_service,
+                        entity_type="prompt",
+                        entity_name=prompt.name,
+                        entity_id=str(prompt.id),
+                        tags=prompt.tags or [],
+                        server_name=None,
+                        server_id=None,
+                        hook_type=pre_hook_types[0],
+                    )
+
+                if post_hook_types:
+                    post_plugins = await _get_plugins_for_entity_and_hook(
+                        route_service,
+                        entity_type="prompt",
+                        entity_name=prompt.name,
+                        entity_id=str(prompt.id),
+                        tags=prompt.tags or [],
+                        server_name=None,
+                        server_id=None,
+                        hook_type=post_hook_types[0],
+                    )
+
+                plugin_info = {}
+                for p in pre_plugins:
+                    name = p.get("name", p.get("plugin_name", ""))
+                    if name not in plugin_info:
+                        plugin_info[name] = {"pre": False, "post": False, "priority": p.get("priority", 0)}
+                    plugin_info[name]["pre"] = True
+                    plugin_info[name]["priority"] = max(plugin_info[name]["priority"], p.get("priority", 0))
+
+                for p in post_plugins:
+                    name = p.get("name", p.get("plugin_name", ""))
+                    if name not in plugin_info:
+                        plugin_info[name] = {"pre": False, "post": False, "priority": p.get("priority", 0)}
+                    plugin_info[name]["post"] = True
+                    plugin_info[name]["priority"] = max(plugin_info[name]["priority"], p.get("priority", 0))
+
+                prompt_plugins[prompt_id] = plugin_info
+
+            except Exception as e:
+                LOGGER.warning(f"Could not get plugins for prompt {prompt_id}: {e}")
+                prompt_plugins[prompt_id] = {}
+                prompt_names[prompt_id] = f"Prompt {prompt_id}"
+
+        all_plugins = set()
+        for plugins in prompt_plugins.values():
+            all_plugins.update(plugins.keys())
+
+        plugin_status = {}
+        for plugin in all_plugins:
+            prompt_count = sum(1 for plugins in prompt_plugins.values() if plugin in plugins)
+            total_prompts = len(prompt_id_list)
+
+            if prompt_count == total_prompts:
+                status = "all"
+            elif prompt_count > 0:
+                status = "some"
+            else:
+                status = "none"
+
+            has_pre = any(plugins.get(plugin, {}).get("pre", False) for plugins in prompt_plugins.values())
+            has_post = any(plugins.get(plugin, {}).get("post", False) for plugins in prompt_plugins.values())
+            max_priority = max((plugins.get(plugin, {}).get("priority", 0) for plugins in prompt_plugins.values()), default=0)
+
+            plugin_status[plugin] = {
+                "status": status,
+                "count": prompt_count,
+                "total": total_prompts,
+                "pre_hooks": ["prompt_pre_invoke"] if has_pre else [],
+                "post_hooks": ["prompt_post_invoke"] if has_post else [],
+                "priority": max_priority,
+            }
+
+        return JSONResponse(
+            content={
+                "success": True,
+                "prompt_count": len(prompt_id_list),
+                "prompt_names": prompt_names,
+                "prompt_plugins": {pid: list(plugins.keys()) for pid, plugins in prompt_plugins.items()},
+                "plugin_status": plugin_status,
+            }
+        )
+    except Exception as e:
+        LOGGER.error(f"Error getting bulk plugin status for prompts: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": str(e)},
+        )
+
+
+@admin_router.get("/resources/bulk/plugins/status", response_class=JSONResponse)
+async def get_bulk_plugin_status_resources(
+    request: Request,
+    resource_ids: str = Query(..., description="Comma-separated list of resource IDs"),
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get plugin configuration status for multiple resources."""
+    try:
+        # First-Party
+        from mcpgateway.plugins.framework import get_plugin_manager
+        from mcpgateway.plugins.framework.hooks.registry import get_hook_registry, HookPhase
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        resource_id_list = [rid.strip() for rid in resource_ids.split(",") if rid.strip()]
+
+        if not resource_id_list:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "message": "No resource IDs provided"},
+            )
+
+        route_service = get_plugin_route_service()
+        hook_registry = get_hook_registry()
+
+        plugin_manager = get_plugin_manager()
+        if plugin_manager:
+            plugin_manager.reload_config()
+
+        resource_plugins = {}
+        resource_names = {}
+
+        for resource_id in resource_id_list:
+            try:
+                resource = await _get_entity_by_id(db, "resource", resource_id)
+                resource_names[resource_id] = resource.name
+
+                pre_hook_types = hook_registry.get_hooks_for_entity_type("resource", HookPhase.PRE)
+                post_hook_types = hook_registry.get_hooks_for_entity_type("resource", HookPhase.POST)
+
+                pre_plugins = []
+                post_plugins = []
+
+                if pre_hook_types:
+                    pre_plugins = await _get_plugins_for_entity_and_hook(
+                        route_service,
+                        entity_type="resource",
+                        entity_name=resource.name,
+                        entity_id=str(resource.id),
+                        tags=resource.tags or [],
+                        server_name=None,
+                        server_id=None,
+                        hook_type=pre_hook_types[0],
+                    )
+
+                if post_hook_types:
+                    post_plugins = await _get_plugins_for_entity_and_hook(
+                        route_service,
+                        entity_type="resource",
+                        entity_name=resource.name,
+                        entity_id=str(resource.id),
+                        tags=resource.tags or [],
+                        server_name=None,
+                        server_id=None,
+                        hook_type=post_hook_types[0],
+                    )
+
+                plugin_info = {}
+                for p in pre_plugins:
+                    name = p.get("name", p.get("plugin_name", ""))
+                    if name not in plugin_info:
+                        plugin_info[name] = {"pre": False, "post": False, "priority": p.get("priority", 0)}
+                    plugin_info[name]["pre"] = True
+                    plugin_info[name]["priority"] = max(plugin_info[name]["priority"], p.get("priority", 0))
+
+                for p in post_plugins:
+                    name = p.get("name", p.get("plugin_name", ""))
+                    if name not in plugin_info:
+                        plugin_info[name] = {"pre": False, "post": False, "priority": p.get("priority", 0)}
+                    plugin_info[name]["post"] = True
+                    plugin_info[name]["priority"] = max(plugin_info[name]["priority"], p.get("priority", 0))
+
+                resource_plugins[resource_id] = plugin_info
+
+            except Exception as e:
+                LOGGER.warning(f"Could not get plugins for resource {resource_id}: {e}")
+                resource_plugins[resource_id] = {}
+                resource_names[resource_id] = f"Resource {resource_id}"
+
+        all_plugins = set()
+        for plugins in resource_plugins.values():
+            all_plugins.update(plugins.keys())
+
+        plugin_status = {}
+        for plugin in all_plugins:
+            resource_count = sum(1 for plugins in resource_plugins.values() if plugin in plugins)
+            total_resources = len(resource_id_list)
+
+            if resource_count == total_resources:
+                status = "all"
+            elif resource_count > 0:
+                status = "some"
+            else:
+                status = "none"
+
+            has_pre = any(plugins.get(plugin, {}).get("pre", False) for plugins in resource_plugins.values())
+            has_post = any(plugins.get(plugin, {}).get("post", False) for plugins in resource_plugins.values())
+            max_priority = max((plugins.get(plugin, {}).get("priority", 0) for plugins in resource_plugins.values()), default=0)
+
+            plugin_status[plugin] = {
+                "status": status,
+                "count": resource_count,
+                "total": total_resources,
+                "pre_hooks": ["resource_pre_invoke"] if has_pre else [],
+                "post_hooks": ["resource_post_invoke"] if has_post else [],
+                "priority": max_priority,
+            }
+
+        return JSONResponse(
+            content={
+                "success": True,
+                "resource_count": len(resource_id_list),
+                "resource_names": resource_names,
+                "resource_plugins": {rid: list(plugins.keys()) for rid, plugins in resource_plugins.items()},
+                "plugin_status": plugin_status,
+            }
+        )
+    except Exception as e:
+        LOGGER.error(f"Error getting bulk plugin status for resources: {e}", exc_info=True)
         return JSONResponse(
             status_code=500,
             content={"success": False, "message": str(e)},
@@ -12932,97 +13575,1019 @@ async def get_tool_plugins_ui(
     - Buttons to remove plugins
     """
     try:
-        # First-Party
-        from mcpgateway.plugins.framework import get_plugin_manager
-        from mcpgateway.plugins.framework.hooks.registry import get_hook_registry, HookPhase
-        from mcpgateway.services.plugin_route_service import get_plugin_route_service
-
-        # Get tool from database
-        tool = await _get_entity_by_id(db, "tool", tool_id)
-
-        # Get services
-        route_service = get_plugin_route_service()
-        hook_registry = get_hook_registry()
-
-        # Reload config from disk to see changes from other workers
-        plugin_manager = get_plugin_manager()
-        if plugin_manager:
-            plugin_manager.reload_config()
-
-        # Get pre and post hook types for tools using the registry
-        pre_hook_types = hook_registry.get_hooks_for_entity_type("tool", HookPhase.PRE)
-        post_hook_types = hook_registry.get_hooks_for_entity_type("tool", HookPhase.POST)
-
-        # Get plugins for each hook type (resolver applies correct ordering)
-        pre_hooks = []
-        post_hooks = []
-
-        # Tool has many-to-many with servers, get first if available
-        first_server = tool.servers[0] if tool.servers else None
-
-        # Use first pre-hook type (typically tool_pre_invoke)
-        if pre_hook_types:
-            pre_hooks = await _get_plugins_for_entity_and_hook(
-                route_service,
-                entity_type="tool",
-                entity_name=tool.name,
-                entity_id=str(tool.id),
-                tags=tool.tags or [],
-                server_name=first_server.name if first_server else None,
-                server_id=str(first_server.id) if first_server else None,
-                hook_type=pre_hook_types[0],
-            )
-
-        # Use first post-hook type (typically tool_post_invoke)
-        if post_hook_types:
-            post_hooks = await _get_plugins_for_entity_and_hook(
-                route_service,
-                entity_type="tool",
-                entity_name=tool.name,
-                entity_id=str(tool.id),
-                tags=tool.tags or [],
-                server_name=first_server.name if first_server else None,
-                server_id=str(first_server.id) if first_server else None,
-                hook_type=post_hook_types[0],
-            )
-
-        # Get available plugins from plugin manager (already retrieved and reloaded above)
-        available_plugins = []
-        if plugin_manager:
-            available_plugins = [{"name": name} for name in plugin_manager.get_plugin_names()]
-
-        # Get reverse post-hooks state for this tool
-        reverse_post_hooks = route_service.get_reverse_post_hooks_state(
-            entity_type="tool",
-            entity_name=tool.name,
-        )
-
-        # Calculate next suggested priority (max existing + 10, or 10 if none)
-        all_plugins = pre_hooks + post_hooks
-        max_priority = max((p.get("priority", 0) or 0 for p in all_plugins), default=0)
-        next_priority = max_priority + 10 if max_priority > 0 else 10
-
-        # Get root_path for URL generation
-        root_path = request.scope.get("root_path", "")
-
-        context = {
-            "request": request,
-            "root_path": root_path,
-            "tool_id": tool.id,
-            "tool_name": tool.name,
-            "pre_hooks": pre_hooks,
-            "post_hooks": post_hooks,
-            "available_plugins": available_plugins,
-            "reverse_post_hooks": reverse_post_hooks,
-            "next_priority": next_priority,
-        }
-
-        return request.app.state.templates.TemplateResponse("tool_plugins_partial.html", context)
+        context = await _get_entity_plugins_ui_context(request, "tool", tool_id, db)
+        return request.app.state.templates.TemplateResponse("entity_plugins_partial.html", context)
 
     except HTTPException:
         raise
     except Exception as e:
         LOGGER.error(f"Error loading tool plugins UI: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+##################################################
+# Resource Plugin Routes
+##################################################
+
+
+@admin_router.get("/resources/{resource_id}/plugins-ui", response_class=HTMLResponse)
+async def get_resource_plugins_ui(
+    request: Request,
+    resource_id: str,
+    db: Session = Depends(get_db),
+):
+    """Get the plugin management UI for a resource (returns HTML fragment for HTMX)."""
+    try:
+        context = await _get_entity_plugins_ui_context(request, "resource", resource_id, db)
+        return request.app.state.templates.TemplateResponse("entity_plugins_partial.html", context)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        LOGGER.error(f"Error loading resource plugins UI: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Bulk operations - must come before parameterized routes to avoid path conflicts
+@admin_router.post("/resources/bulk/plugins", response_class=JSONResponse)
+async def add_bulk_plugins_to_resources(
+    request: Request,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Add a plugin to multiple resources at once (bulk operation)."""
+    # First-Party
+    from mcpgateway.admin_helpers import (
+        bulk_add_plugin_to_entities,
+    )
+    from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+    try:
+        form_data = await request.form()
+        parsed = parse_bulk_plugin_form_data(form_data, "resource_ids")
+
+        # Parse config JSON
+        config, error_response = parse_plugin_config(parsed["config_str"])
+        if error_response:
+            return error_response
+
+        # Validate inputs
+        validation_error = validate_bulk_plugin_inputs(parsed["entity_ids"], parsed["plugin_name"], "resource")
+        if validation_error:
+            return validation_error
+
+        LOGGER.info("=== BULK ADD PLUGIN TO RESOURCES REQUEST ===")
+        LOGGER.info(f"Resource IDs: {parsed['entity_ids']}")
+        LOGGER.info(f"Plugin Name: {parsed['plugin_name']}")
+        LOGGER.info(f"Priority: {parsed['priority']}")
+        LOGGER.info(f"Hooks: {parsed['hooks']}")
+
+        route_service = get_plugin_route_service()
+
+        # Bulk add using helper
+        success_count, failed_count, errors = await bulk_add_plugin_to_entities(
+            entity_ids=parsed["entity_ids"],
+            entity_type="resource",
+            get_entity_by_id_func=_get_entity_by_id,
+            route_service=route_service,
+            db=db,
+            plugin_params={
+                "plugin_name": parsed["plugin_name"],
+                "priority": parsed["priority"],
+                "hooks": parsed["hooks"],
+                "reverse_order_on_post": parsed["reverse_order_on_post"],
+                "config": config,
+                "override": parsed["override"],
+                "mode": parsed["mode"],
+            },
+        )
+
+        return build_bulk_operation_response(success_count, failed_count, errors, "resources", "Added plugin to")
+
+    except Exception as e:
+        LOGGER.error(f"Error in bulk add plugins to resources: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": str(e)},
+        )
+
+
+@admin_router.delete("/resources/bulk/plugins", response_class=JSONResponse)
+async def remove_bulk_plugins_from_resources(
+    request: Request,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Remove a plugin from multiple resources at once (bulk operation)."""
+    # First-Party
+    from mcpgateway.admin_helpers import (
+        bulk_remove_plugin_from_entities,
+    )
+
+    form_data = await request.form()
+    parsed = parse_remove_plugin_form_data(form_data, "resource_ids")
+
+    LOGGER.info(f"Bulk remove plugins from resources - resource_ids: {parsed['entity_ids']}, plugin_names: {parsed['plugin_names']}, clear_all: {parsed['clear_all']}")
+
+    # Validate inputs
+    validation_error = validate_remove_plugin_inputs(parsed["entity_ids"], parsed["plugin_names"], parsed["clear_all"], "resource")
+    if validation_error:
+        return validation_error
+
+    # First-Party
+    from mcpgateway.plugins.framework.hooks.registry import get_hook_registry, HookPhase
+    from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+    route_service = get_plugin_route_service()
+
+    # Handle clear_all case (must stay custom due to hook registry logic)
+    if parsed["clear_all"]:
+        hook_registry = get_hook_registry()
+        success_count = 0
+        failed_count = 0
+        errors = []
+
+        for resource_id in parsed["entity_ids"]:
+            try:
+                resource = await _get_entity_by_id(db, "resource", resource_id)
+
+                pre_hook_types = hook_registry.get_hooks_for_entity_type("resource", HookPhase.PRE)
+                post_hook_types = hook_registry.get_hooks_for_entity_type("resource", HookPhase.POST)
+
+                all_plugin_names = set()
+
+                if pre_hook_types:
+                    pre_plugins = await _get_plugins_for_entity_and_hook(
+                        route_service,
+                        entity_type="resource",
+                        entity_name=resource.name,
+                        entity_id=str(resource.id),
+                        tags=resource.tags or [],
+                        server_name=None,
+                        server_id=None,
+                        hook_type=pre_hook_types[0],
+                    )
+                    all_plugin_names.update(p.get("name", "") for p in pre_plugins)
+
+                if post_hook_types:
+                    post_plugins = await _get_plugins_for_entity_and_hook(
+                        route_service,
+                        entity_type="resource",
+                        entity_name=resource.name,
+                        entity_id=str(resource.id),
+                        tags=resource.tags or [],
+                        server_name=None,
+                        server_id=None,
+                        hook_type=post_hook_types[0],
+                    )
+                    all_plugin_names.update(p.get("name", "") for p in post_plugins)
+
+                for pname in all_plugin_names:
+                    if pname:
+                        removed = await route_service.remove_plugin_from_entity(
+                            entity_type="resource",
+                            entity_name=resource.name,
+                            plugin_name=pname,
+                        )
+                        if removed:
+                            success_count += 1
+                        else:
+                            failed_count += 1
+
+            except Exception as e:
+                LOGGER.warning(f"Error clearing plugins for resource {resource_id}: {e}")
+                failed_count += 1
+                errors.append({"resource_id": resource_id, "error": str(e)})
+
+        return JSONResponse(
+            content={
+                "success": True,
+                "message": f"Cleared plugins from {len(parsed['entity_ids'])} resources",
+                "removed": success_count,
+                "failed": failed_count,
+                "errors": errors if errors else None,
+            }
+        )
+
+    # Handle normal remove using helper
+    success_count, failed_count, errors = await bulk_remove_plugin_from_entities(
+        entity_ids=parsed["entity_ids"],
+        entity_type="resource",
+        plugin_names=parsed["plugin_names"],
+        get_entity_by_id_func=_get_entity_by_id,
+        route_service=route_service,
+        db=db,
+    )
+
+    return JSONResponse(
+        content={
+            "success": True,
+            "message": f"Removed {success_count} plugin attachment(s)" + (f", {failed_count} failed" if failed_count > 0 else ""),
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "errors": errors if errors else None,
+        }
+    )
+
+
+@admin_router.post("/resources/bulk/plugins/priority", response_class=JSONResponse)
+async def update_bulk_plugin_priority_for_resources(
+    request: Request,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Update plugin priority for multiple resources at once (bulk operation)."""
+    # First-Party
+    from mcpgateway.admin_helpers import (
+        bulk_update_plugin_priority_for_entities,
+    )
+    from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+    try:
+        form_data = await request.form()
+        resource_ids = form_data.getlist("resource_ids")
+        plugin_name = form_data.get("plugin_name")
+        new_priority = int(form_data.get("priority", 10))
+
+        # Validate inputs
+        validation_error = validate_bulk_plugin_inputs(resource_ids, plugin_name, "resource")
+        if validation_error:
+            return validation_error
+
+        route_service = get_plugin_route_service()
+
+        # Bulk update using helper
+        success_count, failed_count, errors = await bulk_update_plugin_priority_for_entities(
+            entity_ids=resource_ids,
+            entity_type="resource",
+            plugin_name=plugin_name,
+            priority=new_priority,
+            get_entity_by_id_func=_get_entity_by_id,
+            route_service=route_service,
+            db=db,
+        )
+
+        return build_bulk_operation_response(success_count, failed_count, errors, "resources", "Updated priority for")
+    except Exception as e:
+        LOGGER.error(f"Error in bulk update plugin priority for resources: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": str(e)},
+        )
+
+
+# Individual resource plugin operations
+@admin_router.post("/resources/{resource_id}/plugins", response_class=HTMLResponse)
+async def add_resource_plugin(
+    request: Request,
+    resource_id: str,
+    db: Session = Depends(get_db),
+):
+    """Add a plugin to a resource."""
+    try:
+        # First-Party
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        # Parse form data
+        form_data = await request.form()
+        plugin_name = form_data.get("plugin_name")
+        priority = int(form_data.get("priority", 10))
+        hooks = form_data.getlist("hooks") if "hooks" in form_data else None
+        reverse_order_on_post = form_data.get("reverse_order_on_post") == "true"
+
+        # If no hooks specified, auto-detect from registry for this entity type
+        if not hooks:
+            # First-Party
+            from mcpgateway.plugins.framework.hooks.registry import get_hook_registry
+
+            hook_registry = get_hook_registry()
+            detected_hooks = hook_registry.get_hooks_for_entity_type("resource")
+            if detected_hooks:
+                hooks = [str(h.value if hasattr(h, "value") else h) for h in detected_hooks]
+
+        # Parse advanced fields
+        config_str = form_data.get("config", "").strip()
+        config = None
+        if config_str:
+            try:
+                config = json.loads(config_str)
+            except json.JSONDecodeError as e:
+                raise HTTPException(status_code=400, detail=f"Invalid JSON in config: {e}")
+
+        override = form_data.get("override") == "true"
+        mode = form_data.get("mode") or None
+
+        if not plugin_name:
+            raise HTTPException(status_code=400, detail="Plugin name is required")
+
+        # Get resource from database
+        resource = await _get_entity_by_id(db, "resource", resource_id)
+
+        # Get plugin route service
+        route_service = get_plugin_route_service()
+
+        # Add simple route
+        await route_service.add_simple_route(
+            entity_type="resource",
+            entity_name=resource.name,
+            plugin_name=plugin_name,
+            priority=priority,
+            hooks=hooks if hooks else None,
+            reverse_order_on_post=reverse_order_on_post,
+            config=config,
+            override=override,
+            mode=mode,
+        )
+
+        # Save configuration
+        await route_service.save_config()
+
+        LOGGER.info(f"Added plugin {plugin_name} to resource {resource.name}")
+
+        # Return updated plugins UI
+        return await get_resource_plugins_ui(request, resource_id, db)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        LOGGER.error(f"Error adding resource plugin: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@admin_router.delete("/resources/{resource_id}/plugins/{plugin_name}", response_class=HTMLResponse)
+async def remove_resource_plugin(
+    request: Request,
+    resource_id: str,
+    plugin_name: str,
+    hook: Optional[str] = Query(None, description="Specific hook to remove"),
+    db: Session = Depends(get_db),
+):
+    """Remove a plugin from a resource."""
+    try:
+        # First-Party
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        # Get resource from database
+        resource = await _get_entity_by_id(db, "resource", resource_id)
+
+        # Get plugin route service
+        route_service = get_plugin_route_service()
+
+        # Remove route
+        await route_service.remove_simple_route(
+            entity_type="resource",
+            entity_name=resource.name,
+            plugin_name=plugin_name,
+            hook_type=hook,
+        )
+
+        # Save configuration
+        await route_service.save_config()
+
+        LOGGER.info(f"Removed plugin {plugin_name} from resource {resource.name}")
+
+        # Return updated plugins UI
+        return await get_resource_plugins_ui(request, resource_id, db)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        LOGGER.error(f"Error removing resource plugin: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@admin_router.post("/resources/{resource_id}/plugins/reverse-post-hooks", response_class=HTMLResponse)
+async def toggle_resource_reverse_post_hooks(
+    request: Request,
+    resource_id: str,
+    db: Session = Depends(get_db),
+):
+    """Toggle reverse order for post-invoke hooks on a resource."""
+    try:
+        # First-Party
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        # Get resource from database
+        resource = await _get_entity_by_id(db, "resource", resource_id)
+
+        # Get plugin route service
+        route_service = get_plugin_route_service()
+
+        # Toggle reverse order
+        await route_service.toggle_reverse_post_hooks("resource", resource.name)
+
+        # Save configuration
+        await route_service.save_config()
+
+        LOGGER.info(f"Toggled reverse post-hooks for resource {resource.name}")
+
+        # Return updated plugins UI
+        return await get_resource_plugins_ui(request, resource_id, db)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        LOGGER.error(f"Error toggling resource reverse post-hooks: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@admin_router.post("/resources/{resource_id}/plugins/{plugin_name}/priority", response_class=HTMLResponse)
+async def change_resource_plugin_priority(
+    request: Request,
+    resource_id: str,
+    plugin_name: str,
+    hook: str = Query(..., description="Hook type (e.g., resource_pre_invoke or resource_post_invoke)"),
+    direction: str = Query(..., description="Direction to move: 'up' or 'down'"),
+    db: Session = Depends(get_db),
+):
+    """Change a plugin's priority (move up/down) for a resource."""
+    try:
+        # First-Party
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        # Get resource from database
+        resource = await _get_entity_by_id(db, "resource", resource_id)
+
+        # Get plugin route service
+        route_service = get_plugin_route_service()
+
+        # Change priority
+        await route_service.change_priority(
+            entity_type="resource",
+            entity_name=resource.name,
+            plugin_name=plugin_name,
+            hook_type=hook,
+            direction=direction,
+        )
+
+        # Save configuration
+        await route_service.save_config()
+
+        LOGGER.info(f"Changed priority for plugin {plugin_name} on resource {resource.name}")
+
+        # Return updated plugins UI
+        return await get_resource_plugins_ui(request, resource_id, db)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        LOGGER.error(f"Error changing resource plugin priority: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@admin_router.post("/resources/{resource_id}/plugins/{plugin_name}/set-priority", response_class=HTMLResponse)
+async def set_resource_plugin_priority(
+    request: Request,
+    resource_id: str,
+    plugin_name: str,
+    hook: str = Query(..., description="Hook type (e.g., resource_pre_invoke or resource_post_invoke)"),
+    db: Session = Depends(get_db),
+):
+    """Set a specific priority value for a plugin on a resource."""
+    try:
+        # First-Party
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        # Parse form data
+        form_data = await request.form()
+        priority = int(form_data.get("priority", 10))
+
+        # Get resource from database
+        resource = await _get_entity_by_id(db, "resource", resource_id)
+
+        # Get plugin route service
+        route_service = get_plugin_route_service()
+
+        # Set priority
+        await route_service.set_priority(
+            entity_type="resource",
+            entity_name=resource.name,
+            plugin_name=plugin_name,
+            hook_type=hook,
+            priority=priority,
+        )
+
+        # Save configuration
+        await route_service.save_config()
+
+        LOGGER.info(f"Set priority for plugin {plugin_name} on resource {resource.name} to {priority}")
+
+        # Return updated plugins UI
+        return await get_resource_plugins_ui(request, resource_id, db)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        LOGGER.error(f"Error setting resource plugin priority: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+##################################################
+# Prompt Plugin Routes
+##################################################
+
+
+@admin_router.get("/prompts/{prompt_id}/plugins-ui", response_class=HTMLResponse)
+async def get_prompt_plugins_ui(
+    request: Request,
+    prompt_id: str,
+    db: Session = Depends(get_db),
+):
+    """Get the plugin management UI for a prompt (returns HTML fragment for HTMX)."""
+    try:
+        context = await _get_entity_plugins_ui_context(request, "prompt", prompt_id, db)
+        return request.app.state.templates.TemplateResponse("entity_plugins_partial.html", context)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        LOGGER.error(f"Error loading prompt plugins UI: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+##################################################
+# Prompt Bulk Plugin Routes
+# Bulk operations - must come before parameterized routes to avoid path conflicts
+##################################################
+
+
+@admin_router.post("/prompts/bulk/plugins", response_class=JSONResponse)
+async def add_bulk_plugins_to_prompts(
+    request: Request,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Add a plugin to multiple prompts at once (bulk operation)."""
+    # First-Party
+    from mcpgateway.admin_helpers import (
+        bulk_add_plugin_to_entities,
+    )
+    from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+    try:
+        form_data = await request.form()
+        parsed = parse_bulk_plugin_form_data(form_data, "prompt_ids")
+
+        # Parse config JSON
+        config, error_response = parse_plugin_config(parsed["config_str"])
+        if error_response:
+            return error_response
+
+        # Validate inputs
+        validation_error = validate_bulk_plugin_inputs(parsed["entity_ids"], parsed["plugin_name"], "prompt")
+        if validation_error:
+            return validation_error
+
+        LOGGER.info("=== BULK ADD PLUGIN TO PROMPTS REQUEST ===")
+        LOGGER.info(f"Prompt IDs: {parsed['entity_ids']}")
+        LOGGER.info(f"Plugin Name: {parsed['plugin_name']}")
+        LOGGER.info(f"Priority: {parsed['priority']}")
+        LOGGER.info(f"Hooks: {parsed['hooks']}")
+
+        route_service = get_plugin_route_service()
+
+        # Bulk add using helper
+        success_count, failed_count, errors = await bulk_add_plugin_to_entities(
+            entity_ids=parsed["entity_ids"],
+            entity_type="prompt",
+            get_entity_by_id_func=_get_entity_by_id,
+            route_service=route_service,
+            db=db,
+            plugin_params={
+                "plugin_name": parsed["plugin_name"],
+                "priority": parsed["priority"],
+                "hooks": parsed["hooks"],
+                "reverse_order_on_post": parsed["reverse_order_on_post"],
+                "config": config,
+                "override": parsed["override"],
+                "mode": parsed["mode"],
+            },
+        )
+
+        return build_bulk_operation_response(success_count, failed_count, errors, "prompts", "Added plugin to")
+
+    except Exception as e:
+        LOGGER.error(f"Error in bulk add plugins to prompts: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": str(e)},
+        )
+
+
+@admin_router.delete("/prompts/bulk/plugins", response_class=JSONResponse)
+async def remove_bulk_plugins_from_prompts(
+    request: Request,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Remove a plugin from multiple prompts at once (bulk operation)."""
+    # First-Party
+    from mcpgateway.admin_helpers import (
+        bulk_remove_plugin_from_entities,
+    )
+
+    form_data = await request.form()
+    parsed = parse_remove_plugin_form_data(form_data, "prompt_ids")
+
+    LOGGER.info(f"Bulk remove plugins from prompts - prompt_ids: {parsed['entity_ids']}, plugin_names: {parsed['plugin_names']}, clear_all: {parsed['clear_all']}")
+
+    # Validate inputs
+    validation_error = validate_remove_plugin_inputs(parsed["entity_ids"], parsed["plugin_names"], parsed["clear_all"], "prompt")
+    if validation_error:
+        return validation_error
+
+    # First-Party
+    from mcpgateway.plugins.framework.hooks.registry import get_hook_registry, HookPhase
+    from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+    route_service = get_plugin_route_service()
+
+    # Handle clear_all case (must stay custom due to hook registry logic)
+    if parsed["clear_all"]:
+        hook_registry = get_hook_registry()
+        success_count = 0
+        failed_count = 0
+        errors = []
+
+        for prompt_id in parsed["entity_ids"]:
+            try:
+                prompt = await _get_entity_by_id(db, "prompt", prompt_id)
+
+                pre_hook_types = hook_registry.get_hooks_for_entity_type("prompt", HookPhase.PRE)
+                post_hook_types = hook_registry.get_hooks_for_entity_type("prompt", HookPhase.POST)
+
+                all_plugin_names = set()
+
+                if pre_hook_types:
+                    pre_plugins = await _get_plugins_for_entity_and_hook(
+                        route_service,
+                        entity_type="prompt",
+                        entity_name=prompt.name,
+                        entity_id=str(prompt.id),
+                        tags=prompt.tags or [],
+                        server_name=None,
+                        server_id=None,
+                        hook_type=pre_hook_types[0],
+                    )
+                    all_plugin_names.update(p.get("name", "") for p in pre_plugins)
+
+                if post_hook_types:
+                    post_plugins = await _get_plugins_for_entity_and_hook(
+                        route_service,
+                        entity_type="prompt",
+                        entity_name=prompt.name,
+                        entity_id=str(prompt.id),
+                        tags=prompt.tags or [],
+                        server_name=None,
+                        server_id=None,
+                        hook_type=post_hook_types[0],
+                    )
+                    all_plugin_names.update(p.get("name", "") for p in post_plugins)
+
+                for pname in all_plugin_names:
+                    if pname:
+                        removed = await route_service.remove_plugin_from_entity(
+                            entity_type="prompt",
+                            entity_name=prompt.name,
+                            plugin_name=pname,
+                        )
+                        if removed:
+                            success_count += 1
+                        else:
+                            failed_count += 1
+
+            except Exception as e:
+                LOGGER.warning(f"Error clearing plugins for prompt {prompt_id}: {e}")
+                failed_count += 1
+                errors.append({"prompt_id": prompt_id, "error": str(e)})
+
+        return JSONResponse(
+            content={
+                "success": True,
+                "message": f"Cleared plugins from {len(parsed['entity_ids'])} prompts",
+                "removed": success_count,
+                "failed": failed_count,
+                "errors": errors if errors else None,
+            }
+        )
+
+    # Handle normal remove using helper
+    success_count, failed_count, errors = await bulk_remove_plugin_from_entities(
+        entity_ids=parsed["entity_ids"],
+        entity_type="prompt",
+        plugin_names=parsed["plugin_names"],
+        get_entity_by_id_func=_get_entity_by_id,
+        route_service=route_service,
+        db=db,
+    )
+
+    return JSONResponse(
+        content={
+            "success": True,
+            "message": f"Removed {success_count} plugin attachment(s)" + (f", {failed_count} failed" if failed_count > 0 else ""),
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "errors": errors if errors else None,
+        }
+    )
+
+
+@admin_router.post("/prompts/bulk/plugins/priority", response_class=JSONResponse)
+async def update_bulk_plugin_priority_for_prompts(
+    request: Request,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Update plugin priority for multiple prompts at once (bulk operation)."""
+    # First-Party
+    from mcpgateway.admin_helpers import (
+        bulk_update_plugin_priority_for_entities,
+    )
+    from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+    try:
+        form_data = await request.form()
+        prompt_ids = form_data.getlist("prompt_ids")
+        plugin_name = form_data.get("plugin_name")
+        new_priority = int(form_data.get("priority", 10))
+
+        LOGGER.info(f"Bulk update priority for prompts - prompt_ids: {prompt_ids}, plugin: {plugin_name}, priority: {new_priority}")
+
+        # Validate inputs
+        validation_error = validate_bulk_plugin_inputs(prompt_ids, plugin_name, "prompt")
+        if validation_error:
+            return validation_error
+
+        route_service = get_plugin_route_service()
+
+        # Bulk update using helper
+        success_count, failed_count, errors = await bulk_update_plugin_priority_for_entities(
+            entity_ids=prompt_ids,
+            entity_type="prompt",
+            plugin_name=plugin_name,
+            priority=new_priority,
+            get_entity_by_id_func=_get_entity_by_id,
+            route_service=route_service,
+            db=db,
+        )
+
+        return build_bulk_operation_response(success_count, failed_count, errors, "prompts", "Updated priority for")
+
+    except Exception as e:
+        LOGGER.error(f"Error in bulk update plugin priority for prompts: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": str(e)},
+        )
+
+
+##################################################
+# Individual Prompt Plugin Routes
+##################################################
+
+
+@admin_router.post("/prompts/{prompt_id}/plugins", response_class=HTMLResponse)
+async def add_prompt_plugin(
+    request: Request,
+    prompt_id: str,
+    db: Session = Depends(get_db),
+):
+    """Add a plugin to a prompt."""
+    try:
+        # First-Party
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        # Parse form data
+        form_data = await request.form()
+        plugin_name = form_data.get("plugin_name")
+        priority = int(form_data.get("priority", 10))
+        hooks = form_data.getlist("hooks") if "hooks" in form_data else None
+        reverse_order_on_post = form_data.get("reverse_order_on_post") == "true"
+
+        # If no hooks specified, auto-detect from registry for this entity type
+        if not hooks:
+            # First-Party
+            from mcpgateway.plugins.framework.hooks.registry import get_hook_registry
+
+            hook_registry = get_hook_registry()
+            detected_hooks = hook_registry.get_hooks_for_entity_type("prompt")
+            if detected_hooks:
+                hooks = [str(h.value if hasattr(h, "value") else h) for h in detected_hooks]
+
+        # Parse advanced fields
+        config_str = form_data.get("config", "").strip()
+        config = None
+        if config_str:
+            try:
+                config = json.loads(config_str)
+            except json.JSONDecodeError as e:
+                raise HTTPException(status_code=400, detail=f"Invalid JSON in config: {e}")
+
+        override = form_data.get("override") == "true"
+        mode = form_data.get("mode") or None
+
+        if not plugin_name:
+            raise HTTPException(status_code=400, detail="Plugin name is required")
+
+        # Get prompt from database
+        prompt = await _get_entity_by_id(db, "prompt", prompt_id)
+
+        # Get plugin route service
+        route_service = get_plugin_route_service()
+
+        # Add simple route
+        await route_service.add_simple_route(
+            entity_type="prompt",
+            entity_name=prompt.name,
+            plugin_name=plugin_name,
+            priority=priority,
+            hooks=hooks if hooks else None,
+            reverse_order_on_post=reverse_order_on_post,
+            config=config,
+            override=override,
+            mode=mode,
+        )
+
+        # Save configuration
+        await route_service.save_config()
+
+        LOGGER.info(f"Added plugin {plugin_name} to prompt {prompt.name}")
+
+        # Return updated plugins UI
+        return await get_prompt_plugins_ui(request, prompt_id, db)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        LOGGER.error(f"Error adding prompt plugin: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@admin_router.delete("/prompts/{prompt_id}/plugins/{plugin_name}", response_class=HTMLResponse)
+async def remove_prompt_plugin(
+    request: Request,
+    prompt_id: str,
+    plugin_name: str,
+    hook: Optional[str] = Query(None, description="Specific hook to remove"),
+    db: Session = Depends(get_db),
+):
+    """Remove a plugin from a prompt."""
+    try:
+        # First-Party
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        # Get prompt from database
+        prompt = await _get_entity_by_id(db, "prompt", prompt_id)
+
+        # Get plugin route service
+        route_service = get_plugin_route_service()
+
+        # Remove route
+        await route_service.remove_simple_route(
+            entity_type="prompt",
+            entity_name=prompt.name,
+            plugin_name=plugin_name,
+            hook_type=hook,
+        )
+
+        # Save configuration
+        await route_service.save_config()
+
+        LOGGER.info(f"Removed plugin {plugin_name} from prompt {prompt.name}")
+
+        # Return updated plugins UI
+        return await get_prompt_plugins_ui(request, prompt_id, db)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        LOGGER.error(f"Error removing prompt plugin: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@admin_router.post("/prompts/{prompt_id}/plugins/reverse-post-hooks", response_class=HTMLResponse)
+async def toggle_prompt_reverse_post_hooks(
+    request: Request,
+    prompt_id: str,
+    db: Session = Depends(get_db),
+):
+    """Toggle reverse order for post-invoke hooks on a prompt."""
+    try:
+        # First-Party
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        # Get prompt from database
+        prompt = await _get_entity_by_id(db, "prompt", prompt_id)
+
+        # Get plugin route service
+        route_service = get_plugin_route_service()
+
+        # Toggle reverse order
+        await route_service.toggle_reverse_post_hooks("prompt", prompt.name)
+
+        # Save configuration
+        await route_service.save_config()
+
+        LOGGER.info(f"Toggled reverse post-hooks for prompt {prompt.name}")
+
+        # Return updated plugins UI
+        return await get_prompt_plugins_ui(request, prompt_id, db)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        LOGGER.error(f"Error toggling prompt reverse post-hooks: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@admin_router.post("/prompts/{prompt_id}/plugins/{plugin_name}/priority", response_class=HTMLResponse)
+async def change_prompt_plugin_priority(
+    request: Request,
+    prompt_id: str,
+    plugin_name: str,
+    hook: str = Query(..., description="Hook type (e.g., prompt_pre_invoke or prompt_post_invoke)"),
+    direction: str = Query(..., description="Direction to move: 'up' or 'down'"),
+    db: Session = Depends(get_db),
+):
+    """Change a plugin's priority (move up/down) for a prompt."""
+    try:
+        # First-Party
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        # Get prompt from database
+        prompt = await _get_entity_by_id(db, "prompt", prompt_id)
+
+        # Get plugin route service
+        route_service = get_plugin_route_service()
+
+        # Change priority
+        await route_service.change_priority(
+            entity_type="prompt",
+            entity_name=prompt.name,
+            plugin_name=plugin_name,
+            hook_type=hook,
+            direction=direction,
+        )
+
+        # Save configuration
+        await route_service.save_config()
+
+        LOGGER.info(f"Changed priority for plugin {plugin_name} on prompt {prompt.name}")
+
+        # Return updated plugins UI
+        return await get_prompt_plugins_ui(request, prompt_id, db)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        LOGGER.error(f"Error changing prompt plugin priority: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@admin_router.post("/prompts/{prompt_id}/plugins/{plugin_name}/set-priority", response_class=HTMLResponse)
+async def set_prompt_plugin_priority(
+    request: Request,
+    prompt_id: str,
+    plugin_name: str,
+    hook: str = Query(..., description="Hook type (e.g., prompt_pre_invoke or prompt_post_invoke)"),
+    db: Session = Depends(get_db),
+):
+    """Set a specific priority value for a plugin on a prompt."""
+    try:
+        # First-Party
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        # Parse form data
+        form_data = await request.form()
+        priority = int(form_data.get("priority", 10))
+
+        # Get prompt from database
+        prompt = await _get_entity_by_id(db, "prompt", prompt_id)
+
+        # Get plugin route service
+        route_service = get_plugin_route_service()
+
+        # Set priority
+        await route_service.set_priority(
+            entity_type="prompt",
+            entity_name=prompt.name,
+            plugin_name=plugin_name,
+            hook_type=hook,
+            priority=priority,
+        )
+
+        # Save configuration
+        await route_service.save_config()
+
+        LOGGER.info(f"Set priority for plugin {plugin_name} on prompt {prompt.name} to {priority}")
+
+        # Return updated plugins UI
+        return await get_prompt_plugins_ui(request, prompt_id, db)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        LOGGER.error(f"Error setting prompt plugin priority: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

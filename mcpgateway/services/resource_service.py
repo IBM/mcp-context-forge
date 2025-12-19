@@ -698,7 +698,7 @@ class ResourceService:
             >>> db = MagicMock()
             >>> uri = 'http://example.com/resource.txt'
             >>> import types
-            >>> mock_resource = types.SimpleNamespace(content='test', uri=uri)
+            >>> mock_resource = types.SimpleNamespace(id='res-123', content='test', uri=uri, name='test_resource')
             >>> db.execute.return_value.scalar_one_or_none.return_value = mock_resource
             >>> db.get.return_value = mock_resource  # Ensure uri is a string, not None
             >>> import asyncio

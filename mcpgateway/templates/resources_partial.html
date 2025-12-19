@@ -2,6 +2,13 @@
 <table id="resources-table" class="min-w-full divide-y divide-gray-200">
   <thead class="bg-gray-50 dark:bg-gray-700">
     <tr>
+      <th class="px-2 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-12">
+        <input type="checkbox"
+               x-model="$store.resourcesPanel.selectAllResources"
+               @change="$store.resourcesPanel.toggleAllResources()"
+               class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 dark:border-gray-600 dark:bg-gray-700"
+               title="Select All">
+      </th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">ID</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">URI</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Name</th>
@@ -18,6 +25,12 @@
   <tbody id="resources-table-body" class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
   {% for resource in data %}
   <tr>
+    <td class="px-2 py-4 whitespace-nowrap text-center w-12">
+      <input type="checkbox"
+             x-model="$store.resourcesPanel.selectedResources"
+             :value="'{{ resource.id }}'"
+             class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 dark:border-gray-600 dark:bg-gray-700">
+    </td>
     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">{{ resource.id }}</td>
     <td class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300">{{ resource.uri }}</td>
     <td class="px-6 py-4 whitespace-normal break-words text-sm font-medium text-gray-900 dark:text-gray-100">{{ resource.name }}</td>
@@ -30,6 +43,16 @@
     <td class="px-6 py-4 whitespace-nowrap"><span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full {% if resource.isActive %}bg-green-100 text-green-800{% else %}bg-red-100 text-red-800{% endif %}">{{ 'Active' if resource.isActive else 'Inactive' }}</span></td>
     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
       <div class="grid grid-cols-2 gap-x-2 gap-y-1 max-w-48">
+        <!-- Plugins Button -->
+        <button
+          hx-get="{{ root_path }}/admin/resources/{{ resource.id }}/plugins-ui"
+          hx-target="#plugins-resource-{{ resource.id }}"
+          hx-swap="outerHTML"
+          class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-blue-600 hover:text-blue-900 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20 transition-colors"
+        >
+          🔌 Plugins
+        </button>
+
         <button onclick="viewResource('{{ resource.id }}')" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors">View</button>
         <button onclick="editResource('{{ resource.id }}')" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors">Edit</button>
         <div class="col-span-2 flex flex-col space-y-1">
@@ -50,6 +73,10 @@
         </div>
       </div>
     </td>
+  </tr>
+  <!-- Expandable plugin management section -->
+  <tr id="plugins-resource-{{ resource.id }}" class="hidden">
+    <!-- This will be replaced by plugin UI when Plugins button is clicked -->
   </tr>
   {% endfor %}
   </tbody>

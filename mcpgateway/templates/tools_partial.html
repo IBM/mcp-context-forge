@@ -217,7 +217,7 @@
         <!-- Row 1.5: Plugins -->
         <button
           hx-get="{{ root_path }}/admin/tools/{{ tool.id }}/plugins-ui"
-          hx-target="#plugins-{{ tool.id }}"
+          hx-target="#plugins-tool-{{ tool.id }}"
           hx-swap="outerHTML"
           class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-blue-600 hover:text-blue-900 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20 transition-colors"
           x-tooltip="'💡Manage plugins for this tool'"
@@ -296,7 +296,7 @@
     </td>
   </tr>
   <!-- Expandable plugin management section -->
-  <tr id="plugins-{{ tool.id }}" class="hidden">
+  <tr id="plugins-tool-{{ tool.id }}" class="hidden">
     <!-- This will be replaced by plugin UI when Plugins button is clicked -->
   </tr>
 {% endfor %}

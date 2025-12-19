@@ -230,8 +230,10 @@ class HookRegistry:
         Examples:
             >>> registry = HookRegistry()
             >>> from mcpgateway.plugins.framework.hooks.prompts import PromptPrehookPayload, PromptPrehookResult
-            >>> registry.register_hook("test", PromptPrehookPayload, PromptPrehookResult)
-            >>> payload = registry.json_to_payload("test", {"prompt_id": "123"})
+            >>> registry.register_hook("test_pre", PromptPrehookPayload, PromptPrehookResult)
+            >>> payload = registry.json_to_payload("test_pre", {"prompt_id": "123"})
+            >>> payload.prompt_id
+            '123'
         """
         payload_class = self.get_payload_type(hook_type)
         if not payload_class:
@@ -257,8 +259,10 @@ class HookRegistry:
         Examples:
             >>> registry = HookRegistry()
             >>> from mcpgateway.plugins.framework import PluginPayload, PluginResult
-            >>> registry.register_hook("test", PluginPayload, PluginResult)
-            >>> result = registry.json_to_result("test", '{"continue_processing": true}')
+            >>> registry.register_hook("test_pre", PluginPayload, PluginResult)
+            >>> result = registry.json_to_result("test_pre", '{"continue_processing": true}')
+            >>> result.continue_processing
+            True
         """
         result_class = self.get_result_type(hook_type)
         if not result_class:
@@ -413,16 +417,17 @@ class HookRegistry:
         Examples:
             >>> registry = HookRegistry()
             >>> from mcpgateway.plugins.framework import PluginPayload, PluginResult
-            >>> registry.register_hook("tool_pre_invoke", PluginPayload, PluginResult)
-            >>> registry.register_hook("tool_post_invoke", PluginPayload, PluginResult)
+            >>> from mcpgateway.plugins.framework.hooks.tools import ToolHookType
+            >>> registry.register_hook(ToolHookType.TOOL_PRE_INVOKE, PluginPayload, PluginResult)
+            >>> registry.register_hook(ToolHookType.TOOL_POST_INVOKE, PluginPayload, PluginResult)
             >>> registry.register_hook("prompt_pre_fetch", PluginPayload, PluginResult)
             >>> # Get all tool hooks
             >>> tool_hooks = registry.get_hooks_for_entity_type("tool")
-            >>> sorted(tool_hooks)
+            >>> sorted([str(h.value) if hasattr(h, 'value') else h for h in tool_hooks])
             ['tool_post_invoke', 'tool_pre_invoke']
             >>> # Get only tool PRE hooks
             >>> pre_hooks = registry.get_hooks_for_entity_type("tool", HookPhase.PRE)
-            >>> pre_hooks
+            >>> [str(h.value) if hasattr(h, 'value') else h for h in pre_hooks]
             ['tool_pre_invoke']
         """
         hooks = []

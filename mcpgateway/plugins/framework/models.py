@@ -832,13 +832,13 @@ class PluginAttachment(BaseModel):
         name: Plugin name (references PluginConfig.name).
         priority: Execution priority (lower = runs first).
         post_priority: Optional custom priority for post-hooks (enables wrapping behavior).
-        scope: Entity types this plugin applies to (for gateway/server-level plugins).
         hooks: Override plugin's declared hooks (use specific hooks only).
         when: Runtime condition (transferred from rule, not set in config).
         apply_to: Field selection for scoping to specific fields.
         override: If True, replace inherited config instead of merging.
         mode: Override plugin's default execution mode.
         config: Plugin-specific configuration overrides/extensions.
+        instance_key: Unique instance identifier (name:config_hash), set during resolution.
 
     Examples:
         >>> # Basic attachment
@@ -857,13 +857,13 @@ class PluginAttachment(BaseModel):
         >>> pa3.apply_to.fields
         ['args.email']
 
-        >>> # Server-level with scope
+        >>> # With hooks override
         >>> pa4 = PluginAttachment(
         ...     name="security_check",
         ...     priority=5,
-        ...     scope=[EntityType.TOOL, EntityType.PROMPT]
+        ...     hooks=["tool_pre_invoke", "tool_post_invoke"]
         ... )
-        >>> len(pa4.scope)
+        >>> len(pa4.hooks)
         2
 
         >>> # With post-hook priority for wrapping
@@ -1056,23 +1056,13 @@ class PluginHookRule(BaseModel):
         if not self.plugins:
             raise ValueError("PluginHookRule must have at least one plugin in the 'plugins' list")
 
-        # Check at least one matching criterion exists
-        has_entities = self.entities is not None and len(self.entities) > 0
-        has_name = self.name is not None
-        has_tags = self.tags is not None and len(self.tags) > 0
-        has_hooks = self.hooks is not None and len(self.hooks) > 0
-        has_when = self.when is not None and len(self.when.strip()) > 0
-        has_server_name = self.server_name is not None
-        has_server_id = self.server_id is not None
-        has_gateway_id = self.gateway_id is not None
-
-        # At least one matching criterion must be set
-        if not (has_entities or has_name or has_tags or has_hooks or has_when or has_server_name or has_server_id or has_gateway_id):
-            raise ValueError(
-                "PluginHookRule must have at least one matching criterion: "
-                "'entities', 'name', 'tags', 'hooks', 'when', 'server_name', 'server_id', or 'gateway_id'. "
-                "A rule must specify what it applies to."
-            )
+        # Global rules support: Allow rules with no matching criteria
+        # Empty rules (no filters) will match ALL entities and hooks globally
+        # This enables baseline/default plugin configurations
+        #
+        # Note: The rule matching logic in rule_resolver.py handles empty rules correctly:
+        # - If all filters are None/empty, all checks are skipped and the rule matches everything
+        # - This allows creating "global" or "default" rules that apply universally
 
         # Entity-level rules CAN match all entities of a type (catch-all rules are valid)
         # e.g., entities: [tool] without other criteria applies to ALL tools

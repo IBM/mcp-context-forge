@@ -897,185 +897,7 @@
             <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">A unique identifier for this rule</p>
           </div>
 
-          <!-- Entities -->
-          <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Entity Types
-            </label>
-            <div class="flex flex-wrap gap-2">
-              <template x-for="entityType in [
-                {value: 'tool', label: 'Tool'},
-                {value: 'prompt', label: 'Prompt'},
-                {value: 'resource', label: 'Resource'},
-                {value: 'agent', label: 'Agent'},
-                {value: 'virtual_server', label: 'Virtual Server'},
-                {value: 'mcp_server', label: 'MCP Server'}
-              ]" :key="entityType.value">
-                <label class="inline-flex items-center">
-                  <input
-                    type="checkbox"
-                    :value="entityType.value"
-                    x-model="entities"
-                    class="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                  />
-                  <span class="ml-2 text-sm text-gray-700 dark:text-gray-300" x-text="entityType.label"></span>
-                </label>
-              </template>
-            </div>
-            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Leave empty for HTTP-level hooks</p>
-          </div>
-
-          <!-- Entity Selection -->
-          <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Specific Entities
-            </label>
-
-            <!-- Show entity selection when entity types are selected -->
-            <div x-show="entities.length > 0 && Object.keys(availableEntities).length > 0">
-              <div class="border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 max-h-64 overflow-y-auto">
-                <template x-for="(entityList, entityType) in availableEntities" :key="entityType">
-                  <div class="border-b border-gray-200 dark:border-gray-600 last:border-0">
-                    <div class="px-3 py-2 bg-gray-50 dark:bg-gray-800">
-                      <span class="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase" x-text="getEntityTypeLabel(entityType)"></span>
-                      <span class="text-xs text-gray-500 dark:text-gray-400 ml-2" x-text="'(' + entityList.length + ')'"></span>
-                    </div>
-                    <template x-for="entity in entityList" :key="entity.id">
-                      <label class="flex items-center px-4 py-2 hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          :value="entity.name"
-                          :checked="selectedEntityNames.includes(entity.name)"
-                          @change="toggleEntityName(entity.name)"
-                          class="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                        />
-                        <span class="ml-2 text-sm text-gray-700 dark:text-gray-300" x-text="entity.display_name"></span>
-                        <span class="ml-2 text-xs text-gray-400" x-text="'(' + entity.name + ')'"></span>
-                      </label>
-                    </template>
-                  </div>
-                </template>
-              </div>
-              <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                Select specific entities to filter, or leave empty to match all entities of the selected types
-              </p>
-            </div>
-
-            <!-- Show message when entity types are selected but no entities found -->
-            <div x-show="entities.length > 0 && Object.keys(availableEntities).length === 0" class="text-sm text-gray-500 dark:text-gray-400 italic">
-              Loading available entities...
-            </div>
-
-            <!-- Show manual input when no entity types are selected -->
-            <div x-show="entities.length === 0">
-              <input
-                type="text"
-                x-model="nameFilter"
-                placeholder="e.g., create_user or create_user,update_user,delete_user"
-                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500"
-              />
-              <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                Select entity types above to see available entities, or enter names manually (comma-separated)
-              </p>
-            </div>
-
-            <!-- Show selected entities as chips -->
-            <div class="flex flex-wrap gap-2 mt-2" x-show="selectedEntityNames.length > 0">
-              <template x-for="entityName in selectedEntityNames" :key="entityName">
-                <span class="inline-flex items-center px-3 py-1 rounded-full text-sm bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">
-                  <span x-text="entityName"></span>
-                  <button @click="toggleEntityName(entityName)" class="ml-2 text-indigo-600 dark:text-indigo-300 hover:text-indigo-800">&times;</button>
-                </span>
-              </template>
-            </div>
-          </div>
-
-          <!-- Tags -->
-          <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Tags
-            </label>
-            <div class="flex gap-2 mb-2">
-              <input
-                type="text"
-                x-model="newTag"
-                @keydown.enter.prevent="addTag()"
-                list="tag-suggestions"
-                placeholder="Add tag..."
-                class="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500"
-              />
-              <datalist id="tag-suggestions">
-                <template x-for="tag in availableTags" :key="tag">
-                  <option :value="tag"></option>
-                </template>
-              </datalist>
-              <button
-                @click="addTag()"
-                type="button"
-                class="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-md transition-colors"
-              >
-                Add
-              </button>
-            </div>
-            <div class="flex flex-wrap gap-2" x-show="tags.length > 0">
-              <template x-for="(tag, index) in tags" :key="index">
-                <span class="inline-flex items-center px-3 py-1 rounded-full text-sm bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
-                  <span x-text="tag"></span>
-                  <button @click="removeTag(tag)" class="ml-2 text-green-600 dark:text-green-300 hover:text-green-800">&times;</button>
-                </span>
-              </template>
-            </div>
-            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Tag-based matching for flexible filtering</p>
-          </div>
-
-          <!-- Hooks -->
-          <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Hook Types
-            </label>
-            <div class="grid grid-cols-2 gap-2">
-              <template x-for="hookType in ['tool_pre_invoke', 'tool_post_invoke', 'prompt_pre_invoke', 'prompt_post_invoke', 'resource_pre_invoke', 'resource_post_invoke', 'http_pre_request', 'http_post_response']" :key="hookType">
-                <label class="inline-flex items-center">
-                  <input
-                    type="checkbox"
-                    :value="hookType"
-                    x-model="hooks"
-                    class="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                  />
-                  <span class="ml-2 text-xs text-gray-700 dark:text-gray-300" x-text="hookType.replace(/_/g, ' ')"></span>
-                </label>
-              </template>
-            </div>
-            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Leave empty to apply to all hooks</p>
-          </div>
-
-          <!-- When Expression -->
-          <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Conditional Expression (When)
-            </label>
-            <textarea
-              x-model="whenExpression"
-              rows="3"
-              placeholder="e.g., payload.uri.endswith('.env') or payload.method == 'POST'"
-              class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 font-mono text-sm"
-            ></textarea>
-            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Python expression for complex matching logic</p>
-          </div>
-
-          <!-- Reverse Order on Post -->
-          <div>
-            <label class="inline-flex items-center">
-              <input
-                type="checkbox"
-                x-model="reverseOrderOnPost"
-                class="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-              />
-              <span class="ml-2 text-sm text-gray-700 dark:text-gray-300">Reverse plugin order for post-hooks (LIFO wrapping)</span>
-            </label>
-          </div>
-
-          <!-- Plugins -->
+          <!-- Plugins Section -->
           <div>
             <div class="flex justify-between items-center mb-2">
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -1190,6 +1012,254 @@
               </template>
               <div x-show="selectedPlugins.length === 0" class="text-sm text-gray-500 dark:text-gray-400 italic text-center p-4">
                 No plugins added yet. Click "Add Plugin" to add one.
+              </div>
+            </div>
+
+            <!-- Reverse Order on Post -->
+            <div class="mt-3">
+              <label class="inline-flex items-center">
+                <input
+                  type="checkbox"
+                  x-model="reverseOrderOnPost"
+                  class="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                />
+                <span class="ml-2 text-sm text-gray-700 dark:text-gray-300">Reverse plugin order for post-hooks (LIFO wrapping)</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Collapsible Filter Sections -->
+          <div class="border-t border-gray-200 dark:border-gray-700 pt-4">
+            <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Filtering Options</h4>
+
+            <!-- Filter on Entity Type -->
+            <div class="mb-3" x-data="{ expanded: false }">
+              <button
+                @click="expanded = !expanded"
+                type="button"
+                class="w-full flex items-center justify-between px-4 py-2 bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 rounded-md transition-colors"
+              >
+                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  🎯 Filter on Entity Type
+                  <span x-show="entities.length > 0 || selectedEntityNames.length > 0" class="ml-2 text-xs text-indigo-600 dark:text-indigo-400">
+                    (<span x-text="entities.length > 0 ? entities.length + ' types' : ''"></span><span x-show="entities.length > 0 && selectedEntityNames.length > 0">, </span><span x-text="selectedEntityNames.length > 0 ? selectedEntityNames.length + ' entities' : ''"></span>)
+                  </span>
+                </span>
+                <svg class="h-5 w-5 transition-transform text-gray-500" :class="{ 'rotate-180': expanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              <div x-show="expanded" x-collapse class="mt-2 px-4 py-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-md">
+                <!-- Entity Types -->
+                <div class="mb-4">
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Entity Types
+                  </label>
+                  <div class="flex flex-wrap gap-2">
+                    <template x-for="entityType in [
+                      {value: 'tool', label: 'Tool'},
+                      {value: 'prompt', label: 'Prompt'},
+                      {value: 'resource', label: 'Resource'},
+                      {value: 'agent', label: 'Agent'},
+                      {value: 'virtual_server', label: 'Virtual Server'},
+                      {value: 'mcp_server', label: 'MCP Server'}
+                    ]" :key="entityType.value">
+                      <label class="inline-flex items-center">
+                        <input
+                          type="checkbox"
+                          :value="entityType.value"
+                          x-model="entities"
+                          class="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                        />
+                        <span class="ml-2 text-sm text-gray-700 dark:text-gray-300" x-text="entityType.label"></span>
+                      </label>
+                    </template>
+                  </div>
+                  <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Leave empty for HTTP-level hooks</p>
+                </div>
+
+                <!-- Specific Entities Selection -->
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Specific Entities
+                  </label>
+
+                  <!-- Show entity selection when entity types are selected -->
+                  <div x-show="entities.length > 0 && Object.keys(availableEntities).length > 0">
+                    <div class="border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 max-h-64 overflow-y-auto">
+                      <template x-for="(entityList, entityType) in availableEntities" :key="entityType">
+                        <div class="border-b border-gray-200 dark:border-gray-600 last:border-0">
+                          <div class="px-3 py-2 bg-gray-50 dark:bg-gray-800">
+                            <span class="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase" x-text="getEntityTypeLabel(entityType)"></span>
+                            <span class="text-xs text-gray-500 dark:text-gray-400 ml-2" x-text="'(' + entityList.length + ')'"></span>
+                          </div>
+                          <template x-for="entity in entityList" :key="entity.id">
+                            <label class="flex items-center px-4 py-2 hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                :value="entity.name"
+                                :checked="selectedEntityNames.includes(entity.name)"
+                                @change="toggleEntityName(entity.name)"
+                                class="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                              />
+                              <span class="ml-2 text-sm text-gray-700 dark:text-gray-300" x-text="entity.display_name"></span>
+                              <span class="ml-2 text-xs text-gray-400" x-text="'(' + entity.name + ')'"></span>
+                            </label>
+                          </template>
+                        </div>
+                      </template>
+                    </div>
+                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Select specific entities to filter, or leave empty to match all entities of the selected types
+                    </p>
+                  </div>
+
+                  <!-- Show message when entity types are selected but no entities found -->
+                  <div x-show="entities.length > 0 && Object.keys(availableEntities).length === 0" class="text-sm text-gray-500 dark:text-gray-400 italic">
+                    Loading available entities...
+                  </div>
+
+                  <!-- Show manual input when no entity types are selected -->
+                  <div x-show="entities.length === 0">
+                    <input
+                      type="text"
+                      x-model="nameFilter"
+                      placeholder="e.g., create_user or create_user,update_user,delete_user"
+                      class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Select entity types above to see available entities, or enter names manually (comma-separated)
+                    </p>
+                  </div>
+
+                  <!-- Show selected entities as chips -->
+                  <div class="flex flex-wrap gap-2 mt-2" x-show="selectedEntityNames.length > 0">
+                    <template x-for="entityName in selectedEntityNames" :key="entityName">
+                      <span class="inline-flex items-center px-3 py-1 rounded-full text-sm bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">
+                        <span x-text="entityName"></span>
+                        <button @click="toggleEntityName(entityName)" class="ml-2 text-indigo-600 dark:text-indigo-300 hover:text-indigo-800">&times;</button>
+                      </span>
+                    </template>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Filter on Tags -->
+            <div class="mb-3" x-data="{ expanded: false }">
+              <button
+                @click="expanded = !expanded"
+                type="button"
+                class="w-full flex items-center justify-between px-4 py-2 bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 rounded-md transition-colors"
+              >
+                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  🏷️ Filter on Tags
+                  <span x-show="tags.length > 0" class="ml-2 text-xs text-indigo-600 dark:text-indigo-400">
+                    (<span x-text="tags.length"></span>)
+                  </span>
+                </span>
+                <svg class="h-5 w-5 transition-transform text-gray-500" :class="{ 'rotate-180': expanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              <div x-show="expanded" x-collapse class="mt-2 px-4 py-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-md">
+                <div class="flex gap-2 mb-2">
+                  <input
+                    type="text"
+                    x-model="newTag"
+                    @keydown.enter.prevent="addTag()"
+                    list="tag-suggestions"
+                    placeholder="Add tag..."
+                    class="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <datalist id="tag-suggestions">
+                    <template x-for="tag in availableTags" :key="tag">
+                      <option :value="tag"></option>
+                    </template>
+                  </datalist>
+                  <button
+                    @click="addTag()"
+                    type="button"
+                    class="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-md transition-colors"
+                  >
+                    Add
+                  </button>
+                </div>
+                <div class="flex flex-wrap gap-2" x-show="tags.length > 0">
+                  <template x-for="(tag, index) in tags" :key="index">
+                    <span class="inline-flex items-center px-3 py-1 rounded-full text-sm bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+                      <span x-text="tag"></span>
+                      <button @click="removeTag(tag)" class="ml-2 text-green-600 dark:text-green-300 hover:text-green-800">&times;</button>
+                    </span>
+                  </template>
+                </div>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Tag-based matching for flexible filtering</p>
+              </div>
+            </div>
+
+            <!-- Filter on Hook Types -->
+            <div class="mb-3" x-data="{ expanded: false }">
+              <button
+                @click="expanded = !expanded"
+                type="button"
+                class="w-full flex items-center justify-between px-4 py-2 bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 rounded-md transition-colors"
+              >
+                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  🪝 Filter on Hook Types
+                  <span x-show="hooks.length > 0" class="ml-2 text-xs text-indigo-600 dark:text-indigo-400">
+                    (<span x-text="hooks.length"></span>)
+                  </span>
+                </span>
+                <svg class="h-5 w-5 transition-transform text-gray-500" :class="{ 'rotate-180': expanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              <div x-show="expanded" x-collapse class="mt-2 px-4 py-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-md">
+                <div class="grid grid-cols-2 gap-2">
+                  <template x-for="hookType in ['tool_pre_invoke', 'tool_post_invoke', 'prompt_pre_invoke', 'prompt_post_invoke', 'resource_pre_invoke', 'resource_post_invoke', 'http_pre_request', 'http_post_response']" :key="hookType">
+                    <label class="inline-flex items-center">
+                      <input
+                        type="checkbox"
+                        :value="hookType"
+                        x-model="hooks"
+                        class="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                      />
+                      <span class="ml-2 text-xs text-gray-700 dark:text-gray-300" x-text="hookType.replace(/_/g, ' ')"></span>
+                    </label>
+                  </template>
+                </div>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Leave empty to apply to all hooks</p>
+              </div>
+            </div>
+
+            <!-- Conditional Expressions -->
+            <div class="mb-3" x-data="{ expanded: false }">
+              <button
+                @click="expanded = !expanded"
+                type="button"
+                class="w-full flex items-center justify-between px-4 py-2 bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 rounded-md transition-colors"
+              >
+                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  ⚡ Filter on Conditional Expressions
+                  <span x-show="whenExpression && whenExpression.trim()" class="ml-2 text-xs text-indigo-600 dark:text-indigo-400">
+                    (active)
+                  </span>
+                </span>
+                <svg class="h-5 w-5 transition-transform text-gray-500" :class="{ 'rotate-180': expanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              <div x-show="expanded" x-collapse class="mt-2 px-4 py-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-md">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  When Expression
+                </label>
+                <textarea
+                  x-model="whenExpression"
+                  rows="3"
+                  placeholder="e.g., payload.uri.endswith('.env') or payload.method == 'POST'"
+                  class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 font-mono text-sm"
+                ></textarea>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Python expression for complex matching logic</p>
               </div>
             </div>
           </div>

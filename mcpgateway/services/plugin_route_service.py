@@ -424,8 +424,8 @@ class PluginRouteService:
         """
         hook_pairs = {
             "tool": ["tool_pre_invoke", "tool_post_invoke"],
-            "prompt": ["prompt_pre_invoke", "prompt_post_invoke"],
-            "resource": ["resource_pre_read", "resource_post_read"],
+            "prompt": ["prompt_pre_fetch", "prompt_post_fetch"],
+            "resource": ["resource_pre_fetch", "resource_post_fetch"],
         }
         return hook_pairs.get(entity_type, [])
 
@@ -536,8 +536,8 @@ class PluginRouteService:
         # Map entity types to their hook pairs
         hook_pairs = {
             "tool": ["tool_pre_invoke", "tool_post_invoke"],
-            "prompt": ["prompt_pre_invoke", "prompt_post_invoke"],
-            "resource": ["resource_pre_read", "resource_post_read"],
+            "prompt": ["prompt_pre_fetch", "prompt_post_fetch"],
+            "resource": ["resource_pre_fetch", "resource_post_fetch"],
         }
 
         hooks = hook_pairs.get(entity_type, [])
