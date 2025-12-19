@@ -24,7 +24,7 @@
 #    GUNICORN_TIMEOUT             : Worker timeout in seconds (default: 600)
 #    GUNICORN_MAX_REQUESTS        : Max requests per worker before restart (default: 100000)
 #    GUNICORN_MAX_REQUESTS_JITTER : Random jitter for max requests (default: 100)
-#    GUNICORN_PRELOAD_APP         : Preload app before forking workers (default: false)
+#    GUNICORN_PRELOAD_APP         : Preload app before forking workers (default: true)
 #    GUNICORN_DEV_MODE            : Enable developer mode with hot reload (default: false)
 #    SSL                          : Enable TLS/SSL (true/false, default: false)
 #    CERT_FILE                    : Path to SSL certificate (default: certs/cert.pem)
@@ -250,7 +250,7 @@ GUNICORN_MAX_REQUESTS=${GUNICORN_MAX_REQUESTS:-100000}
 GUNICORN_MAX_REQUESTS_JITTER=${GUNICORN_MAX_REQUESTS_JITTER:-100}
 
 # Preload application before forking workers (saves memory but slower reload)
-GUNICORN_PRELOAD_APP=${GUNICORN_PRELOAD_APP:-false}
+GUNICORN_PRELOAD_APP=${GUNICORN_PRELOAD_APP:-true}
 
 # Developer mode with hot reload (disables preload, enables file watching)
 GUNICORN_DEV_MODE=${GUNICORN_DEV_MODE:-false}

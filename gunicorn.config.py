@@ -33,7 +33,7 @@ max_requests = 100000  # The maximum number of requests a worker will process be
 max_requests_jitter = 100  # The maximum jitter to add to the max_requests setting.
 
 # Optimization https://docs.gunicorn.org/en/stable/settings.html#preload-app
-preload_app = False  # Load application code before the worker processes are forked.
+preload_app = True  # Load application code before the worker processes are forked.
 reuse_port = True  # Set the SO_REUSEPORT flag on the listening socket
 
 

@@ -137,7 +137,7 @@ mcpContextForge:
     GUNICORN_TIMEOUT: "600"             # worker timeout in seconds
     GUNICORN_MAX_REQUESTS: "100000"     # max requests per worker before restart
     GUNICORN_MAX_REQUESTS_JITTER: "100" # random jitter to avoid thundering herd
-    GUNICORN_PRELOAD_APP: "false"       # preload app code before forking workers
+    GUNICORN_PRELOAD_APP: "true"        # preload app code before forking workers
     GUNICORN_DEV_MODE: "false"          # developer mode with hot reload (not for production)
     DISABLE_ACCESS_LOG: "true"          # disable access logging for performance
 

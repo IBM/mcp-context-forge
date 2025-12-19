@@ -188,7 +188,7 @@ GUNICORN_MAX_REQUESTS=100000          # Requests per worker before restart (prev
 GUNICORN_MAX_REQUESTS_JITTER=100      # Random jitter to prevent thundering herd
 
 # Performance Options
-GUNICORN_PRELOAD_APP=false            # Preload app before forking (saves memory, slower reload)
+GUNICORN_PRELOAD_APP=true             # Preload app before forking (saves memory, runs migrations once)
 GUNICORN_DEV_MODE=false               # Enable hot reload (not for production!)
 DISABLE_ACCESS_LOG=true               # Disable access logs for performance (default: true)
 

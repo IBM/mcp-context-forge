@@ -345,7 +345,7 @@
               "type": "string",
               "enum": ["true", "false"],
               "description": "Preload app code before forking workers",
-              "default": "false"
+              "default": "true"
             },
             "GUNICORN_DEV_MODE": {
               "type": "string",

@@ -91,7 +91,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.GUNICORN_TIMEOUT | string | `"600"` |  |
 | mcpContextForge.config.GUNICORN_MAX_REQUESTS | string | `"100000"` |  |
 | mcpContextForge.config.GUNICORN_MAX_REQUESTS_JITTER | string | `"100"` |  |
-| mcpContextForge.config.GUNICORN_PRELOAD_APP | string | `"false"` |  |
+| mcpContextForge.config.GUNICORN_PRELOAD_APP | string | `"true"` |  |
 | mcpContextForge.config.GUNICORN_DEV_MODE | string | `"false"` |  |
 | mcpContextForge.config.DISABLE_ACCESS_LOG | string | `"true"` |  |
 | mcpContextForge.config.APP_NAME | string | `"MCP_Gateway"` |  |
