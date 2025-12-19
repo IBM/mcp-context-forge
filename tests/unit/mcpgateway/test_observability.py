@@ -51,6 +51,20 @@ class TestObservability:
         result = init_telemetry()
         assert result is None
 
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", False)
+    def test_init_telemetry_otel_not_installed(self):
+        """Test graceful degradation when OpenTelemetry is not installed."""
+        os.environ["OTEL_TRACES_EXPORTER"] = "otlp"
+        os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://localhost:4317"
+
+        with patch("mcpgateway.observability.logger") as mock_logger:
+            result = init_telemetry()
+
+            # Should log warning and return None
+            mock_logger.warning.assert_called()
+            mock_logger.info.assert_called()
+            assert result is None
+
     def test_init_telemetry_none_exporter(self):
         """Test that 'none' exporter disables telemetry."""
         os.environ["OTEL_TRACES_EXPORTER"] = "none"
@@ -66,6 +80,7 @@ class TestObservability:
         result = init_telemetry()
         assert result is None
 
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
     @patch("mcpgateway.observability.OTLP_SPAN_EXPORTER")
     @patch("mcpgateway.observability.TracerProvider")
     @patch("mcpgateway.observability.BatchSpanProcessor")
@@ -87,6 +102,7 @@ class TestObservability:
         provider_instance.add_span_processor.assert_called_once()
         assert result is not None
 
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
     @patch("mcpgateway.observability.ConsoleSpanExporter")
     @patch("mcpgateway.observability.TracerProvider")
     @patch("mcpgateway.observability.SimpleSpanProcessor")
@@ -106,6 +122,7 @@ class TestObservability:
         provider_instance.add_span_processor.assert_called_once()
         assert result is not None
 
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
     @patch("mcpgateway.observability.ConsoleSpanExporter")
     @patch("mcpgateway.observability.TracerProvider")
     @patch("mcpgateway.observability.SimpleSpanProcessor")
@@ -124,6 +141,7 @@ class TestObservability:
         assert provider_instance.add_span_processor.call_count == 2
         assert result is not None
 
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
     def test_init_telemetry_custom_resource_attributes(self):
         """Test parsing of custom resource attributes."""
         os.environ["OTEL_TRACES_EXPORTER"] = "console"
@@ -131,7 +149,7 @@ class TestObservability:
 
         with patch("mcpgateway.observability.Resource.create") as mock_resource:
             with patch("mcpgateway.observability.TracerProvider"):
-                with patch("opentelemetry.sdk.trace.export.ConsoleSpanExporter"):
+                with patch("mcpgateway.observability.ConsoleSpanExporter"):
                     init_telemetry()
 
                     # Verify resource attributes were parsed correctly
@@ -140,6 +158,7 @@ class TestObservability:
                     assert call_args["team"] == "platform"
                     assert call_args["version"] == "1.0"
 
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
     def test_init_telemetry_otlp_headers_parsing(self):
         """Test parsing of OTLP headers."""
         os.environ["OTEL_TRACES_EXPORTER"] = "otlp"
@@ -255,6 +274,8 @@ class TestObservability:
         mock_span.set_attribute.assert_any_call("error.message", "Test error")
         mock_span.record_exception.assert_called_once()
 
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    @patch("mcpgateway.observability.JAEGER_EXPORTER", None)
     def test_init_telemetry_jaeger_import_error(self):
         """Test Jaeger exporter when not installed."""
         os.environ["OTEL_TRACES_EXPORTER"] = "jaeger"
@@ -267,6 +288,8 @@ class TestObservability:
             mock_logger.error.assert_called()
             assert result is None
 
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    @patch("mcpgateway.observability.ZIPKIN_EXPORTER", None)
     def test_init_telemetry_zipkin_import_error(self):
         """Test Zipkin exporter when not installed."""
         os.environ["OTEL_TRACES_EXPORTER"] = "zipkin"
@@ -279,6 +302,7 @@ class TestObservability:
             mock_logger.error.assert_called()
             assert result is None
 
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
     def test_init_telemetry_unknown_exporter(self):
         """Test unknown exporter type falls back to console."""
         os.environ["OTEL_TRACES_EXPORTER"] = "unknown_exporter"
@@ -292,6 +316,7 @@ class TestObservability:
                     mock_logger.warning.assert_called()
                     mock_console.assert_called()
 
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
     def test_init_telemetry_exception_handling(self):
         """Test exception handling during initialization."""
         os.environ["OTEL_TRACES_EXPORTER"] = "otlp"
