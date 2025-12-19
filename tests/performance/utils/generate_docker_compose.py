@@ -50,7 +50,7 @@ volumes:
 
 GATEWAY_SERVICE_TEMPLATE = """  gateway{instance_suffix}:
     build:
-      context: ../../..
+      context: .
       dockerfile: Containerfile.lite
     container_name: gateway{instance_suffix}
     environment:
@@ -273,7 +273,7 @@ class DockerComposeGenerator:
         upstreams = []
         for i in range(num_instances):
             suffix = f"_{i + 1}"
-            upstreams.append(f"        server gateway{suffix}:4444;")
+            upstreams.append(f"        server gateway{suffix}:4444 max_fails=3 fail_timeout=30s;")
 
         nginx_conf = f"""events {{
     worker_connections 1024;
