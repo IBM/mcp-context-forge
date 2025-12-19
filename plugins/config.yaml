@@ -98,7 +98,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
     tags: ["plugin", "transformer", "regex", "search-and-replace", "pre-post"]
-    mode: "disabled"  # enforce | permissive | disabled
+    mode: "permissive"  # enforce | permissive | disabled
     priority: 150
     conditions:
       # Apply to specific tools/servers

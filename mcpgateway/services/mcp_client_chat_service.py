@@ -27,6 +27,7 @@ from uuid import uuid4
 
 try:
     # Third-Party
+    from langchain_core.language_models import BaseChatModel
     from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
     from langchain_core.tools import BaseTool
     from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -39,6 +40,7 @@ except ImportError:
     # Optional dependencies for LLM chat feature not installed
     # These are only needed if LLMCHAT_ENABLED=true
     _LLMCHAT_AVAILABLE = False
+    BaseChatModel = None  # type: ignore
     AIMessage = None  # type: ignore
     BaseMessage = None  # type: ignore
     HumanMessage = None  # type: ignore
@@ -1416,6 +1418,269 @@ class WatsonxProvider:
         return self.config.model_id
 
 
+class GatewayProvider:
+    """
+    Gateway provider implementation for using models configured in LLM Settings.
+
+    Routes LLM requests through the gateway's configured providers, allowing
+    users to use models set up via the Admin UI's LLM Settings without needing
+    to configure credentials in environment variables or API requests.
+
+    Attributes:
+        config: Gateway configuration with model ID.
+        llm: Lazily initialized LLM instance.
+
+    Examples:
+        >>> config = GatewayConfig(model="gpt-4o")  # doctest: +SKIP
+        >>> provider = GatewayProvider(config)  # doctest: +SKIP
+        >>> provider.get_model_name()  # doctest: +SKIP
+        'gpt-4o'
+
+    Note:
+        Requires models to be configured via Admin UI -> Settings -> LLM Settings.
+    """
+
+    def __init__(self, config: GatewayConfig):
+        """
+        Initialize Gateway provider.
+
+        Args:
+            config: Gateway configuration with model ID and optional settings.
+
+        Examples:
+            >>> config = GatewayConfig(model="gpt-4o")  # doctest: +SKIP
+            >>> provider = GatewayProvider(config)  # doctest: +SKIP
+        """
+        self.config = config
+        self.llm = None
+        self._model_name: Optional[str] = None
+        self._underlying_provider = None
+        logger.info(f"Initializing Gateway provider with model: {config.model}")
+
+    def get_llm(self) -> BaseChatModel:
+        """
+        Get LLM instance by looking up model from gateway's LLM Settings.
+
+        Fetches the model configuration from the database, decrypts API keys,
+        and creates the appropriate LangChain LLM instance based on provider type.
+
+        Returns:
+            BaseChatModel: Configured LangChain chat model instance.
+
+        Raises:
+            ValueError: If model not found or provider not enabled.
+            ImportError: If required provider package not installed.
+
+        Examples:
+            >>> config = GatewayConfig(model="gpt-4o")  # doctest: +SKIP
+            >>> provider = GatewayProvider(config)  # doctest: +SKIP
+            >>> llm = provider.get_llm()  # doctest: +SKIP
+
+        Note:
+            The LLM instance is lazily initialized and cached.
+        """
+        if self.llm is not None:
+            return self.llm
+
+        # Import here to avoid circular imports
+        # First-Party
+        from mcpgateway.db import LLMModel, LLMProvider, SessionLocal  # pylint: disable=import-outside-toplevel
+        from mcpgateway.utils.services_auth import decode_auth  # pylint: disable=import-outside-toplevel
+
+        model_id = self.config.model
+
+        with SessionLocal() as db:
+            # Try to find model by UUID first, then by model_id
+            model = db.query(LLMModel).filter(LLMModel.id == model_id).first()
+            if not model:
+                model = db.query(LLMModel).filter(LLMModel.model_id == model_id).first()
+
+            if not model:
+                raise ValueError(f"Model '{model_id}' not found in LLM Settings. Configure it via Admin UI -> Settings -> LLM Settings.")
+
+            if not model.is_enabled:
+                raise ValueError(f"Model '{model.model_id}' is disabled. Enable it in LLM Settings.")
+
+            # Get the provider
+            provider = db.query(LLMProvider).filter(LLMProvider.id == model.provider_id).first()
+            if not provider:
+                raise ValueError(f"Provider not found for model '{model.model_id}'")
+
+            if not provider.is_enabled:
+                raise ValueError(f"Provider '{provider.name}' is disabled. Enable it in LLM Settings.")
+
+            # Get decrypted API key
+            api_key = None
+            if provider.api_key_encrypted:
+                api_key = decode_auth(provider.api_key_encrypted)
+
+            # Store model name for get_model_name()
+            self._model_name = model.model_id
+
+            # Get temperature - use config override or model default
+            temperature = self.config.temperature if self.config.temperature is not None else (model.temperature or 0.7)
+            max_tokens = self.config.max_tokens or model.max_tokens
+
+            # Create appropriate LLM based on provider type
+            provider_type = provider.provider_type.lower()
+
+            if provider_type == "openai":
+                kwargs = {
+                    "api_key": api_key,
+                    "model": model.model_id,
+                    "temperature": temperature,
+                }
+                if max_tokens:
+                    kwargs["max_tokens"] = max_tokens
+                if provider.base_url:
+                    kwargs["base_url"] = provider.base_url
+                if self.config.timeout:
+                    kwargs["timeout"] = self.config.timeout
+
+                self.llm = ChatOpenAI(**kwargs)
+
+            elif provider_type == "azure_openai":
+                if not provider.base_url:
+                    raise ValueError("Azure OpenAI requires base_url (azure_endpoint) to be configured")
+
+                # Parse azure_deployment from additional_config or use model_id
+                additional_config = provider.additional_config or {}
+                azure_deployment = additional_config.get("azure_deployment", model.model_id)
+                api_version = additional_config.get("api_version", "2024-05-01-preview")
+
+                kwargs = {
+                    "api_key": api_key,
+                    "azure_endpoint": provider.base_url,
+                    "azure_deployment": azure_deployment,
+                    "api_version": api_version,
+                    "model": model.model_id,
+                    "temperature": temperature,
+                }
+                if max_tokens:
+                    kwargs["max_tokens"] = max_tokens
+                if self.config.timeout:
+                    kwargs["timeout"] = self.config.timeout
+
+                self.llm = AzureChatOpenAI(**kwargs)
+
+            elif provider_type == "anthropic":
+                if not _ANTHROPIC_AVAILABLE:
+                    raise ImportError("Anthropic provider requires langchain-anthropic. Install with: pip install langchain-anthropic")
+
+                kwargs = {
+                    "api_key": api_key,
+                    "model": model.model_id,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens or 4096,
+                }
+                if self.config.timeout:
+                    kwargs["timeout"] = self.config.timeout
+
+                self.llm = ChatAnthropic(**kwargs)
+
+            elif provider_type == "bedrock":
+                if not _BEDROCK_AVAILABLE:
+                    raise ImportError("AWS Bedrock provider requires langchain-aws. Install with: pip install langchain-aws boto3")
+
+                additional_config = provider.additional_config or {}
+                region_name = additional_config.get("region_name", "us-east-1")
+
+                credentials_kwargs = {}
+                if additional_config.get("aws_access_key_id"):
+                    credentials_kwargs["aws_access_key_id"] = additional_config["aws_access_key_id"]
+                if additional_config.get("aws_secret_access_key"):
+                    credentials_kwargs["aws_secret_access_key"] = additional_config["aws_secret_access_key"]
+                if additional_config.get("aws_session_token"):
+                    credentials_kwargs["aws_session_token"] = additional_config["aws_session_token"]
+
+                self.llm = ChatBedrock(
+                    model_id=model.model_id,
+                    region_name=region_name,
+                    model_kwargs={
+                        "temperature": temperature,
+                        "max_tokens": max_tokens or 4096,
+                    },
+                    **credentials_kwargs,
+                )
+
+            elif provider_type == "ollama":
+                base_url = provider.base_url or "http://localhost:11434"
+
+                kwargs = {
+                    "base_url": base_url,
+                    "model": model.model_id,
+                    "temperature": temperature,
+                }
+                if self.config.timeout:
+                    kwargs["timeout"] = self.config.timeout
+
+                self.llm = ChatOllama(**kwargs)
+
+            elif provider_type == "watsonx":
+                if not _WATSONX_AVAILABLE:
+                    raise ImportError("IBM watsonx.ai provider requires langchain-ibm. Install with: pip install langchain-ibm")
+
+                additional_config = provider.additional_config or {}
+                project_id = additional_config.get("project_id")
+                if not project_id:
+                    raise ValueError("IBM watsonx.ai requires project_id in additional_config")
+
+                url = provider.base_url or "https://us-south.ml.cloud.ibm.com"
+
+                params = {
+                    "temperature": temperature,
+                    "max_new_tokens": max_tokens or 1024,
+                }
+
+                self.llm = ChatWatsonx(
+                    apikey=api_key,
+                    url=url,
+                    project_id=project_id,
+                    model_id=model.model_id,
+                    params=params,
+                )
+
+            elif provider_type == "openai_compatible":
+                # Generic OpenAI-compatible provider (e.g., vLLM, LocalAI, etc.)
+                if not provider.base_url:
+                    raise ValueError("OpenAI-compatible provider requires base_url to be configured")
+
+                kwargs = {
+                    "model": model.model_id,
+                    "temperature": temperature,
+                    "base_url": provider.base_url,
+                }
+                if api_key:
+                    kwargs["api_key"] = api_key
+                if max_tokens:
+                    kwargs["max_tokens"] = max_tokens
+                if self.config.timeout:
+                    kwargs["timeout"] = self.config.timeout
+
+                self.llm = ChatOpenAI(**kwargs)
+
+            else:
+                raise ValueError(f"Unsupported provider type: {provider_type}")
+
+            logger.info(f"Gateway provider created LLM instance for model: {model.model_id} via {provider_type}")
+            return self.llm
+
+    def get_model_name(self) -> str:
+        """
+        Get the model name.
+
+        Returns:
+            str: The model name/ID.
+
+        Examples:
+            >>> config = GatewayConfig(model="gpt-4o")  # doctest: +SKIP
+            >>> provider = GatewayProvider(config)  # doctest: +SKIP
+            >>> provider.get_model_name()  # doctest: +SKIP
+            'gpt-4o'
+        """
+        return self._model_name or self.config.model
+
+
 class LLMProviderFactory:
     """
     Factory for creating LLM providers.
@@ -1438,7 +1703,7 @@ class LLMProviderFactory:
     """
 
     @staticmethod
-    def create(llm_config: LLMConfig) -> Union[AzureOpenAIProvider, OpenAIProvider, AnthropicProvider, AWSBedrockProvider, OllamaProvider, WatsonxProvider]:
+    def create(llm_config: LLMConfig) -> Union[AzureOpenAIProvider, OpenAIProvider, AnthropicProvider, AWSBedrockProvider, OllamaProvider, WatsonxProvider, GatewayProvider]:
         """
         Create an LLM provider based on configuration.
 
@@ -1446,7 +1711,7 @@ class LLMProviderFactory:
             llm_config: LLM configuration specifying provider type and settings.
 
         Returns:
-            Union[AzureOpenAIProvider, OpenAIProvider, AnthropicProvider, AWSBedrockProvider, OllamaProvider]: Instantiated provider.
+            Union[AzureOpenAIProvider, OpenAIProvider, AnthropicProvider, AWSBedrockProvider, OllamaProvider, GatewayProvider]: Instantiated provider.
 
         Raises:
             ValueError: If provider type is not supported.
@@ -1494,6 +1759,7 @@ class LLMProviderFactory:
             "aws_bedrock": AWSBedrockProvider,
             "ollama": OllamaProvider,
             "watsonx": WatsonxProvider,
+            "gateway": GatewayProvider,
         }
 
         provider_class = provider_map.get(llm_config.provider)
