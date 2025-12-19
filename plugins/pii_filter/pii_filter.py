@@ -11,6 +11,7 @@ and their responses, including SSNs, credit cards, emails, phone numbers, and mo
 
 # Standard
 from enum import Enum
+import logging
 import re
 from typing import Any, Dict, List, Pattern, Tuple
 
@@ -63,6 +64,7 @@ class PIIType(str, Enum):
     """Types of PII that can be detected."""
 
     SSN = "ssn"
+    BSN = "bsn"
     CREDIT_CARD = "credit_card"
     EMAIL = "email"
     PHONE = "phone"
@@ -102,6 +104,7 @@ class PIIFilterConfig(BaseModel):
 
     # Enable/disable detection for specific PII types
     detect_ssn: bool = Field(default=True, description="Detect Social Security Numbers")
+    detect_bsn: bool = Field(default=True, description="Detect Dutch BSN (Burgerservicenummer)")
     detect_credit_card: bool = Field(default=True, description="Detect credit card numbers")
     detect_email: bool = Field(default=True, description="Detect email addresses")
     detect_phone: bool = Field(default=True, description="Detect phone numbers")
@@ -150,7 +153,12 @@ class PIIDetector:
 
         # Social Security Number patterns
         if self.config.detect_ssn:
-            patterns.append(PIIPattern(type=PIIType.SSN, pattern=r"\b\d{3}-\d{2}-\d{4}\b|\b\d{9}\b", description="US Social Security Number", mask_strategy=MaskingStrategy.PARTIAL))
+            patterns.append(PIIPattern(type=PIIType.SSN, pattern=r"\b\d{3}-\d{2}-\d{4}\b", description="US Social Security Number", mask_strategy=MaskingStrategy.PARTIAL))
+
+        # Dutch BSN (Burgerservicenummer) patterns - 9-digit Dutch citizen service number
+        if self.config.detect_bsn:
+            # Match 9-digit numbers (BSN format) - standalone or with explicit BSN context
+            patterns.append(PIIPattern(type=PIIType.BSN, pattern=r"\b\d{9}\b", description="Dutch BSN (Burgerservicenummer)", mask_strategy=MaskingStrategy.PARTIAL))
 
         # Credit Card patterns (basic validation for common formats)
         if self.config.detect_credit_card:
@@ -367,6 +375,11 @@ class PIIDetector:
                     return f"***-**-{value[-4:]}"
                 return self.config.redaction_text
 
+            elif pii_type == PIIType.BSN:
+                if len(value) >= 4:
+                    return f"*****{value[-4:]}"
+                return self.config.redaction_text
+
             elif pii_type == PIIType.CREDIT_CARD:
                 if len(value) >= 4:
                     return f"****-****-****-{value[-4:]}"
@@ -464,11 +477,18 @@ class PIIFilterPlugin(Plugin):
                         logger.warning(f"PII detected in prompt argument '{key}': {', '.join(detections.keys())}")
 
                     if self.pii_config.block_on_detection:
+                        detected_types = list(detections.keys())
+                        # Log at DEBUG level with full prompt content
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.debug(f"PII filter blocking prompt - full content: {value}")
+                        else:
+                            # Log at WARNING level with redacted content
+                            logger.warning(f"PII filter blocked prompt in argument '{key}' - detected types: {detected_types} (content redacted)")
                         violation = PluginViolation(
                             reason="PII detected in prompt",
                             description=f"Sensitive information detected in argument '{key}'",
                             code="PII_DETECTED",
-                            details={"field": key, "types": list(detections.keys()), "count": sum(len(items) for items in detections.values())},
+                            details={"field": key, "types": detected_types, "count": sum(len(items) for items in detections.values())},
                         )
                         return PromptPrehookResult(continue_processing=False, violation=violation)
 
@@ -579,12 +599,19 @@ class PIIFilterPlugin(Plugin):
                 logger.warning(f"PII detected in tool '{payload.name}' arguments: {', '.join(map(str, detected_types))}")
 
         if detections and self.pii_config.block_on_detection:
+            detected_type_list = list(set(pii_type for arg_detections in all_detections.values() for pii_type in arg_detections.keys()))
+            # Log at DEBUG level with full content
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"PII filter blocking tool '{payload.name}' - full arguments: {payload.args}")
+            else:
+                # Log at WARNING level with redacted content
+                logger.warning(f"PII filter blocked tool '{payload.name}' arguments - detected types: {detected_type_list} (content redacted)")
             violation = PluginViolation(
                 reason="PII detected in tool arguments",
                 description="Detected PII in tool arguments",
                 code="PII_DETECTED_IN_TOOL_ARGS",
                 details={
-                    "detected_types": list(set(pii_type for arg_detections in all_detections.values() for pii_type in arg_detections.keys())),
+                    "detected_types": detected_type_list,
                     "total_count": sum(len(items) for arg_detections in all_detections.values() for items in arg_detections.values()),
                 },
             )
@@ -638,11 +665,18 @@ class PIIFilterPlugin(Plugin):
 
                 # Check if we should block
                 if self.pii_config.block_on_detection:
+                    detected_types = list(detections.keys())
+                    # Log at DEBUG level with full content
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"PII filter blocking tool '{payload.name}' result - full content: {payload.result}")
+                    else:
+                        # Log at WARNING level with redacted content
+                        logger.warning(f"PII filter blocked tool '{payload.name}' result - detected types: {detected_types} (content redacted)")
                     violation = PluginViolation(
                         reason="PII detected in tool result",
-                        description=f"Detected {', '.join(detections.keys())} in tool output",
+                        description=f"Detected {', '.join(detected_types)} in tool output",
                         code="PII_DETECTED_IN_TOOL_RESULT",
-                        details={"detected_types": list(detections.keys()), "count": sum(len(items) for items in detections.values())},
+                        details={"detected_types": detected_types, "count": sum(len(items) for items in detections.values())},
                     )
                     return ToolPostInvokeResult(continue_processing=False, violation=violation)
 
@@ -655,12 +689,19 @@ class PIIFilterPlugin(Plugin):
         elif isinstance(payload.result, dict):
             modified, detections = self._process_nested_data_for_pii(payload.result, "result", all_detections)
             if detections and self.pii_config.block_on_detection:
+                detected_types = list(set(pii_type for field_detections in all_detections.values() for pii_type in field_detections.keys()))
+                # Log at DEBUG level with full content
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"PII filter blocking tool '{payload.name}' result - full content: {payload.result}")
+                else:
+                    # Log at WARNING level with redacted content
+                    logger.warning(f"PII filter blocked tool '{payload.name}' result - detected types: {detected_types} (content redacted)")
                 violation = PluginViolation(
                     reason="PII detected in tool result",
                     description="Detected PII in nested tool result data",
                     code="PII_DETECTED_IN_TOOL_RESULT",
                     details={
-                        "detected_types": list(set(pii_type for field_detections in all_detections.values() for pii_type in field_detections.keys())),
+                        "detected_types": detected_types,
                         "total_count": sum(len(items) for field_detections in all_detections.values() for items in field_detections.values()),
                     },
                 )

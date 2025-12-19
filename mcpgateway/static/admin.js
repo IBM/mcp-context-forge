@@ -21569,7 +21569,9 @@ function toggleLLMConfig() {
  */
 async function loadLLMModels() {
     const modelSelect = document.getElementById("llm-model-select");
-    if (!modelSelect) return;
+    if (!modelSelect) {
+        return;
+    }
 
     try {
         const response = await fetch("/api/llm/models");
@@ -21579,11 +21581,12 @@ async function loadLLMModels() {
         const data = await response.json();
 
         // Clear existing options except the placeholder
-        modelSelect.innerHTML = '<option value="">Select Model (configure in Settings → LLM Settings)</option>';
+        modelSelect.innerHTML =
+            '<option value="">Select Model (configure in Settings → LLM Settings)</option>';
 
         // Add enabled models from enabled providers
         if (data.models && data.models.length > 0) {
-            data.models.forEach(model => {
+            data.models.forEach((model) => {
                 if (model.is_enabled) {
                     const option = document.createElement("option");
                     option.value = model.model_id;
@@ -21595,11 +21598,13 @@ async function loadLLMModels() {
 
         if (modelSelect.options.length === 1) {
             // Only placeholder exists - no models configured
-            modelSelect.innerHTML = '<option value="">No models configured - go to Settings → LLM Settings</option>';
+            modelSelect.innerHTML =
+                '<option value="">No models configured - go to Settings → LLM Settings</option>';
         }
     } catch (error) {
         console.error("Error loading LLM models:", error);
-        modelSelect.innerHTML = '<option value="">Error loading models</option>';
+        modelSelect.innerHTML =
+            '<option value="">Error loading models</option>';
     }
 
     updateConnectButtonState();
@@ -21836,17 +21841,17 @@ function buildLLMConfigLegacy(provider) {
     };
 
     if (provider === "azure_openai") {
-        const apiKey = document.getElementById("azure-api-key")?.value?.trim() || "";
-        const endpoint = document.getElementById("azure-endpoint")?.value?.trim() || "";
-        const deployment = document
-            .getElementById("azure-deployment")
-            ?.value?.trim() || "";
-        const apiVersion = document
-            .getElementById("azure-api-version")
-            ?.value?.trim() || "";
-        const temperature = document
-            .getElementById("azure-temperature")
-            ?.value?.trim() || "";
+        const apiKeyEl = document.getElementById("azure-api-key");
+        const endpointEl = document.getElementById("azure-endpoint");
+        const deploymentEl = document.getElementById("azure-deployment");
+        const apiVersionEl = document.getElementById("azure-api-version");
+        const temperatureEl = document.getElementById("azure-temperature");
+
+        const apiKey = apiKeyEl?.value?.trim() || "";
+        const endpoint = endpointEl?.value?.trim() || "";
+        const deployment = deploymentEl?.value?.trim() || "";
+        const apiVersion = apiVersionEl?.value?.trim() || "";
+        const temperature = temperatureEl?.value?.trim() || "";
 
         // Only include non-empty values
         if (apiKey) {
@@ -21865,12 +21870,15 @@ function buildLLMConfigLegacy(provider) {
             config.config.temperature = parseFloat(temperature);
         }
     } else if (provider === "openai") {
-        const apiKey = document.getElementById("openai-api-key")?.value?.trim() || "";
-        const model = document.getElementById("openai-model")?.value?.trim() || "";
-        const baseUrl = document.getElementById("openai-base-url").value.trim();
-        const temperature = document
-            .getElementById("openai-temperature")
-            .value.trim();
+        const apiKeyEl = document.getElementById("openai-api-key");
+        const modelEl = document.getElementById("openai-model");
+        const baseUrlEl = document.getElementById("openai-base-url");
+        const temperatureEl = document.getElementById("openai-temperature");
+
+        const apiKey = apiKeyEl?.value?.trim() || "";
+        const model = modelEl?.value?.trim() || "";
+        const baseUrl = baseUrlEl.value.trim();
+        const temperature = temperatureEl.value.trim();
 
         // Only include non-empty values
         if (apiKey) {

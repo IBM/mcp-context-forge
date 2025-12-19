@@ -1484,9 +1484,8 @@ class GatewayProvider:
 
         # Import here to avoid circular imports
         # First-Party
-        from mcpgateway.db import SessionLocal
-        from mcpgateway.models import LLMModel, LLMProvider
-        from mcpgateway.utils.services_auth import decode_auth
+        from mcpgateway.db import LLMModel, LLMProvider, SessionLocal  # pylint: disable=import-outside-toplevel
+        from mcpgateway.utils.services_auth import decode_auth  # pylint: disable=import-outside-toplevel
 
         model_id = self.config.model
 
