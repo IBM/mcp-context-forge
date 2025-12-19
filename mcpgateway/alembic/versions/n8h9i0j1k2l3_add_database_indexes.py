@@ -34,6 +34,10 @@ This migration focuses on the most frequently used query patterns:
 - User + team membership queries
 - Status + timestamp ordering
 - Foreign key + timestamp ordering
+
+Phase 3 - Foreign Key Constraint Fixes:
+Adds ON DELETE CASCADE to email_team_member_history.team_member_id foreign key
+to fix PostgreSQL constraint violations when deleting users (Issue: user deletion fails).
 """
 
 # Standard
@@ -645,9 +649,83 @@ def upgrade() -> None:
         ["role_id", "scope", "is_active"],
     )
 
+    # ========================================================================
+    # PHASE 3: Foreign Key Constraint Fixes
+    # ========================================================================
+    print("\n" + "=" * 80)
+    print("PHASE 3: Fixing Foreign Key Constraints (CASCADE)")
+    print("=" * 80)
+
+    # Fix email_team_member_history.team_member_id FK to add CASCADE delete
+    # This fixes PostgreSQL constraint violations when deleting users
+    conn = op.get_bind()
+    dialect_name = conn.dialect.name
+
+    if dialect_name == "postgresql":
+        print("\n--- PostgreSQL: Adding CASCADE to team_member_history FK ---")
+        try:
+            # Drop the existing foreign key constraint (correct name from schema)
+            op.drop_constraint("fk_email_team_member_history_team_member_id", "email_team_member_history", type_="foreignkey")
+            print("✓ Dropped existing FK constraint: fk_email_team_member_history_team_member_id")
+
+            # Recreate with CASCADE
+            op.create_foreign_key("fk_email_team_member_history_team_member_id", "email_team_member_history", "email_team_members", ["team_member_id"], ["id"], ondelete="CASCADE")
+            print("✓ Created FK constraint with CASCADE: fk_email_team_member_history_team_member_id")
+        except Exception as e:
+            print(f"⚠️  Could not update FK constraint: {e}")
+            print("   This is expected if the constraint already has CASCADE")
+    elif dialect_name == "mysql":
+        print("\n--- MySQL: Adding CASCADE to team_member_history FK ---")
+        try:
+            # MySQL may use a different constraint name
+            op.drop_constraint("email_team_member_history_ibfk_1", "email_team_member_history", type_="foreignkey")
+            print("✓ Dropped existing FK constraint: email_team_member_history_ibfk_1")
+
+            op.create_foreign_key("email_team_member_history_ibfk_1", "email_team_member_history", "email_team_members", ["team_member_id"], ["id"], ondelete="CASCADE")
+            print("✓ Created FK constraint with CASCADE: email_team_member_history_ibfk_1")
+        except Exception as e:
+            print(f"⚠️  Could not update FK constraint: {e}")
+    else:
+        print(f"\n--- {dialect_name}: Skipping FK CASCADE update (not required) ---")
+
 
 def downgrade() -> None:
     """Remove all foreign key and composite indexes."""
+
+    # ========================================================================
+    # PHASE 3 DOWNGRADE: Revert Foreign Key Constraint Fixes
+    # ========================================================================
+    print("\n" + "=" * 80)
+    print("PHASE 3 DOWNGRADE: Reverting Foreign Key Constraints (removing CASCADE)")
+    print("=" * 80)
+
+    conn = op.get_bind()
+    dialect_name = conn.dialect.name
+
+    if dialect_name == "postgresql":
+        print("\n--- PostgreSQL: Removing CASCADE from team_member_history FK ---")
+        try:
+            # Drop the CASCADE constraint
+            op.drop_constraint("fk_email_team_member_history_team_member_id", "email_team_member_history", type_="foreignkey")
+            print("✓ Dropped FK constraint with CASCADE")
+
+            # Recreate without CASCADE
+            op.create_foreign_key("fk_email_team_member_history_team_member_id", "email_team_member_history", "email_team_members", ["team_member_id"], ["id"])
+            print("✓ Recreated FK constraint without CASCADE")
+        except Exception as e:
+            print(f"⚠️  Could not revert FK constraint: {e}")
+    elif dialect_name == "mysql":
+        print("\n--- MySQL: Removing CASCADE from team_member_history FK ---")
+        try:
+            op.drop_constraint("email_team_member_history_ibfk_1", "email_team_member_history", type_="foreignkey")
+            print("✓ Dropped FK constraint with CASCADE")
+
+            op.create_foreign_key("email_team_member_history_ibfk_1", "email_team_member_history", "email_team_members", ["team_member_id"], ["id"])
+            print("✓ Recreated FK constraint without CASCADE")
+        except Exception as e:
+            print(f"⚠️  Could not revert FK constraint: {e}")
+    else:
+        print(f"\n--- {dialect_name}: Skipping FK CASCADE revert (not required) ---")
 
     # ========================================================================
     # Remove Composite Indexes (Phase 2) - in reverse order
