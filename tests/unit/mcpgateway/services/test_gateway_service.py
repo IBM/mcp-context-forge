@@ -1250,23 +1250,31 @@ class TestGatewayService:
         """Test initialization with Redis available and enabled."""
         monkeypatch.setattr("mcpgateway.services.gateway_service.REDIS_AVAILABLE", True)
 
-        with patch("mcpgateway.services.gateway_service.redis") as mock_redis:
-            mock_redis_client = MagicMock()
-            mock_redis.from_url.return_value = mock_redis_client
+        mock_redis_client = AsyncMock()
+        mock_redis_client.ping = AsyncMock()
+        mock_redis_client.set = AsyncMock(return_value=True)
 
+        async def mock_get_redis_client():
+            return mock_redis_client
+
+        with patch("mcpgateway.services.gateway_service.get_redis_client", mock_get_redis_client):
             with patch("mcpgateway.services.gateway_service.settings") as mock_settings:
                 mock_settings.cache_type = "redis"
                 mock_settings.redis_url = "redis://localhost:6379"
+                mock_settings.redis_leader_key = "gateway_service_leader"
+                mock_settings.redis_leader_ttl = 15
+                mock_settings.redis_leader_heartbeat_interval = 5
 
                 # First-Party
                 from mcpgateway.services.gateway_service import GatewayService
 
                 service = GatewayService()
+                await service.initialize()
 
                 assert service._redis_client is mock_redis_client
                 assert isinstance(service._instance_id, str)
                 assert service._leader_key == "gateway_service_leader"
-                assert service._leader_ttl == 40
+                assert service._leader_ttl == 15
 
     @pytest.mark.asyncio
     async def test_init_file_cache_path_adjustment(self, monkeypatch):

@@ -29,6 +29,7 @@ from requests_oauthlib import OAuth2Session
 # First-Party
 from mcpgateway.config import get_settings
 from mcpgateway.services.encryption_service import get_encryption_service
+from mcpgateway.utils.redis_client import get_redis_client as _get_shared_redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -41,13 +42,15 @@ _state_lock = asyncio.Lock()
 # State TTL in seconds (5 minutes)
 STATE_TTL_SECONDS = 300
 
-# Redis client for distributed state storage (initialized lazily)
+# Redis client for distributed state storage (uses shared factory)
 _redis_client: Optional[Any] = None
 _REDIS_INITIALIZED = False
 
 
 async def _get_redis_client():
-    """Get or create Redis client for distributed state storage.
+    """Get shared Redis client for distributed state storage.
+
+    Uses the centralized Redis client factory for consistent configuration.
 
     Returns:
         Redis client instance or None if unavailable
@@ -60,15 +63,11 @@ async def _get_redis_client():
     settings = get_settings()
     if settings.cache_type == "redis" and settings.redis_url:
         try:
-            # Third-Party
-            import aioredis  # pylint: disable=import-outside-toplevel
-
-            _redis_client = await aioredis.from_url(settings.redis_url, decode_responses=True, socket_connect_timeout=5, socket_timeout=5)
-            # Test connection
-            await _redis_client.ping()
-            logger.info("Connected to Redis for OAuth state storage")
+            _redis_client = await _get_shared_redis_client()
+            if _redis_client:
+                logger.info("OAuth manager connected to shared Redis client")
         except Exception as e:
-            logger.warning(f"Failed to connect to Redis, falling back to in-memory storage: {e}")
+            logger.warning(f"Failed to get Redis client, falling back to in-memory storage: {e}")
             _redis_client = None
     else:
         _redis_client = None

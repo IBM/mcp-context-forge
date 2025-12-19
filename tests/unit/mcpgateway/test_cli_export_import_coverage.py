@@ -357,18 +357,22 @@ async def test_export_command_success():
 
             with patch("builtins.print") as mock_print:
                 with tempfile.TemporaryDirectory() as temp_dir:
-                    os.chdir(temp_dir)
-                    await export_command(args)
+                    original_cwd = os.getcwd()
+                    try:
+                        os.chdir(temp_dir)
+                        await export_command(args)
 
-                    # Verify print statements
-                    mock_print.assert_any_call("Exporting configuration from gateway at http://localhost:8000")
-                    mock_print.assert_any_call("✅ Export completed successfully!")
-                    mock_print.assert_any_call("📊 Exported 10 total entities:")
-                    mock_print.assert_any_call("   • tools: 5")
-                    mock_print.assert_any_call("   • gateways: 2")
-                    mock_print.assert_any_call("   • servers: 3")
-                    mock_print.assert_any_call("\n🔍 Export details:")
-                    mock_print.assert_any_call("   • Version: 1.0.0")
+                        # Verify print statements
+                        mock_print.assert_any_call("Exporting configuration from gateway at http://localhost:8000")
+                        mock_print.assert_any_call("✅ Export completed successfully!")
+                        mock_print.assert_any_call("📊 Exported 10 total entities:")
+                        mock_print.assert_any_call("   • tools: 5")
+                        mock_print.assert_any_call("   • gateways: 2")
+                        mock_print.assert_any_call("   • servers: 3")
+                        mock_print.assert_any_call("\n🔍 Export details:")
+                        mock_print.assert_any_call("   • Version: 1.0.0")
+                    finally:
+                        os.chdir(original_cwd)
 
 
 @pytest.mark.asyncio

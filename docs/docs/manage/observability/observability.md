@@ -116,7 +116,7 @@ pip install mcp-contextforge-gateway[observability]
 Set these environment variables (or add to `.env`):
 
 ```bash
-# Enable observability (default: true)
+# Enable observability (default: false)
 export OTEL_ENABLE_OBSERVABILITY=true
 
 # Service identification
@@ -229,11 +229,12 @@ export OTEL_SERVICE_NAME=mcp-gateway
 ### 4. Run MCP Gateway
 
 ```bash
-# Start the gateway (observability is enabled by default)
+# Start the gateway (observability is disabled by default)
 mcpgateway
 
 # Or with Docker
-docker run -e OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4317 \
+docker run -e OTEL_ENABLE_OBSERVABILITY=true \
+           -e OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4317 \
            ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
 ```
 
@@ -243,7 +244,7 @@ docker run -e OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4317 \
 
 | Variable | Description | Default | Options |
 |----------|-------------|---------|---------|
-| `OTEL_ENABLE_OBSERVABILITY` | Master switch | `true` | `true`, `false` |
+| `OTEL_ENABLE_OBSERVABILITY` | Master switch | `false` | `true`, `false` |
 | `OTEL_SERVICE_NAME` | Service identifier | `mcp-gateway` | Any string |
 | `OTEL_SERVICE_VERSION` | Service version | `0.9.0` | Any string |
 | `OTEL_DEPLOYMENT_ENVIRONMENT` | Environment tag | `development` | `development`, `staging`, `production` |

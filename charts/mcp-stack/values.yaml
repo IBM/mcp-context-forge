@@ -165,6 +165,19 @@ mcpContextForge:
     DB_MAX_RETRIES: "3"              # Maximum retries for DB cold start
     DB_RETRY_INTERVAL_MS: "2000"     # Interval between DB retries (ms)
 
+    # ─ Redis connection pool (performance-tuned) ─
+    REDIS_MAX_CONNECTIONS: "50"      # Pool size per worker
+    REDIS_SOCKET_TIMEOUT: "2.0"      # Read/write timeout (seconds)
+    REDIS_SOCKET_CONNECT_TIMEOUT: "2.0"  # Connection timeout (seconds)
+    REDIS_RETRY_ON_TIMEOUT: "true"   # Retry commands on timeout
+    REDIS_HEALTH_CHECK_INTERVAL: "30"  # Health check interval (seconds, 0=disabled)
+    REDIS_DECODE_RESPONSES: "true"   # Return strings instead of bytes
+
+    # ─ Redis leader election (multi-node) ─
+    REDIS_LEADER_TTL: "15"           # Leader TTL (seconds)
+    REDIS_LEADER_KEY: "gateway_service_leader"  # Leader key name
+    REDIS_LEADER_HEARTBEAT_INTERVAL: "5"  # Heartbeat interval (seconds)
+
     # ─ Protocol & feature toggles ─
     PROTOCOL_VERSION: 2025-03-26
     MCPGATEWAY_UI_ENABLED: "true"    # toggle Admin UI
@@ -326,7 +339,7 @@ mcpContextForge:
     PLUGINS_CLI_MARKUP_MODE: "rich"  # set markup mode for plugins CLI (rich, markdown, or disabled)
 
     # ─ OpenTelemetry Observability ─
-    OTEL_ENABLE_OBSERVABILITY: "true" # master switch for observability
+    OTEL_ENABLE_OBSERVABILITY: "false" # master switch for observability
     OTEL_TRACES_EXPORTER: "otlp"     # traces exporter: otlp, jaeger, zipkin, console, none
     OTEL_EXPORTER_OTLP_PROTOCOL: "grpc" # OTLP protocol: grpc or http
     OTEL_EXPORTER_OTLP_INSECURE: "true" # use insecure connection for OTLP

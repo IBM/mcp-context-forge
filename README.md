@@ -1874,7 +1874,7 @@ MCP Gateway includes **vendor-agnostic OpenTelemetry support** for distributed t
 
 | Setting                         | Description                                    | Default               | Options                                    |
 | ------------------------------- | ---------------------------------------------- | --------------------- | ------------------------------------------ |
-| `OTEL_ENABLE_OBSERVABILITY`     | Master switch for observability               | `true`                | `true`, `false`                           |
+| `OTEL_ENABLE_OBSERVABILITY`     | Master switch for observability               | `false`               | `true`, `false`                           |
 | `OTEL_SERVICE_NAME`             | Service identifier in traces                   | `mcp-gateway`         | string                                     |
 | `OTEL_SERVICE_VERSION`          | Service version in traces                      | `0.9.0`               | string                                     |
 | `OTEL_DEPLOYMENT_ENVIRONMENT`   | Environment tag (dev/staging/prod)            | `development`         | string                                     |
@@ -2088,6 +2088,15 @@ ENABLE_METRICS=false
 | `MESSAGE_TTL`             | Message retention (secs)   | `600`    | int > 0                  |
 | `REDIS_MAX_RETRIES`       | Max Retry Attempts         | `3`      | int > 0                  |
 | `REDIS_RETRY_INTERVAL_MS` | Retry Interval (ms)        | `2000`   | int > 0                  |
+| `REDIS_MAX_CONNECTIONS`   | Connection pool size       | `50`     | int > 0                  |
+| `REDIS_SOCKET_TIMEOUT`    | Socket timeout (secs)      | `2.0`    | float > 0                |
+| `REDIS_SOCKET_CONNECT_TIMEOUT` | Connect timeout (secs) | `2.0`   | float > 0                |
+| `REDIS_RETRY_ON_TIMEOUT`  | Retry on timeout           | `true`   | bool                     |
+| `REDIS_HEALTH_CHECK_INTERVAL` | Health check (secs)    | `30`     | int >= 0                 |
+| `REDIS_DECODE_RESPONSES`  | Return strings vs bytes    | `true`   | bool                     |
+| `REDIS_LEADER_TTL`        | Leader election TTL (secs) | `15`     | int > 0                  |
+| `REDIS_LEADER_KEY`        | Leader key name            | `gateway_service_leader` | string |
+| `REDIS_LEADER_HEARTBEAT_INTERVAL` | Heartbeat (secs)   | `5`      | int > 0                  |
 
 > 🧠 `none` disables caching entirely. Use `memory` for dev, `database` for local persistence, or `redis` for distributed caching across multiple instances.
 

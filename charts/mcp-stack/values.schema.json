@@ -430,6 +430,53 @@
               "description": "Redis retry interval in milliseconds",
               "default": "2000"
             },
+            "REDIS_MAX_CONNECTIONS": {
+              "type": "string",
+              "description": "Redis connection pool size per worker",
+              "default": "50"
+            },
+            "REDIS_SOCKET_TIMEOUT": {
+              "type": "string",
+              "description": "Redis socket read/write timeout in seconds",
+              "default": "2.0"
+            },
+            "REDIS_SOCKET_CONNECT_TIMEOUT": {
+              "type": "string",
+              "description": "Redis connection timeout in seconds",
+              "default": "2.0"
+            },
+            "REDIS_RETRY_ON_TIMEOUT": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Retry Redis commands on timeout",
+              "default": "true"
+            },
+            "REDIS_HEALTH_CHECK_INTERVAL": {
+              "type": "string",
+              "description": "Redis health check interval in seconds (0=disabled)",
+              "default": "30"
+            },
+            "REDIS_DECODE_RESPONSES": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Return strings instead of bytes from Redis",
+              "default": "true"
+            },
+            "REDIS_LEADER_TTL": {
+              "type": "string",
+              "description": "Redis leader election TTL in seconds",
+              "default": "15"
+            },
+            "REDIS_LEADER_KEY": {
+              "type": "string",
+              "description": "Redis leader election key name",
+              "default": "gateway_service_leader"
+            },
+            "REDIS_LEADER_HEARTBEAT_INTERVAL": {
+              "type": "string",
+              "description": "Redis leader heartbeat interval in seconds",
+              "default": "5"
+            },
             "DB_MAX_RETRIES": {
               "type": "string",
               "description": "Database max retries",

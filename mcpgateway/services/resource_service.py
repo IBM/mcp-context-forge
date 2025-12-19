@@ -160,6 +160,7 @@ class ResourceService:
     async def initialize(self) -> None:
         """Initialize the service."""
         logger.info("Initializing resource service")
+        await self._event_service.initialize()
 
     async def shutdown(self) -> None:
         """Shutdown the service."""
