@@ -1263,6 +1263,7 @@ class TestGatewayService:
                 mock_settings.redis_url = "redis://localhost:6379"
                 mock_settings.redis_leader_key = "gateway_service_leader"
                 mock_settings.redis_leader_ttl = 15
+                mock_settings.redis_leader_heartbeat_interval = 5
 
                 # First-Party
                 from mcpgateway.services.gateway_service import GatewayService
