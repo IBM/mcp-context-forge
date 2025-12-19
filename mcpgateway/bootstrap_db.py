@@ -35,7 +35,7 @@ from contextlib import contextmanager
 from importlib.resources import files
 import os
 import tempfile
-from typing import Any, cast
+from typing import cast
 
 # Third-Party
 from alembic import command
@@ -71,6 +71,12 @@ def advisory_lock(conn: Connection):
 
     Args:
         conn: Active SQLAlchemy connection
+
+    Yields:
+        None
+
+    Raises:
+        TimeoutError: If the lock cannot be acquired within the timeout period
     """
     dialect = conn.dialect.name
     lock_id = "mcpgateway_migration"
@@ -86,7 +92,7 @@ def advisory_lock(conn: Connection):
             logger.info("Releasing Postgres advisory lock...")
             conn.execute(text(f"SELECT pg_advisory_unlock({pg_lock_id})"))
 
-    elif dialect == "mysql" or dialect == "mariadb":
+    elif dialect in ["mysql", "mariadb"]:
         logger.info("Acquiring MySQL advisory lock...")
         # GET_LOCK returns 1 if successful, 0 if timed out, NULL on error
         result = conn.execute(text(f"SELECT GET_LOCK('{lock_id}', {_MIGRATION_LOCK_TIMEOUT})")).scalar()
@@ -112,6 +118,9 @@ async def bootstrap_admin_user(conn: Connection) -> None:
 
     Creates the admin user if email authentication is enabled and the user doesn't exist.
     Also creates a personal team for the admin user if auto-creation is enabled.
+
+    Args:
+        conn: Active SQLAlchemy connection
     """
     if not settings.email_auth_enabled:
         logger.info("Email authentication disabled - skipping admin user bootstrap")
@@ -166,6 +175,9 @@ async def bootstrap_default_roles(conn: Connection) -> None:
 
     Creates essential RBAC roles and assigns administrative privileges
     to the platform admin user.
+
+    Args:
+        conn: Active SQLAlchemy connection
     """
     if not settings.email_auth_enabled:
         logger.info("Email authentication disabled - skipping default roles bootstrap")
@@ -269,6 +281,9 @@ def normalize_team_visibility(conn: Connection) -> int:
 
     Any team with an unsupported visibility (e.g., 'team') is set to 'private'.
 
+    Args:
+        conn: Active SQLAlchemy connection
+
     Returns:
         int: Number of teams updated
     """
@@ -297,6 +312,9 @@ async def bootstrap_resource_assignments(conn: Connection) -> None:
     This ensures existing resources (from pre-multitenancy versions) are
     visible in the new team-based UI by assigning them to the admin's
     personal team with public visibility.
+
+    Args:
+        conn: Active SQLAlchemy connection
     """
     if not settings.email_auth_enabled:
         logger.info("Email authentication disabled - skipping resource assignment")
@@ -368,6 +386,9 @@ async def main() -> None:
 
     Args:
         None
+
+    Raises:
+        Exception: If migration or bootstrap fails
     """
     engine = create_engine(settings.database_url)
     ini_path = files("mcpgateway").joinpath("alembic.ini")
@@ -440,4 +461,3 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-
