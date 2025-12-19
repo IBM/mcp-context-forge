@@ -782,6 +782,8 @@ async def version_endpoint(
 
         >>> # Test with Redis available (using shared client factory)
         >>> async def test_with_redis():
+        ...     from mcpgateway.utils.redis_client import _reset_client
+        ...     _reset_client()  # Reset shared client state for clean test
         ...     mock_redis = AsyncMock()
         ...     mock_redis.ping = AsyncMock(return_value=True)
         ...     mock_redis.info = AsyncMock(return_value={"redis_version": "7.0.5"})
@@ -802,6 +804,7 @@ async def version_endpoint(
         ...                     mock_redis.info.assert_called_once()
         ...                     # Verify payload was built with Redis info
         ...                     mock_build.assert_called_once_with("7.0.5", True)
+        ...                     _reset_client()  # Clean up after test
         ...                     return response
         >>>
         >>> response = asyncio.run(test_with_redis())
