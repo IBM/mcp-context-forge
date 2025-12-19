@@ -39,6 +39,11 @@ class TestPKCEFlowIntegration:
             with patch("mcpgateway.config.get_settings") as mock_settings:
                 # Configure settings to use database cache
                 mock_settings.return_value.cache_type = "database"
+                mock_settings.return_value.auth_encryption_secret.get_secret_value.return_value = "test-secret-key-1234567890"
+                mock_settings.return_value.gateway_tool_name_separator = "-"
+                mock_settings.return_value.argon2id_time_cost = 1
+                mock_settings.return_value.argon2id_memory_cost = 65536
+                mock_settings.return_value.argon2id_parallelism = 1
 
                 token_storage = TokenStorageService(test_db)
                 oauth_manager = OAuthManager(token_storage=token_storage)

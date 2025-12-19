@@ -1059,7 +1059,7 @@ class ToolService:
         # Access control validation
         tool_team_id = getattr(tool, "team_id", None)
 
-        if tool.visibility is not "public" or tool_team_id not in (allowed_team_ids or []):
+        if tool.visibility != "public" or tool_team_id not in (allowed_team_ids or []):
             logger.info(f"User does not have access to tool {tool_id} with visibility {tool.visibility} and team {tool_team_id}")
             raise ToolNotFoundError(f"Tool not found: {tool_id}")
 
