@@ -457,6 +457,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await a2a_service.initialize()
         await resource_cache.initialize()
         await streamable_http_session.initialize()
+        await session_registry.initialize()
 
         # Initialize elicitation service
         if settings.mcpgateway_elicitation_enabled:
@@ -570,6 +571,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             resource_service,
             tool_service,
             streamable_http_session,
+            session_registry,
         ]
 
         if a2a_service:

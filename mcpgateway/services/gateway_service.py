@@ -348,6 +348,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             self._instance_id = str(uuid.uuid4())  # Unique ID for this process
             self._leader_key = settings.redis_leader_key
             self._leader_ttl = settings.redis_leader_ttl
+            self._leader_heartbeat_interval = settings.redis_leader_heartbeat_interval
+            self._leader_heartbeat_task: Optional[asyncio.Task] = None
         elif settings.cache_type != "none":
             # Fallback: File-based lock
             temp_dir = tempfile.gettempdir()
@@ -438,8 +440,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             is_leader = await self._redis_client.set(self._leader_key, self._instance_id, ex=self._leader_ttl, nx=True)
             if is_leader:
-                logger.info("Acquired Redis leadership. Starting health check task.")
+                logger.info("Acquired Redis leadership. Starting health check and heartbeat tasks.")
                 self._health_check_task = asyncio.create_task(self._run_health_checks(db, user_email))
+                self._leader_heartbeat_task = asyncio.create_task(self._run_leader_heartbeat())
         else:
             # Always create the health check task in filelock mode; leader check is handled inside.
             self._health_check_task = asyncio.create_task(self._run_health_checks(db, user_email))
@@ -464,6 +467,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             self._health_check_task.cancel()
             try:
                 await self._health_check_task
+            except asyncio.CancelledError:
+                pass
+
+        # Cancel leader heartbeat task if running
+        if getattr(self, "_leader_heartbeat_task", None):
+            self._leader_heartbeat_task.cancel()
+            try:
+                await self._leader_heartbeat_task
             except asyncio.CancelledError:
                 pass
 
@@ -3027,6 +3038,38 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             return None
         return GatewayRead.model_validate(result)
 
+    async def _run_leader_heartbeat(self) -> None:
+        """Run leader heartbeat loop to keep leader key alive.
+
+        This runs independently from health checks to ensure the leader key
+        is refreshed frequently enough (every redis_leader_heartbeat_interval seconds)
+        to prevent expiration during long-running health check operations.
+
+        The loop exits if this instance loses leadership.
+        """
+        while True:
+            try:
+                await asyncio.sleep(self._leader_heartbeat_interval)
+
+                if not self._redis_client:
+                    return
+
+                # Check if we're still the leader
+                current_leader = await self._redis_client.get(self._leader_key)
+                if current_leader != self._instance_id:
+                    logger.info("Lost Redis leadership, stopping heartbeat")
+                    return
+
+                # Refresh the leader key TTL
+                await self._redis_client.expire(self._leader_key, self._leader_ttl)
+                logger.debug(f"Leader heartbeat: refreshed TTL to {self._leader_ttl}s")
+
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning(f"Leader heartbeat error: {e}")
+                # Continue trying - the main health check loop will handle leadership loss
+
     async def _run_health_checks(self, db: Session, user_email: str) -> None:
         """Run health checks periodically,
         Uses Redis or FileLock - for multiple workers.
@@ -3055,10 +3098,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             try:
                 if self._redis_client and settings.cache_type == "redis":
                     # Redis-based leader check (async, decode_responses=True returns strings)
+                    # Note: Leader key TTL refresh is handled by _run_leader_heartbeat task
                     current_leader = await self._redis_client.get(self._leader_key)
                     if current_leader != self._instance_id:
                         return
-                    await self._redis_client.expire(self._leader_key, self._leader_ttl)
 
                     # Run health checks
                     gateways = await asyncio.to_thread(self._get_gateways)

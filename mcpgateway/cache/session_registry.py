@@ -425,6 +425,9 @@ class SessionRegistry(SessionBackend):
 
         if self._backend == "redis":
             # Store session marker in Redis
+            if not self._redis:
+                logger.warning(f"Redis client not initialized, skipping distributed session tracking for {session_id}")
+                return
             try:
                 await self._redis.setex(f"mcp:session:{session_id}", self._session_ttl, "1")
                 # Publish event to notify other workers
@@ -520,6 +523,8 @@ class SessionRegistry(SessionBackend):
 
         # If not in local cache, check if it exists in shared backend
         if self._backend == "redis":
+            if not self._redis:
+                return None
             try:
                 exists = await self._redis.exists(f"mcp:session:{session_id}")
                 session_exists = bool(exists)
@@ -621,6 +626,8 @@ class SessionRegistry(SessionBackend):
 
         # Remove from shared backend
         if self._backend == "redis":
+            if not self._redis:
+                return
             try:
                 await self._redis.delete(f"mcp:session:{session_id}")
                 # Notify other workers
@@ -719,6 +726,9 @@ class SessionRegistry(SessionBackend):
             self._session_message: Dict[str, Any] | None = {"session_id": session_id, "message": payload_json}
 
         elif self._backend == "redis":
+            if not self._redis:
+                logger.warning(f"Redis client not initialized, cannot broadcast to {session_id}")
+                return
             try:
                 broadcast_payload = {
                     "type": "message",
@@ -861,6 +871,9 @@ class SessionRegistry(SessionBackend):
                 await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
 
         elif self._backend == "redis":
+            if not self._redis:
+                logger.warning(f"Redis client not initialized, cannot respond to {session_id}")
+                return
             pubsub = self._redis.pubsub()
             await pubsub.subscribe(session_id)
 
@@ -1040,6 +1053,8 @@ class SessionRegistry(SessionBackend):
         It checks all local sessions, refreshes TTLs for connected sessions, and
         removes disconnected ones.
         """
+        if not self._redis:
+            return
         try:
             # Check all local sessions
             local_transports = {}

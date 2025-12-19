@@ -202,37 +202,35 @@ class EventService:
         if self._redis_client:
 
             try:
-                # PubSub requires its own dedicated connection (can't share with pool)
-                # Use centralized settings for consistent configuration
-                client = aioredis.from_url(
-                    self.redis_url,
-                    decode_responses=settings.redis_decode_responses,
-                    socket_timeout=settings.redis_socket_timeout,
-                    socket_connect_timeout=settings.redis_socket_connect_timeout,
-                )
-                pubsub = client.pubsub()
+                # Get shared Redis client from factory
+                # PubSub uses the client's connection pool but creates dedicated subscription
+                client = await get_redis_client()
+                if not client:
+                    fallback_to_local = True
+                else:
+                    pubsub = client.pubsub()
 
-                await pubsub.subscribe(self.channel_name)
+                    await pubsub.subscribe(self.channel_name)
 
-                try:
-                    async for message in pubsub.listen():
-                        if message["type"] == "message":
-                            # Yield the data portion
-                            yield json.loads(message["data"])
-                except asyncio.CancelledError:
-                    # Handle client disconnection
-                    logger.debug(f"Client disconnected from Redis subscription: {self.channel_name}")
-                    raise
-                except Exception as e:
-                    logger.error(f"Redis subscription error on {self.channel_name}: {e}")
-                    raise
-                finally:
-                    # Cleanup
                     try:
-                        await pubsub.unsubscribe(self.channel_name)
-                        await client.aclose()
+                        async for message in pubsub.listen():
+                            if message["type"] == "message":
+                                # Yield the data portion
+                                yield json.loads(message["data"])
+                    except asyncio.CancelledError:
+                        # Handle client disconnection
+                        logger.debug(f"Client disconnected from Redis subscription: {self.channel_name}")
+                        raise
                     except Exception as e:
-                        logger.warning(f"Error closing Redis subscription: {e}")
+                        logger.error(f"Redis subscription error on {self.channel_name}: {e}")
+                        raise
+                    finally:
+                        # Cleanup pubsub only (don't close shared client)
+                        try:
+                            await pubsub.unsubscribe(self.channel_name)
+                            await pubsub.aclose()
+                        except Exception as e:
+                            logger.warning(f"Error closing Redis subscription: {e}")
             except ImportError:
                 fallback_to_local = True
                 logger.error("Redis is configured but redis-py does not support asyncio or is not installed.")
