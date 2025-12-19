@@ -43,6 +43,7 @@ from mcpgateway.schemas import (
     SystemMetricsSchema,
     WorkerMetrics,
 )
+from mcpgateway.utils.redis_client import get_redis_client
 
 # Optional psutil import
 try:
@@ -63,9 +64,6 @@ try:
 except ImportError:
     aioredis = None  # type: ignore
     REDIS_AVAILABLE = False
-
-# First-Party
-from mcpgateway.utils.redis_client import get_redis_client
 
 # Optional prometheus_client import
 try:

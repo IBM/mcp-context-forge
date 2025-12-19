@@ -71,6 +71,7 @@ from sqlalchemy import text
 from mcpgateway import __version__
 from mcpgateway.config import settings
 from mcpgateway.db import engine
+from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.utils.verify_credentials import require_auth
 
 # Optional runtime dependencies
@@ -88,10 +89,6 @@ try:
 except ImportError:
     aioredis = None  # type: ignore
     REDIS_AVAILABLE = False
-
-# First-Party
-# First-Party - shared Redis client factory
-from mcpgateway.utils.redis_client import get_redis_client
 
 # Globals
 

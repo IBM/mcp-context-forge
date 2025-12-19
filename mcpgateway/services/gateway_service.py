@@ -64,9 +64,10 @@ from sqlalchemy.orm import Session
 try:
     # Third-Party - check if redis is available
     # Third-Party
-    import redis.asyncio  # noqa: F401
+    import redis.asyncio as _aioredis  # noqa: F401  # pylint: disable=unused-import
 
     REDIS_AVAILABLE = True
+    del _aioredis  # Only needed for availability check
 except ImportError:
     REDIS_AVAILABLE = False
     logging.info("Redis is not utilized in this environment.")
