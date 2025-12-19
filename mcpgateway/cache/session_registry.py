@@ -51,7 +51,7 @@ Examples:
 # Standard
 import asyncio
 from asyncio import Task
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import logging
 import time
@@ -1114,7 +1114,8 @@ class SessionRegistry(SessionBackend):
                     db_session = next(get_db())
                     try:
                         # Delete sessions that haven't been accessed for TTL seconds
-                        expiry_time = func.now() - func.make_interval(seconds=self._session_ttl)  # pylint: disable=not-callable
+                        # Use Python datetime for database-agnostic expiry calculation
+                        expiry_time = datetime.now(timezone.utc) - timedelta(seconds=self._session_ttl)
                         result = db_session.query(SessionRecord).filter(SessionRecord.last_accessed < expiry_time).delete()
                         db_session.commit()
                         return result

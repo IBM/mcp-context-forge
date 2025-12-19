@@ -143,13 +143,16 @@ class TestApplicationStartupPaths:
             patch("mcpgateway.main.sampling_handler") as mock_sampling,
             patch("mcpgateway.main.resource_cache") as mock_cache,
             patch("mcpgateway.main.streamable_http_session") as mock_session,
+            patch("mcpgateway.main.session_registry") as mock_session_registry,
+            patch("mcpgateway.main.export_service") as mock_export,
+            patch("mcpgateway.main.import_service") as mock_import,
             patch("mcpgateway.main.refresh_slugs_on_startup") as mock_refresh,
             patch("mcpgateway.main.get_redis_client", new_callable=AsyncMock) as mock_get_redis,
             patch("mcpgateway.main.close_redis_client", new_callable=AsyncMock) as mock_close_redis,
             patch("mcpgateway.routers.llmchat_router.init_redis", new_callable=AsyncMock) as mock_init_llmchat,
         ):
             # Setup all mocks
-            services = [mock_tool, mock_resource, mock_prompt, mock_gateway, mock_root, mock_completion, mock_sampling, mock_cache, mock_session]
+            services = [mock_tool, mock_resource, mock_prompt, mock_gateway, mock_root, mock_completion, mock_sampling, mock_cache, mock_session, mock_session_registry, mock_export, mock_import]
             for service in services:
                 service.initialize = AsyncMock()
                 service.shutdown = AsyncMock()
