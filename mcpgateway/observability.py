@@ -149,11 +149,11 @@ def init_telemetry() -> Optional[Any]:
         logger.info("Observability disabled via OTEL_ENABLE_OBSERVABILITY=false")
         return None
 
-    # If OpenTelemetry isn't installed, continue gracefully.
-    # Tests may patch required symbols; use fallbacks when absent.
+    # If OpenTelemetry isn't installed, return early with graceful degradation
     if not OTEL_AVAILABLE:
-        logger.warning("OpenTelemetry not installed. Proceeding with graceful fallbacks.")
-        logger.info("To enable full telemetry, install: pip install mcp-contextforge-gateway[observability]")
+        logger.warning("OpenTelemetry not installed - telemetry disabled")
+        logger.info("To enable telemetry, install: pip install mcp-contextforge-gateway[observability]")
+        return None
 
     # Get exporter type from environment
     exporter_type = os.getenv("OTEL_TRACES_EXPORTER", "otlp").lower()
