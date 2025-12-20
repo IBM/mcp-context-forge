@@ -1,3 +1,5 @@
+.env.*
+.env.postgres
 .pylint-cache/
 .pylint-cache
 *FEATURES.md

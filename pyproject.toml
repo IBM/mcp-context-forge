@@ -693,6 +693,13 @@ omit = [
 ]
 
 # --------------------------------------------------------------------
+#  Pylint - Static code analysis
+# --------------------------------------------------------------------
+[tool.pylint.main]
+# C extension modules that pylint cannot introspect - trust their members
+extension-pkg-allow-list = ["orjson"]
+
+# --------------------------------------------------------------------
 #  Interrogate - Documentation coverage tool
 # --------------------------------------------------------------------
 [tool.interrogate]

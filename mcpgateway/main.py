@@ -47,6 +47,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jsonpath_ng.ext import parse
 from jsonpath_ng.jsonpath import JSONPath
+import orjson
 from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -3998,7 +3999,7 @@ async def subscribe_roots_changes(
             str: SSE-formatted event data.
         """
         async for event in root_service.subscribe_changes():
-            yield f"data: {json.dumps(event)}\n\n"
+            yield f"data: {orjson.dumps(event).decode()}\n\n"
 
     return StreamingResponse(generate_events(), media_type="text/event-stream")
 

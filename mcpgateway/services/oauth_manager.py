@@ -24,6 +24,7 @@ from typing import Any, Dict, Optional
 
 # Third-Party
 import aiohttp
+import orjson
 from requests_oauthlib import OAuth2Session
 
 # First-Party
@@ -658,7 +659,7 @@ class OAuthManager:
                     state_key = f"oauth:state:{gateway_id}:{state}"
                     state_data = {"state": state, "gateway_id": gateway_id, "code_verifier": code_verifier, "expires_at": expires_at.isoformat(), "used": False}
                     # Store in Redis with TTL
-                    await redis.setex(state_key, STATE_TTL_SECONDS, json.dumps(state_data))
+                    await redis.setex(state_key, STATE_TTL_SECONDS, orjson.dumps(state_data))
                     logger.debug(f"Stored OAuth state in Redis for gateway {gateway_id}")
                     return
                 except Exception as e:
@@ -726,7 +727,7 @@ class OAuthManager:
                         logger.warning(f"State not found in Redis for gateway {gateway_id}")
                         return False
 
-                    state_data = json.loads(state_json)
+                    state_data = orjson.loads(state_json)
 
                     # Parse expires_at as timezone-aware datetime. If the stored value
                     # is naive, assume UTC for compatibility.
@@ -850,7 +851,7 @@ class OAuthManager:
                     if not state_json:
                         return None
 
-                    state_data = json.loads(state_json)
+                    state_data = orjson.loads(state_json)
 
                     # Check expiration
                     try:

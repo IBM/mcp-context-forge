@@ -44,6 +44,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials
 import httpx
+import orjson
 from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
 from sqlalchemy import and_, case, cast, desc, func, or_, select, String
@@ -10301,7 +10302,7 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
 
                     # SSE format
                     event_type = event.get("type", "message")
-                    event_data = json.dumps(event.get("data", {}))
+                    event_data = orjson.dumps(event.get("data", {})).decode()
 
                     yield f"event: {event_type}\ndata: {event_data}\n\n"
 
@@ -10744,11 +10745,11 @@ async def admin_stream_logs(
                             continue
 
                 # Send SSE event
-                yield f"data: {json.dumps(event)}\n\n"
+                yield f"data: {orjson.dumps(event).decode()}\n\n"
 
         except Exception as e:
             LOGGER.error(f"Error in log streaming: {e}")
-            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+            yield f"event: error\ndata: {orjson.dumps({'error': str(e)}).decode()}\n\n"
 
     return StreamingResponse(
         generate(),

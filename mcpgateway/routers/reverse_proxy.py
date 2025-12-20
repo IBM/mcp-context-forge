@@ -20,6 +20,7 @@ import uuid
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
+import orjson
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -343,12 +344,12 @@ async def sse_endpoint(
         """
         try:
             # Send initial connection event
-            yield {"event": "connected", "data": json.dumps({"sessionId": session_id, "serverInfo": session.server_info})}
+            yield {"event": "connected", "data": orjson.dumps({"sessionId": session_id, "serverInfo": session.server_info}).decode()}
 
             # TODO: Implement message queue for SSE delivery
             while not await request.is_disconnected():
                 await asyncio.sleep(30)  # Keepalive
-                yield {"event": "keepalive", "data": json.dumps({"timestamp": datetime.now(tz=timezone.utc).isoformat()})}
+                yield {"event": "keepalive", "data": orjson.dumps({"timestamp": datetime.now(tz=timezone.utc).isoformat()}).decode()}
 
         except asyncio.CancelledError:
             pass

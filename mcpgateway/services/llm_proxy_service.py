@@ -18,6 +18,7 @@ import uuid
 
 # Third-Party
 import httpx
+import orjson
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -523,7 +524,7 @@ class LLMProxyService:
                     "type": "proxy_error",
                 }
             }
-            yield f"data: {json.dumps(error_chunk)}\n\n"
+            yield f"data: {orjson.dumps(error_chunk).decode()}\n\n"
         except httpx.RequestError as e:
             error_chunk = {
                 "error": {
@@ -531,7 +532,7 @@ class LLMProxyService:
                     "type": "proxy_error",
                 }
             }
-            yield f"data: {json.dumps(error_chunk)}\n\n"
+            yield f"data: {orjson.dumps(error_chunk).decode()}\n\n"
 
     def _transform_openai_response(self, data: Dict[str, Any]) -> ChatCompletionResponse:
         """Transform OpenAI response to standard format.
@@ -684,7 +685,7 @@ class LLMProxyService:
                         }
                     ],
                 }
-                return json.dumps(chunk)
+                return orjson.dumps(chunk).decode()
 
         elif event_type == "message_stop":
             chunk = {
@@ -694,7 +695,7 @@ class LLMProxyService:
                 "model": model_id,
                 "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
             }
-            return json.dumps(chunk)
+            return orjson.dumps(chunk).decode()
 
         return None
 
@@ -742,4 +743,4 @@ class LLMProxyService:
                 ],
             }
 
-        return json.dumps(chunk)
+        return orjson.dumps(chunk).decode()
