@@ -241,25 +241,24 @@ services:
           cpus: '2'
           memory: 2G
 
-  mariadb:
-    image: mariadb:10.6
-    environment:
-      MARIADB_ROOT_PASSWORD: mysecretpassword
-      MARIADB_DATABASE: mcp
-      MARIADB_USER: mariadb
-      MARIADB_PASSWORD: mysecretpassword
-    volumes:
-      - mariadbdata:/var/lib/mysql
-    networks: [mcpnet]
-    ports:
-      - "3306:3306"
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-
+  # mariadb:
+  #   image: mariadb:10.6
+  #   environment:
+  #     MARIADB_ROOT_PASSWORD: mysecretpassword
+  #     MARIADB_DATABASE: mcp
+  #     MARIADB_USER: mariadb
+  #     MARIADB_PASSWORD: mysecretpassword
+  #   volumes:
+  #     - mariadbdata:/var/lib/mysql
+  #   networks: [mcpnet]
+  #   ports:
+  #     - "3306:3306"
+  #   healthcheck:
+  #     test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+  #     interval: 30s
+  #     timeout: 5s
+  #     retries: 5
+  #     start_period: 20s
 
   # mariadb:
   #   image: mariadb:11
@@ -347,74 +346,74 @@ services:
 ###############################################################################
 #  OPTIONAL ADMIN TOOLS - handy web UIs for DB & cache (disabled by default)
 ###############################################################################
-  pgadmin:              # 🔧 Postgres admin UI
-    image: dpage/pgadmin4:latest
-    environment:
-      - PGADMIN_DEFAULT_EMAIL=admin@example.com
-      - PGADMIN_DEFAULT_PASSWORD=changeme
-    ports:
-      - "5050:80"      # http://localhost:5050
-    volumes:
-      - pgadmindata:/var/lib/pgadmin
-    networks: [mcpnet]
-    depends_on:
-      postgres:
-        condition: service_healthy
+  # pgadmin:              # 🔧 Postgres admin UI
+  #   image: dpage/pgadmin4:latest
+  #   environment:
+  #     - PGADMIN_DEFAULT_EMAIL=admin@example.com
+  #     - PGADMIN_DEFAULT_PASSWORD=changeme
+  #   ports:
+  #     - "5050:80"      # http://localhost:5050
+  #   volumes:
+  #     - pgadmindata:/var/lib/pgadmin
+  #   networks: [mcpnet]
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
 
-  # ──────────────────────────────────────────────────────────────────────
-  # Redis Insight - a powerful Redis GUI (recently updated)
-  # ──────────────────────────────────────────────────────────────────────
-  redis_insight:                    # 🔧 Redis Insight GUI
-    image: redis/redisinsight:latest
-    container_name: redisinsight
-    restart: unless-stopped
-    networks: [mcpnet]
-    ports:
-      - "5540:5540"                 # Redis Insight UI (default 5540)
-    depends_on:          # Default stack: Postgres + Redis
-      redis:
-        condition: service_started
+  # # ──────────────────────────────────────────────────────────────────────
+  # # Redis Insight - a powerful Redis GUI (recently updated)
+  # # ──────────────────────────────────────────────────────────────────────
+  # redis_insight:                    # 🔧 Redis Insight GUI
+  #   image: redis/redisinsight:latest
+  #   container_name: redisinsight
+  #   restart: unless-stopped
+  #   networks: [mcpnet]
+  #   ports:
+  #     - "5540:5540"                 # Redis Insight UI (default 5540)
+  #   depends_on:          # Default stack: Postgres + Redis
+  #     redis:
+  #       condition: service_started
 
-    # ──────────────────────────────────────────────────────────────────────
-    # Persist data (config, logs, history) between restarts
-    # ──────────────────────────────────────────────────────────────────────
-    # volumes:
-    #   - ./redisinsight_data:/data
-    volumes:
-      - redisinsight_data:/data  # <- persist data in named volume
+  #   # ──────────────────────────────────────────────────────────────────────
+  #   # Persist data (config, logs, history) between restarts
+  #   # ──────────────────────────────────────────────────────────────────────
+  #   # volumes:
+  #   #   - ./redisinsight_data:/data
+  #   volumes:
+  #     - redisinsight_data:/data  # <- persist data in named volume
 
-    # ──────────────────────────────────────────────────────────────────────
-    # Preconfigure Redis connection(s) via env vars
-    # ──────────────────────────────────────────────────────────────────────
-    environment:
-      # Single connection (omit "*" since only one):
-      - RI_REDIS_HOST=redis         # <- your Redis hostname
-      - RI_REDIS_PORT=6379          # <- your Redis port
-      - RI_REDIS_USERNAME=default   # <- ACL/username (Redis 6+)
-      #- RI_REDIS_PASSWORD=changeme  # <- Redis AUTH password
-      #- RI_REDIS_TLS=true           # <- enable TLS
+  #   # ──────────────────────────────────────────────────────────────────────
+  #   # Preconfigure Redis connection(s) via env vars
+  #   # ──────────────────────────────────────────────────────────────────────
+  #   environment:
+  #     # Single connection (omit "*" since only one):
+  #     - RI_REDIS_HOST=redis         # <- your Redis hostname
+  #     - RI_REDIS_PORT=6379          # <- your Redis port
+  #     - RI_REDIS_USERNAME=default   # <- ACL/username (Redis 6+)
+  #     #- RI_REDIS_PASSWORD=changeme  # <- Redis AUTH password
+  #     #- RI_REDIS_TLS=true           # <- enable TLS
 
-      # Optional: validate self-signed CA instead of trusting all:
-      # - RI_REDIS_TLS_CA_PATH=/certs/selfsigned.crt
-      # - RI_REDIS_TLS_CERT_PATH=/certs/client.crt
-      # - RI_REDIS_TLS_KEY_PATH=/certs/client.key
-      # - RI_REDIS_TLS=true           # (already set above)
+  #     # Optional: validate self-signed CA instead of trusting all:
+  #     # - RI_REDIS_TLS_CA_PATH=/certs/selfsigned.crt
+  #     # - RI_REDIS_TLS_CERT_PATH=/certs/client.crt
+  #     # - RI_REDIS_TLS_KEY_PATH=/certs/client.key
+  #     # - RI_REDIS_TLS=true           # (already set above)
 
-      # ──────────────────────────────────────────────────────────────────
-      # Core Redis Insight settings
-      # ──────────────────────────────────────────────────────────────────
-      - RI_APP_HOST=0.0.0.0          # <- listen on all interfaces
-      - RI_APP_PORT=5540             # <- UI port (container-side)
+  #     # ──────────────────────────────────────────────────────────────────
+  #     # Core Redis Insight settings
+  #     # ──────────────────────────────────────────────────────────────────
+  #     - RI_APP_HOST=0.0.0.0          # <- listen on all interfaces
+  #     - RI_APP_PORT=5540             # <- UI port (container-side)
 
-      # ──────────────────────────────────────────────────────────────────
-      # (Optional) Enable HTTPS for the UI
-      # ──────────────────────────────────────────────────────────────────
-      # - RI_SERVER_TLS_KEY=/certs/tls.key
-      # - RI_SERVER_TLS_CERT=/certs/tls.crt
+  #     # ──────────────────────────────────────────────────────────────────
+  #     # (Optional) Enable HTTPS for the UI
+  #     # ──────────────────────────────────────────────────────────────────
+  #     # - RI_SERVER_TLS_KEY=/certs/tls.key
+  #     # - RI_SERVER_TLS_CERT=/certs/tls.crt
 
-  # ──────────────────────────────────────────────────────────────────────
-  # Redis Commander - a web-based Redis GUI
-  # ──────────────────────────────────────────────────────────────────────
+  # # ──────────────────────────────────────────────────────────────────────
+  # # Redis Commander - a web-based Redis GUI
+  # # ──────────────────────────────────────────────────────────────────────
   # redis_commander:       # 🔧 Redis key browser
   #   image: rediscommander/redis-commander:latest
   #   restart: unless-stopped

@@ -755,10 +755,10 @@ generate-report:                           ## Display most recent load test repo
 # help: load-test-1000        - High-load test (1000 users, 120s)
 
 # Default load test configuration
-LOADTEST_HOST ?= http://localhost:8000
-LOADTEST_USERS ?= 50
-LOADTEST_SPAWN_RATE ?= 10
-LOADTEST_RUN_TIME ?= 60s
+LOADTEST_HOST ?= http://localhost:8080
+LOADTEST_USERS ?= 1000
+LOADTEST_SPAWN_RATE ?= 100
+LOADTEST_RUN_TIME ?= 3m
 LOADTEST_LOCUSTFILE := tests/loadtest/locustfile.py
 LOADTEST_HTML_REPORT := reports/locust_report.html
 LOADTEST_CSV_PREFIX := reports/locust
@@ -794,8 +794,9 @@ load-test-ui:                              ## Start Locust web UI at http://loca
 	@echo "🔥 Starting Locust Web UI..."
 	@echo "   🌐 Open http://localhost:8089 in your browser"
 	@echo "   🎯 Default host: $(LOADTEST_HOST)"
+	@echo "   👥 Default users: $(LOADTEST_USERS), spawn rate: $(LOADTEST_SPAWN_RATE)/s"
+	@echo "   ⏱️  Default run time: $(LOADTEST_RUN_TIME)"
 	@echo ""
-	@echo "   💡 Configure users, spawn rate, and duration in the UI"
 	@echo "   💡 Use 'User classes' dropdown to select FastTimeUser, etc."
 	@echo "   💡 Start server first with 'make dev' or 'docker compose up'"
 	@echo ""
@@ -803,6 +804,9 @@ load-test-ui:                              ## Start Locust web UI at http://loca
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		locust -f $(LOADTEST_LOCUSTFILE) \
 			--host=$(LOADTEST_HOST) \
+			--users=$(LOADTEST_USERS) \
+			--spawn-rate=$(LOADTEST_SPAWN_RATE) \
+			--run-time=$(LOADTEST_RUN_TIME) \
 			--class-picker"
 
 load-test-light:                           ## Light load test (10 users, 30s)
