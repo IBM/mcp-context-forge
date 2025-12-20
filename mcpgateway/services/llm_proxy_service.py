@@ -11,7 +11,6 @@ formats and handles streaming responses.
 """
 
 # Standard
-import json
 import time
 from typing import Any, AsyncGenerator, Dict, Optional, Tuple
 import uuid
@@ -484,7 +483,7 @@ class LLMProxyService:
                             break
 
                         try:
-                            data = json.loads(data_str)
+                            data = orjson.loads(data_str)
 
                             # Transform based on provider
                             if provider.provider_type == LLMProviderType.ANTHROPIC:
@@ -502,7 +501,7 @@ class LLMProxyService:
                             if chunk:
                                 yield f"data: {chunk}\n\n"
 
-                        except json.JSONDecodeError:
+                        except orjson.JSONDecodeError:
                             continue
 
                     # Handle Ollama's newline-delimited JSON (native API only)
@@ -510,11 +509,11 @@ class LLMProxyService:
                         base_url = (provider.api_base or "").rstrip("/")
                         if not base_url.endswith("/v1"):
                             try:
-                                data = json.loads(line)
+                                data = orjson.loads(line)
                                 chunk = self._transform_ollama_stream_chunk(data, response_id, created, model.model_id)
                                 if chunk:
                                     yield f"data: {chunk}\n\n"
-                            except json.JSONDecodeError:
+                            except orjson.JSONDecodeError:
                                 continue
 
         except httpx.HTTPStatusError as e:

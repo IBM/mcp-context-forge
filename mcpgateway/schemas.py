@@ -23,13 +23,13 @@ gateway-specific extensions for federation support.
 import base64
 from datetime import datetime, timezone
 from enum import Enum
-import json
 import logging
 import re
 from typing import Any, Dict, List, Literal, Optional, Self, Union
 from urllib.parse import urlparse
 
 # Third-Party
+import orjson
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_validator, ValidationInfo
 
 # First-Party
@@ -3234,7 +3234,7 @@ class RPCRequest(BaseModel):
             return v
 
         # Check size limits (MCP recommends max 256KB for params)
-        param_size = len(json.dumps(v))
+        param_size = len(orjson.dumps(v))
         if param_size > settings.validation_max_rpc_param_size:
             raise ValueError(f"Parameters exceed maximum size of {settings.validation_max_rpc_param_size} bytes")
 
@@ -3324,8 +3324,8 @@ class AdminToolCreate(BaseModelWithConfigDict):
         if not v:
             return None
         try:
-            return json.loads(v)
-        except json.JSONDecodeError:
+            return orjson.loads(v)
+        except orjson.JSONDecodeError:
             raise ValueError("Invalid JSON")
 
 
