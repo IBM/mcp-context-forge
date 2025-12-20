@@ -18,12 +18,12 @@ from typing import Optional
 
 # Third-Party
 from fastapi import HTTPException, Request, status
-from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer
 
 # First-Party
 from mcpgateway.db import Permissions
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.verify_credentials import verify_jwt_token
 
 # Security scheme
@@ -738,7 +738,7 @@ class TokenScopingMiddleware:
 
         except HTTPException as exc:
             # Return clean JSON response instead of traceback
-            return JSONResponse(
+            return ORJSONResponse(
                 status_code=exc.status_code,
                 content={"detail": exc.detail},
             )

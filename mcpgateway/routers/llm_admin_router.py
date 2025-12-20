@@ -500,11 +500,9 @@ async def admin_test_api(
     # Standard
     import time
 
-    # Third-Party
-    from fastapi.responses import JSONResponse
-
     # First-Party
     from mcpgateway.services.llm_proxy_service import LLMProxyService
+    from mcpgateway.utils.orjson_response import ORJSONResponse
 
     db = current_user_ctx["db"]
     body = await request.json()
@@ -524,7 +522,7 @@ async def admin_test_api(
 
             model_list = [{"id": m.model_id, "owned_by": m.provider_name} for m in models]
 
-            return JSONResponse(
+            return ORJSONResponse(
                 content={
                     "success": True,
                     "test_type": "models",
@@ -563,7 +561,7 @@ async def admin_test_api(
             if response.choices and len(response.choices) > 0:
                 assistant_message = response.choices[0].message.content or ""
 
-            return JSONResponse(
+            return ORJSONResponse(
                 content={
                     "success": True,
                     "test_type": "chat",
@@ -590,7 +588,7 @@ async def admin_test_api(
     except Exception as e:
         duration_ms = int((time.time() - start_time) * 1000)
         logger.error(f"Admin test failed: {e}")
-        return JSONResponse(
+        return ORJSONResponse(
             content={
                 "success": False,
                 "error": str(e),

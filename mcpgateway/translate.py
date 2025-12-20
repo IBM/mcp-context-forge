@@ -131,9 +131,12 @@ import uuid
 # Third-Party
 from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import PlainTextResponse
 from sse_starlette.sse import EventSourceResponse
 import uvicorn
+
+# First-Party
+from mcpgateway.utils.orjson_response import ORJSONResponse
 
 try:
     # Third-Party
@@ -2043,7 +2046,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
                         for candidate in candidates:
                             if isinstance(candidate, dict) and candidate.get("id") == obj.get("id"):
                                 # return the matched response as JSON
-                                return JSONResponse(candidate)
+                                return ORJSONResponse(candidate)
 
                     # timeout -> accept and return 202
                     return PlainTextResponse("accepted (no response yet)", status_code=status.HTTP_202_ACCEPTED)

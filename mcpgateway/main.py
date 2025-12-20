@@ -792,7 +792,7 @@ async def validation_exception_handler(_request: Request, exc: ValidationError):
         ...     result.status_code
         422
     """
-    return JSONResponse(status_code=422, content=ErrorFormatter.format_validation_error(exc))
+    return ORJSONResponse(status_code=422, content=ErrorFormatter.format_validation_error(exc))
 
 
 @app.exception_handler(RequestValidationError)
@@ -826,7 +826,7 @@ async def request_validation_exception_handler(_request: Request, exc: RequestVa
             error_details.append(error_detail)
 
         response_content = {"detail": error_details}
-        return JSONResponse(status_code=422, content=response_content)
+        return ORJSONResponse(status_code=422, content=response_content)
     return await fastapi_default_validation_handler(_request, exc)
 
 
@@ -862,7 +862,7 @@ async def database_exception_handler(_request: Request, exc: IntegrityError):
         >>> hasattr(result, 'body')
         True
     """
-    return JSONResponse(status_code=409, content=ErrorFormatter.format_database_error(exc))
+    return ORJSONResponse(status_code=409, content=ErrorFormatter.format_database_error(exc))
 
 
 @app.exception_handler(PluginViolationError)
@@ -921,7 +921,7 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
         if exc.violation.plugin_name:
             violation_details["plugin_name"] = exc.violation.plugin_name
     json_rpc_error = PydanticJSONRPCError(code=status_code, message="Plugin Violation: " + message, data=violation_details)
-    return JSONResponse(status_code=200, content={"error": json_rpc_error.model_dump()})
+    return ORJSONResponse(status_code=200, content={"error": json_rpc_error.model_dump()})
 
 
 @app.exception_handler(PluginError)
@@ -978,7 +978,7 @@ async def plugin_exception_handler(_request: Request, exc: PluginError):
         if exc.error.plugin_name:
             error_details["plugin_name"] = exc.error.plugin_name
     json_rpc_error = PydanticJSONRPCError(code=status_code, message="Plugin Error: " + message, data=error_details)
-    return JSONResponse(status_code=200, content={"error": json_rpc_error.model_dump()})
+    return ORJSONResponse(status_code=200, content={"error": json_rpc_error.model_dump()})
 
 
 class DocsAuthMiddleware(BaseHTTPMiddleware):
@@ -1046,7 +1046,7 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
                 # Use dedicated docs authentication that bypasses global auth settings
                 await require_docs_auth_override(token, cookie_token)
             except HTTPException as e:
-                return JSONResponse(status_code=e.status_code, content={"detail": e.detail}, headers=e.headers if e.headers else None)
+                return ORJSONResponse(status_code=e.status_code, content={"detail": e.detail}, headers=e.headers if e.headers else None)
 
         # Proceed to next middleware or route
         return await call_next(request)
@@ -1648,14 +1648,14 @@ async def ping(request: Request, user=Depends(get_current_user)) -> JSONResponse
         logger.debug(f"Authenticated user {user} sent ping request.")
         # Return an empty result per the MCP ping specification.
         response: dict = {"jsonrpc": "2.0", "id": req_id, "result": {}}
-        return JSONResponse(content=response)
+        return ORJSONResponse(content=response)
     except Exception as e:
         error_response: dict = {
             "jsonrpc": "2.0",
             "id": req_id,  # Now req_id is always defined
             "error": {"code": -32603, "message": "Internal error", "data": str(e)},
         }
-        return JSONResponse(status_code=500, content=error_response)
+        return ORJSONResponse(status_code=500, content=error_response)
 
 
 @protocol_router.post("/notifications")
@@ -1764,7 +1764,7 @@ async def list_servers(
 
     # Check for team ID mismatch
     if team_id is not None and token_team_id is not None and team_id != token_team_id:
-        return JSONResponse(
+        return ORJSONResponse(
             content={"message": "Access issue: This API token does not have the required permissions for this team."},
             status_code=status.HTTP_403_FORBIDDEN,
         )
@@ -1847,7 +1847,7 @@ async def create_server(
 
         # Check for team ID mismatch
         if team_id is not None and token_team_id is not None and team_id != token_team_id:
-            return JSONResponse(
+            return ORJSONResponse(
                 content={"message": "Access issue: This API token does not have the required permissions for this team."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
@@ -2100,7 +2100,7 @@ async def message_endpoint(request: Request, server_id: str, user=Depends(get_cu
                 message=message,
             )
 
-        return JSONResponse(content={"status": "success"}, status_code=202)
+        return ORJSONResponse(content={"status": "success"}, status_code=202)
     except ValueError as e:
         logger.error(f"Invalid message format: {e}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -2320,7 +2320,7 @@ async def create_a2a_agent(
 
         # Check for team ID mismatch
         if team_id is not None and token_team_id is not None and team_id != token_team_id:
-            return JSONResponse(
+            return ORJSONResponse(
                 content={"message": "Access issue: This API token does not have the required permissions for this team."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
@@ -2585,7 +2585,7 @@ async def list_tools(
 
     # Check for team ID mismatch
     if team_id is not None and token_team_id is not None and team_id != token_team_id:
-        return JSONResponse(
+        return ORJSONResponse(
             content={"message": "Access issue: This API token does not have the required permissions for this team."},
             status_code=status.HTTP_403_FORBIDDEN,
         )
@@ -2653,7 +2653,7 @@ async def create_tool(
 
         # Check for team ID mismatch
         if team_id is not None and token_team_id is not None and team_id != token_team_id:
-            return JSONResponse(
+            return ORJSONResponse(
                 content={"message": "Access issue: This API token does not have the required permissions for this team."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
@@ -2968,7 +2968,7 @@ async def list_resources(
 
     # Check for team ID mismatch
     if team_id is not None and token_team_id is not None and team_id != token_team_id:
-        return JSONResponse(
+        return ORJSONResponse(
             content={"message": "Access issue: This API token does not have the required permissions for this team."},
             status_code=status.HTTP_403_FORBIDDEN,
         )
@@ -3031,7 +3031,7 @@ async def create_resource(
 
         # Check for team ID mismatch
         if team_id is not None and token_team_id is not None and team_id != token_team_id:
-            return JSONResponse(
+            return ORJSONResponse(
                 content={"message": "Access issue: This API token does not have the required permissions for this team."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
@@ -3327,7 +3327,7 @@ async def list_prompts(
 
     # Check for team ID mismatch
     if team_id is not None and token_team_id is not None and team_id != token_team_id:
-        return JSONResponse(
+        return ORJSONResponse(
             content={"message": "Access issue: This API token does not have the required permissions for this team."},
             status_code=status.HTTP_403_FORBIDDEN,
         )
@@ -3389,7 +3389,7 @@ async def create_prompt(
 
         # Check for team ID mismatch
         if team_id is not None and token_team_id is not None and team_id != token_team_id:
-            return JSONResponse(
+            return ORJSONResponse(
                 content={"message": "Access issue: This API token does not have the required permissions for this team."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
@@ -3479,10 +3479,10 @@ async def get_prompt(
         logger.error(f"Could not retrieve prompt {prompt_id}: {ex}")
         if isinstance(ex, PluginViolationError):
             # Return the actual plugin violation message
-            return JSONResponse(content={"message": ex.message, "details": str(ex.violation) if hasattr(ex, "violation") else None}, status_code=422)
+            return ORJSONResponse(content={"message": ex.message, "details": str(ex.violation) if hasattr(ex, "violation") else None}, status_code=422)
         if isinstance(ex, (ValueError, PromptError)):
             # Return the actual error message
-            return JSONResponse(content={"message": str(ex)}, status_code=422)
+            return ORJSONResponse(content={"message": str(ex)}, status_code=422)
         raise
 
     return result
@@ -3709,7 +3709,7 @@ async def list_gateways(
 
     # Check for team ID mismatch
     if team_id is not None and token_team_id is not None and team_id != token_team_id:
-        return JSONResponse(
+        return ORJSONResponse(
             content={"message": "Access issue: This API token does not have the required permissions for this team."},
             status_code=status.HTTP_403_FORBIDDEN,
         )
@@ -3757,7 +3757,7 @@ async def register_gateway(
 
         # Check for team ID mismatch
         if gateway_team_id is not None and token_team_id is not None and gateway_team_id != token_team_id:
-            return JSONResponse(
+            return ORJSONResponse(
                 content={"message": "Access issue: This API token does not have the required permissions for this team."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
@@ -3781,20 +3781,20 @@ async def register_gateway(
         )
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
-            return JSONResponse(content={"message": "Unable to connect to gateway"}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+            return ORJSONResponse(content={"message": "Unable to connect to gateway"}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
         if isinstance(ex, ValueError):
-            return JSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
+            return ORJSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, GatewayNameConflictError):
-            return JSONResponse(content={"message": "Gateway name already exists"}, status_code=status.HTTP_409_CONFLICT)
+            return ORJSONResponse(content={"message": "Gateway name already exists"}, status_code=status.HTTP_409_CONFLICT)
         if isinstance(ex, GatewayDuplicateConflictError):
-            return JSONResponse(content={"message": "Gateway already exists"}, status_code=status.HTTP_409_CONFLICT)
+            return ORJSONResponse(content={"message": "Gateway already exists"}, status_code=status.HTTP_409_CONFLICT)
         if isinstance(ex, RuntimeError):
-            return JSONResponse(content={"message": "Error during execution"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return ORJSONResponse(content={"message": "Error during execution"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
         if isinstance(ex, ValidationError):
-            return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
+            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
         if isinstance(ex, IntegrityError):
-            return JSONResponse(status_code=status.HTTP_409_CONFLICT, content=ErrorFormatter.format_database_error(ex))
-        return JSONResponse(content={"message": "Unexpected error"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return ORJSONResponse(status_code=status.HTTP_409_CONFLICT, content=ErrorFormatter.format_database_error(ex))
+        return ORJSONResponse(content={"message": "Unexpected error"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @gateway_router.get("/{gateway_id}", response_model=GatewayRead)
@@ -3855,24 +3855,24 @@ async def update_gateway(
         )
     except Exception as ex:
         if isinstance(ex, PermissionError):
-            return JSONResponse(content={"message": str(ex)}, status_code=403)
+            return ORJSONResponse(content={"message": str(ex)}, status_code=403)
         if isinstance(ex, GatewayNotFoundError):
-            return JSONResponse(content={"message": "Gateway not found"}, status_code=status.HTTP_404_NOT_FOUND)
+            return ORJSONResponse(content={"message": "Gateway not found"}, status_code=status.HTTP_404_NOT_FOUND)
         if isinstance(ex, GatewayConnectionError):
-            return JSONResponse(content={"message": "Unable to connect to gateway"}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+            return ORJSONResponse(content={"message": "Unable to connect to gateway"}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
         if isinstance(ex, ValueError):
-            return JSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
+            return ORJSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, GatewayNameConflictError):
-            return JSONResponse(content={"message": "Gateway name already exists"}, status_code=status.HTTP_409_CONFLICT)
+            return ORJSONResponse(content={"message": "Gateway name already exists"}, status_code=status.HTTP_409_CONFLICT)
         if isinstance(ex, GatewayDuplicateConflictError):
-            return JSONResponse(content={"message": "Gateway already exists"}, status_code=status.HTTP_409_CONFLICT)
+            return ORJSONResponse(content={"message": "Gateway already exists"}, status_code=status.HTTP_409_CONFLICT)
         if isinstance(ex, RuntimeError):
-            return JSONResponse(content={"message": "Error during execution"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return ORJSONResponse(content={"message": "Error during execution"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
         if isinstance(ex, ValidationError):
-            return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
+            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
         if isinstance(ex, IntegrityError):
-            return JSONResponse(status_code=status.HTTP_409_CONFLICT, content=ErrorFormatter.format_database_error(ex))
-        return JSONResponse(content={"message": "Unexpected error"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return ORJSONResponse(status_code=status.HTTP_409_CONFLICT, content=ErrorFormatter.format_database_error(ex))
+        return ORJSONResponse(content={"message": "Unexpected error"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @gateway_router.delete("/{gateway_id}")
@@ -4359,7 +4359,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         return {"jsonrpc": "2.0", "error": error["error"], "id": req_id}
     except Exception as e:
         if isinstance(e, ValueError):
-            return JSONResponse(content={"message": "Method invalid"}, status_code=422)
+            return ORJSONResponse(content={"message": "Method invalid"}, status_code=422)
         logger.error(f"RPC error: {str(e)}")
         return {
             "jsonrpc": "2.0",
@@ -4519,7 +4519,7 @@ async def utility_message_endpoint(request: Request, user=Depends(get_current_us
             message=message,
         )
 
-        return JSONResponse(content={"status": "success"}, status_code=202)
+        return ORJSONResponse(content={"status": "success"}, status_code=202)
 
     except ValueError as e:
         logger.error("Invalid message format: %s", e)
@@ -4672,11 +4672,11 @@ async def readiness_check(db: Session = Depends(get_db)):
     try:
         # Run the blocking DB check in a thread to avoid blocking the event loop
         await asyncio.to_thread(db.execute, text("SELECT 1"))
-        return JSONResponse(content={"status": "ready"}, status_code=200)
+        return ORJSONResponse(content={"status": "ready"}, status_code=200)
     except Exception as e:
         error_message = f"Readiness check failed: {str(e)}"
         logger.error(error_message)
-        return JSONResponse(content={"status": "not ready", "error": error_message}, status_code=503)
+        return ORJSONResponse(content={"status": "not ready", "error": error_message}, status_code=503)
 
 
 @app.get("/health/security", tags=["health"])

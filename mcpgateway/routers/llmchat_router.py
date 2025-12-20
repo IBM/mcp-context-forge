@@ -19,13 +19,13 @@ history management via ChatHistoryManager from mcp_client_chat_service.
 
 # Standard
 import asyncio
-import json
 import os
 from typing import Any, Dict, Optional
 
 # Third-Party
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
+import orjson
 from pydantic import BaseModel, Field
 
 try:
@@ -334,7 +334,7 @@ async def set_user_config(user_id: str, config: MCPClientConfig):
         config: Complete MCP client configuration.
     """
     if redis_client:
-        await redis_client.set(_cfg_key(user_id), json.dumps(config.model_dump()))
+        await redis_client.set(_cfg_key(user_id), orjson.dumps(config.model_dump()))
     else:
         user_configs[user_id] = config
 
@@ -352,7 +352,7 @@ async def get_user_config(user_id: str) -> Optional[MCPClientConfig]:
         data = await redis_client.get(_cfg_key(user_id))
         if not data:
             return None
-        return MCPClientConfig(**json.loads(data))
+        return MCPClientConfig(**orjson.loads(data))
     return user_configs.get(user_id)
 
 
@@ -774,7 +774,7 @@ async def token_streamer(chat_service: MCPChatService, message: str, user_id: st
             bytes: UTF-8 encoded SSE formatted lines.
         """
         yield f"event: {event_type}\n".encode("utf-8")
-        yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n".encode("utf-8")
+        yield f"data: {orjson.dumps(data).decode()}\n\n".encode("utf-8")
 
     try:
         async for ev in chat_service.chat_events(message):

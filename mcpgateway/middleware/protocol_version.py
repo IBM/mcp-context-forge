@@ -7,8 +7,10 @@ from typing import Callable
 
 # Third-Party
 from fastapi import Request, Response
-from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+
+# First-Party
+from mcpgateway.utils.orjson_response import ORJSONResponse
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +57,7 @@ class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):
         if protocol_version not in SUPPORTED_PROTOCOL_VERSIONS:
             supported = ", ".join(SUPPORTED_PROTOCOL_VERSIONS)
             logger.warning(f"Unsupported protocol version: {protocol_version}")
-            return JSONResponse(
+            return ORJSONResponse(
                 status_code=400,
                 content={"error": "Bad Request", "message": f"Unsupported protocol version: {protocol_version}. Supported versions: {supported}"},
             )

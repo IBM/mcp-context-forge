@@ -64,7 +64,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 # Third-Party
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
 
@@ -72,6 +72,7 @@ from sqlalchemy import text
 from mcpgateway import __version__
 from mcpgateway.config import settings
 from mcpgateway.db import engine
+from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.redis_client import get_redis_client, is_redis_available
 from mcpgateway.utils.verify_credentials import require_auth
 
@@ -832,4 +833,4 @@ async def version_endpoint(
     wants_html = fmt == "html" or "text/html" in request.headers.get("accept", "")
     if wants_html:
         return HTMLResponse(_render_html(payload))
-    return JSONResponse(payload)
+    return ORJSONResponse(payload)

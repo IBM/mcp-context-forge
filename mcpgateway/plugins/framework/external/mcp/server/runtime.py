@@ -266,8 +266,10 @@ class SSLCapableFastMCP(FastMCP):
         # Third-Party
         from starlette.applications import Starlette  # pylint: disable=import-outside-toplevel
         from starlette.requests import Request  # pylint: disable=import-outside-toplevel
-        from starlette.responses import JSONResponse  # pylint: disable=import-outside-toplevel
         from starlette.routing import Route  # pylint: disable=import-outside-toplevel
+
+        # First-Party
+        from mcpgateway.utils.orjson_response import ORJSONResponse  # pylint: disable=import-outside-toplevel
 
         async def health_check(_request: Request):
             """Health check endpoint for container orchestration.
@@ -275,7 +277,7 @@ class SSLCapableFastMCP(FastMCP):
             Returns:
                 JSON response with health status.
             """
-            return JSONResponse({"status": "healthy"})
+            return ORJSONResponse({"status": "healthy"})
 
         # Create a minimal Starlette app with only the health endpoint
         health_app = Starlette(routes=[Route("/health", health_check, methods=["GET"])])
@@ -309,8 +311,10 @@ class SSLCapableFastMCP(FastMCP):
         # Add health check endpoint to main app
         # Third-Party
         from starlette.requests import Request  # pylint: disable=import-outside-toplevel
-        from starlette.responses import JSONResponse  # pylint: disable=import-outside-toplevel
         from starlette.routing import Route  # pylint: disable=import-outside-toplevel
+
+        # First-Party
+        from mcpgateway.utils.orjson_response import ORJSONResponse  # pylint: disable=import-outside-toplevel
 
         async def health_check(_request: Request):
             """Health check endpoint for container orchestration.
@@ -318,7 +322,7 @@ class SSLCapableFastMCP(FastMCP):
             Returns:
                 JSON response with health status.
             """
-            return JSONResponse({"status": "healthy"})
+            return ORJSONResponse({"status": "healthy"})
 
         # Add the health route to the Starlette app
         starlette_app.routes.append(Route("/health", health_check, methods=["GET"]))
