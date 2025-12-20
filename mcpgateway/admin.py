@@ -129,6 +129,7 @@ from mcpgateway.services.tool_service import ToolError, ToolNameConflictError, T
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
+from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.pagination import generate_pagination_links
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
@@ -1244,7 +1245,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         )
     except KeyError as e:
         # Convert KeyError to ValidationError-like response
-        return JSONResponse(content={"message": f"Missing required field: {e}", "success": False}, status_code=422)
+        return ORJSONResponse(content={"message": f"Missing required field: {e}", "success": False}, status_code=422)
     try:
         user_email = get_user_email(user)
         # Determine personal team for default assignment
@@ -1269,25 +1270,25 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             team_id=team_id_cast,
             visibility=visibility,
         )
-        return JSONResponse(
+        return ORJSONResponse(
             content={"message": "Server created successfully!", "success": True},
             status_code=200,
         )
 
     except CoreValidationError as ex:
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=422)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
     except ServerNameConflictError as ex:
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except ServerError as ex:
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except ValueError as ex:
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=400)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
     except ValidationError as ex:
-        return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+        return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
     except IntegrityError as ex:
-        return JSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
+        return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
     except Exception as ex:
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/servers/{server_id}/edit")
@@ -1482,28 +1483,28 @@ async def admin_edit_server(
             modified_user_agent=mod_metadata["modified_user_agent"],
         )
 
-        return JSONResponse(
+        return ORJSONResponse(
             content={"message": "Server updated successfully!", "success": True},
             status_code=200,
         )
     except (ValidationError, CoreValidationError) as ex:
         # Catch both Pydantic and pydantic_core validation errors
-        return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+        return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
     except ServerNameConflictError as ex:
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except ServerError as ex:
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except ValueError as ex:
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=400)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
     except RuntimeError as ex:
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except IntegrityError as ex:
-        return JSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
+        return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
     except PermissionError as e:
         LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
-        return JSONResponse(content={"message": str(e), "success": False}, status_code=403)
+        return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
     except Exception as ex:
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/servers/{server_id}/toggle")
@@ -4723,7 +4724,7 @@ async def admin_list_users(
             users_data = []
             for user_obj in users:
                 users_data.append({"email": user_obj.email, "full_name": user_obj.full_name, "is_active": user_obj.is_active, "is_admin": user_obj.is_admin})
-            return JSONResponse(content={"users": users_data})
+            return ORJSONResponse(content={"users": users_data})
 
         # Generate HTML for users
         users_html = ""
@@ -6950,25 +6951,25 @@ async def admin_add_tool(
             import_batch_id=metadata["import_batch_id"],
             federation_source=metadata["federation_source"],
         )
-        return JSONResponse(
+        return ORJSONResponse(
             content={"message": "Tool registered successfully!", "success": True},
             status_code=200,
         )
     except IntegrityError as ex:
         error_message = ErrorFormatter.format_database_error(ex)
         LOGGER.error(f"IntegrityError in admin_add_tool: {error_message}")
-        return JSONResponse(status_code=409, content=error_message)
+        return ORJSONResponse(status_code=409, content=error_message)
     except ToolNameConflictError as ex:
         LOGGER.error(f"ToolNameConflictError in admin_add_tool: {str(ex)}")
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except ToolError as ex:
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except ValidationError as ex:  # This block should catch ValidationError
         LOGGER.error(f"ValidationError in admin_add_tool: {str(ex)}")
-        return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+        return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
     except Exception as ex:
         LOGGER.error(f"Unexpected error in admin_add_tool: {str(ex)}")
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/tools/{tool_id}/edit/", response_model=None)
@@ -7218,29 +7219,29 @@ async def admin_edit_tool(
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
         )
-        return JSONResponse(content={"message": "Edit tool successfully", "success": True}, status_code=200)
+        return ORJSONResponse(content={"message": "Edit tool successfully", "success": True}, status_code=200)
     except PermissionError as e:
         LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
-        return JSONResponse(
+        return ORJSONResponse(
             content={"message": str(e), "success": False},
             status_code=403,
         )
     except IntegrityError as ex:
         error_message = ErrorFormatter.format_database_error(ex)
         LOGGER.error(f"IntegrityError in admin_tool_resource: {error_message}")
-        return JSONResponse(status_code=409, content=error_message)
+        return ORJSONResponse(status_code=409, content=error_message)
     except ToolNameConflictError as ex:
         LOGGER.error(f"ToolNameConflictError in admin_edit_tool: {str(ex)}")
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except ToolError as ex:
         LOGGER.error(f"ToolError in admin_edit_tool: {str(ex)}")
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except ValidationError as ex:  # Catch Pydantic validation errors
         LOGGER.error(f"ValidationError in admin_edit_tool: {str(ex)}")
-        return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+        return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
     except Exception as ex:  # Generic catch-all for unexpected errors
         LOGGER.error(f"Unexpected error in admin_edit_tool: {str(ex)}")
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/tools/{tool_id}/delete")
@@ -7820,17 +7821,17 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         )
     except KeyError as e:
         # Convert KeyError to ValidationError-like response
-        return JSONResponse(content={"message": f"Missing required field: {e}", "success": False}, status_code=422)
+        return ORJSONResponse(content={"message": f"Missing required field: {e}", "success": False}, status_code=422)
 
     except ValidationError as ex:
         # --- Getting only the custom message from the ValueError ---
         error_ctx = [str(err["ctx"]["error"]) for err in ex.errors()]
-        return JSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
+        return ORJSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
 
     except RuntimeError as re:
         # --- Getting only the custom message from the ValueError ---
         error_ctx = [str(re)]
-        return JSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
+        return ORJSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
 
     user_email = get_user_email(user)
     team_id = form.get("team_id", None)
@@ -7868,27 +7869,27 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
                 "4. Return to the admin panel\n\n"
                 "Tools will not work until OAuth authorization is completed."
             )
-        return JSONResponse(
+        return ORJSONResponse(
             content={"message": message, "success": True},
             status_code=200,
         )
 
     except GatewayConnectionError as ex:
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=502)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
     except GatewayDuplicateConflictError as ex:
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except GatewayNameConflictError as ex:
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except ValueError as ex:
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=400)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
     except RuntimeError as ex:
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except ValidationError as ex:
-        return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+        return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
     except IntegrityError as ex:
-        return JSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
+        return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
     except Exception as ex:
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 # OAuth callback is now handled by the dedicated OAuth router at /oauth/callback
@@ -8139,28 +8140,28 @@ async def admin_edit_gateway(
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
         )
-        return JSONResponse(
+        return ORJSONResponse(
             content={"message": "Gateway updated successfully!", "success": True},
             status_code=200,
         )
     except PermissionError as e:
         LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
-        return JSONResponse(
+        return ORJSONResponse(
             content={"message": str(e), "success": False},
             status_code=403,
         )
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
-            return JSONResponse(content={"message": str(ex), "success": False}, status_code=502)
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
         if isinstance(ex, ValueError):
-            return JSONResponse(content={"message": str(ex), "success": False}, status_code=400)
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
         if isinstance(ex, RuntimeError):
-            return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
         if isinstance(ex, ValidationError):
-            return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
-            return JSONResponse(status_code=409, content=ErrorFormatter.format_database_error(ex))
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+            return ORJSONResponse(status_code=409, content=ErrorFormatter.format_database_error(ex))
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/gateways/{gateway_id}/delete")
@@ -8548,7 +8549,7 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
             owner_email=user_email,
             visibility=visibility,
         )
-        return JSONResponse(
+        return ORJSONResponse(
             content={"message": "Add resource registered successfully!", "success": True},
             status_code=200,
         )
@@ -8566,16 +8567,16 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
 
         if isinstance(ex, ValidationError):
             LOGGER.error(f"ValidationError in admin_add_resource: {ErrorFormatter.format_validation_error(ex)}")
-            return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
             error_message = ErrorFormatter.format_database_error(ex)
             LOGGER.error(f"IntegrityError in admin_add_resource: {error_message}")
-            return JSONResponse(status_code=409, content=error_message)
+            return ORJSONResponse(status_code=409, content=error_message)
         if isinstance(ex, ResourceURIConflictError):
             LOGGER.error(f"ResourceURIConflictError in admin_add_resource: {ex}")
-            return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
         LOGGER.error(f"Error in admin_add_resource: {ex}")
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/resources/{resource_id}/edit")
@@ -8700,26 +8701,26 @@ async def admin_edit_resource(
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=get_user_email(user),
         )
-        return JSONResponse(
+        return ORJSONResponse(
             content={"message": "Resource updated successfully!", "success": True},
             status_code=200,
         )
     except PermissionError as e:
         LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
-        return JSONResponse(content={"message": str(e), "success": False}, status_code=403)
+        return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
     except Exception as ex:
         if isinstance(ex, ValidationError):
             LOGGER.error(f"ValidationError in admin_edit_resource: {ErrorFormatter.format_validation_error(ex)}")
-            return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
             error_message = ErrorFormatter.format_database_error(ex)
             LOGGER.error(f"IntegrityError in admin_edit_resource: {error_message}")
-            return JSONResponse(status_code=409, content=error_message)
+            return ORJSONResponse(status_code=409, content=error_message)
         if isinstance(ex, ResourceURIConflictError):
             LOGGER.error(f"ResourceURIConflictError in admin_edit_resource: {ex}")
-            return JSONResponse(status_code=409, content={"message": str(ex), "success": False})
+            return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
         LOGGER.error(f"Error in admin_edit_resource: {ex}")
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/resources/{resource_id}/delete")
@@ -9128,23 +9129,23 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
             owner_email=user_email,
             visibility=visibility,
         )
-        return JSONResponse(
+        return ORJSONResponse(
             content={"message": "Prompt registered successfully!", "success": True},
             status_code=200,
         )
     except Exception as ex:
         if isinstance(ex, ValidationError):
             LOGGER.error(f"ValidationError in admin_add_prompt: {ErrorFormatter.format_validation_error(ex)}")
-            return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
             error_message = ErrorFormatter.format_database_error(ex)
             LOGGER.error(f"IntegrityError in admin_add_prompt: {error_message}")
-            return JSONResponse(status_code=409, content=error_message)
+            return ORJSONResponse(status_code=409, content=error_message)
         if isinstance(ex, PromptNameConflictError):
             LOGGER.error(f"PromptNameConflictError in admin_add_prompt: {ex}")
-            return JSONResponse(status_code=409, content={"message": str(ex), "success": False})
+            return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
         LOGGER.error(f"Error in admin_add_prompt: {ex}")
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/prompts/{prompt_id}/edit")
@@ -9259,26 +9260,26 @@ async def admin_edit_prompt(
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
         )
-        return JSONResponse(
+        return ORJSONResponse(
             content={"message": "Prompt updated successfully!", "success": True},
             status_code=200,
         )
     except PermissionError as e:
         LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
-        return JSONResponse(content={"message": str(e), "success": False}, status_code=403)
+        return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
     except Exception as ex:
         if isinstance(ex, ValidationError):
             LOGGER.error(f"ValidationError in admin_edit_prompt: {ErrorFormatter.format_validation_error(ex)}")
-            return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
             error_message = ErrorFormatter.format_database_error(ex)
             LOGGER.error(f"IntegrityError in admin_edit_prompt: {error_message}")
-            return JSONResponse(status_code=409, content=error_message)
+            return ORJSONResponse(status_code=409, content=error_message)
         if isinstance(ex, PromptNameConflictError):
             LOGGER.error(f"PromptNameConflictError in admin_edit_prompt: {ex}")
-            return JSONResponse(status_code=409, content={"message": str(ex), "success": False})
+            return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
         LOGGER.error(f"Error in admin_edit_prompt: {ex}")
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/prompts/{prompt_id}/delete")
@@ -10458,13 +10459,13 @@ async def admin_import_tools(
                 payload = await request.json()
             except Exception as ex:
                 LOGGER.exception("Invalid JSON body")
-                return JSONResponse({"success": False, "message": f"Invalid JSON: {ex}"}, status_code=422)
+                return ORJSONResponse({"success": False, "message": f"Invalid JSON: {ex}"}, status_code=422)
         else:
             try:
                 form = await request.form()
             except Exception as ex:
                 LOGGER.exception("Invalid form body")
-                return JSONResponse({"success": False, "message": f"Invalid form data: {ex}"}, status_code=422)
+                return ORJSONResponse({"success": False, "message": f"Invalid form data: {ex}"}, status_code=422)
             # Check for file upload first
             if "tools_file" in form:
                 file = form["tools_file"]
@@ -10474,27 +10475,27 @@ async def admin_import_tools(
                         payload = json.loads(content.decode("utf-8"))
                     except (json.JSONDecodeError, UnicodeDecodeError) as ex:
                         LOGGER.exception("Invalid JSON file")
-                        return JSONResponse({"success": False, "message": f"Invalid JSON file: {ex}"}, status_code=422)
+                        return ORJSONResponse({"success": False, "message": f"Invalid JSON file: {ex}"}, status_code=422)
                 else:
-                    return JSONResponse({"success": False, "message": "Invalid file upload"}, status_code=422)
+                    return ORJSONResponse({"success": False, "message": "Invalid file upload"}, status_code=422)
             else:
                 # Check for JSON in form fields
                 raw_val = form.get("tools") or form.get("tools_json") or form.get("json") or form.get("payload")
                 raw = raw_val if isinstance(raw_val, str) else None
                 if not raw:
-                    return JSONResponse({"success": False, "message": "Missing tools/tools_json/json/payload form field."}, status_code=422)
+                    return ORJSONResponse({"success": False, "message": "Missing tools/tools_json/json/payload form field."}, status_code=422)
                 try:
                     payload = json.loads(raw)
                 except Exception as ex:
                     LOGGER.exception("Invalid JSON in form field")
-                    return JSONResponse({"success": False, "message": f"Invalid JSON: {ex}"}, status_code=422)
+                    return ORJSONResponse({"success": False, "message": f"Invalid JSON: {ex}"}, status_code=422)
 
         if not isinstance(payload, list):
-            return JSONResponse({"success": False, "message": "Payload must be a JSON array of tools."}, status_code=422)
+            return ORJSONResponse({"success": False, "message": "Payload must be a JSON array of tools."}, status_code=422)
 
         max_batch = settings.mcpgateway_bulk_import_max_tools
         if len(payload) > max_batch:
-            return JSONResponse({"success": False, "message": f"Too many tools ({len(payload)}). Max {max_batch}."}, status_code=413)
+            return ORJSONResponse({"success": False, "message": f"Too many tools ({len(payload)}). Max {max_batch}."}, status_code=413)
 
         created, errors = [], []
 
@@ -10564,7 +10565,7 @@ async def admin_import_tools(
         else:
             rd["message"] = f"Imported {len(created)} of {len(payload)} tools. {len(errors)} failed."
 
-        return JSONResponse(
+        return ORJSONResponse(
             response_data,
             status_code=200,  # Always return 200, success field indicates if all succeeded
         )
@@ -10575,7 +10576,7 @@ async def admin_import_tools(
     except Exception as ex:
         # absolute catch-all: report instead of crashing
         LOGGER.exception("Fatal error in admin_import_tools")
-        return JSONResponse({"success": False, "message": str(ex)}, status_code=500)
+        return ORJSONResponse({"success": False, "message": str(ex)}, status_code=500)
 
 
 ####################
@@ -11200,7 +11201,7 @@ async def admin_import_preview(request: Request, db: Session = Depends(get_db), 
         # Generate preview
         preview_data = await import_service.preview_import(db=db, import_data=import_data)
 
-        return JSONResponse(content={"success": True, "preview": preview_data, "message": f"Import preview generated. Found {preview_data['summary']['total_items']} total items."})
+        return ORJSONResponse(content={"success": True, "preview": preview_data, "message": f"Import preview generated. Found {preview_data['summary']['total_items']} total items."})
 
     except ImportValidationError as e:
         LOGGER.error(f"Import validation failed for user {user}: {str(e)}")
@@ -11263,7 +11264,7 @@ async def admin_import_configuration(request: Request, db: Session = Depends(get
             db=db, import_data=import_data, conflict_strategy=conflict_strategy, dry_run=dry_run, rekey_secret=rekey_secret, imported_by=username, selected_entities=selected_entities
         )
 
-        return JSONResponse(content=status.to_dict())
+        return ORJSONResponse(content=status.to_dict())
 
     except ImportServiceError as e:
         LOGGER.error(f"Admin import failed for user {user}: {str(e)}")
@@ -11293,7 +11294,7 @@ async def admin_get_import_status(import_id: str, user=Depends(get_current_user_
     if not status:
         raise HTTPException(status_code=404, detail=f"Import {import_id} not found")
 
-    return JSONResponse(content=status.to_dict())
+    return ORJSONResponse(content=status.to_dict())
 
 
 @admin_router.get("/import/status")
@@ -11309,7 +11310,7 @@ async def admin_list_import_statuses(user=Depends(get_current_user_with_permissi
     LOGGER.debug(f"Admin user {user} requested all import statuses")
 
     statuses = import_service.list_import_statuses()
-    return JSONResponse(content=[status.to_dict() for status in statuses])
+    return ORJSONResponse(content=[status.to_dict() for status in statuses])
 
 
 # ============================================================================ #
@@ -11538,7 +11539,7 @@ async def admin_add_a2a_agent(
 
     if not a2a_service or not settings.mcpgateway_a2a_enabled:
         LOGGER.warning("A2A agent creation attempted but A2A features are disabled")
-        return JSONResponse(
+        return ORJSONResponse(
             content={"message": "A2A features are disabled!", "success": False},
             status_code=403,
         )
@@ -11694,33 +11695,33 @@ async def admin_add_a2a_agent(
             visibility=form.get("visibility", "private"),
         )
 
-        return JSONResponse(
+        return ORJSONResponse(
             content={"message": "A2A agent created successfully!", "success": True},
             status_code=200,
         )
 
     except CoreValidationError as ex:
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=422)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
     except A2AAgentNameConflictError as ex:
         LOGGER.error(f"A2A agent name conflict: {ex}")
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except A2AAgentError as ex:
         LOGGER.error(f"A2A agent error: {ex}")
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except ValidationError as ex:
         LOGGER.error(f"Validation error while creating A2A agent: {ex}")
-        return JSONResponse(
+        return ORJSONResponse(
             content=ErrorFormatter.format_validation_error(ex),
             status_code=422,
         )
     except IntegrityError as ex:
-        return JSONResponse(
+        return ORJSONResponse(
             content=ErrorFormatter.format_database_error(ex),
             status_code=409,
         )
     except Exception as ex:
         LOGGER.error(f"Error creating A2A agent: {ex}")
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/a2a/{agent_id}/edit")
@@ -11997,14 +11998,14 @@ async def admin_edit_a2a_agent(
             modified_user_agent=mod_metadata["modified_user_agent"],
         )
 
-        return JSONResponse({"message": "A2A agent updated successfully", "success": True}, status_code=200)
+        return ORJSONResponse({"message": "A2A agent updated successfully", "success": True}, status_code=200)
 
     except ValidationError as ve:
-        return JSONResponse({"message": str(ve), "success": False}, status_code=422)
+        return ORJSONResponse({"message": str(ve), "success": False}, status_code=422)
     except IntegrityError as ie:
-        return JSONResponse({"message": str(ie), "success": False}, status_code=409)
+        return ORJSONResponse({"message": str(ie), "success": False}, status_code=409)
     except Exception as e:
-        return JSONResponse({"message": str(e), "success": False}, status_code=500)
+        return ORJSONResponse({"message": str(e), "success": False}, status_code=500)
 
 
 @admin_router.post("/a2a/{agent_id}/toggle")
@@ -12137,7 +12138,7 @@ async def admin_test_a2a_agent(
         HTTPException: If A2A features are disabled
     """
     if not a2a_service or not settings.mcpgateway_a2a_enabled:
-        return JSONResponse(content={"success": False, "error": "A2A features are disabled"}, status_code=403)
+        return ORJSONResponse(content={"success": False, "error": "A2A features are disabled"}, status_code=403)
 
     try:
         user_email = get_user_email(user)
@@ -12165,11 +12166,11 @@ async def admin_test_a2a_agent(
             user_id=user_email,
         )
 
-        return JSONResponse(content={"success": True, "result": result, "agent_name": agent.name, "test_timestamp": time.time()})
+        return ORJSONResponse(content={"success": True, "result": result, "agent_name": agent.name, "test_timestamp": time.time()})
 
     except Exception as e:
         LOGGER.error(f"Error testing A2A agent {agent_id}: {e}")
-        return JSONResponse(content={"success": False, "error": str(e), "agent_id": agent_id}, status_code=500)
+        return ORJSONResponse(content={"success": False, "error": str(e), "agent_id": agent_id}, status_code=500)
 
 
 # gRPC Service Management Endpoints
@@ -12231,7 +12232,7 @@ async def admin_create_grpc_service(
         metadata = MetadataCapture.capture(request)  # pylint: disable=no-member
         user_email = get_user_email(user)
         result = await grpc_service_mgr.register_service(db, service, user_email, metadata)
-        return JSONResponse(content=jsonable_encoder(result), status_code=201)
+        return ORJSONResponse(content=jsonable_encoder(result), status_code=201)
     except GrpcServiceNameConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except GrpcServiceError as e:
@@ -12298,7 +12299,7 @@ async def admin_update_grpc_service(
         metadata = MetadataCapture.capture(request)  # pylint: disable=no-member
         user_email = get_user_email(user)
         result = await grpc_service_mgr.update_service(db, service_id, service, user_email, metadata)
-        return JSONResponse(content=jsonable_encoder(result))
+        return ORJSONResponse(content=jsonable_encoder(result))
     except GrpcServiceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except GrpcServiceNameConflictError as e:
@@ -12333,7 +12334,7 @@ async def admin_toggle_grpc_service(
     try:
         service = await grpc_service_mgr.get_service(db, service_id)
         result = await grpc_service_mgr.toggle_service(db, service_id, not service.enabled)
-        return JSONResponse(content=jsonable_encoder(result))
+        return ORJSONResponse(content=jsonable_encoder(result))
     except GrpcServiceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -12391,7 +12392,7 @@ async def admin_reflect_grpc_service(
 
     try:
         result = await grpc_service_mgr.reflect_service(db, service_id)
-        return JSONResponse(content=jsonable_encoder(result))
+        return ORJSONResponse(content=jsonable_encoder(result))
     except GrpcServiceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except GrpcServiceError as e:
@@ -12423,7 +12424,7 @@ async def admin_get_grpc_methods(
 
     try:
         methods = await grpc_service_mgr.get_service_methods(db, service_id)
-        return JSONResponse(content={"methods": methods})
+        return ORJSONResponse(content={"methods": methods})
     except GrpcServiceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -12471,11 +12472,11 @@ async def get_tools_section(
             )
             tools.append(tool_dict)
 
-        return JSONResponse(content=jsonable_encoder({"tools": tools, "team_id": team_id}))
+        return ORJSONResponse(content=jsonable_encoder({"tools": tools, "team_id": team_id}))
 
     except Exception as e:
         LOGGER.error(f"Error loading tools section: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return ORJSONResponse(content={"error": str(e)}, status_code=500)
 
 
 @admin_router.get("/sections/resources")
@@ -12526,11 +12527,11 @@ async def get_resources_section(
             )
             resources.append(resource_dict)
 
-        return JSONResponse(content={"resources": resources, "team_id": team_id})
+        return ORJSONResponse(content={"resources": resources, "team_id": team_id})
 
     except Exception as e:
         LOGGER.error(f"Error loading resources section: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return ORJSONResponse(content={"error": str(e)}, status_code=500)
 
 
 @admin_router.get("/sections/prompts")
@@ -12582,11 +12583,11 @@ async def get_prompts_section(
             )
             prompts.append(prompt_dict)
 
-        return JSONResponse(content={"prompts": prompts, "team_id": team_id})
+        return ORJSONResponse(content={"prompts": prompts, "team_id": team_id})
 
     except Exception as e:
         LOGGER.error(f"Error loading prompts section: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return ORJSONResponse(content={"error": str(e)}, status_code=500)
 
 
 @admin_router.get("/sections/servers")
@@ -12638,11 +12639,11 @@ async def get_servers_section(
             )
             servers.append(server_dict)
 
-        return JSONResponse(content={"servers": servers, "team_id": team_id})
+        return ORJSONResponse(content={"servers": servers, "team_id": team_id})
 
     except Exception as e:
         LOGGER.error(f"Error loading servers section: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return ORJSONResponse(content={"error": str(e)}, status_code=500)
 
 
 @admin_router.get("/sections/gateways")
@@ -12699,11 +12700,11 @@ async def get_gateways_section(
                 }
             gateways.append(gateway_dict)
 
-        return JSONResponse(content={"gateways": gateways, "team_id": team_id})
+        return ORJSONResponse(content={"gateways": gateways, "team_id": team_id})
 
     except Exception as e:
         LOGGER.error(f"Error loading gateways section: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return ORJSONResponse(content={"error": str(e)}, status_code=500)
 
 
 ####################
@@ -13272,7 +13273,7 @@ async def get_system_stats(
             )
 
         # Return JSON for API requests
-        return JSONResponse(content=stats)
+        return ORJSONResponse(content=stats)
 
     except Exception as e:
         LOGGER.error(f"System metrics retrieval failed for user {user}: {str(e)}", exc_info=True)
@@ -15104,7 +15105,7 @@ async def get_performance_stats(
                 },
             )
 
-        return JSONResponse(content=dashboard_data)
+        return ORJSONResponse(content=dashboard_data)
 
     except Exception as e:
         LOGGER.error(f"Performance metrics retrieval failed: {str(e)}", exc_info=True)
@@ -15133,7 +15134,7 @@ async def get_performance_system(
 
     service = get_performance_service(db)
     metrics = service.get_system_metrics()
-    return JSONResponse(content=metrics.model_dump())
+    return metrics.model_dump()
 
 
 @admin_router.get("/performance/workers")
@@ -15158,7 +15159,7 @@ async def get_performance_workers(
 
     service = get_performance_service(db)
     workers = service.get_worker_metrics()
-    return JSONResponse(content=[w.model_dump() for w in workers])
+    return [w.model_dump() for w in workers]
 
 
 @admin_router.get("/performance/requests")
@@ -15183,7 +15184,7 @@ async def get_performance_requests(
 
     service = get_performance_service(db)
     metrics = service.get_request_metrics()
-    return JSONResponse(content=metrics.model_dump())
+    return metrics.model_dump()
 
 
 @admin_router.get("/performance/cache")
@@ -15208,7 +15209,7 @@ async def get_performance_cache(
 
     service = get_performance_service(db)
     metrics = await service.get_cache_metrics()
-    return JSONResponse(content=metrics.model_dump())
+    return metrics.model_dump()
 
 
 @admin_router.get("/performance/history")
@@ -15244,4 +15245,4 @@ async def get_performance_history(
         start_time=start_time,
     )
 
-    return JSONResponse(content=history.model_dump())
+    return history.model_dump()
