@@ -187,7 +187,7 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
             if resp.status_code == 200:
                 data = resp.json()
                 items = data if isinstance(data, list) else data.get("items", [])
-                TOOL_IDS.extend([t.get("id") or t.get("name") for t in items[:50]])
+                TOOL_IDS.extend([str(t.get("id") or t.get("name")) for t in items[:50]])
                 logger.info(f"Loaded {len(TOOL_IDS)} tool IDs")
 
             # Fetch servers
@@ -195,7 +195,7 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
             if resp.status_code == 200:
                 data = resp.json()
                 items = data if isinstance(data, list) else data.get("items", [])
-                SERVER_IDS.extend([s.get("id") or s.get("name") for s in items[:50]])
+                SERVER_IDS.extend([str(s.get("id") or s.get("name")) for s in items[:50]])
                 logger.info(f"Loaded {len(SERVER_IDS)} server IDs")
 
             # Fetch gateways
@@ -203,7 +203,7 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
             if resp.status_code == 200:
                 data = resp.json()
                 items = data if isinstance(data, list) else data.get("items", [])
-                GATEWAY_IDS.extend([g.get("id") or g.get("name") for g in items[:50]])
+                GATEWAY_IDS.extend([str(g.get("id") or g.get("name")) for g in items[:50]])
                 logger.info(f"Loaded {len(GATEWAY_IDS)} gateway IDs")
 
             # Fetch resources
@@ -211,7 +211,7 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
             if resp.status_code == 200:
                 data = resp.json()
                 items = data if isinstance(data, list) else data.get("items", [])
-                RESOURCE_IDS.extend([r.get("id") or r.get("uri") for r in items[:50]])
+                RESOURCE_IDS.extend([str(r.get("id") or r.get("uri")) for r in items[:50]])
                 logger.info(f"Loaded {len(RESOURCE_IDS)} resource IDs")
 
             # Fetch prompts
@@ -219,7 +219,7 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
             if resp.status_code == 200:
                 data = resp.json()
                 items = data if isinstance(data, list) else data.get("items", [])
-                PROMPT_IDS.extend([p.get("id") or p.get("name") for p in items[:50]])
+                PROMPT_IDS.extend([str(p.get("id") or p.get("name")) for p in items[:50]])
                 logger.info(f"Loaded {len(PROMPT_IDS)} prompt IDs")
 
     except Exception as e:
