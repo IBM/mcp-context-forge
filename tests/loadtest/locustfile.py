@@ -742,44 +742,44 @@ class AdminUIUser(BaseUser):
     @task(8)
     @tag("admin", "tools")
     def admin_tools_page(self):
-        """Load tools management page."""
+        """Load tools list (JSON API)."""
         with self.client.get("/admin/tools", headers=self.admin_headers, name="/admin/tools", catch_response=True) as response:
-            self._validate_html_response(response)
+            self._validate_json_response(response)
 
     @task(7)
     @tag("admin", "servers")
     def admin_servers_page(self):
-        """Load servers management page."""
+        """Load servers list (JSON API)."""
         with self.client.get("/admin/servers", headers=self.admin_headers, name="/admin/servers", catch_response=True) as response:
-            self._validate_html_response(response)
+            self._validate_json_response(response)
 
     @task(6)
     @tag("admin", "gateways")
     def admin_gateways_page(self):
-        """Load gateways management page."""
+        """Load gateways list (JSON API)."""
         with self.client.get("/admin/gateways", headers=self.admin_headers, name="/admin/gateways", catch_response=True) as response:
-            self._validate_html_response(response)
+            self._validate_json_response(response)
 
     @task(5)
     @tag("admin", "resources")
     def admin_resources_page(self):
-        """Load resources management page."""
+        """Load resources list (JSON API)."""
         with self.client.get("/admin/resources", headers=self.admin_headers, name="/admin/resources", catch_response=True) as response:
-            self._validate_html_response(response)
+            self._validate_json_response(response)
 
     @task(5)
     @tag("admin", "prompts")
     def admin_prompts_page(self):
-        """Load prompts management page."""
+        """Load prompts list (JSON API)."""
         with self.client.get("/admin/prompts", headers=self.admin_headers, name="/admin/prompts", catch_response=True) as response:
-            self._validate_html_response(response)
+            self._validate_json_response(response)
 
     @task(4)
     @tag("admin", "a2a")
     def admin_a2a_list(self):
-        """Load A2A agents list."""
+        """Load A2A agents list (JSON API)."""
         with self.client.get("/admin/a2a", headers=self.auth_headers, name="/admin/a2a", catch_response=True) as response:
-            self._validate_html_response(response)
+            self._validate_json_response(response)
 
     @task(3)
     @tag("admin", "performance")
@@ -797,23 +797,23 @@ class AdminUIUser(BaseUser):
     @task(2)
     @tag("admin", "logs")
     def admin_logs(self):
-        """Load logs page."""
+        """Load logs (JSON API)."""
         with self.client.get("/admin/logs", headers=self.auth_headers, name="/admin/logs", catch_response=True) as response:
-            self._validate_html_response(response)
+            self._validate_json_response(response)
 
     @task(2)
     @tag("admin", "config")
     def admin_config_settings(self):
-        """Load config settings."""
+        """Load config settings (JSON API)."""
         with self.client.get("/admin/config/settings", headers=self.auth_headers, name="/admin/config/settings", catch_response=True) as response:
-            self._validate_html_response(response)
+            self._validate_json_response(response)
 
     @task(2)
     @tag("admin", "metrics")
     def admin_metrics(self):
-        """Load metrics page."""
+        """Load metrics (JSON API)."""
         with self.client.get("/admin/metrics", headers=self.admin_headers, name="/admin/metrics", catch_response=True) as response:
-            self._validate_html_response(response)
+            self._validate_json_response(response)
 
     @task(2)
     @tag("admin", "teams")
@@ -832,9 +832,9 @@ class AdminUIUser(BaseUser):
     @task(1)
     @tag("admin", "export")
     def admin_export_config(self):
-        """Load export configuration page."""
+        """Load export configuration (JSON API)."""
         with self.client.get("/admin/export/configuration", headers=self.admin_headers, name="/admin/export/configuration", catch_response=True) as response:
-            self._validate_html_response(response)
+            self._validate_json_response(response)
 
     @task(1)
     @tag("admin", "htmx", "tools")
@@ -873,7 +873,7 @@ class AdminUIUser(BaseUser):
     def admin_htmx_refresh(self):
         """Simulate HTMX partial refresh."""
         headers = {**self.admin_headers, "HX-Request": "true"}
-        endpoint = random.choice(["/admin/tools", "/admin/servers", "/admin/gateways"])
+        endpoint = random.choice(["/admin/tools/partial", "/admin/servers/partial", "/admin/gateways/partial"])
         with self.client.get(endpoint, headers=headers, name=f"{endpoint} [htmx]", catch_response=True) as response:
             self._validate_html_response(response)
 
