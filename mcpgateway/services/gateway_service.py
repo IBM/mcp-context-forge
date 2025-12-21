@@ -350,8 +350,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             self._leader_ttl = settings.redis_leader_ttl
             self._leader_heartbeat_interval = settings.redis_leader_heartbeat_interval
             self._leader_heartbeat_task: Optional[asyncio.Task] = None
-        elif settings.cache_type != "none":
-            # Fallback: File-based lock
+
+        # Always initialize file lock as fallback (used if Redis connection fails at runtime)
+        if settings.cache_type != "none":
             temp_dir = tempfile.gettempdir()
             user_path = os.path.normpath(settings.filelock_name)
             if os.path.isabs(user_path):

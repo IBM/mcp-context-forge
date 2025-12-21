@@ -50,8 +50,8 @@ def _is_hiredis_available() -> bool:
         return False
 
 
-def _get_parser_class(parser_setting: str) -> tuple[Any, str]:
-    """Get the appropriate Redis parser class based on settings.
+def _get_async_parser_class(parser_setting: str) -> tuple[Any, str]:
+    """Get the appropriate async Redis parser class based on settings.
 
     Args:
         parser_setting: One of "auto", "hiredis", or "python"
@@ -64,25 +64,24 @@ def _get_parser_class(parser_setting: str) -> tuple[Any, str]:
         ImportError: If hiredis is required but not available
     """
     if parser_setting == "python":
-        # Force pure-Python parser (redis-py 7.x uses _RESP2Parser/_RESP3Parser)
+        # Force pure-Python async parser
         # Third-Party
-        from redis._parsers import _RESP2Parser
+        from redis._parsers import _AsyncRESP2Parser
 
-        return _RESP2Parser, "RESP2Parser (pure-Python)"
+        return _AsyncRESP2Parser, "AsyncRESP2Parser (pure-Python)"
 
     if parser_setting == "hiredis":
         # Require hiredis - fail if not available
         if not _is_hiredis_available():
             raise ImportError("REDIS_PARSER=hiredis requires hiredis to be installed. " "Install with: pip install 'redis[hiredis]'")
-        # Third-Party
-        from redis._parsers import _HiredisParser
-
-        return _HiredisParser, "HiredisParser (C extension)"
+        # Don't set parser_class explicitly - let redis-py auto-detect for async
+        # Setting _AsyncHiredisParser explicitly can cause issues
+        return None, "AsyncHiredisParser (C extension)"
 
     # "auto" mode - let redis-py auto-detect (prefers hiredis if available)
     if _is_hiredis_available():
-        return None, "HiredisParser (C extension, auto-detected)"
-    return None, "RESP2Parser (pure-Python, auto-detected)"
+        return None, "AsyncHiredisParser (C extension, auto-detected)"
+    return None, "AsyncRESP2Parser (pure-Python, auto-detected)"
 
 
 async def get_redis_client() -> Optional[Any]:
@@ -133,7 +132,7 @@ async def get_redis_client() -> Optional[Any]:
 
     try:
         # Get parser configuration (ADR-026)
-        parser_class, _parser_info = _get_parser_class(settings.redis_parser)
+        parser_class, _parser_info = _get_async_parser_class(settings.redis_parser)
 
         # Build connection kwargs
         connection_kwargs: dict[str, Any] = {

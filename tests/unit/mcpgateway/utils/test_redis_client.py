@@ -14,7 +14,7 @@ import pytest
 
 # First-Party
 from mcpgateway.utils.redis_client import (
-    _get_parser_class,
+    _get_async_parser_class,
     _is_hiredis_available,
     _reset_client,
     close_redis_client,
@@ -368,17 +368,17 @@ async def test_reset_client_clears_state():
 # ---------------------------------------------------------------------------
 
 
-def test_get_parser_class_python_mode():
-    """_get_parser_class returns RESP2Parser for python mode."""
-    parser_class, parser_info = _get_parser_class("python")
+def test_get_async_parser_class_python_mode():
+    """_get_async_parser_class returns AsyncRESP2Parser for python mode."""
+    parser_class, parser_info = _get_async_parser_class("python")
 
     assert parser_class is not None
-    assert "RESP2Parser" in parser_info or "pure-Python" in parser_info
+    assert "AsyncRESP2Parser" in parser_info or "pure-Python" in parser_info
 
 
-def test_get_parser_class_auto_mode():
-    """_get_parser_class returns appropriate parser for auto mode."""
-    parser_class, parser_info = _get_parser_class("auto")
+def test_get_async_parser_class_auto_mode():
+    """_get_async_parser_class returns appropriate parser for auto mode."""
+    parser_class, parser_info = _get_async_parser_class("auto")
 
     # In auto mode, parser_class is None (let redis-py decide)
     assert parser_class is None
@@ -386,17 +386,18 @@ def test_get_parser_class_auto_mode():
     assert "auto-detected" in parser_info
 
 
-def test_get_parser_class_hiredis_mode_when_available():
-    """_get_parser_class returns HiredisParser when hiredis is available."""
+def test_get_async_parser_class_hiredis_mode_when_available():
+    """_get_async_parser_class returns None for hiredis mode (let redis-py auto-detect)."""
     if _is_hiredis_available():
-        parser_class, parser_info = _get_parser_class("hiredis")
-        assert parser_class is not None
-        assert "HiredisParser" in parser_info
+        parser_class, parser_info = _get_async_parser_class("hiredis")
+        # For async, we let redis-py auto-detect (parser_class is None)
+        assert parser_class is None
+        assert "AsyncHiredisParser" in parser_info
         assert "C extension" in parser_info
     else:
         # If hiredis is not installed, test that it raises ImportError
         with pytest.raises(ImportError) as exc_info:
-            _get_parser_class("hiredis")
+            _get_async_parser_class("hiredis")
         assert "hiredis" in str(exc_info.value)
 
 
