@@ -27,7 +27,7 @@ except ImportError as e:
     sys.exit(1)
 
 
-def TestOneInput(data: bytes) -> None:
+def TestOneInput(data: bytes) -> None:  # noqa: N802
     """Fuzz target for JSON-RPC validation.
 
     Args:

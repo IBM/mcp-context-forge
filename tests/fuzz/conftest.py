@@ -12,7 +12,6 @@ import os
 import tempfile
 
 # Third-Party
-from _pytest.monkeypatch import MonkeyPatch
 from hypothesis import HealthCheck, settings, Verbosity
 import pytest
 from sqlalchemy import create_engine
@@ -68,6 +67,7 @@ def mock_logging_services(monkeypatch):
     engine.dispose()
     os.close(fd)
     os.unlink(path)
+
 
 # Configure Hypothesis profiles for different environments
 settings.register_profile("dev", max_examples=100, verbosity=Verbosity.normal, suppress_health_check=[HealthCheck.too_slow])

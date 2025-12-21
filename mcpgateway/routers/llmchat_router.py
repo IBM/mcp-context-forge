@@ -30,9 +30,11 @@ from pydantic import BaseModel, Field
 
 try:
     # Third-Party
-    import redis.asyncio as aioredis
+    import redis.asyncio  # noqa: F401 - availability check only
+
+    REDIS_AVAILABLE = True
 except ImportError:
-    aioredis = None
+    REDIS_AVAILABLE = False
 
 # First-Party
 from mcpgateway.config import settings

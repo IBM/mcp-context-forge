@@ -15,20 +15,11 @@ All tests use mocked dependencies (Redis, LLM providers, MCP clients) to ensure
 isolation from external services.
 """
 
-import asyncio
 import json
-import os
 import pytest
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
-from unittest.mock import AsyncMock, MagicMock, Mock, patch, PropertyMock, call
+from typing import Any, Dict
+from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
-
-# FastAPI testing
-from fastapi import HTTPException
-from fastapi.testclient import TestClient
-from httpx import AsyncClient, ASGITransport
-from fastapi import FastAPI
 
 
 # ==================== FIXTURES ====================
@@ -168,7 +159,7 @@ class TestMultiWorkerCoordination:
     @pytest.mark.asyncio
     async def test_session_ttl_expiration_and_renewal(self, mock_redis):
         """Test session TTL expiration and automatic renewal"""
-        from mcpgateway.routers.llmchat_router import get_active_session, _active_key
+        from mcpgateway.routers.llmchat_router import get_active_session
 
         with patch('mcpgateway.routers.llmchat_router.redis_client', mock_redis), \
              patch('mcpgateway.routers.llmchat_router.WORKER_ID', 'worker-1'):
@@ -382,7 +373,7 @@ class TestConfigurationManagement:
     @pytest.mark.asyncio
     async def test_config_with_redis(self, mock_redis):
         """Test configuration storage with Redis"""
-        from mcpgateway.routers.llmchat_router import set_user_config, get_user_config
+        from mcpgateway.routers.llmchat_router import set_user_config
         from mcpgateway.services.mcp_client_chat_service import (
             MCPClientConfig, MCPServerConfig, LLMConfig, OllamaConfig
         )

@@ -164,7 +164,14 @@ dev = [
 [project.optional-dependencies]
 
 # Optional dependency groups (runtime)
+# Redis with hiredis C parser for up to 83x faster response parsing
+# See ADR-026 for benchmarks and decision rationale
 redis = [
+    "redis[hiredis]>=7.1.0",
+]
+
+# Pure-Python Redis parser fallback (for environments where hiredis wheels aren't available)
+redis-pure = [
     "redis>=7.1.0",
 ]
 

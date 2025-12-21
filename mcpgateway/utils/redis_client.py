@@ -4,6 +4,10 @@
 This module provides a single source of truth for Redis client creation,
 ensuring all services use the same connection pool and settings.
 
+Performance: Uses hiredis C parser by default (ADR-026) for up to 83x faster
+response parsing on large responses. Falls back to pure-Python parser if
+hiredis is unavailable or explicitly disabled via REDIS_PARSER setting.
+
 SPDX-License-Identifier: Apache-2.0
 
 Usage:
@@ -24,12 +28,67 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
+# Track which parser is being used for logging
+_parser_info: Optional[str] = None
+
 _client: Optional[Any] = None
 _initialized: bool = False
 
 
+def _is_hiredis_available() -> bool:
+    """Check if hiredis library is available and functional.
+
+    Returns:
+        bool: True if hiredis can be used, False otherwise.
+    """
+    try:
+        # Third-Party
+        import hiredis  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+def _get_async_parser_class(parser_setting: str) -> tuple[Any, str]:
+    """Get the appropriate async Redis parser class based on settings.
+
+    Args:
+        parser_setting: One of "auto", "hiredis", or "python"
+
+    Returns:
+        Tuple of (parser_class or None, parser_name) where parser_class is None
+        for auto-detection (redis-py default behavior)
+
+    Raises:
+        ImportError: If hiredis is required but not available
+    """
+    if parser_setting == "python":
+        # Force pure-Python async parser
+        # Third-Party
+        from redis._parsers import _AsyncRESP2Parser
+
+        return _AsyncRESP2Parser, "AsyncRESP2Parser (pure-Python)"
+
+    if parser_setting == "hiredis":
+        # Require hiredis - fail if not available
+        if not _is_hiredis_available():
+            raise ImportError("REDIS_PARSER=hiredis requires hiredis to be installed. " "Install with: pip install 'redis[hiredis]'")
+        # Don't set parser_class explicitly - let redis-py auto-detect for async
+        # Setting _AsyncHiredisParser explicitly can cause issues
+        return None, "AsyncHiredisParser (C extension)"
+
+    # "auto" mode - let redis-py auto-detect (prefers hiredis if available)
+    if _is_hiredis_available():
+        return None, "AsyncHiredisParser (C extension, auto-detected)"
+    return None, "AsyncRESP2Parser (pure-Python, auto-detected)"
+
+
 async def get_redis_client() -> Optional[Any]:
     """Get or create the shared async Redis client.
+
+    Uses hiredis C parser by default for up to 83x faster response parsing.
+    Parser selection controlled by REDIS_PARSER setting (auto/hiredis/python).
 
     Returns:
         Optional[Redis]: Async Redis client, or None if Redis is disabled/unavailable.
@@ -50,7 +109,7 @@ async def get_redis_client() -> Optional[Any]:
         >>> asyncio.run(test_disabled())
         True
     """
-    global _client, _initialized
+    global _client, _initialized, _parser_info
 
     if _initialized:
         return _client
@@ -72,19 +131,36 @@ async def get_redis_client() -> Optional[Any]:
         return None
 
     try:
-        _client = aioredis.from_url(
-            settings.redis_url,
-            decode_responses=settings.redis_decode_responses,
-            max_connections=settings.redis_max_connections,
-            socket_timeout=settings.redis_socket_timeout,
-            socket_connect_timeout=settings.redis_socket_connect_timeout,
-            retry_on_timeout=settings.redis_retry_on_timeout,
-            health_check_interval=settings.redis_health_check_interval,
-            encoding="utf-8",
-            single_connection_client=False,
-        )
+        # Get parser configuration (ADR-026)
+        parser_class, _parser_info = _get_async_parser_class(settings.redis_parser)
+
+        # Build connection kwargs
+        connection_kwargs: dict[str, Any] = {
+            "decode_responses": settings.redis_decode_responses,
+            "max_connections": settings.redis_max_connections,
+            "socket_timeout": settings.redis_socket_timeout,
+            "socket_connect_timeout": settings.redis_socket_connect_timeout,
+            "retry_on_timeout": settings.redis_retry_on_timeout,
+            "health_check_interval": settings.redis_health_check_interval,
+            "encoding": "utf-8",
+            "single_connection_client": False,
+        }
+
+        # Only specify parser_class if explicitly set (not auto)
+        if parser_class is not None:
+            connection_kwargs["parser_class"] = parser_class
+
+        _client = aioredis.from_url(settings.redis_url, **connection_kwargs)
         await _client.ping()
-        logger.info(f"Redis client initialized: pool_size={settings.redis_max_connections}, " f"timeout={settings.redis_socket_timeout}s, health_check={settings.redis_health_check_interval}s")
+        logger.info(
+            f"Redis client initialized: parser={_parser_info}, "
+            f"pool_size={settings.redis_max_connections}, "
+            f"timeout={settings.redis_socket_timeout}s, "
+            f"health_check={settings.redis_health_check_interval}s"
+        )
+    except ImportError as e:
+        logger.error(f"Redis parser configuration error: {e}")
+        _client = None
     except Exception as e:
         logger.warning(f"Failed to connect to Redis: {e}")
         _client = None
@@ -151,8 +227,18 @@ async def is_redis_available() -> bool:
         return False
 
 
+def get_redis_parser_info() -> Optional[str]:
+    """Get information about which Redis parser is being used.
+
+    Returns:
+        Optional[str]: Parser description string, or None if Redis not initialized.
+    """
+    return _parser_info
+
+
 def _reset_client() -> None:
     """Reset client state (for testing only)."""
-    global _client, _initialized
+    global _client, _initialized, _parser_info
     _client = None
     _initialized = False
+    _parser_info = None

@@ -384,6 +384,9 @@ REDIS_RETRY_ON_TIMEOUT=true         # Retry commands on timeout
 REDIS_HEALTH_CHECK_INTERVAL=30      # Health check interval (seconds, 0=disabled)
 REDIS_DECODE_RESPONSES=true         # Return strings instead of bytes
 
+# Redis Parser (ADR-026 - performance optimization)
+REDIS_PARSER=auto                   # auto, hiredis, python (auto uses hiredis if available)
+
 # Redis Leader Election (multi-node deployments)
 REDIS_LEADER_TTL=15                 # Leader TTL (seconds)
 REDIS_LEADER_KEY=gateway_service_leader
