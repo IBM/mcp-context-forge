@@ -127,15 +127,23 @@ services:
       - DISABLE_ACCESS_LOG=true  # Disable uvicorn access logs for performance (massive I/O overhead)
       - STRUCTURED_LOGGING_DATABASE_ENABLED=false  # Disable DB logging for performance (use true only for debugging)
       # Database pool tuning for load testing (1000 users)
-      # Formula: workers × (pool + overflow) < postgres max_connections
-      # With 2000 max_connections and 16 workers: 16 × 120 = 1920 < 2000
-      - DB_POOL_SIZE=80
-      - DB_MAX_OVERFLOW=40
-      - DB_POOL_TIMEOUT=60
-      - DB_POOL_RECYCLE=1800
+      # IMPORTANT: DB sessions are held during upstream HTTP calls, so pool must
+      # handle concurrent requests × avg_request_duration. With slow upstreams,
+      # connections pile up. Size pools generously.
+      # Formula: (replicas × workers) × (pool + overflow) < postgres max_connections
+      # With 2 replicas × 8 workers = 16 workers total
+      # With 4000 max_connections: 16 × 200 = 3200 < 4000 ✓
+      - DB_POOL_SIZE=150
+      - DB_MAX_OVERFLOW=50
+      - DB_POOL_TIMEOUT=10
+      - DB_POOL_RECYCLE=300
       - DB_POOL_PRE_PING=true
+      # Tool invocation timeout - prevents hung connections
+      - TOOL_TIMEOUT=30
+      - FEDERATION_TIMEOUT=30
       # Worker and server tuning for high-concurrency load testing
-      - GUNICORN_WORKERS=16
+      # Fewer workers = more connections per worker = better handling of slow upstreams
+      - GUNICORN_WORKERS=8
       # Granian high-concurrency tuning (for 1000 concurrent users)
       - GRANIAN_BACKLOG=4096
       - GRANIAN_BACKPRESSURE=1024
@@ -219,11 +227,11 @@ services:
     image: postgres:17
     ports:
       - "5433:5432"      # Expose for baseline load testing (5433 to avoid conflict with local postgres)
-    # Performance tuning for high-load testing (32 workers × 60 pool = 1920 connections)
+    # Performance tuning for high-load testing (2 replicas × 8 workers × 200 pool = 3200 connections)
     command:
       - "postgres"
       - "-c"
-      - "max_connections=2000"
+      - "max_connections=4000"
       - "-c"
       - "shared_buffers=512MB"
       - "-c"

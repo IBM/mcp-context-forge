@@ -240,6 +240,8 @@ if backend == "sqlite":
         cursor.execute("PRAGMA synchronous=NORMAL")
         # Increase cache size for better performance (negative value = KB)
         cursor.execute("PRAGMA cache_size=-64000")  # 64MB cache
+        # Enable foreign key constraints for ON DELETE CASCADE support
+        cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
 
 
@@ -2113,7 +2115,7 @@ class Tool(Base):
     plugin_chain_post: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
 
     # Federation relationship with a local gateway
-    gateway_id: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.id"))
+    gateway_id: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.id", ondelete="CASCADE"))
     # gateway_slug: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.slug"))
     gateway: Mapped["Gateway"] = relationship("Gateway", primaryjoin="Tool.gateway_id == Gateway.id", foreign_keys=[gateway_id], back_populates="tools")
     # federated_with = relationship("Gateway", secondary=tool_gateway_table, back_populates="federated_tools")
@@ -2374,7 +2376,7 @@ class Resource(Base):
     # Subscription tracking
     subscriptions: Mapped[List["ResourceSubscription"]] = relationship("ResourceSubscription", back_populates="resource", cascade="all, delete-orphan")
 
-    gateway_id: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.id"))
+    gateway_id: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.id", ondelete="CASCADE"))
     gateway: Mapped["Gateway"] = relationship("Gateway", back_populates="resources")
     # federated_with = relationship("Gateway", secondary=resource_gateway_table, back_populates="federated_resources")
 
@@ -2625,7 +2627,7 @@ class Prompt(Base):
 
     metrics: Mapped[List["PromptMetric"]] = relationship("PromptMetric", back_populates="prompt", cascade="all, delete-orphan")
 
-    gateway_id: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.id"))
+    gateway_id: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.id", ondelete="CASCADE"))
     gateway: Mapped["Gateway"] = relationship("Gateway", back_populates="prompts")
     # federated_with = relationship("Gateway", secondary=prompt_gateway_table, back_populates="federated_prompts")
 
@@ -2985,13 +2987,13 @@ class Gateway(Base):
     signing_algorithm: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default="ed25519")  # e.g., "sha256"
 
     # Relationship with local tools this gateway provides
-    tools: Mapped[List["Tool"]] = relationship(back_populates="gateway", foreign_keys="Tool.gateway_id", cascade="all, delete-orphan")
+    tools: Mapped[List["Tool"]] = relationship(back_populates="gateway", foreign_keys="Tool.gateway_id", cascade="all, delete-orphan", passive_deletes=True)
 
     # Relationship with local prompts this gateway provides
-    prompts: Mapped[List["Prompt"]] = relationship(back_populates="gateway", cascade="all, delete-orphan")
+    prompts: Mapped[List["Prompt"]] = relationship(back_populates="gateway", cascade="all, delete-orphan", passive_deletes=True)
 
     # Relationship with local resources this gateway provides
-    resources: Mapped[List["Resource"]] = relationship(back_populates="gateway", cascade="all, delete-orphan")
+    resources: Mapped[List["Resource"]] = relationship(back_populates="gateway", cascade="all, delete-orphan", passive_deletes=True)
 
     # # Tools federated from this gateway
     # federated_tools: Mapped[List["Tool"]] = relationship(secondary=tool_gateway_table, back_populates="federated_with")

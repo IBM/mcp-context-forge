@@ -57,7 +57,7 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 from pydantic import ValidationError
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -78,9 +78,11 @@ from mcpgateway.db import EmailTeam
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_db
 from mcpgateway.db import Prompt as DbPrompt
+from mcpgateway.db import PromptMetric
 from mcpgateway.db import Resource as DbResource
-from mcpgateway.db import SessionLocal
+from mcpgateway.db import ResourceMetric, ResourceSubscription, server_prompt_association, server_resource_association, server_tool_association, SessionLocal
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.db import ToolMetric
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, PromptCreate, ResourceCreate, ToolCreate
 
@@ -1093,20 +1095,42 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             # Count items before cleanup for logging
 
-            # Delete tools that are no longer available from the gateway
-            stale_tools = [tool for tool in gateway.tools if tool.original_name not in new_tool_names]
-            for tool in stale_tools:
-                db.delete(tool)
+            # Bulk delete tools that are no longer available from the gateway
+            # Use chunking to avoid SQLite's 999 parameter limit for IN clauses
+            stale_tool_ids = [tool.id for tool in gateway.tools if tool.original_name not in new_tool_names]
+            if stale_tool_ids:
+                # Delete child records first to avoid FK constraint violations
+                for i in range(0, len(stale_tool_ids), 500):
+                    chunk = stale_tool_ids[i : i + 500]
+                    db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
+                    db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
+                    db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
 
-            # Delete resources that are no longer available from the gateway
-            stale_resources = [resource for resource in gateway.resources if resource.uri not in new_resource_uris]
-            for resource in stale_resources:
-                db.delete(resource)
+            # Bulk delete resources that are no longer available from the gateway
+            stale_resource_ids = [resource.id for resource in gateway.resources if resource.uri not in new_resource_uris]
+            if stale_resource_ids:
+                # Delete child records first to avoid FK constraint violations
+                for i in range(0, len(stale_resource_ids), 500):
+                    chunk = stale_resource_ids[i : i + 500]
+                    db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk)))
+                    db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk)))
+                    db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk)))
+                    db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
 
-            # Delete prompts that are no longer available from the gateway
-            stale_prompts = [prompt for prompt in gateway.prompts if prompt.name not in new_prompt_names]
-            for prompt in stale_prompts:
-                db.delete(prompt)
+            # Bulk delete prompts that are no longer available from the gateway
+            stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.name not in new_prompt_names]
+            if stale_prompt_ids:
+                # Delete child records first to avoid FK constraint violations
+                for i in range(0, len(stale_prompt_ids), 500):
+                    chunk = stale_prompt_ids[i : i + 500]
+                    db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk)))
+                    db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
+                    db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
+
+            # Expire gateway to clear cached relationships after bulk deletes
+            # This prevents SQLAlchemy from trying to re-delete already-deleted items
+            if stale_tool_ids or stale_resource_ids or stale_prompt_ids:
+                db.expire(gateway)
 
             # Update gateway relationships to reflect deletions
             gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]
@@ -1114,9 +1138,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             gateway.prompts = [prompt for prompt in gateway.prompts if prompt.name in new_prompt_names]
 
             # Log cleanup results
-            tools_removed = len(stale_tools)
-            resources_removed = len(stale_resources)
-            prompts_removed = len(stale_prompts)
+            tools_removed = len(stale_tool_ids)
+            resources_removed = len(stale_resource_ids)
+            prompts_removed = len(stale_prompt_ids)
 
             if tools_removed > 0:
                 logger.info(f"Removed {tools_removed} tools no longer available from gateway")
@@ -1129,20 +1153,31 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             gateway.capabilities = capabilities
             gateway.last_seen = datetime.now(timezone.utc)
 
-            # Add new items to DB
+            # Add new items to DB in chunks to prevent lock escalation
             items_added = 0
+            chunk_size = 50
+
             if tools_to_add:
-                db.add_all(tools_to_add)
+                for i in range(0, len(tools_to_add), chunk_size):
+                    chunk = tools_to_add[i : i + chunk_size]
+                    db.add_all(chunk)
+                    db.flush()  # Flush each chunk to avoid excessive memory usage
                 items_added += len(tools_to_add)
                 logger.info(f"Added {len(tools_to_add)} new tools to database")
 
             if resources_to_add:
-                db.add_all(resources_to_add)
+                for i in range(0, len(resources_to_add), chunk_size):
+                    chunk = resources_to_add[i : i + chunk_size]
+                    db.add_all(chunk)
+                    db.flush()
                 items_added += len(resources_to_add)
                 logger.info(f"Added {len(resources_to_add)} new resources to database")
 
             if prompts_to_add:
-                db.add_all(prompts_to_add)
+                for i in range(0, len(prompts_to_add), chunk_size):
+                    chunk = prompts_to_add[i : i + chunk_size]
+                    db.add_all(chunk)
+                    db.flush()
                 items_added += len(prompts_to_add)
                 logger.info(f"Added {len(prompts_to_add)} new prompts to database")
 
@@ -1561,20 +1596,42 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                     # Count items before cleanup for logging
 
-                    # Delete tools that are no longer available from the gateway
-                    stale_tools = [tool for tool in gateway.tools if tool.original_name not in new_tool_names]
-                    for tool in stale_tools:
-                        db.delete(tool)
+                    # Bulk delete tools that are no longer available from the gateway
+                    # Use chunking to avoid SQLite's 999 parameter limit for IN clauses
+                    stale_tool_ids = [tool.id for tool in gateway.tools if tool.original_name not in new_tool_names]
+                    if stale_tool_ids:
+                        # Delete child records first to avoid FK constraint violations
+                        for i in range(0, len(stale_tool_ids), 500):
+                            chunk = stale_tool_ids[i : i + 500]
+                            db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
+                            db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
+                            db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
 
-                    # Delete resources that are no longer available from the gateway
-                    stale_resources = [resource for resource in gateway.resources if resource.uri not in new_resource_uris]
-                    for resource in stale_resources:
-                        db.delete(resource)
+                    # Bulk delete resources that are no longer available from the gateway
+                    stale_resource_ids = [resource.id for resource in gateway.resources if resource.uri not in new_resource_uris]
+                    if stale_resource_ids:
+                        # Delete child records first to avoid FK constraint violations
+                        for i in range(0, len(stale_resource_ids), 500):
+                            chunk = stale_resource_ids[i : i + 500]
+                            db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk)))
+                            db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk)))
+                            db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk)))
+                            db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
 
-                    # Delete prompts that are no longer available from the gateway
-                    stale_prompts = [prompt for prompt in gateway.prompts if prompt.name not in new_prompt_names]
-                    for prompt in stale_prompts:
-                        db.delete(prompt)
+                    # Bulk delete prompts that are no longer available from the gateway
+                    stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.name not in new_prompt_names]
+                    if stale_prompt_ids:
+                        # Delete child records first to avoid FK constraint violations
+                        for i in range(0, len(stale_prompt_ids), 500):
+                            chunk = stale_prompt_ids[i : i + 500]
+                            db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk)))
+                            db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
+                            db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
+
+                    # Expire gateway to clear cached relationships after bulk deletes
+                    # This prevents SQLAlchemy from trying to re-delete already-deleted items
+                    if stale_tool_ids or stale_resource_ids or stale_prompt_ids:
+                        db.expire(gateway)
 
                     gateway.capabilities = capabilities
                     gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
@@ -1582,9 +1639,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     gateway.prompts = [prompt for prompt in gateway.prompts if prompt.name in new_prompt_names]  # keep only still-valid rows
 
                     # Log cleanup results
-                    tools_removed = len(stale_tools)
-                    resources_removed = len(stale_resources)
-                    prompts_removed = len(stale_prompts)
+                    tools_removed = len(stale_tool_ids)
+                    resources_removed = len(stale_resource_ids)
+                    prompts_removed = len(stale_prompt_ids)
 
                     if tools_removed > 0:
                         logger.info(f"Removed {tools_removed} tools no longer available during gateway update")
@@ -1595,13 +1652,24 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                     gateway.last_seen = datetime.now(timezone.utc)
 
-                    # Add new items to database session
+                    # Add new items to database session in chunks to prevent lock escalation
+                    chunk_size = 50
+
                     if tools_to_add:
-                        db.add_all(tools_to_add)
+                        for i in range(0, len(tools_to_add), chunk_size):
+                            chunk = tools_to_add[i : i + chunk_size]
+                            db.add_all(chunk)
+                            db.flush()
                     if resources_to_add:
-                        db.add_all(resources_to_add)
+                        for i in range(0, len(resources_to_add), chunk_size):
+                            chunk = resources_to_add[i : i + chunk_size]
+                            db.add_all(chunk)
+                            db.flush()
                     if prompts_to_add:
-                        db.add_all(prompts_to_add)
+                        for i in range(0, len(prompts_to_add), chunk_size):
+                            chunk = prompts_to_add[i : i + chunk_size]
+                            db.add_all(chunk)
+                            db.flush()
 
                     # Update tracking with new URL
                     self._active_gateways.discard(gateway.url)
@@ -1911,20 +1979,42 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                         # Count items before cleanup for logging
 
-                        # Delete tools that are no longer available from the gateway
-                        stale_tools = [tool for tool in gateway.tools if tool.original_name not in new_tool_names]
-                        for tool in stale_tools:
-                            db.delete(tool)
+                        # Bulk delete tools that are no longer available from the gateway
+                        # Use chunking to avoid SQLite's 999 parameter limit for IN clauses
+                        stale_tool_ids = [tool.id for tool in gateway.tools if tool.original_name not in new_tool_names]
+                        if stale_tool_ids:
+                            # Delete child records first to avoid FK constraint violations
+                            for i in range(0, len(stale_tool_ids), 500):
+                                chunk = stale_tool_ids[i : i + 500]
+                                db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
+                                db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
+                                db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
 
-                        # Delete resources that are no longer available from the gateway
-                        stale_resources = [resource for resource in gateway.resources if resource.uri not in new_resource_uris]
-                        for resource in stale_resources:
-                            db.delete(resource)
+                        # Bulk delete resources that are no longer available from the gateway
+                        stale_resource_ids = [resource.id for resource in gateway.resources if resource.uri not in new_resource_uris]
+                        if stale_resource_ids:
+                            # Delete child records first to avoid FK constraint violations
+                            for i in range(0, len(stale_resource_ids), 500):
+                                chunk = stale_resource_ids[i : i + 500]
+                                db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk)))
+                                db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk)))
+                                db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk)))
+                                db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
 
-                        # Delete prompts that are no longer available from the gateway
-                        stale_prompts = [prompt for prompt in gateway.prompts if prompt.name not in new_prompt_names]
-                        for prompt in stale_prompts:
-                            db.delete(prompt)
+                        # Bulk delete prompts that are no longer available from the gateway
+                        stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.name not in new_prompt_names]
+                        if stale_prompt_ids:
+                            # Delete child records first to avoid FK constraint violations
+                            for i in range(0, len(stale_prompt_ids), 500):
+                                chunk = stale_prompt_ids[i : i + 500]
+                                db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk)))
+                                db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
+                                db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
+
+                        # Expire gateway to clear cached relationships after bulk deletes
+                        # This prevents SQLAlchemy from trying to re-delete already-deleted items
+                        if stale_tool_ids or stale_resource_ids or stale_prompt_ids:
+                            db.expire(gateway)
 
                         gateway.capabilities = capabilities
                         gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
@@ -1932,9 +2022,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         gateway.prompts = [prompt for prompt in gateway.prompts if prompt.name in new_prompt_names]  # keep only still-valid rows
 
                         # Log cleanup results
-                        tools_removed = len(stale_tools)
-                        resources_removed = len(stale_resources)
-                        prompts_removed = len(stale_prompts)
+                        tools_removed = len(stale_tool_ids)
+                        resources_removed = len(stale_resource_ids)
+                        prompts_removed = len(stale_prompt_ids)
 
                         if tools_removed > 0:
                             logger.info(f"Removed {tools_removed} tools no longer available during gateway reactivation")
@@ -1945,13 +2035,24 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                         gateway.last_seen = datetime.now(timezone.utc)
 
-                        # Add new items to database session
+                        # Add new items to database session in chunks to prevent lock escalation
+                        chunk_size = 50
+
                         if tools_to_add:
-                            db.add_all(tools_to_add)
+                            for i in range(0, len(tools_to_add), chunk_size):
+                                chunk = tools_to_add[i : i + chunk_size]
+                                db.add_all(chunk)
+                                db.flush()
                         if resources_to_add:
-                            db.add_all(resources_to_add)
+                            for i in range(0, len(resources_to_add), chunk_size):
+                                chunk = resources_to_add[i : i + chunk_size]
+                                db.add_all(chunk)
+                                db.flush()
                         if prompts_to_add:
-                            db.add_all(prompts_to_add)
+                            for i in range(0, len(prompts_to_add), chunk_size):
+                                chunk = prompts_to_add[i : i + chunk_size]
+                                db.add_all(chunk)
+                                db.flush()
                     except Exception as e:
                         logger.warning(f"Failed to initialize reactivated gateway: {e}")
                 else:
@@ -2123,6 +2224,41 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             gateway_info = {"id": gateway.id, "name": gateway.name, "url": gateway.url}
             gateway_name = gateway.name
             gateway_team_id = gateway.team_id
+
+            # Manually delete children first to avoid FK constraint violations
+            # (passive_deletes=True means ORM won't auto-cascade, we must do it explicitly)
+            # Use chunking to avoid SQLite's 999 parameter limit for IN clauses
+            tool_ids = [t.id for t in gateway.tools]
+            resource_ids = [r.id for r in gateway.resources]
+            prompt_ids = [p.id for p in gateway.prompts]
+
+            # Delete tool children and tools
+            if tool_ids:
+                for i in range(0, len(tool_ids), 500):
+                    chunk = tool_ids[i : i + 500]
+                    db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
+                    db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
+                    db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
+
+            # Delete resource children and resources
+            if resource_ids:
+                for i in range(0, len(resource_ids), 500):
+                    chunk = resource_ids[i : i + 500]
+                    db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk)))
+                    db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk)))
+                    db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk)))
+                    db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
+
+            # Delete prompt children and prompts
+            if prompt_ids:
+                for i in range(0, len(prompt_ids), 500):
+                    chunk = prompt_ids[i : i + 500]
+                    db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk)))
+                    db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
+                    db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
+
+            # Expire gateway to clear cached relationships after bulk deletes
+            db.expire(gateway)
 
             # Hard delete gateway
             db.delete(gateway)

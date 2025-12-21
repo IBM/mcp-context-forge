@@ -123,6 +123,8 @@ def mock_gateway():
     # one dummy tool hanging off the gateway
     tool = MagicMock(spec=DbTool, id=101, name="dummy_tool")
     gw.tools = [tool]
+    gw.resources = []  # Empty list for delete tests
+    gw.prompts = []  # Empty list for delete tests
     gw.federated_tools = []
     gw.transport = "sse"
     gw.auth_value = {}
@@ -1173,6 +1175,8 @@ class TestGatewayService:
         test_db.get = Mock(return_value=mock_gateway)
         test_db.delete = Mock()
         test_db.commit = Mock()
+        test_db.execute = Mock()  # For bulk delete operations
+        test_db.expire = Mock()  # For expiring gateway after bulk deletes
 
         # tool clean-up query chain
         test_db.query = Mock(return_value=MagicMock(filter=MagicMock(return_value=MagicMock(delete=Mock()))))
@@ -1183,6 +1187,8 @@ class TestGatewayService:
 
         test_db.delete.assert_called_once_with(mock_gateway)
         gateway_service._notify_gateway_deleted.assert_called_once()
+        # Verify bulk delete was executed for tools (tool_id=101)
+        assert test_db.execute.call_count >= 2  # At least ToolMetric and server_tool_association deletes
 
     @pytest.mark.asyncio
     async def test_delete_gateway_not_found(self, gateway_service, test_db):
