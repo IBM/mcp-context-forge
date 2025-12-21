@@ -48,7 +48,6 @@ import codecs
 from contextlib import suppress
 from dataclasses import dataclass
 import errno
-import json
 import logging
 import os
 import signal
@@ -58,6 +57,7 @@ from urllib.parse import urlencode
 
 # Third-Party
 import httpx
+import orjson
 
 # First-Party
 from mcpgateway.utils.retry_manager import ResilientHttpClient
@@ -195,7 +195,7 @@ def send_to_stdout(obj: Union[dict, str]) -> None:
         If writing fails (e.g., broken pipe), triggers shutdown.
     """
     try:
-        line = json.dumps(obj, ensure_ascii=False)
+        line = orjson.dumps(obj).decode()
     except Exception:
         line = str(obj)
     try:
@@ -260,7 +260,7 @@ async def stdin_reader(queue: "asyncio.Queue[Union[dict, list, str, None]]") -> 
         if not line:
             continue
         try:
-            obj = json.loads(line)
+            obj = orjson.loads(line)
         except Exception:
             obj = make_error("Invalid JSON from stdin", JSONRPC_PARSE_ERROR, line)
         await queue.put(obj)
@@ -413,7 +413,7 @@ async def forward_once(
 
     elif content_type == "application/json":
         # Force JSON
-        body = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
+        body = payload if isinstance(payload, str) else orjson.dumps(payload).decode()
         headers["Content-Type"] = "application/json; charset=utf-8"
 
     else:
@@ -422,7 +422,7 @@ async def forward_once(
             body = urlencode(payload)
             headers["Content-Type"] = "application/x-www-form-urlencoded"
         else:
-            body = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
+            body = payload if isinstance(payload, str) else orjson.dumps(payload).decode()
             headers["Content-Type"] = "application/json; charset=utf-8"
 
     body_bytes = body.encode("utf-8")
@@ -457,7 +457,7 @@ async def forward_once(
             if shutting_down():
                 return
             try:
-                obj = json.loads(line)
+                obj = orjson.loads(line)
                 send_to_stdout(obj)
             except Exception:
                 logger.warning("Invalid JSON from server: %s", line)
@@ -485,7 +485,7 @@ async def forward_once(
             if not shutting_down():
                 text = raw.decode("utf-8", errors="replace")
                 try:
-                    send_to_stdout(json.loads(text))
+                    send_to_stdout(orjson.loads(text))
                 except Exception:
                     send_to_stdout(make_error("Invalid JSON response", JSONRPC_PARSE_ERROR, text))
             return

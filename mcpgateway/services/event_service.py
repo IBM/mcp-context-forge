@@ -55,8 +55,10 @@ Usage Guide:
 # Standard
 import asyncio
 import importlib.util
-import json
 from typing import Any, AsyncGenerator, Dict, List, Optional
+
+# Third-Party
+import orjson
 
 # First-Party
 from mcpgateway.config import settings
@@ -143,7 +145,7 @@ class EventService:
         """
         if self._redis_client:
             try:
-                await self._redis_client.publish(self.channel_name, json.dumps(event))
+                await self._redis_client.publish(self.channel_name, orjson.dumps(event))
             except Exception as e:
                 logger.error(f"Failed to publish event to Redis channel {self.channel_name}: {e}")
                 # Fallback: push to local queues if Redis fails
@@ -211,7 +213,7 @@ class EventService:
                         async for message in pubsub.listen():
                             if message["type"] == "message":
                                 # Yield the data portion
-                                yield json.loads(message["data"])
+                                yield orjson.loads(message["data"])
                     except asyncio.CancelledError:
                         # Handle client disconnection
                         logger.debug(f"Client disconnected from Redis subscription: {self.channel_name}")
@@ -262,7 +264,7 @@ class EventService:
         try:
             async for event in self.subscribe_events():
                 # Serialize the dictionary to a JSON string and format as SSE
-                yield f"data: {json.dumps(event)}\n\n"
+                yield f"data: {orjson.dumps(event).decode()}\n\n"
         except asyncio.CancelledError:
             # Handle client disconnection gracefully
             logger.info(f"Client disconnected from event stream: {self.channel_name}")

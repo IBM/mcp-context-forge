@@ -34,7 +34,6 @@ import argparse
 import asyncio
 from contextlib import suppress
 from enum import Enum
-import json
 import logging
 import os
 import shlex
@@ -43,6 +42,9 @@ import sys
 from typing import Any, cast, Dict, List, Optional
 from urllib.parse import urljoin, urlparse
 import uuid
+
+# Third-Party
+import orjson
 
 try:
     # Third-Party
@@ -397,7 +399,7 @@ class ReverseProxyClient:
         }
 
         # Send to local server
-        await self.stdio_process.send(json.dumps(init_request))
+        await self.stdio_process.send(orjson.dumps(init_request).decode())
 
         # Wait for response (simplified - should correlate properly)
         await asyncio.sleep(1)
@@ -413,7 +415,7 @@ class ReverseProxyClient:
             },
         }
 
-        await self._send_to_gateway(json.dumps(register_msg))
+        await self._send_to_gateway(orjson.dumps(register_msg).decode())
 
     async def _send_to_gateway(self, message: str) -> None:
         """Send message to remote gateway.
@@ -443,13 +445,13 @@ class ReverseProxyClient:
         """
         try:
             # Parse to check if it's a response or notification
-            data = json.loads(message)
+            data = orjson.loads(message)
 
             # Wrap in reverse proxy envelope
             envelope = {"type": MessageType.RESPONSE.value if "id" in data else MessageType.NOTIFICATION.value, "sessionId": self.session_id, "payload": data}
 
             # Forward to gateway
-            await self._send_to_gateway(json.dumps(envelope))
+            await self._send_to_gateway(orjson.dumps(envelope).decode())
 
         except Exception as e:
             LOGGER.error(f"Error forwarding stdio message: {e}")
@@ -483,13 +485,13 @@ class ReverseProxyClient:
             message: Message from gateway.
         """
         try:
-            data = json.loads(message)
+            data = orjson.loads(message)
             msg_type = data.get("type")
 
             if msg_type == MessageType.REQUEST.value:
                 # Forward request to local server
                 payload = data.get("payload", {})
-                await self.stdio_process.send(json.dumps(payload))
+                await self.stdio_process.send(orjson.dumps(payload).decode())
 
             elif msg_type == MessageType.HEARTBEAT.value:
                 # Respond to heartbeat
@@ -497,7 +499,7 @@ class ReverseProxyClient:
                     "type": MessageType.HEARTBEAT.value,
                     "sessionId": self.session_id,
                 }
-                await self._send_to_gateway(json.dumps(pong))
+                await self._send_to_gateway(orjson.dumps(pong).decode())
 
             elif msg_type == MessageType.ERROR.value:
                 LOGGER.error(f"Gateway error: {data.get('message', 'Unknown error')}")
@@ -520,7 +522,7 @@ class ReverseProxyClient:
                 }
 
                 try:
-                    await self._send_to_gateway(json.dumps(heartbeat))
+                    await self._send_to_gateway(orjson.dumps(heartbeat).decode())
                 except Exception as e:
                     LOGGER.warning(f"Keepalive failed: {e}")
                     break
@@ -549,7 +551,7 @@ class ReverseProxyClient:
                     "type": MessageType.UNREGISTER.value,
                     "sessionId": self.session_id,
                 }
-                await self._send_to_gateway(json.dumps(unregister))
+                await self._send_to_gateway(orjson.dumps(unregister).decode())
             except Exception:
                 pass  # nosec B110 - Intentionally swallow errors during cleanup
 
@@ -714,7 +716,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
             if args.config.endswith((".yaml", ".yml")):
                 config = yaml_module.safe_load(f)
             else:
-                config = json.load(f)
+                config = orjson.loads(f.read())
 
         # Merge configuration (command line takes precedence)
         if not isinstance(config, dict):

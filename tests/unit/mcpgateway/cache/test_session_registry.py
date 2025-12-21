@@ -37,6 +37,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
 from fastapi import HTTPException
+import orjson
 import pytest
 
 # First-Party
@@ -227,7 +228,7 @@ async def test_broadcast_redis_input(monkeypatch, registry: SessionRegistry):
     monkeypatch.setattr("mcpgateway.cache.session_registry.time.time", lambda: fixed_ts)
 
     msg = {"a": 1}
-    expected_payload = json.dumps({"type": "message", "message": msg, "timestamp": fixed_ts})
+    expected_payload = orjson.dumps({"type": "message", "message": msg, "timestamp": fixed_ts})
 
     await registry.broadcast("B", msg)
 
@@ -236,7 +237,7 @@ async def test_broadcast_redis_input(monkeypatch, registry: SessionRegistry):
     mock_redis.publish.reset_mock()
 
     msg = ["a", "b", "c"]
-    expected_payload = json.dumps({"type": "message", "message": msg, "timestamp": fixed_ts})
+    expected_payload = orjson.dumps({"type": "message", "message": msg, "timestamp": fixed_ts})
 
     await registry.broadcast("B", msg)
 
@@ -245,7 +246,7 @@ async def test_broadcast_redis_input(monkeypatch, registry: SessionRegistry):
     mock_redis.publish.reset_mock()
 
     msg = 123
-    expected_payload = json.dumps({"type": "message", "message": msg, "timestamp": fixed_ts})
+    expected_payload = orjson.dumps({"type": "message", "message": msg, "timestamp": fixed_ts})
 
     await registry.broadcast("B", msg)
 
@@ -254,7 +255,7 @@ async def test_broadcast_redis_input(monkeypatch, registry: SessionRegistry):
     mock_redis.publish.reset_mock()
 
     msg = "hello\nworld"
-    expected_payload = json.dumps({"type": "message", "message": msg, "timestamp": fixed_ts})
+    expected_payload = orjson.dumps({"type": "message", "message": msg, "timestamp": fixed_ts})
 
     await registry.broadcast("B", msg)
 
@@ -279,7 +280,7 @@ async def test_broadcast_database_input(monkeypatch, registry: SessionRegistry, 
     monkeypatch.setattr("mcpgateway.cache.session_registry.time.time", lambda: fixed_ts)
 
     msg = {"a": 1}
-    expected_msg_json = json.dumps({"type": "message", "message": msg, "timestamp": fixed_ts})
+    expected_msg_json = orjson.dumps({"type": "message", "message": msg, "timestamp": fixed_ts}).decode()
 
     await registry.broadcast("B", msg)
 
@@ -292,7 +293,7 @@ async def test_broadcast_database_input(monkeypatch, registry: SessionRegistry, 
     mock_db.add.reset_mock()
 
     msg = ["a", "b", "c"]
-    expected_msg_json = json.dumps({"type": "message", "message": msg, "timestamp": fixed_ts})
+    expected_msg_json = orjson.dumps({"type": "message", "message": msg, "timestamp": fixed_ts}).decode()
 
     await registry.broadcast("B", msg)
 
@@ -305,7 +306,7 @@ async def test_broadcast_database_input(monkeypatch, registry: SessionRegistry, 
     mock_db.add.reset_mock()
 
     msg = 123
-    expected_msg_json = json.dumps({"type": "message", "message": msg, "timestamp": fixed_ts})
+    expected_msg_json = orjson.dumps({"type": "message", "message": msg, "timestamp": fixed_ts}).decode()
 
     await registry.broadcast("B", msg)
 
@@ -318,7 +319,7 @@ async def test_broadcast_database_input(monkeypatch, registry: SessionRegistry, 
     mock_db.add.reset_mock()
 
     msg = "hello\nworld"
-    expected_msg_json = json.dumps({"type": "message", "message": msg, "timestamp": fixed_ts})
+    expected_msg_json = orjson.dumps({"type": "message", "message": msg, "timestamp": fixed_ts}).decode()
 
     await registry.broadcast("B", msg)
 

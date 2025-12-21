@@ -12,7 +12,6 @@ Module that contains plugin MCP client code to serve external plugins.
 import asyncio
 from contextlib import AsyncExitStack
 from functools import partial
-import json
 import logging
 import os
 from typing import Any, Awaitable, Callable, Optional
@@ -23,6 +22,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.types import TextContent
+import orjson
 
 # First-Party
 from mcpgateway.common.models import TransportType
@@ -242,8 +242,8 @@ class ExternalPlugin(Plugin):
                 if not isinstance(content, TextContent):
                     continue
                 try:
-                    res = json.loads(content.text)
-                except json.decoder.JSONDecodeError:
+                    res = orjson.loads(content.text)
+                except orjson.JSONDecodeError:
                     raise PluginError(error=PluginErrorModel(message=f"Error trying to decode json: {content.text}", code="JSON_DECODE_ERROR", plugin_name=self.name))
                 if CONTEXT in res:
                     cxt = PluginContext.model_validate(res[CONTEXT])
@@ -279,7 +279,7 @@ class ExternalPlugin(Plugin):
             for content in configs.content:
                 if not isinstance(content, TextContent):
                     continue
-                conf = json.loads(content.text)
+                conf = orjson.loads(content.text)
                 return PluginConfig.model_validate(conf)
         except Exception as e:
             logger.exception(e)

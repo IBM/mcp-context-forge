@@ -20,10 +20,12 @@ The module consists of several key components:
 
 # Standard
 from datetime import datetime, timezone
-import json
 import time
 from typing import Any, AsyncGenerator, Dict, List, Literal, Optional, Union
 from uuid import uuid4
+
+# Third-Party
+import orjson
 
 try:
     # Third-Party
@@ -1876,8 +1878,8 @@ class ChatHistoryManager:
                 data = await self.redis_client.get(self._history_key(user_id))
                 if not data:
                     return []
-                return json.loads(data)
-            except json.JSONDecodeError:
+                return orjson.loads(data)
+            except orjson.JSONDecodeError:
                 logger.warning(f"Failed to decode chat history for user {user_id}")
                 return []
             except Exception as e:
@@ -1911,7 +1913,7 @@ class ChatHistoryManager:
 
         if self.redis_client:
             try:
-                await self.redis_client.set(self._history_key(user_id), json.dumps(trimmed), ex=self.ttl)
+                await self.redis_client.set(self._history_key(user_id), orjson.dumps(trimmed), ex=self.ttl)
             except Exception as e:
                 logger.error(f"Error saving chat history to Redis for user {user_id}: {e}")
         else:

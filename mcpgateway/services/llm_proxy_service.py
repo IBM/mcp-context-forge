@@ -11,13 +11,13 @@ formats and handles streaming responses.
 """
 
 # Standard
-import json
 import time
 from typing import Any, AsyncGenerator, Dict, Optional, Tuple
 import uuid
 
 # Third-Party
 import httpx
+import orjson
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -483,7 +483,7 @@ class LLMProxyService:
                             break
 
                         try:
-                            data = json.loads(data_str)
+                            data = orjson.loads(data_str)
 
                             # Transform based on provider
                             if provider.provider_type == LLMProviderType.ANTHROPIC:
@@ -501,7 +501,7 @@ class LLMProxyService:
                             if chunk:
                                 yield f"data: {chunk}\n\n"
 
-                        except json.JSONDecodeError:
+                        except orjson.JSONDecodeError:
                             continue
 
                     # Handle Ollama's newline-delimited JSON (native API only)
@@ -509,11 +509,11 @@ class LLMProxyService:
                         base_url = (provider.api_base or "").rstrip("/")
                         if not base_url.endswith("/v1"):
                             try:
-                                data = json.loads(line)
+                                data = orjson.loads(line)
                                 chunk = self._transform_ollama_stream_chunk(data, response_id, created, model.model_id)
                                 if chunk:
                                     yield f"data: {chunk}\n\n"
-                            except json.JSONDecodeError:
+                            except orjson.JSONDecodeError:
                                 continue
 
         except httpx.HTTPStatusError as e:
@@ -523,7 +523,7 @@ class LLMProxyService:
                     "type": "proxy_error",
                 }
             }
-            yield f"data: {json.dumps(error_chunk)}\n\n"
+            yield f"data: {orjson.dumps(error_chunk).decode()}\n\n"
         except httpx.RequestError as e:
             error_chunk = {
                 "error": {
@@ -531,7 +531,7 @@ class LLMProxyService:
                     "type": "proxy_error",
                 }
             }
-            yield f"data: {json.dumps(error_chunk)}\n\n"
+            yield f"data: {orjson.dumps(error_chunk).decode()}\n\n"
 
     def _transform_openai_response(self, data: Dict[str, Any]) -> ChatCompletionResponse:
         """Transform OpenAI response to standard format.
@@ -684,7 +684,7 @@ class LLMProxyService:
                         }
                     ],
                 }
-                return json.dumps(chunk)
+                return orjson.dumps(chunk).decode()
 
         elif event_type == "message_stop":
             chunk = {
@@ -694,7 +694,7 @@ class LLMProxyService:
                 "model": model_id,
                 "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
             }
-            return json.dumps(chunk)
+            return orjson.dumps(chunk).decode()
 
         return None
 
@@ -742,4 +742,4 @@ class LLMProxyService:
                 ],
             }
 
-        return json.dumps(chunk)
+        return orjson.dumps(chunk).decode()

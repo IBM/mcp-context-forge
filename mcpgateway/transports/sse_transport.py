@@ -11,13 +11,12 @@ providing server-to-client streaming with proper session management.
 
 # Standard
 import asyncio
-from datetime import datetime
-import json
 from typing import Any, AsyncGenerator, Dict
 import uuid
 
 # Third-Party
 from fastapi import Request
+import orjson
 from sse_starlette.sse import EventSourceResponse
 
 # First-Party
@@ -366,7 +365,7 @@ class SSETransport(Transport):
                             timeout=timeout,  # Configurable timeout for keepalives (some tools require more timeout for execution)
                         )
 
-                        data = json.dumps(message, default=lambda obj: (obj.strftime("%Y-%m-%d %H:%M:%S") if isinstance(obj, datetime) else TypeError("Type not serializable")))
+                        data = orjson.dumps(message, option=orjson.OPT_SERIALIZE_NUMPY).decode()
 
                         # logger.info(f"Sending SSE message: {data[:100]}...")
                         logger.debug(f"Sending SSE message: {data}")
@@ -388,7 +387,7 @@ class SSETransport(Transport):
                         logger.error(f"Error processing SSE message: {e}")
                         yield {
                             "event": "error",
-                            "data": json.dumps({"error": str(e)}),
+                            "data": orjson.dumps({"error": str(e)}).decode(),
                             "retry": settings.sse_retry_timeout,
                         }
             except asyncio.CancelledError:

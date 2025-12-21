@@ -47,6 +47,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jsonpath_ng.ext import parse
 from jsonpath_ng.jsonpath import JSONPath
+import orjson
 from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -3998,7 +3999,7 @@ async def subscribe_roots_changes(
             str: SSE-formatted event data.
         """
         async for event in root_service.subscribe_changes():
-            yield f"data: {json.dumps(event)}\n\n"
+            yield f"data: {orjson.dumps(event).decode()}\n\n"
 
     return StreamingResponse(generate_events(), media_type="text/event-stream")
 
@@ -4419,21 +4420,21 @@ async def websocket_endpoint(websocket: WebSocket):
                 async with ResilientHttpClient(client_args=client_args) as client:
                     response = await client.post(
                         f"http://localhost:{settings.port}{settings.app_root_path}/rpc",
-                        json=json.loads(data),
+                        json=orjson.loads(data),
                         headers={"Content-Type": "application/json"},
                     )
                     await websocket.send_text(response.text)
             except JSONRPCError as e:
-                await websocket.send_text(json.dumps(e.to_dict()))
-            except json.JSONDecodeError:
+                await websocket.send_text(orjson.dumps(e.to_dict()).decode())
+            except orjson.JSONDecodeError:
                 await websocket.send_text(
-                    json.dumps(
+                    orjson.dumps(
                         {
                             "jsonrpc": "2.0",
                             "error": {"code": -32700, "message": "Parse error"},
                             "id": None,
                         }
-                    )
+                    ).decode()
                 )
             except Exception as e:
                 logger.error(f"WebSocket error: {str(e)}")

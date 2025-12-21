@@ -17,13 +17,13 @@ import base64
 from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
-import json
 import logging
 import secrets
 from typing import Any, Dict, Optional
 
 # Third-Party
 import aiohttp
+import orjson
 from requests_oauthlib import OAuth2Session
 
 # First-Party
@@ -562,7 +562,7 @@ class OAuthManager:
 
             # Parse state data
             state_json = state_bytes.decode()
-            state_payload = json.loads(state_json)
+            state_payload = orjson.loads(state_json)
             app_user_email = state_payload.get("app_user_email")
             state_gateway_id = state_payload.get("gateway_id")
 
@@ -625,9 +625,8 @@ class OAuthManager:
         # Include user email in state for secure user association
         state_data = {"gateway_id": gateway_id, "app_user_email": app_user_email, "nonce": secrets.token_urlsafe(16), "timestamp": datetime.now(timezone.utc).isoformat()}
 
-        # Encode state as JSON
-        state_json = json.dumps(state_data, separators=(",", ":"))
-        state_bytes = state_json.encode()
+        # Encode state as JSON (orjson produces compact output by default)
+        state_bytes = orjson.dumps(state_data)
 
         # Create HMAC signature
         secret_key = self.settings.auth_encryption_secret.get_secret_value().encode() if self.settings.auth_encryption_secret else b"default-secret-key"
@@ -658,7 +657,7 @@ class OAuthManager:
                     state_key = f"oauth:state:{gateway_id}:{state}"
                     state_data = {"state": state, "gateway_id": gateway_id, "code_verifier": code_verifier, "expires_at": expires_at.isoformat(), "used": False}
                     # Store in Redis with TTL
-                    await redis.setex(state_key, STATE_TTL_SECONDS, json.dumps(state_data))
+                    await redis.setex(state_key, STATE_TTL_SECONDS, orjson.dumps(state_data))
                     logger.debug(f"Stored OAuth state in Redis for gateway {gateway_id}")
                     return
                 except Exception as e:
@@ -726,7 +725,7 @@ class OAuthManager:
                         logger.warning(f"State not found in Redis for gateway {gateway_id}")
                         return False
 
-                    state_data = json.loads(state_json)
+                    state_data = orjson.loads(state_json)
 
                     # Parse expires_at as timezone-aware datetime. If the stored value
                     # is naive, assume UTC for compatibility.
@@ -850,7 +849,7 @@ class OAuthManager:
                     if not state_json:
                         return None
 
-                    state_data = json.loads(state_json)
+                    state_data = orjson.loads(state_json)
 
                     # Check expiration
                     try:
