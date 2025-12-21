@@ -67,6 +67,9 @@ services:
     # Environment - pick ONE database URL line, comment the rest
     # ──────────────────────────────────────────────────────────────────────
     environment:
+      # HTTP Server: gunicorn (default) or granian (Rust-based alternative)
+      - HTTP_SERVER=gunicorn
+      # - HTTP_SERVER=granian  # Alternative: use Granian (Rust-based HTTP server)
       - HOST=0.0.0.0
       - PORT=4444
       - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
@@ -154,6 +157,13 @@ services:
     # Scaling options:
     # - Single instance: use port 4444 directly, replicas: 1
     # - Multi-instance: comment out ports, set replicas: 2+, access via nginx:8080
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Server Engine Selection (Default: Granian - Rust-based HTTP server)
+    # ──────────────────────────────────────────────────────────────────────
+    # Default is Granian. For Gunicorn with Uvicorn workers:
+    # command: ["./run-gunicorn.sh"]
+
     deploy:
       mode: replicated
       replicas: 2

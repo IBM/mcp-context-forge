@@ -88,11 +88,12 @@ COPY --from=rust-builder /build/plugins_rust/target/wheels/ /tmp/rust-wheels/
 
 # Create virtual environment, upgrade pip and install dependencies using uv for speed
 # Including observability packages for OpenTelemetry support and Rust plugins (if built)
+# Granian is included as an optional high-performance alternative to Gunicorn
 ARG ENABLE_RUST=false
 RUN python3 -m venv /app/.venv && \
     . /etc/profile.d/use-openssl.sh && \
     /app/.venv/bin/python3 -m pip install --upgrade pip setuptools pdm uv && \
-    /app/.venv/bin/python3 -m uv pip install ".[redis,postgres,mysql,alembic,observability]" && \
+    /app/.venv/bin/python3 -m uv pip install ".[redis,postgres,mysql,alembic,observability,granian]" && \
     if [ "$ENABLE_RUST" = "true" ] && ls /tmp/rust-wheels/*.whl 1> /dev/null 2>&1; then \
         echo "🦀 Installing Rust plugins..."; \
         /app/.venv/bin/python3 -m pip install /tmp/rust-wheels/mcpgateway_rust-*-manylinux*.whl && \
@@ -115,5 +116,12 @@ USER 1001
 # Ensure virtual environment binaries are in PATH
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Start the application using run-gunicorn.sh
-CMD ["./run-gunicorn.sh"]
+# HTTP server selection via HTTP_SERVER environment variable:
+#   - gunicorn : Python-based with Uvicorn workers (default)
+#   - granian  : Rust-based HTTP server (alternative)
+#
+# Examples:
+#   docker run -e HTTP_SERVER=gunicorn mcpgateway  # Default
+#   docker run -e HTTP_SERVER=granian mcpgateway   # Alternative
+ENV HTTP_SERVER=gunicorn
+CMD ["./docker-entrypoint.sh"]

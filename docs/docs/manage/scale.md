@@ -1633,6 +1633,7 @@ MCP Gateway is built on a high-performance foundation:
 ✅ **Pydantic v2.11+** - Rust-powered validation (5-50x faster than v1)
 ✅ **FastAPI** - Modern async framework with OpenAPI support
 ✅ **Uvicorn [standard]** - ASGI server with uvloop + httptools (15-30% faster)
+✅ **Granian (optional)** - Rust-based HTTP server with native HTTP/2 (+20-50% faster)
 ✅ **SQLAlchemy 2.0** - Async database operations
 ✅ **Python 3.11+** - Current stable with excellent performance
 🔮 **Python 3.14** - Future free-threading support (beta)
@@ -1697,6 +1698,7 @@ MCP Gateway is built on a high-performance foundation:
 
 - [Gunicorn Documentation](https://docs.gunicorn.org/)
 - [Uvicorn Deployment](https://www.uvicorn.org/deployment/)
+- [Granian Documentation](https://granian.dev/)
 - [uvloop GitHub](https://github.com/MagicStack/uvloop)
 - [httptools GitHub](https://github.com/MagicStack/httptools)
 - [Kubernetes HPA](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/)

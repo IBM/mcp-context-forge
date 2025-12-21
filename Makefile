@@ -201,15 +201,24 @@ check-env-dev:
 # help: stop-serve           - Stop gunicorn production server (port 4444)
 # help: run                  - Execute helper script ./run.sh
 
-.PHONY: serve serve-ssl dev stop stop-dev stop-serve run certs certs-jwt certs-jwt-ecdsa certs-all \
-        certs-mcp-ca certs-mcp-gateway certs-mcp-plugin certs-mcp-all certs-mcp-check
+.PHONY: serve serve-ssl serve-granian serve-granian-ssl serve-granian-http2 dev stop stop-dev stop-serve run \
+        certs certs-jwt certs-jwt-ecdsa certs-all certs-mcp-ca certs-mcp-gateway certs-mcp-plugin certs-mcp-all certs-mcp-check
 
 ## --- Primary servers ---------------------------------------------------------
-serve:
+serve:                           ## Run production server with Gunicorn + Uvicorn (default)
 	./run-gunicorn.sh
 
-serve-ssl: certs
+serve-ssl: certs                 ## Run Gunicorn with TLS enabled
 	SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-gunicorn.sh
+
+serve-granian:                   ## Run production server with Granian (Rust-based, alternative)
+	./run-granian.sh
+
+serve-granian-ssl: certs         ## Run Granian with TLS enabled
+	SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-granian.sh
+
+serve-granian-http2: certs       ## Run Granian with HTTP/2 and TLS
+	SSL=true GRANIAN_HTTP=2 CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-granian.sh
 
 dev:
 	@$(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
@@ -222,6 +231,7 @@ dev-echo:                        ## Run dev server with SQL query logging enable
 stop:                            ## Stop all mcpgateway server processes
 	@echo "Stopping all mcpgateway processes..."
 	@if [ -f /tmp/mcpgateway-gunicorn.lock ]; then kill -9 $$(cat /tmp/mcpgateway-gunicorn.lock) 2>/dev/null || true; rm -f /tmp/mcpgateway-gunicorn.lock; fi
+	@if [ -f /tmp/mcpgateway-granian.lock ]; then kill -9 $$(cat /tmp/mcpgateway-granian.lock) 2>/dev/null || true; rm -f /tmp/mcpgateway-granian.lock; fi
 	@lsof -ti:8000 2>/dev/null | xargs -r kill -9 || true
 	@lsof -ti:4444 2>/dev/null | xargs -r kill -9 || true
 	@echo "Done."
@@ -2709,6 +2719,85 @@ container-run-ssl-jwt: certs certs-jwt container-check-image
 	@echo "✅ Container started with TLS + JWT asymmetric authentication"
 	@echo "🔐 JWT Algorithm: RS256"
 	@echo "📁 Keys mounted: /app/certs/jwt/{private,public}.pem"
+
+# HTTP Server selection targets
+container-run-granian: container-check-image  ## Run container with Granian (Rust-based HTTP server)
+	@echo "🚀 Running with $(CONTAINER_RUNTIME) + Granian..."
+	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
+	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
+	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
+		--env-file=.env \
+		-e HTTP_SERVER=granian \
+		-p 4444:4444 \
+		--restart=always \
+		--memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \
+		--health-cmd="curl --fail http://localhost:4444/health || exit 1" \
+		--health-interval=1m --health-retries=3 \
+		--health-start-period=30s --health-timeout=10s \
+		-d $(call get_image_name)
+	@sleep 2
+	@echo "✅ Container started with Granian"
+
+container-run-gunicorn: container-check-image  ## Run container with Gunicorn + Uvicorn
+	@echo "🚀 Running with $(CONTAINER_RUNTIME) + Gunicorn..."
+	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
+	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
+	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
+		--env-file=.env \
+		-e HTTP_SERVER=gunicorn \
+		-p 4444:4444 \
+		--restart=always \
+		--memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \
+		--health-cmd="curl --fail http://localhost:4444/health || exit 1" \
+		--health-interval=1m --health-retries=3 \
+		--health-start-period=30s --health-timeout=10s \
+		-d $(call get_image_name)
+	@sleep 2
+	@echo "✅ Container started with Gunicorn"
+
+container-run-granian-ssl: certs container-check-image  ## Run container with Granian + TLS
+	@echo "🚀 Running with $(CONTAINER_RUNTIME) + Granian (TLS)..."
+	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
+	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
+	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
+		--user $(shell id -u):$(shell id -g) \
+		--env-file=.env \
+		-e HTTP_SERVER=granian \
+		-e SSL=true \
+		-e CERT_FILE=certs/cert.pem \
+		-e KEY_FILE=certs/key.pem \
+		-v $(PWD)/certs:/app/certs:ro$(if $(filter podman,$(CONTAINER_RUNTIME)),$(COMMA)Z,) \
+		-p 4444:4444 \
+		--restart=always \
+		--memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \
+		--health-cmd="curl -k --fail https://localhost:4444/health || exit 1" \
+		--health-interval=1m --health-retries=3 \
+		--health-start-period=30s --health-timeout=10s \
+		-d $(call get_image_name)
+	@sleep 2
+	@echo "✅ Container started with Granian + TLS"
+
+container-run-gunicorn-ssl: certs container-check-image  ## Run container with Gunicorn + TLS
+	@echo "🚀 Running with $(CONTAINER_RUNTIME) + Gunicorn (TLS)..."
+	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
+	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
+	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
+		--user $(shell id -u):$(shell id -g) \
+		--env-file=.env \
+		-e HTTP_SERVER=gunicorn \
+		-e SSL=true \
+		-e CERT_FILE=certs/cert.pem \
+		-e KEY_FILE=certs/key.pem \
+		-v $(PWD)/certs:/app/certs:ro$(if $(filter podman,$(CONTAINER_RUNTIME)),$(COMMA)Z,) \
+		-p 4444:4444 \
+		--restart=always \
+		--memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \
+		--health-cmd="curl -k --fail https://localhost:4444/health || exit 1" \
+		--health-interval=1m --health-retries=3 \
+		--health-start-period=30s --health-timeout=10s \
+		-d $(call get_image_name)
+	@sleep 2
+	@echo "✅ Container started with Gunicorn + TLS"
 
 container-push: container-check-image
 	@echo "📤 Preparing to push image..."
