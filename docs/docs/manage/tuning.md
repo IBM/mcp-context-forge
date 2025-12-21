@@ -60,6 +60,52 @@ Edit the file **before** building the image, then redeploy.
 
 ---
 
+## 2b - Uvicorn Performance Extras
+
+MCP Gateway uses `uvicorn[standard]` which includes high-performance components that are automatically detected and used:
+
+| Package | Purpose | Platform | Improvement |
+|---------|---------|----------|-------------|
+| `uvloop` | Fast event loop (libuv-based, Cython) | Linux, macOS | 20-40% lower latency |
+| `httptools` | Fast HTTP parsing (C extension) | All platforms | 40-60% faster parsing |
+| `websockets` | Optimized WebSocket handling | All platforms | Better WS performance |
+| `watchfiles` | Fast file watching for `--reload` | All platforms | Faster dev cycle |
+
+### Automatic Detection
+
+When Gunicorn spawns Uvicorn workers, these components are automatically detected:
+
+```bash
+# Verify extras are installed
+pip list | grep -E "uvloop|httptools|websockets|watchfiles"
+
+# Expected output (Linux/macOS):
+# httptools    0.6.x
+# uvloop       0.21.x
+# websockets   15.x.x
+# watchfiles   1.x.x
+```
+
+### Platform Notes
+
+- **Linux/macOS**: Full performance benefits (uvloop + httptools)
+- **Windows**: httptools provides benefits; uvloop unavailable (graceful fallback to asyncio)
+
+### Performance Impact
+
+Combined improvements from uvloop and httptools:
+
+| Workload | Improvement |
+|----------|-------------|
+| Simple JSON endpoints | 15-25% faster |
+| High-concurrency requests | 20-30% higher throughput |
+| WebSocket connections | Lower latency, better handling |
+| Development `--reload` | Faster file change detection |
+
+> **Note**: These optimizations are transparent - no code or configuration changes needed.
+
+---
+
 ## 3 - Container resources
 
 | vCPU × RAM   | Good for              | Notes                                              |

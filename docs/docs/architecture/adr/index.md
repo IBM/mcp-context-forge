@@ -27,5 +27,7 @@ This page tracks all significant design decisions made for the MCP Gateway proje
 | 0020  | Multi-Format Packaging Strategy                    | Accepted  | Distribution   | 2025-10-27  |
 | 0021  | Built-in Proxy Capabilities vs Service Mesh        | Accepted  | Architecture   | 2025-10-27  |
 | 0022  | Elicitation Passthrough Implementation             | Accepted  | MCP Protocol   | 2025-10-26  |
+| 0023  | One-Time Authentication Servers                    | Accepted  | Security       | 2025-10-27  |
+| 0024  | Adopt **uvicorn[standard]** for Enhanced Server Performance | Accepted | Performance | 2025-12-21 |
 
 > ✳️ Add new decisions chronologically and link to them from this table.
