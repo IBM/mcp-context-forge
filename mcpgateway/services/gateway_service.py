@@ -2227,28 +2227,35 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             # Manually delete children first to avoid FK constraint violations
             # (passive_deletes=True means ORM won't auto-cascade, we must do it explicitly)
+            # Use chunking to avoid SQLite's 999 parameter limit for IN clauses
             tool_ids = [t.id for t in gateway.tools]
             resource_ids = [r.id for r in gateway.resources]
             prompt_ids = [p.id for p in gateway.prompts]
 
             # Delete tool children and tools
             if tool_ids:
-                db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(tool_ids)))
-                db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(tool_ids)))
-                db.execute(delete(DbTool).where(DbTool.id.in_(tool_ids)))
+                for i in range(0, len(tool_ids), 500):
+                    chunk = tool_ids[i : i + 500]
+                    db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
+                    db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
+                    db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
 
             # Delete resource children and resources
             if resource_ids:
-                db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(resource_ids)))
-                db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(resource_ids)))
-                db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(resource_ids)))
-                db.execute(delete(DbResource).where(DbResource.id.in_(resource_ids)))
+                for i in range(0, len(resource_ids), 500):
+                    chunk = resource_ids[i : i + 500]
+                    db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk)))
+                    db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk)))
+                    db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk)))
+                    db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
 
             # Delete prompt children and prompts
             if prompt_ids:
-                db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(prompt_ids)))
-                db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(prompt_ids)))
-                db.execute(delete(DbPrompt).where(DbPrompt.id.in_(prompt_ids)))
+                for i in range(0, len(prompt_ids), 500):
+                    chunk = prompt_ids[i : i + 500]
+                    db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk)))
+                    db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
+                    db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
 
             # Expire gateway to clear cached relationships after bulk deletes
             db.expire(gateway)
