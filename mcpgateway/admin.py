@@ -44,6 +44,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials
 import httpx
+import orjson
 from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
 from sqlalchemy import and_, case, cast, desc, func, or_, select, String
@@ -1204,10 +1205,10 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             # User clicked "Select All" - get all tool IDs from hidden field
             all_tool_ids_json = str(form.get("allToolIds", "[]"))
             try:
-                all_tool_ids = json.loads(all_tool_ids_json)
+                all_tool_ids = orjson.loads(all_tool_ids_json)
                 associated_tools_list = all_tool_ids
                 LOGGER.info(f"Select All tools enabled: {len(all_tool_ids)} tools selected")
-            except json.JSONDecodeError:
+            except orjson.JSONDecodeError:
                 LOGGER.warning("Failed to parse allToolIds JSON, falling back to checked tools")
 
         # Handle "Select All" for resources
@@ -1215,10 +1216,10 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         if form.get("selectAllResources") == "true":
             all_resource_ids_json = str(form.get("allResourceIds", "[]"))
             try:
-                all_resource_ids = json.loads(all_resource_ids_json)
+                all_resource_ids = orjson.loads(all_resource_ids_json)
                 associated_resources_list = all_resource_ids
                 LOGGER.info(f"Select All resources enabled: {len(all_resource_ids)} resources selected")
-            except json.JSONDecodeError:
+            except orjson.JSONDecodeError:
                 LOGGER.warning("Failed to parse allResourceIds JSON, falling back to checked resources")
 
         # Handle "Select All" for prompts
@@ -1226,10 +1227,10 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         if form.get("selectAllPrompts") == "true":
             all_prompt_ids_json = str(form.get("allPromptIds", "[]"))
             try:
-                all_prompt_ids = json.loads(all_prompt_ids_json)
+                all_prompt_ids = orjson.loads(all_prompt_ids_json)
                 associated_prompts_list = all_prompt_ids
                 LOGGER.info(f"Select All prompts enabled: {len(all_prompt_ids)} prompts selected")
-            except json.JSONDecodeError:
+            except orjson.JSONDecodeError:
                 LOGGER.warning("Failed to parse allPromptIds JSON, falling back to checked prompts")
 
         server = ServerCreate(
@@ -1430,10 +1431,10 @@ async def admin_edit_server(
             # User clicked "Select All" - get all tool IDs from hidden field
             all_tool_ids_json = str(form.get("allToolIds", "[]"))
             try:
-                all_tool_ids = json.loads(all_tool_ids_json)
+                all_tool_ids = orjson.loads(all_tool_ids_json)
                 associated_tools_list = all_tool_ids
                 LOGGER.info(f"Select All tools enabled for edit: {len(all_tool_ids)} tools selected")
-            except json.JSONDecodeError:
+            except orjson.JSONDecodeError:
                 LOGGER.warning("Failed to parse allToolIds JSON, falling back to checked tools")
 
         # Handle "Select All" for resources
@@ -1441,10 +1442,10 @@ async def admin_edit_server(
         if form.get("selectAllResources") == "true":
             all_resource_ids_json = str(form.get("allResourceIds", "[]"))
             try:
-                all_resource_ids = json.loads(all_resource_ids_json)
+                all_resource_ids = orjson.loads(all_resource_ids_json)
                 associated_resources_list = all_resource_ids
                 LOGGER.info(f"Select All resources enabled for edit: {len(all_resource_ids)} resources selected")
-            except json.JSONDecodeError:
+            except orjson.JSONDecodeError:
                 LOGGER.warning("Failed to parse allResourceIds JSON, falling back to checked resources")
 
         # Handle "Select All" for prompts
@@ -1452,10 +1453,10 @@ async def admin_edit_server(
         if form.get("selectAllPrompts") == "true":
             all_prompt_ids_json = str(form.get("allPromptIds", "[]"))
             try:
-                all_prompt_ids = json.loads(all_prompt_ids_json)
+                all_prompt_ids = orjson.loads(all_prompt_ids_json)
                 associated_prompts_list = all_prompt_ids
                 LOGGER.info(f"Select All prompts enabled for edit: {len(all_prompt_ids)} prompts selected")
-            except json.JSONDecodeError:
+            except orjson.JSONDecodeError:
                 LOGGER.warning("Failed to parse allPromptIds JSON, falling back to checked prompts")
 
         server = ServerUpdate(
@@ -6910,10 +6911,10 @@ async def admin_add_tool(
         "description": form.get("description"),
         "request_type": request_type,
         "integration_type": integration_type,
-        "headers": json.loads(headers_raw if isinstance(headers_raw, str) and headers_raw else "{}"),
-        "input_schema": json.loads(input_schema_raw if isinstance(input_schema_raw, str) and input_schema_raw else "{}"),
-        "output_schema": (json.loads(output_schema_raw) if isinstance(output_schema_raw, str) and output_schema_raw else None),
-        "annotations": json.loads(annotations_raw if isinstance(annotations_raw, str) and annotations_raw else "{}"),
+        "headers": orjson.loads(headers_raw if isinstance(headers_raw, str) and headers_raw else "{}"),
+        "input_schema": orjson.loads(input_schema_raw if isinstance(input_schema_raw, str) and input_schema_raw else "{}"),
+        "output_schema": (orjson.loads(output_schema_raw) if isinstance(output_schema_raw, str) and output_schema_raw else None),
+        "annotations": orjson.loads(annotations_raw if isinstance(annotations_raw, str) and annotations_raw else "{}"),
         "jsonpath_filter": form.get("jsonpath_filter", ""),
         "auth_type": form.get("auth_type", ""),
         "auth_username": form.get("auth_username", ""),
@@ -6925,13 +6926,13 @@ async def admin_add_tool(
         "visibility": visibility,
         "team_id": team_id,
         "owner_email": user_email,
-        "query_mapping": json.loads(form.get("query_mapping") or "{}"),
-        "header_mapping": json.loads(form.get("header_mapping") or "{}"),
+        "query_mapping": orjson.loads(form.get("query_mapping") or "{}"),
+        "header_mapping": orjson.loads(form.get("header_mapping") or "{}"),
         "timeout_ms": int(form.get("timeout_ms")) if form.get("timeout_ms") and form.get("timeout_ms").strip() else None,
         "expose_passthrough": form.get("expose_passthrough", "true"),
-        "allowlist": json.loads(form.get("allowlist") or "[]"),
-        "plugin_chain_pre": json.loads(form.get("plugin_chain_pre") or "[]"),
-        "plugin_chain_post": json.loads(form.get("plugin_chain_post") or "[]"),
+        "allowlist": orjson.loads(form.get("allowlist") or "[]"),
+        "plugin_chain_pre": orjson.loads(form.get("plugin_chain_pre") or "[]"),
+        "plugin_chain_post": orjson.loads(form.get("plugin_chain_post") or "[]"),
     }
     LOGGER.debug(f"Tool data built: {tool_data}")
     try:
@@ -7176,10 +7177,10 @@ async def admin_edit_tool(
         "custom_name": form.get("customName"),
         "url": form.get("url"),
         "description": form.get("description"),
-        "headers": json.loads(headers_raw2 if isinstance(headers_raw2, str) and headers_raw2 else "{}"),
-        "input_schema": json.loads(input_schema_raw2 if isinstance(input_schema_raw2, str) and input_schema_raw2 else "{}"),
-        "output_schema": (json.loads(output_schema_raw2) if isinstance(output_schema_raw2, str) and output_schema_raw2 else None),
-        "annotations": json.loads(annotations_raw2 if isinstance(annotations_raw2, str) and annotations_raw2 else "{}"),
+        "headers": orjson.loads(headers_raw2 if isinstance(headers_raw2, str) and headers_raw2 else "{}"),
+        "input_schema": orjson.loads(input_schema_raw2 if isinstance(input_schema_raw2, str) and input_schema_raw2 else "{}"),
+        "output_schema": (orjson.loads(output_schema_raw2) if isinstance(output_schema_raw2, str) and output_schema_raw2 else None),
+        "annotations": orjson.loads(annotations_raw2 if isinstance(annotations_raw2, str) and annotations_raw2 else "{}"),
         "jsonpath_filter": form.get("jsonpathFilter", ""),
         "auth_type": form.get("auth_type", ""),
         "auth_username": form.get("auth_username", ""),
@@ -7681,8 +7682,8 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         auth_headers: list[dict[str, Any]] = []
         if auth_headers_json:
             try:
-                auth_headers = json.loads(auth_headers_json)
-            except (json.JSONDecodeError, ValueError):
+                auth_headers = orjson.loads(auth_headers_json)
+            except (orjson.JSONDecodeError, ValueError):
                 auth_headers = []
 
         # Parse OAuth configuration - support both JSON string and individual form fields
@@ -7695,12 +7696,12 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         # Option 1: Pre-assembled oauth_config JSON (from API calls)
         if oauth_config_json and oauth_config_json != "None":
             try:
-                oauth_config = json.loads(oauth_config_json)
+                oauth_config = orjson.loads(oauth_config_json)
                 # Encrypt the client secret if present
                 if oauth_config and "client_secret" in oauth_config:
                     encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = encryption.encrypt_secret(oauth_config["client_secret"])
-            except (json.JSONDecodeError, ValueError) as e:
+            except (orjson.JSONDecodeError, ValueError) as e:
                 LOGGER.error(f"Failed to parse OAuth config: {e}")
                 oauth_config = None
 
@@ -7759,8 +7760,8 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         passthrough_headers = str(form.get("passthrough_headers"))
         if passthrough_headers and passthrough_headers.strip():
             try:
-                passthrough_headers = json.loads(passthrough_headers)
-            except (json.JSONDecodeError, ValueError):
+                passthrough_headers = orjson.loads(passthrough_headers)
+            except (orjson.JSONDecodeError, ValueError):
                 # Fallback to comma-separated parsing
                 passthrough_headers = [h.strip() for h in passthrough_headers.split(",") if h.strip()]
         else:
@@ -8014,16 +8015,16 @@ async def admin_edit_gateway(
         auth_headers = []
         if auth_headers_json:
             try:
-                auth_headers = json.loads(auth_headers_json)
-            except (json.JSONDecodeError, ValueError):
+                auth_headers = orjson.loads(auth_headers_json)
+            except (orjson.JSONDecodeError, ValueError):
                 auth_headers = []
 
         # Handle passthrough_headers
         passthrough_headers = str(form.get("passthrough_headers"))
         if passthrough_headers and passthrough_headers.strip():
             try:
-                passthrough_headers = json.loads(passthrough_headers)
-            except (json.JSONDecodeError, ValueError):
+                passthrough_headers = orjson.loads(passthrough_headers)
+            except (orjson.JSONDecodeError, ValueError):
                 # Fallback to comma-separated parsing
                 passthrough_headers = [h.strip() for h in passthrough_headers.split(",") if h.strip()]
         else:
@@ -8036,12 +8037,12 @@ async def admin_edit_gateway(
         # Option 1: Pre-assembled oauth_config JSON (from API calls)
         if oauth_config_json and oauth_config_json != "None":
             try:
-                oauth_config = json.loads(oauth_config_json)
+                oauth_config = orjson.loads(oauth_config_json)
                 # Encrypt the client secret if present and not empty
                 if oauth_config and "client_secret" in oauth_config and oauth_config["client_secret"]:
                     encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = encryption.encrypt_secret(oauth_config["client_secret"])
-            except (json.JSONDecodeError, ValueError) as e:
+            except (orjson.JSONDecodeError, ValueError) as e:
                 LOGGER.error(f"Failed to parse OAuth config: {e}")
                 oauth_config = None
 
@@ -9102,7 +9103,7 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
         args_value = form.get("arguments")
         if isinstance(args_value, str) and args_value.strip():
             args_json = args_value
-        arguments = json.loads(args_json)
+        arguments = orjson.loads(args_json)
         prompt = PromptCreate(
             name=str(form["name"]),
             description=str(form.get("description")),
@@ -9234,7 +9235,7 @@ async def admin_edit_prompt(
     LOGGER.info(f"Verifying team for user {user_email} with team_id {team_id}")
 
     args_json: str = str(form.get("arguments")) or "[]"
-    arguments = json.loads(args_json)
+    arguments = orjson.loads(args_json)
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
     tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
@@ -10301,7 +10302,7 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
 
                     # SSE format
                     event_type = event.get("type", "message")
-                    event_data = json.dumps(event.get("data", {}))
+                    event_data = orjson.dumps(event.get("data", {})).decode()
 
                     yield f"event: {event_type}\ndata: {event_data}\n\n"
 
@@ -10472,8 +10473,8 @@ async def admin_import_tools(
                 if isinstance(file, StarletteUploadFile):
                     content = await file.read()
                     try:
-                        payload = json.loads(content.decode("utf-8"))
-                    except (json.JSONDecodeError, UnicodeDecodeError) as ex:
+                        payload = orjson.loads(content.decode("utf-8"))
+                    except (orjson.JSONDecodeError, UnicodeDecodeError) as ex:
                         LOGGER.exception("Invalid JSON file")
                         return ORJSONResponse({"success": False, "message": f"Invalid JSON file: {ex}"}, status_code=422)
                 else:
@@ -10485,7 +10486,7 @@ async def admin_import_tools(
                 if not raw:
                     return ORJSONResponse({"success": False, "message": "Missing tools/tools_json/json/payload form field."}, status_code=422)
                 try:
-                    payload = json.loads(raw)
+                    payload = orjson.loads(raw)
                 except Exception as ex:
                     LOGGER.exception("Invalid JSON in form field")
                     return ORJSONResponse({"success": False, "message": f"Invalid JSON: {ex}"}, status_code=422)
@@ -10744,11 +10745,11 @@ async def admin_stream_logs(
                             continue
 
                 # Send SSE event
-                yield f"data: {json.dumps(event)}\n\n"
+                yield f"data: {orjson.dumps(event).decode()}\n\n"
 
         except Exception as e:
             LOGGER.error(f"Error in log streaming: {e}")
-            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+            yield f"event: error\ndata: {orjson.dumps({'error': str(e)}).decode()}\n\n"
 
     return StreamingResponse(
         generate(),
@@ -11564,8 +11565,8 @@ async def admin_add_a2a_agent(
         auth_headers: list[dict[str, Any]] = []
         if auth_headers_json:
             try:
-                auth_headers = json.loads(auth_headers_json)
-            except (json.JSONDecodeError, ValueError):
+                auth_headers = orjson.loads(auth_headers_json)
+            except (orjson.JSONDecodeError, ValueError):
                 auth_headers = []
 
         # Parse OAuth configuration - support both JSON string and individual form fields
@@ -11578,12 +11579,12 @@ async def admin_add_a2a_agent(
         # Option 1: Pre-assembled oauth_config JSON (from API calls)
         if oauth_config_json and oauth_config_json != "None":
             try:
-                oauth_config = json.loads(oauth_config_json)
+                oauth_config = orjson.loads(oauth_config_json)
                 # Encrypt the client secret if present
                 if oauth_config and "client_secret" in oauth_config:
                     encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = encryption.encrypt_secret(oauth_config["client_secret"])
-            except (json.JSONDecodeError, ValueError) as e:
+            except (orjson.JSONDecodeError, ValueError) as e:
                 LOGGER.error(f"Failed to parse OAuth config: {e}")
                 oauth_config = None
 
@@ -11639,8 +11640,8 @@ async def admin_add_a2a_agent(
         passthrough_headers = str(form.get("passthrough_headers"))
         if passthrough_headers and passthrough_headers.strip():
             try:
-                passthrough_headers = json.loads(passthrough_headers)
-            except (json.JSONDecodeError, ValueError):
+                passthrough_headers = orjson.loads(passthrough_headers)
+            except (orjson.JSONDecodeError, ValueError):
                 # Fallback to comma-separated parsing
                 passthrough_headers = [h.strip() for h in passthrough_headers.split(",") if h.strip()]
         else:
@@ -11857,8 +11858,8 @@ async def admin_edit_a2a_agent(
         capabilities = {}
         if raw_capabilities:
             try:
-                capabilities = json.loads(raw_capabilities)
-            except (ValueError, json.JSONDecodeError):
+                capabilities = orjson.loads(raw_capabilities)
+            except (ValueError, orjson.JSONDecodeError):
                 capabilities = {}
 
         # Config
@@ -11866,8 +11867,8 @@ async def admin_edit_a2a_agent(
         config = {}
         if raw_config:
             try:
-                config = json.loads(raw_config)
-            except (ValueError, json.JSONDecodeError):
+                config = orjson.loads(raw_config)
+            except (ValueError, orjson.JSONDecodeError):
                 config = {}
 
         # Parse auth_headers JSON if present
@@ -11875,16 +11876,16 @@ async def admin_edit_a2a_agent(
         auth_headers = []
         if auth_headers_json:
             try:
-                auth_headers = json.loads(auth_headers_json)
-            except (json.JSONDecodeError, ValueError):
+                auth_headers = orjson.loads(auth_headers_json)
+            except (orjson.JSONDecodeError, ValueError):
                 auth_headers = []
 
         # Passthrough headers
         passthrough_headers = str(form.get("passthrough_headers"))
         if passthrough_headers and passthrough_headers.strip():
             try:
-                passthrough_headers = json.loads(passthrough_headers)
-            except (json.JSONDecodeError, ValueError):
+                passthrough_headers = orjson.loads(passthrough_headers)
+            except (orjson.JSONDecodeError, ValueError):
                 # Fallback to comma-separated parsing
                 passthrough_headers = [h.strip() for h in passthrough_headers.split(",") if h.strip()]
         else:
@@ -11897,12 +11898,12 @@ async def admin_edit_a2a_agent(
         # Option 1: Pre-assembled oauth_config JSON (from API calls)
         if oauth_config_json and oauth_config_json != "None":
             try:
-                oauth_config = json.loads(oauth_config_json)
+                oauth_config = orjson.loads(oauth_config_json)
                 # Encrypt the client secret if present and not empty
                 if oauth_config and "client_secret" in oauth_config and oauth_config["client_secret"]:
                     encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = encryption.encrypt_secret(oauth_config["client_secret"])
-            except (json.JSONDecodeError, ValueError) as e:
+            except (orjson.JSONDecodeError, ValueError) as e:
                 LOGGER.error(f"Failed to parse OAuth config: {e}")
                 oauth_config = None
 

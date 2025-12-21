@@ -14,6 +14,7 @@ from typing import List, Optional
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query
+import orjson
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -560,10 +561,7 @@ def export_traces(
                     str: A JSON-encoded line (with trailing newline) for a trace.
                 """
                 for t in traces:
-                    # Standard
-                    import json
-
-                    yield json.dumps(
+                    yield orjson.dumps(
                         {
                             "trace_id": t.trace_id,
                             "name": t.name,
@@ -574,7 +572,7 @@ def export_traces(
                             "http_status_code": t.http_status_code,
                             "user_email": t.user_email,
                         }
-                    ) + "\n"
+                    ).decode() + "\n"
 
             return StreamingResponse(generate(), media_type="application/x-ndjson", headers={"Content-Disposition": "attachment; filename=traces.ndjson"})
 

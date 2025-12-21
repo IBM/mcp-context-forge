@@ -52,7 +52,6 @@ Examples:
 import asyncio
 from asyncio import Task
 from datetime import datetime, timedelta, timezone
-import json
 import logging
 import time
 import traceback
@@ -62,6 +61,7 @@ import uuid
 
 # Third-Party
 from fastapi import HTTPException, status
+import orjson
 
 # First-Party
 from mcpgateway import __version__
@@ -431,7 +431,7 @@ class SessionRegistry(SessionBackend):
             try:
                 await self._redis.setex(f"mcp:session:{session_id}", self._session_ttl, "1")
                 # Publish event to notify other workers
-                await self._redis.publish("mcp_session_events", json.dumps({"type": "add", "session_id": session_id, "timestamp": time.time()}))
+                await self._redis.publish("mcp_session_events", orjson.dumps({"type": "add", "session_id": session_id, "timestamp": time.time()}))
             except Exception as e:
                 logger.error(f"Redis error adding session {session_id}: {e}")
 
@@ -631,7 +631,7 @@ class SessionRegistry(SessionBackend):
             try:
                 await self._redis.delete(f"mcp:session:{session_id}")
                 # Notify other workers
-                await self._redis.publish("mcp_session_events", json.dumps({"type": "remove", "session_id": session_id, "timestamp": time.time()}))
+                await self._redis.publish("mcp_session_events", orjson.dumps({"type": "remove", "session_id": session_id, "timestamp": time.time()}))
             except Exception as e:
                 logger.error(f"Redis error removing session {session_id}: {e}")
 
@@ -702,7 +702,7 @@ class SessionRegistry(SessionBackend):
             True
             >>> reg._session_message['session_id']
             'session-789'
-            >>> json.loads(reg._session_message['message'])['message'] == message
+            >>> orjson.loads(reg._session_message['message'])['message'] == message
             True
         """
         # Skip for none backend only
@@ -719,7 +719,7 @@ class SessionRegistry(SessionBackend):
                 JSON-encoded string containing type, message, and timestamp.
             """
             payload = {"type": "message", "message": msg, "timestamp": time.time()}
-            return json.dumps(payload)
+            return orjson.dumps(payload).decode()
 
         if self._backend == "memory":
             payload_json = _build_payload(message)
@@ -736,7 +736,7 @@ class SessionRegistry(SessionBackend):
                     "timestamp": time.time(),
                 }
                 # Single encode
-                payload_json = json.dumps(broadcast_payload)
+                payload_json = orjson.dumps(broadcast_payload)
                 await self._redis.publish(session_id, payload_json)  # Single encode
             except Exception as e:
                 logger.error(f"Redis error during broadcast: {e}")
@@ -863,7 +863,7 @@ class SessionRegistry(SessionBackend):
         elif self._backend == "memory":
             transport = self.get_session_sync(session_id)
             if transport and self._session_message:
-                data = json.loads(self._session_message.get("message"))
+                data = orjson.loads(self._session_message.get("message"))
                 if isinstance(data, dict) and "message" in data:
                     message = data["message"]
                 else:
@@ -881,7 +881,7 @@ class SessionRegistry(SessionBackend):
                 async for msg in pubsub.listen():
                     if msg["type"] != "message":
                         continue
-                    data = json.loads(msg["data"])
+                    data = orjson.loads(msg["data"])
                     message = data.get("message", {})
                     transport = self.get_session_sync(session_id)
                     if transport:
@@ -1026,7 +1026,7 @@ class SessionRegistry(SessionBackend):
                     record = await asyncio.to_thread(_db_read, session_id)
 
                     if record:
-                        data = json.loads(record.message)
+                        data = orjson.loads(record.message)
                         if isinstance(data, dict) and "message" in data:
                             message = data["message"]
                         else:

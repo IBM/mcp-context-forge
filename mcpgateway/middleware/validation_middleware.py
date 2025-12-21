@@ -17,7 +17,6 @@ Examples:
 """
 
 # Standard
-import json
 import logging
 from pathlib import Path
 import re
@@ -25,6 +24,7 @@ from typing import Any
 
 # Third-Party
 from fastapi import HTTPException, Request, Response
+import orjson
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # First-Party
@@ -128,9 +128,9 @@ class ValidationMiddleware(BaseHTTPMiddleware):
             try:
                 body = await request.body()
                 if body:
-                    data = json.loads(body)
+                    data = orjson.loads(body)
                     self._validate_json_data(data)
-            except json.JSONDecodeError:
+            except orjson.JSONDecodeError:
                 pass  # Let other middleware handle JSON errors
 
     def _validate_parameter(self, key: str, value: str):

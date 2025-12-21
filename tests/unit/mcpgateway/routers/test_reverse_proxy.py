@@ -12,8 +12,10 @@ session management, and HTTP endpoints.
 # Standard
 import asyncio
 from datetime import datetime
-import json
 from unittest.mock import AsyncMock, Mock, patch
+
+# Third-Party
+import orjson
 
 # Third-Party
 from fastapi import WebSocket
@@ -99,7 +101,7 @@ class TestReverseProxySession:
 
         await sample_session.send_message(message)
 
-        expected_data = json.dumps(message)
+        expected_data = orjson.dumps(message).decode()
         sample_session.websocket.send_text.assert_called_once_with(expected_data)
         assert sample_session.bytes_transferred == len(expected_data)
 
@@ -117,13 +119,13 @@ class TestReverseProxySession:
     async def test_receive_message(self, sample_session):
         """Test receiving a message."""
         test_data = {"type": "test", "content": "hello"}
-        sample_session.websocket.receive_text.return_value = json.dumps(test_data)
+        sample_session.websocket.receive_text.return_value = orjson.dumps(test_data).decode()
 
         result = await sample_session.receive_message()
 
         assert result == test_data
         assert sample_session.message_count == 1
-        assert sample_session.bytes_transferred == len(json.dumps(test_data))
+        assert sample_session.bytes_transferred == len(orjson.dumps(test_data).decode())
 
     @pytest.mark.asyncio
     async def test_receive_message_updates_activity(self, sample_session):
@@ -141,7 +143,7 @@ class TestReverseProxySession:
         """Test receiving invalid JSON."""
         sample_session.websocket.receive_text.return_value = "invalid json"
 
-        with pytest.raises(json.JSONDecodeError):
+        with pytest.raises(orjson.JSONDecodeError):
             await sample_session.receive_message()
 
 
@@ -306,7 +308,7 @@ class TestWebSocketEndpoint:
         """Test handling register message."""
         mock_websocket.headers = {"X-Session-ID": "test-session"}
         register_msg = {"type": "register", "server": {"name": "test-server", "version": "1.0"}}
-        mock_websocket.receive_text.side_effect = [json.dumps(register_msg), asyncio.CancelledError()]
+        mock_websocket.receive_text.side_effect = [orjson.dumps(register_msg).decode(), asyncio.CancelledError()]
 
         # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
@@ -321,7 +323,7 @@ class TestWebSocketEndpoint:
 
         # Should send register acknowledgment
         mock_websocket.send_text.assert_called()
-        sent_data = json.loads(mock_websocket.send_text.call_args[0][0])
+        sent_data = orjson.loads(mock_websocket.send_text.call_args[0][0])
         assert sent_data["type"] == "register_ack"
         assert sent_data["status"] == "success"
 
@@ -330,7 +332,7 @@ class TestWebSocketEndpoint:
         """Test handling unregister message."""
         mock_websocket.headers = {"X-Session-ID": "test-session"}
         unregister_msg = {"type": "unregister"}
-        mock_websocket.receive_text.return_value = json.dumps(unregister_msg)
+        mock_websocket.receive_text.return_value = orjson.dumps(unregister_msg).decode()
 
         # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
@@ -345,7 +347,7 @@ class TestWebSocketEndpoint:
         """Test handling heartbeat message."""
         mock_websocket.headers = {"X-Session-ID": "test-session"}
         heartbeat_msg = {"type": "heartbeat"}
-        mock_websocket.receive_text.side_effect = [json.dumps(heartbeat_msg), asyncio.CancelledError()]
+        mock_websocket.receive_text.side_effect = [orjson.dumps(heartbeat_msg).decode(), asyncio.CancelledError()]
 
         # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
@@ -360,7 +362,7 @@ class TestWebSocketEndpoint:
 
         # Should send heartbeat response
         mock_websocket.send_text.assert_called()
-        sent_data = json.loads(mock_websocket.send_text.call_args[0][0])
+        sent_data = orjson.loads(mock_websocket.send_text.call_args[0][0])
         assert sent_data["type"] == "heartbeat"
         assert "timestamp" in sent_data
 
@@ -369,7 +371,7 @@ class TestWebSocketEndpoint:
         """Test handling response message."""
         mock_websocket.headers = {"X-Session-ID": "test-session"}
         response_msg = {"type": "response", "id": 1, "result": {"data": "test"}}
-        mock_websocket.receive_text.side_effect = [json.dumps(response_msg), asyncio.CancelledError()]
+        mock_websocket.receive_text.side_effect = [orjson.dumps(response_msg).decode(), asyncio.CancelledError()]
 
         # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
@@ -387,7 +389,7 @@ class TestWebSocketEndpoint:
         """Test handling notification message."""
         mock_websocket.headers = {"X-Session-ID": "test-session"}
         notification_msg = {"type": "notification", "method": "test/notification"}
-        mock_websocket.receive_text.side_effect = [json.dumps(notification_msg), asyncio.CancelledError()]
+        mock_websocket.receive_text.side_effect = [orjson.dumps(notification_msg).decode(), asyncio.CancelledError()]
 
         # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
@@ -405,7 +407,7 @@ class TestWebSocketEndpoint:
         """Test handling unknown message type."""
         mock_websocket.headers = {"X-Session-ID": "test-session"}
         unknown_msg = {"type": "unknown", "data": "test"}
-        mock_websocket.receive_text.side_effect = [json.dumps(unknown_msg), asyncio.CancelledError()]
+        mock_websocket.receive_text.side_effect = [orjson.dumps(unknown_msg).decode(), asyncio.CancelledError()]
 
         # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
@@ -437,7 +439,7 @@ class TestWebSocketEndpoint:
 
         # Should send error message
         mock_websocket.send_text.assert_called()
-        sent_data = json.loads(mock_websocket.send_text.call_args[0][0])
+        sent_data = orjson.loads(mock_websocket.send_text.call_args[0][0])
         assert sent_data["type"] == "error"
         assert "Invalid JSON format" in sent_data["message"]
 
@@ -446,7 +448,7 @@ class TestWebSocketEndpoint:
         """Test handling general exception during message processing."""
         mock_websocket.headers = {"X-Session-ID": "test-session"}
         # First call succeeds, second call raises exception, third call cancels
-        mock_websocket.receive_text.side_effect = [json.dumps({"type": "register", "server": {"name": "test"}}), Exception("Test exception"), asyncio.CancelledError()]
+        mock_websocket.receive_text.side_effect = [orjson.dumps({"type": "register", "server": {"name": "test"}}).decode(), Exception("Test exception"), asyncio.CancelledError()]
 
         # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint

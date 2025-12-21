@@ -17,7 +17,6 @@ It handles:
 # Standard
 import base64
 from datetime import datetime, timezone
-import json
 import os
 import re
 import ssl
@@ -33,6 +32,7 @@ import jsonschema
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
+import orjson
 from sqlalchemy import and_, case, delete, desc, Float, func, not_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload, selectinload, Session
@@ -119,8 +119,8 @@ def extract_using_jq(data, jq_filter=""):
     if isinstance(data, str):
         # If the input is a string, parse it as JSON
         try:
-            data = json.loads(data)
-        except json.JSONDecodeError:
+            data = orjson.loads(data)
+        except orjson.JSONDecodeError:
             return ["Invalid JSON string provided."]
 
     elif not isinstance(data, (dict, list)):
@@ -512,7 +512,7 @@ class ToolService:
                 False
                 >>> r.is_error
                 True
-                >>> details = json.loads(r.content[0].text)
+                >>> details = orjson.loads(r.content[0].text)
                 >>> "received" in details
                 True
         """
@@ -531,9 +531,9 @@ class ToolService:
                 for c in getattr(tool_result, "content", []) or []:
                     try:
                         if isinstance(c, dict) and "type" in c and c.get("type") == "text" and "text" in c:
-                            structured = json.loads(c.get("text") or "null")
+                            structured = orjson.loads(c.get("text") or "null")
                             break
-                    except (json.JSONDecodeError, TypeError, ValueError):
+                    except (orjson.JSONDecodeError, TypeError, ValueError):
                         # ignore JSON parse errors and continue
                         continue
 
@@ -555,7 +555,7 @@ class ToolService:
                 # If inner is a TextContent-like dict with 'text' JSON string, parse it
                 if isinstance(inner, dict) and "text" in inner and "type" in inner and inner.get("type") == "text":
                     try:
-                        structured = json.loads(inner.get("text") or "null")
+                        structured = orjson.loads(inner.get("text") or "null")
                     except Exception:
                         # leave as-is if parsing fails
                         structured = inner
@@ -581,7 +581,7 @@ class ToolService:
                     "message": e.message,
                 }
                 try:
-                    tool_result.content = [TextContent(type="text", text=json.dumps(details))]
+                    tool_result.content = [TextContent(type="text", text=orjson.dumps(details).decode())]
                 except Exception:
                     tool_result.content = [TextContent(type="text", text=str(details))]
                 tool_result.is_error = True
@@ -1570,7 +1570,7 @@ class ToolService:
                     elif response.status_code not in [200, 201, 202, 206]:
                         try:
                             result = response.json()
-                        except json.JSONDecodeError:
+                        except orjson.JSONDecodeError:
                             result = {"response_text": response.text} if response.text else {}
                         tool_result = ToolResult(
                             content=[TextContent(type="text", text=str(result["error"]) if "error" in result else "Tool error encountered")],
@@ -1580,11 +1580,11 @@ class ToolService:
                     else:
                         try:
                             result = response.json()
-                        except json.JSONDecodeError:
+                        except orjson.JSONDecodeError:
                             result = {"response_text": response.text} if response.text else {}
                         logger.debug(f"REST API tool response: {result}")
                         filtered_response = extract_using_jq(result, tool.jsonpath_filter)
-                        tool_result = ToolResult(content=[TextContent(type="text", text=json.dumps(filtered_response, indent=2))])
+                        tool_result = ToolResult(content=[TextContent(type="text", text=orjson.dumps(filtered_response, option=orjson.OPT_INDENT_2).decode())])
                         success = True
                         # If output schema is present, validate and attach structured content
                         if getattr(tool, "output_schema", None):

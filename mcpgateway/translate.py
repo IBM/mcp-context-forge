@@ -118,7 +118,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 from contextlib import suppress
-import json
 import logging
 import os
 import shlex
@@ -134,6 +133,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from mcp.server import Server as MCPServer
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+import orjson
 from sse_starlette.sse import EventSourceResponse
 from starlette.applications import Starlette
 from starlette.routing import Route
@@ -834,7 +834,7 @@ def _build_fastapi(
 
         payload = await raw.body()
         try:
-            json.loads(payload)  # validate
+            orjson.loads(payload)  # validate
         except Exception as exc:  # noqa: BLE001
             return PlainTextResponse(
                 f"Invalid JSON payload: {exc}",
@@ -1622,7 +1622,7 @@ async def _run_streamable_http_to_stdio(
                 if CONTENT_TYPE == "application/x-www-form-urlencoded":
                     # If text is JSON, parse and encode as form
                     try:
-                        payload = json.loads(text)
+                        payload = orjson.loads(text)
                         body = urlencode(payload)
                     except Exception:
                         body = text
@@ -1930,7 +1930,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
 
             payload = await raw.body()
             try:
-                json.loads(payload)
+                orjson.loads(payload)
             except Exception as exc:
                 return PlainTextResponse(
                     f"Invalid JSON payload: {exc}",
@@ -2003,7 +2003,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
             # Read and validate JSON
             body = await request.body()
             try:
-                obj = json.loads(body)
+                obj = orjson.loads(body)
             except Exception as exc:
                 return PlainTextResponse(f"Invalid JSON payload: {exc}", status_code=status.HTTP_400_BAD_REQUEST)
 
@@ -2032,8 +2032,8 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
 
                         # stdio stdout lines may contain JSON objects or arrays
                         try:
-                            parsed = json.loads(msg)
-                        except (json.JSONDecodeError, ValueError):
+                            parsed = orjson.loads(msg)
+                        except (orjson.JSONDecodeError, ValueError):
                             # not JSON -> skip
                             continue
 
