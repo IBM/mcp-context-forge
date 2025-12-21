@@ -13,7 +13,6 @@ to connect and tunnel their local MCP servers through the gateway.
 # Standard
 import asyncio
 from datetime import datetime, timezone
-import json
 from typing import Any, Dict, Optional
 import uuid
 
@@ -61,7 +60,7 @@ class ReverseProxySession:
         Args:
             message: Message dictionary to send.
         """
-        data = json.dumps(message)
+        data = orjson.dumps(message).decode()
         await self.websocket.send_text(data)
         self.bytes_transferred += len(data)
         self.last_activity = datetime.now(tz=timezone.utc)
@@ -76,7 +75,7 @@ class ReverseProxySession:
         self.bytes_transferred += len(data)
         self.message_count += 1
         self.last_activity = datetime.now(tz=timezone.utc)
-        return json.loads(data)
+        return orjson.loads(data)
 
 
 class ReverseProxyManager:
@@ -221,7 +220,7 @@ async def websocket_endpoint(
             except WebSocketDisconnect:
                 LOGGER.info(f"WebSocket disconnected: {session_id}")
                 break
-            except json.JSONDecodeError as e:
+            except orjson.JSONDecodeError as e:
                 LOGGER.error(f"Invalid JSON from session {session_id}: {e}")
                 await session.send_message({"type": "error", "message": "Invalid JSON format"})
             except Exception as e:

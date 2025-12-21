@@ -4420,21 +4420,21 @@ async def websocket_endpoint(websocket: WebSocket):
                 async with ResilientHttpClient(client_args=client_args) as client:
                     response = await client.post(
                         f"http://localhost:{settings.port}{settings.app_root_path}/rpc",
-                        json=json.loads(data),
+                        json=orjson.loads(data),
                         headers={"Content-Type": "application/json"},
                     )
                     await websocket.send_text(response.text)
             except JSONRPCError as e:
-                await websocket.send_text(json.dumps(e.to_dict()))
-            except json.JSONDecodeError:
+                await websocket.send_text(orjson.dumps(e.to_dict()).decode())
+            except orjson.JSONDecodeError:
                 await websocket.send_text(
-                    json.dumps(
+                    orjson.dumps(
                         {
                             "jsonrpc": "2.0",
                             "error": {"code": -32700, "message": "Parse error"},
                             "id": None,
                         }
-                    )
+                    ).decode()
                 )
             except Exception as e:
                 logger.error(f"WebSocket error: {str(e)}")

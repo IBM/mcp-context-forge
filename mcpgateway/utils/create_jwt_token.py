@@ -49,6 +49,7 @@ from typing import Any, Dict, List, Sequence
 
 # Third-Party
 import jwt  # PyJWT
+import orjson
 
 # First-Party
 from mcpgateway.config import settings
@@ -335,8 +336,8 @@ def _payload_from_cli(args) -> Dict[str, Any]:
     if args.data is not None:
         # Attempt JSON first
         try:
-            return json.loads(args.data)
-        except json.JSONDecodeError:
+            return orjson.loads(args.data)
+        except orjson.JSONDecodeError:
             pairs = [kv.strip() for kv in args.data.split(",") if kv.strip()]
             payload: Dict[str, Any] = {}
             for pair in pairs:

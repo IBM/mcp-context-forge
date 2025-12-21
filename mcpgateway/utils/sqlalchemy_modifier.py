@@ -10,11 +10,11 @@ SQLAlchemy modifiers
 """
 
 # Standard
-import json
 from typing import Any, Iterable, List, Union
 import uuid
 
 # Third-Party
+import orjson
 from sqlalchemy import and_, func, or_, text
 
 
@@ -70,15 +70,15 @@ def json_contains_expr(session, col, values: Union[str, Iterable[str]], match_an
         try:
             if match_any:
                 # JSON_OVERLAPS exists in modern MySQL; SQLAlchemy will emit func.json_overlaps(...)
-                return func.json_overlaps(col, json.dumps(values_list)) == 1
+                return func.json_overlaps(col, orjson.dumps(values_list).decode()) == 1
             else:
-                return func.json_contains(col, json.dumps(values_list)) == 1
+                return func.json_contains(col, orjson.dumps(values_list).decode()) == 1
         except Exception:
             # Fallback: compose OR of json_contains for each scalar
             if match_any:
-                return or_(*[func.json_contains(col, json.dumps(t)) == 1 for t in values_list])
+                return or_(*[func.json_contains(col, orjson.dumps(t).decode()) == 1 for t in values_list])
             else:
-                return and_(*[func.json_contains(col, json.dumps(t)) == 1 for t in values_list])
+                return and_(*[func.json_contains(col, orjson.dumps(t).decode()) == 1 for t in values_list])
 
     # ---------- PostgreSQL ----------
     # - all-of: col.contains(list)  (works if col is JSONB)
