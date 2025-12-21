@@ -626,8 +626,20 @@ services:
         import json
         import sys
         import os
+        import time
 
         token = os.environ.get('MCPGATEWAY_BEARER_TOKEN', '')
+
+        def api_request(method, path, data=None):
+            '''Helper to make authenticated API requests.'''
+            url = f'http://gateway:4444{path}'
+            req = urllib.request.Request(url, method=method)
+            req.add_header('Authorization', f'Bearer {token}')
+            req.add_header('Content-Type', 'application/json')
+            if data:
+                req.data = json.dumps(data).encode('utf-8')
+            with urllib.request.urlopen(req) as response:
+                return json.loads(response.read().decode('utf-8'))
 
         # Test version endpoint without auth
         print('Checking gateway config...')
@@ -646,7 +658,6 @@ services:
             with urllib.request.urlopen(req) as response:
                 data = response.read().decode('utf-8')
                 print(f'Auth test response: SUCCESS')
-                print(f'Response preview: {data[:200]}...')
                 auth_success = True
         except Exception as e:
             print(f'Auth test response: FAILED - {e}')
@@ -656,48 +667,110 @@ services:
         print('Registering fast_time_server with gateway (Streamable HTTP)...')
 
         # First check if gateway already exists and delete it
+        gateway_id = None
         try:
-            req = urllib.request.Request('http://gateway:4444/gateways')
-            req.add_header('Authorization', f'Bearer {token}')
-            with urllib.request.urlopen(req) as response:
-                gateways = json.loads(response.read().decode('utf-8'))
-                for gw in gateways:
-                    if gw.get('name') == 'fast_time':
-                        print(f'Found existing gateway {gw[\"id\"]}, deleting...')
-                        del_req = urllib.request.Request(f'http://gateway:4444/gateways/{gw[\"id\"]}', method='DELETE')
-                        del_req.add_header('Authorization', f'Bearer {token}')
-                        urllib.request.urlopen(del_req)
-                        print('Deleted existing gateway')
+            gateways = api_request('GET', '/gateways')
+            for gw in gateways:
+                if gw.get('name') == 'fast_time':
+                    print(f'Found existing gateway {gw[\"id\"]}, deleting...')
+                    api_request('DELETE', f'/gateways/{gw[\"id\"]}')
+                    print('Deleted existing gateway')
         except Exception as e:
             print(f'Note: Could not check/delete existing gateway: {e}')
 
+        # Delete existing virtual server if present (using fixed ID)
+        VIRTUAL_SERVER_ID = '9779b6698cbd4b4995ee04a4fab38737'
         try:
-            payload = json.dumps({'name': 'fast_time', 'url': 'http://fast_time_server:8080/http', 'transport': 'STREAMABLEHTTP'})
-            req = urllib.request.Request('http://gateway:4444/gateways',
-                                        data=payload.encode('utf-8'),
-                                        method='POST')
-            req.add_header('Authorization', f'Bearer {token}')
-            req.add_header('Content-Type', 'application/json')
+            api_request('DELETE', f'/servers/{VIRTUAL_SERVER_ID}')
+            print(f'Deleted existing virtual server {VIRTUAL_SERVER_ID}')
+        except Exception as e:
+            print(f'Note: No existing virtual server to delete (or error: {e})')
 
-            with urllib.request.urlopen(req) as response:
-                data = response.read().decode('utf-8')
-                print(f'Registration response: {data}')
-
-                # Check if registration was successful
-                response_data = json.loads(data)
-                if 'id' in response_data:
-                    print('✅ Successfully registered fast_time_server')
-                    registration_success = True
-                else:
-                    print('❌ Registration failed - no ID in response')
-                    registration_success = False
-
+        # Register the gateway
+        try:
+            result = api_request('POST', '/gateways', {
+                'name': 'fast_time',
+                'url': 'http://fast_time_server:8080/http',
+                'transport': 'STREAMABLEHTTP'
+            })
+            print(f'Registration response: {result}')
+            if 'id' in result:
+                gateway_id = result['id']
+                print(f'✅ Successfully registered fast_time_server (gateway_id: {gateway_id})')
+            else:
+                print('❌ Registration failed - no ID in response')
+                sys.exit(1)
         except Exception as e:
             print(f'❌ Registration failed: {e}')
-            registration_success = False
+            sys.exit(1)
 
-        # Exit with error code if registration failed
-        if not registration_success:
+        # Wait for tools to be synced from the gateway
+        print('Waiting for tools/resources/prompts to sync...')
+        for i in range(30):
+            time.sleep(1)
+            try:
+                tools = api_request('GET', '/tools')
+                # Filter tools from fast_time gateway (note: camelCase gatewayId)
+                fast_time_tools = [t for t in tools if t.get('gatewayId') == gateway_id]
+                if fast_time_tools:
+                    print(f'Found {len(fast_time_tools)} tools from fast_time gateway')
+                    break
+            except Exception as e:
+                pass
+            print(f'Waiting for sync... ({i+1}/30)')
+        else:
+            print('⚠️ No tools synced, continuing anyway...')
+
+        # Fetch all tools, resources, and prompts
+        # Note: Tools use gatewayId (camelCase), resources/prompts from catalog have no gatewayId
+        tool_ids = []
+        resource_ids = []
+        prompt_ids = []
+
+        try:
+            tools = api_request('GET', '/tools')
+            # Get tools from the fast_time gateway
+            tool_ids = [t['id'] for t in tools if t.get('gatewayId') == gateway_id]
+            print(f'Found tools: {[t[\"name\"] for t in tools if t.get(\"gatewayId\") == gateway_id]}')
+        except Exception as e:
+            print(f'Failed to fetch tools: {e}')
+
+        try:
+            resources = api_request('GET', '/resources')
+            # Include all resources (from catalog)
+            resource_ids = [r['id'] for r in resources]
+            print(f'Found resources: {[r[\"name\"] for r in resources]}')
+        except Exception as e:
+            print(f'Failed to fetch resources: {e}')
+
+        try:
+            prompts = api_request('GET', '/prompts')
+            # Include all prompts (from catalog)
+            prompt_ids = [p['id'] for p in prompts]
+            print(f'Found prompts: {[p[\"name\"] for p in prompts]}')
+        except Exception as e:
+            print(f'Failed to fetch prompts: {e}')
+
+        # Create virtual server with all tools, resources, and prompts
+        print('Creating virtual server...')
+        try:
+            # API expects payload wrapped in 'server' key
+            # Use fixed UUID for consistent server ID across restarts
+            server_payload = {
+                'server': {
+                    'id': '9779b6698cbd4b4995ee04a4fab38737',
+                    'name': 'Fast Time Server',
+                    'description': 'Virtual server exposing Fast Time MCP tools, resources, and prompts',
+                    'associated_tools': tool_ids,
+                    'associated_resources': resource_ids,
+                    'associated_prompts': prompt_ids
+                }
+            }
+            result = api_request('POST', '/servers', server_payload)
+            print(f'Virtual server created: {result}')
+            print(f'✅ Successfully created virtual server with {len(tool_ids)} tools, {len(resource_ids)} resources, {len(prompt_ids)} prompts')
+        except Exception as e:
+            print(f'❌ Failed to create virtual server: {e}')
             sys.exit(1)
         "
 
