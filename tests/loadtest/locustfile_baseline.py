@@ -1,18 +1,20 @@
 # -*- coding: utf-8 -*-
-"""Baseline load testing for individual components (without gateway).
+"""Baseline load testing for individual components and gateway.
 
 This module provides load testing for individual components to establish
-performance baselines before testing through the gateway.
+performance baselines, and also tests MCP through the gateway.
 
 Components tested:
 - Fast Time Server (REST API) - MCP server performance baseline
-- Fast Time Server (MCP Client) - MCP protocol baseline (optional, requires fastmcp)
+- Fast Time Server (MCP Client) - MCP protocol baseline direct to server
+- Gateway MCP (SSE/HTTP) - MCP protocol through gateway virtual server
 - PostgreSQL - Database performance baseline (optional, requires psycopg2)
 - Redis - Cache performance baseline (optional, requires redis)
 
 User Classes (selectable via --class-picker in Web UI):
 - FastTimeRESTUser: Standard REST API load test (weight: 10)
-- FastTimeMCPUser: MCP protocol test via fastmcp Client (weight: 1, requires fastmcp)
+- FastTimeMCPUser: MCP protocol test direct to server (weight: 1)
+- GatewayMCPUser: MCP protocol test through gateway (weight: 1)
 - FastTimeStressUser: High-frequency stress test (weight: 1)
 - PostgresUser: Direct PostgreSQL testing (weight: 1, requires psycopg2)
 - RedisUser: Direct Redis testing (weight: 1, requires redis)
@@ -42,7 +44,10 @@ Usage:
 
 Environment Variables:
     BASELINE_FAST_TIME_HOST: Fast Time Server URL (default: http://localhost:8888)
-    BASELINE_MCP_URL: MCP Server URL for fastmcp Client (default: http://localhost:8888/http)
+    BASELINE_MCP_URL: MCP Server URL direct (default: http://localhost:8888/http)
+    BASELINE_GATEWAY_URL: Gateway URL (default: http://localhost:8080)
+    BASELINE_GATEWAY_SERVER_ID: Virtual server ID (default: 9779b6698cbd4b4995ee04a4fab38737)
+    BASELINE_JWT_SECRET: JWT secret for gateway auth (default: my-test-key)
     BASELINE_POSTGRES_HOST: PostgreSQL host (default: localhost)
     BASELINE_POSTGRES_PORT: PostgreSQL port (default: 5432)
     BASELINE_POSTGRES_USER: PostgreSQL user (default: postgres)
@@ -87,6 +92,9 @@ def set_defaults(parser):
 
 FAST_TIME_HOST = os.environ.get("BASELINE_FAST_TIME_HOST", "http://localhost:8888")
 MCP_URL = os.environ.get("BASELINE_MCP_URL", "http://localhost:8888/http")
+GATEWAY_URL = os.environ.get("BASELINE_GATEWAY_URL", "http://localhost:8080")
+GATEWAY_SERVER_ID = os.environ.get("BASELINE_GATEWAY_SERVER_ID", "9779b6698cbd4b4995ee04a4fab38737")
+JWT_SECRET = os.environ.get("BASELINE_JWT_SECRET", "my-test-key")
 POSTGRES_HOST = os.environ.get("BASELINE_POSTGRES_HOST", "localhost")
 POSTGRES_PORT = int(os.environ.get("BASELINE_POSTGRES_PORT", "5433"))
 POSTGRES_USER = os.environ.get("BASELINE_POSTGRES_USER", "postgres")
@@ -117,6 +125,7 @@ def on_test_start(environment, **kwargs):
     logger.info("=" * 60)
     logger.info(f"Fast Time Server (REST): {FAST_TIME_HOST}")
     logger.info(f"Fast Time Server (MCP):  {MCP_URL}")
+    logger.info(f"Gateway (MCP):           {GATEWAY_URL}/servers/{GATEWAY_SERVER_ID}/mcp")
     logger.info(f"PostgreSQL: {POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}")
     logger.info(f"Redis: {REDIS_URL}")
     logger.info("=" * 60)
@@ -454,6 +463,213 @@ class FastTimeMCPUser(User):
         try:
             self._ensure_initialized()
             self._mcp_request("tools/list", {})
+            self._fire_request("list_tools", start)
+        except Exception as e:
+            self._fire_request("list_tools", start, e)
+
+
+# =============================================================================
+# Gateway MCP Tests (via virtual server)
+# =============================================================================
+
+def _generate_jwt_token():
+    """Generate a JWT token for gateway authentication.
+
+    First tries to use the PyJWT library for proper token generation.
+    Falls back to manual generation with compact JSON if PyJWT is not available.
+    """
+    import time as time_module
+
+    now = int(time_module.time())
+    payload = {
+        "username": "admin@example.com",
+        "iat": now,
+        "iss": "mcpgateway",
+        "aud": "mcpgateway-api",
+        "sub": "admin@example.com",
+        "exp": now + 86400  # 24 hours
+    }
+
+    # Try PyJWT first (proper implementation)
+    try:
+        import jwt
+        return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+    except ImportError:
+        pass
+
+    # Fallback: manual JWT generation with compact JSON (no spaces)
+    import base64
+    import hashlib
+    import hmac
+    import json as json_module
+
+    header = {"alg": "HS256", "typ": "JWT"}
+
+    def b64url(data):
+        # Use separators to get compact JSON without spaces
+        json_str = json_module.dumps(data, separators=(",", ":"))
+        return base64.urlsafe_b64encode(json_str.encode()).rstrip(b"=").decode()
+
+    header_b64 = b64url(header)
+    payload_b64 = b64url(payload)
+    message = f"{header_b64}.{payload_b64}"
+    signature = hmac.new(JWT_SECRET.encode(), message.encode(), hashlib.sha256).digest()
+    sig_b64 = base64.urlsafe_b64encode(signature).rstrip(b"=").decode()
+
+    return f"{message}.{sig_b64}"
+
+
+class GatewayMCPUser(User):
+    """Load test for MCP protocol through the gateway virtual server.
+
+    Tests the MCP protocol through the gateway to measure the overhead
+    of routing through the gateway vs direct connection.
+
+    Uses the virtual server endpoint: /servers/{server_id}/mcp
+
+    To enable: Select in class picker (Web UI) or set weight > 0
+    """
+
+    weight = 1  # Enabled by default
+    wait_time = between(0.1, 0.5)
+
+    def __init__(self, *args, **kwargs):
+        """Initialize with requests session for gateway MCP calls."""
+        super().__init__(*args, **kwargs)
+        import requests
+        self._session = requests.Session()
+        self._request_id = 0
+        self._initialized = False
+        self._mcp_session_id = None
+        self._token = _generate_jwt_token()
+        self._mcp_url = f"{GATEWAY_URL}/servers/{GATEWAY_SERVER_ID}/mcp"
+        logger.info(f"Gateway MCP client configured for {self._mcp_url}")
+
+    def on_stop(self):
+        """Close the session."""
+        if self._session:
+            self._session.close()
+
+    def _next_id(self):
+        """Get next request ID."""
+        self._request_id += 1
+        return self._request_id
+
+    def _fire_request(self, name: str, start_time: float, exception: Exception = None):
+        """Fire a request event for Locust metrics."""
+        elapsed = (time.perf_counter() - start_time) * 1000
+        events.request.fire(
+            request_type="GW-MCP",
+            name=name,
+            response_time=elapsed,
+            response_length=0,
+            exception=exception,
+        )
+
+    def _mcp_request(self, method: str, params: dict = None):
+        """Make an MCP JSON-RPC request through the gateway."""
+        payload = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "id": self._next_id()
+        }
+        if params:
+            payload["params"] = params
+
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Authorization": f"Bearer {self._token}"
+        }
+        if self._mcp_session_id:
+            headers["Mcp-Session-Id"] = self._mcp_session_id
+
+        response = self._session.post(
+            self._mcp_url,
+            json=payload,
+            headers=headers,
+            timeout=10
+        )
+
+        # Capture session ID from response header
+        if "Mcp-Session-Id" in response.headers:
+            self._mcp_session_id = response.headers["Mcp-Session-Id"]
+
+        response.raise_for_status()
+        result = response.json()
+
+        if "error" in result:
+            raise Exception(f"MCP error: {result['error']}")
+
+        return result.get("result")
+
+    def _ensure_initialized(self):
+        """Ensure MCP session is initialized."""
+        if not self._initialized:
+            self._mcp_request("initialize", {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "locust-gateway-client", "version": "1.0"}
+            })
+            self._initialized = True
+
+    @task(10)
+    @tag("gateway", "mcp", "time")
+    def gw_get_system_time(self):
+        """Gateway MCP: Call get_system_time tool."""
+        tz = random.choice(TIMEZONES)
+        start = time.perf_counter()
+        try:
+            self._ensure_initialized()
+            result = self._mcp_request("tools/call", {
+                "name": "fast-time-get-system-time",
+                "arguments": {"timezone": tz}
+            })
+            # Validate response contains time data
+            content = result.get("content", [])
+            if not content or "text" not in content[0]:
+                raise Exception("Invalid response: missing time content")
+            self._fire_request("get_system_time", start)
+        except Exception as e:
+            self._fire_request("get_system_time", start, e)
+
+    @task(5)
+    @tag("gateway", "mcp", "convert")
+    def gw_convert_time(self):
+        """Gateway MCP: Call convert_time tool."""
+        source_tz = random.choice(TIMEZONES)
+        target_tz = random.choice([t for t in TIMEZONES if t != source_tz])
+        start = time.perf_counter()
+        try:
+            self._ensure_initialized()
+            result = self._mcp_request("tools/call", {
+                "name": "fast-time-convert-time",
+                "arguments": {
+                    "time": "2025-01-15T10:30:00Z",
+                    "source_timezone": source_tz,
+                    "target_timezone": target_tz
+                }
+            })
+            # Validate response contains converted time
+            content = result.get("content", [])
+            if not content or "text" not in content[0]:
+                raise Exception("Invalid response: missing converted time")
+            self._fire_request("convert_time", start)
+        except Exception as e:
+            self._fire_request("convert_time", start, e)
+
+    @task(3)
+    @tag("gateway", "mcp", "list")
+    def gw_list_tools(self):
+        """Gateway MCP: List available tools."""
+        start = time.perf_counter()
+        try:
+            self._ensure_initialized()
+            result = self._mcp_request("tools/list", {})
+            # Validate response contains tools
+            tools = result.get("tools", [])
+            if not tools:
+                raise Exception("Invalid response: no tools returned")
             self._fire_request("list_tools", start)
         except Exception as e:
             self._fire_request("list_tools", start, e)

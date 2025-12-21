@@ -774,6 +774,11 @@ services:
             sys.exit(1)
         "
 
+        # Write the bearer token to a file for load testing
+        echo "Writing bearer token to /tmp/gateway-token.txt..."
+        echo "$$MCPGATEWAY_BEARER_TOKEN" > /tmp/gateway-token.txt
+        echo "Token written to /tmp/gateway-token.txt"
+
         echo "✅ Setup complete!"
 
   ###############################################################################
