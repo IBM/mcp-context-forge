@@ -240,6 +240,8 @@ if backend == "sqlite":
         cursor.execute("PRAGMA synchronous=NORMAL")
         # Increase cache size for better performance (negative value = KB)
         cursor.execute("PRAGMA cache_size=-64000")  # 64MB cache
+        # Enable foreign key constraints for ON DELETE CASCADE support
+        cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
 
 
