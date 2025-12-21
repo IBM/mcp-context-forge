@@ -67,9 +67,9 @@ services:
     # Environment - pick ONE database URL line, comment the rest
     # ──────────────────────────────────────────────────────────────────────
     environment:
-      # HTTP Server: gunicorn (default) or granian (Rust-based alternative)
-      - HTTP_SERVER=gunicorn
-      # - HTTP_SERVER=granian  # Alternative: use Granian (Rust-based HTTP server)
+      # HTTP Server: granian (default, Rust-based) or gunicorn (Python-based alternative)
+      - HTTP_SERVER=granian
+      # - HTTP_SERVER=gunicorn  # Alternative: use Gunicorn with Uvicorn workers
       - HOST=0.0.0.0
       - PORT=4444
       - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
@@ -78,6 +78,10 @@ services:
       # - DATABASE_URL=mongodb://admin:${MONGO_PASSWORD:-changeme}@mongodb:27017/mcp
       - CACHE_TYPE=redis # backend for caching (memory, redis, database, or none)
       - REDIS_URL=redis://redis:6379/0
+      # Redis parser: hiredis (default, C extension ~83x faster), auto, python
+      # - auto: use hiredis if available, fallback to python
+      # - python: force pure-Python parser (useful for debugging)
+      - REDIS_PARSER=hiredis
       # JWT Configuration - Choose ONE approach:
       # Option 1: HMAC (Default - Simple deployments)
       - JWT_ALGORITHM=HS256

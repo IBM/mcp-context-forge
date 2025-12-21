@@ -30,5 +30,6 @@ This page tracks all significant design decisions made for the MCP Gateway proje
 | 0023  | One-Time Authentication Servers                    | Accepted  | Security       | 2025-10-27  |
 | 0024  | Adopt **uvicorn[standard]** for Enhanced Server Performance | Accepted | Performance | 2025-12-21 |
 | 0025  | Adopt **Granian** as Alternative HTTP Server | Accepted | Performance | 2025-12-21 |
+| 0026  | Add **Hiredis** as Default Redis Parser | Accepted | Performance | 2025-12-21 |
 
 > ✳️ Add new decisions chronologically and link to them from this table.

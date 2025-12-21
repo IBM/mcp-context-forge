@@ -151,7 +151,7 @@ RUN set -euo pipefail \
 # Now copy only the application files needed for runtime
 # This ensures code changes don't invalidate the dependency layer
 # ----------------------------------------------------------------------------
-COPY run-gunicorn.sh run-granian.sh /app/
+COPY run-gunicorn.sh run-granian.sh docker-entrypoint.sh /app/
 COPY mcpgateway/ /app/mcpgateway/
 COPY gunicorn.config.py /app/
 COPY plugins/ /app/plugins/
