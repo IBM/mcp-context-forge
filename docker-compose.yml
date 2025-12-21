@@ -113,6 +113,7 @@ services:
       # Logging configuration
       - LOG_LEVEL=ERROR  # Default to ERROR for production performance
       - DISABLE_ACCESS_LOG=true  # Disable uvicorn access logs for performance (massive I/O overhead)
+      - STRUCTURED_LOGGING_DATABASE_ENABLED=false  # Disable DB logging for performance (use true only for debugging)
       # Database pool tuning: 16 workers × 50 pool = 800 connections (< 1000 max)
       - DB_POOL_SIZE=50
       - DB_MAX_OVERFLOW=20

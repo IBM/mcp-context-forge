@@ -867,7 +867,7 @@ class Settings(BaseSettings):
 
     # Structured Logging Configuration
     structured_logging_enabled: bool = Field(default=True, description="Enable structured JSON logging with database persistence")
-    structured_logging_database_enabled: bool = Field(default=True, description="Persist structured logs to database")
+    structured_logging_database_enabled: bool = Field(default=False, description="Persist structured logs to database (enables /api/logs/* endpoints, impacts performance)")
     structured_logging_external_enabled: bool = Field(default=False, description="Send logs to external systems")
 
     # Performance Tracking Configuration
