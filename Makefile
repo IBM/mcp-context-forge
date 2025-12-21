@@ -508,7 +508,7 @@ clean:
 # help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
 # help: query-log-clear      - Clear database query log files
 
-.PHONY: smoketest test test-profile coverage pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary
+.PHONY: smoketest test test-profile coverage pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress
 
 ## --- Automated checks --------------------------------------------------------
 smoketest:
@@ -995,6 +995,67 @@ with open('$(LOADTEST_CSV_PREFIX)_stats.csv') as f: \
 		echo "❌ No CSV report found at $(LOADTEST_CSV_PREFIX)_stats.csv"; \
 		echo "   Run 'make load-test' first to generate reports."; \
 	fi
+
+# --- Baseline Load Tests (individual components without gateway) ---
+# help: load-test-baseline     - Baseline test: Fast Time Server REST API (1000 users, 3min)
+# help: load-test-baseline-ui  - Baseline test with Locust Web UI
+# help: load-test-baseline-stress - Baseline stress test (2000 users, 3min)
+
+BASELINE_HOST ?= http://localhost:8888
+
+load-test-baseline:                        ## Baseline test: Fast Time Server REST API (1000 users, 3min)
+	@echo "📊 Running BASELINE load test (Fast Time Server REST API)..."
+	@echo "   Host: $(BASELINE_HOST)"
+	@echo "   Users: 1000, Duration: 3 minutes"
+	@echo "   💡 Requires: docker compose --profile with-fast-time up -d"
+	@echo "   📝 This tests the MCP server directly WITHOUT the gateway"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		cd tests/loadtest && \
+		locust -f locustfile_baseline.py \
+			--host=$(BASELINE_HOST) \
+			--users=1000 \
+			--spawn-rate=100 \
+			--run-time=180s \
+			--headless \
+			--csv=baseline \
+			--html=baseline_report.html'
+	@echo ""
+	@echo "📊 Baseline report: tests/loadtest/baseline_report.html"
+
+load-test-baseline-ui:                     ## Baseline test with Locust Web UI (class picker enabled)
+	@echo "📊 Starting BASELINE load test Web UI..."
+	@echo "   🌐 Open http://localhost:8089 in your browser"
+	@echo "   🎯 Host: $(BASELINE_HOST)"
+	@echo "   👥 Defaults: 1000 users, 100 spawn/s, 3 min"
+	@echo "   🎛️  Class picker enabled - select which tests to run"
+	@echo "   💡 Requires: docker compose --profile with-fast-time up -d"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		cd tests/loadtest && \
+		locust -f locustfile_baseline.py \
+			--host=$(BASELINE_HOST) \
+			--users=1000 \
+			--spawn-rate=100 \
+			--run-time=180s \
+			--class-picker'
+
+load-test-baseline-stress:                 ## Baseline stress test (2000 users, 3min)
+	@echo "📊 Running BASELINE STRESS test..."
+	@echo "   Host: $(BASELINE_HOST)"
+	@echo "   Users: 2000, Duration: 3 minutes"
+	@echo "   ⚠️  This will generate high load on the MCP server"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		cd tests/loadtest && \
+		locust -f locustfile_baseline.py \
+			--host=$(BASELINE_HOST) \
+			--users=2000 \
+			--spawn-rate=200 \
+			--run-time=180s \
+			--headless \
+			--csv=baseline_stress \
+			--html=baseline_stress_report.html'
 
 # =============================================================================
 # 🧬 MUTATION TESTING
