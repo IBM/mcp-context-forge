@@ -372,6 +372,32 @@ def upgrade() -> None:
     # LLM provider foreign keys
     _create_index_safe("idx_llm_models_provider_id", "llm_models", ["provider_id"])
 
+    # Session message foreign keys
+    _create_index_safe("idx_mcp_messages_session_id", "mcp_messages", ["session_id"])
+
+    # ------------------------------------------------------------------------
+    # Junction Table Foreign Key Indexes
+    # ------------------------------------------------------------------------
+    # These are many-to-many association tables. While the composite primary key
+    # provides an index on (col1, col2), we need separate indexes on each column
+    # for efficient lookups when querying from either direction and for CASCADE deletes.
+
+    # server_tool_association
+    _create_index_safe("idx_server_tool_association_server_id", "server_tool_association", ["server_id"])
+    _create_index_safe("idx_server_tool_association_tool_id", "server_tool_association", ["tool_id"])
+
+    # server_resource_association
+    _create_index_safe("idx_server_resource_association_server_id", "server_resource_association", ["server_id"])
+    _create_index_safe("idx_server_resource_association_resource_id", "server_resource_association", ["resource_id"])
+
+    # server_prompt_association
+    _create_index_safe("idx_server_prompt_association_server_id", "server_prompt_association", ["server_id"])
+    _create_index_safe("idx_server_prompt_association_prompt_id", "server_prompt_association", ["prompt_id"])
+
+    # server_a2a_association
+    _create_index_safe("idx_server_a2a_association_server_id", "server_a2a_association", ["server_id"])
+    _create_index_safe("idx_server_a2a_association_a2a_agent_id", "server_a2a_association", ["a2a_agent_id"])
+
     # ========================================================================
     # PHASE 2: Composite Indexes
     # ========================================================================
@@ -649,6 +675,63 @@ def upgrade() -> None:
         ["role_id", "scope", "is_active"],
     )
 
+    # ------------------------------------------------------------------------
+    # Permission Audit Log Indexes
+    # ------------------------------------------------------------------------
+    print("\n--- Permission Audit Log Indexes ---")
+
+    # Single-column indexes for common filters
+    _create_index_safe("idx_permission_audit_log_timestamp", "permission_audit_log", ["timestamp"])
+    _create_index_safe("idx_permission_audit_log_user_email", "permission_audit_log", ["user_email"])
+    _create_index_safe("idx_permission_audit_log_granted", "permission_audit_log", ["granted"])
+    _create_index_safe("idx_permission_audit_log_resource_type", "permission_audit_log", ["resource_type"])
+    _create_index_safe("idx_permission_audit_log_team_id", "permission_audit_log", ["team_id"])
+
+    # Composite indexes for common query patterns
+    _create_index_safe(
+        "idx_permission_audit_log_user_time",
+        "permission_audit_log",
+        ["user_email", "timestamp"],
+    )
+    _create_index_safe(
+        "idx_permission_audit_log_resource_granted_time",
+        "permission_audit_log",
+        ["resource_type", "granted", "timestamp"],
+    )
+    _create_index_safe(
+        "idx_permission_audit_log_team_time",
+        "permission_audit_log",
+        ["team_id", "timestamp"],
+    )
+
+    # ------------------------------------------------------------------------
+    # Email Auth Events Additional Indexes
+    # ------------------------------------------------------------------------
+    print("\n--- Email Auth Events Additional Indexes ---")
+
+    # Single-column indexes for common filters
+    _create_index_safe("idx_email_auth_events_timestamp", "email_auth_events", ["timestamp"])
+    _create_index_safe("idx_email_auth_events_event_type", "email_auth_events", ["event_type"])
+    _create_index_safe("idx_email_auth_events_success", "email_auth_events", ["success"])
+    _create_index_safe("idx_email_auth_events_ip_address", "email_auth_events", ["ip_address"])
+
+    # Composite indexes for security analysis
+    _create_index_safe(
+        "idx_email_auth_events_success_time",
+        "email_auth_events",
+        ["success", "timestamp"],
+    )
+    _create_index_safe(
+        "idx_email_auth_events_ip_time",
+        "email_auth_events",
+        ["ip_address", "timestamp"],
+    )
+    _create_index_safe(
+        "idx_email_auth_events_type_success_time",
+        "email_auth_events",
+        ["event_type", "success", "timestamp"],
+    )
+
     # ========================================================================
     # PHASE 3: Foreign Key Constraint Fixes
     # ========================================================================
@@ -731,6 +814,25 @@ def downgrade() -> None:
     # Remove Composite Indexes (Phase 2) - in reverse order
     # ========================================================================
 
+    # Email Auth Events Additional Indexes
+    _drop_index_safe("idx_email_auth_events_type_success_time", "email_auth_events")
+    _drop_index_safe("idx_email_auth_events_ip_time", "email_auth_events")
+    _drop_index_safe("idx_email_auth_events_success_time", "email_auth_events")
+    _drop_index_safe("idx_email_auth_events_ip_address", "email_auth_events")
+    _drop_index_safe("idx_email_auth_events_success", "email_auth_events")
+    _drop_index_safe("idx_email_auth_events_event_type", "email_auth_events")
+    _drop_index_safe("idx_email_auth_events_timestamp", "email_auth_events")
+
+    # Permission Audit Log Indexes
+    _drop_index_safe("idx_permission_audit_log_team_time", "permission_audit_log")
+    _drop_index_safe("idx_permission_audit_log_resource_granted_time", "permission_audit_log")
+    _drop_index_safe("idx_permission_audit_log_user_time", "permission_audit_log")
+    _drop_index_safe("idx_permission_audit_log_team_id", "permission_audit_log")
+    _drop_index_safe("idx_permission_audit_log_resource_type", "permission_audit_log")
+    _drop_index_safe("idx_permission_audit_log_granted", "permission_audit_log")
+    _drop_index_safe("idx_permission_audit_log_user_email", "permission_audit_log")
+    _drop_index_safe("idx_permission_audit_log_timestamp", "permission_audit_log")
+
     # RBAC
     _drop_index_safe("idx_user_roles_role_scope_active", "user_roles")
     _drop_index_safe("idx_user_roles_user_scope_active", "user_roles")
@@ -782,6 +884,17 @@ def downgrade() -> None:
     # Remove Foreign Key Indexes (Phase 1) - in reverse order
     # ========================================================================
 
+    # Junction Table Indexes
+    _drop_index_safe("idx_server_a2a_association_a2a_agent_id", "server_a2a_association")
+    _drop_index_safe("idx_server_a2a_association_server_id", "server_a2a_association")
+    _drop_index_safe("idx_server_prompt_association_prompt_id", "server_prompt_association")
+    _drop_index_safe("idx_server_prompt_association_server_id", "server_prompt_association")
+    _drop_index_safe("idx_server_resource_association_resource_id", "server_resource_association")
+    _drop_index_safe("idx_server_resource_association_server_id", "server_resource_association")
+    _drop_index_safe("idx_server_tool_association_tool_id", "server_tool_association")
+    _drop_index_safe("idx_server_tool_association_server_id", "server_tool_association")
+
+    _drop_index_safe("idx_mcp_messages_session_id", "mcp_messages")
     _drop_index_safe("idx_llm_models_provider_id", "llm_models")
     _drop_index_safe("idx_sso_auth_sessions_user_email", "sso_auth_sessions")
     _drop_index_safe("idx_sso_auth_sessions_provider_id", "sso_auth_sessions")
