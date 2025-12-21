@@ -14,10 +14,13 @@ import pytest
 
 # First-Party
 from mcpgateway.utils.redis_client import (
+    _get_async_parser_class,
+    _is_hiredis_available,
     _reset_client,
     close_redis_client,
     get_redis_client,
     get_redis_client_sync,
+    get_redis_parser_info,
     is_redis_available,
 )
 
@@ -94,22 +97,23 @@ async def test_get_redis_client_creates_client_on_first_call():
         mock_settings.redis_socket_connect_timeout = 5.0
         mock_settings.redis_retry_on_timeout = True
         mock_settings.redis_health_check_interval = 30
+        mock_settings.redis_parser = "auto"
 
         with patch("redis.asyncio.from_url", return_value=mock_redis) as mock_from_url:
             client = await get_redis_client()
 
             assert client is mock_redis
-            mock_from_url.assert_called_once_with(
-                "redis://localhost:6379",
-                decode_responses=True,
-                max_connections=10,
-                socket_timeout=5.0,
-                socket_connect_timeout=5.0,
-                retry_on_timeout=True,
-                health_check_interval=30,
-                encoding="utf-8",
-                single_connection_client=False,
-            )
+            # Verify from_url was called with expected kwargs (parser_class may vary)
+            mock_from_url.assert_called_once()
+            call_kwargs = mock_from_url.call_args[1]
+            assert call_kwargs["decode_responses"] is True
+            assert call_kwargs["max_connections"] == 10
+            assert call_kwargs["socket_timeout"] == 5.0
+            assert call_kwargs["socket_connect_timeout"] == 5.0
+            assert call_kwargs["retry_on_timeout"] is True
+            assert call_kwargs["health_check_interval"] == 30
+            assert call_kwargs["encoding"] == "utf-8"
+            assert call_kwargs["single_connection_client"] is False
             mock_redis.ping.assert_awaited_once()
 
 
@@ -128,6 +132,7 @@ async def test_get_redis_client_returns_cached_client():
         mock_settings.redis_socket_connect_timeout = 5.0
         mock_settings.redis_retry_on_timeout = True
         mock_settings.redis_health_check_interval = 30
+        mock_settings.redis_parser = "auto"
 
         with patch("redis.asyncio.from_url", return_value=mock_redis) as mock_from_url:
             client1 = await get_redis_client()
@@ -153,6 +158,7 @@ async def test_get_redis_client_returns_none_on_connection_error():
         mock_settings.redis_socket_connect_timeout = 5.0
         mock_settings.redis_retry_on_timeout = True
         mock_settings.redis_health_check_interval = 30
+        mock_settings.redis_parser = "auto"
 
         with patch("redis.asyncio.from_url", return_value=mock_redis):
             client = await get_redis_client()
@@ -181,6 +187,7 @@ async def test_close_redis_client_closes_active_client():
         mock_settings.redis_socket_connect_timeout = 5.0
         mock_settings.redis_retry_on_timeout = True
         mock_settings.redis_health_check_interval = 30
+        mock_settings.redis_parser = "auto"
 
         with patch("redis.asyncio.from_url", return_value=mock_redis):
             await get_redis_client()
@@ -215,6 +222,7 @@ async def test_close_redis_client_handles_close_error():
         mock_settings.redis_socket_connect_timeout = 5.0
         mock_settings.redis_retry_on_timeout = True
         mock_settings.redis_health_check_interval = 30
+        mock_settings.redis_parser = "auto"
 
         with patch("redis.asyncio.from_url", return_value=mock_redis):
             await get_redis_client()
@@ -242,6 +250,7 @@ async def test_is_redis_available_returns_true_when_connected():
         mock_settings.redis_socket_connect_timeout = 5.0
         mock_settings.redis_retry_on_timeout = True
         mock_settings.redis_health_check_interval = 30
+        mock_settings.redis_parser = "auto"
 
         with patch("redis.asyncio.from_url", return_value=mock_redis):
             result = await is_redis_available()
@@ -277,6 +286,7 @@ async def test_is_redis_available_returns_false_when_ping_fails():
         mock_settings.redis_socket_connect_timeout = 5.0
         mock_settings.redis_retry_on_timeout = True
         mock_settings.redis_health_check_interval = 30
+        mock_settings.redis_parser = "auto"
 
         with patch("redis.asyncio.from_url", return_value=mock_redis):
             result = await is_redis_available()
@@ -311,6 +321,7 @@ async def test_get_redis_client_sync_returns_cached_client():
         mock_settings.redis_socket_connect_timeout = 5.0
         mock_settings.redis_retry_on_timeout = True
         mock_settings.redis_health_check_interval = 30
+        mock_settings.redis_parser = "auto"
 
         with patch("redis.asyncio.from_url", return_value=mock_redis):
             await get_redis_client()
@@ -340,6 +351,7 @@ async def test_reset_client_clears_state():
         mock_settings.redis_socket_connect_timeout = 5.0
         mock_settings.redis_retry_on_timeout = True
         mock_settings.redis_health_check_interval = 30
+        mock_settings.redis_parser = "auto"
 
         with patch("redis.asyncio.from_url", return_value=mock_redis):
             await get_redis_client()
@@ -348,3 +360,75 @@ async def test_reset_client_clears_state():
             _reset_client()
 
             assert get_redis_client_sync() is None
+            assert get_redis_parser_info() is None
+
+
+# ---------------------------------------------------------------------------
+# Tests for parser selection (ADR-026)
+# ---------------------------------------------------------------------------
+
+
+def test_get_async_parser_class_python_mode():
+    """_get_async_parser_class returns AsyncRESP2Parser for python mode."""
+    parser_class, parser_info = _get_async_parser_class("python")
+
+    assert parser_class is not None
+    assert "AsyncRESP2Parser" in parser_info or "pure-Python" in parser_info
+
+
+def test_get_async_parser_class_auto_mode():
+    """_get_async_parser_class returns appropriate parser for auto mode."""
+    parser_class, parser_info = _get_async_parser_class("auto")
+
+    # In auto mode, parser_class is None (let redis-py decide)
+    assert parser_class is None
+    # Parser info should indicate auto-detection
+    assert "auto-detected" in parser_info
+
+
+def test_get_async_parser_class_hiredis_mode_when_available():
+    """_get_async_parser_class returns None for hiredis mode (let redis-py auto-detect)."""
+    if _is_hiredis_available():
+        parser_class, parser_info = _get_async_parser_class("hiredis")
+        # For async, we let redis-py auto-detect (parser_class is None)
+        assert parser_class is None
+        assert "AsyncHiredisParser" in parser_info
+        assert "C extension" in parser_info
+    else:
+        # If hiredis is not installed, test that it raises ImportError
+        with pytest.raises(ImportError) as exc_info:
+            _get_async_parser_class("hiredis")
+        assert "hiredis" in str(exc_info.value)
+
+
+def test_get_redis_parser_info_before_init():
+    """get_redis_parser_info returns None before initialization."""
+    result = get_redis_parser_info()
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_redis_client_with_parser_setting():
+    """get_redis_client respects redis_parser setting."""
+    mock_redis = AsyncMock()
+    mock_redis.ping = AsyncMock(return_value=True)
+
+    with patch("mcpgateway.config.settings") as mock_settings:
+        mock_settings.cache_type = "redis"
+        mock_settings.redis_url = "redis://localhost:6379"
+        mock_settings.redis_decode_responses = True
+        mock_settings.redis_max_connections = 10
+        mock_settings.redis_socket_timeout = 5.0
+        mock_settings.redis_socket_connect_timeout = 5.0
+        mock_settings.redis_retry_on_timeout = True
+        mock_settings.redis_health_check_interval = 30
+        mock_settings.redis_parser = "auto"
+
+        with patch("redis.asyncio.from_url", return_value=mock_redis):
+            client = await get_redis_client()
+
+            assert client is mock_redis
+            # Parser info should be set after initialization
+            parser_info = get_redis_parser_info()
+            assert parser_info is not None
+            assert "auto-detected" in parser_info

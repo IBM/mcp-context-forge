@@ -1098,6 +1098,13 @@ class Settings(BaseSettings):
     redis_max_retries: int = 3
     redis_retry_interval_ms: int = 2000
 
+    # Redis Parser Configuration (ADR-026)
+    # hiredis C parser provides up to 83x faster response parsing for large responses
+    redis_parser: Literal["auto", "hiredis", "python"] = Field(
+        default="auto",
+        description="Redis protocol parser: auto (use hiredis if available), hiredis (require hiredis), python (pure-Python)",
+    )
+
     # Redis Connection Pool - Performance Optimized
     redis_decode_responses: bool = Field(default=True, description="Return strings instead of bytes")
     redis_max_connections: int = Field(default=50, description="Connection pool size per worker")

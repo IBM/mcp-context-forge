@@ -67,17 +67,26 @@ services:
     # Environment - pick ONE database URL line, comment the rest
     # ──────────────────────────────────────────────────────────────────────
     environment:
-      # HTTP Server: gunicorn (default) or granian (Rust-based alternative)
-      - HTTP_SERVER=gunicorn
-      # - HTTP_SERVER=granian  # Alternative: use Granian (Rust-based HTTP server)
+      # HTTP Server: granian (default, Rust-based) or gunicorn (Python-based alternative)
+      - HTTP_SERVER=granian
+      # - HTTP_SERVER=gunicorn  # Alternative: use Gunicorn with Uvicorn workers
       - HOST=0.0.0.0
       - PORT=4444
+      # Transport: sse, streamablehttp, http, or all (default: all)
+      - TRANSPORT_TYPE=streamablehttp
       - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
       # - DATABASE_URL=mysql+pymysql://mysql:${MYSQL_PASSWORD:-changeme}@mariadb:3306/mcp
       # - DATABASE_URL=mysql+pymysql://admin:${MARIADB_PASSWORD:-changeme}@mariadb:3306/mcp
       # - DATABASE_URL=mongodb://admin:${MONGO_PASSWORD:-changeme}@mongodb:27017/mcp
       - CACHE_TYPE=redis # backend for caching (memory, redis, database, or none)
       - REDIS_URL=redis://redis:6379/0
+      # Redis parser: hiredis (C extension ~83x faster for large responses)
+      - REDIS_PARSER=hiredis
+      # Redis connection pool tuning for load testing (32 workers × 150 = 4800 < 5000 maxclients)
+      - REDIS_MAX_CONNECTIONS=150
+      - REDIS_SOCKET_TIMEOUT=5.0
+      - REDIS_SOCKET_CONNECT_TIMEOUT=5.0
+      - REDIS_HEALTH_CHECK_INTERVAL=30
       # JWT Configuration - Choose ONE approach:
       # Option 1: HMAC (Default - Simple deployments)
       - JWT_ALGORITHM=HS256
@@ -117,14 +126,20 @@ services:
       - LOG_LEVEL=ERROR  # Default to ERROR for production performance
       - DISABLE_ACCESS_LOG=true  # Disable uvicorn access logs for performance (massive I/O overhead)
       - STRUCTURED_LOGGING_DATABASE_ENABLED=false  # Disable DB logging for performance (use true only for debugging)
-      # Database pool tuning: 16 workers × 50 pool = 800 connections (< 1000 max)
-      - DB_POOL_SIZE=50
-      - DB_MAX_OVERFLOW=20
-      - DB_POOL_TIMEOUT=30
+      # Database pool tuning for load testing (1000 users)
+      # Formula: workers × (pool + overflow) < postgres max_connections
+      # With 2000 max_connections and 16 workers: 16 × 120 = 1920 < 2000
+      - DB_POOL_SIZE=80
+      - DB_MAX_OVERFLOW=40
+      - DB_POOL_TIMEOUT=60
       - DB_POOL_RECYCLE=1800
-      # Gunicorn workers - critical for throughput!
-      # Rule of thumb: 2 * CPU cores for async workers
+      - DB_POOL_PRE_PING=true
+      # Worker and server tuning for high-concurrency load testing
       - GUNICORN_WORKERS=16
+      # Granian high-concurrency tuning (for 1000 concurrent users)
+      - GRANIAN_BACKLOG=4096
+      - GRANIAN_BACKPRESSURE=1024
+      - GRANIAN_HTTP1_BUFFER_SIZE=524288
 
       # Phoenix Observability Integration (uncomment when using Phoenix)
       # - PHOENIX_ENDPOINT=${PHOENIX_ENDPOINT:-http://phoenix:6006}
@@ -202,11 +217,13 @@ services:
 
   postgres:
     image: postgres:17
-    # Performance tuning for high-load (16 workers × pool)
+    ports:
+      - "5433:5432"      # Expose for baseline load testing (5433 to avoid conflict with local postgres)
+    # Performance tuning for high-load testing (32 workers × 60 pool = 1920 connections)
     command:
       - "postgres"
       - "-c"
-      - "max_connections=1000"
+      - "max_connections=2000"
       - "-c"
       - "shared_buffers=512MB"
       - "-c"
@@ -519,7 +536,8 @@ services:
     networks: [mcpnet]
     ports:
       - "8888:8080"    # Map host port 8888 to container port 8080
-    command: ["-transport=sse", "-listen=0.0.0.0", "-port=8080", "-log-level=info"]
+    # Use dual mode for both SSE (/sse) and Streamable HTTP (/http) endpoints
+    command: ["-transport=dual", "-listen=0.0.0.0", "-port=8080", "-log-level=info"]
     profiles: ["with-fast-time"]  # Optional: enable with --profile with-fast-time
 
   ###############################################################################
@@ -608,8 +626,20 @@ services:
         import json
         import sys
         import os
+        import time
 
         token = os.environ.get('MCPGATEWAY_BEARER_TOKEN', '')
+
+        def api_request(method, path, data=None):
+            '''Helper to make authenticated API requests.'''
+            url = f'http://gateway:4444{path}'
+            req = urllib.request.Request(url, method=method)
+            req.add_header('Authorization', f'Bearer {token}')
+            req.add_header('Content-Type', 'application/json')
+            if data:
+                req.data = json.dumps(data).encode('utf-8')
+            with urllib.request.urlopen(req) as response:
+                return json.loads(response.read().decode('utf-8'))
 
         # Test version endpoint without auth
         print('Checking gateway config...')
@@ -628,43 +658,126 @@ services:
             with urllib.request.urlopen(req) as response:
                 data = response.read().decode('utf-8')
                 print(f'Auth test response: SUCCESS')
-                print(f'Response preview: {data[:200]}...')
                 auth_success = True
         except Exception as e:
             print(f'Auth test response: FAILED - {e}')
             auth_success = False
 
-        # Register fast_time_server with gateway
-        print('Registering fast_time_server with gateway...')
+        # Register fast_time_server with gateway using Streamable HTTP transport
+        print('Registering fast_time_server with gateway (Streamable HTTP)...')
+
+        # First check if gateway already exists and delete it
+        gateway_id = None
         try:
-            payload = json.dumps({'name': 'fast_time', 'url': 'http://fast_time_server:8080/sse'})
-            req = urllib.request.Request('http://gateway:4444/gateways',
-                                        data=payload.encode('utf-8'),
-                                        method='POST')
-            req.add_header('Authorization', f'Bearer {token}')
-            req.add_header('Content-Type', 'application/json')
+            gateways = api_request('GET', '/gateways')
+            for gw in gateways:
+                if gw.get('name') == 'fast_time':
+                    print(f'Found existing gateway {gw[\"id\"]}, deleting...')
+                    api_request('DELETE', f'/gateways/{gw[\"id\"]}')
+                    print('Deleted existing gateway')
+        except Exception as e:
+            print(f'Note: Could not check/delete existing gateway: {e}')
 
-            with urllib.request.urlopen(req) as response:
-                data = response.read().decode('utf-8')
-                print(f'Registration response: {data}')
+        # Delete existing virtual server if present (using fixed ID)
+        VIRTUAL_SERVER_ID = '9779b6698cbd4b4995ee04a4fab38737'
+        try:
+            api_request('DELETE', f'/servers/{VIRTUAL_SERVER_ID}')
+            print(f'Deleted existing virtual server {VIRTUAL_SERVER_ID}')
+        except Exception as e:
+            print(f'Note: No existing virtual server to delete (or error: {e})')
 
-                # Check if registration was successful
-                response_data = json.loads(data)
-                if 'id' in response_data:
-                    print('✅ Successfully registered fast_time_server')
-                    registration_success = True
-                else:
-                    print('❌ Registration failed - no ID in response')
-                    registration_success = False
-
+        # Register the gateway
+        try:
+            result = api_request('POST', '/gateways', {
+                'name': 'fast_time',
+                'url': 'http://fast_time_server:8080/http',
+                'transport': 'STREAMABLEHTTP'
+            })
+            print(f'Registration response: {result}')
+            if 'id' in result:
+                gateway_id = result['id']
+                print(f'✅ Successfully registered fast_time_server (gateway_id: {gateway_id})')
+            else:
+                print('❌ Registration failed - no ID in response')
+                sys.exit(1)
         except Exception as e:
             print(f'❌ Registration failed: {e}')
-            registration_success = False
+            sys.exit(1)
 
-        # Exit with error code if registration failed
-        if not registration_success:
+        # Wait for tools to be synced from the gateway
+        print('Waiting for tools/resources/prompts to sync...')
+        for i in range(30):
+            time.sleep(1)
+            try:
+                tools = api_request('GET', '/tools')
+                # Filter tools from fast_time gateway (note: camelCase gatewayId)
+                fast_time_tools = [t for t in tools if t.get('gatewayId') == gateway_id]
+                if fast_time_tools:
+                    print(f'Found {len(fast_time_tools)} tools from fast_time gateway')
+                    break
+            except Exception as e:
+                pass
+            print(f'Waiting for sync... ({i+1}/30)')
+        else:
+            print('⚠️ No tools synced, continuing anyway...')
+
+        # Fetch all tools, resources, and prompts
+        # Note: Tools use gatewayId (camelCase), resources/prompts from catalog have no gatewayId
+        tool_ids = []
+        resource_ids = []
+        prompt_ids = []
+
+        try:
+            tools = api_request('GET', '/tools')
+            # Get tools from the fast_time gateway
+            tool_ids = [t['id'] for t in tools if t.get('gatewayId') == gateway_id]
+            print(f'Found tools: {[t[\"name\"] for t in tools if t.get(\"gatewayId\") == gateway_id]}')
+        except Exception as e:
+            print(f'Failed to fetch tools: {e}')
+
+        try:
+            resources = api_request('GET', '/resources')
+            # Include all resources (from catalog)
+            resource_ids = [r['id'] for r in resources]
+            print(f'Found resources: {[r[\"name\"] for r in resources]}')
+        except Exception as e:
+            print(f'Failed to fetch resources: {e}')
+
+        try:
+            prompts = api_request('GET', '/prompts')
+            # Include all prompts (from catalog)
+            prompt_ids = [p['id'] for p in prompts]
+            print(f'Found prompts: {[p[\"name\"] for p in prompts]}')
+        except Exception as e:
+            print(f'Failed to fetch prompts: {e}')
+
+        # Create virtual server with all tools, resources, and prompts
+        print('Creating virtual server...')
+        try:
+            # API expects payload wrapped in 'server' key
+            # Use fixed UUID for consistent server ID across restarts
+            server_payload = {
+                'server': {
+                    'id': '9779b6698cbd4b4995ee04a4fab38737',
+                    'name': 'Fast Time Server',
+                    'description': 'Virtual server exposing Fast Time MCP tools, resources, and prompts',
+                    'associated_tools': tool_ids,
+                    'associated_resources': resource_ids,
+                    'associated_prompts': prompt_ids
+                }
+            }
+            result = api_request('POST', '/servers', server_payload)
+            print(f'Virtual server created: {result}')
+            print(f'✅ Successfully created virtual server with {len(tool_ids)} tools, {len(resource_ids)} resources, {len(prompt_ids)} prompts')
+        except Exception as e:
+            print(f'❌ Failed to create virtual server: {e}')
             sys.exit(1)
         "
+
+        # Write the bearer token to a file for load testing
+        echo "Writing bearer token to /tmp/gateway-token.txt..."
+        echo "$$MCPGATEWAY_BEARER_TOKEN" > /tmp/gateway-token.txt
+        echo "Token written to /tmp/gateway-token.txt"
 
         echo "✅ Setup complete!"
 
