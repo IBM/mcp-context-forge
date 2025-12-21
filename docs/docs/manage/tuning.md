@@ -106,6 +106,110 @@ Combined improvements from uvloop and httptools:
 
 ---
 
+## 2c - Granian (Alternative HTTP Server)
+
+MCP Gateway supports two HTTP servers:
+- **Gunicorn + Uvicorn** (default) - Battle-tested, mature, excellent stability
+- **Granian** (alternative) - Rust-based, native HTTP/2, lower memory
+
+### Usage
+
+```bash
+# Local development
+make serve                    # Gunicorn + Uvicorn (default)
+make serve-granian            # Granian (alternative)
+make serve-granian-http2      # Granian with HTTP/2 + TLS
+
+# Container with Gunicorn (default)
+make container-run
+make container-run-gunicorn-ssl
+
+# Container with Granian (alternative)
+make container-run-granian
+make container-run-granian-ssl
+
+# Docker Compose (default uses Gunicorn)
+docker compose up
+```
+
+### Switching HTTP Servers
+
+The `HTTP_SERVER` environment variable controls which server to use:
+
+```bash
+# Docker/Podman - use Gunicorn (default)
+docker run mcpgateway/mcpgateway
+
+# Docker/Podman - use Granian
+docker run -e HTTP_SERVER=granian mcpgateway/mcpgateway
+
+# Docker Compose - set in environment section
+environment:
+  - HTTP_SERVER=gunicorn  # default
+  # - HTTP_SERVER=granian # alternative
+```
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GRANIAN_WORKERS` | auto (CPU cores, max 16) | Worker processes |
+| `GRANIAN_RUNTIME_MODE` | auto (mt if >8 workers) | Runtime mode: mt (multi-threaded), st (single-threaded) |
+| `GRANIAN_RUNTIME_THREADS` | 1 | Runtime threads per worker |
+| `GRANIAN_BLOCKING_THREADS` | 1 | Blocking threads per worker |
+| `GRANIAN_HTTP` | auto | HTTP version: auto, 1, 2 |
+| `GRANIAN_LOOP` | uvloop | Event loop: uvloop, asyncio, rloop |
+| `GRANIAN_TASK_IMPL` | auto | Task implementation: asyncio (Python 3.12+), rust (older) |
+| `GRANIAN_HTTP1_PIPELINE_FLUSH` | true | Aggregate HTTP/1 flushes for pipelined responses |
+| `GRANIAN_HTTP1_BUFFER_SIZE` | 524288 | HTTP/1 buffer size (512KB) |
+| `GRANIAN_BACKLOG` | 2048 | Connection backlog for high concurrency |
+| `GRANIAN_BACKPRESSURE` | 512 | Max concurrent requests per worker |
+| `GRANIAN_RESPAWN_FAILED` | true | Auto-restart failed workers |
+| `GRANIAN_DEV_MODE` | false | Enable hot reload |
+| `DISABLE_ACCESS_LOG` | true | Disable access logging for performance |
+
+**Performance tuning profiles:**
+
+```bash
+# High-throughput (fewer workers, more threads per worker)
+GRANIAN_WORKERS=4 GRANIAN_RUNTIME_THREADS=4 make serve
+
+# High-concurrency (more workers, max backpressure)
+GRANIAN_WORKERS=16 GRANIAN_BACKPRESSURE=1024 GRANIAN_BACKLOG=4096 make serve
+
+# Memory-constrained (fewer workers)
+GRANIAN_WORKERS=2 make serve
+
+# Force HTTP/1 only (avoids HTTP/2 overhead)
+GRANIAN_HTTP=1 make serve
+```
+
+**Notes:**
+- On Python 3.12+, the Rust task implementation is unavailable; asyncio is used automatically
+- `uvloop` provides best performance on Linux/macOS
+- Increase `GRANIAN_BACKLOG` and `GRANIAN_BACKPRESSURE` for high-concurrency workloads
+
+### When to Use Granian
+
+| Use Granian when... | Use Gunicorn when... |
+|---------------------|----------------------|
+| You want native HTTP/2 | Maximum stability needed |
+| Optimizing for memory | Familiar with Gunicorn |
+| Simplest deployment | Need gevent/eventlet workers |
+| Benchmarks show gains | Behind HTTP/2 proxy already |
+
+### Performance Comparison
+
+| Metric | Gunicorn+Uvicorn | Granian |
+|--------|------------------|---------|
+| Simple JSON | Baseline | +20-50% (varies) |
+| Memory/worker | ~80MB | ~40MB |
+| HTTP/2 | Via proxy | Native |
+
+> **Note**: Always benchmark with your specific workload before switching servers.
+
+---
+
 ## 3 - Container resources
 
 | vCPU × RAM   | Good for              | Notes                                              |

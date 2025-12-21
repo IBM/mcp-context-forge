@@ -211,6 +211,13 @@ observability = [
     "opentelemetry-sdk>=1.39.1",
 ]
 
+# Granian HTTP server (optional, alternative to Gunicorn+Uvicorn)
+# Rust-based ASGI server with native HTTP/2, WebSocket, and mTLS support
+# Includes extras: pname (process naming), uvloop (faster event loop), reload (dev hot-reload)
+granian = [
+    "granian[pname,uvloop,reload]>=2.3.2",
+]
+
 # Async SQLite Driver (optional)
 aiosqlite = [
     "aiosqlite>=0.22.0",

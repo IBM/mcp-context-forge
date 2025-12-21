@@ -174,11 +174,14 @@ PORT=4444
 ENVIRONMENT=development
 APP_DOMAIN=localhost
 APP_ROOT_PATH=
+
+# HTTP Server selection (for containers)
+HTTP_SERVER=gunicorn              # Options: gunicorn (default), granian
 ```
 
-### Gunicorn Production Server
+### Gunicorn Production Server (Default)
 
-The production server uses Gunicorn with UVicorn workers. Configure via environment variables or `.env` file:
+The production server uses Gunicorn with UVicorn workers by default. Configure via environment variables or `.env` file:
 
 ```bash
 # Worker Configuration
@@ -226,6 +229,52 @@ DISABLE_ACCESS_LOG=true ./run-gunicorn.sh
     - **I/O-bound workloads**: 4-12 × CPU cores
     - **Memory-constrained**: Start with 2 and monitor
     - **Auto mode**: Uses formula `min(2*CPU+1, 16)`
+
+### Granian Production Server (Alternative)
+
+Granian is a Rust-based HTTP server available as an alternative to Gunicorn. It offers native HTTP/2 support and lower memory usage.
+
+```bash
+# Worker Configuration
+GRANIAN_WORKERS=auto              # Number of workers (auto = CPU cores, max 16)
+GRANIAN_RUNTIME_MODE=auto         # Runtime mode: auto, mt (multi-threaded), st (single-threaded)
+GRANIAN_RUNTIME_THREADS=1         # Runtime threads per worker
+GRANIAN_BLOCKING_THREADS=1        # Blocking threads per worker
+
+# Performance Options
+GRANIAN_HTTP=auto                 # HTTP version: auto, 1, 2
+GRANIAN_LOOP=uvloop               # Event loop: uvloop, asyncio, rloop
+GRANIAN_BACKLOG=2048              # Connection backlog
+GRANIAN_BACKPRESSURE=512          # Max concurrent requests per worker
+GRANIAN_RESPAWN_FAILED=true       # Auto-restart failed workers
+GRANIAN_DEV_MODE=false            # Enable hot reload
+DISABLE_ACCESS_LOG=true           # Disable access logs for performance
+
+# TLS/SSL (same as Gunicorn)
+SSL=false
+CERT_FILE=certs/cert.pem
+KEY_FILE=certs/key.pem
+```
+
+**Starting with Granian:**
+
+```bash
+# Local development
+make serve-granian
+
+# With HTTP/2 + TLS
+make serve-granian-http2
+
+# Container with Granian
+docker run -e HTTP_SERVER=granian mcpgateway/mcpgateway
+```
+
+!!! info "When to use Granian"
+    - Native HTTP/2 without reverse proxy
+    - Lower memory usage (~40MB vs ~80MB per worker)
+    - Simpler deployment for smaller instances
+
+    See [ADR-0025](../architecture/adr/025-granian-http-server.md) for detailed comparison.
 
 ### Authentication & Security
 
