@@ -72,6 +72,8 @@ services:
       # - HTTP_SERVER=gunicorn  # Alternative: use Gunicorn with Uvicorn workers
       - HOST=0.0.0.0
       - PORT=4444
+      # Transport: sse, streamablehttp, http, or all (default: all)
+      - TRANSPORT_TYPE=streamablehttp
       - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
       # - DATABASE_URL=mysql+pymysql://mysql:${MYSQL_PASSWORD:-changeme}@mariadb:3306/mcp
       # - DATABASE_URL=mysql+pymysql://admin:${MARIADB_PASSWORD:-changeme}@mariadb:3306/mcp
@@ -124,12 +126,12 @@ services:
       - LOG_LEVEL=ERROR  # Default to ERROR for production performance
       - DISABLE_ACCESS_LOG=true  # Disable uvicorn access logs for performance (massive I/O overhead)
       - STRUCTURED_LOGGING_DATABASE_ENABLED=false  # Disable DB logging for performance (use true only for debugging)
-      # Database pool tuning for load testing (1000 users, 32 workers total)
-      # Formula: (2 gateways × 16 workers) × (pool + overflow) < postgres max_connections
-      # With 2000 max_connections: 32 × 100 = 3200 > 2000, so limit per gateway: 100
-      - DB_POOL_SIZE=60
+      # Database pool tuning for load testing (1000 users)
+      # Formula: workers × (pool + overflow) < postgres max_connections
+      # With 2000 max_connections and 16 workers: 16 × 120 = 1920 < 2000
+      - DB_POOL_SIZE=80
       - DB_MAX_OVERFLOW=40
-      - DB_POOL_TIMEOUT=30
+      - DB_POOL_TIMEOUT=60
       - DB_POOL_RECYCLE=1800
       - DB_POOL_PRE_PING=true
       # Worker and server tuning for high-concurrency load testing
@@ -532,7 +534,8 @@ services:
     networks: [mcpnet]
     ports:
       - "8888:8080"    # Map host port 8888 to container port 8080
-    command: ["-transport=sse", "-listen=0.0.0.0", "-port=8080", "-log-level=info"]
+    # Use dual mode for both SSE (/sse) and Streamable HTTP (/http) endpoints
+    command: ["-transport=dual", "-listen=0.0.0.0", "-port=8080", "-log-level=info"]
     profiles: ["with-fast-time"]  # Optional: enable with --profile with-fast-time
 
   ###############################################################################
@@ -647,10 +650,27 @@ services:
             print(f'Auth test response: FAILED - {e}')
             auth_success = False
 
-        # Register fast_time_server with gateway
-        print('Registering fast_time_server with gateway...')
+        # Register fast_time_server with gateway using Streamable HTTP transport
+        print('Registering fast_time_server with gateway (Streamable HTTP)...')
+
+        # First check if gateway already exists and delete it
         try:
-            payload = json.dumps({'name': 'fast_time', 'url': 'http://fast_time_server:8080/sse'})
+            req = urllib.request.Request('http://gateway:4444/gateways')
+            req.add_header('Authorization', f'Bearer {token}')
+            with urllib.request.urlopen(req) as response:
+                gateways = json.loads(response.read().decode('utf-8'))
+                for gw in gateways:
+                    if gw.get('name') == 'fast_time':
+                        print(f'Found existing gateway {gw[\"id\"]}, deleting...')
+                        del_req = urllib.request.Request(f'http://gateway:4444/gateways/{gw[\"id\"]}', method='DELETE')
+                        del_req.add_header('Authorization', f'Bearer {token}')
+                        urllib.request.urlopen(del_req)
+                        print('Deleted existing gateway')
+        except Exception as e:
+            print(f'Note: Could not check/delete existing gateway: {e}')
+
+        try:
+            payload = json.dumps({'name': 'fast_time', 'url': 'http://fast_time_server:8080/http', 'transport': 'STREAMABLEHTTP'})
             req = urllib.request.Request('http://gateway:4444/gateways',
                                         data=payload.encode('utf-8'),
                                         method='POST')
