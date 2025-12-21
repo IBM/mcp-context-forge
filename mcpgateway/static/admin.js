@@ -21599,7 +21599,7 @@ async function loadLLMModels() {
     }
 
     try {
-        const response = await fetch("/api/llm/models");
+        const response = await fetchWithTimeout(`${window.ROOT_PATH}/llmchat/gateway/models`);
         if (!response.ok) {
             throw new Error("Failed to load models");
         }
@@ -21612,12 +21612,10 @@ async function loadLLMModels() {
         // Add enabled models from enabled providers
         if (data.models && data.models.length > 0) {
             data.models.forEach((model) => {
-                if (model.is_enabled) {
-                    const option = document.createElement("option");
-                    option.value = model.model_id;
-                    option.textContent = `${model.model_id} (${model.provider_name || model.provider_type})`;
-                    modelSelect.appendChild(option);
-                }
+                const option = document.createElement("option");
+                option.value = model.model_id;
+                option.textContent = `${model.model_id} (${model.provider_name || model.provider_type})`;
+                modelSelect.appendChild(option);
             });
         }
 
