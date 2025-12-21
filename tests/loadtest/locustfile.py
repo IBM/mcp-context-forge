@@ -229,13 +229,99 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
 
 @events.test_stop.add_listener
 def on_test_stop(environment, **kwargs):  # pylint: disable=unused-argument
-    """Clean up after test."""
+    """Clean up after test and print summary statistics."""
     logger.info("Test stopped")
     TOOL_IDS.clear()
     SERVER_IDS.clear()
     GATEWAY_IDS.clear()
     RESOURCE_IDS.clear()
     PROMPT_IDS.clear()
+
+    # Print detailed summary statistics
+    _print_summary_stats(environment)
+
+
+def _print_summary_stats(environment) -> None:
+    """Print detailed summary statistics after test completion."""
+    stats = environment.stats
+
+    if not stats.entries:
+        logger.info("No statistics recorded")
+        return
+
+    print("\n" + "=" * 100)
+    print("LOAD TEST SUMMARY")
+    print("=" * 100)
+
+    # Overall totals
+    total_requests = stats.total.num_requests
+    total_failures = stats.total.num_failures
+    total_rps = stats.total.total_rps
+    failure_rate = (total_failures / total_requests * 100) if total_requests > 0 else 0
+
+    print(f"\n{'OVERALL METRICS':^100}")
+    print("-" * 100)
+    print(f"  Total Requests:     {total_requests:,}")
+    print(f"  Total Failures:     {total_failures:,} ({failure_rate:.2f}%)")
+    print(f"  Requests/sec (RPS): {total_rps:.2f}")
+
+    if stats.total.num_requests > 0:
+        print(f"\n  Response Times (ms):")
+        print(f"    Average:          {stats.total.avg_response_time:.2f}")
+        print(f"    Min:              {stats.total.min_response_time:.2f}")
+        print(f"    Max:              {stats.total.max_response_time:.2f}")
+        print(f"    Median (p50):     {stats.total.get_response_time_percentile(0.50):.2f}")
+        print(f"    p90:              {stats.total.get_response_time_percentile(0.90):.2f}")
+        print(f"    p95:              {stats.total.get_response_time_percentile(0.95):.2f}")
+        print(f"    p99:              {stats.total.get_response_time_percentile(0.99):.2f}")
+
+    # Per-endpoint breakdown (top 15 by request count)
+    print(f"\n{'ENDPOINT BREAKDOWN (Top 15 by request count)':^100}")
+    print("-" * 100)
+    print(f"{'Endpoint':<40} {'Reqs':>8} {'Fails':>7} {'Avg':>8} {'Min':>8} {'Max':>8} {'p95':>8} {'RPS':>8}")
+    print("-" * 100)
+
+    # Sort by request count, get top 15
+    sorted_entries = sorted(stats.entries.values(), key=lambda x: x.num_requests, reverse=True)[:15]
+
+    for entry in sorted_entries:
+        name = entry.name[:38] + ".." if len(entry.name) > 40 else entry.name
+        reqs = entry.num_requests
+        fails = entry.num_failures
+        avg = entry.avg_response_time if reqs > 0 else 0
+        min_rt = entry.min_response_time if reqs > 0 else 0
+        max_rt = entry.max_response_time if reqs > 0 else 0
+        p95 = entry.get_response_time_percentile(0.95) if reqs > 0 else 0
+        rps = entry.total_rps
+
+        print(f"{name:<40} {reqs:>8,} {fails:>7,} {avg:>8.1f} {min_rt:>8.1f} {max_rt:>8.1f} {p95:>8.1f} {rps:>8.2f}")
+
+    # Slowest endpoints (by average response time)
+    slow_entries = sorted(
+        [e for e in stats.entries.values() if e.num_requests >= 10],
+        key=lambda x: x.avg_response_time,
+        reverse=True,
+    )[:5]
+
+    if slow_entries:
+        print(f"\n{'SLOWEST ENDPOINTS (min 10 requests)':^100}")
+        print("-" * 100)
+        print(f"{'Endpoint':<50} {'Avg (ms)':>12} {'p95 (ms)':>12} {'Requests':>12}")
+        print("-" * 100)
+        for entry in slow_entries:
+            name = entry.name[:48] + ".." if len(entry.name) > 50 else entry.name
+            print(f"{name:<50} {entry.avg_response_time:>12.2f} {entry.get_response_time_percentile(0.95):>12.2f} {entry.num_requests:>12,}")
+
+    # Error summary
+    if stats.errors:
+        print(f"\n{'ERRORS':^100}")
+        print("-" * 100)
+        for error_key, error in list(stats.errors.items())[:10]:
+            print(f"  [{error.occurrences}x] {error.method} {error.name}: {error.error[:80]}")
+
+    print("\n" + "=" * 100)
+    print("END OF SUMMARY")
+    print("=" * 100 + "\n")
 
 
 # =============================================================================

@@ -498,7 +498,7 @@ clean:
 # help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
 # help: query-log-clear      - Clear database query log files
 
-.PHONY: smoketest test test-profile coverage pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000
+.PHONY: smoketest test test-profile coverage pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary
 
 ## --- Automated checks --------------------------------------------------------
 smoketest:
@@ -753,6 +753,7 @@ generate-report:                           ## Display most recent load test repo
 # help: load-test-timeserver  - Load test fast_time_server (5 users, 30s)
 # help: load-test-fasttime    - Load test fast_time MCP tools (50 users, 60s)
 # help: load-test-1000        - High-load test (1000 users, 120s)
+# help: load-test-summary     - Parse CSV reports and show summary statistics
 
 # Default load test configuration
 LOADTEST_HOST ?= http://localhost:8080
@@ -930,6 +931,59 @@ load-test-1000:                            ## High-load test (1000 users, 120s) 
 		echo "✅ Report: reports/loadtest_1000.html"; \
 	else \
 		echo "❌ Cancelled"; \
+	fi
+
+load-test-summary:                         ## Parse CSV reports and show summary statistics
+	@if [ -f "$(LOADTEST_CSV_PREFIX)_stats.csv" ]; then \
+		echo ""; \
+		echo "===================================================================================================="; \
+		echo "LOAD TEST SUMMARY (from $(LOADTEST_CSV_PREFIX)_stats.csv)"; \
+		echo "===================================================================================================="; \
+		echo ""; \
+		python3 -c " \
+import csv; \
+import sys; \
+with open('$(LOADTEST_CSV_PREFIX)_stats.csv') as f: \
+    reader = list(csv.DictReader(f)); \
+    if not reader: \
+        print('No data found'); \
+        sys.exit(0); \
+    agg = [r for r in reader if r.get('Name') == 'Aggregated']; \
+    if agg: \
+        a = agg[0]; \
+        print('OVERALL METRICS'); \
+        print('-' * 100); \
+        print(f\"  Total Requests:     {int(float(a.get('Request Count', 0))):,}\"); \
+        print(f\"  Total Failures:     {int(float(a.get('Failure Count', 0))):,}\"); \
+        print(f\"  Requests/sec:       {float(a.get('Requests/s', 0)):.2f}\"); \
+        print(); \
+        print('  Response Times (ms):'); \
+        print(f\"    Average:          {float(a.get('Average Response Time', 0)):.2f}\"); \
+        print(f\"    Min:              {float(a.get('Min Response Time', 0)):.2f}\"); \
+        print(f\"    Max:              {float(a.get('Max Response Time', 0)):.2f}\"); \
+        print(f\"    Median (p50):     {float(a.get('50%', 0)):.2f}\"); \
+        print(f\"    p90:              {float(a.get('90%', 0)):.2f}\"); \
+        print(f\"    p95:              {float(a.get('95%', 0)):.2f}\"); \
+        print(f\"    p99:              {float(a.get('99%', 0)):.2f}\"); \
+    print(); \
+    print('ENDPOINT BREAKDOWN (Top 15)'); \
+    print('-' * 100); \
+    print(f\"{'Endpoint':<40} {'Reqs':>8} {'Fails':>7} {'Avg':>8} {'Min':>8} {'Max':>8} {'p95':>8}\"); \
+    print('-' * 100); \
+    endpoints = [r for r in reader if r.get('Name') != 'Aggregated'][:15]; \
+    for e in endpoints: \
+        name = e.get('Name', '')[:38] + '..' if len(e.get('Name', '')) > 40 else e.get('Name', ''); \
+        print(f\"{name:<40} {int(float(e.get('Request Count', 0))):>8,} {int(float(e.get('Failure Count', 0))):>7,} {float(e.get('Average Response Time', 0)):>8.1f} {float(e.get('Min Response Time', 0)):>8.1f} {float(e.get('Max Response Time', 0)):>8.1f} {float(e.get('95%', 0)):>8.1f}\"); \
+"; \
+		echo ""; \
+		echo "===================================================================================================="; \
+		echo ""; \
+		echo "📊 Full reports:"; \
+		echo "   HTML: $(LOADTEST_HTML_REPORT)"; \
+		echo "   CSV:  $(LOADTEST_CSV_PREFIX)_stats.csv"; \
+	else \
+		echo "❌ No CSV report found at $(LOADTEST_CSV_PREFIX)_stats.csv"; \
+		echo "   Run 'make load-test' first to generate reports."; \
 	fi
 
 # =============================================================================
