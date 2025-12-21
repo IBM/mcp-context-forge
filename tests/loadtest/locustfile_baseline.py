@@ -6,14 +6,16 @@ performance baselines before testing through the gateway.
 
 Components tested:
 - Fast Time Server (REST API) - MCP server performance baseline
+- Fast Time Server (MCP Client) - MCP protocol baseline (optional, requires fastmcp)
 - PostgreSQL - Database performance baseline (optional, requires psycopg2)
 - Redis - Cache performance baseline (optional, requires redis)
 
 User Classes (selectable via --class-picker in Web UI):
 - FastTimeRESTUser: Standard REST API load test (weight: 10)
+- FastTimeMCPUser: MCP protocol test via fastmcp Client (weight: 1, requires fastmcp)
 - FastTimeStressUser: High-frequency stress test (weight: 1)
-- PostgresUser: Direct PostgreSQL testing (weight: 0, requires psycopg2)
-- RedisUser: Direct Redis testing (weight: 0, requires redis)
+- PostgresUser: Direct PostgreSQL testing (weight: 1, requires psycopg2)
+- RedisUser: Direct Redis testing (weight: 1, requires redis)
 
 Default Parameters:
 - Users: 1000
@@ -40,6 +42,7 @@ Usage:
 
 Environment Variables:
     BASELINE_FAST_TIME_HOST: Fast Time Server URL (default: http://localhost:8888)
+    BASELINE_MCP_URL: MCP Server URL for fastmcp Client (default: http://localhost:8888/http)
     BASELINE_POSTGRES_HOST: PostgreSQL host (default: localhost)
     BASELINE_POSTGRES_PORT: PostgreSQL port (default: 5432)
     BASELINE_POSTGRES_USER: PostgreSQL user (default: postgres)
@@ -51,7 +54,6 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 """
 
-import json
 import logging
 import os
 import random
@@ -84,6 +86,7 @@ def set_defaults(parser):
 # =============================================================================
 
 FAST_TIME_HOST = os.environ.get("BASELINE_FAST_TIME_HOST", "http://localhost:8888")
+MCP_URL = os.environ.get("BASELINE_MCP_URL", "http://localhost:8888/http")
 POSTGRES_HOST = os.environ.get("BASELINE_POSTGRES_HOST", "localhost")
 POSTGRES_PORT = int(os.environ.get("BASELINE_POSTGRES_PORT", "5433"))
 POSTGRES_USER = os.environ.get("BASELINE_POSTGRES_USER", "postgres")
@@ -112,7 +115,8 @@ def on_test_start(environment, **kwargs):
     logger.info("=" * 60)
     logger.info("BASELINE PERFORMANCE TEST")
     logger.info("=" * 60)
-    logger.info(f"Fast Time Server: {FAST_TIME_HOST}")
+    logger.info(f"Fast Time Server (REST): {FAST_TIME_HOST}")
+    logger.info(f"Fast Time Server (MCP):  {MCP_URL}")
     logger.info(f"PostgreSQL: {POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}")
     logger.info(f"Redis: {REDIS_URL}")
     logger.info("=" * 60)
@@ -313,6 +317,149 @@ class FastTimeStressUser(HttpUser):
 
 
 # =============================================================================
+# Fast Time Server MCP Client Tests (Streamable HTTP)
+# =============================================================================
+
+class FastTimeMCPUser(User):
+    """Load test for Fast Time Server via MCP Streamable HTTP protocol.
+
+    Tests the MCP protocol directly using synchronous HTTP requests to
+    establish a performance baseline for the MCP server without the gateway.
+
+    NOTE: Uses direct HTTP JSON-RPC calls to MCP Streamable HTTP endpoint.
+    No HTTP host required - connects directly via MCP protocol.
+
+    To enable: Select in class picker (Web UI) or set weight > 0
+    """
+
+    weight = 1  # Enabled by default
+    wait_time = between(0.1, 0.5)
+
+    def __init__(self, *args, **kwargs):
+        """Initialize with requests session for MCP calls."""
+        super().__init__(*args, **kwargs)
+        import requests
+        self._session = requests.Session()
+        self._request_id = 0
+        self._initialized = False
+        self._mcp_session_id = None
+        logger.info(f"MCP Streamable HTTP client configured for {MCP_URL}")
+
+    def on_stop(self):
+        """Close the session."""
+        if self._session:
+            self._session.close()
+
+    def _next_id(self):
+        """Get next request ID."""
+        self._request_id += 1
+        return self._request_id
+
+    def _fire_request(self, name: str, start_time: float, exception: Exception = None):
+        """Fire a request event for Locust metrics."""
+        elapsed = (time.perf_counter() - start_time) * 1000
+        events.request.fire(
+            request_type="MCP",
+            name=name,
+            response_time=elapsed,
+            response_length=0,
+            exception=exception,
+        )
+
+    def _mcp_request(self, method: str, params: dict = None):
+        """Make an MCP JSON-RPC request."""
+        payload = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "id": self._next_id()
+        }
+        if params:
+            payload["params"] = params
+
+        headers = {"Content-Type": "application/json"}
+        if self._mcp_session_id:
+            headers["Mcp-Session-Id"] = self._mcp_session_id
+
+        response = self._session.post(
+            MCP_URL,
+            json=payload,
+            headers=headers,
+            timeout=10
+        )
+
+        # Capture session ID from response header
+        if "Mcp-Session-Id" in response.headers:
+            self._mcp_session_id = response.headers["Mcp-Session-Id"]
+
+        response.raise_for_status()
+        result = response.json()
+
+        if "error" in result:
+            raise Exception(f"MCP error: {result['error']}")
+
+        return result.get("result")
+
+    def _ensure_initialized(self):
+        """Ensure MCP session is initialized."""
+        if not self._initialized:
+            self._mcp_request("initialize", {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "locust-mcp-client", "version": "1.0"}
+            })
+            self._initialized = True
+
+    @task(10)
+    @tag("fast-time", "mcp", "time")
+    def mcp_get_system_time(self):
+        """MCP: Call get_system_time tool."""
+        tz = random.choice(TIMEZONES)
+        start = time.perf_counter()
+        try:
+            self._ensure_initialized()
+            self._mcp_request("tools/call", {
+                "name": "get_system_time",
+                "arguments": {"timezone": tz}
+            })
+            self._fire_request("get_system_time", start)
+        except Exception as e:
+            self._fire_request("get_system_time", start, e)
+
+    @task(5)
+    @tag("fast-time", "mcp", "convert")
+    def mcp_convert_time(self):
+        """MCP: Call convert_time tool."""
+        source_tz = random.choice(TIMEZONES)
+        target_tz = random.choice([t for t in TIMEZONES if t != source_tz])
+        start = time.perf_counter()
+        try:
+            self._ensure_initialized()
+            self._mcp_request("tools/call", {
+                "name": "convert_time",
+                "arguments": {
+                    "time": "2025-01-15T10:30:00Z",
+                    "source_timezone": source_tz,
+                    "target_timezone": target_tz
+                }
+            })
+            self._fire_request("convert_time", start)
+        except Exception as e:
+            self._fire_request("convert_time", start, e)
+
+    @task(3)
+    @tag("fast-time", "mcp", "list")
+    def mcp_list_tools(self):
+        """MCP: List available tools."""
+        start = time.perf_counter()
+        try:
+            self._ensure_initialized()
+            self._mcp_request("tools/list", {})
+            self._fire_request("list_tools", start)
+        except Exception as e:
+            self._fire_request("list_tools", start, e)
+
+
+# =============================================================================
 # PostgreSQL Direct Tests (requires psycopg2)
 # =============================================================================
 
@@ -357,7 +504,7 @@ class PostgresUser(User):
 
     def _fire_request(self, name: str, start_time: float, exception: Exception = None):
         """Fire a request event for Locust metrics."""
-        elapsed = (time.time() - start_time) * 1000
+        elapsed = (time.perf_counter() - start_time) * 1000
         events.request.fire(
             request_type="PSQL",
             name=name,
@@ -372,7 +519,7 @@ class PostgresUser(User):
         """Simple SELECT query."""
         if not self.conn:
             return
-        start = time.time()
+        start = time.perf_counter()
         try:
             with self.conn.cursor() as cur:
                 cur.execute("SELECT 1")
@@ -387,7 +534,7 @@ class PostgresUser(User):
         """Count tools in database."""
         if not self.conn:
             return
-        start = time.time()
+        start = time.perf_counter()
         try:
             with self.conn.cursor() as cur:
                 cur.execute("SELECT COUNT(*) FROM tools")
@@ -432,7 +579,7 @@ class RedisUser(User):
 
     def _fire_request(self, name: str, start_time: float, exception: Exception = None):
         """Fire a request event for Locust metrics."""
-        elapsed = (time.time() - start_time) * 1000
+        elapsed = (time.perf_counter() - start_time) * 1000
         events.request.fire(
             request_type="REDIS",
             name=name,
@@ -447,7 +594,7 @@ class RedisUser(User):
         """Redis PING command."""
         if not self.redis_client:
             return
-        start = time.time()
+        start = time.perf_counter()
         try:
             self.redis_client.ping()
             self._fire_request("PING", start)
@@ -461,10 +608,10 @@ class RedisUser(User):
         if not self.redis_client:
             return
         key = f"loadtest:{random.randint(1, 1000)}"
-        value = f"value_{time.time()}"
+        value = f"value_{time.perf_counter()}"
 
         # SET
-        start = time.time()
+        start = time.perf_counter()
         try:
             self.redis_client.set(key, value, ex=60)
             self._fire_request("SET", start)
@@ -473,7 +620,7 @@ class RedisUser(User):
             return
 
         # GET
-        start = time.time()
+        start = time.perf_counter()
         try:
             self.redis_client.get(key)
             self._fire_request("GET", start)
@@ -486,7 +633,7 @@ class RedisUser(User):
         """Redis INFO command."""
         if not self.redis_client:
             return
-        start = time.time()
+        start = time.perf_counter()
         try:
             self.redis_client.info("stats")
             self._fire_request("INFO stats", start)
