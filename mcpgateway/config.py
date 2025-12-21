@@ -50,7 +50,7 @@ Examples:
 # Standard
 from functools import lru_cache
 from importlib.resources import files
-import json  # consider typjson for type safety loading from configuration data.
+import json  # Used only for indent=2 pretty-printing in print_schema()
 import logging
 import os
 from pathlib import Path
@@ -61,6 +61,7 @@ from typing import Annotated, Any, ClassVar, Dict, List, Literal, NotRequired, O
 # Third-Party
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
+import orjson
 from pydantic import Field, field_validator, HttpUrl, model_validator, PositiveInt, SecretStr, ValidationInfo
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
@@ -99,13 +100,13 @@ def _normalize_env_list_vars() -> None:
         if s.startswith("["):
             # Already JSON-like, keep as is
             try:
-                json.loads(s)
+                orjson.loads(s)
                 continue
             except Exception:
                 pass  # nosec B110 - Intentionally continue with CSV parsing if JSON parsing fails
         # Convert CSV to JSON array
         items = [item.strip() for item in s.split(",") if item.strip()]
-        os.environ[key] = json.dumps(items)
+        os.environ[key] = orjson.dumps(items).decode()
 
 
 _normalize_env_list_vars()
@@ -489,10 +490,10 @@ class Settings(BaseSettings):
                 return []
             # Try JSON first
             try:
-                loaded = json.loads(v)
+                loaded = orjson.loads(v)
                 if isinstance(loaded, list):
                     return loaded
-            except json.JSONDecodeError:
+            except orjson.JSONDecodeError:
                 # Not a valid JSON array → fallback to comma-separated parsing
                 pass
             # Fallback to comma-split
@@ -795,8 +796,8 @@ class Settings(BaseSettings):
             if v[:1] in "\"'" and v[-1:] == v[:1]:  # strip 1 outer quote pair
                 v = v[1:-1]
             try:
-                parsed = set(json.loads(v))
-            except json.JSONDecodeError:
+                parsed = set(orjson.loads(v))
+            except orjson.JSONDecodeError:
                 parsed = {s.strip() for s in v.split(",") if s.strip()}
             return parsed
         return set(v)
@@ -984,8 +985,8 @@ class Settings(BaseSettings):
             if len(v) > 1 and v[0] in "\"'" and v[-1] == v[0]:
                 v = v[1:-1]
             try:
-                peers = json.loads(v)
-            except json.JSONDecodeError:
+                peers = orjson.loads(v)
+            except orjson.JSONDecodeError:
                 peers = [s.strip() for s in v.split(",") if s.strip()]
             return peers  # type: ignore[no-any-return]
 
@@ -1030,9 +1031,9 @@ class Settings(BaseSettings):
                 return []
             if s.startswith("["):
                 try:
-                    parsed = json.loads(s)
+                    parsed = orjson.loads(s)
                     return parsed if isinstance(parsed, list) else []
-                except json.JSONDecodeError:
+                except orjson.JSONDecodeError:
                     raise ValueError(f"Invalid JSON for SSO_ISSUERS: {v!r}")
             # Fallback to comma-separated parsing
             return [item.strip() for item in s.split(",") if item.strip()]
@@ -1213,8 +1214,8 @@ Disallow: /
             Dict[str, str]: Parsed custom well-known files mapping filename to content.
         """
         try:
-            return json.loads(self.well_known_custom_files) if self.well_known_custom_files else {}
-        except json.JSONDecodeError:
+            return orjson.loads(self.well_known_custom_files) if self.well_known_custom_files else {}
+        except orjson.JSONDecodeError:
             logger.error(f"Invalid JSON in WELL_KNOWN_CUSTOM_FILES: {self.well_known_custom_files}")
             return {}
 
@@ -1270,7 +1271,7 @@ Disallow: /
                 return []
             if s.startswith("["):
                 try:
-                    parsed = json.loads(s)
+                    parsed = orjson.loads(s)
                     return parsed if isinstance(parsed, list) else []
                 except Exception:
                     logger.warning("Invalid JSON list in env for list field; falling back to CSV parsing")
@@ -1644,10 +1645,10 @@ Disallow: /
         if default_value:
             try:
                 # Try JSON parsing first
-                self.default_passthrough_headers = json.loads(default_value)
+                self.default_passthrough_headers = orjson.loads(default_value)
                 if not isinstance(self.default_passthrough_headers, list):
                     raise ValueError("Must be a JSON array")
-            except (json.JSONDecodeError, ValueError):
+            except (orjson.JSONDecodeError, ValueError):
                 # Fallback to comma-separated parsing
                 self.default_passthrough_headers = [h.strip() for h in default_value.split(",") if h.strip()]
                 logger.info(f"Parsed comma-separated passthrough headers: {self.default_passthrough_headers}")

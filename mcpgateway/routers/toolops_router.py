@@ -15,11 +15,11 @@ The module handles API endpoints created for several toolops features.
 """
 
 # Standard
-import json
 from typing import Any, Dict, List
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+import orjson
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -96,7 +96,7 @@ async def generate_testcases_for_tool(
         test_cases = await validation_generate_test_cases(tool_id, tool_service, db, number_of_test_cases, number_of_nl_variations, mode)
         return test_cases
 
-    except json.JSONDecodeError:
+    except orjson.JSONDecodeError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid JSON in request body",
@@ -131,7 +131,7 @@ async def execute_tool_nl_testcases(tool_nl_test_input: ToolNLTestInput, db: Ses
         tool_nl_test_cases_output = await execute_tool_nl_test_cases(tool_id, tool_nl_test_cases, tool_service, db)
         return tool_nl_test_cases_output
 
-    except json.JSONDecodeError:
+    except orjson.JSONDecodeError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid JSON in request body",

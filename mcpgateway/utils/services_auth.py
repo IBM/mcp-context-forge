@@ -35,11 +35,11 @@ error
 # Standard
 import base64
 import hashlib
-import json
 import os
 
 # Third-Party
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+import orjson
 from pydantic import SecretStr
 
 # First-Party
@@ -105,11 +105,11 @@ def encode_auth(auth_value: dict) -> str:
     """
     if not auth_value:
         return None
-    plaintext = json.dumps(auth_value)
+    plaintext = orjson.dumps(auth_value)
     key = get_key()
     aesgcm = AESGCM(key)
     nonce = os.urandom(12)
-    ciphertext = aesgcm.encrypt(nonce, plaintext.encode(), None)
+    ciphertext = aesgcm.encrypt(nonce, plaintext, None)
     combined = nonce + ciphertext
     encoded = base64.urlsafe_b64encode(combined).rstrip(b"=")
     return encoded.decode()
@@ -147,4 +147,4 @@ def decode_auth(encoded_value: str) -> dict:
     nonce = combined[:12]
     ciphertext = combined[12:]
     plaintext = aesgcm.decrypt(nonce, ciphertext, None)
-    return json.loads(plaintext.decode())
+    return orjson.loads(plaintext)

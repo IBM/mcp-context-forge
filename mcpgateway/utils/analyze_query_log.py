@@ -12,10 +12,12 @@ Usage:
 # Standard
 import argparse
 from collections import Counter, defaultdict
-import json
 from pathlib import Path
 import sys
 from typing import Any, Dict, List
+
+# Third-Party
+import orjson
 
 
 def load_json_log(filepath: Path) -> List[Dict[str, Any]]:
@@ -33,8 +35,8 @@ def load_json_log(filepath: Path) -> List[Dict[str, Any]]:
             line = line.strip()
             if line:
                 try:
-                    entries.append(json.loads(line))
-                except json.JSONDecodeError:
+                    entries.append(orjson.loads(line))
+                except orjson.JSONDecodeError:
                     continue
     return entries
 
