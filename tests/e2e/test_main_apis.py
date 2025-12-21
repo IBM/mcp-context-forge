@@ -981,7 +981,6 @@ class TestResourceAPIs:
         elif "mimeType" in result:
             assert result["mimeType"] == "application/json"
 
-
     async def test_create_resource_form_urlencoded(self, client: AsyncClient, mock_auth):
         """
         Test POST /resources with application/x-www-form-urlencoded.
@@ -1019,7 +1018,7 @@ class TestResourceAPIs:
 
         response = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
         resource = response.json()
-        print ("\n----------HBD------------> Resource \n",resource,"\n----------HBD------------> Resource\n")
+        print("\n----------HBD------------> Resource \n", resource, "\n----------HBD------------> Resource\n")
         assert resource["name"] == "test_doc"
         resource_id = resource["id"]
 

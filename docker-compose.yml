@@ -126,10 +126,10 @@ services:
       - STRUCTURED_LOGGING_DATABASE_ENABLED=false  # Disable DB logging for performance (use true only for debugging)
       # Database pool tuning for load testing (1000 users, 32 workers total)
       # Formula: (2 gateways × 16 workers) × (pool + overflow) < postgres max_connections
-      # With 2000 max_connections: 32 × 60 = 1920 connections (safe margin)
-      - DB_POOL_SIZE=40
-      - DB_MAX_OVERFLOW=20
-      - DB_POOL_TIMEOUT=60
+      # With 2000 max_connections: 32 × 100 = 3200 > 2000, so limit per gateway: 100
+      - DB_POOL_SIZE=60
+      - DB_MAX_OVERFLOW=40
+      - DB_POOL_TIMEOUT=30
       - DB_POOL_RECYCLE=1800
       - DB_POOL_PRE_PING=true
       # Worker and server tuning for high-concurrency load testing

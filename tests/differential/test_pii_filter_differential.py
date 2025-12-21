@@ -378,13 +378,13 @@ class TestDifferentialPIIDetection:
 
         # Report speedup
         speedup = py_duration / rust_duration
-        print(f"\n{'='*60}")
-        print(f"Performance Comparison: 1000 PII instances")
-        print(f"{'='*60}")
+        print(f"\n{'=' * 60}")
+        print("Performance Comparison: 1000 PII instances")
+        print(f"{'=' * 60}")
         print(f"Python: {py_duration:.3f}s")
         print(f"Rust:   {rust_duration:.3f}s")
         print(f"Speedup: {speedup:.1f}x")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         # Rust should be at least 3x faster
         assert speedup >= 3.0, f"Rust should be at least 3x faster, got {speedup:.1f}x"
@@ -396,12 +396,12 @@ class TestDifferentialPIIDetection:
         data = {"level1": {}}
         current = data["level1"]
         for i in range(100):
-            current[f"level{i+2}"] = {
+            current[f"level{i + 2}"] = {
                 "ssn": f"{i:03d}-45-6789",
                 "email": f"user{i}@example.com",
                 "data": {}
             }
-            current = current[f"level{i+2}"]["data"]
+            current = current[f"level{i + 2}"]["data"]
 
         import time
 
@@ -421,13 +421,13 @@ class TestDifferentialPIIDetection:
 
         # Report speedup
         speedup = py_duration / rust_duration
-        print(f"\n{'='*60}")
-        print(f"Nested Structure Performance: 100 levels deep")
-        print(f"{'='*60}")
+        print(f"\n{'=' * 60}")
+        print("Nested Structure Performance: 100 levels deep")
+        print(f"{'=' * 60}")
         print(f"Python: {py_duration:.3f}s")
         print(f"Rust:   {rust_duration:.3f}s")
         print(f"Speedup: {speedup:.1f}x")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
 
 def test_rust_python_compatibility():

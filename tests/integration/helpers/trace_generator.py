@@ -23,10 +23,10 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 # Standard
-import random
+import random  # noqa: E402
 
 # First-Party
-from mcpgateway.observability import init_telemetry
+from mcpgateway.observability import init_telemetry  # noqa: E402
 
 
 async def test_phoenix_integration():

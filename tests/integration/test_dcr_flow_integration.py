@@ -102,7 +102,7 @@ class TestPKCEFlowIntegration:
                     mock_session_class.return_value = mock_session
 
                     # Complete flow
-                    result = await oauth_manager.complete_authorization_code_flow(gateway_id="test-gateway-123", code=code, state=state, credentials=credentials)
+                    _result = await oauth_manager.complete_authorization_code_flow(gateway_id="test-gateway-123", code=code, state=state, credentials=credentials)  # noqa: F841
 
                 # Verify code_verifier was included in token request
                 call_kwargs = mock_post.call_args[1]
