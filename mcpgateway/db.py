@@ -1103,7 +1103,7 @@ class EmailTeamMemberHistory(Base):
     __tablename__ = "email_team_member_history"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
-    team_member_id: Mapped[str] = mapped_column(String(36), ForeignKey("email_team_members.id"), nullable=False)
+    team_member_id: Mapped[str] = mapped_column(String(36), ForeignKey("email_team_members.id", ondelete="CASCADE"), nullable=False)
     team_id: Mapped[str] = mapped_column(String(36), ForeignKey("email_teams.id"), nullable=False)
     user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=False)
     role: Mapped[str] = mapped_column(String(50), default="member", nullable=False)
