@@ -78,9 +78,11 @@ from mcpgateway.db import EmailTeam
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_db
 from mcpgateway.db import Prompt as DbPrompt
+from mcpgateway.db import PromptMetric
 from mcpgateway.db import Resource as DbResource
-from mcpgateway.db import SessionLocal
+from mcpgateway.db import ResourceMetric, ResourceSubscription, server_prompt_association, server_resource_association, server_tool_association, SessionLocal
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.db import ToolMetric
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, PromptCreate, ResourceCreate, ToolCreate
 
@@ -1096,16 +1098,26 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Bulk delete tools that are no longer available from the gateway
             stale_tool_ids = [tool.id for tool in gateway.tools if tool.original_name not in new_tool_names]
             if stale_tool_ids:
+                # Delete child records first to avoid FK constraint violations
+                db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(stale_tool_ids)))
+                db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(stale_tool_ids)))
                 db.execute(delete(DbTool).where(DbTool.id.in_(stale_tool_ids)))
 
             # Bulk delete resources that are no longer available from the gateway
             stale_resource_ids = [resource.id for resource in gateway.resources if resource.uri not in new_resource_uris]
             if stale_resource_ids:
+                # Delete child records first to avoid FK constraint violations
+                db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(stale_resource_ids)))
+                db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(stale_resource_ids)))
+                db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(stale_resource_ids)))
                 db.execute(delete(DbResource).where(DbResource.id.in_(stale_resource_ids)))
 
             # Bulk delete prompts that are no longer available from the gateway
             stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.name not in new_prompt_names]
             if stale_prompt_ids:
+                # Delete child records first to avoid FK constraint violations
+                db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(stale_prompt_ids)))
+                db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(stale_prompt_ids)))
                 db.execute(delete(DbPrompt).where(DbPrompt.id.in_(stale_prompt_ids)))
 
             # Update gateway relationships to reflect deletions
@@ -1575,16 +1587,26 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     # Bulk delete tools that are no longer available from the gateway
                     stale_tool_ids = [tool.id for tool in gateway.tools if tool.original_name not in new_tool_names]
                     if stale_tool_ids:
+                        # Delete child records first to avoid FK constraint violations
+                        db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(stale_tool_ids)))
+                        db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(stale_tool_ids)))
                         db.execute(delete(DbTool).where(DbTool.id.in_(stale_tool_ids)))
 
                     # Bulk delete resources that are no longer available from the gateway
                     stale_resource_ids = [resource.id for resource in gateway.resources if resource.uri not in new_resource_uris]
                     if stale_resource_ids:
+                        # Delete child records first to avoid FK constraint violations
+                        db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(stale_resource_ids)))
+                        db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(stale_resource_ids)))
+                        db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(stale_resource_ids)))
                         db.execute(delete(DbResource).where(DbResource.id.in_(stale_resource_ids)))
 
                     # Bulk delete prompts that are no longer available from the gateway
                     stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.name not in new_prompt_names]
                     if stale_prompt_ids:
+                        # Delete child records first to avoid FK constraint violations
+                        db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(stale_prompt_ids)))
+                        db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(stale_prompt_ids)))
                         db.execute(delete(DbPrompt).where(DbPrompt.id.in_(stale_prompt_ids)))
 
                     gateway.capabilities = capabilities
@@ -1936,16 +1958,26 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         # Bulk delete tools that are no longer available from the gateway
                         stale_tool_ids = [tool.id for tool in gateway.tools if tool.original_name not in new_tool_names]
                         if stale_tool_ids:
+                            # Delete child records first to avoid FK constraint violations
+                            db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(stale_tool_ids)))
+                            db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(stale_tool_ids)))
                             db.execute(delete(DbTool).where(DbTool.id.in_(stale_tool_ids)))
 
                         # Bulk delete resources that are no longer available from the gateway
                         stale_resource_ids = [resource.id for resource in gateway.resources if resource.uri not in new_resource_uris]
                         if stale_resource_ids:
+                            # Delete child records first to avoid FK constraint violations
+                            db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(stale_resource_ids)))
+                            db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(stale_resource_ids)))
+                            db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(stale_resource_ids)))
                             db.execute(delete(DbResource).where(DbResource.id.in_(stale_resource_ids)))
 
                         # Bulk delete prompts that are no longer available from the gateway
                         stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.name not in new_prompt_names]
                         if stale_prompt_ids:
+                            # Delete child records first to avoid FK constraint violations
+                            db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(stale_prompt_ids)))
+                            db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(stale_prompt_ids)))
                             db.execute(delete(DbPrompt).where(DbPrompt.id.in_(stale_prompt_ids)))
 
                         gateway.capabilities = capabilities
