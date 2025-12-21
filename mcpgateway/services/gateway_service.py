@@ -57,7 +57,7 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 from pydantic import ValidationError
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -1093,20 +1093,20 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             # Count items before cleanup for logging
 
-            # Delete tools that are no longer available from the gateway
-            stale_tools = [tool for tool in gateway.tools if tool.original_name not in new_tool_names]
-            for tool in stale_tools:
-                db.delete(tool)
+            # Bulk delete tools that are no longer available from the gateway
+            stale_tool_ids = [tool.id for tool in gateway.tools if tool.original_name not in new_tool_names]
+            if stale_tool_ids:
+                db.execute(delete(DbTool).where(DbTool.id.in_(stale_tool_ids)))
 
-            # Delete resources that are no longer available from the gateway
-            stale_resources = [resource for resource in gateway.resources if resource.uri not in new_resource_uris]
-            for resource in stale_resources:
-                db.delete(resource)
+            # Bulk delete resources that are no longer available from the gateway
+            stale_resource_ids = [resource.id for resource in gateway.resources if resource.uri not in new_resource_uris]
+            if stale_resource_ids:
+                db.execute(delete(DbResource).where(DbResource.id.in_(stale_resource_ids)))
 
-            # Delete prompts that are no longer available from the gateway
-            stale_prompts = [prompt for prompt in gateway.prompts if prompt.name not in new_prompt_names]
-            for prompt in stale_prompts:
-                db.delete(prompt)
+            # Bulk delete prompts that are no longer available from the gateway
+            stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.name not in new_prompt_names]
+            if stale_prompt_ids:
+                db.execute(delete(DbPrompt).where(DbPrompt.id.in_(stale_prompt_ids)))
 
             # Update gateway relationships to reflect deletions
             gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]
@@ -1114,9 +1114,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             gateway.prompts = [prompt for prompt in gateway.prompts if prompt.name in new_prompt_names]
 
             # Log cleanup results
-            tools_removed = len(stale_tools)
-            resources_removed = len(stale_resources)
-            prompts_removed = len(stale_prompts)
+            tools_removed = len(stale_tool_ids)
+            resources_removed = len(stale_resource_ids)
+            prompts_removed = len(stale_prompt_ids)
 
             if tools_removed > 0:
                 logger.info(f"Removed {tools_removed} tools no longer available from gateway")
@@ -1129,20 +1129,31 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             gateway.capabilities = capabilities
             gateway.last_seen = datetime.now(timezone.utc)
 
-            # Add new items to DB
+            # Add new items to DB in chunks to prevent lock escalation
             items_added = 0
+            chunk_size = 50
+
             if tools_to_add:
-                db.add_all(tools_to_add)
+                for i in range(0, len(tools_to_add), chunk_size):
+                    chunk = tools_to_add[i : i + chunk_size]
+                    db.add_all(chunk)
+                    db.flush()  # Flush each chunk to avoid excessive memory usage
                 items_added += len(tools_to_add)
                 logger.info(f"Added {len(tools_to_add)} new tools to database")
 
             if resources_to_add:
-                db.add_all(resources_to_add)
+                for i in range(0, len(resources_to_add), chunk_size):
+                    chunk = resources_to_add[i : i + chunk_size]
+                    db.add_all(chunk)
+                    db.flush()
                 items_added += len(resources_to_add)
                 logger.info(f"Added {len(resources_to_add)} new resources to database")
 
             if prompts_to_add:
-                db.add_all(prompts_to_add)
+                for i in range(0, len(prompts_to_add), chunk_size):
+                    chunk = prompts_to_add[i : i + chunk_size]
+                    db.add_all(chunk)
+                    db.flush()
                 items_added += len(prompts_to_add)
                 logger.info(f"Added {len(prompts_to_add)} new prompts to database")
 
@@ -1561,20 +1572,20 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                     # Count items before cleanup for logging
 
-                    # Delete tools that are no longer available from the gateway
-                    stale_tools = [tool for tool in gateway.tools if tool.original_name not in new_tool_names]
-                    for tool in stale_tools:
-                        db.delete(tool)
+                    # Bulk delete tools that are no longer available from the gateway
+                    stale_tool_ids = [tool.id for tool in gateway.tools if tool.original_name not in new_tool_names]
+                    if stale_tool_ids:
+                        db.execute(delete(DbTool).where(DbTool.id.in_(stale_tool_ids)))
 
-                    # Delete resources that are no longer available from the gateway
-                    stale_resources = [resource for resource in gateway.resources if resource.uri not in new_resource_uris]
-                    for resource in stale_resources:
-                        db.delete(resource)
+                    # Bulk delete resources that are no longer available from the gateway
+                    stale_resource_ids = [resource.id for resource in gateway.resources if resource.uri not in new_resource_uris]
+                    if stale_resource_ids:
+                        db.execute(delete(DbResource).where(DbResource.id.in_(stale_resource_ids)))
 
-                    # Delete prompts that are no longer available from the gateway
-                    stale_prompts = [prompt for prompt in gateway.prompts if prompt.name not in new_prompt_names]
-                    for prompt in stale_prompts:
-                        db.delete(prompt)
+                    # Bulk delete prompts that are no longer available from the gateway
+                    stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.name not in new_prompt_names]
+                    if stale_prompt_ids:
+                        db.execute(delete(DbPrompt).where(DbPrompt.id.in_(stale_prompt_ids)))
 
                     gateway.capabilities = capabilities
                     gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
@@ -1582,9 +1593,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     gateway.prompts = [prompt for prompt in gateway.prompts if prompt.name in new_prompt_names]  # keep only still-valid rows
 
                     # Log cleanup results
-                    tools_removed = len(stale_tools)
-                    resources_removed = len(stale_resources)
-                    prompts_removed = len(stale_prompts)
+                    tools_removed = len(stale_tool_ids)
+                    resources_removed = len(stale_resource_ids)
+                    prompts_removed = len(stale_prompt_ids)
 
                     if tools_removed > 0:
                         logger.info(f"Removed {tools_removed} tools no longer available during gateway update")
@@ -1595,13 +1606,24 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                     gateway.last_seen = datetime.now(timezone.utc)
 
-                    # Add new items to database session
+                    # Add new items to database session in chunks to prevent lock escalation
+                    chunk_size = 50
+
                     if tools_to_add:
-                        db.add_all(tools_to_add)
+                        for i in range(0, len(tools_to_add), chunk_size):
+                            chunk = tools_to_add[i : i + chunk_size]
+                            db.add_all(chunk)
+                            db.flush()
                     if resources_to_add:
-                        db.add_all(resources_to_add)
+                        for i in range(0, len(resources_to_add), chunk_size):
+                            chunk = resources_to_add[i : i + chunk_size]
+                            db.add_all(chunk)
+                            db.flush()
                     if prompts_to_add:
-                        db.add_all(prompts_to_add)
+                        for i in range(0, len(prompts_to_add), chunk_size):
+                            chunk = prompts_to_add[i : i + chunk_size]
+                            db.add_all(chunk)
+                            db.flush()
 
                     # Update tracking with new URL
                     self._active_gateways.discard(gateway.url)
@@ -1911,20 +1933,20 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                         # Count items before cleanup for logging
 
-                        # Delete tools that are no longer available from the gateway
-                        stale_tools = [tool for tool in gateway.tools if tool.original_name not in new_tool_names]
-                        for tool in stale_tools:
-                            db.delete(tool)
+                        # Bulk delete tools that are no longer available from the gateway
+                        stale_tool_ids = [tool.id for tool in gateway.tools if tool.original_name not in new_tool_names]
+                        if stale_tool_ids:
+                            db.execute(delete(DbTool).where(DbTool.id.in_(stale_tool_ids)))
 
-                        # Delete resources that are no longer available from the gateway
-                        stale_resources = [resource for resource in gateway.resources if resource.uri not in new_resource_uris]
-                        for resource in stale_resources:
-                            db.delete(resource)
+                        # Bulk delete resources that are no longer available from the gateway
+                        stale_resource_ids = [resource.id for resource in gateway.resources if resource.uri not in new_resource_uris]
+                        if stale_resource_ids:
+                            db.execute(delete(DbResource).where(DbResource.id.in_(stale_resource_ids)))
 
-                        # Delete prompts that are no longer available from the gateway
-                        stale_prompts = [prompt for prompt in gateway.prompts if prompt.name not in new_prompt_names]
-                        for prompt in stale_prompts:
-                            db.delete(prompt)
+                        # Bulk delete prompts that are no longer available from the gateway
+                        stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.name not in new_prompt_names]
+                        if stale_prompt_ids:
+                            db.execute(delete(DbPrompt).where(DbPrompt.id.in_(stale_prompt_ids)))
 
                         gateway.capabilities = capabilities
                         gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
@@ -1932,9 +1954,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         gateway.prompts = [prompt for prompt in gateway.prompts if prompt.name in new_prompt_names]  # keep only still-valid rows
 
                         # Log cleanup results
-                        tools_removed = len(stale_tools)
-                        resources_removed = len(stale_resources)
-                        prompts_removed = len(stale_prompts)
+                        tools_removed = len(stale_tool_ids)
+                        resources_removed = len(stale_resource_ids)
+                        prompts_removed = len(stale_prompt_ids)
 
                         if tools_removed > 0:
                             logger.info(f"Removed {tools_removed} tools no longer available during gateway reactivation")
@@ -1945,13 +1967,24 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                         gateway.last_seen = datetime.now(timezone.utc)
 
-                        # Add new items to database session
+                        # Add new items to database session in chunks to prevent lock escalation
+                        chunk_size = 50
+
                         if tools_to_add:
-                            db.add_all(tools_to_add)
+                            for i in range(0, len(tools_to_add), chunk_size):
+                                chunk = tools_to_add[i : i + chunk_size]
+                                db.add_all(chunk)
+                                db.flush()
                         if resources_to_add:
-                            db.add_all(resources_to_add)
+                            for i in range(0, len(resources_to_add), chunk_size):
+                                chunk = resources_to_add[i : i + chunk_size]
+                                db.add_all(chunk)
+                                db.flush()
                         if prompts_to_add:
-                            db.add_all(prompts_to_add)
+                            for i in range(0, len(prompts_to_add), chunk_size):
+                                chunk = prompts_to_add[i : i + chunk_size]
+                                db.add_all(chunk)
+                                db.flush()
                     except Exception as e:
                         logger.warning(f"Failed to initialize reactivated gateway: {e}")
                 else:
