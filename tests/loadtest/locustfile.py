@@ -146,11 +146,17 @@ logger.info(f"  JWT_ISSUER: {JWT_ISSUER}")
 logger.info(f"  JWT_SECRET_KEY: {'*' * len(JWT_SECRET_KEY) if JWT_SECRET_KEY else '(not set)'}")
 
 # Test data pools (populated during test setup)
+# IDs for REST API calls (GET /tools/{id}, etc.)
 TOOL_IDS: list[str] = []
 SERVER_IDS: list[str] = []
 GATEWAY_IDS: list[str] = []
 RESOURCE_IDS: list[str] = []
 PROMPT_IDS: list[str] = []
+
+# Names/URIs for RPC calls (tools/call uses name, resources/read uses uri, etc.)
+TOOL_NAMES: list[str] = []
+RESOURCE_URIS: list[str] = []
+PROMPT_NAMES: list[str] = []
 
 
 # =============================================================================
@@ -187,8 +193,9 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
             if resp.status_code == 200:
                 data = resp.json()
                 items = data if isinstance(data, list) else data.get("items", [])
-                TOOL_IDS.extend([str(t.get("id") or t.get("name")) for t in items[:50]])
-                logger.info(f"Loaded {len(TOOL_IDS)} tool IDs")
+                TOOL_IDS.extend([str(t.get("id")) for t in items[:50] if t.get("id")])
+                TOOL_NAMES.extend([str(t.get("name")) for t in items[:50] if t.get("name")])
+                logger.info(f"Loaded {len(TOOL_IDS)} tool IDs, {len(TOOL_NAMES)} tool names")
 
             # Fetch servers
             resp = client.get("/servers", headers=headers)
@@ -211,16 +218,18 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
             if resp.status_code == 200:
                 data = resp.json()
                 items = data if isinstance(data, list) else data.get("items", [])
-                RESOURCE_IDS.extend([str(r.get("id") or r.get("uri")) for r in items[:50]])
-                logger.info(f"Loaded {len(RESOURCE_IDS)} resource IDs")
+                RESOURCE_IDS.extend([str(r.get("id")) for r in items[:50] if r.get("id")])
+                RESOURCE_URIS.extend([str(r.get("uri")) for r in items[:50] if r.get("uri")])
+                logger.info(f"Loaded {len(RESOURCE_IDS)} resource IDs, {len(RESOURCE_URIS)} resource URIs")
 
             # Fetch prompts
             resp = client.get("/prompts", headers=headers)
             if resp.status_code == 200:
                 data = resp.json()
                 items = data if isinstance(data, list) else data.get("items", [])
-                PROMPT_IDS.extend([str(p.get("id") or p.get("name")) for p in items[:50]])
-                logger.info(f"Loaded {len(PROMPT_IDS)} prompt IDs")
+                PROMPT_IDS.extend([str(p.get("id")) for p in items[:50] if p.get("id")])
+                PROMPT_NAMES.extend([str(p.get("name")) for p in items[:50] if p.get("name")])
+                logger.info(f"Loaded {len(PROMPT_IDS)} prompt IDs, {len(PROMPT_NAMES)} prompt names")
 
     except Exception as e:
         logger.warning(f"Failed to fetch entity IDs: {e}")
@@ -236,6 +245,9 @@ def on_test_stop(environment, **kwargs):  # pylint: disable=unused-argument
     GATEWAY_IDS.clear()
     RESOURCE_IDS.clear()
     PROMPT_IDS.clear()
+    TOOL_NAMES.clear()
+    RESOURCE_URIS.clear()
+    PROMPT_NAMES.clear()
 
     # Print detailed summary statistics
     _print_summary_stats(environment)
@@ -873,7 +885,7 @@ class AdminUIUser(BaseUser):
     def admin_htmx_refresh(self):
         """Simulate HTMX partial refresh."""
         headers = {**self.admin_headers, "HX-Request": "true"}
-        endpoint = random.choice(["/admin/tools/partial", "/admin/servers/partial", "/admin/gateways/partial"])
+        endpoint = random.choice(["/admin/tools/partial", "/admin/resources/partial", "/admin/prompts/partial"])
         with self.client.get(endpoint, headers=headers, name=f"{endpoint} [htmx]", catch_response=True) as response:
             self._validate_html_response(response)
 
@@ -924,8 +936,8 @@ class MCPJsonRpcUser(BaseUser):
     @tag("mcp", "rpc", "tools")
     def rpc_call_tool(self):
         """JSON-RPC: Call a tool."""
-        if TOOL_IDS:
-            tool_name = random.choice(TOOL_IDS)
+        if TOOL_NAMES:
+            tool_name = random.choice(TOOL_NAMES)
             payload = _json_rpc_request("tools/call", {"name": tool_name, "arguments": {}})
             self._rpc_request(payload, "/rpc tools/call")
 
@@ -933,8 +945,8 @@ class MCPJsonRpcUser(BaseUser):
     @tag("mcp", "rpc", "resources")
     def rpc_read_resource(self):
         """JSON-RPC: Read a resource."""
-        if RESOURCE_IDS:
-            resource_uri = random.choice(RESOURCE_IDS)
+        if RESOURCE_URIS:
+            resource_uri = random.choice(RESOURCE_URIS)
             payload = _json_rpc_request("resources/read", {"uri": resource_uri})
             self._rpc_request(payload, "/rpc resources/read")
 
@@ -942,9 +954,10 @@ class MCPJsonRpcUser(BaseUser):
     @tag("mcp", "rpc", "prompts")
     def rpc_get_prompt(self):
         """JSON-RPC: Get a prompt."""
+        # Note: The API expects an ID passed as "name" parameter for lookup
         if PROMPT_IDS:
-            prompt_name = random.choice(PROMPT_IDS)
-            payload = _json_rpc_request("prompts/get", {"name": prompt_name})
+            prompt_id = random.choice(PROMPT_IDS)
+            payload = _json_rpc_request("prompts/get", {"name": prompt_id})
             self._rpc_request(payload, "/rpc prompts/get")
 
     @task(3)
@@ -1241,36 +1254,39 @@ class WriteAPIUser(BaseUser):
 
     @task(1)
     @tag("api", "write", "gateways")
-    def create_and_delete_gateway(self):
-        """Create a gateway and then delete it."""
-        gateway_name = f"loadtest-gateway-{uuid.uuid4().hex[:8]}"
-        gateway_data = {
-            "name": gateway_name,
-            "description": "Load test gateway - will be deleted",
-            "url": "http://localhost:9999/loadtest",
-            "transport": "SSE",
-        }
-
-        with self.client.post(
+    def read_and_refresh_gateway(self):
+        """Read existing gateway and trigger a refresh."""
+        # First, get list of gateways
+        with self.client.get(
             "/gateways",
-            json=gateway_data,
-            headers={**self.auth_headers, "Content-Type": "application/json"},
-            name="/gateways [create]",
+            headers=self.auth_headers,
+            name="/gateways [list for refresh]",
             catch_response=True,
         ) as response:
-            if response.status_code in (200, 201):
-                try:
-                    data = response.json()
-                    gateway_id = data.get("id") or data.get("name") or gateway_name
-                    time.sleep(0.1)
-                    self.client.delete(f"/gateways/{gateway_id}", headers=self.auth_headers, name="/gateways/[id] [delete]")
-                except Exception:
-                    pass
-            elif response.status_code in (409, 422):
-                # 409=Conflict, 422=Validation error (acceptable)
+            if response.status_code != 200:
+                response.failure(f"Failed to list gateways: {response.status_code}")
+                return
+            try:
+                gateways = response.json()
+                if not gateways:
+                    response.success()
+                    return
                 response.success()
-            else:
-                response.failure(f"Unexpected status: {response.status_code}")
+            except Exception as e:
+                response.failure(f"Invalid JSON: {e}")
+                return
+
+        # Pick a gateway and read its details
+        gateway = random.choice(gateways)
+        gateway_id = gateway.get("id")
+        if gateway_id:
+            with self.client.get(
+                f"/gateways/{gateway_id}",
+                headers=self.auth_headers,
+                name="/gateways/[id] [read]",
+                catch_response=True,
+            ) as response:
+                self._validate_json_response(response, allowed_codes=[200, 404])
 
 
 class StressTestUser(BaseUser):
