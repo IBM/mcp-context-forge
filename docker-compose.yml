@@ -80,8 +80,8 @@ services:
       - REDIS_URL=redis://redis:6379/0
       # Redis parser: hiredis (C extension ~83x faster for large responses)
       - REDIS_PARSER=hiredis
-      # Redis connection pool tuning for load testing
-      - REDIS_MAX_CONNECTIONS=100
+      # Redis connection pool tuning for load testing (32 workers × 150 = 4800 < 5000 maxclients)
+      - REDIS_MAX_CONNECTIONS=150
       - REDIS_SOCKET_TIMEOUT=5.0
       - REDIS_SOCKET_CONNECT_TIMEOUT=5.0
       - REDIS_HEALTH_CHECK_INTERVAL=30
