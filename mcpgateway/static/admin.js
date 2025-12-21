@@ -21542,7 +21542,13 @@ async function selectServerForChat(
         console.warn("Could not persist selected LLM server:", e);
     }
 
-    // Update UI to show selected server
+    // Update toolbar dropdown button text
+    const selectedServerName = document.getElementById("selected-server-name");
+    if (selectedServerName) {
+        selectedServerName.textContent = serverName;
+    }
+
+    // Update UI to show selected server in dropdown list
     const serverItems = document.querySelectorAll(".server-item");
     serverItems.forEach((item) => {
         if (item.onclick.toString().includes(serverId)) {
@@ -21562,10 +21568,12 @@ async function selectServerForChat(
         }
     });
 
-    // Show and expand LLM configuration
-    const configForm = document.getElementById("llm-config-form");
-    if (configForm && configForm.classList.contains("hidden")) {
-        toggleLLMConfig();
+    // Close the dropdown 
+    const dropdownBtn = document.getElementById("llm-server-dropdown-btn");
+    if (dropdownBtn) {
+        // Trigger click outside to close dropdown
+        const event = new Event("click");
+        document.body.dispatchEvent(event);
     }
 
     // Enable connect button if provider is selected
@@ -21578,15 +21586,14 @@ async function selectServerForChat(
 
 /**
  * Toggle LLM configuration visibility
+ * This function is kept as a no-op for backward compatibility
  */
 function toggleLLMConfig() {
-    const configForm = document.getElementById("llm-config-form");
-    const chevron = document.getElementById("llm-config-chevron");
 
-    if (configForm && chevron) {
-        configForm.classList.toggle("hidden");
-        chevron.classList.toggle("rotate-180");
-    }
+    // No manual DOM manipulation needed
+    console.log(
+        "toggleLLMConfig: Now handled by Alpine.js configDropdownOpen state",
+    );
 }
 
 /**
@@ -21599,7 +21606,9 @@ async function loadLLMModels() {
     }
 
     try {
-        const response = await fetchWithTimeout(`${window.ROOT_PATH}/llmchat/gateway/models`);
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/llmchat/gateway/models`,
+        );
         if (!response.ok) {
             throw new Error("Failed to load models");
         }
@@ -21638,6 +21647,25 @@ async function loadLLMModels() {
  */
 // eslint-disable-next-line no-unused-vars
 function handleLLMModelChange() {
+    const modelSelect = document.getElementById("llm-model-select");
+    const modelBadge = document.getElementById("llm-model-badge");
+    const modelNameSpan = document.getElementById("llm-model-name");
+
+    if (modelSelect && modelBadge && modelNameSpan) {
+        const selectedOption = modelSelect.options[modelSelect.selectedIndex];
+        const modelValue = modelSelect.value;
+
+        if (modelValue) {
+            // Show badge with selected model name
+            const modelName = selectedOption.text;
+            modelNameSpan.textContent = modelName;
+            modelBadge.classList.remove("hidden");
+        } else {
+            // Hide badge when no model selected
+            modelBadge.classList.add("hidden");
+        }
+    }
+
     updateConnectButtonState();
 }
 
@@ -22234,13 +22262,6 @@ function showConnectionSuccess() {
         disconnectBtn.classList.remove("hidden");
     }
 
-    // Auto-collapse configuration
-    const configForm = document.getElementById("llm-config-form");
-    const chevron = document.getElementById("llm-config-chevron");
-    if (configForm && !configForm.classList.contains("hidden")) {
-        configForm.classList.add("hidden");
-        chevron.classList.remove("rotate-180");
-    }
 
     // Show success message
     showNotification(
@@ -22946,7 +22967,17 @@ function renderMarkdown(text) {
     if (typeof marked === "undefined" || typeof DOMPurify === "undefined") {
         return text;
     }
-    const rawHtml = marked.parse(text);
+
+    // Configure marked for nested markdown support
+    const rawHtml = marked.parse(text, {
+        breaks: true, // Support GFM line breaks
+        gfm: true, // GitHub Flavored Markdown
+        pedantic: false, // Allow nested markdown
+        sanitize: false, // We'll sanitize with DOMPurify
+        smartLists: true, // Better list handling
+        smartypants: false, // No typographic replacements
+    });
+
     return DOMPurify.sanitize(rawHtml);
 }
 

@@ -168,10 +168,10 @@
     z-index: 9999 !important;
 }
 
-/* ===== LLM Chat — equal heights + fixed, scrollable servers card ===== */
+/* ===== LLM Chat — Toolbar-based layout with maximized chat area ===== */
 
 /* ========================================
-   LLM CHAT PANEL - IMPROVED UI
+   LLM CHAT PANEL - TOOLBAR UI
    ======================================== */
 
 /* Main Container */
@@ -179,34 +179,29 @@
     width: 100%;
 }
 
-#llm-chat-panel .max-w-7xl {
-    max-width: none !important;
-    padding-inline: clamp(12px, 1.6vw, 24px);
+/* Toolbar Container */
+.llm-chat-toolbar {
+    position: relative;
+    z-index: 10;
 }
 
-/* Layout: Left Sidebar + Right Chat */
-#llm-chat-panel .flex.gap-6 {
-    min-height: 0;
+/* Server Dropdown in Toolbar */
+#llm-server-dropdown-btn {
+    min-width: 200px;
 }
 
-/* Left Sidebar - Virtual Servers */
-#llm-chat-panel .w-80 {
-    flex: 0 0 clamp(280px, 22%, 340px);
-    min-height: 0;
+#selected-server-name {
+    flex: 1;
 }
 
-/* Server List Scrollable Container */
+/* Server List in Dropdown */
 #llm-chat-servers-list {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-    padding-bottom: 0.5rem;
-    overflow-y: auto;
-    min-height: 0;
-    max-height: 100%;
 }
 
-/* Server Item Card */
+/* Server Item Card (in dropdown) */
 .server-item {
     padding: 0.75rem;
     border-width: 2px;
@@ -241,14 +236,6 @@
 
 .dark .server-item.border-indigo-500 {
     background: linear-gradient(to bottom, rgb(49 46 129 / 40%), rgb(67 56 202 / 30%));
-}
-
-/* Right Chat Area */
-#llm-chat-panel .flex-1 {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
 }
 
 /* Configuration Toggle Button */
@@ -336,7 +323,7 @@
     border-radius: 1.25rem 1.25rem 0.25rem 1.25rem;
     line-height: 1.5;
     overflow-wrap: break-word;
-    word-break: break-word;
+    word-break: normal;
     box-shadow: 0 4px 12px rgb(99 102 241 / 20%);
     border: 1px solid rgb(255 255 255 / 10%);
 }
@@ -356,7 +343,7 @@
     border-radius: 1.25rem 1.25rem 1.25rem 0.25rem;
     line-height: 1.6;
     overflow-wrap: break-word;
-    word-break: break-word;
+    word-break: normal;
     border: 1px solid rgb(229 231 235);
     box-shadow: 0 4px 12px rgb(0 0 0 / 5%);
     transition: box-shadow 0.2s ease;
@@ -496,14 +483,29 @@
 }
 
 .markdown-body table {
+    display: table;
     width: 100%;
     border-collapse: collapse;
     margin: 0.75rem 0;
     font-size: 0.8125rem;
+    overflow-x: auto;
+}
+
+.markdown-body thead {
+    display: table-header-group;
+}
+
+.markdown-body tbody {
+    display: table-row-group;
+}
+
+.markdown-body tr {
+    display: table-row;
 }
 
 .markdown-body th,
 .markdown-body td {
+    display: table-cell;
     border: 1px solid rgb(229 231 235);
     padding: 0.5rem 0.75rem;
     text-align: left;
