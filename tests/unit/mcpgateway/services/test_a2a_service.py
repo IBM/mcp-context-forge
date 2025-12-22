@@ -288,8 +288,9 @@ class TestA2AAgentService:
         with pytest.raises(A2AAgentNotFoundError):
             await service.delete_agent(mock_db, "non-existent-id")
 
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("httpx.AsyncClient")
-    async def test_invoke_agent_success(self, mock_client_class, service, mock_db, sample_db_agent):
+    async def test_invoke_agent_success(self, mock_client_class, mock_fresh_db, service, mock_db, sample_db_agent):
         """Test successful agent invocation."""
         # Mock HTTP client
         mock_client = AsyncMock()
@@ -309,11 +310,15 @@ class TestA2AAgentService:
                 auth_type=sample_db_agent.auth_type,
                 auth_value=sample_db_agent.auth_value,
                 protocol_version=sample_db_agent.protocol_version,
+                agent_type="generic",
             )
         )
-        mock_db.add = MagicMock()
-        mock_db.commit = MagicMock()
-        mock_db.execute.return_value.scalar_one.return_value = sample_db_agent
+
+        # Mock fresh_db_session for metrics recording
+        mock_metrics_db = MagicMock()
+        mock_metrics_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent
+        mock_fresh_db.return_value.__enter__.return_value = mock_metrics_db
+        mock_fresh_db.return_value.__exit__.return_value = None
 
         # Execute
         result = await service.invoke_agent(mock_db, sample_db_agent.name, {"test": "data"})
@@ -321,8 +326,8 @@ class TestA2AAgentService:
         # Verify
         assert result["response"] == "Test response"
         mock_client.post.assert_called_once()
-        mock_db.add.assert_called()  # Metrics added
-        mock_db.commit.assert_called()
+        mock_metrics_db.add.assert_called()  # Metrics added via fresh_db_session
+        mock_metrics_db.commit.assert_called()
 
     async def test_invoke_agent_disabled(self, service, mock_db, sample_db_agent):
         """Test invoking disabled agent."""
@@ -336,8 +341,9 @@ class TestA2AAgentService:
         with pytest.raises(A2AAgentError, match="disabled"):
             await service.invoke_agent(mock_db, sample_db_agent.name, {"test": "data"})
 
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("httpx.AsyncClient")
-    async def test_invoke_agent_http_error(self, mock_client_class, service, mock_db, sample_db_agent):
+    async def test_invoke_agent_http_error(self, mock_client_class, mock_fresh_db, service, mock_db, sample_db_agent):
         """Test agent invocation with HTTP error."""
         # Mock HTTP client with error response
         mock_client = AsyncMock()
@@ -357,19 +363,23 @@ class TestA2AAgentService:
                 auth_type=sample_db_agent.auth_type,
                 auth_value=sample_db_agent.auth_value,
                 protocol_version=sample_db_agent.protocol_version,
+                agent_type="generic",
             )
         )
-        mock_db.add = MagicMock()
-        mock_db.commit = MagicMock()
-        mock_db.execute.return_value.scalar_one.return_value = sample_db_agent
+
+        # Mock fresh_db_session for metrics recording
+        mock_metrics_db = MagicMock()
+        mock_metrics_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent
+        mock_fresh_db.return_value.__enter__.return_value = mock_metrics_db
+        mock_fresh_db.return_value.__exit__.return_value = None
 
         # Execute and verify exception
         with pytest.raises(A2AAgentError, match="HTTP 500"):
             await service.invoke_agent(mock_db, sample_db_agent.name, {"test": "data"})
 
-        # Verify metrics were still recorded
-        mock_db.add.assert_called()
-        mock_db.commit.assert_called()
+        # Verify metrics were still recorded via fresh_db_session
+        mock_metrics_db.add.assert_called()
+        mock_metrics_db.commit.assert_called()
 
     async def test_aggregate_metrics(self, service, mock_db):
         """Test metrics aggregation."""

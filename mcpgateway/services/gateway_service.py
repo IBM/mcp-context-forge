@@ -74,7 +74,7 @@ except ImportError:
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailTeam
+from mcpgateway.db import EmailTeam, fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_db
 from mcpgateway.db import Prompt as DbPrompt
@@ -2461,8 +2461,16 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 response.raise_for_status()
                 result = response.json()
 
-                # Update last seen timestamp
-                gateway.last_seen = datetime.now(timezone.utc)
+                # Update last seen timestamp using fresh DB session
+                # (gateway object may be detached from original session)
+                try:
+                    with fresh_db_session() as update_db:
+                        db_gateway = update_db.execute(select(DbGateway).where(DbGateway.id == gateway.id)).scalar_one_or_none()
+                        if db_gateway:
+                            db_gateway.last_seen = datetime.now(timezone.utc)
+                            update_db.commit()
+                except Exception as update_error:
+                    logger.warning(f"Failed to update last_seen for gateway {gateway.name}: {update_error}")
 
                 # Record success metrics
                 if span:
@@ -2499,53 +2507,86 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         Raises:
             GatewayConnectionError: If no gateways can handle the request
         """
-        # Get all active gateways
+        # ═══════════════════════════════════════════════════════════════════════════
+        # PHASE 1: Fetch all required data before HTTP calls
+        # ═══════════════════════════════════════════════════════════════════════════
         active_gateways = db.execute(select(DbGateway).where(DbGateway.enabled.is_(True))).scalars().all()
 
         if not active_gateways:
             raise GatewayConnectionError("No active gateways available to forward request")
 
+        # Extract all gateway data to local variables before releasing DB connection
+        gateway_data_list: List[Dict[str, Any]] = []
+        for gateway in active_gateways:
+            gw_data = {
+                "id": gateway.id,
+                "name": gateway.name,
+                "url": gateway.url,
+                "auth_type": getattr(gateway, "auth_type", None),
+                "auth_value": gateway.auth_value,
+                "oauth_config": gateway.oauth_config if hasattr(gateway, "oauth_config") else None,
+            }
+            gateway_data_list.append(gw_data)
+
+        # For OAuth authorization_code flow, we need to fetch tokens while session is open
+        # First-Party
+        from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+
+        for gw_data in gateway_data_list:
+            if gw_data["auth_type"] == "oauth" and gw_data["oauth_config"]:
+                grant_type = gw_data["oauth_config"].get("grant_type", "client_credentials")
+                if grant_type == "authorization_code" and app_user_email:
+                    try:
+                        token_storage = TokenStorageService(db)
+                        access_token = await token_storage.get_user_token(str(gw_data["id"]), app_user_email)
+                        gw_data["_oauth_token"] = access_token
+                    except Exception as e:
+                        logger.warning(f"Failed to get OAuth token for gateway {gw_data['name']}: {e}")
+                        gw_data["_oauth_token"] = None
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls
+        # This prevents connection pool exhaustion during slow upstream requests.
+        # ═══════════════════════════════════════════════════════════════════════════
+        db.close()
+
         errors: List[str] = []
 
-        # Try each active gateway in order
-        for gateway in active_gateways:
+        # ═══════════════════════════════════════════════════════════════════════════
+        # PHASE 2: Make HTTP calls (no DB connection held)
+        # ═══════════════════════════════════════════════════════════════════════════
+        for gw_data in gateway_data_list:
             try:
                 # Handle OAuth authentication for the specific gateway
                 headers: Dict[str, str] = {}
 
-                if getattr(gateway, "auth_type", None) == "oauth" and gateway.oauth_config:
+                if gw_data["auth_type"] == "oauth" and gw_data["oauth_config"]:
                     try:
-                        grant_type = gateway.oauth_config.get("grant_type", "client_credentials")
+                        grant_type = gw_data["oauth_config"].get("grant_type", "client_credentials")
 
                         if grant_type == "client_credentials":
                             # Use OAuth manager to get access token for Client Credentials flow
-                            access_token = await self.oauth_manager.get_access_token(gateway.oauth_config)
+                            access_token = await self.oauth_manager.get_access_token(gw_data["oauth_config"])
                             headers = {"Authorization": f"Bearer {access_token}"}
                         elif grant_type == "authorization_code":
-                            # For Authorization Code flow, try to get a stored token
+                            # For Authorization Code flow, use pre-fetched token
                             if not app_user_email:
-                                # System operations cannot use user-specific OAuth tokens
-                                # Skip OAuth authorization code gateways in system context
-                                logger.warning(f"Skipping OAuth authorization code gateway {gateway.name} - user-specific tokens required but no user email provided")
+                                logger.warning(f"Skipping OAuth authorization code gateway {gw_data['name']} - user-specific tokens required but no user email provided")
                                 continue
 
-                            # First-Party
-                            from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
-
-                            token_storage = TokenStorageService(db)
-                            access_token = await token_storage.get_user_token(str(gateway.id), app_user_email)
+                            access_token = gw_data.get("_oauth_token")
                             if access_token:
                                 headers = {"Authorization": f"Bearer {access_token}"}
                             else:
-                                logger.warning(f"No valid OAuth token for user {app_user_email} and gateway {gateway.name}")
+                                logger.warning(f"No valid OAuth token for user {app_user_email} and gateway {gw_data['name']}")
                                 continue
                     except Exception as oauth_error:
-                        logger.warning(f"Failed to obtain OAuth token for gateway {gateway.name}: {oauth_error}")
-                        errors.append(f"Gateway {gateway.name}: OAuth error - {str(oauth_error)}")
+                        logger.warning(f"Failed to obtain OAuth token for gateway {gw_data['name']}: {oauth_error}")
+                        errors.append(f"Gateway {gw_data['name']}: OAuth error - {str(oauth_error)}")
                         continue
                 else:
                     # Handle non-OAuth authentication
-                    auth_data = gateway.auth_value or {}
+                    auth_data = gw_data["auth_value"] or {}
                     if isinstance(auth_data, str):
                         headers = decode_auth(auth_data)
                     elif isinstance(auth_data, dict):
@@ -2559,26 +2600,35 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     request["params"] = params
 
                 # Forward request with proper authentication headers
-                response = await self._http_client.post(urljoin(gateway.url, "/rpc"), json=request, headers=headers)
+                response = await self._http_client.post(urljoin(gw_data["url"], "/rpc"), json=request, headers=headers)
                 response.raise_for_status()
                 result = response.json()
 
-                # Update last seen timestamp
-                gateway.last_seen = datetime.now(timezone.utc)
-
                 # Check for RPC errors
                 if "error" in result:
-                    errors.append(f"Gateway {gateway.name}: {result['error'].get('message', 'Unknown RPC error')}")
+                    errors.append(f"Gateway {gw_data['name']}: {result['error'].get('message', 'Unknown RPC error')}")
                     continue
 
+                # ═══════════════════════════════════════════════════════════════════════════
+                # PHASE 3: Update last_seen using fresh DB session
+                # ═══════════════════════════════════════════════════════════════════════════
+                try:
+                    with fresh_db_session() as update_db:
+                        db_gateway = update_db.execute(select(DbGateway).where(DbGateway.id == gw_data["id"])).scalar_one_or_none()
+                        if db_gateway:
+                            db_gateway.last_seen = datetime.now(timezone.utc)
+                            update_db.commit()
+                except Exception as update_error:
+                    logger.warning(f"Failed to update last_seen for gateway {gw_data['name']}: {update_error}")
+
                 # Success - return the result
-                logger.info(f"Successfully forwarded request to gateway {gateway.name}")
+                logger.info(f"Successfully forwarded request to gateway {gw_data['name']}")
                 return result.get("result")
 
             except Exception as e:
-                error_msg = f"Gateway {gateway.name}: {str(e)}"
+                error_msg = f"Gateway {gw_data['name']}: {str(e)}"
                 errors.append(error_msg)
-                logger.warning(f"Failed to forward request to gateway {gateway.name}: {e}")
+                logger.warning(f"Failed to forward request to gateway {gw_data['name']}: {e}")
                 continue
 
         # If we get here, all gateways failed
