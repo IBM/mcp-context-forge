@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailUser, SessionLocal
+from mcpgateway.db import EmailUser, fresh_db_session, SessionLocal
 from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError
 from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
 from mcpgateway.utils.correlation_id import get_correlation_id
@@ -126,7 +126,7 @@ async def get_team_from_token(payload: Dict[str, Any], db: Session) -> Optional[
             - "sub" (str): The user's unique identifier (email).
             - "teams" (List[str], optional): List containing team ID.
         db (Session):
-            SQLAlchemy database session used to query team data.
+            SQLAlchemy database session used to query team data (unused, kept for API compatibility).
 
     Returns:
         Optional[str]:
@@ -160,12 +160,14 @@ async def get_team_from_token(payload: Dict[str, Any], db: Session) -> Optional[
     user_email = payload.get("sub")
 
     # If no team found in token, get user's personal team
+    # Use fresh_db_session to avoid holding request-scoped connection during slow operations
     if not team_id:
-
-        team_service = TeamManagementService(db)
-        user_teams = await team_service.get_user_teams(user_email, include_personal=True)
-        personal_team = next((team for team in user_teams if team.is_personal), None)
-        team_id = personal_team.id if personal_team else None
+        with fresh_db_session() as team_db:
+            team_service = TeamManagementService(team_db)
+            user_teams = await team_service.get_user_teams(user_email, include_personal=True)
+            # Extract team ID while session is still open (avoid lazy loading issues)
+            personal_team = next((team for team in user_teams if team.is_personal), None)
+            team_id = personal_team.id if personal_team else None
 
     return team_id
 
@@ -345,8 +347,9 @@ async def get_current_user(
                 # First-Party
                 from mcpgateway.services.token_catalog_service import TokenCatalogService  # pylint: disable=import-outside-toplevel
 
-                token_service = TokenCatalogService(db)
-                is_revoked = await token_service.is_token_revoked(jti)
+                with fresh_db_session() as token_db:
+                    token_service = TokenCatalogService(token_db)
+                    is_revoked = await token_service.is_token_revoked(jti)
                 if is_revoked:
                     raise HTTPException(
                         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -372,59 +375,57 @@ async def get_current_user(
             # First-Party
             from mcpgateway.services.token_catalog_service import TokenCatalogService  # pylint: disable=import-outside-toplevel
 
-            token_service = TokenCatalogService(db)
             token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
             logger.debug("Generated token hash: %s", token_hash)
 
-            # Find active API token by hash
+            # Find active API token by hash using fresh session
             # Third-Party
             from sqlalchemy import select
 
             # First-Party
-            from mcpgateway.db import EmailApiToken
+            from mcpgateway.db import EmailApiToken, utc_now
 
-            result = db.execute(select(EmailApiToken).where(EmailApiToken.token_hash == token_hash, EmailApiToken.is_active.is_(True)))
-            api_token = result.scalar_one_or_none()
-            logger.debug(f"Database lookup result: {api_token is not None}")
+            with fresh_db_session() as api_token_db:
+                result = api_token_db.execute(select(EmailApiToken).where(EmailApiToken.token_hash == token_hash, EmailApiToken.is_active.is_(True)))
+                api_token = result.scalar_one_or_none()
+                logger.debug(f"Database lookup result: {api_token is not None}")
 
-            if api_token:
-                logger.debug(f"Found API token for user: {api_token.user_email}")
-                # Check if token is expired
-                if api_token.expires_at and api_token.expires_at < datetime.now(timezone.utc):
+                if api_token:
+                    logger.debug(f"Found API token for user: {api_token.user_email}")
+                    # Check if token is expired
+                    if api_token.expires_at and api_token.expires_at < datetime.now(timezone.utc):
+                        raise HTTPException(
+                            status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="API token expired",
+                            headers={"WWW-Authenticate": "Bearer"},
+                        )
+
+                    # Check if token is revoked
+                    token_service = TokenCatalogService(api_token_db)
+                    is_revoked = await token_service.is_token_revoked(api_token.jti)
+                    if is_revoked:
+                        raise HTTPException(
+                            status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="API token has been revoked",
+                            headers={"WWW-Authenticate": "Bearer"},
+                        )
+
+                    # Extract email before closing session (avoid lazy loading)
+                    email = api_token.user_email
+                    logger.debug(f"API token authentication successful for email: {email}")
+
+                    # Update last_used timestamp
+                    api_token.last_used = utc_now()
+                    api_token_db.commit()
+                else:
+                    logger.debug("API token not found in database")
+                    logger.debug("No valid authentication method found")
+                    # Neither JWT nor API token worked
                     raise HTTPException(
                         status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="API token expired",
+                        detail="Invalid authentication credentials",
                         headers={"WWW-Authenticate": "Bearer"},
                     )
-
-                # Check if token is revoked
-                is_revoked = await token_service.is_token_revoked(api_token.jti)
-                if is_revoked:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="API token has been revoked",
-                        headers={"WWW-Authenticate": "Bearer"},
-                    )
-
-                # Use the email from the API token
-                email = api_token.user_email
-                logger.debug(f"API token authentication successful for email: {email}")
-
-                # Update last_used timestamp
-                # First-Party
-                from mcpgateway.db import utc_now
-
-                api_token.last_used = utc_now()
-                db.commit()
-            else:
-                logger.debug("API token not found in database")
-                logger.debug("No valid authentication method found")
-                # Neither JWT nor API token worked
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid authentication credentials",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
         except HTTPException:
             # Re-raise HTTP exceptions
             raise
@@ -437,12 +438,13 @@ async def get_current_user(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-    # Get user from database
+    # Get user from database using fresh session to avoid connection pool exhaustion
     # First-Party
     from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
 
-    auth_service = EmailAuthService(db)
-    user = await auth_service.get_user_by_email(email)
+    with fresh_db_session() as auth_db:
+        auth_service = EmailAuthService(auth_db)
+        user = await auth_service.get_user_by_email(email)
 
     if user is None:
         # Special case for platform admin - if user doesn't exist but token is valid

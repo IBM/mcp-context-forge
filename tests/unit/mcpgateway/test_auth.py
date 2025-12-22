@@ -12,6 +12,7 @@ and error handling scenarios.
 """
 
 # Standard
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import hashlib
 import logging
@@ -26,6 +27,16 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.auth import get_current_user, get_db
 from mcpgateway.db import EmailApiToken, EmailUser
+
+
+def make_fresh_db_session_mock(mock_db):
+    """Create a mock fresh_db_session context manager that yields the mock_db."""
+
+    @contextmanager
+    def mock_fresh_db_session():
+        yield mock_db
+
+    return mock_fresh_db_session
 
 
 class TestGetDb:
@@ -338,17 +349,17 @@ class TestGetCurrentUser:
 
         # JWT fails, fallback to API token
         with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(side_effect=Exception("Invalid JWT"))):
-            with patch("mcpgateway.services.token_catalog_service.TokenCatalogService") as mock_token_service_class:
-                mock_token_service = MagicMock()
-                mock_token_service.is_token_revoked = AsyncMock(return_value=False)
-                mock_token_service_class.return_value = mock_token_service
+            with patch("mcpgateway.auth.fresh_db_session", make_fresh_db_session_mock(mock_db)):
+                with patch("mcpgateway.services.token_catalog_service.TokenCatalogService") as mock_token_service_class:
+                    mock_token_service = MagicMock()
+                    mock_token_service.is_token_revoked = AsyncMock(return_value=False)
+                    mock_token_service_class.return_value = mock_token_service
 
-                with patch("mcpgateway.services.email_auth_service.EmailAuthService") as mock_auth_service_class:
-                    mock_auth_service = MagicMock()
-                    mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
-                    mock_auth_service_class.return_value = mock_auth_service
+                    with patch("mcpgateway.services.email_auth_service.EmailAuthService") as mock_auth_service_class:
+                        mock_auth_service = MagicMock()
+                        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+                        mock_auth_service_class.return_value = mock_auth_service
 
-                    with patch("mcpgateway.db.utc_now", return_value=datetime.now(timezone.utc)):
                         user = await get_current_user(credentials=credentials, db=mock_db)
 
                         assert user == mock_user
@@ -378,15 +389,16 @@ class TestGetCurrentUser:
         mock_db.execute.return_value = mock_result
 
         with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(side_effect=Exception("Invalid JWT"))):
-            with patch("mcpgateway.services.token_catalog_service.TokenCatalogService") as mock_token_service_class:
-                mock_token_service = MagicMock()
-                mock_token_service_class.return_value = mock_token_service
+            with patch("mcpgateway.auth.fresh_db_session", make_fresh_db_session_mock(mock_db)):
+                with patch("mcpgateway.services.token_catalog_service.TokenCatalogService") as mock_token_service_class:
+                    mock_token_service = MagicMock()
+                    mock_token_service_class.return_value = mock_token_service
 
-                with pytest.raises(HTTPException) as exc_info:
-                    await get_current_user(credentials=credentials, db=mock_db)
+                    with pytest.raises(HTTPException) as exc_info:
+                        await get_current_user(credentials=credentials, db=mock_db)
 
-                assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
-                assert exc_info.value.detail == "API token expired"
+                    assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+                    assert exc_info.value.detail == "API token expired"
 
     @pytest.mark.asyncio
     async def test_revoked_api_token_raises_401(self):
@@ -404,16 +416,17 @@ class TestGetCurrentUser:
         mock_db.execute.return_value = mock_result
 
         with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(side_effect=Exception("Invalid JWT"))):
-            with patch("mcpgateway.services.token_catalog_service.TokenCatalogService") as mock_token_service_class:
-                mock_token_service = MagicMock()
-                mock_token_service.is_token_revoked = AsyncMock(return_value=True)
-                mock_token_service_class.return_value = mock_token_service
+            with patch("mcpgateway.auth.fresh_db_session", make_fresh_db_session_mock(mock_db)):
+                with patch("mcpgateway.services.token_catalog_service.TokenCatalogService") as mock_token_service_class:
+                    mock_token_service = MagicMock()
+                    mock_token_service.is_token_revoked = AsyncMock(return_value=True)
+                    mock_token_service_class.return_value = mock_token_service
 
-                with pytest.raises(HTTPException) as exc_info:
-                    await get_current_user(credentials=credentials, db=mock_db)
+                    with pytest.raises(HTTPException) as exc_info:
+                        await get_current_user(credentials=credentials, db=mock_db)
 
-                assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
-                assert exc_info.value.detail == "API token has been revoked"
+                    assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+                    assert exc_info.value.detail == "API token has been revoked"
 
     @pytest.mark.asyncio
     async def test_api_token_not_found_raises_401(self):
@@ -426,15 +439,16 @@ class TestGetCurrentUser:
         mock_db.execute.return_value = mock_result
 
         with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(side_effect=Exception("Invalid JWT"))):
-            with patch("mcpgateway.services.token_catalog_service.TokenCatalogService") as mock_token_service_class:
-                mock_token_service = MagicMock()
-                mock_token_service_class.return_value = mock_token_service
+            with patch("mcpgateway.auth.fresh_db_session", make_fresh_db_session_mock(mock_db)):
+                with patch("mcpgateway.services.token_catalog_service.TokenCatalogService") as mock_token_service_class:
+                    mock_token_service = MagicMock()
+                    mock_token_service_class.return_value = mock_token_service
 
-                with pytest.raises(HTTPException) as exc_info:
-                    await get_current_user(credentials=credentials, db=mock_db)
+                    with pytest.raises(HTTPException) as exc_info:
+                        await get_current_user(credentials=credentials, db=mock_db)
 
-                assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
-                assert exc_info.value.detail == "Invalid authentication credentials"
+                    assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+                    assert exc_info.value.detail == "Invalid authentication credentials"
 
     @pytest.mark.asyncio
     async def test_api_token_database_error_raises_401(self):
@@ -445,15 +459,16 @@ class TestGetCurrentUser:
         mock_db.execute.side_effect = Exception("Database connection error")
 
         with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(side_effect=Exception("Invalid JWT"))):
-            with patch("mcpgateway.services.token_catalog_service.TokenCatalogService") as mock_token_service_class:
-                mock_token_service = MagicMock()
-                mock_token_service_class.return_value = mock_token_service
+            with patch("mcpgateway.auth.fresh_db_session", make_fresh_db_session_mock(mock_db)):
+                with patch("mcpgateway.services.token_catalog_service.TokenCatalogService") as mock_token_service_class:
+                    mock_token_service = MagicMock()
+                    mock_token_service_class.return_value = mock_token_service
 
-                with pytest.raises(HTTPException) as exc_info:
-                    await get_current_user(credentials=credentials, db=mock_db)
+                    with pytest.raises(HTTPException) as exc_info:
+                        await get_current_user(credentials=credentials, db=mock_db)
 
-                assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
-                assert exc_info.value.detail == "Invalid authentication credentials"
+                    assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+                    assert exc_info.value.detail == "Invalid authentication credentials"
 
     @pytest.mark.asyncio
     async def test_user_not_found_raises_401(self):
@@ -599,17 +614,17 @@ class TestGetCurrentUser:
         mock_db.execute.return_value = mock_result
 
         with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(side_effect=Exception("Invalid JWT"))):
-            with patch("mcpgateway.services.token_catalog_service.TokenCatalogService") as mock_token_service_class:
-                mock_token_service = MagicMock()
-                mock_token_service.is_token_revoked = AsyncMock(return_value=False)
-                mock_token_service_class.return_value = mock_token_service
+            with patch("mcpgateway.auth.fresh_db_session", make_fresh_db_session_mock(mock_db)):
+                with patch("mcpgateway.services.token_catalog_service.TokenCatalogService") as mock_token_service_class:
+                    mock_token_service = MagicMock()
+                    mock_token_service.is_token_revoked = AsyncMock(return_value=False)
+                    mock_token_service_class.return_value = mock_token_service
 
-                with patch("mcpgateway.services.email_auth_service.EmailAuthService") as mock_auth_service_class:
-                    mock_auth_service = MagicMock()
-                    mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
-                    mock_auth_service_class.return_value = mock_auth_service
+                    with patch("mcpgateway.services.email_auth_service.EmailAuthService") as mock_auth_service_class:
+                        mock_auth_service = MagicMock()
+                        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+                        mock_auth_service_class.return_value = mock_auth_service
 
-                    with patch("mcpgateway.db.utc_now", return_value=datetime.now(timezone.utc)):
                         user = await get_current_user(credentials=credentials, db=mock_db)
 
                         assert user == mock_user
@@ -627,15 +642,16 @@ class TestGetCurrentUser:
         mock_db.execute.return_value = mock_result
 
         with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(side_effect=Exception("Invalid JWT"))):
-            with patch("mcpgateway.services.token_catalog_service.TokenCatalogService") as mock_token_service_class:
-                mock_token_service = MagicMock()
-                mock_token_service_class.return_value = mock_token_service
+            with patch("mcpgateway.auth.fresh_db_session", make_fresh_db_session_mock(mock_db)):
+                with patch("mcpgateway.services.token_catalog_service.TokenCatalogService") as mock_token_service_class:
+                    mock_token_service = MagicMock()
+                    mock_token_service_class.return_value = mock_token_service
 
-                with pytest.raises(HTTPException) as exc_info:
-                    await get_current_user(credentials=credentials, db=mock_db)
+                    with pytest.raises(HTTPException) as exc_info:
+                        await get_current_user(credentials=credentials, db=mock_db)
 
-                assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
-                assert exc_info.value.detail == "Invalid authentication credentials"
+                    assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+                    assert exc_info.value.detail == "Invalid authentication credentials"
 
     @pytest.mark.asyncio
     async def test_fallback_from_jwt_to_api_token_logging(self, caplog):
@@ -668,17 +684,17 @@ class TestGetCurrentUser:
         caplog.set_level(logging.DEBUG, logger="mcpgateway.auth")
 
         with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(side_effect=Exception("JWT validation failed"))):
-            with patch("mcpgateway.services.token_catalog_service.TokenCatalogService") as mock_token_service_class:
-                mock_token_service = MagicMock()
-                mock_token_service.is_token_revoked = AsyncMock(return_value=False)
-                mock_token_service_class.return_value = mock_token_service
+            with patch("mcpgateway.auth.fresh_db_session", make_fresh_db_session_mock(mock_db)):
+                with patch("mcpgateway.services.token_catalog_service.TokenCatalogService") as mock_token_service_class:
+                    mock_token_service = MagicMock()
+                    mock_token_service.is_token_revoked = AsyncMock(return_value=False)
+                    mock_token_service_class.return_value = mock_token_service
 
-                with patch("mcpgateway.services.email_auth_service.EmailAuthService") as mock_auth_service_class:
-                    mock_auth_service = MagicMock()
-                    mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
-                    mock_auth_service_class.return_value = mock_auth_service
+                    with patch("mcpgateway.services.email_auth_service.EmailAuthService") as mock_auth_service_class:
+                        mock_auth_service = MagicMock()
+                        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+                        mock_auth_service_class.return_value = mock_auth_service
 
-                    with patch("mcpgateway.db.utc_now", return_value=datetime.now(timezone.utc)):
                         _ = await get_current_user(credentials=credentials, db=mock_db)
 
                         assert "JWT validation failed with error" in caplog.text
