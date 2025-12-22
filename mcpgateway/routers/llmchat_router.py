@@ -766,6 +766,53 @@ async def token_streamer(chat_service: MCPChatService, message: str, user_id: st
     """
 
     def json_default(obj):
+        """
+        Default JSON serializer helper for non-serializable Python objects.
+
+        Intended for use as the `default` parameter of `json.dumps`. The
+        function tries common serialization patterns in the following order:
+
+        1. model_dump() for Pydantic v2 models
+        2. dict() for Pydantic v1 models
+        3. __dict__ for plain Python objects
+        4. Fallback to str(obj)
+
+        Args:
+            obj: An object that is not JSON serializable by default.
+
+        Returns:
+            A JSON-serializable representation of ``obj``.
+
+        Examples:
+            >>> class Simple:
+            ...     def __init__(self):
+            ...         self.x = 1
+            ...         self.y = 2
+            ...
+            >>> json_default(Simple())
+            {'x': 1, 'y': 2}
+
+            >>> class WithStr:
+            ...     def __str__(self):
+            ...         return "custom"
+            ...
+            >>> json_default(WithStr())
+            'custom'
+
+            >>> class PydanticV1Like:
+            ...     def dict(self):
+            ...         return {"a": 1}
+            ...
+            >>> json_default(PydanticV1Like())
+            {'a': 1}
+
+            >>> class PydanticV2Like:
+            ...     def model_dump(self):
+            ...         return {"b": 2}
+            ...
+            >>> json_default(PydanticV2Like())
+            {'b': 2}
+        """
         # Try common patterns first
         if hasattr(obj, "model_dump"):  # pydantic v2
             return obj.model_dump()
