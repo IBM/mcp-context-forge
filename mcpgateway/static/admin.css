@@ -121,27 +121,34 @@
     position: fixed;
     z-index: 9999;
     background-color: #1f2937;
+
     /* Tailwind's gray-800 */
     color: white;
     font-size: 0.875rem;
+
     /* text-sm */
     border-radius: 0.5rem;
+
     /* Increased rounded corners */
     padding: 0.75rem 1rem;
+
     /* More padding */
     pointer-events: none;
     opacity: 0;
     transform: scale(0.8);
+
     /* Tooltip starts slightly smaller */
     transition:
         transform 0.2s ease,
         opacity 0.3s ease;
+
     /* Added smooth transition */
 }
 
 .tooltip.show {
     opacity: 1;
     transform: scale(1);
+
     /* Scales up smoothly */
 }
 
@@ -263,6 +270,7 @@
 #chat-messages-container {
     flex: 1;
     overflow-y: auto;
+
     /* scroll-behavior: smooth; -- Removed to prevent jitter during frequent streaming updates */
     min-height: 0;
     scrollbar-width: thin;
@@ -320,7 +328,7 @@
     background: linear-gradient(135deg, rgb(79 70 229), rgb(124 58 237));
     color: white;
     padding: 0.625rem 1rem;
-    border-radius: 1.25rem 1.25rem 0.25rem 1.25rem;
+    border-radius: 1.25rem 1.25rem 0.25rem;
     line-height: 1.5;
     overflow-wrap: break-word;
     word-break: normal;
@@ -573,7 +581,6 @@
 }
 
 @keyframes typing-dots {
-
     0%,
     60%,
     100% {

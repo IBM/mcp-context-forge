@@ -21638,7 +21638,7 @@ async function loadLLMModels() {
 function handleLLMModelChange() {
     const modelSelect = document.getElementById("llm-model-select");
     const modelBadge = document.getElementById("llm-model-badge");
-    const modelNameSpan = document.getElementById("llm-model-name");
+    const modelNameSpan = document.getElementById("llmchat-model-name");
 
     if (modelSelect && modelBadge && modelNameSpan) {
         const selectedOption = modelSelect.options[modelSelect.selectedIndex];
