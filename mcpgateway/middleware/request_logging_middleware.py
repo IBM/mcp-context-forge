@@ -26,7 +26,6 @@ from starlette.responses import Response
 
 # First-Party
 from mcpgateway.auth import get_current_user
-from mcpgateway.db import SessionLocal
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.utils.correlation_id import get_correlation_id
@@ -171,22 +170,15 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         if not token:
             return (None, None)
 
-        db = None
         try:
-            db = SessionLocal()
             credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-            user = await get_current_user(credentials, db)
+            # get_current_user now uses fresh DB sessions internally
+            user = await get_current_user(credentials)
             raw_user_id = getattr(user, "id", None)
             user_email = getattr(user, "email", None)
             return (str(raw_user_id) if raw_user_id is not None else None, user_email)
         except Exception:
             return (None, None)
-        finally:
-            if db:
-                try:
-                    db.close()
-                except Exception:  # nosec B110 - Silently handle db.close() failures during cleanup
-                    pass
 
     async def dispatch(self, request: Request, call_next: Callable):
         """Process incoming request and log details with sensitive data masked.

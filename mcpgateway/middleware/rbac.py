@@ -142,7 +142,7 @@ async def get_current_user_with_permissions(
 
         # Extract user from token using the email auth function
         # Pass request to get_current_user so plugins can store auth_method in request.state
-        user = await get_current_user(credentials, db, request=request)
+        user = await get_current_user(credentials, request=request)
 
         # Read auth_method and request_id from request.state
         # (auth_method set by plugin in get_current_user, request_id set by HTTP middleware)

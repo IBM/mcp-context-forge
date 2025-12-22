@@ -3134,7 +3134,8 @@ async def change_password_required_handler(request: Request, db: Session = Depen
             # Authenticate using the token
             # Create credentials object from cookie
             credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=jwt_token)
-            current_user = await get_current_user(credentials, db, request)
+            # get_current_user now uses fresh DB sessions internally
+            current_user = await get_current_user(credentials, request=request)
 
             if not current_user:
                 root_path = request.scope.get("root_path", "")
