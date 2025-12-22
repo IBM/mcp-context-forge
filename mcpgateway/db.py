@@ -22,6 +22,7 @@ Examples:
 """
 
 # Standard
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import logging
 import os
@@ -3881,6 +3882,33 @@ def get_db() -> Generator[Session, Any, None]:
         >>> hasattr(db, 'commit')
         True
         >>> gen.close()
+    """
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@contextmanager
+def fresh_db_session() -> Generator[Session, Any, None]:
+    """Get a fresh database session for isolated operations.
+
+    Use this when you need a new session independent of the request lifecycle,
+    such as for metrics recording after releasing the main session.
+
+    This is a synchronous context manager that creates a new database session
+    from the SessionLocal factory. The session is automatically closed when
+    the context manager exits, regardless of whether an exception occurred.
+
+    Yields:
+        Session: A fresh SQLAlchemy database session.
+
+    Examples:
+        >>> from mcpgateway.db import fresh_db_session
+        >>> with fresh_db_session() as db:
+        ...     hasattr(db, 'query')
+        True
     """
     db = SessionLocal()
     try:
