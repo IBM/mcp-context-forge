@@ -55,14 +55,7 @@
         if (parts.length == 2) return parts.pop().split(";").shift();
       }
     </script>
-    <!-- Markdown and Sanitization -->
-    {% if ui_airgapped %}
-    <script src="{{ root_path }}/static/vendor/marked/marked.min.js"></script>
-    <script src="{{ root_path }}/static/vendor/dompurify/purify.min.js"></script>
-    {% else %}
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
-    {% endif %}
+    
     <!-- CodeMirror -->
     {% if ui_airgapped %}
     <script src="{{ root_path }}/static/vendor/codemirror/codemirror.min.js"></script>
@@ -98,6 +91,14 @@
     <script src="{{ root_path }}/static/vendor/chartjs/chart.umd.min.js"></script>
     {% else %}
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    {% endif %}
+    <!-- Markdown and Sanitization -->
+    {% if ui_airgapped %}
+    <script src="{{ root_path }}/static/vendor/marked/marked.min.js"></script>
+    <script src="{{ root_path }}/static/vendor/dompurify/purify.min.js"></script>
+    {% else %}
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
     {% endif %}
     <script src="{{ root_path }}/static/admin.js"></script>
     <script src="{{ root_path }}/static/gantt-chart.js?v=3"></script>

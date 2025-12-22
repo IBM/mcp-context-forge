@@ -1,3 +1,4 @@
+/* global marked, DOMPurify */
 const MASKED_AUTH_VALUE = "*****";
 
 // Add three fields to passthrough section on Advanced button click
@@ -21568,7 +21569,7 @@ async function selectServerForChat(
         }
     });
 
-    // Close the dropdown 
+    // Close the dropdown
     const dropdownBtn = document.getElementById("llm-server-dropdown-btn");
     if (dropdownBtn) {
         // Trigger click outside to close dropdown
@@ -21581,18 +21582,6 @@ async function selectServerForChat(
 
     console.log(
         `Selected server: ${serverName} (${serverId}), Visibility: ${serverVisibility}, Token: ${requiresToken ? "Required" : "Not required"}`,
-    );
-}
-
-/**
- * Toggle LLM configuration visibility
- * This function is kept as a no-op for backward compatibility
- */
-function toggleLLMConfig() {
-
-    // No manual DOM manipulation needed
-    console.log(
-        "toggleLLMConfig: Now handled by Alpine.js configDropdownOpen state",
     );
 }
 
@@ -22261,7 +22250,6 @@ function showConnectionSuccess() {
     if (disconnectBtn) {
         disconnectBtn.classList.remove("hidden");
     }
-
 
     // Show success message
     showNotification(
