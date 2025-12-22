@@ -87,6 +87,17 @@ services:
       - REDIS_SOCKET_TIMEOUT=5.0
       - REDIS_SOCKET_CONNECT_TIMEOUT=5.0
       - REDIS_HEALTH_CHECK_INTERVAL=30
+      # MCP Server Health Check
+      # Interval in seconds between health checks (default: 300)
+      - HEALTH_CHECK_INTERVAL=300
+      # Timeout in seconds for each health check request (default: 5)
+      - HEALTH_CHECK_TIMEOUT=5
+      # Consecutive failures before marking gateway offline (default: 3)
+      - UNHEALTHY_THRESHOLD=3
+      # Gateway URL validation timeout in seconds (default: 5)
+      - GATEWAY_VALIDATION_TIMEOUT=5
+      # Max concurrent health checks per worker (default: 10)
+      - MAX_CONCURRENT_HEALTH_CHECKS=10
       # JWT Configuration - Choose ONE approach:
       # Option 1: HMAC (Default - Simple deployments)
       - JWT_ALGORITHM=HS256

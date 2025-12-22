@@ -27,7 +27,7 @@ Environment variables:
 - RESOURCE_CACHE_TTL: Cache TTL in seconds (default: 3600)
 - TOOL_TIMEOUT: Tool invocation timeout (default: 60)
 - PROMPT_CACHE_SIZE: Max cached prompts (default: 100)
-- HEALTH_CHECK_INTERVAL: Gateway health check interval (default: 60)
+- HEALTH_CHECK_INTERVAL: Gateway health check interval (default: 300)
 
 Examples:
     >>> from mcpgateway.config import Settings
@@ -1066,10 +1066,14 @@ class Settings(BaseSettings):
     prompt_render_timeout: int = 10  # seconds
 
     # Health Checks
-    health_check_interval: int = 60  # seconds
-    health_check_timeout: int = 10  # seconds
-    unhealthy_threshold: int = 5  # after this many failures, mark as Offline
-    max_concurrent_health_checks: int = 20  # maximum concurrent health checks per worker
+    # Interval in seconds between health checks
+    health_check_interval: int = 300
+    # Timeout in seconds for each health check request
+    health_check_timeout: int = 5
+    # Consecutive failures before marking gateway offline
+    unhealthy_threshold: int = 3
+    # Max concurrent health checks per worker
+    max_concurrent_health_checks: int = 10
 
     # Validation Gateway URL
     gateway_validation_timeout: int = 5  # seconds
