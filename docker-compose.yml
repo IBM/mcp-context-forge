@@ -68,7 +68,7 @@ services:
     # ──────────────────────────────────────────────────────────────────────
     environment:
       # HTTP Server: granian (default, Rust-based) or gunicorn (Python-based alternative)
-      - HTTP_SERVER=granian
+      - HTTP_SERVER=gunicorn
       # - HTTP_SERVER=gunicorn  # Alternative: use Gunicorn with Uvicorn workers
       - HOST=0.0.0.0
       - PORT=4444
@@ -158,7 +158,7 @@ services:
       - GRANIAN_BACKPRESSURE=2048
       - GRANIAN_HTTP1_BUFFER_SIZE=524288
       # Granian workers (auto = CPU count, or set explicit number)
-      - GRANIAN_WORKERS=8
+      - GRANIAN_WORKERS=16
 
       # Phoenix Observability Integration (uncomment when using Phoenix)
       # - PHOENIX_ENDPOINT=${PHOENIX_ENDPOINT:-http://phoenix:6006}

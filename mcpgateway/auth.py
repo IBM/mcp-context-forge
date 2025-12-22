@@ -119,12 +119,12 @@ def _get_personal_team_sync(user_email: str) -> Optional[str]:
     """
     with fresh_db_session() as db:
         # Third-Party
-        from sqlalchemy import select
+        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
 
         # First-Party
-        from mcpgateway.db import Team, TeamMember
+        from mcpgateway.db import EmailTeam, EmailTeamMember  # pylint: disable=import-outside-toplevel
 
-        result = db.execute(select(Team).join(TeamMember).where(TeamMember.user_email == user_email, Team.is_personal.is_(True)))
+        result = db.execute(select(EmailTeam).join(EmailTeamMember).where(EmailTeamMember.user_email == user_email, EmailTeam.is_personal.is_(True)))
         personal_team = result.scalar_one_or_none()
         return personal_team.id if personal_team else None
 
@@ -193,12 +193,12 @@ def _check_token_revoked_sync(jti: str) -> bool:
     """
     with fresh_db_session() as db:
         # Third-Party
-        from sqlalchemy import select
+        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
 
         # First-Party
-        from mcpgateway.db import RevokedToken
+        from mcpgateway.db import TokenRevocation  # pylint: disable=import-outside-toplevel
 
-        result = db.execute(select(RevokedToken).where(RevokedToken.jti == jti))
+        result = db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti))
         return result.scalar_one_or_none() is not None
 
 
@@ -215,10 +215,10 @@ def _lookup_api_token_sync(token_hash: str) -> Optional[Dict[str, Any]]:
     """
     with fresh_db_session() as db:
         # Third-Party
-        from sqlalchemy import select
+        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
 
         # First-Party
-        from mcpgateway.db import EmailApiToken, utc_now
+        from mcpgateway.db import EmailApiToken, utc_now  # pylint: disable=import-outside-toplevel
 
         result = db.execute(select(EmailApiToken).where(EmailApiToken.token_hash == token_hash, EmailApiToken.is_active.is_(True)))
         api_token = result.scalar_one_or_none()
@@ -230,9 +230,9 @@ def _lookup_api_token_sync(token_hash: str) -> Optional[Dict[str, Any]]:
 
             # Check revocation
             # First-Party
-            from mcpgateway.db import RevokedToken
+            from mcpgateway.db import TokenRevocation  # pylint: disable=import-outside-toplevel
 
-            revoke_result = db.execute(select(RevokedToken).where(RevokedToken.jti == api_token.jti))
+            revoke_result = db.execute(select(TokenRevocation).where(TokenRevocation.jti == api_token.jti))
             if revoke_result.scalar_one_or_none() is not None:
                 return {"revoked": True}
 
@@ -260,7 +260,7 @@ def _get_user_by_email_sync(email: str) -> Optional[EmailUser]:
     """
     with fresh_db_session() as db:
         # Third-Party
-        from sqlalchemy import select
+        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
 
         result = db.execute(select(EmailUser).where(EmailUser.email == email))
         user = result.scalar_one_or_none()

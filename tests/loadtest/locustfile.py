@@ -329,7 +329,7 @@ def _print_summary_stats(environment) -> None:
         print(f"\n{'ERRORS':^100}")
         print("-" * 100)
         for _error_key, error in list(stats.errors.items())[:10]:
-            print(f"  [{error.occurrences}x] {error.method} {error.name}: {error.error[:80]}")
+            print(f"  [{error.occurrences}x] {error.method} {error.name}: {str(error.error)[:80]}")
 
     print("\n" + "=" * 100)
     print("END OF SUMMARY")
