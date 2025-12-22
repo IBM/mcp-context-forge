@@ -44,7 +44,6 @@ from __future__ import annotations
 # Standard
 import argparse
 import asyncio
-import codecs
 from contextlib import suppress
 from dataclasses import dataclass
 import errno
