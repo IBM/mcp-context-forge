@@ -306,10 +306,6 @@ class TestGatewayServiceExtended:
         service = GatewayService()
         service._health_check_interval = 0.1  # Short interval for testing
 
-        # Mock database session
-        mock_db = MagicMock()
-        service._get_db = MagicMock(return_value=mock_db)
-
         # Mock gateways
         mock_gateway1 = MagicMock()
         mock_gateway1.id = "gateway1"
@@ -335,8 +331,8 @@ class TestGatewayServiceExtended:
         with patch("mcpgateway.services.gateway_service.settings") as mock_settings:
             mock_settings.cache_type = "none"
 
-            # Run health checks for a short time
-            health_check_task = asyncio.create_task(service._run_health_checks(service._get_db, "user@example.com"))
+            # Run health checks for a short time (no db parameter - uses fresh_db_session internally)
+            health_check_task = asyncio.create_task(service._run_health_checks("user@example.com"))
             await asyncio.sleep(0.2)
             health_check_task.cancel()
 

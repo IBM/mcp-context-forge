@@ -290,7 +290,6 @@ async def get_current_user(
 
     Args:
         credentials: HTTP authorization credentials
-        db: Database session
         request: Optional request object for plugin hooks
 
     Returns:
