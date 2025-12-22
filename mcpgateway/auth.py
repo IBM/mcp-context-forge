@@ -27,7 +27,6 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, fresh_db_session, SessionLocal
 from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError
-from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.verify_credentials import verify_jwt_token
 
@@ -119,9 +118,6 @@ def _get_personal_team_sync(user_email: str) -> Optional[str]:
         The personal team ID, or None if not found.
     """
     with fresh_db_session() as db:
-        TeamManagementService(db)
-        # TeamManagementService.get_user_teams is sync despite async wrapper
-        # We need to call the underlying sync method directly
         # Third-Party
         from sqlalchemy import select
 
@@ -196,11 +192,6 @@ def _check_token_revoked_sync(jti: str) -> bool:
         True if the token is revoked, False otherwise.
     """
     with fresh_db_session() as db:
-        # First-Party
-        from mcpgateway.services.token_catalog_service import TokenCatalogService
-
-        TokenCatalogService(db)
-        # Check revocation table directly
         # Third-Party
         from sqlalchemy import select
 
