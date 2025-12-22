@@ -1533,7 +1533,7 @@ class GatewayProvider:
             # Create appropriate LLM based on provider type
             provider_type = provider.provider_type.lower()
             config = provider.config or {}
-            
+
             # Common kwargs
             kwargs: Dict[str, Any] = {
                 "temperature": temperature,
@@ -1541,18 +1541,20 @@ class GatewayProvider:
             }
 
             if provider_type == "openai":
-                kwargs.update({
-                    "api_key": api_key,
-                    "model": model.model_id,
-                    "max_tokens": max_tokens,
-                })
+                kwargs.update(
+                    {
+                        "api_key": api_key,
+                        "model": model.model_id,
+                        "max_tokens": max_tokens,
+                    }
+                )
                 if provider.api_base:
                     kwargs["base_url"] = provider.api_base
-                
+
                 # Handle default headers
                 if config.get("default_headers"):
                     kwargs["default_headers"] = config["default_headers"]
-                elif hasattr(self.config, "default_headers") and self.config.default_headers: # type: ignore
+                elif hasattr(self.config, "default_headers") and self.config.default_headers:  # type: ignore
                     kwargs["default_headers"] = self.config.default_headers
 
                 if model_type == "chat":
@@ -1568,15 +1570,17 @@ class GatewayProvider:
                 api_version = config.get("api_version", "2024-05-01-preview")
                 max_retries = config.get("max_retries", 2)
 
-                kwargs.update({
-                    "api_key": api_key,
-                    "azure_endpoint": provider.api_base,
-                    "azure_deployment": azure_deployment,
-                    "api_version": api_version,
-                    "model": model.model_id,
-                    "max_tokens": int(max_tokens) if max_tokens is not None else None,
-                    "max_retries": max_retries,
-                })
+                kwargs.update(
+                    {
+                        "api_key": api_key,
+                        "azure_endpoint": provider.api_base,
+                        "azure_deployment": azure_deployment,
+                        "api_version": api_version,
+                        "model": model.model_id,
+                        "max_tokens": int(max_tokens) if max_tokens is not None else None,
+                        "max_retries": max_retries,
+                    }
+                )
 
                 if model_type == "chat":
                     self.llm = AzureChatOpenAI(**kwargs)
@@ -1625,7 +1629,7 @@ class GatewayProvider:
                     "temperature": temperature,
                     "max_tokens": max_tokens or 4096,
                 }
-                
+
                 if model_type == "chat":
                     self.llm = ChatBedrock(
                         model_id=model.model_id,
@@ -1700,13 +1704,15 @@ class GatewayProvider:
                 if not provider.api_base:
                     raise ValueError("OpenAI-compatible provider requires base_url to be configured")
 
-                kwargs.update({
-                    "api_key": api_key or "no-key-required",
-                    "model": model.model_id,
-                    "base_url": provider.api_base,
-                    "max_tokens": max_tokens,
-                })
-                
+                kwargs.update(
+                    {
+                        "api_key": api_key or "no-key-required",
+                        "model": model.model_id,
+                        "base_url": provider.api_base,
+                        "max_tokens": max_tokens,
+                    }
+                )
+
                 if model_type == "chat":
                     self.llm = ChatOpenAI(**kwargs)
                 else:
@@ -1717,7 +1723,6 @@ class GatewayProvider:
 
             logger.info(f"Gateway provider created LLM instance for model: {model.model_id} via {provider_type}")
             return self.llm
-
 
     def get_model_name(self) -> str:
         """
