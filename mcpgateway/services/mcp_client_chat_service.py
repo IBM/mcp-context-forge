@@ -550,7 +550,7 @@ class GatewayConfig(BaseModel):
 
     model: str = Field(..., description="Gateway model ID to use")
     base_url: Optional[str] = Field(None, description="Gateway internal API URL (optional, defaults to self)")
-    temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0, description="Sampling temperature")
+    temperature: Optional[float] = Field(default=0.7, ge=0.0, le=2.0, description="Sampling temperature")
     max_tokens: Optional[int] = Field(None, gt=0, description="Maximum tokens to generate")
     timeout: Optional[float] = Field(None, gt=0, description="Request timeout in seconds")
 
