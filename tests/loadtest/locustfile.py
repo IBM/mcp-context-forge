@@ -18,7 +18,7 @@ Environment Variables (also reads from .env file):
     LOADTEST_HOST: Target host URL (default: http://localhost:8080)
     LOADTEST_USERS: Number of concurrent users (default: 1000)
     LOADTEST_SPAWN_RATE: Users spawned per second (default: 100)
-    LOADTEST_RUN_TIME: Test duration, e.g., "60s", "5m" (default: 3m)
+    LOADTEST_RUN_TIME: Test duration, e.g., "60s", "5m" (default: 5m)
     MCPGATEWAY_BEARER_TOKEN: JWT token for authenticated requests
     BASIC_AUTH_USER: Basic auth username (default: admin)
     BASIC_AUTH_PASSWORD: Basic auth password (default: changeme)
