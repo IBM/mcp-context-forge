@@ -2877,6 +2877,8 @@ async def toggle_tool_status(
         }
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
+    except ToolNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -2941,6 +2943,8 @@ async def toggle_resource_status(
         }
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
+    except ResourceNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -3300,6 +3304,8 @@ async def toggle_prompt_status(
         }
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
+    except PromptNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -3528,7 +3534,7 @@ async def get_prompt_no_args(
         The prompt template information
 
     Raises:
-        Exception: Re-raised from prompt service.
+        HTTPException: 404 if prompt not found, 403 if permission denied.
     """
     logger.debug(f"User: {user} requested prompt: {prompt_id} with no arguments")
 
@@ -3536,13 +3542,18 @@ async def get_prompt_no_args(
     plugin_context_table = getattr(request.state, "plugin_context_table", None)
     plugin_global_context = getattr(request.state, "plugin_global_context", None)
 
-    return await prompt_service.get_prompt(
-        db,
-        prompt_id,
-        {},
-        plugin_context_table=plugin_context_table,
-        plugin_global_context=plugin_global_context,
-    )
+    try:
+        return await prompt_service.get_prompt(
+            db,
+            prompt_id,
+            {},
+            plugin_context_table=plugin_context_table,
+            plugin_global_context=plugin_global_context,
+        )
+    except PromptNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
 
 
 @prompt_router.put("/{prompt_id}", response_model=PromptRead)
@@ -3689,6 +3700,8 @@ async def toggle_gateway_status(
         }
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
+    except GatewayNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -3828,9 +3841,15 @@ async def get_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depen
 
     Returns:
         Gateway data.
+
+    Raises:
+        HTTPException: 404 if gateway not found.
     """
     logger.debug(f"User '{user}' requested gateway {gateway_id}")
-    return await gateway_service.get_gateway(db, gateway_id)
+    try:
+        return await gateway_service.get_gateway(db, gateway_id)
+    except GatewayNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
 @gateway_router.put("/{gateway_id}", response_model=GatewayRead)
