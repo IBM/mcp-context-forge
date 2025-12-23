@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import A2AAgentMetric, EmailTeam
+from mcpgateway.db import A2AAgentMetric, EmailTeam, fresh_db_session
 from mcpgateway.schemas import A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.structured_logger import get_structured_logger
@@ -383,7 +383,8 @@ class A2AAgentService:
 
         agents = db.execute(query).scalars().all()
 
-        return [self._db_to_schema(db=db, db_agent=agent) for agent in agents]
+        # Skip metrics to avoid N+1 queries in list operations
+        return [self._db_to_schema(db=db, db_agent=agent, include_metrics=False) for agent in agents]
 
     async def list_agents_for_user(
         self, db: Session, user_info: Dict[str, Any], team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
@@ -456,7 +457,8 @@ class A2AAgentService:
         query = query.offset(skip).limit(limit)
 
         agents = db.execute(query).scalars().all()
-        return [self._db_to_schema(db=db, db_agent=agent) for agent in agents]
+        # Skip metrics to avoid N+1 queries in list operations
+        return [self._db_to_schema(db=db, db_agent=agent, include_metrics=False) for agent in agents]
 
     async def get_agent(self, db: Session, agent_id: str, include_inactive: bool = True) -> A2AAgentRead:
         """Retrieve an A2A agent by ID.
@@ -832,37 +834,59 @@ class A2AAgentService:
             A2AAgentNotFoundError: If the agent is not found.
             A2AAgentError: If the agent is disabled or invocation fails.
         """
+        # ═══════════════════════════════════════════════════════════════════════════
+        # PHASE 1: Fetch all required data before HTTP call
+        # ═══════════════════════════════════════════════════════════════════════════
         agent = await self.get_agent_by_name(db, agent_name)
 
         if not agent.enabled:
             raise A2AAgentError(f"A2A Agent '{agent_name}' is disabled")
+
+        # Extract all needed data to local variables before releasing DB connection
+        agent_id = agent.id
+        agent_endpoint_url = agent.endpoint_url
+        agent_type = agent.agent_type
+        agent_protocol_version = agent.protocol_version
+        agent_auth_type = agent.auth_type
+
+        # Fetch auth_value if needed (before closing session)
+        auth_token_value = None
+        if agent_auth_type in ("api_key", "bearer"):
+            db_row = db.execute(select(DbA2AAgent).where(DbA2AAgent.name == agent_name)).scalar_one_or_none()
+            auth_token_value = getattr(db_row, "auth_value", None) if db_row else None
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls
+        # This prevents connection pool exhaustion during slow upstream requests.
+        # ═══════════════════════════════════════════════════════════════════════════
+        db.rollback()  # End the transaction so connection returns to "idle" not "idle in transaction"
+        db.close()
 
         start_time = datetime.now(timezone.utc)
         success = False
         error_message = None
         response = None
 
+        # ═══════════════════════════════════════════════════════════════════════════
+        # PHASE 2: Make HTTP call (no DB connection held)
+        # ═══════════════════════════════════════════════════════════════════════════
         try:
             # Prepare the request to the A2A agent
             # Format request based on agent type and endpoint
-            if agent.agent_type in ["generic", "jsonrpc"] or agent.endpoint_url.endswith("/"):
+            if agent_type in ["generic", "jsonrpc"] or agent_endpoint_url.endswith("/"):
                 # Use JSONRPC format for agents that expect it
                 request_data = {"jsonrpc": "2.0", "method": parameters.get("method", "message/send"), "params": parameters.get("params", parameters), "id": 1}
             else:
                 # Use custom A2A format
-                request_data = {"interaction_type": interaction_type, "parameters": parameters, "protocol_version": agent.protocol_version}
+                request_data = {"interaction_type": interaction_type, "parameters": parameters, "protocol_version": agent_protocol_version}
 
             # Make HTTP request to the agent endpoint
             async with httpx.AsyncClient(timeout=30.0) as client:
                 headers = {"Content-Type": "application/json"}
 
                 # Add authentication if configured
-                if agent.auth_type in ("api_key", "bearer"):
-                    # Fetch raw encrypted auth_value from DB layer for use in header
-                    db_row = db.execute(select(DbA2AAgent).where(DbA2AAgent.name == agent_name)).scalar_one_or_none()
-                    token_value = getattr(db_row, "auth_value", None) if db_row else None
-                    if token_value:
-                        headers["Authorization"] = f"Bearer {token_value}"
+                if auth_token_value:
+                    headers["Authorization"] = f"Bearer {auth_token_value}"
 
                 # Add correlation ID to outbound headers for distributed tracing
                 correlation_id = get_correlation_id()
@@ -881,14 +905,14 @@ class A2AAgentService:
                     metadata={
                         "event": "a2a_call_started",
                         "agent_name": agent_name,
-                        "agent_id": agent.id,
-                        "endpoint_url": agent.endpoint_url,
+                        "agent_id": agent_id,
+                        "endpoint_url": agent_endpoint_url,
                         "interaction_type": interaction_type,
-                        "protocol_version": agent.protocol_version,
+                        "protocol_version": agent_protocol_version,
                     },
                 )
 
-                http_response = await client.post(agent.endpoint_url, json=request_data, headers=headers)
+                http_response = await client.post(agent_endpoint_url, json=request_data, headers=headers)
                 call_duration_ms = (datetime.now(timezone.utc) - call_start_time).total_seconds() * 1000
 
                 if http_response.status_code == 200:
@@ -904,7 +928,7 @@ class A2AAgentService:
                         user_email=user_email,
                         correlation_id=correlation_id,
                         duration_ms=call_duration_ms,
-                        metadata={"event": "a2a_call_completed", "agent_name": agent_name, "agent_id": agent.id, "status_code": http_response.status_code, "success": True},
+                        metadata={"event": "a2a_call_completed", "agent_name": agent_name, "agent_id": agent_id, "status_code": http_response.status_code, "success": True},
                     )
                 else:
                     error_message = f"HTTP {http_response.status_code}: {http_response.text}"
@@ -919,30 +943,50 @@ class A2AAgentService:
                         correlation_id=correlation_id,
                         duration_ms=call_duration_ms,
                         error_details={"error_type": "A2AHTTPError", "error_message": error_message},
-                        metadata={"event": "a2a_call_failed", "agent_name": agent_name, "agent_id": agent.id, "status_code": http_response.status_code},
+                        metadata={"event": "a2a_call_failed", "agent_name": agent_name, "agent_id": agent_id, "status_code": http_response.status_code},
                     )
 
                     raise A2AAgentError(error_message)
 
+        except A2AAgentError:
+            # Re-raise A2AAgentError without wrapping
+            raise
         except Exception as e:
             error_message = str(e)
             logger.error(f"Failed to invoke A2A agent '{agent_name}': {error_message}")
             raise A2AAgentError(f"Failed to invoke A2A agent: {error_message}")
 
         finally:
-            # Record metrics
+            # ═══════════════════════════════════════════════════════════════════════════
+            # PHASE 3: Record metrics via buffered service (batches writes for performance)
+            # ═══════════════════════════════════════════════════════════════════════════
             end_time = datetime.now(timezone.utc)
             response_time = (end_time - start_time).total_seconds()
 
-            metric = A2AAgentMetric(a2a_agent_id=agent.id, response_time=response_time, is_success=success, error_message=error_message, interaction_type=interaction_type)
-            db.add(metric)
+            try:
+                # First-Party
+                from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
 
-            # Update last interaction timestamp
-            query = select(DbA2AAgent).where(DbA2AAgent.id == agent.id)
-            db_agent = db.execute(query).scalar_one()
-            db_agent.last_interaction = end_time
+                metrics_buffer = get_metrics_buffer_service()
+                metrics_buffer.record_a2a_agent_metric_with_duration(
+                    a2a_agent_id=agent_id,
+                    response_time=response_time,
+                    success=success,
+                    interaction_type=interaction_type,
+                    error_message=error_message,
+                )
+            except Exception as metrics_error:
+                logger.warning(f"Failed to record A2A metrics for '{agent_name}': {metrics_error}")
 
-            db.commit()
+            # Update last interaction timestamp (quick separate write)
+            try:
+                with fresh_db_session() as ts_db:
+                    db_agent = ts_db.execute(select(DbA2AAgent).where(DbA2AAgent.id == agent_id)).scalar_one_or_none()
+                    if db_agent:
+                        db_agent.last_interaction = end_time
+                        ts_db.commit()
+            except Exception as ts_error:
+                logger.warning(f"Failed to update last_interaction for '{agent_name}': {ts_error}")
 
         return response or {"error": error_message}
 
@@ -1031,12 +1075,14 @@ class A2AAgentService:
             agent.auth_value = encode_auth(agent.auth_value)
         return agent
 
-    def _db_to_schema(self, db: Session, db_agent: DbA2AAgent) -> A2AAgentRead:
+    def _db_to_schema(self, db: Session, db_agent: DbA2AAgent, include_metrics: bool = True) -> A2AAgentRead:
         """Convert database model to schema.
 
         Args:
             db (Session): Database session.
             db_agent (DbA2AAgent): Database agent model.
+            include_metrics (bool): Whether to include metrics in the result. Defaults to True.
+                Set to False for list operations to avoid N+1 query issues.
 
         Returns:
             A2AAgentRead: Agent read schema.
@@ -1051,31 +1097,34 @@ class A2AAgentService:
 
         setattr(db_agent, "team", self._get_team_name(db, getattr(db_agent, "team_id", None)))
 
-        # ✅ Compute metrics
-        total_executions = len(db_agent.metrics)
-        successful_executions = sum(1 for m in db_agent.metrics if m.is_success)
-        failed_executions = total_executions - successful_executions
-        failure_rate = (failed_executions / total_executions * 100) if total_executions > 0 else 0.0
+        # Compute metrics only if requested (avoids N+1 queries in list operations)
+        if include_metrics:
+            total_executions = len(db_agent.metrics)
+            successful_executions = sum(1 for m in db_agent.metrics if m.is_success)
+            failed_executions = total_executions - successful_executions
+            failure_rate = (failed_executions / total_executions * 100) if total_executions > 0 else 0.0
 
-        min_response_time = max_response_time = avg_response_time = last_execution_time = None
-        if db_agent.metrics:
-            response_times = [m.response_time for m in db_agent.metrics if m.response_time is not None]
-            if response_times:
-                min_response_time = min(response_times)
-                max_response_time = max(response_times)
-                avg_response_time = sum(response_times) / len(response_times)
-            last_execution_time = max((m.timestamp for m in db_agent.metrics), default=None)
+            min_response_time = max_response_time = avg_response_time = last_execution_time = None
+            if db_agent.metrics:
+                response_times = [m.response_time for m in db_agent.metrics if m.response_time is not None]
+                if response_times:
+                    min_response_time = min(response_times)
+                    max_response_time = max(response_times)
+                    avg_response_time = sum(response_times) / len(response_times)
+                last_execution_time = max((m.timestamp for m in db_agent.metrics), default=None)
 
-        metrics = A2AAgentMetrics(
-            total_executions=total_executions,
-            successful_executions=successful_executions,
-            failed_executions=failed_executions,
-            failure_rate=failure_rate,
-            min_response_time=min_response_time,
-            max_response_time=max_response_time,
-            avg_response_time=avg_response_time,
-            last_execution_time=last_execution_time,
-        )
+            metrics = A2AAgentMetrics(
+                total_executions=total_executions,
+                successful_executions=successful_executions,
+                failed_executions=failed_executions,
+                failure_rate=failure_rate,
+                min_response_time=min_response_time,
+                max_response_time=max_response_time,
+                avg_response_time=avg_response_time,
+                last_execution_time=last_execution_time,
+            )
+        else:
+            metrics = None
 
         # Build dict from ORM model
         agent_data = {k: getattr(db_agent, k, None) for k in A2AAgentRead.model_fields.keys()}

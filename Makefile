@@ -769,7 +769,7 @@ generate-report:                           ## Display most recent load test repo
 LOADTEST_HOST ?= http://localhost:8080
 LOADTEST_USERS ?= 1000
 LOADTEST_SPAWN_RATE ?= 100
-LOADTEST_RUN_TIME ?= 3m
+LOADTEST_RUN_TIME ?= 5m
 LOADTEST_LOCUSTFILE := tests/loadtest/locustfile.py
 LOADTEST_HTML_REPORT := reports/locust_report.html
 LOADTEST_CSV_PREFIX := reports/locust

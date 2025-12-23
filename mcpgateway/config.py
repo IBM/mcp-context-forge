@@ -27,7 +27,7 @@ Environment variables:
 - RESOURCE_CACHE_TTL: Cache TTL in seconds (default: 3600)
 - TOOL_TIMEOUT: Tool invocation timeout (default: 60)
 - PROMPT_CACHE_SIZE: Max cached prompts (default: 100)
-- HEALTH_CHECK_INTERVAL: Gateway health check interval (default: 60)
+- HEALTH_CHECK_INTERVAL: Gateway health check interval (default: 300)
 
 Examples:
     >>> from mcpgateway.config import Settings
@@ -890,6 +890,11 @@ class Settings(BaseSettings):
     metrics_aggregation_window_minutes: int = Field(default=5, description="Time window for metrics aggregation (minutes)")
     metrics_aggregation_auto_start: bool = Field(default=False, description="Automatically run the log aggregation loop on application startup")
 
+    # Metrics Buffer Configuration (for batching tool/resource/prompt metrics writes)
+    metrics_buffer_enabled: bool = Field(default=True, description="Enable buffered metrics writes (reduces DB pressure under load)")
+    metrics_buffer_flush_interval: int = Field(default=60, ge=5, le=300, description="Seconds between automatic metrics buffer flushes")
+    metrics_buffer_max_size: int = Field(default=1000, ge=100, le=10000, description="Maximum buffered metrics before forced flush")
+
     # Log Search Configuration
     log_search_max_results: int = Field(default=1000, description="Maximum results per log search query")
     log_retention_days: int = Field(default=30, description="Number of days to retain logs in database")
@@ -1066,10 +1071,14 @@ class Settings(BaseSettings):
     prompt_render_timeout: int = 10  # seconds
 
     # Health Checks
-    health_check_interval: int = 60  # seconds
-    health_check_timeout: int = 10  # seconds
-    unhealthy_threshold: int = 5  # after this many failures, mark as Offline
-    max_concurrent_health_checks: int = 20  # maximum concurrent health checks per worker
+    # Interval in seconds between health checks
+    health_check_interval: int = 300
+    # Timeout in seconds for each health check request
+    health_check_timeout: int = 5
+    # Consecutive failures before marking gateway offline
+    unhealthy_threshold: int = 3
+    # Max concurrent health checks per worker
+    max_concurrent_health_checks: int = 10
 
     # Validation Gateway URL
     gateway_validation_timeout: int = 5  # seconds

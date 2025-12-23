@@ -68,7 +68,7 @@ services:
     # ──────────────────────────────────────────────────────────────────────
     environment:
       # HTTP Server: granian (default, Rust-based) or gunicorn (Python-based alternative)
-      - HTTP_SERVER=granian
+      - HTTP_SERVER=gunicorn
       # - HTTP_SERVER=gunicorn  # Alternative: use Gunicorn with Uvicorn workers
       - HOST=0.0.0.0
       - PORT=4444
@@ -87,6 +87,17 @@ services:
       - REDIS_SOCKET_TIMEOUT=5.0
       - REDIS_SOCKET_CONNECT_TIMEOUT=5.0
       - REDIS_HEALTH_CHECK_INTERVAL=30
+      # MCP Server Health Check
+      # Interval in seconds between health checks (default: 300)
+      - HEALTH_CHECK_INTERVAL=300
+      # Timeout in seconds for each health check request (default: 5)
+      - HEALTH_CHECK_TIMEOUT=5
+      # Consecutive failures before marking gateway offline (default: 3)
+      - UNHEALTHY_THRESHOLD=3
+      # Gateway URL validation timeout in seconds (default: 5)
+      - GATEWAY_VALIDATION_TIMEOUT=5
+      # Max concurrent health checks per worker (default: 10)
+      - MAX_CONCURRENT_HEALTH_CHECKS=10
       # JWT Configuration - Choose ONE approach:
       # Option 1: HMAC (Default - Simple deployments)
       - JWT_ALGORITHM=HS256
@@ -127,27 +138,27 @@ services:
       - DISABLE_ACCESS_LOG=true  # Disable uvicorn access logs for performance (massive I/O overhead)
       - STRUCTURED_LOGGING_DATABASE_ENABLED=false  # Disable DB logging for performance (use true only for debugging)
       # Database pool tuning for load testing (1000 users)
-      # IMPORTANT: DB sessions are held during upstream HTTP calls, so pool must
-      # handle concurrent requests × avg_request_duration. With slow upstreams,
-      # connections pile up. Size pools generously.
+      # Auth now uses fresh short-lived sessions via asyncio.to_thread(),
+      # so connections are released quickly. Smaller pools work better.
       # Formula: (replicas × workers) × (pool + overflow) < postgres max_connections
-      # With 2 replicas × 8 workers = 16 workers total
-      # With 4000 max_connections: 16 × 200 = 3200 < 4000 ✓
-      - DB_POOL_SIZE=150
-      - DB_MAX_OVERFLOW=50
-      - DB_POOL_TIMEOUT=10
+      # With 4 replicas × 16 workers = 64 async contexts, but sessions are short-lived
+      - DB_POOL_SIZE=50
+      - DB_MAX_OVERFLOW=100
+      - DB_POOL_TIMEOUT=30
       - DB_POOL_RECYCLE=300
-      - DB_POOL_PRE_PING=true
+      - DB_POOL_PRE_PING=false
       # Tool invocation timeout - prevents hung connections
       - TOOL_TIMEOUT=30
       - FEDERATION_TIMEOUT=30
       # Worker and server tuning for high-concurrency load testing
-      # Fewer workers = more connections per worker = better handling of slow upstreams
-      - GUNICORN_WORKERS=8
+      - GUNICORN_WORKERS=16
       # Granian high-concurrency tuning (for 1000 concurrent users)
-      - GRANIAN_BACKLOG=4096
-      - GRANIAN_BACKPRESSURE=1024
+      # Higher backlog allows more pending connections
+      - GRANIAN_BACKLOG=8192
+      - GRANIAN_BACKPRESSURE=2048
       - GRANIAN_HTTP1_BUFFER_SIZE=524288
+      # Granian workers (auto = CPU count, or set explicit number)
+      - GRANIAN_WORKERS=16
 
       # Phoenix Observability Integration (uncomment when using Phoenix)
       # - PHOENIX_ENDPOINT=${PHOENIX_ENDPOINT:-http://phoenix:6006}
