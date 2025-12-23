@@ -1216,6 +1216,12 @@ Disallow: /
 
     # Cache control for well-known files (seconds)
     well_known_cache_max_age: int = 3600  # 1 hour default
+
+    # ===================================
+    # Performance / Startup Tuning
+    # ===================================
+
+    slug_refresh_batch_size: int = Field(default=1000, description="Batch size for gateway/tool slug refresh at startup")
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore")
 
     gateway_tool_name_separator: str = "-"
