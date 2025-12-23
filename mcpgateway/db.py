@@ -3898,8 +3898,12 @@ def fresh_db_session() -> Generator[Session, Any, None]:
     such as for metrics recording after releasing the main session.
 
     This is a synchronous context manager that creates a new database session
-    from the SessionLocal factory. The session is automatically closed when
-    the context manager exits, regardless of whether an exception occurred.
+    from the SessionLocal factory. The session is automatically committed on
+    successful exit or rolled back on exception, then closed.
+
+    Note: Prior to this fix, sessions were closed without commit, causing
+    PostgreSQL to implicitly rollback all transactions (even read-only SELECTs).
+    This was causing ~40% rollback rate under load.
 
     Yields:
         Session: A fresh SQLAlchemy database session.
@@ -3913,6 +3917,10 @@ def fresh_db_session() -> Generator[Session, Any, None]:
     db = SessionLocal()
     try:
         yield db
+        db.commit()  # Commit on successful exit (even for read-only operations)
+    except Exception:
+        db.rollback()  # Explicit rollback on exception
+        raise
     finally:
         db.close()
 
