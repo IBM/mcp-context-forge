@@ -38,9 +38,7 @@ class PerformanceTracker:
         self.max_samples = getattr(settings, "perf_max_samples_per_operation", 1000)
 
         # Use deque with maxlen for O(1) automatic eviction instead of O(n) pop(0)
-        self.operation_timings: Dict[str, deque[float]] = defaultdict(
-            lambda: deque(maxlen=self.max_samples)
-        )
+        self.operation_timings: Dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=self.max_samples))
 
         # Performance thresholds (seconds) from settings or defaults
         self.performance_thresholds = {
