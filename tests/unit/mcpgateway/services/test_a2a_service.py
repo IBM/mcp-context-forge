@@ -17,6 +17,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.schemas import A2AAgentCreate, A2AAgentUpdate
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
@@ -38,6 +39,10 @@ def mock_logging_services():
 
 class TestA2AAgentService:
     """Test suite for A2A Agent Service."""
+
+    def setup_method(self):
+        """Clear the A2A stats cache before each test to ensure isolation."""
+        a2a_stats_cache.invalidate()
 
     @pytest.fixture
     def service(self):
@@ -397,14 +402,21 @@ class TestA2AAgentService:
     async def test_aggregate_metrics(self, service, mock_db):
         """Test metrics aggregation."""
         # Mock database queries
-        mock_db.execute.return_value.scalar.side_effect = [5, 3]  # total_agents, active_agents
-        mock_db.execute.return_value.first.return_value = MagicMock(
-            total_interactions=100,
-            successful_interactions=90,
-            avg_response_time=1.5,
-            min_response_time=0.5,
-            max_response_time=3.0,
-        )
+        # The cache uses .one() to get both total and active in a single query
+        mock_counts_result = MagicMock()
+        mock_counts_result.total = 5
+        mock_counts_result.active = 3
+
+        mock_metrics_result = MagicMock()
+        mock_metrics_result.total_interactions = 100
+        mock_metrics_result.successful_interactions = 90
+        mock_metrics_result.avg_response_time = 1.5
+        mock_metrics_result.min_response_time = 0.5
+        mock_metrics_result.max_response_time = 3.0
+
+        # First call is from cache (get_counts -> .one()), second is metrics query (.first())
+        mock_db.execute.return_value.one.return_value = mock_counts_result
+        mock_db.execute.return_value.first.return_value = mock_metrics_result
 
         # Execute
         result = await service.aggregate_metrics(mock_db)

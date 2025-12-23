@@ -37,6 +37,7 @@ from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import GlobalConfig
@@ -169,6 +170,8 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
     Examples:
         Feature disabled by default (secure by default):
         >>> from unittest.mock import Mock, patch
+        >>> from mcpgateway.cache.global_config_cache import global_config_cache
+        >>> global_config_cache.invalidate()  # Clear cache for isolated test
         >>> with patch(__name__ + ".settings") as mock_settings:
         ...     mock_settings.enable_header_passthrough = False
         ...     mock_settings.default_passthrough_headers = ["X-Tenant-Id"]
@@ -180,6 +183,7 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
         {'Content-Type': 'application/json'}
 
         Enabled with allowlist and conflicts:
+        >>> global_config_cache.invalidate()  # Clear cache for isolated test
         >>> with patch(__name__ + ".settings") as mock_settings:
         ...     mock_settings.enable_header_passthrough = True
         ...     mock_settings.default_passthrough_headers = ["X-Tenant-Id", "Authorization"]
@@ -243,9 +247,9 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
     if settings.enable_overwrite_base_headers:
         logger.debug("Overwriting base headers is enabled via ENABLE_OVERWRITE_BASE_HEADERS flag")
 
-    # Get global passthrough headers first
-    global_config = db.query(GlobalConfig).first()
-    allowed_headers = global_config.passthrough_headers if global_config else settings.default_passthrough_headers
+    # Get global passthrough headers from in-memory cache (Issue #1715)
+    # This eliminates redundant DB queries for static configuration
+    allowed_headers = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
 
     # Gateway specific headers override global config
     if gateway:
@@ -487,6 +491,8 @@ async def set_global_passthrough_headers(db: Session) -> None:
         This function is typically called during application startup to ensure
         global configuration is in place before any gateway operations.
     """
+    # Query DB directly here (not cache) because we need to check if config exists
+    # to decide whether to create it
     global_config = db.query(GlobalConfig).first()
 
     if not global_config:
@@ -503,6 +509,8 @@ async def set_global_passthrough_headers(db: Session) -> None:
         try:
             db.add(GlobalConfig(passthrough_headers=allowed_headers))
             db.commit()
+            # Invalidate cache so next read picks up new config (Issue #1715)
+            global_config_cache.invalidate()
         except Exception as e:
             db.rollback()
             raise PassthroughHeadersError(f"Failed to update passthrough headers: {str(e)}")

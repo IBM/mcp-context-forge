@@ -22,6 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2AAgentMetric, EmailTeam, fresh_db_session
 from mcpgateway.schemas import A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
@@ -161,6 +162,27 @@ class A2AAgentService:
         team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
         return team.name if team else None
 
+    def _batch_get_team_names(self, db: Session, team_ids: List[str]) -> Dict[str, str]:
+        """Batch retrieve team names for multiple team IDs.
+
+        This method fetches team names in a single query to avoid N+1 issues
+        when converting multiple agents to schemas in list operations.
+
+        Args:
+            db (Session): Database session for querying teams.
+            team_ids (List[str]): List of team IDs to look up.
+
+        Returns:
+            Dict[str, str]: Mapping of team_id -> team_name for active teams.
+        """
+        if not team_ids:
+            return {}
+
+        # Single query for all teams
+        teams = db.query(EmailTeam.id, EmailTeam.name).filter(EmailTeam.id.in_(team_ids), EmailTeam.is_active.is_(True)).all()
+
+        return {team.id: team.name for team in teams}
+
     async def register_agent(
         self,
         db: Session,
@@ -271,6 +293,9 @@ class A2AAgentService:
             db.add(new_agent)
             db.commit()
             db.refresh(new_agent)
+
+            # Invalidate cache since agent count changed
+            a2a_stats_cache.invalidate()
 
             # Automatically create a tool for the A2A agent if not already present
             tool_service = ToolService()
@@ -383,8 +408,12 @@ class A2AAgentService:
 
         agents = db.execute(query).scalars().all()
 
+        # Batch fetch team names to avoid N+1 queries
+        team_ids = list({a.team_id for a in agents if a.team_id})
+        team_map = self._batch_get_team_names(db, team_ids)
+
         # Skip metrics to avoid N+1 queries in list operations
-        return [self._db_to_schema(db=db, db_agent=agent, include_metrics=False) for agent in agents]
+        return [self._db_to_schema(db=db, db_agent=agent, include_metrics=False, team_map=team_map) for agent in agents]
 
     async def list_agents_for_user(
         self, db: Session, user_info: Dict[str, Any], team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
@@ -457,8 +486,13 @@ class A2AAgentService:
         query = query.offset(skip).limit(limit)
 
         agents = db.execute(query).scalars().all()
+
+        # Batch fetch team names to avoid N+1 queries
+        team_ids = list({a.team_id for a in agents if a.team_id})
+        team_map = self._batch_get_team_names(db, team_ids)
+
         # Skip metrics to avoid N+1 queries in list operations
-        return [self._db_to_schema(db=db, db_agent=agent, include_metrics=False) for agent in agents]
+        return [self._db_to_schema(db=db, db_agent=agent, include_metrics=False, team_map=team_map) for agent in agents]
 
     async def get_agent(self, db: Session, agent_id: str, include_inactive: bool = True) -> A2AAgentRead:
         """Retrieve an A2A agent by ID.
@@ -739,6 +773,9 @@ class A2AAgentService:
         db.commit()
         db.refresh(agent)
 
+        # Invalidate cache since active agent count changed
+        a2a_stats_cache.invalidate()
+
         status = "activated" if activate else "deactivated"
         logger.info(f"A2A agent {status}: {agent.name} (ID: {agent.id})")
 
@@ -790,6 +827,9 @@ class A2AAgentService:
             agent_name = agent.name
             db.delete(agent)
             db.commit()
+
+            # Invalidate cache since agent count changed
+            a2a_stats_cache.invalidate()
 
             logger.info(f"Deleted A2A agent: {agent_name} (ID: {agent_id})")
 
@@ -999,9 +1039,10 @@ class A2AAgentService:
         Returns:
             Aggregated metrics.
         """
-        # Get total number of agents
-        total_agents = db.execute(select(func.count(DbA2AAgent.id))).scalar()  # pylint: disable=not-callable
-        active_agents = db.execute(select(func.count(DbA2AAgent.id)).where(DbA2AAgent.enabled.is_(True))).scalar()  # pylint: disable=not-callable
+        # Get total/active agent counts from cache (avoids 2 COUNT queries per call)
+        counts = a2a_stats_cache.get_counts(db)
+        total_agents = counts["total"]
+        active_agents = counts["active"]
 
         # Get overall metrics
         metrics_query = select(
@@ -1075,7 +1116,7 @@ class A2AAgentService:
             agent.auth_value = encode_auth(agent.auth_value)
         return agent
 
-    def _db_to_schema(self, db: Session, db_agent: DbA2AAgent, include_metrics: bool = True) -> A2AAgentRead:
+    def _db_to_schema(self, db: Session, db_agent: DbA2AAgent, include_metrics: bool = True, team_map: Optional[Dict[str, str]] = None) -> A2AAgentRead:
         """Convert database model to schema.
 
         Args:
@@ -1083,6 +1124,8 @@ class A2AAgentService:
             db_agent (DbA2AAgent): Database agent model.
             include_metrics (bool): Whether to include metrics in the result. Defaults to True.
                 Set to False for list operations to avoid N+1 query issues.
+            team_map (Optional[Dict[str, str]]): Pre-fetched team_id -> team_name mapping.
+                If provided, avoids N+1 queries for team name lookups in list operations.
 
         Returns:
             A2AAgentRead: Agent read schema.
@@ -1095,7 +1138,13 @@ class A2AAgentService:
         if not db_agent:
             raise A2AAgentNotFoundError("Agent not found")
 
-        setattr(db_agent, "team", self._get_team_name(db, getattr(db_agent, "team_id", None)))
+        # Use pre-fetched team map if available, otherwise query individually
+        team_id = getattr(db_agent, "team_id", None)
+        if team_map is not None and team_id:
+            team_name = team_map.get(team_id)
+        else:
+            team_name = self._get_team_name(db, team_id)
+        setattr(db_agent, "team", team_name)
 
         # Compute metrics only if requested (avoids N+1 queries in list operations)
         if include_metrics:

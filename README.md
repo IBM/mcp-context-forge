@@ -2151,6 +2151,7 @@ MCP Gateway uses Alembic for database migrations. Common commands:
 | `ENABLE_HEADER_PASSTHROUGH`   | Enable HTTP header passthrough feature (⚠️ Security implications) | `false` | bool |
 | `ENABLE_OVERWRITE_BASE_HEADERS` | Enable overwriting of base headers (⚠️ Advanced usage) | `false` | bool |
 | `DEFAULT_PASSTHROUGH_HEADERS` | Default headers to pass through (JSON array)    | `["X-Tenant-Id", "X-Trace-Id"]` | JSON array |
+| `GLOBAL_CONFIG_CACHE_TTL`     | In-memory cache TTL for GlobalConfig (seconds). Reduces DB queries under load. | `60` | int (5-3600) |
 
 > ⚠️ **Security Warning**: Header passthrough is disabled by default for security. Only enable if you understand the implications and have reviewed which headers should be passed through to backing MCP servers. Authorization headers are not included in defaults.
 

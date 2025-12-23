@@ -18,6 +18,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 # First-Party
+from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import GlobalConfig
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers, PassthroughHeadersError, set_global_passthrough_headers
@@ -25,6 +26,10 @@ from mcpgateway.utils.passthrough_headers import get_passthrough_headers, Passth
 
 class TestPassthroughHeaders:
     """Test suite for HTTP header passthrough functionality."""
+
+    def setup_method(self):
+        """Clear the global config cache before each test to ensure isolation."""
+        global_config_cache.invalidate()
 
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_basic_header_passthrough_global_config(self, mock_settings):
