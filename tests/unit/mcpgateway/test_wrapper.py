@@ -229,9 +229,8 @@ async def test_stdin_reader_valid_and_invalid(monkeypatch):
     assert got3 is None
 
     task.cancel()
-    suppress = contextlib.suppress(Exception)
-    with suppress:
-        await wrapper.main_async(wrapper.Settings("x", None), DummyClient(DummyResp()))
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
 
 
 # -------------------

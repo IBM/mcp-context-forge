@@ -374,11 +374,8 @@ async def sse_events(resp: httpx.Response) -> AsyncIterator[bytes]:
     # Process remaining partial line if any (though standard SSE ends with \n\n)
     if partial_line:
         line = partial_line.rstrip(b"\r")
-        # Logic same as above for one line
-        if not line:
-            if event_lines:
-                yield b"\n".join(event_lines)
-        elif not line.startswith(b":"):
+        # Process the partial line same as above
+        if line and not line.startswith(b":"):
             if b":" in line:
                 field, value = line.split(b":", 1)
                 value = value.lstrip(b" ")
@@ -387,8 +384,9 @@ async def sse_events(resp: httpx.Response) -> AsyncIterator[bytes]:
             if field == b"data":
                 event_lines.append(value)
 
-                if event_lines:
-                    yield b"\n".join(event_lines)
+    # Always yield any remaining accumulated event data
+    if event_lines:
+        yield b"\n".join(event_lines)
 
 
 # -----------------------
