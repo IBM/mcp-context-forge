@@ -38,13 +38,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
+from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import Gateway as PydanticGateway
 from mcpgateway.common.models import TextContent
 from mcpgateway.common.models import Tool as PydanticTool
 from mcpgateway.common.models import ToolResult
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import EmailTeam, fresh_db_session, GlobalConfig, server_tool_association
+from mcpgateway.db import EmailTeam, fresh_db_session, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
 from mcpgateway.observability import create_span
@@ -1515,9 +1516,9 @@ class ToolService:
         if tool.integration_type == "A2A" and tool.annotations and "a2a_agent_id" in tool.annotations:
             return await self._invoke_a2a_tool(db=db, tool=tool, arguments=arguments)
 
-        # Fetch GlobalConfig once for passthrough headers (instead of per-request query)
-        global_config = db.execute(select(GlobalConfig)).scalar_one_or_none()
-        passthrough_allowed = global_config.passthrough_headers if global_config else settings.default_passthrough_headers
+        # Get passthrough headers from in-memory cache (Issue #1715)
+        # This eliminates 42,000+ redundant DB queries under load
+        passthrough_allowed = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
 
         # Access gateway now (already eager-loaded) to prevent later lazy load
         gateway = tool.gateway

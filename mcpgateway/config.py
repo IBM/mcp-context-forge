@@ -1107,6 +1107,15 @@ class Settings(BaseSettings):
     redis_max_retries: int = 3
     redis_retry_interval_ms: int = 2000
 
+    # GlobalConfig In-Memory Cache (Issue #1715)
+    # Caches GlobalConfig (passthrough headers) to eliminate redundant DB queries
+    global_config_cache_ttl: int = Field(
+        default=60,
+        ge=5,
+        le=3600,
+        description="TTL in seconds for GlobalConfig in-memory cache (default: 60)",
+    )
+
     # Redis Parser Configuration (ADR-026)
     # hiredis C parser provides up to 83x faster response parsing for large responses
     redis_parser: Literal["auto", "hiredis", "python"] = Field(

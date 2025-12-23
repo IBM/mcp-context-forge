@@ -76,14 +76,14 @@ def test_send_to_stdout_json_and_str(monkeypatch):
     monkeypatch.setattr(sys.stdout, "write", fake_write)
     if hasattr(sys.stdout, "buffer"):
         monkeypatch.setattr(sys.stdout.buffer, "write", fake_write)
-    
+
     monkeypatch.setattr(sys.stdout, "flush", lambda: None)
     if hasattr(sys.stdout, "buffer"):
         monkeypatch.setattr(sys.stdout.buffer, "flush", lambda: None)
 
     wrapper.send_to_stdout({"a": 1})
     wrapper.send_to_stdout("plain text")
-    
+
     # decode captured bytes to str for assertion simplicity
     decoded_captured = []
     for s in captured:
@@ -105,7 +105,7 @@ def test_send_to_stdout_oserror(monkeypatch):
     monkeypatch.setattr(sys.stdout, "write", bad_write)
     if hasattr(sys.stdout, "buffer"):
         monkeypatch.setattr(sys.stdout.buffer, "write", bad_write)
-        
+
     monkeypatch.setattr(sys.stdout, "flush", lambda: None)
     if hasattr(sys.stdout, "buffer"):
         monkeypatch.setattr(sys.stdout.buffer, "flush", lambda: None)

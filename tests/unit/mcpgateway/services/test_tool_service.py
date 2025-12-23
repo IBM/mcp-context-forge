@@ -19,6 +19,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 # First-Party
+from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.plugins.framework import PluginManager
@@ -74,31 +75,29 @@ def mock_global_config_obj():
 
 
 def setup_db_execute_mock(test_db, mock_tool, mock_global_config):
-    """Helper to set up test_db.execute to return tool and GlobalConfig alternately.
+    """Helper to set up test_db.execute to return tool for queries.
 
-    invoke_tool() now makes two execute calls:
-    1. Tool query (with joinedload for gateway)
-    2. GlobalConfig query (for passthrough headers)
-
-    This helper sets up a cycling mock that returns the right value for each call.
+    invoke_tool() makes db.execute() calls for tool queries.
+    GlobalConfig is now cached via global_config_cache (Issue #1715),
+    so db.execute() only needs to return the tool.
 
     Args:
         test_db: The mock database session.
         mock_tool: The mock tool to return for tool queries.
         mock_global_config: The mock GlobalConfig to return for config queries.
     """
+    # Invalidate cache to ensure fresh state for each test
+    global_config_cache.invalidate()
+
+    # db.execute() always returns the tool (GlobalConfig is now cached)
     mock_scalar_tool = Mock()
     mock_scalar_tool.scalar_one_or_none.return_value = mock_tool
-    mock_scalar_config = Mock()
-    mock_scalar_config.scalar_one_or_none.return_value = mock_global_config
-    call_count = [0]
+    test_db.execute = Mock(return_value=mock_scalar_tool)
 
-    def execute_side_effect(*args, **kwargs):
-        idx = call_count[0] % 2
-        call_count[0] += 1
-        return [mock_scalar_tool, mock_scalar_config][idx]
-
-    test_db.execute = Mock(side_effect=execute_side_effect)
+    # Mock db.query() for GlobalConfig cache (Issue #1715)
+    mock_query_result = Mock()
+    mock_query_result.first.return_value = mock_global_config
+    test_db.query = Mock(return_value=mock_query_result)
 
 
 @pytest.fixture

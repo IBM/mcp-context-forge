@@ -375,6 +375,7 @@ mcpContextForge:
     ENABLE_HEADER_PASSTHROUGH: "false" # enable HTTP header passthrough (security implications)
     ENABLE_OVERWRITE_BASE_HEADERS: "false" # enable overwriting of base headers (advanced usage)
     DEFAULT_PASSTHROUGH_HEADERS: '["X-Tenant-Id", "X-Trace-Id"]' # default headers to pass through (JSON array)
+    GLOBAL_CONFIG_CACHE_TTL: "60" # in-memory cache TTL for GlobalConfig (seconds, 5-3600)
 
     # ─ Advanced Validation Configuration ─
     # These are advanced security validation settings with sensible defaults.
