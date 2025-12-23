@@ -1,3 +1,4 @@
+/* global marked, DOMPurify */
 const MASKED_AUTH_VALUE = "*****";
 
 // Add three fields to passthrough section on Advanced button click
@@ -21289,6 +21290,7 @@ const llmChatState = {
     connectedTools: [],
     toolCount: 0,
     serverToken: "",
+    autoScroll: true,
 };
 
 /**
@@ -21330,6 +21332,27 @@ function initializeLLMChat() {
 
     // Initialize chat input resize behavior
     initializeChatInputResize();
+
+    // Initialize scroll handling
+    initializeChatScroll();
+}
+
+/**
+ * Initialize scroll listener for auto-scroll management
+ */
+function initializeChatScroll() {
+    const container = document.getElementById("chat-messages-container");
+    if (container) {
+        container.addEventListener("scroll", () => {
+            // Check if user is near bottom (within 50px)
+            const isAtBottom =
+                container.scrollHeight -
+                    container.scrollTop -
+                    container.clientHeight <
+                50;
+            llmChatState.autoScroll = isAtBottom;
+        });
+    }
 }
 
 /**
@@ -21384,7 +21407,10 @@ async function loadVirtualServersForChat() {
         serversList.innerHTML = servers
             .map((server) => {
                 const toolCount = (server.associatedTools || []).length;
-                const isActive = server.isActive;
+                const isActive =
+                    server.isActive !== undefined
+                        ? server.isActive
+                        : server.enabled;
                 const visibility = server.visibility || "public";
                 const requiresToken =
                     visibility === "team" || visibility === "private";
@@ -21517,7 +21543,13 @@ async function selectServerForChat(
         console.warn("Could not persist selected LLM server:", e);
     }
 
-    // Update UI to show selected server
+    // Update toolbar dropdown button text
+    const selectedServerName = document.getElementById("selected-server-name");
+    if (selectedServerName) {
+        selectedServerName.textContent = serverName;
+    }
+
+    // Update UI to show selected server in dropdown list
     const serverItems = document.querySelectorAll(".server-item");
     serverItems.forEach((item) => {
         if (item.onclick.toString().includes(serverId)) {
@@ -21537,10 +21569,12 @@ async function selectServerForChat(
         }
     });
 
-    // Show and expand LLM configuration
-    const configForm = document.getElementById("llm-config-form");
-    if (configForm && configForm.classList.contains("hidden")) {
-        toggleLLMConfig();
+    // Close the dropdown
+    const dropdownBtn = document.getElementById("llm-server-dropdown-btn");
+    if (dropdownBtn) {
+        // Trigger click outside to close dropdown
+        const event = new Event("click");
+        document.body.dispatchEvent(event);
     }
 
     // Enable connect button if provider is selected
@@ -21549,19 +21583,6 @@ async function selectServerForChat(
     console.log(
         `Selected server: ${serverName} (${serverId}), Visibility: ${serverVisibility}, Token: ${requiresToken ? "Required" : "Not required"}`,
     );
-}
-
-/**
- * Toggle LLM configuration visibility
- */
-function toggleLLMConfig() {
-    const configForm = document.getElementById("llm-config-form");
-    const chevron = document.getElementById("llm-config-chevron");
-
-    if (configForm && chevron) {
-        configForm.classList.toggle("hidden");
-        chevron.classList.toggle("rotate-180");
-    }
 }
 
 /**
@@ -21574,7 +21595,9 @@ async function loadLLMModels() {
     }
 
     try {
-        const response = await fetch("/api/llm/models");
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/llmchat/gateway/models`,
+        );
         if (!response.ok) {
             throw new Error("Failed to load models");
         }
@@ -21587,12 +21610,10 @@ async function loadLLMModels() {
         // Add enabled models from enabled providers
         if (data.models && data.models.length > 0) {
             data.models.forEach((model) => {
-                if (model.is_enabled) {
-                    const option = document.createElement("option");
-                    option.value = model.model_id;
-                    option.textContent = `${model.model_id} (${model.provider_name || model.provider_type})`;
-                    modelSelect.appendChild(option);
-                }
+                const option = document.createElement("option");
+                option.value = model.model_id;
+                option.textContent = `${model.model_id} (${model.provider_name || model.provider_type})`;
+                modelSelect.appendChild(option);
             });
         }
 
@@ -21615,6 +21636,25 @@ async function loadLLMModels() {
  */
 // eslint-disable-next-line no-unused-vars
 function handleLLMModelChange() {
+    const modelSelect = document.getElementById("llm-model-select");
+    const modelBadge = document.getElementById("llm-model-badge");
+    const modelNameSpan = document.getElementById("llmchat-model-name");
+
+    if (modelSelect && modelBadge && modelNameSpan) {
+        const selectedOption = modelSelect.options[modelSelect.selectedIndex];
+        const modelValue = modelSelect.value;
+
+        if (modelValue) {
+            // Show badge with selected model name
+            const modelName = selectedOption.text;
+            modelNameSpan.textContent = modelName;
+            modelBadge.classList.remove("hidden");
+        } else {
+            // Hide badge when no model selected
+            modelBadge.classList.add("hidden");
+        }
+    }
+
     updateConnectButtonState();
 }
 
@@ -22211,14 +22251,6 @@ function showConnectionSuccess() {
         disconnectBtn.classList.remove("hidden");
     }
 
-    // Auto-collapse configuration
-    const configForm = document.getElementById("llm-config-form");
-    const chevron = document.getElementById("llm-config-chevron");
-    if (configForm && !configForm.classList.contains("hidden")) {
-        configForm.classList.add("hidden");
-        chevron.classList.remove("rotate-180");
-    }
-
     // Show success message
     showNotification(
         `Connected to ${llmChatState.selectedServerName}`,
@@ -22715,6 +22747,9 @@ function updateChatMessageWithThinkTags(messageId, content) {
         return;
     }
 
+    // Store raw content for final processing
+    contentEl.setAttribute("data-raw-content", content);
+
     // Parse content for think tags
     const { thinkingSteps, finalAnswer } = parseThinkTags(content);
 
@@ -22730,8 +22765,8 @@ function updateChatMessageWithThinkTags(messageId, content) {
     // Render final answer
     if (finalAnswer) {
         const answerDiv = document.createElement("div");
-        answerDiv.className = "final-answer-content";
-        answerDiv.textContent = finalAnswer;
+        answerDiv.className = "final-answer-content markdown-body";
+        answerDiv.innerHTML = renderMarkdown(finalAnswer);
         contentEl.appendChild(answerDiv);
     }
 
@@ -22887,12 +22922,16 @@ function appendChatMessage(role, content, isStreaming = false) {
     } else if (role === "assistant") {
         messageDiv.innerHTML = `
             <div class="flex justify-start px-2">
-                <div class="bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-2xl px-4 py-2 max-w-xs shadow-sm text-sm whitespace-pre-wrap flex items-end gap-1">
-                    <div class="message-content">${escapeHtmlChat(content)}</div>
-                    ${isStreaming ? '<span class="streaming-indicator w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>' : ""}
+                <div class="bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-2xl px-4 py-3 shadow-sm text-sm flex flex-col gap-1 w-fit">
+                    <div class="message-content markdown-body"></div>
+                    ${isStreaming ? '<span class="streaming-indicator"></span>' : ""}
                 </div>
             </div>
         `;
+        const contentEl = messageDiv.querySelector(".message-content");
+        if (contentEl) {
+            contentEl.innerHTML = renderMarkdown(content);
+        }
     } else if (role === "system") {
         messageDiv.innerHTML = `
             <div class="flex justify-center px-2">
@@ -22904,14 +22943,37 @@ function appendChatMessage(role, content, isStreaming = false) {
     }
 
     container.appendChild(messageDiv);
-    scrollChatToBottom();
+    // Use force scroll for new messages
+    scrollChatToBottom(true);
     return messageId;
+}
+
+/**
+ * Render and sanitize markdown content
+ */
+function renderMarkdown(text) {
+    if (typeof marked === "undefined" || typeof DOMPurify === "undefined") {
+        return text;
+    }
+
+    // Configure marked for nested markdown support
+    const rawHtml = marked.parse(text, {
+        breaks: true, // Support GFM line breaks
+        gfm: true, // GitHub Flavored Markdown
+        pedantic: false, // Allow nested markdown
+        sanitize: false, // We'll sanitize with DOMPurify
+        smartLists: true, // Better list handling
+        smartypants: false, // No typographic replacements
+    });
+
+    return DOMPurify.sanitize(rawHtml);
 }
 
 /**
  * Update chat message content (for streaming)
  */
 let scrollThrottle = null;
+let renderThrottle = null;
 function updateChatMessage(messageId, content) {
     const messageDiv = document.getElementById(messageId);
     if (messageDiv) {
@@ -22919,7 +22981,20 @@ function updateChatMessage(messageId, content) {
         if (contentEl) {
             // Store raw content for final processing
             contentEl.setAttribute("data-raw-content", content);
-            contentEl.textContent = content;
+
+            // Ensure markdown-body class is present
+            if (!contentEl.classList.contains("markdown-body")) {
+                contentEl.classList.add("markdown-body");
+            }
+
+            // During streaming, we use textContent for speed and to avoid broken HTML tags
+            // but we can render markdown periodically for a better UI
+            if (!renderThrottle) {
+                contentEl.innerHTML = renderMarkdown(content);
+                renderThrottle = setTimeout(() => {
+                    renderThrottle = null;
+                }, 150);
+            }
 
             // Throttle scroll during streaming
             if (!scrollThrottle) {
@@ -22962,10 +23037,14 @@ function markMessageComplete(messageId) {
 
                 if (finalAnswer) {
                     const answerDiv = document.createElement("div");
-                    answerDiv.className = "final-answer-content";
-                    answerDiv.textContent = finalAnswer;
+                    answerDiv.className = "final-answer-content markdown-body";
+                    answerDiv.innerHTML = renderMarkdown(finalAnswer);
                     contentEl.appendChild(answerDiv);
                 }
+            } else {
+                // If no think tags, just render markdown
+                contentEl.classList.add("markdown-body");
+                contentEl.innerHTML = renderMarkdown(fullContent);
             }
         }
     }
@@ -23136,13 +23215,15 @@ function clearChatMessages() {
 /**
  * Scroll chat to bottom
  */
-function scrollChatToBottom() {
+function scrollChatToBottom(force = false) {
     const container = document.getElementById("chat-messages-container");
     if (container) {
-        requestAnimationFrame(() => {
-            // Use instant scroll during streaming for better UX
-            container.scrollTop = container.scrollHeight;
-        });
+        if (force || llmChatState.autoScroll) {
+            requestAnimationFrame(() => {
+                // Use instant scroll during streaming for better UX
+                container.scrollTop = container.scrollHeight;
+            });
+        }
     }
 }
 
