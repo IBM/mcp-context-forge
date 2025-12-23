@@ -1189,6 +1189,7 @@ class ResourceService:
                             resource_text = await connect_to_sse_session(server_url=gateway.url, authentication=headers, uri=uri)
                         else:
                             resource_text = await connect_to_streamablehttp_server(server_url=gateway.url, authentication=headers, uri=uri)
+                        success = True  # Mark as successful before returning
                         return resource_text
                     except Exception as e:
                         success = False
