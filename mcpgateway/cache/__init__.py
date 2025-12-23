@@ -40,19 +40,20 @@ def __getattr__(name: str):
     Raises:
         AttributeError: If the requested attribute is not found.
     """
+    # pylint: disable=import-outside-toplevel
     if name in ("A2AStatsCache", "a2a_stats_cache"):
         from mcpgateway.cache.a2a_stats_cache import A2AStatsCache, a2a_stats_cache
 
         return a2a_stats_cache if name == "a2a_stats_cache" else A2AStatsCache
-    elif name in ("GlobalConfigCache", "global_config_cache"):
+    if name in ("GlobalConfigCache", "global_config_cache"):
         from mcpgateway.cache.global_config_cache import GlobalConfigCache, global_config_cache
 
         return global_config_cache if name == "global_config_cache" else GlobalConfigCache
-    elif name == "ResourceCache":
+    if name == "ResourceCache":
         from mcpgateway.cache.resource_cache import ResourceCache
 
         return ResourceCache
-    elif name == "SessionRegistry":
+    if name == "SessionRegistry":
         from mcpgateway.cache.session_registry import SessionRegistry
 
         return SessionRegistry

@@ -165,7 +165,7 @@ class A2AStatsCache:
             # Single query with conditional aggregation (replaces 2 separate queries)
             result = db.execute(
                 select(
-                    func.count(A2AAgent.id).label("total"),
+                    func.count(A2AAgent.id).label("total"),  # pylint: disable=not-callable
                     func.sum(case((A2AAgent.enabled.is_(True), 1), else_=0)).label("active"),
                 )
             ).one()
