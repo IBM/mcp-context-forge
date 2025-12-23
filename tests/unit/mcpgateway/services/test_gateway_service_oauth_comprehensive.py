@@ -702,9 +702,9 @@ class TestGatewayServiceOAuthComprehensive:
         # Mock HTTP client
         gateway_service._http_client.get = AsyncMock(return_value=MagicMock(status=200))
 
-        # Run health check twice
-        await gateway_service.check_health_of_gateways(test_db, [mock_oauth_gateway], "user@example.com")
-        await gateway_service.check_health_of_gateways(test_db, [mock_oauth_gateway], "user@example.com")
+        # Run health check twice (no db parameter - health checks use fresh_db_session internally)
+        await gateway_service.check_health_of_gateways([mock_oauth_gateway], "user@example.com")
+        await gateway_service.check_health_of_gateways([mock_oauth_gateway], "user@example.com")
 
         # Verify OAuth manager was called twice (token refresh)
         assert gateway_service.oauth_manager.get_access_token.call_count == 2

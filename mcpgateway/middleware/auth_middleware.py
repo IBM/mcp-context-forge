@@ -85,17 +85,13 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
         try:
             db = SessionLocal()
             credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-            user = await get_current_user(credentials, db)
+            # get_current_user now uses fresh DB sessions internally, no session needed here
+            user = await get_current_user(credentials, request=request)
 
-            # Eagerly access user attributes before session closes to prevent DetachedInstanceError
-            # This forces SQLAlchemy to load the data while the session is still active
             # Note: EmailUser uses 'email' as primary key, not 'id'
+            # User is already detached (created with fresh session that was closed)
             user_email = user.email
             user_id = user_email  # For EmailUser, email IS the ID
-
-            # Expunge the user from the session so it can be used after session closes
-            # This makes the object detached but with all attributes already loaded
-            db.expunge(user)
 
             # Store user in request state for downstream use
             request.state.user = user

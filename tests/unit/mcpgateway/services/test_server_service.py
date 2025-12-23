@@ -450,7 +450,7 @@ class TestServerService:
         # test_db.execute.assert_called_once()
         test_db.execute.call_count = 2
         assert result == [server_read]
-        server_service._convert_server_to_read.assert_called_once_with(mock_server)
+        server_service._convert_server_to_read.assert_called_once_with(mock_server, include_metrics=False)
 
     @pytest.mark.asyncio
     async def test_get_server(self, server_service, mock_server, test_db):

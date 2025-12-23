@@ -44,9 +44,7 @@ from mcpgateway.common.models import Tool as PydanticTool
 from mcpgateway.common.models import ToolResult
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import EmailTeam
-from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import server_tool_association
+from mcpgateway.db import EmailTeam, fresh_db_session, GlobalConfig, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
 from mcpgateway.observability import create_span
@@ -75,7 +73,7 @@ from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor
-from mcpgateway.utils.passthrough_headers import get_passthrough_headers
+from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
@@ -450,6 +448,66 @@ class ToolService:
         )
         db.add(metric)
         db.commit()
+
+    def _record_tool_metric_by_id(
+        self,
+        db: Session,
+        tool_id: str,
+        start_time: float,
+        success: bool,
+        error_message: Optional[str],
+    ) -> None:
+        """Record tool metric using tool ID instead of ORM object.
+
+        This method is designed to be used with a fresh database session after the main
+        request session has been released. It avoids requiring the ORM tool object,
+        which may have been detached from the session.
+
+        Args:
+            db: A fresh database session (not the request session).
+            tool_id: The UUID string of the tool.
+            start_time: The monotonic start time of the invocation.
+            success: True if the invocation succeeded; otherwise, False.
+            error_message: The error message if the invocation failed, otherwise None.
+        """
+        end_time = time.monotonic()
+        response_time = end_time - start_time
+        metric = ToolMetric(
+            tool_id=tool_id,
+            response_time=response_time,
+            is_success=success,
+            error_message=error_message,
+        )
+        db.add(metric)
+        db.commit()
+
+    def _record_tool_metric_sync(
+        self,
+        tool_id: str,
+        start_time: float,
+        success: bool,
+        error_message: Optional[str],
+    ) -> None:
+        """Synchronous helper to record tool metrics with its own session.
+
+        This method creates a fresh database session, records the metric, and closes
+        the session. Designed to be called via asyncio.to_thread() to avoid blocking
+        the event loop.
+
+        Args:
+            tool_id: The UUID string of the tool.
+            start_time: The monotonic start time of the invocation.
+            success: True if the invocation succeeded; otherwise, False.
+            error_message: The error message if the invocation failed, otherwise None.
+        """
+        with fresh_db_session() as db_metrics:
+            self._record_tool_metric_by_id(
+                db_metrics,
+                tool_id=tool_id,
+                start_time=start_time,
+                success=success,
+                error_message=error_message,
+            )
 
     def _extract_and_validate_structured_content(self, tool: DbTool, tool_result: "ToolResult", candidate: Optional[Any] = None) -> bool:
         """
@@ -909,7 +967,7 @@ class ToolService:
             tool, team_name = row[0], row.team_name
             tool.team = team_name
             tools.append(tool)
-            result.append(self._convert_tool_to_read(tool))
+            result.append(self._convert_tool_to_read(tool, include_metrics=False))
 
         # Generate next_cursor if there are more results
         next_cursor = None
@@ -1073,7 +1131,7 @@ class ToolService:
             tool = row[0]
             team_name = row.team_name
             tool.team = team_name
-            result.append(self._convert_tool_to_read(tool))
+            result.append(self._convert_tool_to_read(tool, include_metrics=False))
         return result
 
     async def get_tool(self, db: Session, tool_id: str) -> ToolRead:
@@ -1435,7 +1493,13 @@ class ToolService:
         """
         # pylint: disable=comparison-with-callable
         logger.info(f"Invoking tool: {name} with arguments: {arguments.keys() if arguments else None} and headers: {request_headers.keys() if request_headers else None}")
-        tool = db.execute(select(DbTool).where(DbTool.name == name).where(DbTool.enabled)).scalar_one_or_none()
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # PHASE 1: Fetch all required data with eager loading to minimize DB queries
+        # ═══════════════════════════════════════════════════════════════════════════
+
+        # Eager load tool WITH gateway in single query to prevent lazy load N+1
+        tool = db.execute(select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.name == name).where(DbTool.enabled)).scalar_one_or_none()
         if not tool:
             inactive_tool = db.execute(select(DbTool).where(DbTool.name == name).where(not_(DbTool.enabled))).scalar_one_or_none()
             if inactive_tool:
@@ -1451,17 +1515,71 @@ class ToolService:
         if tool.integration_type == "A2A" and tool.annotations and "a2a_agent_id" in tool.annotations:
             return await self._invoke_a2a_tool(db=db, tool=tool, arguments=arguments)
 
+        # Fetch GlobalConfig once for passthrough headers (instead of per-request query)
+        global_config = db.execute(select(GlobalConfig)).scalar_one_or_none()
+        passthrough_allowed = global_config.passthrough_headers if global_config else settings.default_passthrough_headers
+
+        # Access gateway now (already eager-loaded) to prevent later lazy load
+        gateway = tool.gateway
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # PHASE 2: Extract all needed data to local variables before network I/O
+        # This allows us to release the DB session before making HTTP calls
+        # ═══════════════════════════════════════════════════════════════════════════
+
+        tool_id = str(tool.id)
+        tool_name_original = tool.original_name
+        tool_name_computed = tool.name
+        tool_url = tool.url
+        tool_integration_type = tool.integration_type
+        tool_request_type = tool.request_type
+        tool_headers = dict(tool.headers) if tool.headers else {}
+        tool_auth_type = tool.auth_type
+        tool_auth_value = tool.auth_value
+        tool_jsonpath_filter = tool.jsonpath_filter
+        tool_output_schema = tool.output_schema
+        tool_oauth_config = getattr(tool, "oauth_config", None)
+        tool_gateway_id = tool.gateway_id
+
+        gateway_url = gateway.url if gateway else None
+        gateway_name = gateway.name if gateway else None
+        gateway_auth_type = gateway.auth_type if gateway else None
+        gateway_auth_value = gateway.auth_value if gateway else None
+        gateway_oauth_config = gateway.oauth_config if gateway else None
+        gateway_ca_cert = gateway.ca_certificate if gateway else None
+        gateway_ca_cert_sig = gateway.ca_certificate_sig if gateway else None
+        gateway_passthrough = gateway.passthrough_headers if gateway else None
+        gateway_id_str = str(gateway.id) if gateway else None
+
+        # Create Pydantic models for plugins BEFORE HTTP calls (use ORM objects while still valid)
+        # This prevents lazy loading during HTTP calls
+        tool_metadata: Optional[PydanticTool] = None
+        gateway_metadata: Optional[PydanticGateway] = None
+        if self._plugin_manager:
+            tool_metadata = PydanticTool.model_validate(tool)
+            if gateway:
+                gateway_metadata = PydanticGateway.model_validate(gateway)
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls
+        # This prevents connection pool exhaustion during slow upstream requests.
+        # All needed data has been extracted to local variables above.
+        # The session will be closed again by FastAPI's get_db() finally block (safe no-op).
+        # ═══════════════════════════════════════════════════════════════════════════
+        db.rollback()  # End the transaction so connection returns to "idle" not "idle in transaction"
+        db.close()
+
         # Plugin hook: tool pre-invoke
         # Use existing context_table from previous hooks if available
         context_table = plugin_context_table
 
         # Reuse existing global_context from middleware or create new one
+        # IMPORTANT: Use local variables (tool_gateway_id) instead of ORM object access
         if plugin_global_context:
             global_context = plugin_global_context
-            # Update server_id if we have better information
-            gateway_id = getattr(tool, "gateway_id", None)
-            if gateway_id and isinstance(gateway_id, str):
-                global_context.server_id = gateway_id
+            # Update server_id using local variable (not ORM access)
+            if tool_gateway_id and isinstance(tool_gateway_id, str):
+                global_context.server_id = tool_gateway_id
             # Propagate user email to global context for plugin access
             if app_user_email and isinstance(app_user_email, str):
                 global_context.user = app_user_email
@@ -1469,52 +1587,53 @@ class ToolService:
             # Create new context (fallback when middleware didn't run)
             # Use correlation ID from context if available, otherwise generate new one
             request_id = get_correlation_id() or uuid.uuid4().hex
-            gateway_id = getattr(tool, "gateway_id", "unknown")
-            server_id = gateway_id if isinstance(gateway_id, str) else "unknown"
+            server_id = tool_gateway_id if tool_gateway_id and isinstance(tool_gateway_id, str) else "unknown"
             global_context = GlobalContext(request_id=request_id, server_id=server_id, tenant_id=None, user=app_user_email)
 
         start_time = time.monotonic()
         success = False
         error_message = None
 
-        # Create a trace span for the tool invocation
+        # Create a trace span for the tool invocation (using local variables)
         with create_span(
             "tool.invoke",
             {
                 "tool.name": name,
-                "tool.id": str(tool.id) if tool else "unknown",
-                "tool.integration_type": tool.integration_type if tool else "unknown",
-                "tool.gateway_id": str(tool.gateway_id) if tool and tool.gateway_id else None,
+                "tool.id": tool_id,
+                "tool.integration_type": tool_integration_type,
+                "tool.gateway_id": tool_gateway_id,
                 "arguments_count": len(arguments) if arguments else 0,
                 "has_headers": bool(request_headers),
             },
         ) as span:
             try:
                 # Get combined headers for the tool including base headers, auth, and passthrough headers
-                # headers = self._get_combined_headers(db, tool, tool.headers or {}, request_headers)
-                headers = tool.headers or {}
-                if tool.integration_type == "REST":
+                headers = tool_headers.copy()
+                if tool_integration_type == "REST":
                     # Handle OAuth authentication for REST tools
-                    if tool.auth_type == "oauth" and hasattr(tool, "oauth_config") and tool.oauth_config:
+                    if tool_auth_type == "oauth" and tool_oauth_config:
                         try:
-                            access_token = await self.oauth_manager.get_access_token(tool.oauth_config)
+                            access_token = await self.oauth_manager.get_access_token(tool_oauth_config)
                             headers["Authorization"] = f"Bearer {access_token}"
                         except Exception as e:
-                            logger.error(f"Failed to obtain OAuth access token for tool {tool.name}: {e}")
+                            logger.error(f"Failed to obtain OAuth access token for tool {tool_name_computed}: {e}")
                             raise ToolInvocationError(f"OAuth authentication failed: {str(e)}")
                     else:
-                        credentials = decode_auth(tool.auth_value)
+                        credentials = decode_auth(tool_auth_value)
                         # Filter out empty header names/values to avoid "Illegal header name" errors
                         filtered_credentials = {k: v for k, v in credentials.items() if k and v}
                         headers.update(filtered_credentials)
 
-                    # Only call get_passthrough_headers if we actually have request headers to pass through
+                    # Use cached passthrough headers (no DB query needed)
                     if request_headers:
-                        headers = get_passthrough_headers(request_headers, headers, db)
+                        headers = compute_passthrough_headers_cached(
+                            request_headers, headers, passthrough_allowed, gateway_auth_type=None, gateway_passthrough_headers=None  # REST tools don't use gateway auth here
+                        )
 
                     if self._plugin_manager:
-                        tool_metadata = PydanticTool.model_validate(tool)
-                        global_context.metadata[TOOL_METADATA] = tool_metadata
+                        # Use pre-created Pydantic model from Phase 2 (no ORM access)
+                        if tool_metadata:
+                            global_context.metadata[TOOL_METADATA] = tool_metadata
                         pre_result, context_table = await self._plugin_manager.invoke_hook(
                             ToolHookType.TOOL_PRE_INVOKE,
                             payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=headers)),
@@ -1532,11 +1651,11 @@ class ToolService:
                     # Build the payload based on integration type
                     payload = arguments.copy()
 
-                    # Handle URL path parameter substitution
-                    final_url = tool.url
-                    if "{" in tool.url and "}" in tool.url:
+                    # Handle URL path parameter substitution (using local variable)
+                    final_url = tool_url
+                    if "{" in tool_url and "}" in tool_url:
                         # Extract path parameters from URL template and arguments
-                        url_params = re.findall(r"\{(\w+)\}", tool.url)
+                        url_params = re.findall(r"\{(\w+)\}", tool_url)
                         url_substitutions = {}
 
                         for param in url_params:
@@ -1555,8 +1674,8 @@ class ToolService:
                     # Merge leftover payload + query params
                     payload.update(query_params)
 
-                    # Use the tool's request_type rather than defaulting to POST.
-                    method = tool.request_type.upper()
+                    # Use the tool's request_type rather than defaulting to POST (using local variable)
+                    method = tool_request_type.upper() if tool_request_type else "POST"
                     if method == "GET":
                         response = await self._http_client.get(final_url, params=payload, headers=headers)
                     else:
@@ -1583,24 +1702,23 @@ class ToolService:
                         except orjson.JSONDecodeError:
                             result = {"response_text": response.text} if response.text else {}
                         logger.debug(f"REST API tool response: {result}")
-                        filtered_response = extract_using_jq(result, tool.jsonpath_filter)
+                        filtered_response = extract_using_jq(result, tool_jsonpath_filter)
                         tool_result = ToolResult(content=[TextContent(type="text", text=orjson.dumps(filtered_response, option=orjson.OPT_INDENT_2).decode())])
                         success = True
                         # If output schema is present, validate and attach structured content
-                        if getattr(tool, "output_schema", None):
+                        if tool_output_schema:
                             valid = self._extract_and_validate_structured_content(tool, tool_result, candidate=filtered_response)
                             success = bool(valid)
-                elif tool.integration_type == "MCP":
-                    transport = tool.request_type.lower()
-                    # gateway = db.execute(select(DbGateway).where(DbGateway.id == tool.gateway_id).where(DbGateway.enabled)).scalar_one_or_none()
-                    gateway = tool.gateway
+                elif tool_integration_type == "MCP":
+                    transport = tool_request_type.lower() if tool_request_type else "sse"
 
-                    # Handle OAuth authentication for the gateway
-                    if gateway and gateway.auth_type == "oauth" and gateway.oauth_config:
-                        grant_type = gateway.oauth_config.get("grant_type", "client_credentials")
+                    # Handle OAuth authentication for the gateway (using local variables)
+                    if gateway and gateway_auth_type == "oauth" and gateway_oauth_config:
+                        grant_type = gateway_oauth_config.get("grant_type", "client_credentials")
 
                         if grant_type == "authorization_code":
                             # For Authorization Code flow, try to get stored tokens
+                            # NOTE: This still requires DB access before we can release the session
                             try:
                                 # First-Party
                                 from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
@@ -1609,32 +1727,34 @@ class ToolService:
 
                                 # Get user-specific OAuth token
                                 if not app_user_email:
-                                    raise ToolInvocationError(f"User authentication required for OAuth-protected gateway '{gateway.name}'. Please ensure you are authenticated.")
+                                    raise ToolInvocationError(f"User authentication required for OAuth-protected gateway '{gateway_name}'. Please ensure you are authenticated.")
 
-                                access_token = await token_storage.get_user_token(gateway.id, app_user_email)
+                                access_token = await token_storage.get_user_token(gateway_id_str, app_user_email)
 
                                 if access_token:
                                     headers = {"Authorization": f"Bearer {access_token}"}
                                 else:
                                     # User hasn't authorized this gateway yet
-                                    raise ToolInvocationError(f"Please authorize {gateway.name} first. Visit /oauth/authorize/{gateway.id} to complete OAuth flow.")
+                                    raise ToolInvocationError(f"Please authorize {gateway_name} first. Visit /oauth/authorize/{gateway_id_str} to complete OAuth flow.")
                             except Exception as e:
-                                logger.error(f"Failed to obtain stored OAuth token for gateway {gateway.name}: {e}")
+                                logger.error(f"Failed to obtain stored OAuth token for gateway {gateway_name}: {e}")
                                 raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
                         else:
-                            # For Client Credentials flow, get token directly
+                            # For Client Credentials flow, get token directly (no DB needed)
                             try:
-                                access_token = await self.oauth_manager.get_access_token(gateway.oauth_config)
+                                access_token = await self.oauth_manager.get_access_token(gateway_oauth_config)
                                 headers = {"Authorization": f"Bearer {access_token}"}
                             except Exception as e:
-                                logger.error(f"Failed to obtain OAuth access token for gateway {gateway.name}: {e}")
+                                logger.error(f"Failed to obtain OAuth access token for gateway {gateway_name}: {e}")
                                 raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
                     else:
-                        headers = decode_auth(gateway.auth_value if gateway else None)
+                        headers = decode_auth(gateway_auth_value)
 
-                    # Get combined headers including gateway auth and passthrough
+                    # Use cached passthrough headers (no DB query needed)
                     if request_headers:
-                        headers = get_passthrough_headers(request_headers, headers, db, gateway)
+                        headers = compute_passthrough_headers_cached(
+                            request_headers, headers, passthrough_allowed, gateway_auth_type=gateway_auth_type, gateway_passthrough_headers=gateway_passthrough
+                        )
 
                     def create_ssl_context(ca_certificate: str) -> ssl.SSLContext:
                         """Create an SSL context with the provided CA certificate.
@@ -1667,15 +1787,16 @@ class ToolService:
                         Raises:
                             Exception: If CA certificate signature is invalid
                         """
+                        # Use local variables instead of ORM objects (captured from outer scope)
                         valid = False
-                        if gateway.ca_certificate:
+                        if gateway_ca_cert:
                             if settings.enable_ed25519_signing:
                                 public_key_pem = settings.ed25519_public_key
-                                valid = validate_signature(gateway.ca_certificate.encode(), gateway.ca_certificate_sig, public_key_pem)
+                                valid = validate_signature(gateway_ca_cert.encode(), gateway_ca_cert_sig, public_key_pem)
                             else:
                                 valid = True
                         if valid:
-                            ctx = create_ssl_context(gateway.ca_certificate)
+                            ctx = create_ssl_context(gateway_ca_cert)
                         else:
                             ctx = None
                         return httpx.AsyncClient(
@@ -1706,45 +1827,45 @@ class ToolService:
                         if correlation_id and headers:
                             headers["X-Correlation-ID"] = correlation_id
 
-                        # Log MCP call start
+                        # Log MCP call start (using local variables)
                         mcp_start_time = time.time()
                         structured_logger.log(
                             level="INFO",
-                            message=f"MCP tool call started: {tool.original_name}",
+                            message=f"MCP tool call started: {tool_name_original}",
                             component="tool_service",
                             correlation_id=correlation_id,
-                            metadata={"event": "mcp_call_started", "tool_name": tool.original_name, "tool_id": tool.id, "server_url": server_url, "transport": "sse"},
+                            metadata={"event": "mcp_call_started", "tool_name": tool_name_original, "tool_id": tool_id, "server_url": server_url, "transport": "sse"},
                         )
 
                         try:
                             async with sse_client(url=server_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as streams:
                                 async with ClientSession(*streams) as session:
                                     await session.initialize()
-                                    tool_call_result = await session.call_tool(tool.original_name, arguments)
+                                    tool_call_result = await session.call_tool(tool_name_original, arguments)
 
                             # Log successful MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
                             structured_logger.log(
                                 level="INFO",
-                                message=f"MCP tool call completed: {tool.original_name}",
+                                message=f"MCP tool call completed: {tool_name_original}",
                                 component="tool_service",
                                 correlation_id=correlation_id,
                                 duration_ms=mcp_duration_ms,
-                                metadata={"event": "mcp_call_completed", "tool_name": tool.original_name, "tool_id": tool.id, "transport": "sse", "success": True},
+                                metadata={"event": "mcp_call_completed", "tool_name": tool_name_original, "tool_id": tool_id, "transport": "sse", "success": True},
                             )
 
                             return tool_call_result
                         except Exception as e:
-                            # Log failed MCP call
+                            # Log failed MCP call (using local variables)
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
                             structured_logger.log(
                                 level="ERROR",
-                                message=f"MCP tool call failed: {tool.original_name}",
+                                message=f"MCP tool call failed: {tool_name_original}",
                                 component="tool_service",
                                 correlation_id=correlation_id,
                                 duration_ms=mcp_duration_ms,
                                 error_details={"error_type": type(e).__name__, "error_message": str(e)},
-                                metadata={"event": "mcp_call_failed", "tool_name": tool.original_name, "tool_id": tool.id, "transport": "sse"},
+                                metadata={"event": "mcp_call_failed", "tool_name": tool_name_original, "tool_id": tool_id, "transport": "sse"},
                             )
                             raise
 
@@ -1768,31 +1889,31 @@ class ToolService:
                         if correlation_id and headers:
                             headers["X-Correlation-ID"] = correlation_id
 
-                        # Log MCP call start
+                        # Log MCP call start (using local variables)
                         mcp_start_time = time.time()
                         structured_logger.log(
                             level="INFO",
-                            message=f"MCP tool call started: {tool.original_name}",
+                            message=f"MCP tool call started: {tool_name_original}",
                             component="tool_service",
                             correlation_id=correlation_id,
-                            metadata={"event": "mcp_call_started", "tool_name": tool.original_name, "tool_id": tool.id, "server_url": server_url, "transport": "streamablehttp"},
+                            metadata={"event": "mcp_call_started", "tool_name": tool_name_original, "tool_id": tool_id, "server_url": server_url, "transport": "streamablehttp"},
                         )
 
                         try:
                             async with streamablehttp_client(url=server_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):
                                 async with ClientSession(read_stream, write_stream) as session:
                                     await session.initialize()
-                                    tool_call_result = await session.call_tool(tool.original_name, arguments)
+                                    tool_call_result = await session.call_tool(tool_name_original, arguments)
 
                             # Log successful MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
                             structured_logger.log(
                                 level="INFO",
-                                message=f"MCP tool call completed: {tool.original_name}",
+                                message=f"MCP tool call completed: {tool_name_original}",
                                 component="tool_service",
                                 correlation_id=correlation_id,
                                 duration_ms=mcp_duration_ms,
-                                metadata={"event": "mcp_call_completed", "tool_name": tool.original_name, "tool_id": tool.id, "transport": "streamablehttp", "success": True},
+                                metadata={"event": "mcp_call_completed", "tool_name": tool_name_original, "tool_id": tool_id, "transport": "streamablehttp", "success": True},
                             )
 
                             return tool_call_result
@@ -1801,23 +1922,23 @@ class ToolService:
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
                             structured_logger.log(
                                 level="ERROR",
-                                message=f"MCP tool call failed: {tool.original_name}",
+                                message=f"MCP tool call failed: {tool_name_original}",
                                 component="tool_service",
                                 correlation_id=correlation_id,
                                 duration_ms=mcp_duration_ms,
                                 error_details={"error_type": type(e).__name__, "error_message": str(e)},
-                                metadata={"event": "mcp_call_failed", "tool_name": tool.original_name, "tool_id": tool.id, "transport": "streamablehttp"},
+                                metadata={"event": "mcp_call_failed", "tool_name": tool_name_original, "tool_id": tool_id, "transport": "streamablehttp"},
                             )
                             raise
 
-                    tool_gateway_id = tool.gateway_id
-                    tool_gateway = db.execute(select(DbGateway).where(DbGateway.id == tool_gateway_id).where(DbGateway.enabled)).scalar_one_or_none()
+                    # REMOVED: Redundant gateway query - gateway already eager-loaded via joinedload
+                    # tool_gateway = db.execute(select(DbGateway).where(DbGateway.id == tool_gateway_id)...)
 
                     if self._plugin_manager:
-                        tool_metadata = PydanticTool.model_validate(tool)
-                        global_context.metadata[TOOL_METADATA] = tool_metadata
-                        if tool_gateway:
-                            gateway_metadata = PydanticGateway.model_validate(tool_gateway)
+                        # Use pre-created Pydantic models from Phase 2 (no ORM access)
+                        if tool_metadata:
+                            global_context.metadata[TOOL_METADATA] = tool_metadata
+                        if gateway_metadata:
                             global_context.metadata[GATEWAY_METADATA] = gateway_metadata
                         pre_result, context_table = await self._plugin_manager.invoke_hook(
                             ToolHookType.TOOL_PRE_INVOKE,
@@ -1835,15 +1956,15 @@ class ToolService:
 
                     tool_call_result = ToolResult(content=[TextContent(text="", type="text")])
                     if transport == "sse":
-                        tool_call_result = await connect_to_sse_server(tool_gateway.url, headers=headers)
+                        tool_call_result = await connect_to_sse_server(gateway_url, headers=headers)
                     elif transport == "streamablehttp":
-                        tool_call_result = await connect_to_streamablehttp_server(tool_gateway.url, headers=headers)
+                        tool_call_result = await connect_to_streamablehttp_server(gateway_url, headers=headers)
                     dump = tool_call_result.model_dump(by_alias=True)
                     logger.debug(f"Tool call result dump: {dump}")
                     content = dump.get("content", [])
                     # Accept both alias and pythonic names for structured content
                     structured = dump.get("structuredContent") or dump.get("structured_content")
-                    filtered_response = extract_using_jq(content, tool.jsonpath_filter)
+                    filtered_response = extract_using_jq(content, tool_jsonpath_filter)
 
                     is_err = getattr(tool_call_result, "is_error", None)
                     if is_err is None:
@@ -1896,19 +2017,33 @@ class ToolService:
                     span.set_attribute("success", success)
                     span.set_attribute("duration.ms", duration_ms)
 
-                # Record tool metric
-                await self._record_tool_metric(db, tool, start_time, success, error_message)
+                # ═══════════════════════════════════════════════════════════════════════════
+                # PHASE 4: Record metrics via buffered service (batches writes for performance)
+                # ═══════════════════════════════════════════════════════════════════════════
+                try:
+                    # First-Party
+                    from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
 
-                # Log structured message with performance tracking
+                    metrics_buffer = get_metrics_buffer_service()
+                    metrics_buffer.record_tool_metric(
+                        tool_id=tool_id,
+                        start_time=start_time,
+                        success=success,
+                        error_message=error_message,
+                    )
+                except Exception as metric_error:
+                    logger.warning(f"Failed to record tool metric: {metric_error}")
+
+                # Log structured message with performance tracking (using local variables)
                 if success:
                     structured_logger.info(
                         f"Tool '{name}' invoked successfully",
                         user_id=app_user_email,
                         resource_type="tool",
-                        resource_id=str(tool.id),
+                        resource_id=tool_id,
                         resource_action="invoke",
                         duration_ms=duration_ms,
-                        custom_fields={"tool_name": name, "integration_type": tool.integration_type, "arguments_count": len(arguments) if arguments else 0},
+                        custom_fields={"tool_name": name, "integration_type": tool_integration_type, "arguments_count": len(arguments) if arguments else 0},
                     )
                 else:
                     structured_logger.error(
@@ -1916,10 +2051,10 @@ class ToolService:
                         error=Exception(error_message) if error_message else None,
                         user_id=app_user_email,
                         resource_type="tool",
-                        resource_id=str(tool.id),
+                        resource_id=tool_id,
                         resource_action="invoke",
                         duration_ms=duration_ms,
-                        custom_fields={"tool_name": name, "integration_type": tool.integration_type, "error_message": error_message},
+                        custom_fields={"tool_name": name, "integration_type": tool_integration_type, "error_message": error_message},
                     )
 
                 # Track performance with threshold checking

@@ -211,13 +211,15 @@ class PromptService:
 
         return build_top_performers(results)
 
-    def _convert_db_prompt(self, db_prompt: DbPrompt) -> Dict[str, Any]:
+    def _convert_db_prompt(self, db_prompt: DbPrompt, include_metrics: bool = True) -> Dict[str, Any]:
         """
         Convert a DbPrompt instance to a dictionary matching the PromptRead schema,
-        including aggregated metrics computed from the associated PromptMetric records.
+        optionally including aggregated metrics computed from the associated PromptMetric records.
 
         Args:
             db_prompt: Db prompt to convert
+            include_metrics: Whether to include metrics in the result. Defaults to True.
+                Set to False for list operations to avoid N+1 query issues.
 
         Returns:
             dict: Dictionary matching the PromptRead schema
@@ -234,14 +236,30 @@ class PromptService:
                     "required": arg_name in required_list,
                 }
             )
-        total = len(db_prompt.metrics) if hasattr(db_prompt, "metrics") and db_prompt.metrics is not None else 0
-        successful = sum(1 for m in db_prompt.metrics if m.is_success) if total > 0 else 0
-        failed = sum(1 for m in db_prompt.metrics if not m.is_success) if total > 0 else 0
-        failure_rate = failed / total if total > 0 else 0.0
-        min_rt = min((m.response_time for m in db_prompt.metrics), default=None) if total > 0 else None
-        max_rt = max((m.response_time for m in db_prompt.metrics), default=None) if total > 0 else None
-        avg_rt = (sum(m.response_time for m in db_prompt.metrics) / total) if total > 0 else None
-        last_time = max((m.timestamp for m in db_prompt.metrics), default=None) if total > 0 else None
+
+        # Compute aggregated metrics only if requested (avoids N+1 queries in list operations)
+        if include_metrics:
+            total = len(db_prompt.metrics) if hasattr(db_prompt, "metrics") and db_prompt.metrics is not None else 0
+            successful = sum(1 for m in db_prompt.metrics if m.is_success) if total > 0 else 0
+            failed = sum(1 for m in db_prompt.metrics if not m.is_success) if total > 0 else 0
+            failure_rate = failed / total if total > 0 else 0.0
+            min_rt = min((m.response_time for m in db_prompt.metrics), default=None) if total > 0 else None
+            max_rt = max((m.response_time for m in db_prompt.metrics), default=None) if total > 0 else None
+            avg_rt = (sum(m.response_time for m in db_prompt.metrics) / total) if total > 0 else None
+            last_time = max((m.timestamp for m in db_prompt.metrics), default=None) if total > 0 else None
+
+            metrics_dict = {
+                "totalExecutions": total,
+                "successfulExecutions": successful,
+                "failedExecutions": failed,
+                "failureRate": failure_rate,
+                "minResponseTime": min_rt,
+                "maxResponseTime": max_rt,
+                "avgResponseTime": avg_rt,
+                "lastExecutionTime": last_time,
+            }
+        else:
+            metrics_dict = None
 
         return {
             "id": db_prompt.id,
@@ -252,16 +270,7 @@ class PromptService:
             "created_at": db_prompt.created_at,
             "updated_at": db_prompt.updated_at,
             "enabled": db_prompt.enabled,
-            "metrics": {
-                "totalExecutions": total,
-                "successfulExecutions": successful,
-                "failedExecutions": failed,
-                "failureRate": failure_rate,
-                "minResponseTime": min_rt,
-                "maxResponseTime": max_rt,
-                "avgResponseTime": avg_rt,
-                "lastExecutionTime": last_time,
-            },
+            "metrics": metrics_dict,
             "tags": db_prompt.tags or [],
             "visibility": db_prompt.visibility,
             "team": getattr(db_prompt, "team", None),
@@ -568,12 +577,12 @@ class PromptService:
         if has_more:
             prompts = prompts[:page_size]  # Trim to page_size
 
-        # Convert to PromptRead objects
+        # Convert to PromptRead objects (skip metrics to avoid N+1 queries)
         result = []
         for t in prompts:
             team_name = self._get_team_name(db, getattr(t, "team_id", None))
             t.team = team_name
-            result.append(PromptRead.model_validate(self._convert_db_prompt(t)))
+            result.append(PromptRead.model_validate(self._convert_db_prompt(t, include_metrics=False)))
 
         # Generate next_cursor if there are more results
         next_cursor = None
@@ -654,7 +663,7 @@ class PromptService:
         for t in prompts:
             team_name = self._get_team_name(db, getattr(t, "team_id", None))
             t.team = team_name
-            result.append(PromptRead.model_validate(self._convert_db_prompt(t)))
+            result.append(PromptRead.model_validate(self._convert_db_prompt(t, include_metrics=False)))
         return result
 
     async def list_server_prompts(self, db: Session, server_id: str, include_inactive: bool = False, cursor: Optional[str] = None) -> List[PromptRead]:
@@ -702,7 +711,7 @@ class PromptService:
         for t in prompts:
             team_name = self._get_team_name(db, getattr(t, "team_id", None))
             t.team = team_name
-            result.append(PromptRead.model_validate(self._convert_db_prompt(t)))
+            result.append(PromptRead.model_validate(self._convert_db_prompt(t, include_metrics=False)))
         return result
 
     async def _record_prompt_metric(self, db: Session, prompt: DbPrompt, start_time: float, success: bool, error_message: Optional[str]) -> None:
@@ -966,7 +975,16 @@ class PromptService:
                 # Record metrics only if we found a prompt
                 if prompt:
                     try:
-                        await self._record_prompt_metric(db, prompt, start_time, success, error_message)
+                        # First-Party
+                        from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
+
+                        metrics_buffer = get_metrics_buffer_service()
+                        metrics_buffer.record_prompt_metric(
+                            prompt_id=prompt.id,
+                            start_time=start_time,
+                            success=success,
+                            error_message=error_message,
+                        )
                     except Exception as metrics_error:
                         logger.warning(f"Failed to record prompt metric: {metrics_error}")
 
