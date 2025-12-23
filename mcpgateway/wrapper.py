@@ -44,7 +44,6 @@ from __future__ import annotations
 # Standard
 import argparse
 import asyncio
-import codecs
 from contextlib import suppress
 from dataclasses import dataclass
 import errno
@@ -185,7 +184,7 @@ def convert_url(url: str) -> str:
     return url + "/mcp/"
 
 
-def send_to_stdout(obj: Union[dict, str]) -> None:
+def send_to_stdout(obj: Union[dict, str, bytes]) -> None:
     """Write JSON-serializable object to stdout.
 
     Args:
@@ -195,12 +194,23 @@ def send_to_stdout(obj: Union[dict, str]) -> None:
         If writing fails (e.g., broken pipe), triggers shutdown.
     """
     try:
-        line = orjson.dumps(obj).decode()
+        # orjson.dumps returns bytes
+        line = orjson.dumps(obj)
     except Exception:
-        line = str(obj)
+        if isinstance(obj, bytes):
+            line = obj
+        else:
+            line = str(obj).encode("utf-8")
     try:
-        sys.stdout.write(line + "\n")
-        sys.stdout.flush()
+        # Check if sys.stdout has buffer attribute
+        # If not (eg. some mocks), fall back to write str
+        if hasattr(sys.stdout, "buffer"):
+            sys.stdout.buffer.write(line + b"\n")
+            sys.stdout.buffer.flush()
+        else:
+            # Fallback for testing environments that mock sys.stdout but not buffer
+            sys.stdout.write(line.decode("utf-8") + "\n")
+            sys.stdout.flush()
     except OSError as e:
         if e.errno in (errno.EPIPE, errno.EINVAL):
             _mark_shutdown()
@@ -251,122 +261,132 @@ async def stdin_reader(queue: "asyncio.Queue[Union[dict, list, str, None]]") -> 
         True
     """
     while True:
-        line = await asyncio.to_thread(sys.stdin.readline)
+        # read bytes directly if possible
+        if hasattr(sys.stdin, "buffer"):
+            line = await asyncio.to_thread(sys.stdin.buffer.readline)
+        else:
+            # Fallback
+            line_str = await asyncio.to_thread(sys.stdin.readline)
+            line = line_str.encode("utf-8") if line_str else b""
+
         if not line:
             await queue.put(None)
             _mark_shutdown()
             break
+
         line = line.strip()
         if not line:
             continue
         try:
+            # orjson.loads accepts bytes
             obj = orjson.loads(line)
         except Exception:
-            obj = make_error("Invalid JSON from stdin", JSONRPC_PARSE_ERROR, line)
+            # Decode for error message if needed
+            try:
+                line_str = line.decode("utf-8", errors="replace")
+            except Exception:
+                line_str = str(line)
+            obj = make_error("Invalid JSON from stdin", JSONRPC_PARSE_ERROR, line_str)
         await queue.put(obj)
 
 
 # -----------------------
 # Stream Parsers
 # -----------------------
-async def ndjson_lines(resp: httpx.Response) -> AsyncIterator[str]:
+async def ndjson_lines(resp: httpx.Response) -> AsyncIterator[bytes]:
     """Parse newline-delimited JSON (NDJSON) from an HTTP response.
 
     Args:
         resp: httpx.Response with NDJSON content.
 
     Yields:
-        str: Individual JSON lines as strings.
+        bytes: Individual JSON lines as bytes.
 
     Examples:
         >>> # This function is a parser for network streams; doctest uses patterns only.
         >>> True
         True
     """
-    decoder = codecs.getincrementaldecoder("utf-8")()
-    buffer = ""
+    # read bytes directly if possible
+    partial_line = b""
     async for chunk in resp.aiter_bytes():
         if shutting_down():
             break
         if not chunk:
             continue
-        text = decoder.decode(chunk)
-        buffer += text
-        while True:
-            nl_idx = buffer.find("\n")
-            if nl_idx == -1:
-                break
-            line = buffer[:nl_idx]
-            buffer = buffer[nl_idx + 1 :]  # noqa: E203
+
+        # Split chunk into lines, handling partial line from previous chunk
+        lines = (partial_line + chunk).split(b"\n")
+
+        # The last element is always the new partial line (might be empty if chunk ended with newline)
+        partial_line = lines.pop()
+
+        for line in lines:
             if line.strip():
                 yield line.strip()
-    tail = decoder.decode(b"", final=True)
-    buffer += tail
-    if buffer.strip():
-        yield buffer.strip()
+
+    # Process remaining partial line
+    if partial_line.strip():
+        yield partial_line.strip()
 
 
-async def sse_events(resp: httpx.Response) -> AsyncIterator[str]:
+async def sse_events(resp: httpx.Response) -> AsyncIterator[bytes]:
     """Parse Server-Sent Events (SSE) from an HTTP response.
 
     Args:
         resp: httpx.Response with SSE content.
 
     Yields:
-        str: Event payload data lines.
+        bytes: Event payload data lines (joined).
     """
-    decoder = codecs.getincrementaldecoder("utf-8")()
-    buffer = ""
-    event_lines: List[str] = []
+    partial_line = b""
+    event_lines: List[bytes] = []
+
     async for chunk in resp.aiter_bytes():
         if shutting_down():
             break
         if not chunk:
             continue
-        text = decoder.decode(chunk)
-        buffer += text
-        while True:
-            nl_idx = buffer.find("\n")
-            if nl_idx == -1:
-                break
-            raw_line = buffer[:nl_idx]
-            buffer = buffer[nl_idx + 1 :]  # noqa: E203
 
-            line = raw_line.rstrip("\r")
-            if line == "":
+        # Split chunk into lines
+        lines = (partial_line + chunk).split(b"\n")
+        partial_line = lines.pop()
+
+        for line in lines:
+            line = line.rstrip(b"\r")
+            if not line:
                 if event_lines:
-                    yield "\n".join(event_lines)
+                    yield b"\n".join(event_lines)
                     event_lines = []
                 continue
-            if line.startswith(":"):
+            if line.startswith(b":"):
                 continue
-            if ":" in line:
-                field, value = line.split(":", 1)
-                value = value.lstrip(" ")
+
+            if b":" in line:
+                field, value = line.split(b":", 1)
+                value = value.lstrip(b" ")
             else:
-                field, value = line, ""
-            if field == "data":
+                field, value = line, b""
+
+            if field == b"data":
                 event_lines.append(value)
-    tail = decoder.decode(b"", final=True)
-    buffer += tail
-    for line in buffer.splitlines():
-        line = line.rstrip("\r")
-        if line == "":
-            if event_lines:
-                yield "\n".join(event_lines)
-                event_lines = []
-            continue
-        if line.startswith(":"):
-            continue
-        if ":" in line:
-            field, value = line.split(":", 1)
-            value = value.lstrip(" ")
-        else:
-            field, value = line, ""
-        if field == "data":
-            event_lines.append(value)
+
+    # Process remaining partial line if any (though standard SSE ends with \n\n)
+    if partial_line:
+        line = partial_line.rstrip(b"\r")
+        # Process the partial line same as above
+        if line and not line.startswith(b":"):
+            if b":" in line:
+                field, value = line.split(b":", 1)
+                value = value.lstrip(b" ")
+            else:
+                field, value = line, b""
+            if field == b"data":
+                event_lines.append(value)
+
+    # Always yield any remaining accumulated event data
     if event_lines:
-        yield "\n".join(event_lines)
+        yield b"\n".join(event_lines)
 
 
 # -----------------------
@@ -440,28 +460,28 @@ async def forward_once(
             send_to_stdout(make_error(f"HTTP {status}", code=status))
             return
 
-        async def _process_line(line: str):
+        async def _process_line(line: Union[str, bytes]):
             """
-            Asynchronously processes a single line of text, expected to be a JSON-encoded string.
+            Asynchronously processes a single line of text/bytes, expected to be a valid JSON.
 
             If the system is shutting down, the function returns immediately.
             Otherwise, it attempts to parse the line as JSON and sends the resulting object to stdout.
             If parsing fails, logs a warning and sends a standardized error response to stdout.
 
             Args:
-                line (str): A string that should contain a valid JSON object.
-
-            Returns:
-                None
+                line (Union[str, bytes]): Valid JSON object (bytes optimized).
             """
             if shutting_down():
                 return
             try:
+                # orjson.loads accepts bytes or str
                 obj = orjson.loads(line)
                 send_to_stdout(obj)
             except Exception:
                 logger.warning("Invalid JSON from server: %s", line)
-                send_to_stdout(make_error("Invalid JSON from server", JSONRPC_PARSE_ERROR, line))
+                # Ensure line is str for error message
+                line_str = line if isinstance(line, str) else str(line)
+                send_to_stdout(make_error("Invalid JSON from server", JSONRPC_PARSE_ERROR, line_str))
 
         # Step 3: Handle response content types
         if "event-stream" in ctype:
@@ -483,11 +503,11 @@ async def forward_once(
         if "application/json" in ctype:
             raw = await resp.aread()
             if not shutting_down():
-                text = raw.decode("utf-8", errors="replace")
+                # raw is bytes
                 try:
-                    send_to_stdout(orjson.loads(text))
+                    send_to_stdout(orjson.loads(raw))
                 except Exception:
-                    send_to_stdout(make_error("Invalid JSON response", JSONRPC_PARSE_ERROR, text))
+                    send_to_stdout(make_error("Invalid JSON response", JSONRPC_PARSE_ERROR, raw.decode("utf-8", "replace")))
             return
 
         # Fallback: try parsing as NDJSON
