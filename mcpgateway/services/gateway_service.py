@@ -2444,6 +2444,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 else:
                                     raise GatewayConnectionError(f"No valid OAuth token for user {app_user_email} and gateway {gateway.name}")
                             finally:
+                                db.rollback()  # End transaction before returning to pool
                                 db.close()
                     except Exception as oauth_error:
                         raise GatewayConnectionError(f"Failed to obtain OAuth token for gateway {gateway.name}: {oauth_error}")
@@ -2549,6 +2550,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls
         # This prevents connection pool exhaustion during slow upstream requests.
         # ═══════════════════════════════════════════════════════════════════════════
+        db.rollback()  # End the transaction so connection returns to "idle" not "idle in transaction"
         db.close()
 
         errors: List[str] = []
