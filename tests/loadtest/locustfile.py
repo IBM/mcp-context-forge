@@ -954,10 +954,9 @@ class MCPJsonRpcUser(BaseUser):
     @tag("mcp", "rpc", "prompts")
     def rpc_get_prompt(self):
         """JSON-RPC: Get a prompt."""
-        # Note: The API expects an ID passed as "name" parameter for lookup
-        if PROMPT_IDS:
-            prompt_id = random.choice(PROMPT_IDS)
-            payload = _json_rpc_request("prompts/get", {"name": prompt_id})
+        if PROMPT_NAMES:
+            prompt_name = random.choice(PROMPT_NAMES)
+            payload = _json_rpc_request("prompts/get", {"name": prompt_name})
             self._rpc_request(payload, "/rpc prompts/get")
 
     @task(3)
