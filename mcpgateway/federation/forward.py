@@ -507,9 +507,18 @@ class ForwardingService:
             error_message = str(e)
             raise ForwardingError(f"Failed to forward to {gateway.name}: {str(e)}")
         finally:
-            # Always record the metric
+            # Always record the metric via buffered service
             try:
-                await self._record_server_metric(db, gateway, start_time, success, error_message)
+                # First-Party
+                from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
+
+                metrics_buffer = get_metrics_buffer_service()
+                metrics_buffer.record_server_metric(
+                    server_id=gateway.id,
+                    start_time=start_time,
+                    success=success,
+                    error_message=error_message,
+                )
             except Exception as metrics_error:
                 logger.warning(f"Failed to record server metric: {metrics_error}")
 

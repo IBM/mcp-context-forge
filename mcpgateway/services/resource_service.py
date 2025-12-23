@@ -215,15 +215,17 @@ class ResourceService:
 
         return build_top_performers(results)
 
-    def _convert_resource_to_read(self, resource: DbResource) -> ResourceRead:
+    def _convert_resource_to_read(self, resource: DbResource, include_metrics: bool = True) -> ResourceRead:
         """
-        Converts a DbResource instance into a ResourceRead model, including aggregated metrics.
+        Converts a DbResource instance into a ResourceRead model, optionally including aggregated metrics.
 
         Args:
             resource (DbResource): The ORM instance of the resource.
+            include_metrics (bool): Whether to include metrics in the result. Defaults to True.
+                Set to False for list operations to avoid N+1 query issues.
 
         Returns:
-            ResourceRead: The Pydantic model representing the resource, including aggregated metrics.
+            ResourceRead: The Pydantic model representing the resource, optionally including aggregated metrics.
 
         Examples:
             >>> from types import SimpleNamespace
@@ -260,26 +262,30 @@ class ResourceService:
         resource_dict["is_active"] = getattr(resource, "is_active", resource_dict.get("is_active"))
         resource_dict["enabled"] = getattr(resource, "enabled", resource_dict.get("enabled"))
 
-        # Compute aggregated metrics from the resource's metrics list.
-        total = len(resource.metrics) if hasattr(resource, "metrics") and resource.metrics is not None else 0
-        successful = sum(1 for m in resource.metrics if m.is_success) if total > 0 else 0
-        failed = sum(1 for m in resource.metrics if not m.is_success) if total > 0 else 0
-        failure_rate = (failed / total) if total > 0 else 0.0
-        min_rt = min((m.response_time for m in resource.metrics), default=None) if total > 0 else None
-        max_rt = max((m.response_time for m in resource.metrics), default=None) if total > 0 else None
-        avg_rt = (sum(m.response_time for m in resource.metrics) / total) if total > 0 else None
-        last_time = max((m.timestamp for m in resource.metrics), default=None) if total > 0 else None
+        # Compute aggregated metrics from the resource's metrics list (only if requested)
+        if include_metrics:
+            total = len(resource.metrics) if hasattr(resource, "metrics") and resource.metrics is not None else 0
+            successful = sum(1 for m in resource.metrics if m.is_success) if total > 0 else 0
+            failed = sum(1 for m in resource.metrics if not m.is_success) if total > 0 else 0
+            failure_rate = (failed / total) if total > 0 else 0.0
+            min_rt = min((m.response_time for m in resource.metrics), default=None) if total > 0 else None
+            max_rt = max((m.response_time for m in resource.metrics), default=None) if total > 0 else None
+            avg_rt = (sum(m.response_time for m in resource.metrics) / total) if total > 0 else None
+            last_time = max((m.timestamp for m in resource.metrics), default=None) if total > 0 else None
 
-        resource_dict["metrics"] = {
-            "total_executions": total,
-            "successful_executions": successful,
-            "failed_executions": failed,
-            "failure_rate": failure_rate,
-            "min_response_time": min_rt,
-            "max_response_time": max_rt,
-            "avg_response_time": avg_rt,
-            "last_execution_time": last_time,
-        }
+            resource_dict["metrics"] = {
+                "total_executions": total,
+                "successful_executions": successful,
+                "failed_executions": failed,
+                "failure_rate": failure_rate,
+                "min_response_time": min_rt,
+                "max_response_time": max_rt,
+                "avg_response_time": avg_rt,
+                "last_execution_time": last_time,
+            }
+        else:
+            resource_dict["metrics"] = None
+
         resource_dict["tags"] = resource.tags or []
         resource_dict["team"] = getattr(resource, "team", None)
 
@@ -597,12 +603,12 @@ class ResourceService:
         if has_more:
             resources = resources[:page_size]  # Trim to page_size
 
-        # Convert to ResourceRead objects
+        # Convert to ResourceRead objects (skip metrics to avoid N+1 queries)
         result = []
         for t in resources:
             team_name = self._get_team_name(db, getattr(t, "team_id", None))
             t.team = team_name
-            result.append(self._convert_resource_to_read(t))
+            result.append(self._convert_resource_to_read(t, include_metrics=False))
 
         # Generate next_cursor if there are more results
         next_cursor = None
@@ -714,7 +720,7 @@ class ResourceService:
         for t in resources:
             team_name = self._get_team_name(db, getattr(t, "team_id", None))
             t.team = team_name
-            result.append(self._convert_resource_to_read(t))
+            result.append(self._convert_resource_to_read(t, include_metrics=False))
         return result
 
     async def list_server_resources(self, db: Session, server_id: str, include_inactive: bool = False) -> List[ResourceRead]:
@@ -767,7 +773,7 @@ class ResourceService:
         for t in resources:
             team_name = self._get_team_name(db, getattr(t, "team_id", None))
             t.team = team_name
-            result.append(self._convert_resource_to_read(t))
+            result.append(self._convert_resource_to_read(t, include_metrics=False))
         return result
 
     async def _record_resource_metric(self, db: Session, resource: DbResource, start_time: float, success: bool, error_message: Optional[str]) -> None:
@@ -1191,7 +1197,16 @@ class ResourceService:
                     finally:
                         if resource_text:
                             try:
-                                await self._record_invoke_resource_metric(db, resource_id, start_time, success, error_message)
+                                # First-Party
+                                from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
+
+                                metrics_buffer = get_metrics_buffer_service()
+                                metrics_buffer.record_resource_metric(
+                                    resource_id=resource_id,
+                                    start_time=start_time,
+                                    success=success,
+                                    error_message=error_message,
+                                )
                             except Exception as metrics_error:
                                 logger.warning(f"Failed to invoke resource metric: {metrics_error}")
 
@@ -1498,7 +1513,16 @@ class ResourceService:
                 # Record metrics only if we found a resource (not for templates)
                 if resource_db:
                     try:
-                        await self._record_resource_metric(db, resource_db, start_time, success, error_message)
+                        # First-Party
+                        from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
+
+                        metrics_buffer = get_metrics_buffer_service()
+                        metrics_buffer.record_resource_metric(
+                            resource_id=resource_db.id,
+                            start_time=start_time,
+                            success=success,
+                            error_message=error_message,
+                        )
                     except Exception as metrics_error:
                         logger.warning(f"Failed to record resource metric: {metrics_error}")
 

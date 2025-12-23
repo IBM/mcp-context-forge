@@ -890,6 +890,11 @@ class Settings(BaseSettings):
     metrics_aggregation_window_minutes: int = Field(default=5, description="Time window for metrics aggregation (minutes)")
     metrics_aggregation_auto_start: bool = Field(default=False, description="Automatically run the log aggregation loop on application startup")
 
+    # Metrics Buffer Configuration (for batching tool/resource/prompt metrics writes)
+    metrics_buffer_enabled: bool = Field(default=True, description="Enable buffered metrics writes (reduces DB pressure under load)")
+    metrics_buffer_flush_interval: int = Field(default=60, ge=5, le=300, description="Seconds between automatic metrics buffer flushes")
+    metrics_buffer_max_size: int = Field(default=1000, ge=100, le=10000, description="Maximum buffered metrics before forced flush")
+
     # Log Search Configuration
     log_search_max_results: int = Field(default=1000, description="Maximum results per log search query")
     log_retention_days: int = Field(default=30, description="Number of days to retain logs in database")

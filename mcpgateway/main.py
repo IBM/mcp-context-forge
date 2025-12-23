@@ -469,6 +469,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await elicitation_service.start()
             logger.info("Elicitation service initialized")
 
+        # Initialize metrics buffer service for batching metric writes
+        if settings.metrics_buffer_enabled:
+            # First-Party
+            from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
+
+            metrics_buffer_service = get_metrics_buffer_service()
+            await metrics_buffer_service.start()
+            logger.info("Metrics buffer service initialized")
+
         refresh_slugs_on_startup()
 
         # Bootstrap SSO providers from environment configuration
@@ -585,6 +594,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
             elicitation_service = get_elicitation_service()
             services_to_shutdown.insert(5, elicitation_service)
+
+        # Add metrics buffer service if enabled (flush remaining metrics before shutdown)
+        if settings.metrics_buffer_enabled:
+            # First-Party
+            from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
+
+            metrics_buffer_service = get_metrics_buffer_service()
+            services_to_shutdown.insert(0, metrics_buffer_service)  # Shutdown first to flush metrics
 
         await shutdown_services(services_to_shutdown)
 

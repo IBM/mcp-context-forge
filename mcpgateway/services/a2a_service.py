@@ -383,7 +383,8 @@ class A2AAgentService:
 
         agents = db.execute(query).scalars().all()
 
-        return [self._db_to_schema(db=db, db_agent=agent) for agent in agents]
+        # Skip metrics to avoid N+1 queries in list operations
+        return [self._db_to_schema(db=db, db_agent=agent, include_metrics=False) for agent in agents]
 
     async def list_agents_for_user(
         self, db: Session, user_info: Dict[str, Any], team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
@@ -456,7 +457,8 @@ class A2AAgentService:
         query = query.offset(skip).limit(limit)
 
         agents = db.execute(query).scalars().all()
-        return [self._db_to_schema(db=db, db_agent=agent) for agent in agents]
+        # Skip metrics to avoid N+1 queries in list operations
+        return [self._db_to_schema(db=db, db_agent=agent, include_metrics=False) for agent in agents]
 
     async def get_agent(self, db: Session, agent_id: str, include_inactive: bool = True) -> A2AAgentRead:
         """Retrieve an A2A agent by ID.
@@ -955,24 +957,35 @@ class A2AAgentService:
 
         finally:
             # ═══════════════════════════════════════════════════════════════════════════
-            # PHASE 3: Record metrics using fresh DB session
+            # PHASE 3: Record metrics via buffered service (batches writes for performance)
             # ═══════════════════════════════════════════════════════════════════════════
             end_time = datetime.now(timezone.utc)
             response_time = (end_time - start_time).total_seconds()
 
             try:
-                with fresh_db_session() as metrics_db:
-                    metric = A2AAgentMetric(a2a_agent_id=agent_id, response_time=response_time, is_success=success, error_message=error_message, interaction_type=interaction_type)
-                    metrics_db.add(metric)
+                # First-Party
+                from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
 
-                    # Update last interaction timestamp
-                    db_agent = metrics_db.execute(select(DbA2AAgent).where(DbA2AAgent.id == agent_id)).scalar_one_or_none()
-                    if db_agent:
-                        db_agent.last_interaction = end_time
-
-                    metrics_db.commit()
+                metrics_buffer = get_metrics_buffer_service()
+                metrics_buffer.record_a2a_agent_metric_with_duration(
+                    a2a_agent_id=agent_id,
+                    response_time=response_time,
+                    success=success,
+                    interaction_type=interaction_type,
+                    error_message=error_message,
+                )
             except Exception as metrics_error:
                 logger.warning(f"Failed to record A2A metrics for '{agent_name}': {metrics_error}")
+
+            # Update last interaction timestamp (quick separate write)
+            try:
+                with fresh_db_session() as ts_db:
+                    db_agent = ts_db.execute(select(DbA2AAgent).where(DbA2AAgent.id == agent_id)).scalar_one_or_none()
+                    if db_agent:
+                        db_agent.last_interaction = end_time
+                        ts_db.commit()
+            except Exception as ts_error:
+                logger.warning(f"Failed to update last_interaction for '{agent_name}': {ts_error}")
 
         return response or {"error": error_message}
 
@@ -1061,12 +1074,14 @@ class A2AAgentService:
             agent.auth_value = encode_auth(agent.auth_value)
         return agent
 
-    def _db_to_schema(self, db: Session, db_agent: DbA2AAgent) -> A2AAgentRead:
+    def _db_to_schema(self, db: Session, db_agent: DbA2AAgent, include_metrics: bool = True) -> A2AAgentRead:
         """Convert database model to schema.
 
         Args:
             db (Session): Database session.
             db_agent (DbA2AAgent): Database agent model.
+            include_metrics (bool): Whether to include metrics in the result. Defaults to True.
+                Set to False for list operations to avoid N+1 query issues.
 
         Returns:
             A2AAgentRead: Agent read schema.
@@ -1081,31 +1096,34 @@ class A2AAgentService:
 
         setattr(db_agent, "team", self._get_team_name(db, getattr(db_agent, "team_id", None)))
 
-        # ✅ Compute metrics
-        total_executions = len(db_agent.metrics)
-        successful_executions = sum(1 for m in db_agent.metrics if m.is_success)
-        failed_executions = total_executions - successful_executions
-        failure_rate = (failed_executions / total_executions * 100) if total_executions > 0 else 0.0
+        # Compute metrics only if requested (avoids N+1 queries in list operations)
+        if include_metrics:
+            total_executions = len(db_agent.metrics)
+            successful_executions = sum(1 for m in db_agent.metrics if m.is_success)
+            failed_executions = total_executions - successful_executions
+            failure_rate = (failed_executions / total_executions * 100) if total_executions > 0 else 0.0
 
-        min_response_time = max_response_time = avg_response_time = last_execution_time = None
-        if db_agent.metrics:
-            response_times = [m.response_time for m in db_agent.metrics if m.response_time is not None]
-            if response_times:
-                min_response_time = min(response_times)
-                max_response_time = max(response_times)
-                avg_response_time = sum(response_times) / len(response_times)
-            last_execution_time = max((m.timestamp for m in db_agent.metrics), default=None)
+            min_response_time = max_response_time = avg_response_time = last_execution_time = None
+            if db_agent.metrics:
+                response_times = [m.response_time for m in db_agent.metrics if m.response_time is not None]
+                if response_times:
+                    min_response_time = min(response_times)
+                    max_response_time = max(response_times)
+                    avg_response_time = sum(response_times) / len(response_times)
+                last_execution_time = max((m.timestamp for m in db_agent.metrics), default=None)
 
-        metrics = A2AAgentMetrics(
-            total_executions=total_executions,
-            successful_executions=successful_executions,
-            failed_executions=failed_executions,
-            failure_rate=failure_rate,
-            min_response_time=min_response_time,
-            max_response_time=max_response_time,
-            avg_response_time=avg_response_time,
-            last_execution_time=last_execution_time,
-        )
+            metrics = A2AAgentMetrics(
+                total_executions=total_executions,
+                successful_executions=successful_executions,
+                failed_executions=failed_executions,
+                failure_rate=failure_rate,
+                min_response_time=min_response_time,
+                max_response_time=max_response_time,
+                avg_response_time=avg_response_time,
+                last_execution_time=last_execution_time,
+            )
+        else:
+            metrics = None
 
         # Build dict from ORM model
         agent_data = {k: getattr(db_agent, k, None) for k in A2AAgentRead.model_fields.keys()}

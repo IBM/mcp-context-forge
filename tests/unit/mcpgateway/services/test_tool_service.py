@@ -600,7 +600,7 @@ class TestToolService:
         assert len(result) == 1
         assert result[0] == tool_read
         assert next_cursor is None  # No pagination needed for single result
-        tool_service._convert_tool_to_read.assert_called_once_with(mock_tool)
+        tool_service._convert_tool_to_read.assert_called_once_with(mock_tool, include_metrics=False)
 
     @pytest.mark.asyncio
     async def test_list_inactive_tools(self, tool_service, mock_tool, test_db):
@@ -658,7 +658,7 @@ class TestToolService:
         # Verify result
         assert len(result) == 1
         assert result[0] == tool_read
-        tool_service._convert_tool_to_read.assert_called_once_with(mock_tool)
+        tool_service._convert_tool_to_read.assert_called_once_with(mock_tool, include_metrics=False)
 
     @pytest.mark.asyncio
     async def test_list_server_tools_active_only(self):
@@ -1308,25 +1308,25 @@ class TestToolService:
         tool_service._http_client.get = AsyncMock(return_value=mock_response)
 
         # ------------- metrics -----------------
-        # Note: _record_tool_metric_sync is called via asyncio.to_thread (mocked by fixture)
-        tool_service._record_tool_metric_sync = Mock()
+        # Mock the metrics buffer service
+        mock_metrics_buffer = Mock()
+        with patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=mock_metrics_buffer):
+            # -------------- invoke -----------------
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
 
-        # -------------- invoke -----------------
-        result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
-
-        # ------------- asserts -----------------
-        tool_service._http_client.get.assert_called_once_with(
-            mock_tool.url,
-            params={},  # payload is empty
-            headers=mock_tool.headers,
-        )
-        assert result.content[0].text == '{\n  "result": "REST tool response"\n}'
-        # Verify metrics were recorded with tool_id (positional args via asyncio.to_thread)
-        tool_service._record_tool_metric_sync.assert_called_once()
-        call_args = tool_service._record_tool_metric_sync.call_args[0]  # Get positional args
-        assert call_args[0] == str(mock_tool.id)  # tool_id
-        assert call_args[2] is True  # success
-        assert call_args[3] is None  # error_message
+            # ------------- asserts -----------------
+            tool_service._http_client.get.assert_called_once_with(
+                mock_tool.url,
+                params={},  # payload is empty
+                headers=mock_tool.headers,
+            )
+            assert result.content[0].text == '{\n  "result": "REST tool response"\n}'
+            # Verify metrics were recorded via buffer service
+            mock_metrics_buffer.record_tool_metric.assert_called_once()
+            call_kwargs = mock_metrics_buffer.record_tool_metric.call_args[1]
+            assert call_kwargs["tool_id"] == str(mock_tool.id)
+            assert call_kwargs["success"] is True
+            assert call_kwargs["error_message"] is None
 
         # Test 204 status
         mock_response = AsyncMock()
@@ -1379,32 +1379,33 @@ class TestToolService:
         mock_response.json = Mock(return_value={"result": "REST tool response"})  # Make json() synchronous
         tool_service._http_client.request.return_value = mock_response
 
-        # Mock metrics recording
-        tool_service._record_tool_metric_sync = Mock()
-
-        # Mock decode_auth to return empty dict when auth_value is None
-        # Mock extract_using_jq to return the input unmodified when filter is empty
-        with patch("mcpgateway.services.tool_service.decode_auth", return_value={}), patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "REST tool response"}):
+        # Mock metrics buffer service and other dependencies
+        mock_metrics_buffer = Mock()
+        with (
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "REST tool response"}),
+        ):
             # Invoke tool
             result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
-        # Verify HTTP request
-        tool_service._http_client.request.assert_called_once_with(
-            "POST",
-            mock_tool.url,
-            json={"param": "value"},
-            headers=mock_tool.headers,
-        )
+            # Verify HTTP request
+            tool_service._http_client.request.assert_called_once_with(
+                "POST",
+                mock_tool.url,
+                json={"param": "value"},
+                headers=mock_tool.headers,
+            )
 
-        # Verify result
-        assert result.content[0].text == '{\n  "result": "REST tool response"\n}'
+            # Verify result
+            assert result.content[0].text == '{\n  "result": "REST tool response"\n}'
 
-        # Verify metrics recorded with tool_id (positional args via asyncio.to_thread)
-        tool_service._record_tool_metric_sync.assert_called_once()
-        call_args = tool_service._record_tool_metric_sync.call_args[0]
-        assert call_args[0] == str(mock_tool.id)  # tool_id
-        assert call_args[2] is True  # success
-        assert call_args[3] is None  # error_message
+            # Verify metrics recorded via buffer service
+            mock_metrics_buffer.record_tool_metric.assert_called_once()
+            call_kwargs = mock_metrics_buffer.record_tool_metric.call_args[1]
+            assert call_kwargs["tool_id"] == str(mock_tool.id)
+            assert call_kwargs["success"] is True
+            assert call_kwargs["error_message"] is None
 
     @pytest.mark.asyncio
     async def test_invoke_tool_rest_parameter_substitution(self, tool_service, mock_tool, mock_global_config_obj, test_db):
@@ -1772,26 +1773,27 @@ class TestToolService:
         # Mock DB to return the tool and GlobalConfig
         setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
 
-        # Mock decode_auth to return empty dict
-        with patch("mcpgateway.services.tool_service.decode_auth", return_value={}):
-            # Mock HTTP client to raise an error
-            tool_service._http_client.request.side_effect = Exception("HTTP error")
+        # Mock HTTP client to raise an error
+        tool_service._http_client.request.side_effect = Exception("HTTP error")
 
-            # Mock metrics recording
-            tool_service._record_tool_metric_sync = Mock()
-
+        # Mock metrics buffer service and decode_auth
+        mock_metrics_buffer = Mock()
+        with (
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+        ):
             # Should raise ToolInvocationError
             with pytest.raises(ToolInvocationError) as exc_info:
                 await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
             assert "Tool invocation failed: HTTP error" in str(exc_info.value)
 
-            # Verify metrics recorded with error (positional args via asyncio.to_thread)
-            tool_service._record_tool_metric_sync.assert_called_once()
-            call_args = tool_service._record_tool_metric_sync.call_args[0]
-            assert call_args[0] == str(mock_tool.id)  # tool_id
-            assert call_args[2] is False  # success
-            assert call_args[3] == "HTTP error"  # error_message
+            # Verify metrics recorded with error via buffer service
+            mock_metrics_buffer.record_tool_metric.assert_called_once()
+            call_kwargs = mock_metrics_buffer.record_tool_metric.call_args[1]
+            assert call_kwargs["tool_id"] == str(mock_tool.id)
+            assert call_kwargs["success"] is False
+            assert call_kwargs["error_message"] == "HTTP error"
 
     @pytest.mark.asyncio
     async def test_reset_metrics(self, tool_service, test_db):

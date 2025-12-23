@@ -194,15 +194,17 @@ class ServerService:
 
         return build_top_performers(results)
 
-    def _convert_server_to_read(self, server: DbServer) -> ServerRead:
+    def _convert_server_to_read(self, server: DbServer, include_metrics: bool = True) -> ServerRead:
         """
-        Converts a DbServer instance into a ServerRead model, including aggregated metrics.
+        Converts a DbServer instance into a ServerRead model, optionally including aggregated metrics.
 
         Args:
             server (DbServer): The ORM instance of the server.
+            include_metrics (bool): Whether to include metrics in the result. Defaults to True.
+                Set to False for list operations to avoid N+1 query issues.
 
         Returns:
-            ServerRead: The Pydantic model representing the server, including aggregated metrics.
+            ServerRead: The Pydantic model representing the server, optionally including aggregated metrics.
 
         Examples:
             >>> from types import SimpleNamespace
@@ -228,48 +230,51 @@ class ServerService:
         server_dict = server.__dict__.copy()
         server_dict.pop("_sa_instance_state", None)
 
-        # Compute aggregated metrics from server.metrics in a single pass; default to 0/None when no records exist.
-        total = 0
-        successful = 0
-        failed = 0
-        min_rt = None
-        max_rt = None
-        sum_rt = 0.0
-        last_time = None
+        # Compute aggregated metrics only if requested (avoids N+1 queries in list operations)
+        if include_metrics:
+            total = 0
+            successful = 0
+            failed = 0
+            min_rt = None
+            max_rt = None
+            sum_rt = 0.0
+            last_time = None
 
-        if hasattr(server, "metrics") and server.metrics:
-            for m in server.metrics:
-                total += 1
-                if m.is_success:
-                    successful += 1
-                else:
-                    failed += 1
+            if hasattr(server, "metrics") and server.metrics:
+                for m in server.metrics:
+                    total += 1
+                    if m.is_success:
+                        successful += 1
+                    else:
+                        failed += 1
 
-                # Track min/max response times
-                if min_rt is None or m.response_time < min_rt:
-                    min_rt = m.response_time
-                if max_rt is None or m.response_time > max_rt:
-                    max_rt = m.response_time
+                    # Track min/max response times
+                    if min_rt is None or m.response_time < min_rt:
+                        min_rt = m.response_time
+                    if max_rt is None or m.response_time > max_rt:
+                        max_rt = m.response_time
 
-                sum_rt += m.response_time
+                    sum_rt += m.response_time
 
-                # Track last execution time
-                if last_time is None or m.timestamp > last_time:
-                    last_time = m.timestamp
+                    # Track last execution time
+                    if last_time is None or m.timestamp > last_time:
+                        last_time = m.timestamp
 
-        failure_rate = (failed / total) if total > 0 else 0.0
-        avg_rt = (sum_rt / total) if total > 0 else None
+            failure_rate = (failed / total) if total > 0 else 0.0
+            avg_rt = (sum_rt / total) if total > 0 else None
 
-        server_dict["metrics"] = {
-            "total_executions": total,
-            "successful_executions": successful,
-            "failed_executions": failed,
-            "failure_rate": failure_rate,
-            "min_response_time": min_rt,
-            "max_response_time": max_rt,
-            "avg_response_time": avg_rt,
-            "last_execution_time": last_time,
-        }
+            server_dict["metrics"] = {
+                "total_executions": total,
+                "successful_executions": successful,
+                "failed_executions": failed,
+                "failure_rate": failure_rate,
+                "min_response_time": min_rt,
+                "max_response_time": max_rt,
+                "avg_response_time": avg_rt,
+                "last_execution_time": last_time,
+            }
+        else:
+            server_dict["metrics"] = None
         # Also update associated IDs (if not already done)
         server_dict["associated_tools"] = [tool.name for tool in server.tools] if server.tools else []
         server_dict["associated_resources"] = [res.id for res in server.resources] if server.resources else []
@@ -685,10 +690,11 @@ class ServerService:
             teams = db.execute(select(DbEmailTeam.id, DbEmailTeam.name).where(DbEmailTeam.id.in_(team_ids), DbEmailTeam.is_active.is_(True))).all()
             team_map = {team.id: team.name for team in teams}
 
+        # Skip metrics to avoid N+1 queries in list operations
         result = []
         for s in servers:
             s.team = team_map.get(s.team_id) if s.team_id else None
-            result.append(self._convert_server_to_read(s))
+            result.append(self._convert_server_to_read(s, include_metrics=False))
 
         return result
 
@@ -765,10 +771,11 @@ class ServerService:
             teams = db.execute(select(DbEmailTeam.id, DbEmailTeam.name).where(DbEmailTeam.id.in_(server_team_ids), DbEmailTeam.is_active.is_(True))).all()
             team_map = {team.id: team.name for team in teams}
 
+        # Skip metrics to avoid N+1 queries in list operations
         result = []
         for s in servers:
             s.team = team_map.get(s.team_id) if s.team_id else None
-            result.append(self._convert_server_to_read(s))
+            result.append(self._convert_server_to_read(s, include_metrics=False))
         return result
 
     async def get_server(self, db: Session, server_id: str) -> ServerRead:

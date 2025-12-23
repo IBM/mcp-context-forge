@@ -288,9 +288,10 @@ class TestA2AAgentService:
         with pytest.raises(A2AAgentNotFoundError):
             await service.delete_agent(mock_db, "non-existent-id")
 
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("httpx.AsyncClient")
-    async def test_invoke_agent_success(self, mock_client_class, mock_fresh_db, service, mock_db, sample_db_agent):
+    async def test_invoke_agent_success(self, mock_client_class, mock_fresh_db, mock_metrics_buffer_fn, service, mock_db, sample_db_agent):
         """Test successful agent invocation."""
         # Mock HTTP client
         mock_client = AsyncMock()
@@ -314,11 +315,15 @@ class TestA2AAgentService:
             )
         )
 
-        # Mock fresh_db_session for metrics recording
-        mock_metrics_db = MagicMock()
-        mock_metrics_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent
-        mock_fresh_db.return_value.__enter__.return_value = mock_metrics_db
+        # Mock fresh_db_session for last_interaction update
+        mock_ts_db = MagicMock()
+        mock_ts_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
         mock_fresh_db.return_value.__exit__.return_value = None
+
+        # Mock metrics buffer service
+        mock_metrics_buffer = MagicMock()
+        mock_metrics_buffer_fn.return_value = mock_metrics_buffer
 
         # Execute
         result = await service.invoke_agent(mock_db, sample_db_agent.name, {"test": "data"})
@@ -326,8 +331,10 @@ class TestA2AAgentService:
         # Verify
         assert result["response"] == "Test response"
         mock_client.post.assert_called_once()
-        mock_metrics_db.add.assert_called()  # Metrics added via fresh_db_session
-        mock_metrics_db.commit.assert_called()
+        # Metrics recorded via buffer service
+        mock_metrics_buffer.record_a2a_agent_metric_with_duration.assert_called_once()
+        # last_interaction updated via fresh_db_session
+        mock_ts_db.commit.assert_called()
 
     async def test_invoke_agent_disabled(self, service, mock_db, sample_db_agent):
         """Test invoking disabled agent."""
@@ -341,9 +348,10 @@ class TestA2AAgentService:
         with pytest.raises(A2AAgentError, match="disabled"):
             await service.invoke_agent(mock_db, sample_db_agent.name, {"test": "data"})
 
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("httpx.AsyncClient")
-    async def test_invoke_agent_http_error(self, mock_client_class, mock_fresh_db, service, mock_db, sample_db_agent):
+    async def test_invoke_agent_http_error(self, mock_client_class, mock_fresh_db, mock_metrics_buffer_fn, service, mock_db, sample_db_agent):
         """Test agent invocation with HTTP error."""
         # Mock HTTP client with error response
         mock_client = AsyncMock()
@@ -367,19 +375,24 @@ class TestA2AAgentService:
             )
         )
 
-        # Mock fresh_db_session for metrics recording
-        mock_metrics_db = MagicMock()
-        mock_metrics_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent
-        mock_fresh_db.return_value.__enter__.return_value = mock_metrics_db
+        # Mock fresh_db_session for last_interaction update
+        mock_ts_db = MagicMock()
+        mock_ts_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
         mock_fresh_db.return_value.__exit__.return_value = None
+
+        # Mock metrics buffer service
+        mock_metrics_buffer = MagicMock()
+        mock_metrics_buffer_fn.return_value = mock_metrics_buffer
 
         # Execute and verify exception
         with pytest.raises(A2AAgentError, match="HTTP 500"):
             await service.invoke_agent(mock_db, sample_db_agent.name, {"test": "data"})
 
-        # Verify metrics were still recorded via fresh_db_session
-        mock_metrics_db.add.assert_called()
-        mock_metrics_db.commit.assert_called()
+        # Verify metrics were still recorded via buffer service
+        mock_metrics_buffer.record_a2a_agent_metric_with_duration.assert_called_once()
+        # last_interaction updated via fresh_db_session
+        mock_ts_db.commit.assert_called()
 
     async def test_aggregate_metrics(self, service, mock_db):
         """Test metrics aggregation."""

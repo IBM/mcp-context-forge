@@ -15,7 +15,6 @@ It handles:
 """
 
 # Standard
-import asyncio
 import base64
 from datetime import datetime, timezone
 import os
@@ -968,7 +967,7 @@ class ToolService:
             tool, team_name = row[0], row.team_name
             tool.team = team_name
             tools.append(tool)
-            result.append(self._convert_tool_to_read(tool))
+            result.append(self._convert_tool_to_read(tool, include_metrics=False))
 
         # Generate next_cursor if there are more results
         next_cursor = None
@@ -1132,7 +1131,7 @@ class ToolService:
             tool = row[0]
             team_name = row.team_name
             tool.team = team_name
-            result.append(self._convert_tool_to_read(tool))
+            result.append(self._convert_tool_to_read(tool, include_metrics=False))
         return result
 
     async def get_tool(self, db: Session, tool_id: str) -> ToolRead:
@@ -2018,16 +2017,18 @@ class ToolService:
                     span.set_attribute("duration.ms", duration_ms)
 
                 # ═══════════════════════════════════════════════════════════════════════════
-                # PHASE 4: Record metrics asynchronously without blocking event loop
-                # Uses asyncio.to_thread() to run synchronous DB operations in thread pool
+                # PHASE 4: Record metrics via buffered service (batches writes for performance)
                 # ═══════════════════════════════════════════════════════════════════════════
                 try:
-                    await asyncio.to_thread(
-                        self._record_tool_metric_sync,
-                        tool_id,
-                        start_time,
-                        success,
-                        error_message,
+                    # First-Party
+                    from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
+
+                    metrics_buffer = get_metrics_buffer_service()
+                    metrics_buffer.record_tool_metric(
+                        tool_id=tool_id,
+                        start_time=start_time,
+                        success=success,
+                        error_message=error_message,
                     )
                 except Exception as metric_error:
                     logger.warning(f"Failed to record tool metric: {metric_error}")
