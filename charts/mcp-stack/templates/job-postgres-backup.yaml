@@ -15,6 +15,7 @@ spec:
   template:
     spec:
       restartPolicy: Never
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       containers:
         - name: postgres-backup
           image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"

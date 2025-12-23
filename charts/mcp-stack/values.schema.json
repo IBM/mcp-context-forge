@@ -30,6 +30,36 @@
       },
       "additionalProperties": false
     },
+    "serviceAccount": {
+      "type": "object",
+      "description": "ServiceAccount configuration for all pods in the release",
+      "properties": {
+        "create": {
+          "type": "boolean",
+          "description": "Create a ServiceAccount",
+          "default": false
+        },
+        "name": {
+          "type": "string",
+          "description": "ServiceAccount name (uses fullname if empty)",
+          "default": ""
+        },
+        "annotations": {
+          "type": "object",
+          "description": "Annotations for the ServiceAccount (e.g., IRSA, Workload Identity)",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "automountServiceAccountToken": {
+          "type": "boolean",
+          "description": "Mount the ServiceAccount token in pods",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
     "mcpContextForge": {
       "type": "object",
       "description": "MCP Context-Forge Gateway configuration",

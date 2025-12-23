@@ -8,6 +8,18 @@ global:
   fullnameOverride: ""          # fully-qualified name override (optional)
 
 ########################################################################
+# SERVICE ACCOUNT
+# Configure ServiceAccount for all pods in the release.
+########################################################################
+serviceAccount:
+  create: false                 # Set to true to create a ServiceAccount
+  name: ""                      # If empty, uses fullname; if set, uses this name
+  annotations: {}               # Annotations for the ServiceAccount (e.g., IRSA, Workload Identity)
+    # eks.amazonaws.com/role-arn: arn:aws:iam::123456789:role/my-role
+    # iam.gke.io/gcp-service-account: my-sa@project.iam.gserviceaccount.com
+  automountServiceAccountToken: true  # Mount the ServiceAccount token in pods
+
+########################################################################
 # MCP CONTEXT-FORGE (Gateway / API tier)
 ########################################################################
 mcpContextForge:
