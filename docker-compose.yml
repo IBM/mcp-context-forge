@@ -46,6 +46,14 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '1'
+          memory: 512M
 
   # ──────────────────────────────────────────────────────────────────────
   # MCP Gateway - the main API server for the MCP stack
@@ -398,32 +406,32 @@ services:
 ###############################################################################
   redis:
     image: redis:latest
-    # Performance tuning for 1000 RPS (memory-constrained)
+    # Performance tuning for 1000+ RPS high-concurrency load testing
     command:
       - "redis-server"
       - "--maxmemory"
-      - "512mb"
+      - "1gb"
       - "--maxmemory-policy"
       - "allkeys-lru"
       - "--tcp-backlog"
-      - "1024"
+      - "2048"
       - "--timeout"
       - "0"
       - "--tcp-keepalive"
       - "300"
       - "--maxclients"
-      - "5000"
+      - "10000"
     ports:
       - "6379:6379"      # expose only if you want host access
     networks: [mcpnet]
     deploy:
       resources:
         limits:
-          cpus: '0.5'
-          memory: 1G
+          cpus: '2'
+          memory: 2G
         reservations:
-          cpus: '0.25'
-          memory: 512M
+          cpus: '1'
+          memory: 1G
 
 ###############################################################################
 #  OPTIONAL ADMIN TOOLS - handy web UIs for DB & cache (disabled by default)
