@@ -11,6 +11,7 @@ Security tests for HTTP header passthrough utilities.
 from unittest.mock import Mock, patch
 
 # First-Party
+from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.utils.passthrough_headers import (
     get_passthrough_headers,
     MAX_HEADER_VALUE_LENGTH,
@@ -21,6 +22,10 @@ from mcpgateway.utils.passthrough_headers import (
 
 class TestHeaderSecurity:
     """Test security features of header passthrough."""
+
+    def setup_method(self):
+        """Clear the global config cache before each test to ensure isolation."""
+        global_config_cache.invalidate()
 
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_feature_flag_disabled_by_default(self, mock_settings):

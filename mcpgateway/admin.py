@@ -56,6 +56,7 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 # First-Party
 # Authentication and password-related imports
 from mcpgateway.auth import get_current_user
+from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
@@ -772,6 +773,72 @@ async def get_passthrough_headers_cache_stats(
         True
     """
     return global_config_cache.stats()
+
+
+# ===================================
+# A2A Stats Cache Endpoints
+# ===================================
+
+
+@admin_router.post("/cache/a2a-stats/invalidate")
+@rate_limit(requests_per_minute=10)
+async def invalidate_a2a_stats_cache(
+    _user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Invalidate the A2A stats cache.
+
+    Forces an immediate cache refresh on the next access. Use this after
+    modifying A2A agents outside the normal API flow, or when you need
+    changes to propagate immediately.
+
+    Args:
+        _user: Authenticated user
+
+    Returns:
+        Dict with invalidation status and cache statistics
+
+    Examples:
+        >>> from mcpgateway.admin import invalidate_a2a_stats_cache
+        >>> invalidate_a2a_stats_cache.__name__
+        'invalidate_a2a_stats_cache'
+        >>> import inspect
+        >>> inspect.iscoroutinefunction(invalidate_a2a_stats_cache)
+        True
+    """
+    a2a_stats_cache.invalidate()
+    stats = a2a_stats_cache.stats()
+    return {
+        "status": "invalidated",
+        "message": "A2A stats cache invalidated successfully",
+        "cache_stats": stats,
+    }
+
+
+@admin_router.get("/cache/a2a-stats/stats")
+@rate_limit(requests_per_minute=30)
+async def get_a2a_stats_cache_stats(
+    _user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Get A2A stats cache statistics.
+
+    Returns cache hit/miss counts, hit rate, TTL, and current cache status.
+    Useful for monitoring cache effectiveness and debugging.
+
+    Args:
+        _user: Authenticated user
+
+    Returns:
+        Dict with cache statistics
+
+    Examples:
+        >>> from mcpgateway.admin import get_a2a_stats_cache_stats
+        >>> get_a2a_stats_cache_stats.__name__
+        'get_a2a_stats_cache_stats'
+        >>> import inspect
+        >>> inspect.iscoroutinefunction(get_a2a_stats_cache_stats)
+        True
+    """
+    return a2a_stats_cache.stats()
 
 
 @admin_router.get("/config/settings")

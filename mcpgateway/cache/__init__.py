@@ -15,21 +15,36 @@ Note: Imports are lazy to avoid circular dependencies with services.
 
 from typing import TYPE_CHECKING
 
-__all__ = ["GlobalConfigCache", "global_config_cache", "ResourceCache", "SessionRegistry"]
+__all__ = ["A2AStatsCache", "a2a_stats_cache", "GlobalConfigCache", "global_config_cache", "ResourceCache", "SessionRegistry"]
 
 # Lazy imports to avoid circular dependencies
 # When services import cache.global_config_cache, we don't want to
 # trigger imports of ResourceCache/SessionRegistry which depend on services
 
 if TYPE_CHECKING:
+    from mcpgateway.cache.a2a_stats_cache import A2AStatsCache, a2a_stats_cache
     from mcpgateway.cache.global_config_cache import GlobalConfigCache, global_config_cache
     from mcpgateway.cache.resource_cache import ResourceCache
     from mcpgateway.cache.session_registry import SessionRegistry
 
 
 def __getattr__(name: str):
-    """Lazy import handler for cache submodules."""
-    if name in ("GlobalConfigCache", "global_config_cache"):
+    """Lazy import handler for cache submodules.
+
+    Args:
+        name: The attribute name being accessed.
+
+    Returns:
+        The requested cache class or instance.
+
+    Raises:
+        AttributeError: If the requested attribute is not found.
+    """
+    if name in ("A2AStatsCache", "a2a_stats_cache"):
+        from mcpgateway.cache.a2a_stats_cache import A2AStatsCache, a2a_stats_cache
+
+        return a2a_stats_cache if name == "a2a_stats_cache" else A2AStatsCache
+    elif name in ("GlobalConfigCache", "global_config_cache"):
         from mcpgateway.cache.global_config_cache import GlobalConfigCache, global_config_cache
 
         return global_config_cache if name == "global_config_cache" else GlobalConfigCache

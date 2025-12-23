@@ -1116,6 +1116,15 @@ class Settings(BaseSettings):
         description="TTL in seconds for GlobalConfig in-memory cache (default: 60)",
     )
 
+    # A2A Stats In-Memory Cache
+    # Caches A2A agent counts (total, active) to eliminate redundant COUNT queries
+    a2a_stats_cache_ttl: int = Field(
+        default=30,
+        ge=5,
+        le=3600,
+        description="TTL in seconds for A2A stats in-memory cache (default: 30)",
+    )
+
     # Redis Parser Configuration (ADR-026)
     # hiredis C parser provides up to 83x faster response parsing for large responses
     redis_parser: Literal["auto", "hiredis", "python"] = Field(

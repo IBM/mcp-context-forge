@@ -170,6 +170,8 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
     Examples:
         Feature disabled by default (secure by default):
         >>> from unittest.mock import Mock, patch
+        >>> from mcpgateway.cache.global_config_cache import global_config_cache
+        >>> global_config_cache.invalidate()  # Clear cache for isolated test
         >>> with patch(__name__ + ".settings") as mock_settings:
         ...     mock_settings.enable_header_passthrough = False
         ...     mock_settings.default_passthrough_headers = ["X-Tenant-Id"]
@@ -181,6 +183,7 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
         {'Content-Type': 'application/json'}
 
         Enabled with allowlist and conflicts:
+        >>> global_config_cache.invalidate()  # Clear cache for isolated test
         >>> with patch(__name__ + ".settings") as mock_settings:
         ...     mock_settings.enable_header_passthrough = True
         ...     mock_settings.default_passthrough_headers = ["X-Tenant-Id", "Authorization"]
