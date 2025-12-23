@@ -11,12 +11,12 @@ optimization opportunities.
 """
 
 # Standard
-from collections import defaultdict
+from collections import defaultdict, deque
 from contextlib import contextmanager
 import logging
 import statistics
 import time
-from typing import Any, Dict, Generator, List, Optional
+from typing import Any, Dict, Generator, Optional
 
 # First-Party
 from mcpgateway.config import settings
@@ -34,7 +34,11 @@ class PerformanceTracker:
 
     def __init__(self):
         """Initialize performance tracker."""
-        self.operation_timings: Dict[str, List[float]] = defaultdict(list)
+        # Max buffer size per operation type - must be set before creating deque factory
+        self.max_samples = getattr(settings, "perf_max_samples_per_operation", 1000)
+
+        # Use deque with maxlen for O(1) automatic eviction instead of O(n) pop(0)
+        self.operation_timings: Dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=self.max_samples))
 
         # Performance thresholds (seconds) from settings or defaults
         self.performance_thresholds = {
@@ -47,9 +51,6 @@ class PerformanceTracker:
             "resource_fetch": getattr(settings, "perf_threshold_resource_fetch", 1.0),
             "prompt_processing": getattr(settings, "perf_threshold_prompt_processing", 0.5),
         }
-
-        # Max buffer size per operation type
-        self.max_samples = getattr(settings, "perf_max_samples_per_operation", 1000)
 
     @contextmanager
     def track_operation(self, operation_name: str, component: Optional[str] = None, log_slow: bool = True, extra_context: Optional[Dict[str, Any]] = None) -> Generator[None, None, None]:
@@ -85,12 +86,8 @@ class PerformanceTracker:
         finally:
             duration = time.time() - start_time
 
-            # Record timing
+            # Record timing (deque automatically evicts oldest when at maxlen)
             self.operation_timings[operation_name].append(duration)
-
-            # Limit buffer size
-            if len(self.operation_timings[operation_name]) > self.max_samples:
-                self.operation_timings[operation_name].pop(0)
 
             # Check threshold and log if needed
             threshold = self.performance_thresholds.get(operation_name, float("inf"))
@@ -120,11 +117,8 @@ class PerformanceTracker:
             component: Component/module name
             extra_context: Additional context
         """
+        # Record timing (deque automatically evicts oldest when at maxlen)
         self.operation_timings[operation_name].append(duration)
-
-        # Limit buffer size
-        if len(self.operation_timings[operation_name]) > self.max_samples:
-            self.operation_timings[operation_name].pop(0)
 
         # Check threshold
         threshold = self.performance_thresholds.get(operation_name, float("inf"))
@@ -267,9 +261,11 @@ class PerformanceTracker:
             return {"degraded": False, "reason": "insufficient_samples"}
 
         # Compare recent timings to overall average
-        recent_count = min(10, len(timings))
-        recent_timings = timings[-recent_count:]
-        historical_timings = timings[:-recent_count] if len(timings) > recent_count else timings
+        # Convert deque to list for slicing operations
+        timings_list = list(timings)
+        recent_count = min(10, len(timings_list))
+        recent_timings = timings_list[-recent_count:]
+        historical_timings = timings_list[:-recent_count] if len(timings_list) > recent_count else timings_list
 
         if not historical_timings:
             return {"degraded": False, "reason": "insufficient_historical_data"}
