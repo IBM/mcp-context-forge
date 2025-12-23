@@ -1511,8 +1511,8 @@ class ToolMetric(Base):
     __tablename__ = "tool_metrics"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    tool_id: Mapped[str] = mapped_column(String(36), ForeignKey("tools.id"), nullable=False)
-    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    tool_id: Mapped[str] = mapped_column(String(36), ForeignKey("tools.id"), nullable=False, index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -1537,8 +1537,8 @@ class ResourceMetric(Base):
     __tablename__ = "resource_metrics"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    resource_id: Mapped[str] = mapped_column(String(36), ForeignKey("resources.id"), nullable=False)
-    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    resource_id: Mapped[str] = mapped_column(String(36), ForeignKey("resources.id"), nullable=False, index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -1563,8 +1563,8 @@ class ServerMetric(Base):
     __tablename__ = "server_metrics"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    server_id: Mapped[str] = mapped_column(String(36), ForeignKey("servers.id"), nullable=False)
-    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    server_id: Mapped[str] = mapped_column(String(36), ForeignKey("servers.id"), nullable=False, index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -1589,8 +1589,8 @@ class PromptMetric(Base):
     __tablename__ = "prompt_metrics"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    prompt_id: Mapped[str] = mapped_column(String(36), ForeignKey("prompts.id"), nullable=False)
-    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    prompt_id: Mapped[str] = mapped_column(String(36), ForeignKey("prompts.id"), nullable=False, index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -1616,8 +1616,8 @@ class A2AAgentMetric(Base):
     __tablename__ = "a2a_agent_metrics"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    a2a_agent_id: Mapped[str] = mapped_column(String(36), ForeignKey("a2a_agents.id"), nullable=False)
-    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    a2a_agent_id: Mapped[str] = mapped_column(String(36), ForeignKey("a2a_agents.id"), nullable=False, index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
