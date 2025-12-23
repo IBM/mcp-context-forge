@@ -410,6 +410,10 @@ LOG_FORMAT=json                     # json, plain
 
 # Database Log Persistence (disabled by default for performance)
 STRUCTURED_LOGGING_DATABASE_ENABLED=false
+
+# Security Event Logging (disabled by default for performance)
+SECURITY_LOGGING_ENABLED=false
+SECURITY_LOGGING_LEVEL=failures_only  # all, failures_only, high_severity
 ```
 
 #### Structured Log Database Persistence

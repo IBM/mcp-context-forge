@@ -54,6 +54,8 @@ MCP Gateway provides flexible logging with **stdout/stderr by default** and **op
 | `LOG_MAX_SIZE_MB`       | Max file size before rotation (MB) | `1`               | `10`, `50`, `100`           |
 | `LOG_BACKUP_COUNT`      | Number of backup files to keep     | `5`               | `3`, `10`, `0` (no backups) |
 | `STRUCTURED_LOGGING_DATABASE_ENABLED` | **Persist logs to database** | **`false`** | **`true`, `false`** |
+| `SECURITY_LOGGING_ENABLED` | **Enable security event logging** | **`false`** | **`true`, `false`** |
+| `SECURITY_LOGGING_LEVEL` | Security logging verbosity level | `failures_only` | `all`, `failures_only`, `high_severity` |
 
 ### Logging Behavior
 
@@ -95,6 +97,44 @@ LOG_FOLDER=./logs
 LOG_FILE=debug.log
 LOG_FORMAT=text
 ```
+
+---
+
+## 🔐 Security Event Logging
+
+Security event logging records authentication attempts, authorization failures, and other security-relevant events to the database. **This is disabled by default for performance**.
+
+### Configuration
+
+```bash
+# Security event logging - disabled by default for performance
+SECURITY_LOGGING_ENABLED=false
+
+# Security logging level controls what gets logged
+SECURITY_LOGGING_LEVEL=failures_only  # all, failures_only, high_severity
+```
+
+### Logging Levels
+
+| Level | Description | Use Case |
+|-------|-------------|----------|
+| `all` | Log all events including successful authentications | Debugging, compliance auditing (high DB load) |
+| `failures_only` | Log only authentication/authorization failures | Production monitoring without excessive writes |
+| `high_severity` | Log only high/critical severity events | Minimal logging for high-traffic environments |
+
+!!! warning "Performance Impact"
+    Setting `SECURITY_LOGGING_LEVEL=all` logs **every authenticated request** to the database. During load testing, this can generate 300+ database writes per second, causing significant performance degradation. Use `failures_only` or `high_severity` in production.
+
+### Security Events Table
+
+When enabled, events are stored in the `security_events` table:
+
+- Authentication success/failure
+- Authorization denials
+- Rate limiting triggers
+- Suspicious activity detection
+
+Query security events via the API: `GET /api/logs/security-events`
 
 ---
 

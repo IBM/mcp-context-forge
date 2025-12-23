@@ -879,7 +879,19 @@ class Settings(BaseSettings):
     performance_degradation_multiplier: float = Field(default=1.5, description="Alert if performance degrades by this multiplier vs baseline")
 
     # Security Logging Configuration
-    security_logging_enabled: bool = Field(default=True, description="Enable security event logging")
+    # Security event logging is disabled by default for performance.
+    # When enabled, it logs authentication attempts, authorization failures, and security events.
+    # WARNING: "all" level logs every request and can cause significant database write load.
+    security_logging_enabled: bool = Field(default=False, description="Enable security event logging to database")
+    security_logging_level: Literal["all", "failures_only", "high_severity"] = Field(
+        default="failures_only",
+        description=(
+            "Security logging level: "
+            "'all' = log all events including successful auth (high DB load), "
+            "'failures_only' = log only authentication/authorization failures, "
+            "'high_severity' = log only high/critical severity events"
+        ),
+    )
     security_failed_auth_threshold: int = Field(default=5, description="Failed auth attempts before high severity alert")
     security_threat_score_alert: float = Field(default=0.7, description="Threat score threshold for alerts (0.0-1.0)")
     security_rate_limit_window_minutes: int = Field(default=5, description="Time window for rate limit checks (minutes)")
