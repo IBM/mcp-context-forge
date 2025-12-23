@@ -5638,7 +5638,7 @@ async def admin_list_tools(
     for t in tools:
         team_name = tool_service._get_team_name(db, getattr(t, "team_id", None))  # pylint: disable=protected-access
         t.team = team_name
-        result.append(tool_service._convert_tool_to_read(t))  # pylint: disable=protected-access
+        result.append(tool_service._convert_tool_to_read(t, include_metrics=False))  # pylint: disable=protected-access
 
     # Build pagination metadata
     pagination = PaginationMeta(
@@ -6303,7 +6303,7 @@ async def admin_resources_partial_html(
     resources_data = []
     for r in resources_db:
         try:
-            resources_data.append(local_resource_service._convert_resource_to_read(r))  # pylint: disable=protected-access
+            resources_data.append(local_resource_service._convert_resource_to_read(r, include_metrics=False))  # pylint: disable=protected-access
         except Exception as e:
             LOGGER.warning(f"Failed to convert resource {getattr(r, 'id', '<unknown>')} to schema: {e}")
             continue

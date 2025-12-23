@@ -261,6 +261,12 @@ mcpContextForge:
     LOG_BACKUP_COUNT: "5"            # number of backup files to keep
     LOG_BUFFER_SIZE_MB: "1.0"        # size of in-memory log buffer (MB)
 
+    # ─ Metrics Buffer ─
+    # Batches metric writes to reduce DB pressure under high load
+    METRICS_BUFFER_ENABLED: "true"   # enable buffered metrics writes
+    METRICS_BUFFER_FLUSH_INTERVAL: "60" # seconds between flushes (5-300)
+    METRICS_BUFFER_MAX_SIZE: "1000"  # max entries before forced flush (100-10000)
+
     # ─ Transports ─
     TRANSPORT_TYPE: all              # comma-separated list: http, ws, sse, stdio, all
     WEBSOCKET_PING_INTERVAL: "30"    # seconds between WS pings
