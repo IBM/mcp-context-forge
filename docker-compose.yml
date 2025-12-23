@@ -142,10 +142,11 @@ services:
       - SECURITY_LOGGING_ENABLED=false  # Set to true to enable security event logging
       - SECURITY_LOGGING_LEVEL=failures_only  # Options: all, failures_only, high_severity
       # Performance optimizations - disable CPU-intensive middlewares
-      # nginx handles compression, so disable app-level compression to avoid double work
+      # NOTE: Keep compression enabled when running without nginx that already has compression
+      # Disabling causes throughput drop due to larger payloads
       - COMPRESSION_ENABLED=false
       # Disable optional middlewares for maximum throughput
-      - VALIDATION_MIDDLEWARE_ENABLED=false
+      - VALIDATION_MIDDLEWARE_ENABLED=true
       - CORRELATION_ID_ENABLED=false
       - OBSERVABILITY_ENABLED=false
       # Database pool tuning for load testing (1000 users)
