@@ -879,7 +879,19 @@ class Settings(BaseSettings):
     performance_degradation_multiplier: float = Field(default=1.5, description="Alert if performance degrades by this multiplier vs baseline")
 
     # Security Logging Configuration
-    security_logging_enabled: bool = Field(default=True, description="Enable security event logging")
+    # Security event logging is disabled by default for performance.
+    # When enabled, it logs authentication attempts, authorization failures, and security events.
+    # WARNING: "all" level logs every request and can cause significant database write load.
+    security_logging_enabled: bool = Field(default=False, description="Enable security event logging to database")
+    security_logging_level: Literal["all", "failures_only", "high_severity"] = Field(
+        default="failures_only",
+        description=(
+            "Security logging level: "
+            "'all' = log all events including successful auth (high DB load), "
+            "'failures_only' = log only authentication/authorization failures, "
+            "'high_severity' = log only high/critical severity events"
+        ),
+    )
     security_failed_auth_threshold: int = Field(default=5, description="Failed auth attempts before high severity alert")
     security_threat_score_alert: float = Field(default=0.7, description="Threat score threshold for alerts (0.0-1.0)")
     security_rate_limit_window_minutes: int = Field(default=5, description="Time window for rate limit checks (minutes)")
@@ -1106,6 +1118,24 @@ class Settings(BaseSettings):
     message_ttl: int = 600
     redis_max_retries: int = 3
     redis_retry_interval_ms: int = 2000
+
+    # GlobalConfig In-Memory Cache (Issue #1715)
+    # Caches GlobalConfig (passthrough headers) to eliminate redundant DB queries
+    global_config_cache_ttl: int = Field(
+        default=60,
+        ge=5,
+        le=3600,
+        description="TTL in seconds for GlobalConfig in-memory cache (default: 60)",
+    )
+
+    # A2A Stats In-Memory Cache
+    # Caches A2A agent counts (total, active) to eliminate redundant COUNT queries
+    a2a_stats_cache_ttl: int = Field(
+        default=30,
+        ge=5,
+        le=3600,
+        description="TTL in seconds for A2A stats in-memory cache (default: 30)",
+    )
 
     # Redis Parser Configuration (ADR-026)
     # hiredis C parser provides up to 83x faster response parsing for large responses

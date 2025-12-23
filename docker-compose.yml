@@ -137,6 +137,17 @@ services:
       - LOG_LEVEL=ERROR  # Default to ERROR for production performance
       - DISABLE_ACCESS_LOG=true  # Disable uvicorn access logs for performance (massive I/O overhead)
       - STRUCTURED_LOGGING_DATABASE_ENABLED=false  # Disable DB logging for performance (use true only for debugging)
+      # Security event logging - disabled by default for performance
+      # WARNING: "all" level logs every request and causes massive DB write load
+      - SECURITY_LOGGING_ENABLED=false  # Set to true to enable security event logging
+      - SECURITY_LOGGING_LEVEL=failures_only  # Options: all, failures_only, high_severity
+      # Performance optimizations - disable CPU-intensive middlewares
+      # nginx handles compression, so disable app-level compression to avoid double work
+      - COMPRESSION_ENABLED=false
+      # Disable optional middlewares for maximum throughput
+      - VALIDATION_MIDDLEWARE_ENABLED=false
+      - CORRELATION_ID_ENABLED=false
+      - OBSERVABILITY_ENABLED=false
       # Database pool tuning for load testing (1000 users)
       # Auth now uses fresh short-lived sessions via asyncio.to_thread(),
       # so connections are released quickly. Smaller pools work better.
