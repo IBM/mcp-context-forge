@@ -141,6 +141,13 @@ services:
       # WARNING: "all" level logs every request and causes massive DB write load
       - SECURITY_LOGGING_ENABLED=false  # Set to true to enable security event logging
       - SECURITY_LOGGING_LEVEL=failures_only  # Options: all, failures_only, high_severity
+      # Performance optimizations - disable CPU-intensive middlewares
+      # nginx handles compression, so disable app-level compression to avoid double work
+      - COMPRESSION_ENABLED=false
+      # Disable optional middlewares for maximum throughput
+      - VALIDATION_MIDDLEWARE_ENABLED=false
+      - CORRELATION_ID_ENABLED=false
+      - OBSERVABILITY_ENABLED=false
       # Database pool tuning for load testing (1000 users)
       # Auth now uses fresh short-lived sessions via asyncio.to_thread(),
       # so connections are released quickly. Smaller pools work better.
