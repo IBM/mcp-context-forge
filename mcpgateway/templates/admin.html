@@ -55,7 +55,7 @@
         if (parts.length == 2) return parts.pop().split(";").shift();
       }
     </script>
-    
+
     <!-- CodeMirror -->
     {% if ui_airgapped %}
     <script src="{{ root_path }}/static/vendor/codemirror/codemirror.min.js"></script>
@@ -1276,7 +1276,7 @@
           <span class="ml-3 text-gray-600 dark:text-gray-400">Loading observability dashboard...</span>
         </div>
       </div>
-      {% endif %} 
+      {% endif %}
         {% if llmchat_enabled %}
         <!-- LLM Chat Panel -->
         <div id="llm-chat-panel" class="tab-panel hidden">
