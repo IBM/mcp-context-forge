@@ -621,6 +621,28 @@ async def get_provider_defaults(
     return LLMProviderType.get_provider_defaults()
 
 
+@llm_admin_router.get("/provider-configs")
+@require_permission("admin.system_config")
+async def get_provider_configs(
+    request: Request,
+    current_user_ctx: dict = Depends(get_current_user_with_permissions),
+):
+    """Get provider-specific configuration definitions for UI rendering.
+
+    Args:
+        request: FastAPI request object.
+        current_user_ctx: Authenticated user context.
+
+    Returns:
+        Dictionary of provider configurations with field definitions.
+    """
+    # First-Party
+    from mcpgateway.llm_provider_configs import get_all_provider_configs
+
+    configs = get_all_provider_configs()
+    return {provider_type: config.model_dump() for provider_type, config in configs.items()}
+
+
 @llm_admin_router.post("/providers/{provider_id}/fetch-models")
 @require_permission("admin.system_config")
 async def fetch_provider_models(
