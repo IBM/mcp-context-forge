@@ -2236,12 +2236,12 @@ function updateTableRows(tbody, entityType, data, page, perPage) {
             "px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100 sm:px-6 sm:py-4";
         const rankBadge = document.createElement("span");
         rankBadge.className = `inline-flex items-center justify-center w-6 h-6 rounded-full ${globalIndex === 0
-                ? "bg-yellow-400 text-yellow-900"
-                : globalIndex === 1
-                    ? "bg-gray-300 text-gray-900"
-                    : globalIndex === 2
-                        ? "bg-orange-400 text-orange-900"
-                        : "bg-gray-100 text-gray-600"
+            ? "bg-yellow-400 text-yellow-900"
+            : globalIndex === 1
+                ? "bg-gray-300 text-gray-900"
+                : globalIndex === 2
+                    ? "bg-orange-400 text-orange-900"
+                    : "bg-gray-100 text-gray-600"
             }`;
         rankBadge.textContent = globalIndex + 1;
         rankBadge.setAttribute("aria-label", `Rank ${globalIndex + 1}`);
@@ -2284,10 +2284,10 @@ function updateTableRows(tbody, entityType, data, page, perPage) {
         const successRate = calculateSuccessRate(item);
         const successBadge = document.createElement("span");
         successBadge.className = `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${successRate >= 95
-                ? "bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-100"
-                : successRate >= 80
-                    ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-100"
-                    : "bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-100"
+            ? "bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-100"
+            : successRate >= 80
+                ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-100"
+                : "bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-100"
             }`;
         successBadge.textContent = `${successRate}%`;
         successBadge.setAttribute(
@@ -3947,8 +3947,8 @@ async function viewResource(resourceId) {
             const isActive = resource.enabled === true;
             const statusSpan = document.createElement("span");
             statusSpan.className = `px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${isActive
-                    ? "bg-green-100 text-green-800"
-                    : "bg-red-100 text-red-800"
+                ? "bg-green-100 text-green-800"
+                : "bg-red-100 text-red-800"
                 }`;
             statusSpan.textContent = isActive ? "Active" : "Inactive";
 
@@ -4379,8 +4379,8 @@ async function viewPrompt(promptName) {
 
             const statusSpan = document.createElement("span");
             statusSpan.className = `px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${prompt.isActive
-                    ? "bg-green-100 text-green-800"
-                    : "bg-red-100 text-red-800"
+                ? "bg-green-100 text-green-800"
+                : "bg-red-100 text-red-800"
                 }`;
             statusSpan.textContent = prompt.isActive ? "Active" : "Inactive";
             statusP.appendChild(statusSpan);
@@ -5378,8 +5378,8 @@ async function viewServer(serverId) {
 
             const statusSpan = document.createElement("span");
             statusSpan.className = `px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${server.isActive
-                    ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300"
-                    : "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300"
+                ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300"
+                : "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300"
                 }`;
             statusSpan.textContent = server.isActive ? "Active" : "Inactive";
             statusP.appendChild(statusSpan);
@@ -18453,10 +18453,10 @@ function showNotification(message, type = "info") {
     // Create a simple toast notification
     const toast = document.createElement("div");
     toast.className = `fixed top-4 right-4 z-50 px-4 py-3 rounded-md text-sm font-medium max-w-sm ${type === "success"
-            ? "bg-green-100 text-green-800 border border-green-400"
-            : type === "error"
-                ? "bg-red-100 text-red-800 border border-red-400"
-                : "bg-blue-100 text-blue-800 border border-blue-400"
+        ? "bg-green-100 text-green-800 border border-green-400"
+        : type === "error"
+            ? "bg-red-100 text-red-800 border border-red-400"
+            : "bg-blue-100 text-blue-800 border border-blue-400"
         }`;
     toast.textContent = message;
 
@@ -21034,13 +21034,12 @@ function initializePluginFunctions() {
                         <div>
                             <h4 class="font-medium text-gray-700 dark:text-gray-300">Mode</h4>
                             <p class="mt-1">
-                                <span class="px-2 py-1 text-xs rounded-full ${
-                                    plugin.mode === "enforce"
-                                        ? "bg-red-100 text-red-800"
-                                        : plugin.mode === "permissive"
-                                          ? "bg-yellow-100 text-yellow-800"
-                                          : "bg-gray-100 text-gray-800"
-                                }">
+                                <span class="px-2 py-1 text-xs rounded-full ${plugin.mode === "enforce"
+                    ? "bg-red-100 text-red-800"
+                    : plugin.mode === "permissive"
+                        ? "bg-yellow-100 text-yellow-800"
+                        : "bg-gray-100 text-gray-800"
+                }">
                                     ${plugin.mode}
                                 </span>
                             </p>
@@ -21055,11 +21054,11 @@ function initializePluginFunctions() {
                         <h4 class="font-medium text-gray-700 dark:text-gray-300">Hooks</h4>
                         <div class="mt-1 flex flex-wrap gap-1">
                             ${(plugin.hooks || [])
-                                .map(
-                                    (hook) =>
-                                        `<span class="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded">${hook}</span>`,
-                                )
-                                .join("")}
+                    .map(
+                        (hook) =>
+                            `<span class="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded">${hook}</span>`,
+                    )
+                    .join("")}
                         </div>
                     </div>
 
@@ -21067,24 +21066,23 @@ function initializePluginFunctions() {
                         <h4 class="font-medium text-gray-700 dark:text-gray-300">Tags</h4>
                         <div class="mt-1 flex flex-wrap gap-1">
                             ${(plugin.tags || [])
-                                .map(
-                                    (tag) =>
-                                        `<span class="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded">${tag}</span>`,
-                                )
-                                .join("")}
+                    .map(
+                        (tag) =>
+                            `<span class="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded">${tag}</span>`,
+                    )
+                    .join("")}
                         </div>
                     </div>
 
-                    ${
-                        plugin.config && Object.keys(plugin.config).length > 0
-                            ? `
+                    ${plugin.config && Object.keys(plugin.config).length > 0
+                    ? `
                         <div>
                             <h4 class="font-medium text-gray-700 dark:text-gray-300">Configuration</h4>
                             <pre class="mt-1 p-2 bg-gray-50 dark:bg-gray-800 rounded text-xs overflow-x-auto">${JSON.stringify(plugin.config, null, 2)}</pre>
                         </div>
                     `
-                            : ""
-                    }
+                    : ""
+                }
                 </div>
             `;
         } catch (error) {
@@ -21822,6 +21820,16 @@ async function connectLLMChat() {
             // But we can trigger a click if we knew it was open, or just let Alpine handle click.away
         }
 
+        // Disable server dropdown as well
+        const serverDropdownBtn = document.getElementById(
+            "llm-server-dropdown-btn",
+        );
+        if (serverDropdownBtn) {
+            serverDropdownBtn.disabled = true;
+            serverDropdownBtn.classList.add("opacity-50", "cursor-not-allowed");
+            serverDropdownBtn.title = "Please disconnect to change server";
+        }
+
         // Show success message
         showNotification(
             `Connected to ${llmChatState.selectedServerName}`,
@@ -22371,6 +22379,11 @@ async function disconnectLLMChat() {
             toolsBadge.classList.add("hidden");
         }
 
+        const modelBadge = document.getElementById("llm-model-badge");
+        if (modelBadge) {
+            modelBadge.classList.add("hidden");
+        }
+
         const connectBtn = document.getElementById("llm-connect-btn");
         if (connectBtn) {
             connectBtn.classList.remove("hidden");
@@ -22393,6 +22406,19 @@ async function disconnectLLMChat() {
             configToggle.disabled = false;
             configToggle.classList.remove("opacity-50", "cursor-not-allowed");
             configToggle.removeAttribute("title");
+        }
+
+        // Re-enable server dropdown
+        const serverDropdownBtn = document.getElementById(
+            "llm-server-dropdown-btn",
+        );
+        if (serverDropdownBtn) {
+            serverDropdownBtn.disabled = false;
+            serverDropdownBtn.classList.remove(
+                "opacity-50",
+                "cursor-not-allowed",
+            );
+            serverDropdownBtn.removeAttribute("title");
         }
 
         // Clear messages
