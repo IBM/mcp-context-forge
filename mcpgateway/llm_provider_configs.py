@@ -5,7 +5,15 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Keval Mahajan
 
 LLM Provider-Specific Configuration Definitions.
-This module defines the specific configuration parameters required for each LLM provider type.
+
+This module contains Pydantic models that define configuration parameters
+required for different LLM providers. Each provider
+has its own configuration schema to capture authentication details,
+regional settings, deployment identifiers, and provider-specific options.
+
+These configuration objects are intended to be used by the MCP Gateway
+to initialize and manage provider clients in a consistent and type-safe
+manner.
 """
 
 # Standard
@@ -14,14 +22,22 @@ from typing import Any, Dict, List, Optional
 # Third-Party
 from pydantic import BaseModel, Field
 
-
 # ---------------------------------------------------------------------------
 # Provider-Specific Configuration Models
 # ---------------------------------------------------------------------------
 
 
 class AWSBedrockConfig(BaseModel):
-    """AWS Bedrock-specific configuration."""
+    """AWS Bedrock-specific configuration.
+
+    Attributes:
+        region: AWS region where Bedrock is hosted (e.g., "us-east-1").
+        access_key_id: AWS access key ID. Optional if using IAM roles.
+        secret_access_key: AWS secret access key. Optional if using IAM roles.
+        session_token: AWS session token for temporary credentials.
+        profile_name: AWS profile name from ~/.aws/credentials.
+
+    """
 
     region: str = Field(..., description="AWS region (e.g., us-east-1)")
     access_key_id: Optional[str] = Field(None, description="AWS access key ID (optional if using IAM role)")
@@ -31,7 +47,16 @@ class AWSBedrockConfig(BaseModel):
 
 
 class IBMWatsonXConfig(BaseModel):
-    """IBM Watson X AI-specific configuration."""
+    """IBM Watson X AI-specific configuration.
+
+    Attributes:
+        project_id: Watson X project ID.
+        space_id: Watson X deployment space ID.
+        deployment_id: Deployment ID for a specific model deployment.
+        instance_id: Watson X service instance ID.
+        version: Watson X API version string.
+        url: Watson X service URL, overriding the default API base.
+    """
 
     project_id: Optional[str] = Field(None, description="Watson X project ID")
     space_id: Optional[str] = Field(None, description="Watson X deployment space ID")
@@ -42,7 +67,13 @@ class IBMWatsonXConfig(BaseModel):
 
 
 class AzureOpenAIConfig(BaseModel):
-    """Azure OpenAI-specific configuration."""
+    """Azure OpenAI-specific configuration.
+
+    Attributes:
+        deployment_name: Azure OpenAI deployment name.
+        resource_name: Azure OpenAI resource name.
+        api_version: Azure OpenAI API version.
+    """
 
     deployment_name: str = Field(..., description="Azure OpenAI deployment name")
     resource_name: str = Field(..., description="Azure resource name")
@@ -50,7 +81,14 @@ class AzureOpenAIConfig(BaseModel):
 
 
 class GoogleVertexAIConfig(BaseModel):
-    """Google Vertex AI-specific configuration."""
+    """Google Vertex AI-specific configuration.
+
+    Attributes:
+        project_id: Google Cloud project ID.
+        location: Google Cloud region or location.
+        credentials_path: Path to a service account JSON credentials file.
+        credentials_json: Service account credentials as a JSON string.
+    """
 
     project_id: str = Field(..., description="Google Cloud project ID")
     location: str = Field(default="us-central1", description="Google Cloud region/location")
@@ -59,19 +97,34 @@ class GoogleVertexAIConfig(BaseModel):
 
 
 class AnthropicConfig(BaseModel):
-    """Anthropic-specific configuration."""
+    """Anthropic-specific configuration.
+
+    Attributes:
+        anthropic_version: Anthropic API version identifier.
+    """
 
     anthropic_version: str = Field(default="2023-06-01", description="Anthropic API version header")
 
 
 class CohereConfig(BaseModel):
-    """Cohere-specific configuration."""
+    """Cohere-specific configuration.
+
+    Attributes:
+        truncate: Truncation strategy to apply. Valid values include
+            "NONE", "START", or "END".
+    """
 
     truncate: Optional[str] = Field(None, description="Truncation strategy: NONE, START, END")
 
 
 class HuggingFaceConfig(BaseModel):
-    """Hugging Face-specific configuration."""
+    """Hugging Face-specific configuration.
+
+    Attributes:
+        task: Task type (e.g., "text-generation", "conversational").
+        use_cache: Whether to use cached inference results.
+        wait_for_model: Whether to wait if the model is still loading.
+    """
 
     task: Optional[str] = Field(None, description="Task type (e.g., text-generation, conversational)")
     use_cache: bool = Field(default=True, description="Whether to use cached results")
@@ -84,7 +137,27 @@ class HuggingFaceConfig(BaseModel):
 
 
 class ProviderFieldDefinition(BaseModel):
-    """Definition of a provider-specific configuration field for UI rendering."""
+    """Definition of a provider-specific configuration field for UI rendering.
+
+    This model represents metadata for a single configuration field used
+    by a provider. It is primarily intended to drive dynamic UI generation
+    and validation for provider configuration forms.
+
+    Attributes:
+        name: Field name used as the key in the provider configuration dict.
+        label: Human-readable display label for the field.
+        field_type: Input type for the field (e.g., "text", "password",
+            "number", "select", "textarea").
+        required: Whether this field is mandatory.
+        default_value: Default value for the field, if any.
+        placeholder: Placeholder text shown in the input field.
+        help_text: Additional help or description displayed to the user.
+        options: List of selectable options for "select" field types.
+            Each option is typically a dict with keys like "label" and "value".
+        validation_pattern: Regular expression used to validate input.
+        min_value: Minimum allowed value for numeric fields.
+        max_value: Maximum allowed value for numeric fields.
+    """
 
     name: str = Field(..., description="Field name (key in config dict)")
     label: str = Field(..., description="Display label for the field")
@@ -100,7 +173,27 @@ class ProviderFieldDefinition(BaseModel):
 
 
 class ProviderConfigDefinition(BaseModel):
-    """Complete configuration definition for a provider type."""
+    """Complete configuration definition for an LLM provider type.
+
+    This model defines all metadata required to describe how a provider
+    should be configured, including API requirements and provider-specific
+    configuration fields. It is commonly used to drive UI rendering,
+    validation, and onboarding flows for new providers.
+
+    Attributes:
+        provider_type: Unique identifier for the provider (e.g., "openai",
+            "azure_openai", "aws_bedrock").
+        display_name: Human-readable provider name displayed in the UI.
+        description: Short description of the provider and its purpose.
+        requires_api_key: Whether the provider requires an API key.
+        api_key_label: Label used when displaying the API key input field.
+        api_key_help: Help text shown alongside the API key input field.
+        requires_api_base: Whether the provider requires an API base URL.
+        api_base_default: Default API base URL, if applicable.
+        api_base_help: Help text shown for the API base URL field.
+        config_fields: List of provider-specific configuration field
+            definitions used for UI rendering and validation.
+    """
 
     provider_type: str
     display_name: str

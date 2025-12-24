@@ -226,12 +226,12 @@ class LLMProxyService:
             Tuple of (url, headers, body).
         """
         api_key = self._get_api_key(provider)
-        
+
         # Get Azure-specific config
         deployment_name = provider.config.get("deployment_name") or provider.config.get("deployment") or model.model_id
         resource_name = provider.config.get("resource_name", "")
         api_version = provider.config.get("api_version") or provider.api_version or "2024-02-15-preview"
-        
+
         # Build base URL from resource name if not provided
         if not provider.api_base and resource_name:
             base_url = f"https://{resource_name}.openai.azure.com"

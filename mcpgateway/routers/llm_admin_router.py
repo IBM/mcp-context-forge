@@ -640,10 +640,7 @@ async def get_provider_configs(
     from mcpgateway.llm_provider_configs import get_all_provider_configs
 
     configs = get_all_provider_configs()
-    return {
-        provider_type: config.model_dump()
-        for provider_type, config in configs.items()
-    }
+    return {provider_type: config.model_dump() for provider_type, config in configs.items()}
 
 
 @llm_admin_router.post("/providers/{provider_id}/fetch-models")

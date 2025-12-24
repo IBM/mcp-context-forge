@@ -91,17 +91,18 @@ class LLMProviderBase(BaseModel):
 
     def validate_provider_config(self) -> None:
         """Validate provider-specific configuration based on provider type.
-        
+
         Raises:
             ValueError: If required provider-specific fields are missing.
         """
         # Import here to avoid circular dependency
-        from mcpgateway.llm_provider_configs import get_provider_config
-        
+        # First-Party
+        from mcpgateway.llm_provider_configs import get_provider_config  # pylint: disable=import-outside-toplevel
+
         provider_def = get_provider_config(self.provider_type.value if isinstance(self.provider_type, LLMProviderTypeEnum) else self.provider_type)
         if not provider_def:
             return
-        
+
         # Validate required config fields
         for field_def in provider_def.config_fields:
             if field_def.required and field_def.name not in self.config:
