@@ -41,6 +41,9 @@ def get_db():
     Yields:
         Session: SQLAlchemy database session
 
+    Raises:
+        Exception: Re-raises any exception after rolling back the transaction.
+
     Examples:
         >>> db_gen = get_db()
         >>> db = next(db_gen)

@@ -3951,6 +3951,9 @@ def get_db() -> Generator[Session, Any, None]:
     Yields:
         SessionLocal: A SQLAlchemy database session.
 
+    Raises:
+        Exception: Re-raises any exception after rolling back the transaction.
+
     Examples:
         >>> from mcpgateway.db import get_db
         >>> gen = get_db()

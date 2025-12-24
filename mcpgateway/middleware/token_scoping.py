@@ -384,6 +384,7 @@ class TokenScopingMiddleware:
 
             return True
         finally:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
             db.close()
 
     def _check_resource_team_ownership(self, request_path: str, token_teams: list) -> bool:  # pylint: disable=too-many-return-statements
@@ -652,6 +653,7 @@ class TokenScopingMiddleware:
             # Fail securely - deny access on error
             return False
         finally:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
             db.close()
 
     async def __call__(self, request: Request, call_next):

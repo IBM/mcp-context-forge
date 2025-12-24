@@ -1333,6 +1333,12 @@ class ResourceService:
                                 headers = {}
 
                         # ═══════════════════════════════════════════════════════════════════════════
+                        # Extract gateway data to local variables BEFORE releasing DB connection
+                        # ═══════════════════════════════════════════════════════════════════════════
+                        gateway_url = gateway.url
+                        gateway_transport = gateway.transport
+
+                        # ═══════════════════════════════════════════════════════════════════════════
                         # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls
                         # This prevents connection pool exhaustion during slow upstream requests.
                         # All needed data has been extracted to local variables above.
@@ -1447,10 +1453,10 @@ class ResourceService:
                             span.set_attribute("duration.ms", (time.monotonic() - start_time) * 1000)
 
                         resource_text = ""
-                        if (gateway.transport).lower() == "sse":
-                            resource_text = await connect_to_sse_session(server_url=gateway.url, authentication=headers, uri=uri)
+                        if (gateway_transport).lower() == "sse":
+                            resource_text = await connect_to_sse_session(server_url=gateway_url, authentication=headers, uri=uri)
                         else:
-                            resource_text = await connect_to_streamablehttp_server(server_url=gateway.url, authentication=headers, uri=uri)
+                            resource_text = await connect_to_streamablehttp_server(server_url=gateway_url, authentication=headers, uri=uri)
                         success = True  # Mark as successful before returning
                         return resource_text
                     except Exception as e:

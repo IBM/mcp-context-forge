@@ -327,6 +327,9 @@ async def get_db() -> AsyncGenerator[Session, Any]:
         A database session instance from SessionLocal.
         Ensures the session is closed after use.
 
+    Raises:
+        Exception: Re-raises any exception after rolling back the transaction.
+
     Examples:
         >>> # Test database context manager
         >>> import asyncio

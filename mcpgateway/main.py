@@ -1374,6 +1374,9 @@ def get_db():
     Yields:
         Session: A SQLAlchemy session object for interacting with the database.
 
+    Raises:
+        Exception: Re-raises any exception after rolling back the transaction.
+
     Ensures:
         The database session is closed after the request completes, even in the case of an exception.
 
