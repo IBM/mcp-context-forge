@@ -44,6 +44,15 @@ spec:
 
           env:
             # ---------- POSTGRES ----------
+            {{- if .Values.postgres.external.enabled }}
+            # External database: use provided DATABASE_URL directly from secret
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.fullname" . }}-external-db-secret
+                  key: DATABASE_URL
+            {{- else }}
+            # In-cluster database: construct DATABASE_URL from components
             - name: POSTGRES_HOST
               value: {{ printf "%s-postgres" (include "mcp-stack.fullname" .) }}
             - name: POSTGRES_PORT
@@ -60,10 +69,10 @@ spec:
                 secretKeyRef:
                   name: {{ include "mcp-stack.postgresSecretName" . | trim }}
                   key: POSTGRES_PASSWORD
-            # ---------- DERIVED URLS ----------
             - name: DATABASE_URL
               value: >-
                 postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)
+            {{- end }}
             # ---------- LOGGING ----------
             - name: LOG_LEVEL
               value: "INFO"

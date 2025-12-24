@@ -619,6 +619,15 @@ migration:
 postgres:
   enabled: true
 
+  # ─── External Database Configuration (RDS, Cloud SQL, etc.) ───
+  # Set external.enabled: true to use an external managed database
+  # instead of the in-cluster PostgreSQL deployment.
+  external:
+    enabled: false                   # Set to true to use external database
+    databaseUrl: ""                  # Full PostgreSQL connection string
+                                    # Example: "postgresql://user:pass@my-rds.us-east-1.rds.amazonaws.com:5432/mydb"
+                                    # Note: This value is stored in a Kubernetes Secret for security
+
   image:
     repository: postgres
     tag: "17"

@@ -946,6 +946,23 @@
           "description": "Enable PostgreSQL",
           "default": true
         },
+        "external": {
+          "type": "object",
+          "description": "External database configuration (RDS, Cloud SQL, etc.)",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Use external managed database instead of in-cluster PostgreSQL",
+              "default": false
+            },
+            "databaseUrl": {
+              "type": "string",
+              "description": "Full PostgreSQL connection string (e.g., postgresql://user:pass@host:5432/db)",
+              "default": ""
+            }
+          },
+          "additionalProperties": false
+        },
         "image": {
           "type": "object",
           "description": "PostgreSQL image configuration",
