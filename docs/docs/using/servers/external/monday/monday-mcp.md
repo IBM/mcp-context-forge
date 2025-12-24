@@ -46,7 +46,7 @@ Before integrating monday.com MCP Server with MCP Gateway, ensure you have:
 3. Configure your OAuth application:
    - **App Name**: Choose a descriptive name (e.g., "MCP Gateway Integration")
    - **Redirect URI**: Set to your MCP Gateway callback URL (e.g., `https://your-gateway.com/oauth/callback`)
-   - **Scopes**: Select required permissions (see [Scope Configuration](#scope-configuration))
+   - **Scopes**: Select required permissions (see [Required Permissions](#required-permissions))
 4. Save your **Client ID** and **Client Secret** securely
 
 ### Required Permissions
@@ -303,6 +303,7 @@ Create a new board in a workspace.
 ```
 
 **Parameters:**
+
 - `workspace_id` (required): Target workspace ID
 - `board_name` (required): Name of the new board
 - `board_kind` (optional): Board visibility - "public", "private", or "share"
@@ -378,6 +379,7 @@ Add a new item to a board.
 ```
 
 **Parameters:**
+
 - `board_id` (required): Target board ID
 - `group_id` (optional): Group/section to add item to
 - `item_name` (required): Name of the item
@@ -471,6 +473,7 @@ Add a new column to a board.
 ```
 
 **Column Types:**
+
 - `text` - Simple text field
 - `status` - Status labels with colors
 - `date` - Date picker
@@ -540,6 +543,7 @@ List users in the workspace.
 ```
 
 **Parameters:**
+
 - `workspace_id` (optional): Filter by workspace
 - `kind` (optional): "all", "non_guests", "guests"
 - `limit` (optional): Maximum number of users to return
@@ -1065,6 +1069,7 @@ report = asyncio.run(generate_monthly_report("12345678", "2024-12"))
 #### Problem: Authorization fails with "insufficient_scope" error
 
 **Solution:**
+
 1. Verify that all required scopes are included in your OAuth configuration
 2. Re-authorize the application with updated scopes
 3. Check that your monday.com account has the necessary permissions
@@ -1088,6 +1093,7 @@ curl -X PATCH http://localhost:4444/servers/monday-official \
 #### Problem: "invalid_client" error during OAuth flow
 
 **Solution:**
+
 1. Verify `MONDAY_CLIENT_ID` and `MONDAY_CLIENT_SECRET` are correct
 2. Ensure redirect URI matches exactly what's configured in monday.com
 3. Check that the OAuth app is active in your monday.com account
@@ -1097,6 +1103,7 @@ curl -X PATCH http://localhost:4444/servers/monday-official \
 #### Problem: SSE connection drops frequently
 
 **Solution:**
+
 1. Increase timeout settings in server configuration
 2. Implement reconnection logic with exponential backoff
 3. Check network stability and firewall rules
@@ -1136,6 +1143,7 @@ async def connect_with_retry(gateway, server_id, max_retries=5):
 #### Problem: "Connection timeout" errors
 
 **Solution:**
+
 1. Check monday.com service status at [status.monday.com](https://status.monday.com)
 2. Verify network connectivity to `mcp.monday.com`
 3. Review MCP Gateway logs for detailed error messages
@@ -1153,6 +1161,7 @@ docker logs mcp-gateway --tail 100 | grep monday
 #### Problem: "rate_limit_exceeded" errors
 
 **Solution:**
+
 1. Implement request throttling in your application
 2. Use batch operations where possible
 3. Cache frequently accessed data
@@ -1198,6 +1207,7 @@ class RateLimitedMondayClient:
 #### Problem: Quota exceeded for workspace
 
 **Solution:**
+
 1. Review your monday.com plan limits
 2. Optimize queries to reduce API calls
 3. Use webhooks instead of polling for updates
@@ -1208,6 +1218,7 @@ class RateLimitedMondayClient:
 #### Problem: "board_not_found" or "access_denied" errors
 
 **Solution:**
+
 1. Verify the user has access to the workspace and board
 2. Check board visibility settings (public vs. private)
 3. Ensure the OAuth token has the correct workspace scope
@@ -1234,6 +1245,7 @@ async def verify_board_access(gateway, board_id):
 #### Problem: Webhook events not received
 
 **Solution:**
+
 1. Verify webhook endpoint is publicly accessible
 2. Check webhook signature validation
 3. Ensure webhook is properly registered in monday.com
@@ -1497,14 +1509,14 @@ networks:
 
 - [monday.com Community](https://community.monday.com) - Community forum and discussions
 - [monday.com Support](https://support.monday.com) - Official support portal
-- [MCP Gateway GitHub](https://github.com/crivetimihai/mcp-gateway) - Report issues and contribute
+- [MCP Gateway GitHub](https://github.com/IBM/mcp-context-forge) - Report issues and contribute
 - [monday.com Status](https://status.monday.com) - Service status and incidents
 
 ### Tutorials and Examples
 
-- [MCP Gateway Tutorials](../../../tutorials/index.md) - Getting started guides
-- [API Usage Examples](../../../manage/api-usage.md) - API integration examples
-- [Deployment Guide](../../../deployment/index.md) - Deployment best practices
+- [MCP Gateway Tutorials](../../../../tutorials/index.md) - Getting started guides
+- [API Usage Examples](../../../../manage/api-usage.md) - API integration examples
+- [Deployment Guide](../../../../deployment/index.md) - Deployment best practices
 
 ## Next Steps
 
@@ -1516,4 +1528,4 @@ networks:
 6. **Set up webhooks**: Enable real-time updates for your application
 7. **Monitor and optimize**: Track usage and optimize performance
 
-For additional help, consult the [FAQ](../../faq/index.md) or reach out to the community.
+For additional help, consult the [FAQ](../../../../faq/index.md) or reach out to the community.
