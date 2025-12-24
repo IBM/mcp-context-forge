@@ -34,9 +34,9 @@ import jsonschema
 from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index, Integer, JSON, make_url, MetaData, select, String, Table, Text, UniqueConstraint, VARCHAR
 from sqlalchemy.engine import Engine
 from sqlalchemy.event import listen
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
 from sqlalchemy.ext.hybrid import hybrid_property
-from sqlalchemy.orm import DeclarativeBase, Mapped, joinedload, mapped_column, relationship, Session, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, joinedload, Mapped, mapped_column, relationship, Session, sessionmaker
 from sqlalchemy.orm.attributes import get_history
 from sqlalchemy.pool import QueuePool
 
@@ -299,12 +299,7 @@ def _refresh_tool_names_batched(session: Session, batch_size: int) -> None:
     separator = settings.gateway_tool_name_separator
 
     while True:
-        stmt = (
-            select(Tool)
-            .options(joinedload(Tool.gateway))
-            .order_by(Tool.id)
-            .limit(batch_size)
-        )
+        stmt = select(Tool).options(joinedload(Tool.gateway)).order_by(Tool.id).limit(batch_size)
         if last_id is not None:
             stmt = stmt.where(Tool.id > last_id)
 
@@ -356,17 +351,21 @@ def refresh_slugs_on_startup(batch_size: Optional[int] = None) -> None:
             # Skip if tables don't exist yet (fresh database)
             try:
                 _refresh_gateway_slugs_batched(session, effective_batch_size)
-            except Exception:
-                logger.info("Gateway table not found, skipping slug refresh")
+            except (OperationalError, ProgrammingError) as e:
+                # Table doesn't exist yet - expected on fresh database
+                logger.info("Gateway table not found, skipping slug refresh: %s", e)
                 return
 
             try:
                 _refresh_tool_names_batched(session, effective_batch_size)
-            except Exception:
-                logger.info("Tool table not found, skipping tool name refresh")
+            except (OperationalError, ProgrammingError) as e:
+                # Table doesn't exist yet - expected on fresh database
+                logger.info("Tool table not found, skipping tool name refresh: %s", e)
 
+    except SQLAlchemyError as e:
+        logger.warning("Failed to refresh slugs on startup (database error): %s", e)
     except Exception as e:
-        logger.warning("Failed to refresh slugs on startup: %s", e)
+        logger.warning("Failed to refresh slugs on startup (unexpected error): %s", e)
 
 
 class Base(DeclarativeBase):
