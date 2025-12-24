@@ -342,6 +342,11 @@ def refresh_slugs_on_startup(batch_size: Optional[int] = None) -> None:
     This implementation avoids loading all rows into memory at once by
     streaming through the tables in batches and eager-loading tool.gateway
     relationships to prevent N+1 query patterns.
+
+    Args:
+        batch_size: Optional maximum number of rows to process per batch. If
+            not provided, the value is taken from
+            ``settings.slug_refresh_batch_size`` with a default of ``1000``.
     """
 
     effective_batch_size = batch_size or getattr(settings, "slug_refresh_batch_size", 1000)
