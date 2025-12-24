@@ -88,6 +88,9 @@ def _log_auth_event(
 def get_db() -> Generator[Session, Never, None]:
     """Database dependency.
 
+    Commits the transaction on successful completion to avoid implicit rollbacks
+    for read-only operations. Rolls back explicitly on exception.
+
     Yields:
         Session: SQLAlchemy database session
 
@@ -102,6 +105,10 @@ def get_db() -> Generator[Session, Never, None]:
     db = SessionLocal()
     try:
         yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 

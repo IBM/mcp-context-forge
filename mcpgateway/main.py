@@ -1368,6 +1368,9 @@ def get_db():
     """
     Dependency function to provide a database session.
 
+    Commits the transaction on successful completion to avoid implicit rollbacks
+    for read-only operations. Rolls back explicitly on exception.
+
     Yields:
         Session: A SQLAlchemy session object for interacting with the database.
 
@@ -1393,6 +1396,10 @@ def get_db():
     db = SessionLocal()
     try:
         yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 

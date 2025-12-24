@@ -209,14 +209,14 @@ async def connect_monday():
         base_url="http://localhost:4444",
         bearer_token=os.getenv("MCPGATEWAY_BEARER_TOKEN")
     )
-    
+
     # Connect to monday.com server
     await gateway.connect_server("monday-official")
-    
+
     # List available tools
     tools = await gateway.list_tools("monday-official")
     print(f"Available monday.com tools: {len(tools)}")
-    
+
     return gateway
 
 # Run connection
@@ -729,7 +729,7 @@ async def setup_project_board():
         base_url="http://localhost:4444",
         bearer_token=os.getenv("MCPGATEWAY_BEARER_TOKEN")
     )
-    
+
     # Create a new board
     board = await gateway.call_tool(
         server="monday-official",
@@ -741,10 +741,10 @@ async def setup_project_board():
             "description": "Complete website redesign for Q1 2025"
         }
     )
-    
+
     board_id = board["id"]
     print(f"Created board: {board_id}")
-    
+
     # Add custom columns
     await gateway.call_tool(
         server="monday-official",
@@ -762,7 +762,7 @@ async def setup_project_board():
             }
         }
     )
-    
+
     # Create project tasks
     tasks = [
         "Design mockups",
@@ -771,7 +771,7 @@ async def setup_project_board():
         "Testing and QA",
         "Deployment"
     ]
-    
+
     for task_name in tasks:
         item = await gateway.call_tool(
             server="monday-official",
@@ -786,7 +786,7 @@ async def setup_project_board():
             }
         )
         print(f"Created task: {item['name']}")
-    
+
     return board_id
 
 # Run the setup
@@ -802,7 +802,7 @@ async def automate_status_workflow(board_id):
         base_url="http://localhost:4444",
         bearer_token=os.getenv("MCPGATEWAY_BEARER_TOKEN")
     )
-    
+
     # Create automation: notify team when status changes to "Done"
     automation = await gateway.call_tool(
         server="monday-official",
@@ -820,9 +820,9 @@ async def automate_status_workflow(board_id):
             }
         }
     )
-    
+
     print(f"Automation created: {automation['id']}")
-    
+
     # Create automation: move to "Completed" group when done
     await gateway.call_tool(
         server="monday-official",
@@ -851,7 +851,7 @@ async def track_team_progress(board_id):
         base_url="http://localhost:4444",
         bearer_token=os.getenv("MCPGATEWAY_BEARER_TOKEN")
     )
-    
+
     # Get all items from the board
     board = await gateway.call_tool(
         server="monday-official",
@@ -861,7 +861,7 @@ async def track_team_progress(board_id):
             "include_items": True
         }
     )
-    
+
     # Track time for each in-progress item
     for item in board["items"]:
         if item["column_values"]["status"] == "Working on it":
@@ -876,7 +876,7 @@ async def track_team_progress(board_id):
                     "notes": "Development work"
                 }
             )
-            
+
             # Update progress
             await gateway.call_tool(
                 server="monday-official",
@@ -888,7 +888,7 @@ async def track_team_progress(board_id):
                     }
                 }
             )
-    
+
     # Generate progress report
     report = await gateway.call_tool(
         server="monday-official",
@@ -899,7 +899,7 @@ async def track_team_progress(board_id):
             "include_charts": True
         }
     )
-    
+
     print(f"Team Progress Report:")
     print(f"- Total Items: {report['total_items']}")
     print(f"- Completed: {report['completed_items']}")
@@ -921,14 +921,14 @@ async def verify_monday_signature(request: Request, secret: str) -> bool:
     signature = request.headers.get("X-Monday-Signature")
     if not signature:
         return False
-    
+
     body = await request.body()
     expected_signature = hmac.new(
         secret.encode(),
         body,
         hashlib.sha256
     ).hexdigest()
-    
+
     return hmac.compare_digest(signature, expected_signature)
 
 @app.post("/webhooks/monday")
@@ -938,22 +938,22 @@ async def handle_monday_webhook(request: Request):
     secret = os.getenv("MONDAY_WEBHOOK_SECRET")
     if not await verify_monday_signature(request, secret):
         raise HTTPException(status_code=401, detail="Invalid signature")
-    
+
     # Parse webhook payload
     payload = await request.json()
     event_type = payload.get("event", {}).get("type")
-    
+
     # Handle different event types
     if event_type == "item_created":
         item = payload["event"]["pulseId"]
         print(f"New item created: {item}")
-        
+
         # Automatically assign to team member
         gateway = MCPGatewayClient(
             base_url="http://localhost:4444",
             bearer_token=os.getenv("MCPGATEWAY_BEARER_TOKEN")
         )
-        
+
         await gateway.call_tool(
             server="monday-official",
             tool="assign_user_to_item",
@@ -962,17 +962,17 @@ async def handle_monday_webhook(request: Request):
                 "user_id": "12345"
             }
         )
-    
+
     elif event_type == "status_changed":
         item_id = payload["event"]["pulseId"]
         new_status = payload["event"]["value"]["label"]["text"]
         print(f"Status changed to: {new_status}")
-        
+
         # Send notification or trigger other actions
         if new_status == "Done":
             # Archive completed item
             pass
-    
+
     return {"status": "processed"}
 ```
 
@@ -985,7 +985,7 @@ async def generate_monthly_report(workspace_id: str, month: str):
         base_url="http://localhost:4444",
         bearer_token=os.getenv("MCPGATEWAY_BEARER_TOKEN")
     )
-    
+
     # Get all boards in workspace
     boards = await gateway.call_tool(
         server="monday-official",
@@ -994,7 +994,7 @@ async def generate_monthly_report(workspace_id: str, month: str):
             "workspace_id": workspace_id
         }
     )
-    
+
     report_data = {
         "month": month,
         "boards": [],
@@ -1002,7 +1002,7 @@ async def generate_monthly_report(workspace_id: str, month: str):
         "completed_items": 0,
         "total_hours": 0
     }
-    
+
     # Analyze each board
     for board in boards:
         board_report = await gateway.call_tool(
@@ -1017,7 +1017,7 @@ async def generate_monthly_report(workspace_id: str, month: str):
                 }
             }
         )
-        
+
         # Get time tracking data
         time_data = await gateway.call_tool(
             server="monday-official",
@@ -1028,24 +1028,24 @@ async def generate_monthly_report(workspace_id: str, month: str):
                 "end_date": f"{month}-31"
             }
         )
-        
+
         report_data["boards"].append({
             "name": board["name"],
             "items": board_report["total_items"],
             "completed": board_report["completed_items"],
             "hours": sum(entry["hours"] for entry in time_data)
         })
-        
+
         report_data["total_items"] += board_report["total_items"]
         report_data["completed_items"] += board_report["completed_items"]
         report_data["total_hours"] += sum(entry["hours"] for entry in time_data)
-    
+
     # Calculate metrics
     report_data["completion_rate"] = (
         report_data["completed_items"] / report_data["total_items"] * 100
         if report_data["total_items"] > 0 else 0
     )
-    
+
     print(f"\n📊 Monthly Report for {month}")
     print(f"{'='*50}")
     print(f"Total Items: {report_data['total_items']}")
@@ -1055,7 +1055,7 @@ async def generate_monthly_report(workspace_id: str, month: str):
     print(f"\nBoard Breakdown:")
     for board in report_data["boards"]:
         print(f"  - {board['name']}: {board['completed']}/{board['items']} items, {board['hours']:.1f} hours")
-    
+
     return report_data
 
 # Generate report
@@ -1173,28 +1173,28 @@ import time
 
 class RateLimitedMondayClient:
     """Client with built-in rate limiting"""
-    
+
     def __init__(self, gateway, requests_per_minute=60):
         self.gateway = gateway
         self.semaphore = Semaphore(requests_per_minute)
         self.request_times = []
-    
+
     async def call_tool(self, tool, arguments):
         """Call tool with rate limiting"""
         async with self.semaphore:
             # Remove old timestamps
             current_time = time.time()
             self.request_times = [
-                t for t in self.request_times 
+                t for t in self.request_times
                 if current_time - t < 60
             ]
-            
+
             # Wait if at limit
             if len(self.request_times) >= 60:
                 wait_time = 60 - (current_time - self.request_times[0])
                 if wait_time > 0:
                     await asyncio.sleep(wait_time)
-            
+
             # Make request
             self.request_times.append(time.time())
             return await self.gateway.call_tool(
@@ -1287,12 +1287,12 @@ servers:
     name: "monday.com MCP Server"
     description: "Official monday.com productivity and project management tools"
     enabled: true
-    
+
     # Transport configuration
     transport:
       type: "sse"
       endpoint: "https://mcp.monday.com/sse"
-      
+
       # OAuth2.1 authentication
       auth:
         type: "oauth2"
@@ -1308,11 +1308,11 @@ servers:
           - "workspaces:read"
           - "workspaces:write"
           - "webhooks:write"
-        
+
         # Token refresh settings
         refresh_before_expiry: 300  # Refresh 5 minutes before expiry
         auto_refresh: true
-    
+
     # Server settings
     settings:
       timeout: 60
@@ -1320,22 +1320,22 @@ servers:
       retry_delay: 2
       rate_limit_handling: true
       workspace_id: "${MONDAY_WORKSPACE_ID}"
-      
+
       # Connection pool
       max_connections: 10
       connection_timeout: 30
-      
+
       # Caching
       cache_enabled: true
       cache_ttl: 300
-    
+
     # Tags for organization
     tags:
       - "productivity"
       - "project-management"
       - "collaboration"
       - "official"
-    
+
     # Metadata
     metadata:
       provider: "monday.com"
@@ -1352,50 +1352,50 @@ webhooks:
   - id: "monday-item-events"
     server_id: "monday-official"
     endpoint: "https://mcp.monday.com/webhooks"
-    
+
     # Events to subscribe to
     events:
       - "item_created"
       - "item_updated"
       - "item_deleted"
       - "item_moved"
-    
+
     # Authentication
     auth:
       type: "signature"
       secret: "${MONDAY_WEBHOOK_SECRET}"
       header: "X-Monday-Signature"
       algorithm: "sha256"
-    
+
     # Delivery settings
     settings:
       retry_attempts: 3
       retry_delay: 5
       timeout: 30
       verify_ssl: true
-      
+
       # Batch settings
       batch_enabled: false
       batch_size: 10
       batch_timeout: 5
-  
+
   - id: "monday-board-events"
     server_id: "monday-official"
     endpoint: "https://mcp.monday.com/webhooks"
-    
+
     events:
       - "board_created"
       - "board_updated"
       - "board_deleted"
       - "column_created"
       - "column_updated"
-    
+
     auth:
       type: "signature"
       secret: "${MONDAY_WEBHOOK_SECRET}"
       header: "X-Monday-Signature"
       algorithm: "sha256"
-    
+
     settings:
       retry_attempts: 3
       timeout: 30
@@ -1447,7 +1447,7 @@ services:
     networks:
       - mcp-network
     restart: unless-stopped
-    
+
     # Health check
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:4444/health"]

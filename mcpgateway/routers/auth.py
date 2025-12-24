@@ -35,6 +35,9 @@ auth_router = APIRouter(prefix="/auth", tags=["Authentication"])
 def get_db():
     """Database dependency.
 
+    Commits the transaction on successful completion to avoid implicit rollbacks
+    for read-only operations. Rolls back explicitly on exception.
+
     Yields:
         Session: SQLAlchemy database session
 
@@ -47,6 +50,10 @@ def get_db():
     db = SessionLocal()
     try:
         yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 

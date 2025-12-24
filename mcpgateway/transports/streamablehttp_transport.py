@@ -320,6 +320,9 @@ async def get_db() -> AsyncGenerator[Session, Any]:
     """
     Asynchronous context manager for database sessions.
 
+    Commits the transaction on successful completion to avoid implicit rollbacks
+    for read-only operations. Rolls back explicitly on exception.
+
     Yields:
         A database session instance from SessionLocal.
         Ensures the session is closed after use.
@@ -337,6 +340,10 @@ async def get_db() -> AsyncGenerator[Session, Any]:
     db = SessionLocal()
     try:
         yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 
