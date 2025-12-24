@@ -1316,6 +1316,7 @@ class ToolService:
         cursor: Optional[str] = None,
         tags: Optional[List[str]] = None,
         gateway_id: Optional[str] = None,
+        limit: Optional[int] = None,
         _request_headers: Optional[Dict[str, str]] = None,
     ) -> tuple[List[ToolRead], Optional[str]]:
         """
@@ -1329,6 +1330,8 @@ class ToolService:
                 Opaque base64-encoded string containing last item's ID.
             tags (Optional[List[str]]): Filter tools by tags. If provided, only tools with at least one matching tag will be returned.
             gateway_id (Optional[str]): Filter tools by gateway ID. Accepts the literal value 'null' to match NULL gateway_id.
+            limit (Optional[int]): Maximum number of tools to return. Use 0 for all tools (no limit).
+                If not specified, uses pagination_default_page_size.
             _request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
                 Currently unused but kept for API consistency. Defaults to None.
 
@@ -1350,7 +1353,14 @@ class ToolService:
             >>> isinstance(tools, list)
             True
         """
-        page_size = settings.pagination_default_page_size
+        # Determine page size based on limit parameter
+        # limit=None: use default, limit=0: no limit (all), limit>0: use specified (capped)
+        if limit is None:
+            page_size = settings.pagination_default_page_size
+        elif limit == 0:
+            page_size = None  # No limit - fetch all
+        else:
+            page_size = min(limit, settings.pagination_max_page_size)
 
         # Decode cursor to get last_id if provided
         last_id = None
@@ -1391,12 +1401,13 @@ class ToolService:
             else:
                 query = query.where(DbTool.gateway_id == gateway_id)
 
-        # Fetch page_size + 1 to determine if there are more results
-        query = query.limit(page_size + 1)
+        # Fetch page_size + 1 to determine if there are more results (unless no limit)
+        if page_size is not None:
+            query = query.limit(page_size + 1)
         rows = db.execute(query).all()
 
-        # Check if there are more results
-        has_more = len(rows) > page_size
+        # Check if there are more results (only when paginating)
+        has_more = page_size is not None and len(rows) > page_size
         if has_more:
             rows = rows[:page_size]  # Trim to page_size
 
@@ -1500,6 +1511,7 @@ class ToolService:
         cursor: Optional[str] = None,
         gateway_id: Optional[str] = None,
         tags: Optional[List[str]] = None,
+        limit: Optional[int] = None,
     ) -> tuple[List[ToolRead], Optional[str]]:
         """
         List tools user has access to with team filtering and cursor pagination.
@@ -1515,11 +1527,20 @@ class ToolService:
             cursor: Opaque cursor token for pagination
             gateway_id: Filter tools by gateway ID. Accepts literal 'null' for NULL gateway_id.
             tags: Filter tools by tags (match any)
+            limit: Maximum number of tools to return. Use 0 for all tools (no limit).
+                If not specified, uses pagination_default_page_size.
 
         Returns:
             tuple[List[ToolRead], Optional[str]]: Tools the user has access to and optional next_cursor
         """
-        page_size = settings.pagination_default_page_size
+        # Determine page size based on limit parameter
+        # limit=None: use default, limit=0: no limit (all), limit>0: use specified (capped)
+        if limit is None:
+            page_size = settings.pagination_default_page_size
+        elif limit == 0:
+            page_size = None  # No limit - fetch all
+        else:
+            page_size = min(limit, settings.pagination_max_page_size)
 
         # Decode cursor to get last_id if provided
         last_id = None
@@ -1582,10 +1603,13 @@ class ToolService:
 
         # Execute query with LEFT JOIN for team names in single query
         query_with_join = query.outerjoin(EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True))).add_columns(EmailTeam.name.label("team_name"))
-        rows = db.execute(query_with_join.limit(page_size + 1)).all()
+        if page_size is not None:
+            rows = db.execute(query_with_join.limit(page_size + 1)).all()
+        else:
+            rows = db.execute(query_with_join).all()
 
-        # Check if there are more results
-        has_more = len(rows) > page_size
+        # Check if there are more results (only when paginating)
+        has_more = page_size is not None and len(rows) > page_size
         if has_more:
             rows = rows[:page_size]
 

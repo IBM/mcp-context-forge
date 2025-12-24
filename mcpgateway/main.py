@@ -2564,6 +2564,7 @@ async def list_tools(
     request: Request,
     cursor: Optional[str] = None,
     include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
+    limit: Optional[int] = Query(None, ge=0, description="Maximum number of tools to return. 0 means all (no limit). Default uses pagination_default_page_size."),
     include_inactive: bool = False,
     tags: Optional[str] = None,
     team_id: Optional[str] = Query(None, description="Filter by team ID"),
@@ -2579,6 +2580,8 @@ async def list_tools(
         request (Request): The FastAPI request object for team_id retrieval
         cursor: Pagination cursor for fetching the next set of results
         include_pagination: Whether to include cursor pagination metadata in the response
+        limit: Maximum number of tools to return. Use 0 for all tools (no limit).
+            If not specified, uses pagination_default_page_size (default: 50).
         include_inactive: Whether to include inactive tools in the results
         tags: Comma-separated list of tags to filter by (e.g., "api,data")
         team_id: Optional team ID to filter tools by specific team
@@ -2624,10 +2627,11 @@ async def list_tools(
             cursor=cursor,
             gateway_id=gateway_id,
             tags=tags_list,
+            limit=limit,
         )
     else:
         # Use existing method for backward compatibility when no team filtering
-        data, next_cursor = await tool_service.list_tools(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list, gateway_id=gateway_id)
+        data, next_cursor = await tool_service.list_tools(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list, gateway_id=gateway_id, limit=limit)
 
     if apijsonpath is None:
         if include_pagination:

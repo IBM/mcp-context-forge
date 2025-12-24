@@ -2423,8 +2423,16 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
          }' \
      http://localhost:4444/tools
 
-# List tools
+# List tools (returns first 50 by default)
 curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools
+
+# List tools with filtering and pagination
+curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     "http://localhost:4444/tools?gateway_id=<id>&limit=100&include_pagination=true"
+
+# Get ALL tools (no pagination limit)
+curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     "http://localhost:4444/tools?limit=0"
 
 # Get tool by ID
 curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools/1
