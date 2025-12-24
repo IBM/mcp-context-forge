@@ -34,7 +34,7 @@ def import_service():
     service.prompt_service = AsyncMock()
     service.resource_service = AsyncMock()
     service.root_service = AsyncMock()
-    
+
     # Setup default return values for bulk registration methods
     service.tool_service.register_tools_bulk.return_value = {
         "created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []
@@ -45,7 +45,7 @@ def import_service():
     service.resource_service.register_resources_bulk.return_value = {
         "created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []
     }
-    
+
     return service
 
 
@@ -1625,10 +1625,10 @@ def make_session():
     # Third-Party
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
-    
+
     # First-Party
     from mcpgateway.db import Base
-    
+
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
@@ -1640,11 +1640,11 @@ async def test_register_tools_bulk_creates_and_returns_counts():
     """Test bulk tool registration creates tools and returns correct counts."""
     # Third-Party
     from sqlalchemy import select
-    
+
     # First-Party
     from mcpgateway.db import Tool as DbTool
     from mcpgateway.services.tool_service import ToolService
-    
+
     db = make_session()
     service = ToolService()
     service._notify_tool_added = AsyncMock()
@@ -1664,11 +1664,11 @@ async def test_register_tools_bulk_conflict_skip():
     """Test bulk tool registration with skip conflict strategy."""
     # Third-Party
     from sqlalchemy import select
-    
+
     # First-Party
     from mcpgateway.db import Tool as DbTool
     from mcpgateway.services.tool_service import ToolService
-    
+
     db = make_session()
     service = ToolService()
     service._notify_tool_added = AsyncMock()
@@ -1695,12 +1695,12 @@ async def test_register_prompts_bulk_creates_and_returns_counts():
     """Test bulk prompt registration creates prompts and returns correct counts."""
     # Third-Party
     from sqlalchemy import select
-    
+
     # First-Party
     from mcpgateway.db import Prompt as DbPrompt
     from mcpgateway.services.prompt_service import PromptService
     from mcpgateway.schemas import PromptCreate
-    
+
     db = make_session()
     service = PromptService()
     service._notify_prompt_added = AsyncMock()
@@ -1732,12 +1732,12 @@ async def test_register_prompts_bulk_conflict_skip():
     """Test bulk prompt registration with skip conflict strategy."""
     # Third-Party
     from sqlalchemy import select
-    
+
     # First-Party
     from mcpgateway.db import Prompt as DbPrompt
     from mcpgateway.services.prompt_service import PromptService
     from mcpgateway.schemas import PromptCreate
-    
+
     db = make_session()
     service = PromptService()
     service._notify_prompt_added = AsyncMock()
@@ -1772,12 +1772,12 @@ async def test_register_resources_bulk_creates_and_returns_counts():
     """Test bulk resource registration creates resources and returns correct counts."""
     # Third-Party
     from sqlalchemy import select
-    
+
     # First-Party
     from mcpgateway.db import Resource as DbResource
     from mcpgateway.services.resource_service import ResourceService
     from mcpgateway.schemas import ResourceCreate
-    
+
     db = make_session()
     service = ResourceService()
     service._notify_resource_added = AsyncMock()
@@ -1811,12 +1811,12 @@ async def test_register_resources_bulk_conflict_skip():
     """Test bulk resource registration with skip conflict strategy."""
     # Third-Party
     from sqlalchemy import select
-    
+
     # First-Party
     from mcpgateway.db import Resource as DbResource
     from mcpgateway.services.resource_service import ResourceService
     from mcpgateway.schemas import ResourceCreate
-    
+
     db = make_session()
     service = ResourceService()
     service._notify_resource_added = AsyncMock()
