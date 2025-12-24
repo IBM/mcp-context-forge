@@ -2699,6 +2699,8 @@ async def admin_ui(
     # --------------------------------------------------------------------------------
     try:
         raw_tools = await _call_list_with_team_support(tool_service.list_tools_for_user, db, user_email, include_inactive=include_inactive)
+        if isinstance(raw_tools, tuple):
+            raw_tools = raw_tools[0]
     except Exception as e:
         LOGGER.exception("Failed to load tools for user: %s", e)
         raw_tools = []
@@ -12586,7 +12588,7 @@ async def get_tools_section(
         user_email = get_user_email(user)
 
         # Get team-filtered tools
-        tools_list = await local_tool_service.list_tools_for_user(db, user_email, team_id=team_id, include_inactive=True)
+        tools_list, _ = await local_tool_service.list_tools_for_user(db, user_email, team_id=team_id, include_inactive=True)
 
         # Convert to JSON-serializable format
         tools = []

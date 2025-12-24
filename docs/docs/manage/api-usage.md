@@ -182,12 +182,54 @@ Tools are executable operations exposed by MCP servers through the gateway.
 ### List All Tools
 
 ```bash
-# List all available tools
+# List all available tools (returns first 50 by default)
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools | jq '.'
 
 # List tools with pretty formatting
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools | \
   jq '.[] | {name: .name, description: .description, gateway: .gatewaySlug}'
+```
+
+#### Filtering and Pagination
+
+The `/tools` endpoint supports several query parameters for filtering and pagination:
+
+| Parameter | Description |
+|-----------|-------------|
+| `gateway_id` | Filter by gateway ID. Use `null` to match tools without a gateway. |
+| `tags` | Comma-separated list of tags to filter by (matches any). |
+| `visibility` | Filter by visibility: `private`, `team`, or `public`. |
+| `team_id` | Filter by team ID. |
+| `include_inactive` | Include disabled tools (default: `false`). |
+| `limit` | Maximum tools to return. Use `0` for all tools (no limit). Default: 50, Max: 500. |
+| `cursor` | Pagination cursor for fetching the next page. |
+| `include_pagination` | Return `{tools: [...], nextCursor: "..."}` format (default: `false`). |
+
+```bash
+# Filter by gateway
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tools?gateway_id=<gateway-id>" | jq '.'
+
+# Filter by tags
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tools?tags=api,data" | jq '.'
+
+# Get up to 100 tools
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tools?limit=100" | jq '.'
+
+# Get ALL tools (no pagination limit)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tools?limit=0" | jq '.'
+
+# Paginate through results
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tools?include_pagination=true" | jq '.'
+# Response: {"tools": [...], "nextCursor": "eyJpZCI6Ii4uLiJ9"}
+
+# Get next page using cursor
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tools?include_pagination=true&cursor=eyJpZCI6Ii4uLiJ9" | jq '.'
 ```
 
 ### Get Tool Details

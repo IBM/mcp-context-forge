@@ -22,6 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.config import settings
 from mcpgateway.plugins.framework import PluginManager
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
@@ -35,6 +36,7 @@ from mcpgateway.services.tool_service import (
     ToolValidationError,
 )
 from mcpgateway.utils.services_auth import encode_auth
+from mcpgateway.utils.pagination import decode_cursor
 
 
 @pytest.fixture(autouse=True)
@@ -600,6 +602,92 @@ class TestToolService:
         assert result[0] == tool_read
         assert next_cursor is None  # No pagination needed for single result
         tool_service._convert_tool_to_read.assert_called_once_with(mock_tool, include_metrics=False)
+
+    @pytest.mark.asyncio
+    async def test_list_tools_for_user_pagination(self, tool_service, test_db, monkeypatch):
+        """Test list_tools_for_user returns next_cursor when page size is exceeded."""
+        monkeypatch.setattr(settings, "pagination_default_page_size", 1)
+
+        tool_1 = MagicMock(spec=DbTool, id="1")
+        tool_2 = MagicMock(spec=DbTool, id="2")
+
+        row_1 = MagicMock()
+        row_1.__getitem__ = lambda self, idx: tool_1 if idx == 0 else None
+        row_1.team_name = None
+
+        row_2 = MagicMock()
+        row_2.__getitem__ = lambda self, idx: tool_2 if idx == 0 else None
+        row_2.team_name = None
+
+        test_db.execute = Mock(return_value=MagicMock(all=Mock(return_value=[row_1, row_2])))
+
+        mock_team = MagicMock(id="team-1", is_personal=True)
+        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
+            mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[mock_team])
+            tool_service._convert_tool_to_read = Mock(side_effect=[MagicMock(), MagicMock()])
+
+            result, next_cursor = await tool_service.list_tools_for_user(test_db, user_email="user@example.com", team_id="team-1")
+
+        assert len(result) == 1
+        assert next_cursor is not None
+        assert decode_cursor(next_cursor)["id"] == "1"
+
+    @pytest.mark.asyncio
+    async def test_list_tools_for_user_denies_unknown_team(self, tool_service, test_db):
+        """Test list_tools_for_user returns empty when user lacks team membership."""
+        test_db.execute = Mock()
+        mock_team = MagicMock(id="other-team", is_personal=True)
+
+        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
+            mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[mock_team])
+            result, next_cursor = await tool_service.list_tools_for_user(test_db, user_email="user@example.com", team_id="team-1")
+
+        assert result == []
+        assert next_cursor is None
+        test_db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_list_tools_with_limit(self, tool_service, test_db, monkeypatch):
+        """Test list_tools respects custom limit parameter."""
+        monkeypatch.setattr(settings, "pagination_default_page_size", 50)
+        monkeypatch.setattr(settings, "pagination_max_page_size", 500)
+
+        tools = [MagicMock(spec=DbTool, id=str(i)) for i in range(150)]
+        rows = []
+        for tool in tools:
+            row = MagicMock()
+            row.__getitem__ = lambda self, idx, t=tool: t if idx == 0 else None
+            row.team_name = None
+            rows.append(row)
+
+        test_db.execute = Mock(return_value=MagicMock(all=Mock(return_value=rows[:101])))  # 100 + 1 for has_more check
+        tool_service._convert_tool_to_read = Mock(side_effect=lambda t, **kw: MagicMock())
+
+        result, next_cursor = await tool_service.list_tools(test_db, limit=100)
+
+        assert len(result) == 100
+        assert next_cursor is not None  # More results available
+
+    @pytest.mark.asyncio
+    async def test_list_tools_with_limit_zero_returns_all(self, tool_service, test_db, monkeypatch):
+        """Test list_tools with limit=0 returns all tools without pagination."""
+        monkeypatch.setattr(settings, "pagination_default_page_size", 50)
+
+        tools = [MagicMock(spec=DbTool, id=str(i)) for i in range(200)]
+        rows = []
+        for tool in tools:
+            row = MagicMock()
+            row.__getitem__ = lambda self, idx, t=tool: t if idx == 0 else None
+            row.team_name = None
+            rows.append(row)
+
+        test_db.execute = Mock(return_value=MagicMock(all=Mock(return_value=rows)))
+        tool_service._convert_tool_to_read = Mock(side_effect=lambda t, **kw: MagicMock())
+
+        result, next_cursor = await tool_service.list_tools(test_db, limit=0)
+
+        assert len(result) == 200
+        assert next_cursor is None  # No pagination when limit=0
 
     @pytest.mark.asyncio
     async def test_list_inactive_tools(self, tool_service, mock_tool, test_db):

@@ -2563,6 +2563,8 @@ async def invoke_a2a_agent(
 async def list_tools(
     request: Request,
     cursor: Optional[str] = None,
+    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
+    limit: Optional[int] = Query(None, ge=0, description="Maximum number of tools to return. 0 means all (no limit). Default uses pagination_default_page_size."),
     include_inactive: bool = False,
     tags: Optional[str] = None,
     team_id: Optional[str] = Query(None, description="Filter by team ID"),
@@ -2577,6 +2579,9 @@ async def list_tools(
     Args:
         request (Request): The FastAPI request object for team_id retrieval
         cursor: Pagination cursor for fetching the next set of results
+        include_pagination: Whether to include cursor pagination metadata in the response
+        limit: Maximum number of tools to return. Use 0 for all tools (no limit).
+            If not specified, uses pagination_default_page_size (default: 50).
         include_inactive: Whether to include inactive tools in the results
         tags: Comma-separated list of tags to filter by (e.g., "api,data")
         team_id: Optional team ID to filter tools by specific team
@@ -2613,20 +2618,27 @@ async def list_tools(
 
     # Use team-filtered tool listing
     if team_id or visibility:
-        data = await tool_service.list_tools_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
-
-        # Apply tag filtering to team-filtered results if needed
-        if tags_list:
-            data = [tool for tool in data if any(tag in tool.tags for tag in tags_list)]
+        data, next_cursor = await tool_service.list_tools_for_user(
+            db=db,
+            user_email=user_email,
+            team_id=team_id,
+            visibility=visibility,
+            include_inactive=include_inactive,
+            cursor=cursor,
+            gateway_id=gateway_id,
+            tags=tags_list,
+            limit=limit,
+        )
     else:
         # Use existing method for backward compatibility when no team filtering
-        data, _ = await tool_service.list_tools(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
-
-    # Apply gateway_id filtering if provided
-    if gateway_id:
-        data = [tool for tool in data if str(tool.gateway_id) == gateway_id]
+        data, next_cursor = await tool_service.list_tools(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list, gateway_id=gateway_id, limit=limit)
 
     if apijsonpath is None:
+        if include_pagination:
+            payload = {"tools": [tool.model_dump(by_alias=True) for tool in data]}
+            if next_cursor:
+                payload["nextCursor"] = next_cursor
+            return payload
         return data
 
     tools_dict_list = [tool.to_dict(use_alias=True) for tool in data]
