@@ -1310,7 +1310,14 @@ class ToolService:
         )
 
     async def list_tools(
-        self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None, _request_headers: Optional[Dict[str, str]] = None
+        self,
+        db: Session,
+        include_inactive: bool = False,
+        cursor: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        gateway_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        _request_headers: Optional[Dict[str, str]] = None,
     ) -> tuple[List[ToolRead], Optional[str]]:
         """
         Retrieve a list of registered tools from the database with pagination support.
@@ -1322,6 +1329,9 @@ class ToolService:
             cursor (Optional[str], optional): An opaque cursor token for pagination.
                 Opaque base64-encoded string containing last item's ID.
             tags (Optional[List[str]]): Filter tools by tags. If provided, only tools with at least one matching tag will be returned.
+            gateway_id (Optional[str]): Filter tools by gateway ID. Accepts the literal value 'null' to match NULL gateway_id.
+            limit (Optional[int]): Maximum number of tools to return. Use 0 for all tools (no limit).
+                If not specified, uses pagination_default_page_size.
             _request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
                 Currently unused but kept for API consistency. Defaults to None.
 
@@ -1343,7 +1353,14 @@ class ToolService:
             >>> isinstance(tools, list)
             True
         """
-        page_size = settings.pagination_default_page_size
+        # Determine page size based on limit parameter
+        # limit=None: use default, limit=0: no limit (all), limit>0: use specified (capped)
+        if limit is None:
+            page_size = settings.pagination_default_page_size
+        elif limit == 0:
+            page_size = None  # No limit - fetch all
+        else:
+            page_size = min(limit, settings.pagination_max_page_size)
 
         # Decode cursor to get last_id if provided
         last_id = None
@@ -1355,7 +1372,14 @@ class ToolService:
             except ValueError as e:
                 logger.warning(f"Invalid cursor, ignoring: {e}")
 
-        logger.debug(f"Listing tools with include_inactive={include_inactive}, cursor={cursor}, tags={tags}, page_size={page_size}")
+        logger.debug(
+            "Listing tools with include_inactive=%s, cursor=%s, tags=%s, gateway_id=%s, page_size=%s",
+            include_inactive,
+            cursor,
+            tags,
+            gateway_id,
+            page_size,
+        )
 
         # Build query with LEFT JOIN for team names in single query instead of batch fetching
         query = select(DbTool, EmailTeam.name.label("team_name")).outerjoin(EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True))).order_by(DbTool.id)
@@ -1371,12 +1395,19 @@ class ToolService:
         if tags:
             query = query.where(json_contains_expr(db, DbTool.tags, tags, match_any=True))
 
-        # Fetch page_size + 1 to determine if there are more results
-        query = query.limit(page_size + 1)
+        if gateway_id:
+            if gateway_id.lower() == "null":
+                query = query.where(DbTool.gateway_id.is_(None))
+            else:
+                query = query.where(DbTool.gateway_id == gateway_id)
+
+        # Fetch page_size + 1 to determine if there are more results (unless no limit)
+        if page_size is not None:
+            query = query.limit(page_size + 1)
         rows = db.execute(query).all()
 
-        # Check if there are more results
-        has_more = len(rows) > page_size
+        # Check if there are more results (only when paginating)
+        has_more = page_size is not None and len(rows) > page_size
         if has_more:
             rows = rows[:page_size]  # Trim to page_size
 
@@ -1468,10 +1499,22 @@ class ToolService:
         return result
 
     async def list_tools_for_user(
-        self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, _skip: int = 0, _limit: int = 100
-    ) -> List[ToolRead]:
+        self,
+        db: Session,
+        user_email: str,
+        team_id: Optional[str] = None,
+        visibility: Optional[str] = None,
+        include_inactive: bool = False,
+        _skip: int = 0,
+        _limit: int = 100,
+        *,
+        cursor: Optional[str] = None,
+        gateway_id: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        limit: Optional[int] = None,
+    ) -> tuple[List[ToolRead], Optional[str]]:
         """
-        List tools user has access to with team filtering.
+        List tools user has access to with team filtering and cursor pagination.
 
         Args:
             db: Database session
@@ -1479,12 +1522,36 @@ class ToolService:
             team_id: Optional team ID to filter by specific team
             visibility: Optional visibility filter (private, team, public)
             include_inactive: Whether to include inactive tools
-            _skip: Number of tools to skip for pagination
-            _limit: Maximum number of tools to return
+            _skip: Number of tools to skip for pagination (deprecated)
+            _limit: Maximum number of tools to return (deprecated)
+            cursor: Opaque cursor token for pagination
+            gateway_id: Filter tools by gateway ID. Accepts literal 'null' for NULL gateway_id.
+            tags: Filter tools by tags (match any)
+            limit: Maximum number of tools to return. Use 0 for all tools (no limit).
+                If not specified, uses pagination_default_page_size.
 
         Returns:
-            List[ToolRead]: Tools the user has access to
+            tuple[List[ToolRead], Optional[str]]: Tools the user has access to and optional next_cursor
         """
+        # Determine page size based on limit parameter
+        # limit=None: use default, limit=0: no limit (all), limit>0: use specified (capped)
+        if limit is None:
+            page_size = settings.pagination_default_page_size
+        elif limit == 0:
+            page_size = None  # No limit - fetch all
+        else:
+            page_size = min(limit, settings.pagination_max_page_size)
+
+        # Decode cursor to get last_id if provided
+        last_id = None
+        if cursor:
+            try:
+                cursor_data = decode_cursor(cursor)
+                last_id = cursor_data.get("id")
+                logger.debug(f"Decoded cursor: last_id={last_id}")
+            except ValueError as e:
+                logger.warning(f"Invalid cursor, ignoring: {e}")
+
         # Build query following existing patterns from list_tools()
         team_service = TeamManagementService(db)
         user_teams = await team_service.get_user_teams(user_email)
@@ -1492,67 +1559,76 @@ class ToolService:
 
         query = select(DbTool)
 
-        offset = 0
-        per_page = settings.pagination_default_page_size
-
         # Apply active/inactive filter
         if not include_inactive:
             query = query.where(DbTool.enabled.is_(True))
 
         if team_id:
             if team_id not in team_ids:
-                return []  # No access to team
+                return ([], None)  # No access to team
 
-            access_conditions = []
-            # Filter by specific team
-            access_conditions.append(and_(DbTool.team_id == team_id, DbTool.visibility.in_(["team", "public"])))
-
-            access_conditions.append(and_(DbTool.team_id == team_id, DbTool.owner_email == user_email))
-
+            access_conditions = [
+                and_(DbTool.team_id == team_id, DbTool.visibility.in_(["team", "public"])),
+                and_(DbTool.team_id == team_id, DbTool.owner_email == user_email),
+            ]
             query = query.where(or_(*access_conditions))
-
-            query = query.offset(offset).limit(per_page)
         else:
-            # Get user's accessible teams
-            # Build access conditions following existing patterns
-
-            access_conditions = []
-
-            # 1. User's personal resources (owner_email matches)
-            access_conditions.append(DbTool.owner_email == user_email)
-
-            # 2. Team resources where user is member
+            access_conditions = [
+                DbTool.owner_email == user_email,
+                DbTool.visibility == "public",
+            ]
             if team_ids:
                 access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
 
-            # 3. Public resources (if visibility allows)
-            access_conditions.append(DbTool.visibility == "public")
-
             query = query.where(or_(*access_conditions))
-
-            query = query.offset(offset).limit(per_page)
 
         # Apply visibility filter if specified
         if visibility:
             query = query.where(DbTool.visibility == visibility)
 
-        # Note: Pagination is currently not implemented so this limit is not supporeted as of now
-        # # Apply pagination following existing patterns
-        # query = query.offset(skip).limit(limit)
+        if gateway_id:
+            if gateway_id.lower() == "null":
+                query = query.where(DbTool.gateway_id.is_(None))
+            else:
+                query = query.where(DbTool.gateway_id == gateway_id)
+
+        if tags:
+            query = query.where(json_contains_expr(db, DbTool.tags, tags, match_any=True))
+
+        # Apply cursor filter (WHERE id > last_id)
+        if last_id:
+            query = query.where(DbTool.id > last_id)
+
+        query = query.order_by(DbTool.id)
 
         # Execute query with LEFT JOIN for team names in single query
         query_with_join = query.outerjoin(EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True))).add_columns(EmailTeam.name.label("team_name"))
+        if page_size is not None:
+            rows = db.execute(query_with_join.limit(page_size + 1)).all()
+        else:
+            rows = db.execute(query_with_join).all()
 
-        rows = db.execute(query_with_join).all()
+        # Check if there are more results (only when paginating)
+        has_more = page_size is not None and len(rows) > page_size
+        if has_more:
+            rows = rows[:page_size]
 
         # Convert to ToolRead objects with team names from join result
         result = []
+        tools = []
         for row in rows:
             tool = row[0]
             team_name = row.team_name
             tool.team = team_name
+            tools.append(tool)
             result.append(self._convert_tool_to_read(tool, include_metrics=False))
-        return result
+
+        next_cursor = None
+        if has_more and tools:
+            last_tool = tools[-1]
+            next_cursor = encode_cursor({"id": last_tool.id})
+
+        return (result, next_cursor)
 
     async def get_tool(self, db: Session, tool_id: str) -> ToolRead:
         """
