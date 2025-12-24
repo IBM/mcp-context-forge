@@ -310,6 +310,12 @@ def test_validate_prompt_schema_missing():
 # --- get_db generator ---
 def test_get_db_yields_and_closes(monkeypatch):
     class DummySession:
+        def commit(self):
+            self.committed = True
+
+        def rollback(self):
+            self.rolled_back = True
+
         def close(self):
             self.closed = True
 
@@ -323,10 +329,17 @@ def test_get_db_yields_and_closes(monkeypatch):
     except StopIteration:
         pass
     assert hasattr(dummy, "closed")
+    assert hasattr(dummy, "committed")
 
 
 def test_get_db_closes_on_exception(monkeypatch):
     class DummySession:
+        def commit(self):
+            self.committed = True
+
+        def rollback(self):
+            self.rolled_back = True
+
         def close(self):
             self.closed = True
 
@@ -343,6 +356,7 @@ def test_get_db_closes_on_exception(monkeypatch):
         pass
 
     assert hasattr(dummy, "closed")
+    assert hasattr(dummy, "rolled_back")
 
 
 # --- init_db ---

@@ -3945,8 +3945,14 @@ def get_db() -> Generator[Session, Any, None]:
     """
     Dependency to get database session.
 
+    Commits the transaction on successful completion to avoid implicit rollbacks
+    for read-only operations. Rolls back explicitly on exception.
+
     Yields:
         SessionLocal: A SQLAlchemy database session.
+
+    Raises:
+        Exception: Re-raises any exception after rolling back the transaction.
 
     Examples:
         >>> from mcpgateway.db import get_db
@@ -3961,6 +3967,10 @@ def get_db() -> Generator[Session, Any, None]:
     db = SessionLocal()
     try:
         yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 
