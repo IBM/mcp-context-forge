@@ -21823,11 +21823,26 @@ async function connectLLMChat() {
         }
 
         // Auto-collapse configuration
-        const configForm = document.getElementById("llm-config-form");
-        const chevron = document.getElementById("llm-config-chevron");
-        if (configForm && !configForm.classList.contains("hidden")) {
-            configForm.classList.add("hidden");
-            chevron.classList.remove("rotate-180");
+        // Disable configuration toggle instead of hiding it
+        const configToggle = document.getElementById("llm-config-toggle");
+        if (configToggle) {
+            configToggle.disabled = true;
+            configToggle.classList.add("opacity-50", "cursor-not-allowed");
+            configToggle.title = "Please disconnect to change configuration";
+
+            // Ensure dropdown is closed if it was open (handled by Alpine, but good to be safe)
+            // We DON'T set 'hidden' class manually as it breaks Alpine's state
+            // But we can trigger a click if we knew it was open, or just let Alpine handle click.away
+        }
+
+        // Disable server dropdown as well
+        const serverDropdownBtn = document.getElementById(
+            "llm-server-dropdown-btn",
+        );
+        if (serverDropdownBtn) {
+            serverDropdownBtn.disabled = true;
+            serverDropdownBtn.classList.add("opacity-50", "cursor-not-allowed");
+            serverDropdownBtn.title = "Please disconnect to change server";
         }
 
         // Show success message
@@ -22379,6 +22394,11 @@ async function disconnectLLMChat() {
             toolsBadge.classList.add("hidden");
         }
 
+        const modelBadge = document.getElementById("llm-model-badge");
+        if (modelBadge) {
+            modelBadge.classList.add("hidden");
+        }
+
         const connectBtn = document.getElementById("llm-connect-btn");
         if (connectBtn) {
             connectBtn.classList.remove("hidden");
@@ -22393,6 +22413,27 @@ async function disconnectLLMChat() {
             chatInput.classList.add("hidden");
             document.getElementById("chat-input").disabled = true;
             document.getElementById("chat-send-btn").disabled = true;
+        }
+
+        // Re-enable configuration toggle
+        const configToggle = document.getElementById("llm-config-toggle");
+        if (configToggle) {
+            configToggle.disabled = false;
+            configToggle.classList.remove("opacity-50", "cursor-not-allowed");
+            configToggle.removeAttribute("title");
+        }
+
+        // Re-enable server dropdown
+        const serverDropdownBtn = document.getElementById(
+            "llm-server-dropdown-btn",
+        );
+        if (serverDropdownBtn) {
+            serverDropdownBtn.disabled = false;
+            serverDropdownBtn.classList.remove(
+                "opacity-50",
+                "cursor-not-allowed",
+            );
+            serverDropdownBtn.removeAttribute("title");
         }
 
         // Clear messages
@@ -27183,6 +27224,13 @@ let previousProviderType = null;
 async function onLLMProviderTypeChange() {
     const providerType = document.getElementById("llm-provider-type").value;
     if (!providerType) {
+        // Hide provider-specific config section
+        const configSection = document.getElementById(
+            "llm-provider-specific-config",
+        );
+        if (configSection) {
+            configSection.classList.add("hidden");
+        }
         return;
     }
 
@@ -27195,43 +27243,46 @@ async function onLLMProviderTypeChange() {
 
     // Only auto-fill if creating new provider (not editing)
     const providerId = document.getElementById("llm-provider-id").value;
-    if (providerId) {
-        return;
-    }
+    const isEditing = providerId !== "";
 
     const apiBaseField = document.getElementById("llm-provider-api-base");
     const defaultModelField = document.getElementById(
         "llm-provider-default-model",
     );
 
-    // Check if current values match previous provider's defaults
-    const previousConfig = previousProviderType
-        ? defaults[previousProviderType]
-        : null;
-    const apiBaseMatchesPrevious =
-        previousConfig &&
-        (apiBaseField.value === previousConfig.api_base ||
-            apiBaseField.value === "");
-    const modelMatchesPrevious =
-        previousConfig &&
-        (defaultModelField.value === previousConfig.default_model ||
-            defaultModelField.value === "");
+    if (!isEditing) {
+        // Check if current values match previous provider's defaults
+        const previousConfig = previousProviderType
+            ? defaults[previousProviderType]
+            : null;
+        const apiBaseMatchesPrevious =
+            previousConfig &&
+            (apiBaseField.value === previousConfig.api_base ||
+                apiBaseField.value === "");
+        const modelMatchesPrevious =
+            previousConfig &&
+            (defaultModelField.value === previousConfig.default_model ||
+                defaultModelField.value === "");
 
-    // Auto-fill API base if empty or matches previous provider's default
-    if ((apiBaseMatchesPrevious || !apiBaseField.value) && config.api_base) {
-        apiBaseField.value = config.api_base;
+        // Auto-fill API base if empty or matches previous provider's default
+        if (
+            (apiBaseMatchesPrevious || !apiBaseField.value) &&
+            config.api_base
+        ) {
+            apiBaseField.value = config.api_base;
+        }
+
+        // Auto-fill default model if empty or matches previous provider's default
+        if (
+            (modelMatchesPrevious || !defaultModelField.value) &&
+            config.default_model
+        ) {
+            defaultModelField.value = config.default_model;
+        }
+
+        // Remember this provider type for next change
+        previousProviderType = providerType;
     }
-
-    // Auto-fill default model if empty or matches previous provider's default
-    if (
-        (modelMatchesPrevious || !defaultModelField.value) &&
-        config.default_model
-    ) {
-        defaultModelField.value = config.default_model;
-    }
-
-    // Remember this provider type for next change
-    previousProviderType = providerType;
 
     // Update description/help text
     const descEl = document.getElementById("llm-provider-type-description");
@@ -27250,6 +27301,161 @@ async function onLLMProviderTypeChange() {
         } else {
             apiKeyRequired.classList.add("hidden");
         }
+    }
+
+    // Load and render provider-specific configuration fields
+    await renderProviderSpecificFields(providerType, isEditing);
+}
+
+/**
+ * Render provider-specific configuration fields dynamically
+ */
+async function renderProviderSpecificFields(providerType, isEditing = false) {
+    try {
+        // Fetch provider configurations
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/llm/provider-configs`,
+            {
+                headers: {
+                    Authorization: `Bearer ${await getAuthToken()}`,
+                },
+            },
+        );
+
+        if (!response.ok) {
+            console.error("Failed to fetch provider configs");
+            return;
+        }
+
+        const providerConfigs = await response.json();
+        const providerConfig = providerConfigs[providerType];
+
+        if (
+            !providerConfig ||
+            !providerConfig.config_fields ||
+            providerConfig.config_fields.length === 0
+        ) {
+            // No provider-specific fields, hide the section
+            const configSection = document.getElementById(
+                "llm-provider-specific-config",
+            );
+            if (configSection) {
+                configSection.classList.add("hidden");
+            }
+            return;
+        }
+
+        // Show the provider-specific config section
+        const configSection = document.getElementById(
+            "llm-provider-specific-config",
+        );
+        const fieldsContainer = document.getElementById(
+            "llm-provider-config-fields",
+        );
+
+        if (!configSection || !fieldsContainer) {
+            return;
+        }
+
+        configSection.classList.remove("hidden");
+        fieldsContainer.innerHTML = ""; // Clear existing fields
+
+        // Render each field
+        for (const fieldDef of providerConfig.config_fields) {
+            const fieldDiv = document.createElement("div");
+
+            const label = document.createElement("label");
+            label.setAttribute("for", `llm-config-${fieldDef.name}`);
+            label.className =
+                "block text-sm font-medium text-gray-700 dark:text-gray-300";
+            label.textContent = fieldDef.label;
+            if (fieldDef.required) {
+                const requiredSpan = document.createElement("span");
+                requiredSpan.className = "text-red-500 ml-1";
+                requiredSpan.textContent = "*";
+                label.appendChild(requiredSpan);
+            }
+            fieldDiv.appendChild(label);
+
+            let inputElement;
+
+            if (fieldDef.field_type === "select") {
+                inputElement = document.createElement("select");
+                inputElement.className =
+                    "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm";
+
+                // Add empty option
+                const emptyOption = document.createElement("option");
+                emptyOption.value = "";
+                emptyOption.textContent = "Select...";
+                inputElement.appendChild(emptyOption);
+
+                // Add options
+                if (fieldDef.options) {
+                    for (const opt of fieldDef.options) {
+                        const option = document.createElement("option");
+                        option.value = opt.value;
+                        option.textContent = opt.label;
+                        inputElement.appendChild(option);
+                    }
+                }
+            } else if (fieldDef.field_type === "textarea") {
+                inputElement = document.createElement("textarea");
+                inputElement.className =
+                    "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm";
+                inputElement.rows = 3;
+            } else {
+                inputElement = document.createElement("input");
+                inputElement.type = fieldDef.field_type;
+                inputElement.className =
+                    "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm";
+
+                if (fieldDef.field_type === "number") {
+                    if (
+                        fieldDef.min_value !== null &&
+                        fieldDef.min_value !== undefined
+                    ) {
+                        inputElement.min = fieldDef.min_value;
+                    }
+                    if (
+                        fieldDef.max_value !== null &&
+                        fieldDef.max_value !== undefined
+                    ) {
+                        inputElement.max = fieldDef.max_value;
+                    }
+                }
+            }
+
+            inputElement.id = `llm-config-${fieldDef.name}`;
+            inputElement.name = `config_${fieldDef.name}`;
+
+            if (fieldDef.required) {
+                inputElement.required = true;
+            }
+
+            if (fieldDef.placeholder) {
+                inputElement.placeholder = fieldDef.placeholder;
+            }
+
+            if (fieldDef.default_value && !isEditing) {
+                inputElement.value = fieldDef.default_value;
+            }
+
+            fieldDiv.appendChild(inputElement);
+
+            // Add help text if available
+            if (fieldDef.help_text) {
+                const helpText = document.createElement("p");
+                helpText.className =
+                    "mt-1 text-xs text-gray-500 dark:text-gray-400";
+                helpText.textContent = fieldDef.help_text;
+                fieldDiv.appendChild(helpText);
+            }
+
+            fieldsContainer.appendChild(fieldDiv);
+        }
+    } catch (error) {
+        console.error("Error rendering provider-specific fields:", error);
     }
 }
 
@@ -27405,6 +27611,23 @@ async function editLLMProvider(providerId) {
         document.getElementById("llm-provider-enabled").checked =
             provider.enabled;
 
+        // Render provider-specific fields and populate with existing config
+        await renderProviderSpecificFields(provider.provider_type, true);
+
+        // Populate provider-specific config values
+        if (provider.config) {
+            for (const [key, value] of Object.entries(provider.config)) {
+                const input = document.getElementById(`llm-config-${key}`);
+                if (input) {
+                    if (input.type === "checkbox") {
+                        input.checked = value;
+                    } else {
+                        input.value = value || "";
+                    }
+                }
+            }
+        }
+
         document.getElementById("llm-provider-modal-title").textContent =
             "Edit LLM Provider";
         document
@@ -27438,6 +27661,7 @@ async function saveLLMProvider(event) {
             document.getElementById("llm-provider-temperature").value,
         ),
         enabled: document.getElementById("llm-provider-enabled").checked,
+        config: {},
     };
 
     const apiKey = document.getElementById("llm-provider-api-key").value;
@@ -27448,6 +27672,35 @@ async function saveLLMProvider(event) {
     const maxTokens = document.getElementById("llm-provider-max-tokens").value;
     if (maxTokens) {
         formData.default_max_tokens = parseInt(maxTokens, 10);
+    }
+
+    // Collect provider-specific configuration fields
+    const configFieldsContainer = document.getElementById(
+        "llm-provider-config-fields",
+    );
+    if (configFieldsContainer) {
+        const configInputs = configFieldsContainer.querySelectorAll(
+            "input, select, textarea",
+        );
+        for (const input of configInputs) {
+            if (input.name && input.name.startsWith("config_")) {
+                const fieldName = input.name.replace("config_", "");
+                let value = input.value;
+
+                // Convert to appropriate type
+                if (input.type === "number") {
+                    value = value ? parseFloat(value) : null;
+                } else if (input.type === "checkbox") {
+                    value = input.checked;
+                } else if (value === "") {
+                    value = null;
+                }
+
+                if (value !== null && value !== "") {
+                    formData.config[fieldName] = value;
+                }
+            }
+        }
     }
 
     try {
