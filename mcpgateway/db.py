@@ -3984,7 +3984,8 @@ def fresh_db_session() -> Generator[Session, Any, None]:
         Session: A fresh SQLAlchemy database session.
 
     Raises:
-        Exception: Re-raises any exception after rolling back the transaction.
+        Exception: Any exception raised during database operations is re-raised
+            after rolling back the transaction.
 
     Examples:
         >>> from mcpgateway.db import fresh_db_session
