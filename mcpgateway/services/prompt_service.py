@@ -508,6 +508,269 @@ class PromptService:
             )
             raise PromptError(f"Failed to register prompt: {str(e)}")
 
+    async def register_prompts_bulk(
+        self,
+        db: Session,
+        prompts: List[PromptCreate],
+        created_by: Optional[str] = None,
+        created_from_ip: Optional[str] = None,
+        created_via: Optional[str] = None,
+        created_user_agent: Optional[str] = None,
+        import_batch_id: Optional[str] = None,
+        federation_source: Optional[str] = None,
+        team_id: Optional[str] = None,
+        owner_email: Optional[str] = None,
+        visibility: Optional[str] = "public",
+        conflict_strategy: str = "skip",
+    ) -> Dict[str, Any]:
+        """Register multiple prompts in bulk with a single commit.
+
+        This method provides significant performance improvements over individual
+        prompt registration by:
+        - Using db.add_all() instead of individual db.add() calls
+        - Performing a single commit for all prompts
+        - Batch conflict detection
+        - Chunking for very large imports (>500 items)
+
+        Args:
+            db: Database session
+            prompts: List of prompt creation schemas
+            created_by: Username who created these prompts
+            created_from_ip: IP address of creator
+            created_via: Creation method (ui, api, import, federation)
+            created_user_agent: User agent of creation request
+            import_batch_id: UUID for bulk import operations
+            federation_source: Source gateway for federated prompts
+            team_id: Team ID to assign the prompts to
+            owner_email: Email of the user who owns these prompts
+            visibility: Prompt visibility level (private, team, public)
+            conflict_strategy: How to handle conflicts (skip, update, rename, fail)
+
+        Returns:
+            Dict with statistics:
+                - created: Number of prompts created
+                - updated: Number of prompts updated
+                - skipped: Number of prompts skipped
+                - failed: Number of prompts that failed
+                - errors: List of error messages
+
+        Raises:
+            PromptError: If bulk registration fails critically
+
+        Examples:
+            >>> from mcpgateway.services.prompt_service import PromptService
+            >>> from unittest.mock import MagicMock
+            >>> service = PromptService()
+            >>> db = MagicMock()
+            >>> prompts = [MagicMock(), MagicMock()]
+            >>> import asyncio
+            >>> try:
+            ...     result = asyncio.run(service.register_prompts_bulk(db, prompts))
+            ... except Exception:
+            ...     pass
+        """
+        if not prompts:
+            return {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
+
+        stats = {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
+
+        # Process in chunks to avoid memory issues and SQLite parameter limits
+        chunk_size = 500
+
+        for chunk_start in range(0, len(prompts), chunk_size):
+            chunk = prompts[chunk_start : chunk_start + chunk_size]
+
+            try:
+                # Batch check for existing prompts to detect conflicts
+                prompt_names = [prompt.name for prompt in chunk]
+
+                if visibility.lower() == "public":
+                    existing_prompts_query = select(DbPrompt).where(DbPrompt.name.in_(prompt_names), DbPrompt.visibility == "public")
+                elif visibility.lower() == "team" and team_id:
+                    existing_prompts_query = select(DbPrompt).where(DbPrompt.name.in_(prompt_names), DbPrompt.visibility == "team", DbPrompt.team_id == team_id)
+                else:
+                    # Private prompts - check by owner
+                    existing_prompts_query = select(DbPrompt).where(DbPrompt.name.in_(prompt_names), DbPrompt.visibility == "private", DbPrompt.owner_email == (owner_email or created_by))
+
+                existing_prompts = db.execute(existing_prompts_query).scalars().all()
+                existing_prompts_map = {prompt.name: prompt for prompt in existing_prompts}
+
+                prompts_to_add = []
+                prompts_to_update = []
+
+                for prompt in chunk:
+                    try:
+                        # Validate template syntax
+                        self._validate_template(prompt.template)
+
+                        # Extract required arguments from template
+                        required_args = self._get_required_arguments(prompt.template)
+
+                        # Create argument schema
+                        argument_schema = {
+                            "type": "object",
+                            "properties": {},
+                            "required": list(required_args),
+                        }
+                        for arg in prompt.arguments:
+                            schema = {"type": "string"}
+                            if arg.description is not None:
+                                schema["description"] = arg.description
+                            argument_schema["properties"][arg.name] = schema
+
+                        # Use provided parameters or schema values
+                        prompt_team_id = team_id if team_id is not None else getattr(prompt, "team_id", None)
+                        prompt_owner_email = owner_email or getattr(prompt, "owner_email", None) or created_by
+                        prompt_visibility = visibility if visibility is not None else getattr(prompt, "visibility", "public")
+
+                        existing_prompt = existing_prompts_map.get(prompt.name)
+
+                        if existing_prompt:
+                            # Handle conflict based on strategy
+                            if conflict_strategy == "skip":
+                                stats["skipped"] += 1
+                                continue
+                            if conflict_strategy == "update":
+                                # Update existing prompt
+                                existing_prompt.description = prompt.description
+                                existing_prompt.template = prompt.template
+                                existing_prompt.argument_schema = argument_schema
+                                existing_prompt.tags = prompt.tags or []
+                                existing_prompt.modified_by = created_by
+                                existing_prompt.modified_from_ip = created_from_ip
+                                existing_prompt.modified_via = created_via
+                                existing_prompt.modified_user_agent = created_user_agent
+                                existing_prompt.updated_at = datetime.now(timezone.utc)
+                                existing_prompt.version = (existing_prompt.version or 1) + 1
+
+                                prompts_to_update.append(existing_prompt)
+                                stats["updated"] += 1
+                            elif conflict_strategy == "rename":
+                                # Create with renamed prompt
+                                new_name = f"{prompt.name}_imported_{int(datetime.now().timestamp())}"
+                                db_prompt = DbPrompt(
+                                    name=new_name,
+                                    description=prompt.description,
+                                    template=prompt.template,
+                                    argument_schema=argument_schema,
+                                    tags=prompt.tags or [],
+                                    created_by=created_by,
+                                    created_from_ip=created_from_ip,
+                                    created_via=created_via,
+                                    created_user_agent=created_user_agent,
+                                    import_batch_id=import_batch_id,
+                                    federation_source=federation_source,
+                                    version=1,
+                                    team_id=prompt_team_id,
+                                    owner_email=prompt_owner_email,
+                                    visibility=prompt_visibility,
+                                )
+                                prompts_to_add.append(db_prompt)
+                                stats["created"] += 1
+                            elif conflict_strategy == "fail":
+                                stats["failed"] += 1
+                                stats["errors"].append(f"Prompt name conflict: {prompt.name}")
+                                continue
+                        else:
+                            # Create new prompt
+                            db_prompt = DbPrompt(
+                                name=prompt.name,
+                                description=prompt.description,
+                                template=prompt.template,
+                                argument_schema=argument_schema,
+                                tags=prompt.tags or [],
+                                created_by=created_by,
+                                created_from_ip=created_from_ip,
+                                created_via=created_via,
+                                created_user_agent=created_user_agent,
+                                import_batch_id=import_batch_id,
+                                federation_source=federation_source,
+                                version=1,
+                                team_id=prompt_team_id,
+                                owner_email=prompt_owner_email,
+                                visibility=prompt_visibility,
+                            )
+                            prompts_to_add.append(db_prompt)
+                            stats["created"] += 1
+
+                    except Exception as e:
+                        stats["failed"] += 1
+                        stats["errors"].append(f"Failed to process prompt {prompt.name}: {str(e)}")
+                        logger.warning(f"Failed to process prompt {prompt.name} in bulk operation: {str(e)}")
+                        continue
+
+                # Bulk add new prompts
+                if prompts_to_add:
+                    db.add_all(prompts_to_add)
+
+                # Commit the chunk
+                db.commit()
+
+                # Refresh prompts for notifications and audit trail
+                for db_prompt in prompts_to_add:
+                    db.refresh(db_prompt)
+                    # Notify subscribers
+                    await self._notify_prompt_added(db_prompt)
+
+                # Log bulk audit trail entry
+                if prompts_to_add or prompts_to_update:
+                    audit_trail.log_action(
+                        user_id=created_by or "system",
+                        action="bulk_create_prompts" if prompts_to_add else "bulk_update_prompts",
+                        resource_type="prompt",
+                        resource_id=import_batch_id or "bulk_operation",
+                        resource_name=f"Bulk operation: {len(prompts_to_add)} created, {len(prompts_to_update)} updated",
+                        user_email=owner_email,
+                        team_id=team_id,
+                        client_ip=created_from_ip,
+                        user_agent=created_user_agent,
+                        new_values={
+                            "prompts_created": len(prompts_to_add),
+                            "prompts_updated": len(prompts_to_update),
+                            "visibility": visibility,
+                        },
+                        context={
+                            "created_via": created_via,
+                            "import_batch_id": import_batch_id,
+                            "federation_source": federation_source,
+                            "conflict_strategy": conflict_strategy,
+                        },
+                        db=db,
+                    )
+
+                logger.info(f"Bulk registered {len(prompts_to_add)} prompts, updated {len(prompts_to_update)} prompts in chunk")
+
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Failed to process chunk in bulk prompt registration: {str(e)}")
+                stats["failed"] += len(chunk)
+                stats["errors"].append(f"Chunk processing failed: {str(e)}")
+                continue
+
+        # Final structured logging
+        structured_logger.log(
+            level="INFO",
+            message="Bulk prompt registration completed",
+            event_type="prompts_bulk_created",
+            component="prompt_service",
+            user_id=created_by,
+            user_email=owner_email,
+            team_id=team_id,
+            resource_type="prompt",
+            custom_fields={
+                "prompts_created": stats["created"],
+                "prompts_updated": stats["updated"],
+                "prompts_skipped": stats["skipped"],
+                "prompts_failed": stats["failed"],
+                "total_prompts": len(prompts),
+                "visibility": visibility,
+                "conflict_strategy": conflict_strategy,
+            },
+            db=db,
+        )
+
+        return stats
+
     async def list_prompts(self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None) -> tuple[List[PromptRead], Optional[str]]:
         """
         Retrieve a list of prompt templates from the database with pagination support.
