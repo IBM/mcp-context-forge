@@ -305,7 +305,7 @@ class ToolService:
 
         Args:
             db (Session): Database session for querying tool metrics.
-            limit (Optional[int]): Maximum number of tools to return. Defaults to 5. If None, returns all tools.
+            limit (Optional[int]): Maximum number of tools to return. Defaults to 5.
 
         Returns:
             List[TopPerformer]: A list of TopPerformer objects, each containing:

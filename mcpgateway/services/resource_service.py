@@ -177,7 +177,7 @@ class ResourceService:
 
         Args:
             db (Session): Database session for querying resource metrics.
-            limit (Optional[int]): Maximum number of resources to return. Defaults to 5. If None, returns all resources.
+            limit (Optional[int]): Maximum number of resources to return. Defaults to 5.
 
         Returns:
             List[TopPerformer]: A list of TopPerformer objects, each containing:
@@ -208,8 +208,7 @@ class ResourceService:
             .order_by(desc("execution_count"))
         )
 
-        if limit is not None:
-            query = query.limit(limit)
+        query = query.limit(limit or 5)
 
         results = query.all()
 

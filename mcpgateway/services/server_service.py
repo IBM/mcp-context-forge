@@ -156,7 +156,7 @@ class ServerService:
 
         Args:
             db (Session): Database session for querying server metrics.
-            limit (Optional[int]): Maximum number of servers to return. Defaults to 5. If None, returns all servers.
+            limit (Optional[int]): Maximum number of servers to return. Defaults to 5.
 
         Returns:
             List[TopPerformer]: A list of TopPerformer objects, each containing:
@@ -187,8 +187,7 @@ class ServerService:
             .order_by(desc("execution_count"))
         )
 
-        if limit is not None:
-            query = query.limit(limit)
+        query = query.limit(limit or 5)
 
         results = query.all()
 
