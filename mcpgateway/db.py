@@ -34,9 +34,9 @@ import jsonschema
 from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index, Integer, JSON, make_url, MetaData, select, String, Table, Text, UniqueConstraint, VARCHAR
 from sqlalchemy.engine import Engine
 from sqlalchemy.event import listen
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
 from sqlalchemy.ext.hybrid import hybrid_property
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, Session, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, joinedload, Mapped, mapped_column, relationship, Session, sessionmaker
 from sqlalchemy.orm.attributes import get_history
 from sqlalchemy.pool import QueuePool
 
@@ -250,47 +250,122 @@ if backend == "sqlite":
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
-def refresh_slugs_on_startup():
-    """Refresh slugs for all gateways and names of tools on startup."""
+def _refresh_gateway_slugs_batched(session: Session, batch_size: int) -> None:
+    """Refresh gateway slugs in small batches to reduce memory usage.
+
+    Args:
+        session: Active SQLAlchemy session.
+        batch_size: Maximum number of rows to process per batch.
+    """
+
+    last_id: Optional[str] = None
+
+    while True:
+        query = session.query(Gateway).order_by(Gateway.id)
+        if last_id is not None:
+            query = query.filter(Gateway.id > last_id)
+
+        gateways = query.limit(batch_size).all()
+        if not gateways:
+            break
+
+        updated = False
+        for gateway in gateways:
+            new_slug = slugify(gateway.name)
+            if gateway.slug != new_slug:
+                gateway.slug = new_slug
+                updated = True
+
+        if updated:
+            session.commit()
+
+        # Free ORM state from memory between batches
+        session.expire_all()
+        last_id = gateways[-1].id
+
+
+def _refresh_tool_names_batched(session: Session, batch_size: int) -> None:
+    """Refresh tool names in batches with eager-loaded gateways.
+
+    Uses joinedload(Tool.gateway) to avoid N+1 queries when accessing the
+    gateway relationship while regenerating tool names.
+
+    Args:
+        session: Active SQLAlchemy session.
+        batch_size: Maximum number of rows to process per batch.
+    """
+
+    last_id: Optional[str] = None
+    separator = settings.gateway_tool_name_separator
+
+    while True:
+        stmt = select(Tool).options(joinedload(Tool.gateway)).order_by(Tool.id).limit(batch_size)
+        if last_id is not None:
+            stmt = stmt.where(Tool.id > last_id)
+
+        tools = session.execute(stmt).scalars().all()
+        if not tools:
+            break
+
+        updated = False
+        for tool in tools:
+            # Prefer custom_name_slug when available; fall back to original_name
+            name_slug_source = getattr(tool, "custom_name_slug", None) or tool.original_name
+            name_slug = slugify(name_slug_source)
+
+            if tool.gateway:
+                gateway_slug = slugify(tool.gateway.name)
+                new_name = f"{gateway_slug}{separator}{name_slug}"
+            else:
+                new_name = name_slug
+
+            if tool.name != new_name:
+                tool.name = new_name
+                updated = True
+
+        if updated:
+            session.commit()
+
+        # Free ORM state from memory between batches
+        session.expire_all()
+        last_id = tools[-1].id
+
+
+def refresh_slugs_on_startup(batch_size: Optional[int] = None) -> None:
+    """Refresh slugs for all gateways and tool names on startup.
+
+    This implementation avoids loading all rows into memory at once by
+    streaming through the tables in batches and eager-loading tool.gateway
+    relationships to prevent N+1 query patterns.
+
+    Args:
+        batch_size: Optional maximum number of rows to process per batch. If
+            not provided, the value is taken from
+            ``settings.slug_refresh_batch_size`` with a default of ``1000``.
+    """
+
+    effective_batch_size = batch_size or getattr(settings, "slug_refresh_batch_size", 1000)
+
     try:
         with cast(Any, SessionLocal)() as session:
             # Skip if tables don't exist yet (fresh database)
             try:
-                gateways = session.query(Gateway).all()
-            except Exception:
-                logger.info("Gateway table not found, skipping slug refresh")
+                _refresh_gateway_slugs_batched(session, effective_batch_size)
+            except (OperationalError, ProgrammingError) as e:
+                # Table doesn't exist yet - expected on fresh database
+                logger.info("Gateway table not found, skipping slug refresh: %s", e)
                 return
 
-            updated = False
-            for gateway in gateways:
-                new_slug = slugify(gateway.name)
-                if gateway.slug != new_slug:
-                    gateway.slug = new_slug
-                    updated = True
-            if updated:
-                session.commit()
-
             try:
-                tools = session.query(Tool).all()
-                for tool in tools:
-                    session.expire(tool, ["gateway"])
+                _refresh_tool_names_batched(session, effective_batch_size)
+            except (OperationalError, ProgrammingError) as e:
+                # Table doesn't exist yet - expected on fresh database
+                logger.info("Tool table not found, skipping tool name refresh: %s", e)
 
-                updated = False
-                for tool in tools:
-                    if tool.gateway:
-                        new_name = f"{tool.gateway.slug}{settings.gateway_tool_name_separator}{slugify(tool.original_name)}"
-                    else:
-                        new_name = slugify(tool.original_name)
-                    if tool.name != new_name:
-                        tool.name = new_name
-                        updated = True
-                if updated:
-                    session.commit()
-            except Exception:
-                logger.info("Tool table not found, skipping tool name refresh")
-
+    except SQLAlchemyError as e:
+        logger.warning("Failed to refresh slugs on startup (database error): %s", e)
     except Exception as e:
-        logger.warning("Failed to refresh slugs on startup: %s", e)
+        logger.warning("Failed to refresh slugs on startup (unexpected error): %s", e)
 
 
 class Base(DeclarativeBase):
