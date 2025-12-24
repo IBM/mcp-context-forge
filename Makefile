@@ -508,7 +508,7 @@ clean:
 # help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
 # help: query-log-clear      - Clear database query log files
 
-.PHONY: smoketest test test-profile coverage pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress
+.PHONY: smoketest test test-profile coverage pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
 
 ## --- Automated checks --------------------------------------------------------
 smoketest:
@@ -1056,6 +1056,29 @@ load-test-baseline-stress:                 ## Baseline stress test (2000 users, 
 			--headless \
 			--csv=baseline_stress \
 			--html=baseline_stress_report.html'
+
+# --- AgentGateway MCP Server Time Load Test ---
+# help: load-test-agentgateway-mcp-server-time - Load test external MCP server at localhost:3000
+
+AGENTGATEWAY_MCP_HOST ?= http://localhost:3000
+
+load-test-agentgateway-mcp-server-time:    ## Load test external MCP server (localhost-get-system-time)
+	@echo "⏰ Running AgentGateway MCP Server Time load test..."
+	@echo "   🌐 Open http://localhost:8089 in your browser"
+	@echo "   🎯 Host: $(AGENTGATEWAY_MCP_HOST)"
+	@echo "   👥 Defaults: 50 users, 10 spawn/s, 60s"
+	@echo "   🔧 Tool: localhost-get-system-time"
+	@echo "   🎛️  Class picker enabled - select which tests to run"
+	@echo ""
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		cd tests/loadtest && \
+		locust -f locustfile_agentgateway_mcp_server_time.py \
+			--host=$(AGENTGATEWAY_MCP_HOST) \
+			--users=50 \
+			--spawn-rate=10 \
+			--run-time=60s \
+			--class-picker'
 
 # =============================================================================
 # 🧬 MUTATION TESTING
