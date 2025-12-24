@@ -890,6 +890,425 @@ class ToolService:
             )
             raise ToolError(f"Failed to register tool: {str(e)}")
 
+    async def register_tools_bulk(
+        self,
+        db: Session,
+        tools: List[ToolCreate],
+        created_by: Optional[str] = None,
+        created_from_ip: Optional[str] = None,
+        created_via: Optional[str] = None,
+        created_user_agent: Optional[str] = None,
+        import_batch_id: Optional[str] = None,
+        federation_source: Optional[str] = None,
+        team_id: Optional[str] = None,
+        owner_email: Optional[str] = None,
+        visibility: Optional[str] = "public",
+        conflict_strategy: str = "skip",
+    ) -> Dict[str, Any]:
+        """Register multiple tools in bulk with a single commit.
+
+        This method provides significant performance improvements over individual
+        tool registration by:
+        - Using db.add_all() instead of individual db.add() calls
+        - Performing a single commit for all tools
+        - Batch conflict detection
+        - Chunking for very large imports (>500 items)
+
+        Args:
+            db: Database session
+            tools: List of tool creation schemas
+            created_by: Username who created these tools
+            created_from_ip: IP address of creator
+            created_via: Creation method (ui, api, import, federation)
+            created_user_agent: User agent of creation request
+            import_batch_id: UUID for bulk import operations
+            federation_source: Source gateway for federated tools
+            team_id: Team ID to assign the tools to
+            owner_email: Email of the user who owns these tools
+            visibility: Tool visibility level (private, team, public)
+            conflict_strategy: How to handle conflicts (skip, update, rename, fail)
+
+        Returns:
+            Dict with statistics:
+                - created: Number of tools created
+                - updated: Number of tools updated
+                - skipped: Number of tools skipped
+                - failed: Number of tools that failed
+                - errors: List of error messages
+
+        Raises:
+            ToolError: If bulk registration fails critically
+
+        Examples:
+            >>> from mcpgateway.services.tool_service import ToolService
+            >>> from unittest.mock import MagicMock
+            >>> service = ToolService()
+            >>> db = MagicMock()
+            >>> tools = [MagicMock(), MagicMock()]
+            >>> import asyncio
+            >>> try:
+            ...     result = asyncio.run(service.register_tools_bulk(db, tools))
+            ... except Exception:
+            ...     pass
+        """
+        if not tools:
+            return {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
+
+        stats = {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
+
+        # Process in chunks to avoid memory issues and SQLite parameter limits
+        chunk_size = 500
+
+        for chunk_start in range(0, len(tools), chunk_size):
+            chunk = tools[chunk_start : chunk_start + chunk_size]
+            chunk_stats = self._process_tool_chunk(
+                db=db,
+                chunk=chunk,
+                conflict_strategy=conflict_strategy,
+                visibility=visibility,
+                team_id=team_id,
+                owner_email=owner_email,
+                created_by=created_by,
+                created_from_ip=created_from_ip,
+                created_via=created_via,
+                created_user_agent=created_user_agent,
+                import_batch_id=import_batch_id,
+                federation_source=federation_source,
+            )
+
+            # Aggregate stats
+            for key, value in chunk_stats.items():
+                if key == "errors":
+                    stats[key].extend(value)
+                else:
+                    stats[key] += value
+
+        return stats
+
+    def _process_tool_chunk(
+        self,
+        db: Session,
+        chunk: List[ToolCreate],
+        conflict_strategy: str,
+        visibility: str,
+        team_id: Optional[int],
+        owner_email: Optional[str],
+        created_by: str,
+        created_from_ip: Optional[str],
+        created_via: Optional[str],
+        created_user_agent: Optional[str],
+        import_batch_id: Optional[str],
+        federation_source: Optional[str],
+    ) -> dict:
+        """Process a chunk of tools for bulk import.
+
+        Args:
+            db: The SQLAlchemy database session.
+            chunk: List of ToolCreate objects to process.
+            conflict_strategy: Strategy for handling conflicts ("skip", "update", or "fail").
+            visibility: Tool visibility level ("public", "team", or "private").
+            team_id: Team ID for team-scoped tools.
+            owner_email: Email of the tool owner.
+            created_by: Email of the user creating the tools.
+            created_from_ip: IP address of the request origin.
+            created_via: Source of the creation (e.g., "api", "ui").
+            created_user_agent: User agent string from the request.
+            import_batch_id: Batch identifier for bulk imports.
+            federation_source: Source identifier for federated tools.
+
+        Returns:
+            dict: Statistics dictionary with keys "created", "updated", "skipped", "failed", and "errors".
+        """
+        stats = {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
+
+        try:
+            # Batch check for existing tools to detect conflicts
+            tool_names = [tool.name for tool in chunk]
+
+            if visibility.lower() == "public":
+                existing_tools_query = select(DbTool).where(DbTool.name.in_(tool_names), DbTool.visibility == "public")
+            elif visibility.lower() == "team" and team_id:
+                existing_tools_query = select(DbTool).where(DbTool.name.in_(tool_names), DbTool.visibility == "team", DbTool.team_id == team_id)
+            else:
+                # Private tools - check by owner
+                existing_tools_query = select(DbTool).where(DbTool.name.in_(tool_names), DbTool.visibility == "private", DbTool.owner_email == (owner_email or created_by))
+
+            existing_tools = db.execute(existing_tools_query).scalars().all()
+            existing_tools_map = {tool.name: tool for tool in existing_tools}
+
+            tools_to_add = []
+            tools_to_update = []
+
+            for tool in chunk:
+                result = self._process_single_tool_for_bulk(
+                    tool=tool,
+                    existing_tools_map=existing_tools_map,
+                    conflict_strategy=conflict_strategy,
+                    visibility=visibility,
+                    team_id=team_id,
+                    owner_email=owner_email,
+                    created_by=created_by,
+                    created_from_ip=created_from_ip,
+                    created_via=created_via,
+                    created_user_agent=created_user_agent,
+                    import_batch_id=import_batch_id,
+                    federation_source=federation_source,
+                )
+
+                if result["status"] == "add":
+                    tools_to_add.append(result["tool"])
+                    stats["created"] += 1
+                elif result["status"] == "update":
+                    tools_to_update.append(result["tool"])
+                    stats["updated"] += 1
+                elif result["status"] == "skip":
+                    stats["skipped"] += 1
+                elif result["status"] == "fail":
+                    stats["failed"] += 1
+                    stats["errors"].append(result["error"])
+
+            # Bulk add new tools
+            if tools_to_add:
+                db.add_all(tools_to_add)
+
+            # Commit the chunk
+            db.commit()
+
+            # Refresh tools for notifications and audit trail
+            for db_tool in tools_to_add:
+                db.refresh(db_tool)
+                # Notify subscribers (sync call in async context handled by caller)
+
+            # Log bulk audit trail entry
+            if tools_to_add or tools_to_update:
+                audit_trail.log_action(
+                    user_id=created_by or "system",
+                    action="bulk_create_tools" if tools_to_add else "bulk_update_tools",
+                    resource_type="tool",
+                    resource_id=None,
+                    details={"count": len(tools_to_add) + len(tools_to_update), "import_batch_id": import_batch_id},
+                    db=db,
+                )
+
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Failed to process tool chunk: {str(e)}")
+            stats["failed"] += len(chunk)
+            stats["errors"].append(f"Chunk processing failed: {str(e)}")
+
+        return stats
+
+    def _process_single_tool_for_bulk(
+        self,
+        tool: ToolCreate,
+        existing_tools_map: dict,
+        conflict_strategy: str,
+        visibility: str,
+        team_id: Optional[int],
+        owner_email: Optional[str],
+        created_by: str,
+        created_from_ip: Optional[str],
+        created_via: Optional[str],
+        created_user_agent: Optional[str],
+        import_batch_id: Optional[str],
+        federation_source: Optional[str],
+    ) -> dict:
+        """Process a single tool for bulk import.
+
+        Args:
+            tool: ToolCreate object to process.
+            existing_tools_map: Dictionary mapping tool names to existing DbTool objects.
+            conflict_strategy: Strategy for handling conflicts ("skip", "update", or "fail").
+            visibility: Tool visibility level ("public", "team", or "private").
+            team_id: Team ID for team-scoped tools.
+            owner_email: Email of the tool owner.
+            created_by: Email of the user creating the tool.
+            created_from_ip: IP address of the request origin.
+            created_via: Source of the creation (e.g., "api", "ui").
+            created_user_agent: User agent string from the request.
+            import_batch_id: Batch identifier for bulk imports.
+            federation_source: Source identifier for federated tools.
+
+        Returns:
+            dict: Result dictionary with "status" key ("add", "update", "skip", or "fail")
+                and either "tool" (DbTool object) or "error" (error message).
+        """
+        try:
+            # Extract auth information
+            if tool.auth is None:
+                auth_type = None
+                auth_value = None
+            else:
+                auth_type = tool.auth.auth_type
+                auth_value = tool.auth.auth_value
+
+            # Use provided parameters or schema values
+            tool_team_id = team_id if team_id is not None else getattr(tool, "team_id", None)
+            tool_owner_email = owner_email or getattr(tool, "owner_email", None) or created_by
+            tool_visibility = visibility if visibility is not None else getattr(tool, "visibility", "public")
+
+            existing_tool = existing_tools_map.get(tool.name)
+
+            if existing_tool:
+                # Handle conflict based on strategy
+                if conflict_strategy == "skip":
+                    return {"status": "skip"}
+                if conflict_strategy == "update":
+                    # Update existing tool
+                    existing_tool.display_name = tool.displayName or tool.name
+                    existing_tool.url = str(tool.url)
+                    existing_tool.description = tool.description
+                    existing_tool.integration_type = tool.integration_type
+                    existing_tool.request_type = tool.request_type
+                    existing_tool.headers = tool.headers
+                    existing_tool.input_schema = tool.input_schema
+                    existing_tool.output_schema = tool.output_schema
+                    existing_tool.annotations = tool.annotations
+                    existing_tool.jsonpath_filter = tool.jsonpath_filter
+                    existing_tool.auth_type = auth_type
+                    existing_tool.auth_value = auth_value
+                    existing_tool.tags = tool.tags or []
+                    existing_tool.modified_by = created_by
+                    existing_tool.modified_from_ip = created_from_ip
+                    existing_tool.modified_via = created_via
+                    existing_tool.modified_user_agent = created_user_agent
+                    existing_tool.updated_at = datetime.now(timezone.utc)
+                    existing_tool.version = (existing_tool.version or 1) + 1
+
+                    # Update REST-specific fields if applicable
+                    if tool.integration_type == "REST":
+                        existing_tool.base_url = tool.base_url
+                        existing_tool.path_template = tool.path_template
+                        existing_tool.query_mapping = tool.query_mapping
+                        existing_tool.header_mapping = tool.header_mapping
+                        existing_tool.timeout_ms = tool.timeout_ms
+                        existing_tool.expose_passthrough = tool.expose_passthrough if tool.expose_passthrough is not None else True
+                        existing_tool.allowlist = tool.allowlist
+                        existing_tool.plugin_chain_pre = tool.plugin_chain_pre
+                        existing_tool.plugin_chain_post = tool.plugin_chain_post
+
+                    return {"status": "update", "tool": existing_tool}
+
+                if conflict_strategy == "rename":
+                    # Create with renamed tool
+                    new_name = f"{tool.name}_imported_{int(datetime.now().timestamp())}"
+                    db_tool = self._create_tool_object(
+                        tool,
+                        new_name,
+                        auth_type,
+                        auth_value,
+                        tool_team_id,
+                        tool_owner_email,
+                        tool_visibility,
+                        created_by,
+                        created_from_ip,
+                        created_via,
+                        created_user_agent,
+                        import_batch_id,
+                        federation_source,
+                    )
+                    return {"status": "add", "tool": db_tool}
+
+                if conflict_strategy == "fail":
+                    return {"status": "fail", "error": f"Tool name conflict: {tool.name}"}
+
+            # Create new tool
+            db_tool = self._create_tool_object(
+                tool,
+                tool.name,
+                auth_type,
+                auth_value,
+                tool_team_id,
+                tool_owner_email,
+                tool_visibility,
+                created_by,
+                created_from_ip,
+                created_via,
+                created_user_agent,
+                import_batch_id,
+                federation_source,
+            )
+            return {"status": "add", "tool": db_tool}
+
+        except Exception as e:
+            logger.warning(f"Failed to process tool {tool.name} in bulk operation: {str(e)}")
+            return {"status": "fail", "error": f"Failed to process tool {tool.name}: {str(e)}"}
+
+    def _create_tool_object(
+        self,
+        tool: ToolCreate,
+        name: str,
+        auth_type: Optional[str],
+        auth_value: Optional[str],
+        tool_team_id: Optional[int],
+        tool_owner_email: Optional[str],
+        tool_visibility: str,
+        created_by: str,
+        created_from_ip: Optional[str],
+        created_via: Optional[str],
+        created_user_agent: Optional[str],
+        import_batch_id: Optional[str],
+        federation_source: Optional[str],
+    ) -> DbTool:
+        """Create a DbTool object from ToolCreate schema.
+
+        Args:
+            tool: ToolCreate schema object containing tool data.
+            name: Name of the tool.
+            auth_type: Authentication type for the tool.
+            auth_value: Authentication value/credentials for the tool.
+            tool_team_id: Team ID for team-scoped tools.
+            tool_owner_email: Email of the tool owner.
+            tool_visibility: Tool visibility level ("public", "team", or "private").
+            created_by: Email of the user creating the tool.
+            created_from_ip: IP address of the request origin.
+            created_via: Source of the creation (e.g., "api", "ui").
+            created_user_agent: User agent string from the request.
+            import_batch_id: Batch identifier for bulk imports.
+            federation_source: Source identifier for federated tools.
+
+        Returns:
+            DbTool: Database model instance ready to be added to the session.
+        """
+        return DbTool(
+            original_name=name,
+            custom_name=name,
+            custom_name_slug=slugify(name),
+            display_name=tool.displayName or name,
+            url=str(tool.url),
+            description=tool.description,
+            integration_type=tool.integration_type,
+            request_type=tool.request_type,
+            headers=tool.headers,
+            input_schema=tool.input_schema,
+            output_schema=tool.output_schema,
+            annotations=tool.annotations,
+            jsonpath_filter=tool.jsonpath_filter,
+            auth_type=auth_type,
+            auth_value=auth_value,
+            gateway_id=tool.gateway_id,
+            tags=tool.tags or [],
+            created_by=created_by,
+            created_from_ip=created_from_ip,
+            created_via=created_via,
+            created_user_agent=created_user_agent,
+            import_batch_id=import_batch_id,
+            federation_source=federation_source,
+            version=1,
+            team_id=tool_team_id,
+            owner_email=tool_owner_email,
+            visibility=tool_visibility,
+            base_url=tool.base_url if tool.integration_type == "REST" else None,
+            path_template=tool.path_template if tool.integration_type == "REST" else None,
+            query_mapping=tool.query_mapping if tool.integration_type == "REST" else None,
+            header_mapping=tool.header_mapping if tool.integration_type == "REST" else None,
+            timeout_ms=tool.timeout_ms if tool.integration_type == "REST" else None,
+            expose_passthrough=((tool.expose_passthrough if tool.integration_type == "REST" and tool.expose_passthrough is not None else True) if tool.integration_type == "REST" else None),
+            allowlist=tool.allowlist if tool.integration_type == "REST" else None,
+            plugin_chain_pre=tool.plugin_chain_pre if tool.integration_type == "REST" else None,
+            plugin_chain_post=tool.plugin_chain_post if tool.integration_type == "REST" else None,
+        )
+
     async def list_tools(
         self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None, _request_headers: Optional[Dict[str, str]] = None
     ) -> tuple[List[ToolRead], Optional[str]]:

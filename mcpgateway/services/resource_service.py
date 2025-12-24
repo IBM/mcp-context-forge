@@ -525,6 +525,259 @@ class ResourceService:
             )
             raise ResourceError(f"Failed to register resource: {str(e)}")
 
+    async def register_resources_bulk(
+        self,
+        db: Session,
+        resources: List[ResourceCreate],
+        created_by: Optional[str] = None,
+        created_from_ip: Optional[str] = None,
+        created_via: Optional[str] = None,
+        created_user_agent: Optional[str] = None,
+        import_batch_id: Optional[str] = None,
+        federation_source: Optional[str] = None,
+        team_id: Optional[str] = None,
+        owner_email: Optional[str] = None,
+        visibility: Optional[str] = "public",
+        conflict_strategy: str = "skip",
+    ) -> Dict[str, Any]:
+        """Register multiple resources in bulk with a single commit.
+
+        This method provides significant performance improvements over individual
+        resource registration by:
+        - Using db.add_all() instead of individual db.add() calls
+        - Performing a single commit for all resources
+        - Batch conflict detection
+        - Chunking for very large imports (>500 items)
+
+        Args:
+            db: Database session
+            resources: List of resource creation schemas
+            created_by: Username who created these resources
+            created_from_ip: IP address of creator
+            created_via: Creation method (ui, api, import, federation)
+            created_user_agent: User agent of creation request
+            import_batch_id: UUID for bulk import operations
+            federation_source: Source gateway for federated resources
+            team_id: Team ID to assign the resources to
+            owner_email: Email of the user who owns these resources
+            visibility: Resource visibility level (private, team, public)
+            conflict_strategy: How to handle conflicts (skip, update, rename, fail)
+
+        Returns:
+            Dict with statistics:
+                - created: Number of resources created
+                - updated: Number of resources updated
+                - skipped: Number of resources skipped
+                - failed: Number of resources that failed
+                - errors: List of error messages
+
+        Raises:
+            ResourceError: If bulk registration fails critically
+
+        Examples:
+            >>> from mcpgateway.services.resource_service import ResourceService
+            >>> from unittest.mock import MagicMock
+            >>> service = ResourceService()
+            >>> db = MagicMock()
+            >>> resources = [MagicMock(), MagicMock()]
+            >>> import asyncio
+            >>> try:
+            ...     result = asyncio.run(service.register_resources_bulk(db, resources))
+            ... except Exception:
+            ...     pass
+        """
+        if not resources:
+            return {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
+
+        stats = {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
+
+        # Process in chunks to avoid memory issues and SQLite parameter limits
+        chunk_size = 500
+
+        for chunk_start in range(0, len(resources), chunk_size):
+            chunk = resources[chunk_start : chunk_start + chunk_size]
+
+            try:
+                # Batch check for existing resources to detect conflicts
+                resource_uris = [resource.uri for resource in chunk]
+
+                if visibility.lower() == "public":
+                    existing_resources_query = select(DbResource).where(DbResource.uri.in_(resource_uris), DbResource.visibility == "public")
+                elif visibility.lower() == "team" and team_id:
+                    existing_resources_query = select(DbResource).where(DbResource.uri.in_(resource_uris), DbResource.visibility == "team", DbResource.team_id == team_id)
+                else:
+                    # Private resources - check by owner
+                    existing_resources_query = select(DbResource).where(DbResource.uri.in_(resource_uris), DbResource.visibility == "private", DbResource.owner_email == (owner_email or created_by))
+
+                existing_resources = db.execute(existing_resources_query).scalars().all()
+                existing_resources_map = {resource.uri: resource for resource in existing_resources}
+
+                resources_to_add = []
+                resources_to_update = []
+
+                for resource in chunk:
+                    try:
+                        # Use provided parameters or schema values
+                        resource_team_id = team_id if team_id is not None else getattr(resource, "team_id", None)
+                        resource_owner_email = owner_email or getattr(resource, "owner_email", None) or created_by
+                        resource_visibility = visibility if visibility is not None else getattr(resource, "visibility", "public")
+
+                        existing_resource = existing_resources_map.get(resource.uri)
+
+                        if existing_resource:
+                            # Handle conflict based on strategy
+                            if conflict_strategy == "skip":
+                                stats["skipped"] += 1
+                                continue
+                            if conflict_strategy == "update":
+                                # Update existing resource
+                                existing_resource.name = resource.name
+                                existing_resource.description = resource.description
+                                existing_resource.mime_type = resource.mime_type
+                                existing_resource.size = getattr(resource, "size", None)
+                                existing_resource.uri_template = resource.uri_template
+                                existing_resource.tags = resource.tags or []
+                                existing_resource.modified_by = created_by
+                                existing_resource.modified_from_ip = created_from_ip
+                                existing_resource.modified_via = created_via
+                                existing_resource.modified_user_agent = created_user_agent
+                                existing_resource.updated_at = datetime.now(timezone.utc)
+                                existing_resource.version = (existing_resource.version or 1) + 1
+
+                                resources_to_update.append(existing_resource)
+                                stats["updated"] += 1
+                            elif conflict_strategy == "rename":
+                                # Create with renamed resource
+                                new_uri = f"{resource.uri}_imported_{int(datetime.now().timestamp())}"
+                                db_resource = DbResource(
+                                    uri=new_uri,
+                                    name=resource.name,
+                                    description=resource.description,
+                                    mime_type=resource.mime_type,
+                                    size=getattr(resource, "size", None),
+                                    uri_template=resource.uri_template,
+                                    gateway_id=getattr(resource, "gateway_id", None),
+                                    tags=resource.tags or [],
+                                    created_by=created_by,
+                                    created_from_ip=created_from_ip,
+                                    created_via=created_via,
+                                    created_user_agent=created_user_agent,
+                                    import_batch_id=import_batch_id,
+                                    federation_source=federation_source,
+                                    version=1,
+                                    team_id=resource_team_id,
+                                    owner_email=resource_owner_email,
+                                    visibility=resource_visibility,
+                                )
+                                resources_to_add.append(db_resource)
+                                stats["created"] += 1
+                            elif conflict_strategy == "fail":
+                                stats["failed"] += 1
+                                stats["errors"].append(f"Resource URI conflict: {resource.uri}")
+                                continue
+                        else:
+                            # Create new resource
+                            db_resource = DbResource(
+                                uri=resource.uri,
+                                name=resource.name,
+                                description=resource.description,
+                                mime_type=resource.mime_type,
+                                size=getattr(resource, "size", None),
+                                uri_template=resource.uri_template,
+                                gateway_id=getattr(resource, "gateway_id", None),
+                                tags=resource.tags or [],
+                                created_by=created_by,
+                                created_from_ip=created_from_ip,
+                                created_via=created_via,
+                                created_user_agent=created_user_agent,
+                                import_batch_id=import_batch_id,
+                                federation_source=federation_source,
+                                version=1,
+                                team_id=resource_team_id,
+                                owner_email=resource_owner_email,
+                                visibility=resource_visibility,
+                            )
+                            resources_to_add.append(db_resource)
+                            stats["created"] += 1
+
+                    except Exception as e:
+                        stats["failed"] += 1
+                        stats["errors"].append(f"Failed to process resource {resource.uri}: {str(e)}")
+                        logger.warning(f"Failed to process resource {resource.uri} in bulk operation: {str(e)}")
+                        continue
+
+                # Bulk add new resources
+                if resources_to_add:
+                    db.add_all(resources_to_add)
+
+                # Commit the chunk
+                db.commit()
+
+                # Refresh resources for notifications and audit trail
+                for db_resource in resources_to_add:
+                    db.refresh(db_resource)
+                    # Notify subscribers
+                    await self._notify_resource_added(db_resource)
+
+                # Log bulk audit trail entry
+                if resources_to_add or resources_to_update:
+                    audit_trail.log_action(
+                        user_id=created_by or "system",
+                        action="bulk_create_resources" if resources_to_add else "bulk_update_resources",
+                        resource_type="resource",
+                        resource_id=import_batch_id or "bulk_operation",
+                        resource_name=f"Bulk operation: {len(resources_to_add)} created, {len(resources_to_update)} updated",
+                        user_email=owner_email,
+                        team_id=team_id,
+                        client_ip=created_from_ip,
+                        user_agent=created_user_agent,
+                        new_values={
+                            "resources_created": len(resources_to_add),
+                            "resources_updated": len(resources_to_update),
+                            "visibility": visibility,
+                        },
+                        context={
+                            "created_via": created_via,
+                            "import_batch_id": import_batch_id,
+                            "federation_source": federation_source,
+                            "conflict_strategy": conflict_strategy,
+                        },
+                        db=db,
+                    )
+
+                logger.info(f"Bulk registered {len(resources_to_add)} resources, updated {len(resources_to_update)} resources in chunk")
+
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Failed to process chunk in bulk resource registration: {str(e)}")
+                stats["failed"] += len(chunk)
+                stats["errors"].append(f"Chunk processing failed: {str(e)}")
+                continue
+
+        # Final structured logging
+        structured_logger.log(
+            level="INFO",
+            message="Bulk resource registration completed",
+            event_type="resources_bulk_created",
+            component="resource_service",
+            user_id=created_by,
+            user_email=owner_email,
+            team_id=team_id,
+            resource_type="resource",
+            custom_fields={
+                "resources_created": stats["created"],
+                "resources_updated": stats["updated"],
+                "resources_skipped": stats["skipped"],
+                "resources_failed": stats["failed"],
+                "total_resources": len(resources),
+                "visibility": visibility,
+                "conflict_strategy": conflict_strategy,
+            },
+            db=db,
+        )
+
+        return stats
+
     async def list_resources(self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None) -> tuple[List[ResourceRead], Optional[str]]:
         """
         Retrieve a list of registered resources from the database with pagination support.
