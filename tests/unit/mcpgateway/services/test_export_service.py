@@ -172,8 +172,8 @@ async def test_export_configuration_with_filters(export_service, mock_db):
     # Execute export with filters
     result = await export_service.export_configuration(db=mock_db, include_types=["tools", "gateways"], tags=["production"], include_inactive=True, exported_by="test_user")
 
-    # Verify service calls with filters
-    export_service.tool_service.list_tools.assert_called_once_with(mock_db, tags=["production"], include_inactive=True)
+    # Verify service calls with filters (cursor=None for pagination)
+    export_service.tool_service.list_tools.assert_called_once_with(mock_db, tags=["production"], include_inactive=True, cursor=None)
     export_service.gateway_service.list_gateways.assert_called_once_with(mock_db, include_inactive=True)
 
     # Should not call other services
@@ -401,15 +401,13 @@ async def test_export_with_masked_auth_data(export_service, mock_db):
     # Mock service and database
     export_service.tool_service.list_tools.return_value = ([tool_with_masked_auth], None)
 
-    # Mock database query to return raw auth value
-    mock_db_tool = MagicMock()
-    mock_db_tool.auth_value = "encrypted_raw_auth_value"
-    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_db_tool
+    # Mock database batch query to return raw auth values (id, auth_type, auth_value tuples)
+    mock_db.execute.return_value.all.return_value = [("tool1", "bearer", "encrypted_raw_auth_value")]
 
     # Execute export
     tools = await export_service._export_tools(mock_db, None, False)
 
-    # Should get raw auth value from database
+    # Should get raw auth value from database via batch query
     assert len(tools) == 1
     assert tools[0]["auth_type"] == "bearer"
     assert tools[0]["auth_value"] == "encrypted_raw_auth_value"
@@ -513,8 +511,8 @@ async def test_export_with_include_inactive(export_service, mock_db):
     export_options = result["metadata"]["export_options"]
     assert export_options["include_inactive"] == True
 
-    # Verify service calls included the flag
-    export_service.tool_service.list_tools.assert_called_with(mock_db, tags=None, include_inactive=True)
+    # Verify service calls included the flag (cursor=None for pagination)
+    export_service.tool_service.list_tools.assert_called_with(mock_db, tags=None, include_inactive=True, cursor=None)
 
 
 @pytest.mark.asyncio
@@ -662,15 +660,13 @@ async def test_export_gateways_with_masked_auth(export_service, mock_db):
 
     export_service.gateway_service.list_gateways.return_value = [gateway_with_masked_auth]
 
-    # Mock database query to return raw auth value
-    mock_db_gateway = MagicMock()
-    mock_db_gateway.auth_value = "encrypted_raw_gateway_auth"
-    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_db_gateway
+    # Mock database batch query to return raw auth values (id, auth_type, auth_value tuples)
+    mock_db.execute.return_value.all.return_value = [("gw1", "bearer", "encrypted_raw_gateway_auth")]
 
     # Execute export
     gateways = await export_service._export_gateways(mock_db, None, False)
 
-    # Should get raw auth value from database
+    # Should get raw auth value from database via batch query
     assert len(gateways) == 1
     assert gateways[0]["auth_type"] == "bearer"
     assert gateways[0]["auth_value"] == "encrypted_raw_gateway_auth"
