@@ -1740,6 +1740,15 @@
                         <input type="number" id="llm-provider-max-tokens" name="default_max_tokens" min="1" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="4096">
                       </div>
                     </div>
+                    <!-- Dynamic Provider-Specific Configuration Fields -->
+                    <div id="llm-provider-specific-config" class="space-y-4 hidden">
+                      <div class="border-t border-gray-200 dark:border-gray-600 pt-4">
+                        <h4 class="text-sm font-medium text-gray-900 dark:text-white mb-3">Provider-Specific Configuration</h4>
+                        <div id="llm-provider-config-fields" class="space-y-4">
+                          <!-- Dynamic fields will be inserted here -->
+                        </div>
+                      </div>
+                    </div>
                     <div class="flex items-center">
                       <input type="checkbox" id="llm-provider-enabled" name="enabled" checked class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded dark:bg-gray-700 dark:border-gray-600">
                       <label for="llm-provider-enabled" class="ml-2 block text-sm text-gray-700 dark:text-gray-300">Enabled</label>
