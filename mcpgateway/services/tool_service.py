@@ -2037,15 +2037,18 @@ class ToolService:
         tool_oauth_config = getattr(tool, "oauth_config", None)
         tool_gateway_id = tool.gateway_id
 
-        gateway_url = gateway.url if gateway else None
-        gateway_name = gateway.name if gateway else None
-        gateway_auth_type = gateway.auth_type if gateway else None
-        gateway_auth_value = gateway.auth_value if gateway else None
-        gateway_oauth_config = gateway.oauth_config if gateway else None
-        gateway_ca_cert = gateway.ca_certificate if gateway else None
-        gateway_ca_cert_sig = gateway.ca_certificate_sig if gateway else None
-        gateway_passthrough = gateway.passthrough_headers if gateway else None
-        gateway_id_str = str(gateway.id) if gateway else None
+        # Save gateway existence as local boolean BEFORE db.close()
+        # to avoid checking ORM object truthiness after session is closed
+        has_gateway = gateway is not None
+        gateway_url = gateway.url if has_gateway else None
+        gateway_name = gateway.name if has_gateway else None
+        gateway_auth_type = gateway.auth_type if has_gateway else None
+        gateway_auth_value = gateway.auth_value if has_gateway else None
+        gateway_oauth_config = gateway.oauth_config if has_gateway else None
+        gateway_ca_cert = gateway.ca_certificate if has_gateway else None
+        gateway_ca_cert_sig = gateway.ca_certificate_sig if has_gateway else None
+        gateway_passthrough = gateway.passthrough_headers if has_gateway else None
+        gateway_id_str = str(gateway.id) if has_gateway else None
 
         # Create Pydantic models for plugins BEFORE HTTP calls (use ORM objects while still valid)
         # This prevents lazy loading during HTTP calls
@@ -2053,7 +2056,7 @@ class ToolService:
         gateway_metadata: Optional[PydanticGateway] = None
         if self._plugin_manager:
             tool_metadata = PydanticTool.model_validate(tool)
-            if gateway:
+            if has_gateway:
                 gateway_metadata = PydanticGateway.model_validate(gateway)
 
         # ═══════════════════════════════════════════════════════════════════════════
@@ -2209,23 +2212,25 @@ class ToolService:
                     transport = tool_request_type.lower() if tool_request_type else "sse"
 
                     # Handle OAuth authentication for the gateway (using local variables)
-                    if gateway and gateway_auth_type == "oauth" and gateway_oauth_config:
+                    # NOTE: Use has_gateway instead of gateway to avoid accessing detached ORM object
+                    if has_gateway and gateway_auth_type == "oauth" and gateway_oauth_config:
                         grant_type = gateway_oauth_config.get("grant_type", "client_credentials")
 
                         if grant_type == "authorization_code":
                             # For Authorization Code flow, try to get stored tokens
-                            # NOTE: This still requires DB access before we can release the session
+                            # NOTE: Use fresh_db_session() since the original db was closed
                             try:
                                 # First-Party
                                 from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
 
-                                token_storage = TokenStorageService(db)
+                                with fresh_db_session() as token_db:
+                                    token_storage = TokenStorageService(token_db)
 
-                                # Get user-specific OAuth token
-                                if not app_user_email:
-                                    raise ToolInvocationError(f"User authentication required for OAuth-protected gateway '{gateway_name}'. Please ensure you are authenticated.")
+                                    # Get user-specific OAuth token
+                                    if not app_user_email:
+                                        raise ToolInvocationError(f"User authentication required for OAuth-protected gateway '{gateway_name}'. Please ensure you are authenticated.")
 
-                                access_token = await token_storage.get_user_token(gateway_id_str, app_user_email)
+                                    access_token = await token_storage.get_user_token(gateway_id_str, app_user_email)
 
                                 if access_token:
                                     headers = {"Authorization": f"Bearer {access_token}"}

@@ -44,7 +44,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.common.models import ResourceContent, ResourceTemplate, TextContent
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.db import EmailTeam
+from mcpgateway.db import EmailTeam, fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import ResourceMetric
@@ -1332,6 +1332,21 @@ class ResourceService:
                             else:
                                 headers = {}
 
+                        # ═══════════════════════════════════════════════════════════════════════════
+                        # Extract gateway data to local variables BEFORE releasing DB connection
+                        # ═══════════════════════════════════════════════════════════════════════════
+                        gateway_url = gateway.url
+                        gateway_transport = gateway.transport
+
+                        # ═══════════════════════════════════════════════════════════════════════════
+                        # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls
+                        # This prevents connection pool exhaustion during slow upstream requests.
+                        # All needed data has been extracted to local variables above.
+                        # The session will be closed again by FastAPI's get_db() finally block (safe no-op).
+                        # ═══════════════════════════════════════════════════════════════════════════
+                        db.rollback()  # End the transaction so connection returns to "idle" not "idle in transaction"
+                        db.close()
+
                         async def connect_to_sse_session(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | None:
                             """
                             Connect to an SSE-based gateway and retrieve the text content of a resource.
@@ -1438,10 +1453,10 @@ class ResourceService:
                             span.set_attribute("duration.ms", (time.monotonic() - start_time) * 1000)
 
                         resource_text = ""
-                        if (gateway.transport).lower() == "sse":
-                            resource_text = await connect_to_sse_session(server_url=gateway.url, authentication=headers, uri=uri)
+                        if (gateway_transport).lower() == "sse":
+                            resource_text = await connect_to_sse_session(server_url=gateway_url, authentication=headers, uri=uri)
                         else:
-                            resource_text = await connect_to_streamablehttp_server(server_url=gateway.url, authentication=headers, uri=uri)
+                            resource_text = await connect_to_streamablehttp_server(server_url=gateway_url, authentication=headers, uri=uri)
                         success = True  # Mark as successful before returning
                         return resource_text
                     except Exception as e:
@@ -1465,14 +1480,17 @@ class ResourceService:
                                 logger.warning(f"Failed to invoke resource metric: {metrics_error}")
 
                             # End Invoke resource span for Observability dashboard
+                            # NOTE: Use fresh_db_session() since the original db was released
+                            # before making HTTP calls to prevent connection pool exhaustion
                             if db_span_id and observability_service and not db_span_ended:
                                 try:
-                                    observability_service.end_span(
-                                        db=db,
-                                        span_id=db_span_id,
-                                        status="ok" if success else "error",
-                                        status_message=error_message if error_message else None,
-                                    )
+                                    with fresh_db_session() as fresh_db:
+                                        observability_service.end_span(
+                                            db=fresh_db,
+                                            span_id=db_span_id,
+                                            status="ok" if success else "error",
+                                            status_message=error_message if error_message else None,
+                                        )
                                     db_span_ended = True
                                     logger.debug(f"✓ Ended invoke.resource span: {db_span_id}")
                                 except Exception as e:

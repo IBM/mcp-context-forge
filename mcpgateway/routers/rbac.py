@@ -40,8 +40,14 @@ router = APIRouter(prefix="/rbac", tags=["RBAC"])
 def get_db() -> Generator[Session, None, None]:
     """Get database session for dependency injection.
 
+    Commits the transaction on successful completion to avoid implicit rollbacks
+    for read-only operations. Rolls back explicitly on exception.
+
     Yields:
         Session: SQLAlchemy database session
+
+    Raises:
+        Exception: Re-raises any exception after rolling back the transaction.
 
     Examples:
         >>> gen = get_db()
@@ -52,6 +58,10 @@ def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
     try:
         yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 
