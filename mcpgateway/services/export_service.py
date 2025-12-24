@@ -27,6 +27,9 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import Prompt as DbPrompt
+from mcpgateway.db import Resource as DbResource
+from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.services.gateway_service import GatewayService
 from mcpgateway.services.prompt_service import PromptService
@@ -137,6 +140,69 @@ class ExportService:
     async def shutdown(self) -> None:
         """Shutdown the export service."""
         logger.info("Export service shutdown")
+
+    async def _fetch_all_tools(self, db: Session, tags: Optional[List[str]], include_inactive: bool) -> List[Any]:
+        """Fetch all tools by following pagination cursors.
+
+        Args:
+            db: Database session
+            tags: Filter by tags
+            include_inactive: Include inactive tools
+
+        Returns:
+            List of all tools across all pages
+        """
+        all_tools = []
+        cursor = None
+        while True:
+            tools, next_cursor = await self.tool_service.list_tools(db, tags=tags, include_inactive=include_inactive, cursor=cursor)
+            all_tools.extend(tools)
+            if not next_cursor:
+                break
+            cursor = next_cursor
+        return all_tools
+
+    async def _fetch_all_prompts(self, db: Session, tags: Optional[List[str]], include_inactive: bool) -> List[Any]:
+        """Fetch all prompts by following pagination cursors.
+
+        Args:
+            db: Database session
+            tags: Filter by tags
+            include_inactive: Include inactive prompts
+
+        Returns:
+            List of all prompts across all pages
+        """
+        all_prompts = []
+        cursor = None
+        while True:
+            prompts, next_cursor = await self.prompt_service.list_prompts(db, tags=tags, include_inactive=include_inactive, cursor=cursor)
+            all_prompts.extend(prompts)
+            if not next_cursor:
+                break
+            cursor = next_cursor
+        return all_prompts
+
+    async def _fetch_all_resources(self, db: Session, tags: Optional[List[str]], include_inactive: bool) -> List[Any]:
+        """Fetch all resources by following pagination cursors.
+
+        Args:
+            db: Database session
+            tags: Filter by tags
+            include_inactive: Include inactive resources
+
+        Returns:
+            List of all resources across all pages
+        """
+        all_resources = []
+        cursor = None
+        while True:
+            resources, next_cursor = await self.resource_service.list_resources(db, tags=tags, include_inactive=include_inactive, cursor=cursor)
+            all_resources.extend(resources)
+            if not next_cursor:
+                break
+            cursor = next_cursor
+        return all_resources
 
     async def export_configuration(
         self,
@@ -269,6 +335,8 @@ class ExportService:
     async def _export_tools(self, db: Session, tags: Optional[List[str]], include_inactive: bool) -> List[Dict[str, Any]]:
         """Export tools with encrypted authentication data.
 
+        Uses batch queries to fetch auth data efficiently, avoiding N+1 query patterns.
+
         Args:
             db: Database session
             tags: Filter by tags
@@ -277,14 +345,24 @@ class ExportService:
         Returns:
             List of exported tool dictionaries
         """
-        tools, _ = await self.tool_service.list_tools(db, tags=tags, include_inactive=include_inactive)
+        # Fetch all tools across all pages (bypasses pagination limit)
+        tools = await self._fetch_all_tools(db, tags, include_inactive)
+
+        # Filter to only exportable tools (local REST tools, not MCP tools from gateways)
+        exportable_tools = [t for t in tools if not (t.integration_type == "MCP" and t.gateway_id)]
+
+        # Batch fetch auth data for tools with masked values (single query instead of N queries)
+        tool_ids_needing_auth = [
+            tool.id for tool in exportable_tools if hasattr(tool, "auth") and tool.auth and hasattr(tool.auth, "auth_value") and tool.auth.auth_value == settings.masked_auth_value
+        ]
+
+        auth_data_map: Dict[Any, tuple] = {}
+        if tool_ids_needing_auth:
+            db_tools_with_auth = db.execute(select(DbTool.id, DbTool.auth_type, DbTool.auth_value).where(DbTool.id.in_(tool_ids_needing_auth))).all()
+            auth_data_map = {row[0]: (row[1], row[2]) for row in db_tools_with_auth}
+
         exported_tools = []
-
-        for tool in tools:
-            # Only export locally created REST tools, not MCP tools from gateways
-            if tool.integration_type == "MCP" and tool.gateway_id:
-                continue
-
+        for tool in exportable_tools:
             tool_data = {
                 "name": tool.original_name,  # Use original name, not the slugified version
                 "displayName": tool.displayName,  # Export displayName field from ToolRead
@@ -305,21 +383,21 @@ class ExportService:
                 "updated_at": tool.updated_at.isoformat() if hasattr(tool.updated_at, "isoformat") and tool.updated_at else None,
             }
 
-            # Handle authentication data securely - get raw encrypted values
+            # Handle authentication data securely - use batch-fetched values
             if hasattr(tool, "auth") and tool.auth:
-                auth_data = tool.auth
-                if hasattr(auth_data, "auth_type") and hasattr(auth_data, "auth_value"):
-                    # Check if auth_value is masked, if so get raw value from DB
-                    if auth_data.auth_value == settings.masked_auth_value:
-                        # Get the raw encrypted auth_value from database
-                        db_tool = db.execute(select(DbTool).where(DbTool.id == tool.id)).scalar_one_or_none()
-                        if db_tool and db_tool.auth_value:
-                            tool_data["auth_type"] = auth_data.auth_type
-                            tool_data["auth_value"] = db_tool.auth_value  # Raw encrypted value
+                auth = tool.auth
+                if hasattr(auth, "auth_type") and hasattr(auth, "auth_value"):
+                    if auth.auth_value == settings.masked_auth_value:
+                        # Use batch-fetched auth data
+                        if tool.id in auth_data_map:
+                            auth_type, auth_value = auth_data_map[tool.id]
+                            if auth_value:
+                                tool_data["auth_type"] = auth_type
+                                tool_data["auth_value"] = auth_value
                     else:
                         # Auth value is not masked, use as-is
-                        tool_data["auth_type"] = auth_data.auth_type
-                        tool_data["auth_value"] = auth_data.auth_value  # Already encrypted
+                        tool_data["auth_type"] = auth.auth_type
+                        tool_data["auth_value"] = auth.auth_value
 
             exported_tools.append(tool_data)
 
@@ -327,6 +405,8 @@ class ExportService:
 
     async def _export_gateways(self, db: Session, tags: Optional[List[str]], include_inactive: bool) -> List[Dict[str, Any]]:
         """Export gateways with encrypted authentication data.
+
+        Uses batch queries to fetch auth data efficiently, avoiding N+1 query patterns.
 
         Args:
             db: Database session
@@ -337,13 +417,21 @@ class ExportService:
             List of exported gateway dictionaries
         """
         gateways = await self.gateway_service.list_gateways(db, include_inactive=include_inactive)
+
+        # Filter by tags if specified
+        if tags:
+            gateways = [g for g in gateways if any(str(tag) in {(str(t.get("id")) if isinstance(t, dict) and t.get("id") is not None else str(t)) for t in (g.tags or [])} for tag in tags)]
+
+        # Batch fetch auth data for gateways with masked values (single query instead of N queries)
+        gateway_ids_needing_auth = [g.id for g in gateways if g.auth_type and g.auth_value == settings.masked_auth_value]
+
+        auth_data_map: Dict[Any, tuple] = {}
+        if gateway_ids_needing_auth:
+            db_gateways_with_auth = db.execute(select(DbGateway.id, DbGateway.auth_type, DbGateway.auth_value).where(DbGateway.id.in_(gateway_ids_needing_auth))).all()
+            auth_data_map = {row[0]: (row[1], row[2]) for row in db_gateways_with_auth}
+
         exported_gateways = []
-
         for gateway in gateways:
-            # Filter by tags if specified — match by tag 'id' when tag objects present
-            if tags and not any(str(tag) in {(str(t.get("id")) if isinstance(t, dict) and t.get("id") is not None else str(t)) for t in (gateway.tags or [])} for tag in tags):
-                continue
-
             gateway_data = {
                 "name": gateway.name,
                 "url": str(gateway.url),
@@ -357,19 +445,19 @@ class ExportService:
                 "passthrough_headers": gateway.passthrough_headers or [],
             }
 
-            # Handle authentication data securely - get raw encrypted values
+            # Handle authentication data securely - use batch-fetched values
             if gateway.auth_type and gateway.auth_value:
-                # Check if auth_value is masked, if so get raw value from DB
                 if gateway.auth_value == settings.masked_auth_value:
-                    # Get the raw encrypted auth_value from database
-                    db_gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway.id)).scalar_one_or_none()
-                    if db_gateway and db_gateway.auth_value:
-                        gateway_data["auth_type"] = gateway.auth_type
-                        gateway_data["auth_value"] = db_gateway.auth_value  # Raw encrypted value
+                    # Use batch-fetched auth data
+                    if gateway.id in auth_data_map:
+                        auth_type, auth_value = auth_data_map[gateway.id]
+                        if auth_value:
+                            gateway_data["auth_type"] = auth_type
+                            gateway_data["auth_value"] = auth_value
                 else:
                     # Auth value is not masked, use as-is
                     gateway_data["auth_type"] = gateway.auth_type
-                    gateway_data["auth_value"] = gateway.auth_value  # Already encrypted
+                    gateway_data["auth_value"] = gateway.auth_value
 
             exported_gateways.append(gateway_data)
 
@@ -418,7 +506,8 @@ class ExportService:
         Returns:
             List of exported prompt dictionaries
         """
-        prompts, _ = await self.prompt_service.list_prompts(db, tags=tags, include_inactive=include_inactive)
+        # Fetch all prompts across all pages (bypasses pagination limit)
+        prompts = await self._fetch_all_prompts(db, tags, include_inactive)
         exported_prompts = []
 
         for prompt in prompts:
@@ -459,7 +548,8 @@ class ExportService:
         Returns:
             List of exported resource dictionaries
         """
-        resources, _ = await self.resource_service.list_resources(db, tags=tags, include_inactive=include_inactive)
+        # Fetch all resources across all pages (bypasses pagination limit)
+        resources = await self._fetch_all_resources(db, tags, include_inactive)
         exported_resources = []
 
         for resource in resources:
@@ -634,7 +724,9 @@ class ExportService:
         return cast(Dict[str, Any], export_data)
 
     async def _export_selected_tools(self, db: Session, tool_ids: List[str]) -> List[Dict[str, Any]]:
-        """Export specific tools by their IDs.
+        """Export specific tools by their IDs using batch queries.
+
+        Uses a single batch query instead of fetching all tools N times.
 
         Args:
             db: Database session
@@ -643,19 +735,51 @@ class ExportService:
         Returns:
             List of exported tool dictionaries
         """
-        tools = []
-        for tool_id in tool_ids:
-            try:
-                tool = await self.tool_service.get_tool(db, tool_id)
-                if tool.integration_type == "REST":  # Only export local REST tools
-                    tool_data = await self._export_tools(db, None, True)
-                    tools.extend([t for t in tool_data if t["name"] == tool.original_name])
-            except Exception as e:
-                logger.warning(f"Could not export tool {tool_id}: {str(e)}")
-        return tools
+        if not tool_ids:
+            return []
+
+        # Batch query for selected tools only
+        db_tools = db.execute(select(DbTool).where(DbTool.id.in_(tool_ids))).scalars().all()
+
+        exported_tools = []
+        for db_tool in db_tools:
+            # Only export local REST tools, not MCP tools from gateways
+            if db_tool.integration_type == "MCP" and db_tool.gateway_id:
+                continue
+
+            tool_data = {
+                "name": db_tool.original_name or db_tool.custom_name,
+                "displayName": db_tool.display_name,
+                "url": str(db_tool.url) if db_tool.url else None,
+                "integration_type": db_tool.integration_type,
+                "request_type": db_tool.request_type,
+                "description": db_tool.description,
+                "headers": db_tool.headers or {},
+                "input_schema": db_tool.input_schema or {"type": "object", "properties": {}},
+                "output_schema": db_tool.output_schema,
+                "annotations": db_tool.annotations or {},
+                "jsonpath_filter": db_tool.jsonpath_filter,
+                "tags": db_tool.tags or [],
+                "rate_limit": db_tool.rate_limit,
+                "timeout": db_tool.timeout,
+                "is_active": db_tool.is_active,
+                "created_at": db_tool.created_at.isoformat() if db_tool.created_at else None,
+                "updated_at": db_tool.updated_at.isoformat() if db_tool.updated_at else None,
+            }
+
+            # Include auth data directly from DB (already have raw values)
+            if db_tool.auth_type and db_tool.auth_value:
+                tool_data["auth_type"] = db_tool.auth_type
+                tool_data["auth_value"] = db_tool.auth_value
+
+            exported_tools.append(tool_data)
+
+        return exported_tools
 
     async def _export_selected_gateways(self, db: Session, gateway_ids: List[str]) -> List[Dict[str, Any]]:
-        """Export specific gateways by their IDs.
+        """Export specific gateways by their IDs using batch queries.
+
+        Uses a single batch query instead of fetching all gateways N times.
 
         Args:
             db: Database session
@@ -664,18 +788,40 @@ class ExportService:
         Returns:
             List of exported gateway dictionaries
         """
-        gateways = []
-        for gateway_id in gateway_ids:
-            try:
-                gateway = await self.gateway_service.get_gateway(db, gateway_id)
-                gateway_data = await self._export_gateways(db, None, True)
-                gateways.extend([g for g in gateway_data if g["name"] == gateway.name])
-            except Exception as e:
-                logger.warning(f"Could not export gateway {gateway_id}: {str(e)}")
-        return gateways
+        if not gateway_ids:
+            return []
+
+        # Batch query for selected gateways only
+        db_gateways = db.execute(select(DbGateway).where(DbGateway.id.in_(gateway_ids))).scalars().all()
+
+        exported_gateways = []
+        for db_gateway in db_gateways:
+            gateway_data = {
+                "name": db_gateway.name,
+                "url": str(db_gateway.url) if db_gateway.url else None,
+                "description": db_gateway.description,
+                "transport": db_gateway.transport,
+                "capabilities": db_gateway.capabilities or {},
+                "health_check": {"url": f"{db_gateway.url}/health", "interval": 30, "timeout": 10, "retries": 3},
+                "is_active": db_gateway.is_active,
+                "federation_enabled": True,
+                "tags": db_gateway.tags or [],
+                "passthrough_headers": db_gateway.passthrough_headers or [],
+            }
+
+            # Include auth data directly from DB (already have raw values)
+            if db_gateway.auth_type and db_gateway.auth_value:
+                gateway_data["auth_type"] = db_gateway.auth_type
+                gateway_data["auth_value"] = db_gateway.auth_value
+
+            exported_gateways.append(gateway_data)
+
+        return exported_gateways
 
     async def _export_selected_servers(self, db: Session, server_ids: List[str], root_path: str = "") -> List[Dict[str, Any]]:
-        """Export specific servers by their IDs.
+        """Export specific servers by their IDs using batch queries.
+
+        Uses a single batch query instead of fetching all servers N times.
 
         Args:
             db: Database session
@@ -685,18 +831,37 @@ class ExportService:
         Returns:
             List of exported server dictionaries
         """
-        servers = []
-        for server_id in server_ids:
-            try:
-                server = await self.server_service.get_server(db, server_id)
-                server_data = await self._export_servers(db, None, True, root_path)
-                servers.extend([s for s in server_data if s["name"] == server.name])
-            except Exception as e:
-                logger.warning(f"Could not export server {server_id}: {str(e)}")
-        return servers
+        if not server_ids:
+            return []
+
+        # Batch query for selected servers only
+        db_servers = db.execute(select(DbServer).where(DbServer.id.in_(server_ids))).scalars().all()
+
+        exported_servers = []
+        for db_server in db_servers:
+            # Get associated tool IDs
+            tool_ids = [str(tool.id) for tool in db_server.tools] if db_server.tools else []
+
+            server_data = {
+                "name": db_server.name,
+                "description": db_server.description,
+                "tool_ids": tool_ids,
+                "sse_endpoint": f"{root_path}/servers/{db_server.id}/sse",
+                "websocket_endpoint": f"{root_path}/servers/{db_server.id}/ws",
+                "jsonrpc_endpoint": f"{root_path}/servers/{db_server.id}/jsonrpc",
+                "capabilities": {"tools": {"list_changed": True}, "prompts": {"list_changed": True}},
+                "is_active": db_server.is_active,
+                "tags": db_server.tags or [],
+            }
+
+            exported_servers.append(server_data)
+
+        return exported_servers
 
     async def _export_selected_prompts(self, db: Session, prompt_names: List[str]) -> List[Dict[str, Any]]:
-        """Export specific prompts by their names.
+        """Export specific prompts by their names using batch queries.
+
+        Uses a single batch query instead of fetching all prompts N times.
 
         Args:
             db: Database session
@@ -705,19 +870,36 @@ class ExportService:
         Returns:
             List of exported prompt dictionaries
         """
-        prompts = []
-        for prompt_name in prompt_names:
-            try:
-                # Use get_prompt with empty args to get metadata
-                await self.prompt_service.get_prompt(db, prompt_name, {})
-                prompt_data = await self._export_prompts(db, None, True)
-                prompts.extend([p for p in prompt_data if p["name"] == prompt_name])
-            except Exception as e:
-                logger.warning(f"Could not export prompt {prompt_name}: {str(e)}")
-        return prompts
+        if not prompt_names:
+            return []
+
+        # Batch query for selected prompts only
+        db_prompts = db.execute(select(DbPrompt).where(DbPrompt.name.in_(prompt_names))).scalars().all()
+
+        exported_prompts = []
+        for db_prompt in db_prompts:
+            # Build input schema from argument_schema
+            input_schema: Dict[str, Any] = {"type": "object", "properties": {}, "required": []}
+            if db_prompt.argument_schema:
+                input_schema = db_prompt.argument_schema
+
+            prompt_data: Dict[str, Any] = {
+                "name": db_prompt.name,
+                "template": db_prompt.template,
+                "description": db_prompt.description,
+                "input_schema": input_schema,
+                "tags": db_prompt.tags or [],
+                "is_active": db_prompt.is_active,
+            }
+
+            exported_prompts.append(prompt_data)
+
+        return exported_prompts
 
     async def _export_selected_resources(self, db: Session, resource_uris: List[str]) -> List[Dict[str, Any]]:
-        """Export specific resources by their URIs.
+        """Export specific resources by their URIs using batch queries.
+
+        Uses a single batch query instead of fetching all resources N times.
 
         Args:
             db: Database session
@@ -726,14 +908,27 @@ class ExportService:
         Returns:
             List of exported resource dictionaries
         """
-        resources = []
-        for resource_uri in resource_uris:
-            try:
-                resource_data = await self._export_resources(db, None, True)
-                resources.extend([r for r in resource_data if r["uri"] == resource_uri])
-            except Exception as e:
-                logger.warning(f"Could not export resource {resource_uri}: {str(e)}")
-        return resources
+        if not resource_uris:
+            return []
+
+        # Batch query for selected resources only
+        db_resources = db.execute(select(DbResource).where(DbResource.uri.in_(resource_uris))).scalars().all()
+
+        exported_resources = []
+        for db_resource in db_resources:
+            resource_data = {
+                "name": db_resource.name,
+                "uri": db_resource.uri,
+                "description": db_resource.description,
+                "mime_type": db_resource.mime_type,
+                "tags": db_resource.tags or [],
+                "is_active": db_resource.is_active,
+                "last_modified": db_resource.updated_at.isoformat() if db_resource.updated_at else None,
+            }
+
+            exported_resources.append(resource_data)
+
+        return exported_resources
 
     async def _export_selected_roots(self, root_uris: List[str]) -> List[Dict[str, Any]]:
         """Export specific roots by their URIs.
