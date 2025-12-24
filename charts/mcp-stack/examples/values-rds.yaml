@@ -1,0 +1,116 @@
+########################################################################
+# EXAMPLE: AWS RDS Configuration
+#
+# This example shows how to configure the MCP Stack Helm chart to use
+# an external AWS RDS PostgreSQL database instead of the in-cluster
+# PostgreSQL deployment.
+#
+# Usage:
+#   helm install my-release ./charts/mcp-stack -f examples/values-rds.yaml
+########################################################################
+
+########################################################################
+# DISABLE IN-CLUSTER POSTGRESQL
+########################################################################
+postgres:
+  enabled: false                   # Disable in-cluster PostgreSQL deployment
+  
+  # External database configuration
+  external:
+    enabled: true                  # Enable external database mode
+    databaseUrl: "postgresql://admin:MySecurePassword123@my-app.abc123.us-east-1.rds.amazonaws.com:5432/mcpgateway?sslmode=require"
+    # Connection string format:
+    # postgresql://[user]:[password]@[host]:[port]/[database]?[options]
+    #
+    # Important options for RDS:
+    # - sslmode=require: Enforce SSL/TLS connection
+    # - connect_timeout=10: Connection timeout in seconds
+    # - application_name=mcp-gateway: Identify connections in RDS logs
+    #
+    # Example with all options:
+    # "postgresql://admin:pass@host:5432/db?sslmode=require&connect_timeout=10&application_name=mcp-gateway"
+
+########################################################################
+# MCP CONTEXT-FORGE (Gateway)
+########################################################################
+mcpContextForge:
+  replicaCount: 3                  # Scale horizontally for production
+  
+  image:
+    repository: ghcr.io/ibm/mcp-context-forge
+    tag: latest
+    pullPolicy: IfNotPresent
+  
+  service:
+    type: LoadBalancer             # Expose via LoadBalancer
+    port: 443                      # HTTPS port
+  
+  ingress:
+    enabled: false                 # Using LoadBalancer instead
+  
+  # Resource limits for production
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+  
+  # HPA for auto-scaling
+  hpa:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+
+########################################################################
+# REDIS CACHE (Optional - can also use ElastiCache)
+########################################################################
+redis:
+  enabled: true                    # Keep in-cluster Redis or use ElastiCache
+  
+  persistence:
+    enabled: true                  # Enable persistence for Redis
+    size: 5Gi
+    storageClassName: "gp3"        # AWS EBS gp3 storage class
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 512Mi
+
+########################################################################
+# DISABLE OPTIONAL COMPONENTS
+########################################################################
+pgadmin:
+  enabled: false                   # Not needed with RDS (use RDS console)
+
+redisCommander:
+  enabled: false                   # Optional Redis UI
+
+minio:
+  enabled: false                   # Use S3 instead if needed
+
+mcpFastTimeServer:
+  enabled: false                   # Optional MCP server
+
+########################################################################
+# DATABASE MIGRATION
+########################################################################
+migration:
+  enabled: true                    # Run migrations against RDS
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 512Mi
+
+# Made with Bob
