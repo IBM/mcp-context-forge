@@ -1499,28 +1499,28 @@ function extractKPIData(data) {
 
             const executions = Number(
                 normalized["total executions"] ??
-                    normalized.totalexecutions ??
-                    normalized.execution_count ??
-                    normalized["execution-count"] ??
-                    normalized.executions ??
-                    normalized.total_executions ??
-                    0,
+                normalized.totalexecutions ??
+                normalized.execution_count ??
+                normalized["execution-count"] ??
+                normalized.executions ??
+                normalized.total_executions ??
+                0,
             );
 
             const successful = Number(
                 normalized["successful executions"] ??
-                    normalized.successfulexecutions ??
-                    normalized.successful ??
-                    normalized.successful_executions ??
-                    0,
+                normalized.successfulexecutions ??
+                normalized.successful ??
+                normalized.successful_executions ??
+                0,
             );
 
             const failed = Number(
                 normalized["failed executions"] ??
-                    normalized.failedexecutions ??
-                    normalized.failed ??
-                    normalized.failed_executions ??
-                    0,
+                normalized.failedexecutions ??
+                normalized.failed ??
+                normalized.failed_executions ??
+                0,
             );
 
             const avgResponseRaw =
@@ -2235,15 +2235,14 @@ function updateTableRows(tbody, entityType, data, page, perPage) {
         rankCell.className =
             "px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100 sm:px-6 sm:py-4";
         const rankBadge = document.createElement("span");
-        rankBadge.className = `inline-flex items-center justify-center w-6 h-6 rounded-full ${
-            globalIndex === 0
+        rankBadge.className = `inline-flex items-center justify-center w-6 h-6 rounded-full ${globalIndex === 0
                 ? "bg-yellow-400 text-yellow-900"
                 : globalIndex === 1
-                  ? "bg-gray-300 text-gray-900"
-                  : globalIndex === 2
-                    ? "bg-orange-400 text-orange-900"
-                    : "bg-gray-100 text-gray-600"
-        }`;
+                    ? "bg-gray-300 text-gray-900"
+                    : globalIndex === 2
+                        ? "bg-orange-400 text-orange-900"
+                        : "bg-gray-100 text-gray-600"
+            }`;
         rankBadge.textContent = globalIndex + 1;
         rankBadge.setAttribute("aria-label", `Rank ${globalIndex + 1}`);
         rankCell.appendChild(rankBadge);
@@ -2284,13 +2283,12 @@ function updateTableRows(tbody, entityType, data, page, perPage) {
             "px-6 py-4 whitespace-nowrap text-sm sm:px-6 sm:py-4";
         const successRate = calculateSuccessRate(item);
         const successBadge = document.createElement("span");
-        successBadge.className = `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-            successRate >= 95
+        successBadge.className = `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${successRate >= 95
                 ? "bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-100"
                 : successRate >= 80
-                  ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-100"
-                  : "bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-100"
-        }`;
+                    ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-100"
+                    : "bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-100"
+            }`;
         successBadge.textContent = `${successRate}%`;
         successBadge.setAttribute(
             "aria-label",
@@ -2432,7 +2430,7 @@ function createPerformanceCard(performanceData) {
             const value =
                 performanceData[metric.key] ??
                 performanceData[
-                    metric.key.replace(/([A-Z])/g, "_$1").toLowerCase()
+                metric.key.replace(/([A-Z])/g, "_$1").toLowerCase()
                 ] ??
                 "N/A";
 
@@ -2654,10 +2652,10 @@ async function editTool(toolId) {
         if (tagsField) {
             const rawTags = tool.tags
                 ? tool.tags.map((tag) =>
-                      typeof tag === "object" && tag !== null
-                          ? tag.label || tag.id
-                          : tag,
-                  )
+                    typeof tag === "object" && tag !== null
+                        ? tag.label || tag.id
+                        : tag,
+                )
                 : [];
             tagsField.value = rawTags.join(", ");
         }
@@ -3155,8 +3153,8 @@ async function viewAgent(agentId) {
                     value:
                         agent.created_at || agent.createdAt
                             ? new Date(
-                                  agent.created_at || agent.createdAt,
-                              ).toLocaleString()
+                                agent.created_at || agent.createdAt,
+                            ).toLocaleString()
                             : "Pre-metadata",
                 },
                 {
@@ -3179,8 +3177,8 @@ async function viewAgent(agentId) {
                     value:
                         agent.updated_at || agent.updatedAt
                             ? new Date(
-                                  agent.updated_at || agent.updatedAt,
-                              ).toLocaleString()
+                                agent.updated_at || agent.updatedAt,
+                            ).toLocaleString()
                             : "N/A",
                 },
                 {
@@ -3311,10 +3309,10 @@ async function editA2AAgent(agentId) {
         if (tagsField) {
             const rawTags = agent.tags
                 ? agent.tags.map((tag) =>
-                      typeof tag === "object" && tag !== null
-                          ? tag.label || tag.id
-                          : tag,
-                  )
+                    typeof tag === "object" && tag !== null
+                        ? tag.label || tag.id
+                        : tag,
+                )
                 : [];
             tagsField.value = rawTags.join(", ");
         }
@@ -3602,7 +3600,7 @@ async function testResource(resourceId) {
             try {
                 const errorJson = await response.json();
                 errorDetail = errorJson.detail || "";
-            } catch (_) {}
+            } catch (_) { }
 
             throw new Error(
                 `HTTP ${response.status}: ${errorDetail || response.statusText}`,
@@ -3710,7 +3708,7 @@ async function runResourceTest() {
     try {
         const parsed = JSON.parse(contentStr);
         contentStr = JSON.stringify(parsed, null, 2);
-    } catch (_) {}
+    } catch (_) { }
 
     // ---- Content Section (same as prompt tester) ----
     const contentSection = document.createElement("div");
@@ -3880,7 +3878,7 @@ async function viewResource(resourceId) {
             try {
                 const errorJson = await response.json();
                 errorDetail = errorJson.detail || "";
-            } catch (_) {}
+            } catch (_) { }
 
             throw new Error(
                 `HTTP ${response.status}: ${errorDetail || response.statusText}`,
@@ -3948,11 +3946,10 @@ async function viewResource(resourceId) {
 
             const isActive = resource.enabled === true;
             const statusSpan = document.createElement("span");
-            statusSpan.className = `px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                isActive
+            statusSpan.className = `px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${isActive
                     ? "bg-green-100 text-green-800"
                     : "bg-red-100 text-red-800"
-            }`;
+                }`;
             statusSpan.textContent = isActive ? "Active" : "Inactive";
 
             statusP.appendChild(statusSpan);
@@ -4061,8 +4058,8 @@ async function viewResource(resourceId) {
                     value:
                         resource.created_at || resource.createdAt
                             ? new Date(
-                                  resource.created_at || resource.createdAt,
-                              ).toLocaleString()
+                                resource.created_at || resource.createdAt,
+                            ).toLocaleString()
                             : "Pre-metadata",
                 },
                 {
@@ -4088,8 +4085,8 @@ async function viewResource(resourceId) {
                     value:
                         resource.updated_at || resource.updatedAt
                             ? new Date(
-                                  resource.updated_at || resource.updatedAt,
-                              ).toLocaleString()
+                                resource.updated_at || resource.updatedAt,
+                            ).toLocaleString()
                             : "N/A",
                 },
                 {
@@ -4167,7 +4164,7 @@ async function editResource(resourceId) {
             try {
                 const errorJson = await response.json();
                 errorDetail = errorJson.detail || "";
-            } catch (_) {}
+            } catch (_) { }
 
             throw new Error(
                 `HTTP ${response.status}: ${errorDetail || response.statusText}`,
@@ -4255,10 +4252,10 @@ async function editResource(resourceId) {
         if (tagsField) {
             const rawTags = resource.tags
                 ? resource.tags.map((tag) =>
-                      typeof tag === "object" && tag !== null
-                          ? tag.label || tag.id
-                          : tag,
-                  )
+                    typeof tag === "object" && tag !== null
+                        ? tag.label || tag.id
+                        : tag,
+                )
                 : [];
             tagsField.value = rawTags.join(", ");
         }
@@ -4381,11 +4378,10 @@ async function viewPrompt(promptName) {
             statusP.appendChild(statusStrong);
 
             const statusSpan = document.createElement("span");
-            statusSpan.className = `px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                prompt.isActive
+            statusSpan.className = `px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${prompt.isActive
                     ? "bg-green-100 text-green-800"
                     : "bg-red-100 text-red-800"
-            }`;
+                }`;
             statusSpan.textContent = prompt.isActive ? "Active" : "Inactive";
             statusP.appendChild(statusSpan);
             container.appendChild(statusP);
@@ -4499,8 +4495,8 @@ async function viewPrompt(promptName) {
                     value:
                         prompt.created_at || prompt.createdAt
                             ? new Date(
-                                  prompt.created_at || prompt.createdAt,
-                              ).toLocaleString()
+                                prompt.created_at || prompt.createdAt,
+                            ).toLocaleString()
                             : "Pre-metadata",
                 },
                 {
@@ -4523,8 +4519,8 @@ async function viewPrompt(promptName) {
                     value:
                         prompt.updated_at || prompt.updatedAt
                             ? new Date(
-                                  prompt.updated_at || prompt.updatedAt,
-                              ).toLocaleString()
+                                prompt.updated_at || prompt.updatedAt,
+                            ).toLocaleString()
                             : "N/A",
                 },
                 {
@@ -4678,10 +4674,10 @@ async function editPrompt(promptId) {
         if (tagsField) {
             const rawTags = prompt.tags
                 ? prompt.tags.map((tag) =>
-                      typeof tag === "object" && tag !== null
-                          ? tag.label || tag.id
-                          : tag,
-                  )
+                    typeof tag === "object" && tag !== null
+                        ? tag.label || tag.id
+                        : tag,
+                )
                 : [];
             tagsField.value = rawTags.join(", ");
         }
@@ -4851,8 +4847,8 @@ async function viewGateway(gatewayId) {
                     value:
                         gateway.created_at || gateway.createdAt
                             ? new Date(
-                                  gateway.created_at || gateway.createdAt,
-                              ).toLocaleString()
+                                gateway.created_at || gateway.createdAt,
+                            ).toLocaleString()
                             : "Pre-metadata",
                 },
                 {
@@ -4876,8 +4872,8 @@ async function viewGateway(gatewayId) {
                     value:
                         gateway.updated_at || gateway.updatedAt
                             ? new Date(
-                                  gateway.updated_at || gateway.updatedAt,
-                              ).toLocaleString()
+                                gateway.updated_at || gateway.updatedAt,
+                            ).toLocaleString()
                             : "N/A",
                 },
                 {
@@ -4994,10 +4990,10 @@ async function editGateway(gatewayId) {
         if (tagsField) {
             const rawTags = gateway.tags
                 ? gateway.tags.map((tag) =>
-                      typeof tag === "object" && tag !== null
-                          ? tag.label || tag.id
-                          : tag,
-                  )
+                    typeof tag === "object" && tag !== null
+                        ? tag.label || tag.id
+                        : tag,
+                )
                 : [];
             tagsField.value = rawTags.join(", ");
         }
@@ -5141,7 +5137,7 @@ async function editGateway(gatewayId) {
                     authHeadersSection.style.display = "block";
                     const unmaskedHeaders =
                         Array.isArray(gateway.authHeadersUnmasked) &&
-                        gateway.authHeadersUnmasked.length > 0
+                            gateway.authHeadersUnmasked.length > 0
                             ? gateway.authHeadersUnmasked
                             : gateway.authHeaders;
                     if (
@@ -5381,11 +5377,10 @@ async function viewServer(serverId) {
             statusP.appendChild(statusStrong);
 
             const statusSpan = document.createElement("span");
-            statusSpan.className = `px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                server.isActive
+            statusSpan.className = `px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${server.isActive
                     ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300"
                     : "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300"
-            }`;
+                }`;
             statusSpan.textContent = server.isActive ? "Active" : "Inactive";
             statusP.appendChild(statusSpan);
 
@@ -5491,7 +5486,7 @@ async function viewServer(serverId) {
                         "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full dark:bg-blue-900 dark:text-blue-200";
                     resourceBadge.textContent =
                         window.resourceMapping &&
-                        window.resourceMapping[resourceId]
+                            window.resourceMapping[resourceId]
                             ? window.resourceMapping[resourceId]
                             : `Resource ${resourceId}`;
 
@@ -5696,8 +5691,8 @@ async function viewServer(serverId) {
                     value: server.updated_at
                         ? new Date(server.updated_at).toLocaleString()
                         : server.updatedAt
-                          ? new Date(server.updatedAt).toLocaleString()
-                          : "N/A",
+                            ? new Date(server.updatedAt).toLocaleString()
+                            : "N/A",
                 },
                 {
                     label: "Modified From IP",
@@ -5843,10 +5838,10 @@ async function editServer(serverId) {
         if (tagsField) {
             const rawTags = server.tags
                 ? server.tags.map((tag) =>
-                      typeof tag === "object" && tag !== null
-                          ? tag.label || tag.id
-                          : tag,
-                  )
+                    typeof tag === "object" && tag !== null
+                        ? tag.label || tag.id
+                        : tag,
+                )
                 : [];
             tagsField.value = rawTags.join(", ");
         }
@@ -5936,8 +5931,8 @@ async function editServer(serverId) {
                 document.getElementById("edit-server-tools");
             const toolCheckboxes = editToolContainer
                 ? editToolContainer.querySelectorAll(
-                      'input[name="associatedTools"]',
-                  )
+                    'input[name="associatedTools"]',
+                )
                 : document.querySelectorAll('input[name="associatedTools"]');
 
             toolCheckboxes.forEach((checkbox) => {
@@ -5960,11 +5955,11 @@ async function editServer(serverId) {
             );
             const resourceCheckboxes = editResourceContainer
                 ? editResourceContainer.querySelectorAll(
-                      'input[name="associatedResources"]',
-                  )
+                    'input[name="associatedResources"]',
+                )
                 : document.querySelectorAll(
-                      'input[name="associatedResources"]',
-                  );
+                    'input[name="associatedResources"]',
+                );
 
             resourceCheckboxes.forEach((checkbox) => {
                 const checkboxValue = checkbox.value;
@@ -5980,8 +5975,8 @@ async function editServer(serverId) {
             );
             const promptCheckboxes = editPromptContainer
                 ? editPromptContainer.querySelectorAll(
-                      'input[name="associatedPrompts"]',
-                  )
+                    'input[name="associatedPrompts"]',
+                )
                 : document.querySelectorAll('input[name="associatedPrompts"]');
 
             promptCheckboxes.forEach((checkbox) => {
@@ -6081,8 +6076,8 @@ function setEditServerAssociations(server) {
     const resourceContainer = document.getElementById("edit-server-resources");
     const resourceCheckboxes = resourceContainer
         ? resourceContainer.querySelectorAll(
-              'input[name="associatedResources"]',
-          )
+            'input[name="associatedResources"]',
+        )
         : document.querySelectorAll('input[name="associatedResources"]');
 
     resourceCheckboxes.forEach((checkbox) => {
@@ -11248,8 +11243,8 @@ async function validateTool(toolId) {
                                             prop.items?.anyOf,
                                         )
                                             ? prop.items.anyOf.map(
-                                                  (t) => t.type,
-                                              )
+                                                (t) => t.type,
+                                            )
                                             : [prop.items?.type];
 
                                         if (
@@ -13518,8 +13513,8 @@ async function viewTool(toolId) {
                 tool.created_at
                     ? new Date(tool.created_at).toLocaleString()
                     : tool.createdAt
-                      ? new Date(tool.createdAt).toLocaleString()
-                      : "Pre-metadata",
+                        ? new Date(tool.createdAt).toLocaleString()
+                        : "Pre-metadata",
             );
             setTextSafely(
                 ".metadata-created-from",
@@ -13538,8 +13533,8 @@ async function viewTool(toolId) {
                 tool.updated_at
                     ? new Date(tool.updated_at).toLocaleString()
                     : tool.updatedAt
-                      ? new Date(tool.updatedAt).toLocaleString()
-                      : "N/A",
+                        ? new Date(tool.updatedAt).toLocaleString()
+                        : "N/A",
             );
             setTextSafely(
                 ".metadata-modified-from",
@@ -16591,9 +16586,8 @@ function getCatalogUrl(server) {
         (window.location.protocol === "https:" ? "443" : "80");
     const protocol = window.location.protocol;
 
-    const baseUrl = `${protocol}//${currentHost}${
-        currentPort !== "80" && currentPort !== "443" ? ":" + currentPort : ""
-    }`;
+    const baseUrl = `${protocol}//${currentHost}${currentPort !== "80" && currentPort !== "443" ? ":" + currentPort : ""
+        }`;
 
     return `${baseUrl}/servers/${server.id}`;
 }
@@ -18350,9 +18344,9 @@ function displayImportMessages(errors, warnings, isDryRun) {
             <div class="font-bold">❌ Errors (${errors.length})</div>
             <ul class="mt-2 text-sm list-disc list-inside">
                 ${errors
-                    .slice(0, 5)
-                    .map((error) => `<li>${escapeHtml(error)}</li>`)
-                    .join("")}
+                .slice(0, 5)
+                .map((error) => `<li>${escapeHtml(error)}</li>`)
+                .join("")}
                 ${errors.length > 5 ? `<li class="text-gray-600 dark:text-gray-400">... and ${errors.length - 5} more errors</li>` : ""}
             </ul>
         `;
@@ -18369,9 +18363,9 @@ function displayImportMessages(errors, warnings, isDryRun) {
             <div class="font-bold">${warningTitle} (${warnings.length})</div>
             <ul class="mt-2 text-sm list-disc list-inside">
                 ${warnings
-                    .slice(0, 5)
-                    .map((warning) => `<li>${escapeHtml(warning)}</li>`)
-                    .join("")}
+                .slice(0, 5)
+                .map((warning) => `<li>${escapeHtml(warning)}</li>`)
+                .join("")}
                 ${warnings.length > 5 ? `<li class="text-gray-600 dark:text-gray-400">... and ${warnings.length - 5} more warnings</li>` : ""}
             </ul>
         `;
@@ -18458,13 +18452,12 @@ function showNotification(message, type = "info") {
 
     // Create a simple toast notification
     const toast = document.createElement("div");
-    toast.className = `fixed top-4 right-4 z-50 px-4 py-3 rounded-md text-sm font-medium max-w-sm ${
-        type === "success"
+    toast.className = `fixed top-4 right-4 z-50 px-4 py-3 rounded-md text-sm font-medium max-w-sm ${type === "success"
             ? "bg-green-100 text-green-800 border border-green-400"
             : type === "error"
-              ? "bg-red-100 text-red-800 border border-red-400"
-              : "bg-blue-100 text-blue-800 border border-blue-400"
-    }`;
+                ? "bg-red-100 text-red-800 border border-red-400"
+                : "bg-blue-100 text-blue-800 border border-blue-400"
+        }`;
     toast.textContent = message;
 
     document.body.appendChild(toast);
@@ -19316,27 +19309,26 @@ function showUsageStatsModal(stats) {
                 <div class="text-lg text-gray-700 dark:text-gray-300">${stats.average_response_time_ms}ms</div>
             </div>
 
-            ${
-                stats.top_endpoints && stats.top_endpoints.length > 0
-                    ? `
+            ${stats.top_endpoints && stats.top_endpoints.length > 0
+            ? `
                 <div class="mb-4">
                     <h4 class="text-md font-medium text-gray-900 dark:text-white mb-2">Top Endpoints</h4>
                     <div class="space-y-2">
                         ${stats.top_endpoints
-                            .map(
-                                ([endpoint, count]) => `
+                .map(
+                    ([endpoint, count]) => `
                             <div class="flex justify-between items-center p-2 bg-gray-50 dark:bg-gray-700 rounded">
                                 <span class="font-mono text-sm">${escapeHtml(endpoint)}</span>
                                 <span class="text-sm font-medium">${count} requests</span>
                             </div>
                         `,
-                            )
-                            .join("")}
+                )
+                .join("")}
                     </div>
                 </div>
             `
-                    : ""
-            }
+            : ""
+        }
 
             <div class="flex justify-end">
                 <button
@@ -19661,15 +19653,14 @@ function displayPublicTeams(teams) {
                 </span>
             </div>
 
-            ${
-                team.description
+            ${team.description
                     ? `
                 <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">
                     ${escapeHtml(team.description)}
                 </p>
             `
                     : ""
-            }
+                }
 
             <div class="mt-4 flex items-center justify-between">
                 <div class="flex items-center text-sm text-gray-500 dark:text-gray-400">
@@ -19729,7 +19720,7 @@ async function requestToJoinTeam(teamId) {
             const errorData = await response.json().catch(() => null);
             throw new Error(
                 errorData?.detail ||
-                    `Failed to request join: ${response.status}`,
+                `Failed to request join: ${response.status}`,
             );
         }
 
@@ -19837,7 +19828,7 @@ async function approveJoinRequest(teamId, requestId) {
             const errorData = await response.json().catch(() => null);
             throw new Error(
                 errorData?.detail ||
-                    `Failed to approve join request: ${response.status}`,
+                `Failed to approve join request: ${response.status}`,
             );
         }
 
@@ -19893,7 +19884,7 @@ async function rejectJoinRequest(teamId, requestId) {
             const errorData = await response.json().catch(() => null);
             throw new Error(
                 errorData?.detail ||
-                    `Failed to reject join request: ${response.status}`,
+                `Failed to reject join request: ${response.status}`,
             );
         }
 
@@ -20000,8 +19991,8 @@ function displayImportPreview(preview) {
                     </h3>
                     <div class="mt-1 text-sm text-blue-600 dark:text-blue-300">
                         ${Object.entries(preview.summary.by_type)
-                            .map(([type, count]) => `${type}: ${count}`)
-                            .join(", ")}
+            .map(([type, count]) => `${type}: ${count}`)
+            .join(", ")}
                     </div>
                 </div>
             </div>
@@ -20030,17 +20021,16 @@ function displayImportPreview(preview) {
         </div>
 
         <!-- Gateway Bundles -->
-        ${
-            Object.keys(preview.bundles || {}).length > 0
-                ? `
+        ${Object.keys(preview.bundles || {}).length > 0
+            ? `
             <div class="mb-6">
                 <h5 class="text-md font-medium text-gray-900 dark:text-white mb-3">
                     🌐 Gateway Bundles (Gateway + Auto-discovered Items)
                 </h5>
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     ${Object.entries(preview.bundles)
-                        .map(
-                            ([gatewayName, bundle]) => `
+                .map(
+                    ([gatewayName, bundle]) => `
                         <div class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:bg-gray-50 dark:hover:bg-gray-750">
                             <label class="flex items-start cursor-pointer">
                                 <input type="checkbox"
@@ -20057,26 +20047,26 @@ function displayImportPreview(preview) {
                                     <div class="text-xs text-blue-600 dark:text-blue-400">
                                         Bundle includes: ${bundle.total_items} items
                                         (${Object.entries(bundle.items)
-                                            .filter(
-                                                ([type, items]) =>
-                                                    items.length > 0,
-                                            )
-                                            .map(
-                                                ([type, items]) =>
-                                                    `${items.length} ${type}`,
-                                            )
-                                            .join(", ")})
+                            .filter(
+                                ([type, items]) =>
+                                    items.length > 0,
+                            )
+                            .map(
+                                ([type, items]) =>
+                                    `${items.length} ${type}`,
+                            )
+                            .join(", ")})
                                     </div>
                                 </div>
                             </label>
                         </div>
                     `,
-                        )
-                        .join("")}
+                )
+                .join("")}
                 </div>
             </div>
         `
-                : ""
+            : ""
         }
 
         <!-- Custom Items by Type -->
@@ -20091,8 +20081,8 @@ function displayImportPreview(preview) {
                     </h5>
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                         ${customItems
-                            .map(
-                                (item) => `
+                        .map(
+                            (item) => `
                             <div class="border border-gray-200 dark:border-gray-700 rounded-lg p-3 hover:bg-gray-50 dark:hover:bg-gray-750 ${item.conflicts_with ? "border-orange-300 dark:border-orange-700 bg-orange-50 dark:bg-orange-900" : ""}">
                                 <label class="flex items-start cursor-pointer">
                                     <input type="checkbox"
@@ -20103,11 +20093,10 @@ function displayImportPreview(preview) {
                                     <div class="flex-1">
                                         <div class="text-sm font-medium text-gray-900 dark:text-white">
                                             ${item.name}
-                                            ${
-                                                item.conflicts_with
-                                                    ? '<span class="text-orange-600 text-xs ml-1">⚠️ Conflict</span>'
-                                                    : ""
-                                            }
+                                            ${item.conflicts_with
+                                    ? '<span class="text-orange-600 text-xs ml-1">⚠️ Conflict</span>'
+                                    : ""
+                                }
                                         </div>
                                         <div class="text-xs text-gray-500 dark:text-gray-400">
                                             ${item.description || `Custom ${entityType} item`}
@@ -20116,8 +20105,8 @@ function displayImportPreview(preview) {
                                 </label>
                             </div>
                         `,
-                            )
-                            .join("")}
+                        )
+                        .join("")}
                     </div>
                 </div>
             `
@@ -20126,9 +20115,8 @@ function displayImportPreview(preview) {
             .join("")}
 
         <!-- Conflicts Warning -->
-        ${
-            Object.keys(preview.conflicts || {}).length > 0
-                ? `
+        ${Object.keys(preview.conflicts || {}).length > 0
+            ? `
             <div class="mb-6">
                 <div class="bg-orange-50 dark:bg-orange-900 border border-orange-200 dark:border-orange-800 rounded-lg p-4">
                     <div class="flex items-start">
@@ -20149,7 +20137,7 @@ function displayImportPreview(preview) {
                 </div>
             </div>
         `
-                : ""
+            : ""
         }
 
         <!-- Action Buttons -->
@@ -21347,8 +21335,8 @@ function initializeChatScroll() {
             // Check if user is near bottom (within 50px)
             const isAtBottom =
                 container.scrollHeight -
-                    container.scrollTop -
-                    container.clientHeight <
+                container.scrollTop -
+                container.clientHeight <
                 50;
             llmChatState.autoScroll = isAtBottom;
         });
@@ -21429,9 +21417,8 @@ async function loadVirtualServersForChat() {
                     onclick="selectServerForChat('${server.id}', '${escapeHtml(server.name)}', ${isActive}, ${requiresToken}, '${visibility}')"
                     style="position: relative;">
 
-                    ${
-                        requiresToken
-                            ? `
+                    ${requiresToken
+                        ? `
                         <div class="tooltip"
                         style="position: absolute; left: 50%; transform: translateX(-50%); bottom: 120%; margin-bottom: 8px;
                                 background-color: #6B7280; color: white; font-size: 10px; border-radius: 4px;
@@ -21443,7 +21430,7 @@ async function loadVirtualServersForChat() {
                                     width: 0; height: 0; border-left: 5px solid transparent;
                                     border-right: 5px solid transparent; border-top: 5px solid #6B7280;"></div>
                         </div>`
-                            : ""
+                        : ""
                     }
 
                     <div class="flex justify-between items-start">
@@ -21823,11 +21810,16 @@ async function connectLLMChat() {
         }
 
         // Auto-collapse configuration
-        const configForm = document.getElementById("llm-config-form");
-        const chevron = document.getElementById("llm-config-chevron");
-        if (configForm && !configForm.classList.contains("hidden")) {
-            configForm.classList.add("hidden");
-            chevron.classList.remove("rotate-180");
+        // Disable configuration toggle instead of hiding it
+        const configToggle = document.getElementById("llm-config-toggle");
+        if (configToggle) {
+            configToggle.disabled = true;
+            configToggle.classList.add("opacity-50", "cursor-not-allowed");
+            configToggle.title = "Please disconnect to change configuration";
+
+            // Ensure dropdown is closed if it was open (handled by Alpine, but good to be safe)
+            // We DON'T set 'hidden' class manually as it breaks Alpine's state
+            // But we can trigger a click if we knew it was open, or just let Alpine handle click.away
         }
 
         // Show success message
@@ -22393,6 +22385,14 @@ async function disconnectLLMChat() {
             chatInput.classList.add("hidden");
             document.getElementById("chat-input").disabled = true;
             document.getElementById("chat-send-btn").disabled = true;
+        }
+
+        // Re-enable configuration toggle
+        const configToggle = document.getElementById("llm-config-toggle");
+        if (configToggle) {
+            configToggle.disabled = false;
+            configToggle.classList.remove("opacity-50", "cursor-not-allowed");
+            configToggle.removeAttribute("title");
         }
 
         // Clear messages
@@ -26069,16 +26069,15 @@ function displayLogResults(data) {
                     ${durationDisplay}
                 </td>
                 <td class="px-4 py-3 text-sm">
-                    ${
-                        correlationId !== "-"
-                            ? `
+                    ${correlationId !== "-"
+                    ? `
                         <button onclick="event.stopPropagation(); showCorrelationTrace('${escapeHtml(correlationId)}')"
                                 class="text-blue-600 dark:text-blue-400 hover:underline">
                             ${escapeHtml(truncateText(correlationId, 12))}
                         </button>
                     `
-                            : "-"
-                    }
+                    : "-"
+                }
                 </td>
             </tr>
         `;
@@ -26711,16 +26710,15 @@ function displaySecurityEvents(events) {
                     </div>
                 </td>
                 <td class="px-4 py-3 text-sm">
-                    ${
-                        event.correlation_id
-                            ? `
+                    ${event.correlation_id
+                    ? `
                         <button onclick="event.stopPropagation(); showCorrelationTrace('${escapeHtml(event.correlation_id)}')"
                                 class="text-blue-600 dark:text-blue-400 hover:underline">
                             ${escapeHtml(truncateText(event.correlation_id, 12))}
                         </button>
                     `
-                            : "-"
-                    }
+                    : "-"
+                }
                 </td>
             </tr>
         `;
@@ -26877,16 +26875,15 @@ function displayAuditTrail(trails) {
                     ${actionIcon} ${trail.success ? "Success" : "Failed"}
                 </td>
                 <td class="px-4 py-3 text-sm">
-                    ${
-                        trail.correlation_id
-                            ? `
+                    ${trail.correlation_id
+                    ? `
                         <button onclick="event.stopPropagation(); showCorrelationTrace('${escapeHtml(trail.correlation_id)}')"
                                 class="text-blue-600 dark:text-blue-400 hover:underline">
                             ${escapeHtml(truncateText(trail.correlation_id, 12))}
                         </button>
                     `
-                            : "-"
-                    }
+                    : "-"
+                }
                 </td>
             </tr>
         `;
@@ -27296,7 +27293,7 @@ async function renderProviderSpecificFields(providerType, isEditing = false) {
         // Show the provider-specific config section
         const configSection = document.getElementById("llm-provider-specific-config");
         const fieldsContainer = document.getElementById("llm-provider-config-fields");
-        
+
         if (!configSection || !fieldsContainer) {
             return;
         }
@@ -27307,7 +27304,7 @@ async function renderProviderSpecificFields(providerType, isEditing = false) {
         // Render each field
         for (const fieldDef of providerConfig.config_fields) {
             const fieldDiv = document.createElement("div");
-            
+
             const label = document.createElement("label");
             label.setAttribute("for", `llm-config-${fieldDef.name}`);
             label.className = "block text-sm font-medium text-gray-700 dark:text-gray-300";
@@ -27321,17 +27318,17 @@ async function renderProviderSpecificFields(providerType, isEditing = false) {
             fieldDiv.appendChild(label);
 
             let inputElement;
-            
+
             if (fieldDef.field_type === "select") {
                 inputElement = document.createElement("select");
                 inputElement.className = "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm";
-                
+
                 // Add empty option
                 const emptyOption = document.createElement("option");
                 emptyOption.value = "";
                 emptyOption.textContent = "Select...";
                 inputElement.appendChild(emptyOption);
-                
+
                 // Add options
                 if (fieldDef.options) {
                     for (const opt of fieldDef.options) {
@@ -27349,7 +27346,7 @@ async function renderProviderSpecificFields(providerType, isEditing = false) {
                 inputElement = document.createElement("input");
                 inputElement.type = fieldDef.field_type;
                 inputElement.className = "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm";
-                
+
                 if (fieldDef.field_type === "number") {
                     if (fieldDef.min_value !== null && fieldDef.min_value !== undefined) {
                         inputElement.min = fieldDef.min_value;
@@ -27362,15 +27359,15 @@ async function renderProviderSpecificFields(providerType, isEditing = false) {
 
             inputElement.id = `llm-config-${fieldDef.name}`;
             inputElement.name = `config_${fieldDef.name}`;
-            
+
             if (fieldDef.required) {
                 inputElement.required = true;
             }
-            
+
             if (fieldDef.placeholder) {
                 inputElement.placeholder = fieldDef.placeholder;
             }
-            
+
             if (fieldDef.default_value && !isEditing) {
                 inputElement.value = fieldDef.default_value;
             }
@@ -27546,7 +27543,7 @@ async function editLLMProvider(providerId) {
 
         // Render provider-specific fields and populate with existing config
         await renderProviderSpecificFields(provider.provider_type, true);
-        
+
         // Populate provider-specific config values
         if (provider.config) {
             for (const [key, value] of Object.entries(provider.config)) {
@@ -27615,7 +27612,7 @@ async function saveLLMProvider(event) {
             if (input.name && input.name.startsWith("config_")) {
                 const fieldName = input.name.replace("config_", "");
                 let value = input.value;
-                
+
                 // Convert to appropriate type
                 if (input.type === "number") {
                     value = value ? parseFloat(value) : null;
@@ -27624,7 +27621,7 @@ async function saveLLMProvider(event) {
                 } else if (value === "") {
                     value = null;
                 }
-                
+
                 if (value !== null && value !== "") {
                     formData.config[fieldName] = value;
                 }
