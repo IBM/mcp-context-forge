@@ -159,7 +159,7 @@ class MetricsCache:
             True
         """
         with self._lock:
-            keys_to_remove = [k for k in self._caches.keys() if k.startswith(prefix)]
+            keys_to_remove = [k for k in self._caches if k.startswith(prefix)]
             for key in keys_to_remove:
                 self._caches.pop(key, None)
                 self._expiries.pop(key, None)
