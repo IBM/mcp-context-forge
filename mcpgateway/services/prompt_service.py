@@ -173,7 +173,7 @@ class PromptService:
 
         Args:
             db (Session): Database session for querying prompt metrics.
-            limit (Optional[int]): Maximum number of prompts to return. Defaults to 5. If None, returns all prompts.
+            limit (Optional[int]): Maximum number of prompts to return. Defaults to 5.
 
         Returns:
             List[TopPerformer]: A list of TopPerformer objects, each containing:
@@ -204,21 +204,20 @@ class PromptService:
             .order_by(desc("execution_count"))
         )
 
-        if limit is not None:
-            query = query.limit(limit)
+        query = query.limit(limit or 5)
 
         results = query.all()
 
         return build_top_performers(results)
 
-    def _convert_db_prompt(self, db_prompt: DbPrompt, include_metrics: bool = True) -> Dict[str, Any]:
+    def _convert_db_prompt(self, db_prompt: DbPrompt, include_metrics: bool = False) -> Dict[str, Any]:
         """
         Convert a DbPrompt instance to a dictionary matching the PromptRead schema,
         optionally including aggregated metrics computed from the associated PromptMetric records.
 
         Args:
             db_prompt: Db prompt to convert
-            include_metrics: Whether to include metrics in the result. Defaults to True.
+            include_metrics: Whether to include metrics in the result. Defaults to False.
                 Set to False for list operations to avoid N+1 query issues.
 
         Returns:
@@ -2066,6 +2065,9 @@ class PromptService:
         """
         Aggregate metrics for all prompt invocations across all prompts.
 
+        Uses in-memory caching (10s TTL) to reduce database load under high
+        request rates. Cache is invalidated when metrics are reset.
+
         Args:
             db: Database session
 
@@ -2092,6 +2094,15 @@ class PromptService:
             >>> isinstance(result, dict)
             True
         """
+        # Check cache first (if enabled)
+        # First-Party
+        from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
+
+        if is_cache_enabled():
+            cached = metrics_cache.get("prompts")
+            if cached is not None:
+                return cached
+
         # Execute a single query to get all metrics at once
         result = db.execute(
             select(
@@ -2110,7 +2121,7 @@ class PromptService:
         failed = result.failed_executions or 0
         failure_rate = failed / total if total > 0 else 0.0
 
-        return {
+        metrics = {
             "total_executions": total,
             "successful_executions": successful,
             "failed_executions": failed,
@@ -2120,6 +2131,12 @@ class PromptService:
             "avg_response_time": result.avg_response_time,
             "last_execution_time": result.last_execution_time,
         }
+
+        # Cache the result (if enabled)
+        if is_cache_enabled():
+            metrics_cache.set("prompts", metrics)
+
+        return metrics
 
     async def reset_metrics(self, db: Session) -> None:
         """
@@ -2141,3 +2158,9 @@ class PromptService:
 
         db.execute(delete(PromptMetric))
         db.commit()
+
+        # Invalidate metrics cache
+        # First-Party
+        from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
+
+        metrics_cache.invalidate("prompts")

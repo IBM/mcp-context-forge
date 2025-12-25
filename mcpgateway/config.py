@@ -907,6 +907,10 @@ class Settings(BaseSettings):
     metrics_buffer_flush_interval: int = Field(default=60, ge=5, le=300, description="Seconds between automatic metrics buffer flushes")
     metrics_buffer_max_size: int = Field(default=1000, ge=100, le=10000, description="Maximum buffered metrics before forced flush")
 
+    # Metrics Cache Configuration (for caching aggregate metrics queries)
+    metrics_cache_enabled: bool = Field(default=True, description="Enable in-memory caching for aggregate metrics queries")
+    metrics_cache_ttl_seconds: int = Field(default=10, ge=1, le=300, description="TTL for cached aggregate metrics in seconds")
+
     # Log Search Configuration
     log_search_max_results: int = Field(default=1000, description="Maximum results per log search query")
     log_retention_days: int = Field(default=30, description="Number of days to retain logs in database")
