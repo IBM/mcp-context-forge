@@ -1144,6 +1144,21 @@ You can configure the gateway with SQLite, PostgreSQL (or any other compatible d
 
 When using PostgreSQL, you need to install the `psycopg` (psycopg3) driver.
 
+**System Dependencies**: The PostgreSQL adapter requires the `libpq` development headers to compile:
+
+```bash
+# Debian/Ubuntu
+sudo apt-get install libpq-dev
+
+# RHEL/CentOS/Fedora
+sudo dnf install postgresql-devel
+
+# macOS (Homebrew)
+brew install libpq
+```
+
+Then install the Python package:
+
 ```bash
 uv pip install 'psycopg[binary]'   # dev convenience (pre-built wheels)
 # or

@@ -17,6 +17,31 @@ MCP Gateway supports multiple database backends with full feature parity across 
 | MariaDB     | ✅ Full       | `mysql+pymysql://mysql:changeme@localhost:3306/mcp`         | **36+ tables**, MariaDB 10.6+ |
 | MySQL       | ✅ Full       | `mysql+pymysql://admin:changeme@localhost:3306/mcp`         | Alternative MySQL variant      |
 
+### PostgreSQL System Dependencies
+
+!!! warning "Required: libpq Development Headers"
+    The PostgreSQL adapter (`psycopg[c]`) requires the `libpq` development headers to compile. Install them before running `pip install .[postgres]`:
+
+    === "Debian/Ubuntu"
+        ```bash
+        sudo apt-get install libpq-dev
+        ```
+
+    === "RHEL/CentOS/Fedora"
+        ```bash
+        sudo dnf install postgresql-devel
+        ```
+
+    === "macOS (Homebrew)"
+        ```bash
+        brew install libpq
+        ```
+
+    After installing the system dependencies, install the Python package:
+    ```bash
+    pip install .[postgres]
+    ```
+
 ### MariaDB/MySQL Setup Details
 
 !!! success "MariaDB & MySQL Full Support"
