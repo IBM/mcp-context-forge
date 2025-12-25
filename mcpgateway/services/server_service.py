@@ -220,7 +220,7 @@ class ServerService:
             ...     tags=[], metrics=[m1, m2],
             ...     tools=[], resources=[], prompts=[], a2a_agents=[]
             ... )
-            >>> result = svc._convert_server_to_read(server)
+            >>> result = svc._convert_server_to_read(server, include_metrics=True)
             >>> result.metrics.total_executions
             2
             >>> result.metrics.successful_executions
