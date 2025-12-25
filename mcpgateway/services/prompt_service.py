@@ -169,7 +169,7 @@ class PromptService:
 
         Queries the database to get prompts with their metrics, ordered by the number of executions
         in descending order. Returns a list of TopPerformer objects containing prompt details and
-        performance metrics.
+        performance metrics. Results are cached for performance.
 
         Args:
             db (Session): Database session for querying prompt metrics.
@@ -184,6 +184,18 @@ class PromptService:
                 - success_rate: Success rate percentage, or None if no metrics.
                 - last_execution: Timestamp of the last execution, or None if no metrics.
         """
+        # Check cache first (if enabled)
+        # First-Party
+        from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
+
+        effective_limit = limit or 5
+        cache_key = f"top_prompts:{effective_limit}"
+
+        if is_cache_enabled():
+            cached = metrics_cache.get(cache_key)
+            if cached is not None:
+                return cached
+
         query = (
             db.query(
                 DbPrompt.id,
@@ -204,11 +216,16 @@ class PromptService:
             .order_by(desc("execution_count"))
         )
 
-        query = query.limit(limit or 5)
+        query = query.limit(effective_limit)
 
         results = query.all()
+        top_performers = build_top_performers(results)
 
-        return build_top_performers(results)
+        # Cache the result (if enabled)
+        if is_cache_enabled():
+            metrics_cache.set(cache_key, top_performers)
+
+        return top_performers
 
     def _convert_db_prompt(self, db_prompt: DbPrompt, include_metrics: bool = False) -> Dict[str, Any]:
         """
@@ -2164,3 +2181,4 @@ class PromptService:
         from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
 
         metrics_cache.invalidate("prompts")
+        metrics_cache.invalidate_prefix("top_prompts:")

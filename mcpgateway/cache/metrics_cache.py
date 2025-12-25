@@ -139,6 +139,33 @@ class MetricsCache:
                 self._expiries.pop(metric_type, None)
                 logger.debug(f"Invalidated metrics cache for: {metric_type}")
 
+    def invalidate_prefix(self, prefix: str) -> None:
+        """Invalidate all cached metrics with keys starting with prefix.
+
+        Args:
+            prefix: Key prefix to match for invalidation.
+
+        Examples:
+            >>> cache = MetricsCache()
+            >>> cache.set("top_tools:5", [{"id": "1"}])
+            >>> cache.set("top_tools:10", [{"id": "2"}])
+            >>> cache.set("tools", {"total": 100})
+            >>> cache.invalidate_prefix("top_tools:")
+            >>> cache.get("top_tools:5") is None
+            True
+            >>> cache.get("top_tools:10") is None
+            True
+            >>> cache.get("tools") is not None
+            True
+        """
+        with self._lock:
+            keys_to_remove = [k for k in self._caches if k.startswith(prefix)]
+            for key in keys_to_remove:
+                self._caches.pop(key, None)
+                self._expiries.pop(key, None)
+            if keys_to_remove:
+                logger.debug(f"Invalidated {len(keys_to_remove)} metrics cache entries with prefix: {prefix}")
+
     def stats(self) -> Dict[str, Any]:
         """Get cache statistics.
 
