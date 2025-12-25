@@ -8,7 +8,7 @@ Components tested:
 - Fast Time Server (REST API) - MCP server performance baseline
 - Fast Time Server (MCP Client) - MCP protocol baseline direct to server
 - Gateway MCP (SSE/HTTP) - MCP protocol through gateway virtual server
-- PostgreSQL - Database performance baseline (optional, requires psycopg2)
+- PostgreSQL - Database performance baseline (optional, requires psycopg)
 - Redis - Cache performance baseline (optional, requires redis)
 
 User Classes (selectable via --class-picker in Web UI):
@@ -16,7 +16,7 @@ User Classes (selectable via --class-picker in Web UI):
 - FastTimeMCPUser: MCP protocol test direct to server (weight: 1)
 - GatewayMCPUser: MCP protocol test through gateway (weight: 1)
 - FastTimeStressUser: High-frequency stress test (weight: 1)
-- PostgresUser: Direct PostgreSQL testing (weight: 1, requires psycopg2)
+- PostgresUser: Direct PostgreSQL testing (weight: 1, requires psycopg)
 - RedisUser: Direct Redis testing (weight: 1, requires redis)
 
 Default Parameters:
@@ -676,7 +676,7 @@ class GatewayMCPUser(User):
 
 
 # =============================================================================
-# PostgreSQL Direct Tests (requires psycopg2)
+# PostgreSQL Direct Tests (requires psycopg)
 # =============================================================================
 
 class PostgresUser(User):
@@ -686,7 +686,7 @@ class PostgresUser(User):
     It uses the Locust event system to report metrics.
     No HTTP host required - connects directly to PostgreSQL.
 
-    Requires: psycopg2-binary
+    Requires: psycopg[binary] (psycopg3)
 
     To enable: Select in class picker (Web UI) or set weight > 0
     """
@@ -699,17 +699,17 @@ class PostgresUser(User):
         super().__init__(*args, **kwargs)
         self.conn = None
         try:
-            import psycopg2
-            self.conn = psycopg2.connect(
+            import psycopg
+            self.conn = psycopg.connect(
                 host=POSTGRES_HOST,
                 port=POSTGRES_PORT,
                 user=POSTGRES_USER,
                 password=POSTGRES_PASSWORD,
-                database=POSTGRES_DB
+                dbname=POSTGRES_DB
             )
             logger.info("PostgreSQL connection established")
         except ImportError:
-            logger.warning("psycopg2 not installed - PostgreSQL tests disabled")
+            logger.warning("psycopg not installed - PostgreSQL tests disabled")
         except Exception as e:
             logger.warning(f"PostgreSQL connection failed: {e}")
 

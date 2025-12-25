@@ -784,7 +784,7 @@ PostgreSQL and Redis are **automatically deployed** with the MCP Gateway stack u
 
 **Connection strings (auto-configured):**
 ```bash
-DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/mcp
+DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD}@postgres:5432/mcp
 REDIS_URL=redis://redis:6379/0
 ```
 

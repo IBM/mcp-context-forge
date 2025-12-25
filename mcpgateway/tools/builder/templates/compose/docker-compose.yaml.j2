@@ -41,7 +41,7 @@ services:
       {% endfor %}
       {% endif %}
       # Database configuration
-      - DATABASE_URL=postgresql://postgres:$${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
+      - DATABASE_URL=postgresql+psycopg://postgres:$${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
       - REDIS_URL=redis://redis:6379/0
       {% if gateway.mtls_enabled | default(true) %}
       # mTLS client configuration (gateway connects to external plugins)
