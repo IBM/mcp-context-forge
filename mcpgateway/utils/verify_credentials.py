@@ -46,9 +46,11 @@ Examples:
 # Standard
 from base64 import b64decode
 import binascii
+import hashlib
 from typing import Optional
 
 # Third-Party
+from cachetools import TTLCache
 from fastapi import Cookie, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBasic, HTTPBasicCredentials, HTTPBearer
 from fastapi.security.utils import get_authorization_scheme_param
@@ -66,12 +68,102 @@ security = HTTPBearer(auto_error=False)
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
+# JWT verification cache using TTLCache (thread-safe with automatic expiration)
+_jwt_verification_cache: TTLCache = TTLCache(maxsize=settings.jwt_cache_max_size, ttl=settings.jwt_cache_ttl)
+# User cache using TTLCache (thread-safe with automatic expiration)
+_user_cache: TTLCache = TTLCache(maxsize=settings.user_cache_max_size, ttl=settings.user_cache_ttl)
+# Cache statistics
+_cache_stats = {"hits": 0, "misses": 0, "invalidations": 0}
+
+
+def invalidate_user_cache(email: str) -> None:
+    """Invalidate all cached entries for a specific user.
+
+    Call this when user logs out, changes password, or account is modified.
+
+    Args:
+        email: User email to invalidate cache for
+    """
+    count = 0
+
+    # Remove user from user cache
+    if email in _user_cache:
+        del _user_cache[email]
+        count += 1
+
+    # Find and remove all JWT tokens for this user
+    # Create a list of keys first to avoid modifying cache during iteration
+    keys_to_remove = []
+    try:
+        for token_hash, payload in list(_jwt_verification_cache.items()):
+            if payload.get("sub") == email or payload.get("email") == email:
+                keys_to_remove.append(token_hash)
+    except Exception:
+        pass  # Handle race condition if cache changes during iteration
+
+    for key in keys_to_remove:
+        try:
+            del _jwt_verification_cache[key]
+            count += 1
+        except KeyError:
+            pass  # Key may have expired naturally
+
+    _cache_stats["invalidations"] += count
+    logger.info(f"Invalidated {count} cache entries for user: {email}")
+
+
+def get_cache_stats() -> dict:
+    """Get JWT verification cache statistics for monitoring.
+
+    Returns:
+        dict: Cache statistics including hits, misses, size, and invalidations
+    """
+    return {
+        "jwt_cache_enabled": settings.jwt_cache_enabled,
+        "jwt_cache_size": len(_jwt_verification_cache),
+        "jwt_cache_max_size": settings.jwt_cache_max_size,
+        "user_cache_size": len(_user_cache),
+        "user_cache_max_size": settings.user_cache_max_size,
+        "cache_hits": _cache_stats["hits"],
+        "cache_misses": _cache_stats["misses"],
+        "cache_invalidations": _cache_stats["invalidations"],
+        "hit_rate": _cache_stats["hits"] / max(_cache_stats["hits"] + _cache_stats["misses"], 1),
+    }
+
+
+def get_cached_user(email: str) -> Optional[dict]:
+    """Get user from cache if available.
+
+    Args:
+        email: User email to lookup
+
+    Returns:
+        User dict if cached, None otherwise
+    """
+    if settings.jwt_cache_enabled and email in _user_cache:
+        logger.debug(f"User cache hit for: {email}")
+        return _user_cache[email]
+    return None
+
+
+def cache_user(email: str, user_dict: dict) -> None:
+    """Cache user object.
+
+    Args:
+        email: User email
+        user_dict: User data to cache
+    """
+    if settings.jwt_cache_enabled:
+        _user_cache[email] = user_dict
+        logger.debug(f"User cached: {email} (TTL: {settings.user_cache_ttl}s)")
+
 
 async def verify_jwt_token(token: str) -> dict:
     """Verify and decode a JWT token.
 
     Decodes and validates a JWT token using the configured secret key
     and algorithm from settings. Checks for token expiration and validity.
+    Results are cached to improve performance on repeated verifications.
 
     Args:
         token: The JWT token string to verify.
@@ -83,6 +175,19 @@ async def verify_jwt_token(token: str) -> dict:
         HTTPException: If token is invalid, expired, or missing required claims.
         MissingRequiredClaimError: If token is missing required expiration claim.
     """
+    # Check cache first if enabled
+    if settings.jwt_cache_enabled:
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+
+        # Check if token is in cache (TTLCache handles expiration automatically)
+        if token_hash in _jwt_verification_cache:
+            _cache_stats["hits"] += 1
+            logger.debug(f"JWT verification cache hit for token: {token_hash[:16]}...")
+            return _jwt_verification_cache[token_hash]
+
+        # Cache miss
+        _cache_stats["misses"] += 1
+
     try:
         validate_jwt_algo_and_keys()
 
@@ -115,6 +220,13 @@ async def verify_jwt_token(token: str) -> dict:
         }
 
         payload = jwt.decode(token, **decode_kwargs)
+
+        # Cache the successful verification result if enabled (TTLCache handles expiry)
+        if settings.jwt_cache_enabled:
+            token_hash = hashlib.sha256(token.encode()).hexdigest()
+            _jwt_verification_cache[token_hash] = payload
+            logger.debug(f"JWT verification cached for token: {token_hash[:16]}... (TTL: {settings.jwt_cache_ttl}s)")
+
         return payload
 
     except jwt.MissingRequiredClaimError:

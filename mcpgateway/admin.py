@@ -139,6 +139,7 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.security_cookies import set_auth_cookie
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.validate_signature import sign_data
+from mcpgateway.utils.verify_credentials import invalidate_user_cache
 
 # Conditional imports for gRPC support (only if grpcio is installed)
 try:
@@ -3128,6 +3129,19 @@ async def admin_logout(request: Request) -> RedirectResponse:
     """
     LOGGER.info("Admin user logging out")
     root_path = request.scope.get("root_path", "")
+
+    # Invalidate JWT cache for the user (extract email from JWT if available)
+    try:
+        jwt_token = request.cookies.get("jwt_token")
+        if jwt_token:
+            # First-Party
+            from mcpgateway.utils.verify_credentials import verify_jwt_token
+
+            payload = await verify_jwt_token(jwt_token)
+            if "email" in payload:
+                invalidate_user_cache(payload["email"])
+    except Exception:
+        pass  # Ignore errors, proceed with logout
 
     # Create redirect response to login page
     response = RedirectResponse(url=f"{root_path}/admin/login", status_code=303)

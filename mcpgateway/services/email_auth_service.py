@@ -35,6 +35,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import EmailAuthEvent, EmailUser
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.verify_credentials import invalidate_user_cache
 
 # Initialize logging
 logging_service = LoggingService()
@@ -488,7 +489,8 @@ class EmailAuthService:
 
             self.db.commit()
             success = True
-
+            # Invalidate JWT cache for this user
+            invalidate_user_cache(email)
             logger.info(f"Password changed successfully for {email}")
 
         except Exception as e:

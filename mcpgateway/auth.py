@@ -28,7 +28,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, fresh_db_session, SessionLocal
 from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError
 from mcpgateway.utils.correlation_id import get_correlation_id
-from mcpgateway.utils.verify_credentials import verify_jwt_token
+from mcpgateway.utils.verify_credentials import cache_user, get_cached_user, verify_jwt_token
 
 # Security scheme
 security = HTTPBearer(auto_error=False)
@@ -535,8 +535,37 @@ async def get_current_user(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-    # Get user from database using fresh session in thread pool
-    user = await asyncio.to_thread(_get_user_by_email_sync, email)
+    # Get user from database
+    # First-Party
+    from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
+
+    # Check user cache first
+    cached_user_dict = get_cached_user(email)
+    if cached_user_dict:
+        # Reconstruct EmailUser from cached dict
+        user = EmailUser(**cached_user_dict)
+    else:
+        # Get user from database - create session
+        db = SessionLocal()
+        try:
+            auth_service = EmailAuthService(db)
+            user = await auth_service.get_user_by_email(email)
+        finally:
+            db.close()
+
+        # Cache the user object if found
+        if user:
+            user_dict = {
+                "email": user.email,
+                "password_hash": user.password_hash,
+                "full_name": user.full_name,
+                "is_admin": user.is_admin,
+                "is_active": user.is_active,
+                "email_verified_at": user.email_verified_at,
+                "created_at": user.created_at,
+                "updated_at": user.updated_at,
+            }
+            cache_user(email, user_dict)
 
     if user is None:
         # Special case for platform admin - if user doesn't exist but token is valid

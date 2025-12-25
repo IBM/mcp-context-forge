@@ -189,6 +189,13 @@ class Settings(BaseSettings):
 
     require_token_expiration: bool = Field(default=False, description="Require all JWT tokens to have expiration claims")  # Default to flexible mode for backward compatibility
 
+    # JWT Token Verification Cache Configuration
+    jwt_cache_enabled: bool = Field(default=True, description="Enable caching of JWT token verification results")
+    jwt_cache_ttl: int = Field(default=30, ge=1, le=3600, description="JWT cache time-to-live in seconds (default: 30 seconds)")
+    jwt_cache_max_size: int = Field(default=10000, ge=10, le=100000, description="Maximum number of cached JWT verification results")
+    user_cache_ttl: int = Field(default=60, ge=1, le=3600, description="User object cache TTL in seconds (default: 60 seconds)")
+    user_cache_max_size: int = Field(default=5000, ge=10, le=100000, description="Maximum number of cached user objects")
+
     # SSO Configuration
     sso_enabled: bool = Field(default=False, description="Enable Single Sign-On authentication")
     sso_github_enabled: bool = Field(default=False, description="Enable GitHub OAuth authentication")

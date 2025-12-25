@@ -134,7 +134,7 @@ from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
 from mcpgateway.utils.redis_client import close_redis_client, get_redis_client
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
-from mcpgateway.utils.verify_credentials import require_auth, require_docs_auth_override, verify_jwt_token
+from mcpgateway.utils.verify_credentials import get_cache_stats, require_auth, require_docs_auth_override, verify_jwt_token
 from mcpgateway.validation.jsonrpc import JSONRPCError
 
 # Import the admin routes from the new module
@@ -4714,7 +4714,10 @@ async def healthcheck(db: Session = Depends(get_db)):
         error_message = f"Database connection error: {str(e)}"
         logger.error(error_message)
         return {"status": "unhealthy", "error": error_message}
-    return {"status": "healthy"}
+
+    # Include JWT cache statistics in health response
+    jwt_cache_stats = get_cache_stats()
+    return {"status": "healthy", "jwt_cache": jwt_cache_stats}
 
 
 @app.get("/ready")
