@@ -174,6 +174,7 @@ class ResourceService:
         Queries the database to get resources with their metrics, ordered by the number of executions
         in descending order. Uses the resource URI as the name field for TopPerformer objects.
         Returns a list of TopPerformer objects containing resource details and performance metrics.
+        Results are cached for performance.
 
         Args:
             db (Session): Database session for querying resource metrics.
@@ -188,6 +189,18 @@ class ResourceService:
                 - success_rate: Success rate percentage, or None if no metrics.
                 - last_execution: Timestamp of the last execution, or None if no metrics.
         """
+        # Check cache first (if enabled)
+        # First-Party
+        from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
+
+        effective_limit = limit or 5
+        cache_key = f"top_resources:{effective_limit}"
+
+        if is_cache_enabled():
+            cached = metrics_cache.get(cache_key)
+            if cached is not None:
+                return cached
+
         query = (
             db.query(
                 DbResource.id,
@@ -208,11 +221,16 @@ class ResourceService:
             .order_by(desc("execution_count"))
         )
 
-        query = query.limit(limit or 5)
+        query = query.limit(effective_limit)
 
         results = query.all()
+        top_performers = build_top_performers(results)
 
-        return build_top_performers(results)
+        # Cache the result (if enabled)
+        if is_cache_enabled():
+            metrics_cache.set(cache_key, top_performers)
+
+        return top_performers
 
     def _convert_resource_to_read(self, resource: DbResource, include_metrics: bool = False) -> ResourceRead:
         """
@@ -2907,3 +2925,4 @@ class ResourceService:
         from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
 
         metrics_cache.invalidate("resources")
+        metrics_cache.invalidate_prefix("top_resources:")
