@@ -1114,6 +1114,11 @@ class Settings(BaseSettings):
     db_max_retries: int = 3
     db_retry_interval_ms: int = 2000
 
+    # psycopg3-specific: Number of times a query must be executed before it's
+    # prepared server-side. Set to 0 to disable, 1 to prepare immediately.
+    # Default of 5 balances memory usage with query performance.
+    db_prepare_threshold: int = Field(default=5, ge=0, le=100, description="psycopg3 prepare_threshold for auto-prepared statements")
+
     # Cache
     cache_type: Literal["redis", "memory", "none", "database"] = "database"  # memory or redis or database
     redis_url: Optional[str] = "redis://localhost:6379/0"

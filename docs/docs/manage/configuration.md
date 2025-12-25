@@ -163,6 +163,10 @@ DB_POOL_TIMEOUT=60
 DB_POOL_RECYCLE=3600
 DB_MAX_RETRIES=5
 DB_RETRY_INTERVAL_MS=2000
+
+# psycopg3 auto-prepared statements (PostgreSQL only)
+# Queries executed N+ times are prepared server-side for performance
+DB_PREPARE_THRESHOLD=5
 ```
 
 ### Server Configuration

@@ -421,7 +421,41 @@ DB_POOL_TIMEOUT=60           # Wait time before timeout (seconds)
 DB_POOL_RECYCLE=3600         # Recycle connections after 1 hour
 DB_MAX_RETRIES=5             # Retry attempts on failure
 DB_RETRY_INTERVAL_MS=2000    # Retry interval
+
+# psycopg3-specific optimizations
+DB_PREPARE_THRESHOLD=5       # Auto-prepare queries after N executions (0=disable)
 ```
+
+#### psycopg3 Performance Features
+
+MCP Gateway uses psycopg3 (the modern PostgreSQL adapter) with several performance optimizations:
+
+**Automatic Prepared Statements:**
+
+```bash
+# Number of executions before auto-preparing a query server-side
+# Default: 5 (balance between memory and performance)
+# Set to 0 to disable, 1 to prepare immediately
+DB_PREPARE_THRESHOLD=5
+```
+
+After N executions of the same query pattern, psycopg3 creates a server-side prepared statement, reducing:
+- Query parsing overhead (5-15% per query)
+- Network round-trips for query plans
+- PostgreSQL CPU usage for repeated queries
+
+**COPY Protocol for Large Bulk Imports:**
+
+A utility module (`mcpgateway/utils/psycopg3_optimizations.py`) provides COPY protocol support for very large bulk inserts (1000+ rows). Note: COPY is only faster for large batches; for small batches (<100 rows), SQLAlchemy's `bulk_insert_mappings()` is actually faster due to lower protocol overhead.
+
+**Connection URL Format:**
+
+```bash
+# Required format for psycopg3 (NOT postgresql://)
+DATABASE_URL=postgresql+psycopg://user:pass@host:5432/db
+```
+
+See [ADR-027: Migrate to psycopg3](../architecture/adr/027-migrate-psycopg3.md) for details.
 
 #### Configuration in Code
 

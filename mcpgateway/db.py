@@ -86,6 +86,10 @@ if backend == "postgresql" and driver in ("psycopg", "default", ""):
         keepalives_idle=30,  # seconds of idleness before first probe
         keepalives_interval=5,  # seconds between probes
         keepalives_count=5,  # drop the link after N failed probes
+        # psycopg3: prepare_threshold controls automatic server-side prepared statements
+        # After N executions of the same query, psycopg3 prepares it server-side
+        # This significantly improves performance for frequently-executed queries
+        prepare_threshold=settings.db_prepare_threshold,
     )
 
     # Extract and apply PostgreSQL options from URL query parameters
@@ -94,6 +98,8 @@ if backend == "postgresql" and driver in ("psycopg", "default", ""):
     if url_options:
         connect_args["options"] = url_options
         logger.info(f"PostgreSQL connection options applied: {url_options}")
+
+    logger.info(f"psycopg3 prepare_threshold set to {settings.db_prepare_threshold}")
 
 # ---------------------------------------------------------------------------
 # 3. SQLite (optional) - only one extra flag and it is *SQLite-specific*.

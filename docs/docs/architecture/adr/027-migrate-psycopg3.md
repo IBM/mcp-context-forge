@@ -26,8 +26,7 @@ We will use `psycopg[binary]` (psycopg3) as the only supported PostgreSQL adapte
 ### Changes Made
 
 1. **Dependencies** (`pyproject.toml`):
-   - Use `psycopg[binary]>=3.2.0` for the `postgres` extra
-   - Add `postgres-c` extra for users who want to compile the C extension for maximum performance
+   - Use `psycopg[c,binary]>=3.2.0` for the `postgres` extra (C extension + pre-compiled libpq)
 
 2. **Driver Detection** (`mcpgateway/db.py`):
    - Only psycopg3 driver is supported: `driver in ("psycopg", "default", "")`
@@ -40,8 +39,53 @@ We will use `psycopg[binary]` (psycopg3) as the only supported PostgreSQL adapte
 ### Migration Path for Users
 
 1. **URL format**: Must use `postgresql+psycopg://` (not `postgresql://`)
-2. **Install**: Use `pip install 'psycopg[binary]'` or install the gateway with `[postgres]` extra
+2. **Install**: Use `pip install 'psycopg[c,binary]'` or install the gateway with `[postgres]` extra
 3. **Breaking change**: All PostgreSQL URLs must be updated to use `postgresql+psycopg://`
+
+## Performance Optimizations
+
+The migration to psycopg3 enabled several performance optimizations:
+
+### 1. COPY Protocol Utility (for Large Bulk Imports)
+
+A utility module provides psycopg3's COPY protocol for very large bulk inserts (1000+ rows).
+
+**Location**: `mcpgateway/utils/psycopg3_optimizations.py`
+
+**Important**: COPY is only faster for large batches. Testing showed:
+- 1000+ rows: COPY is 5-10x faster than INSERT
+- 10-100 rows: COPY is actually 2x **slower** due to protocol overhead
+- For small batches, use SQLAlchemy's `bulk_insert_mappings()` instead
+
+**Use cases**:
+- Bulk data imports (tools, resources, prompts)
+- Initial data seeding
+- NOT recommended for metrics buffering (small frequent batches)
+
+### 2. Automatic Prepared Statements
+
+Psycopg3 automatically prepares frequently-executed queries server-side after a configurable threshold.
+
+**Configuration**: `DB_PREPARE_THRESHOLD` (default: 5)
+
+After N executions of the same query template, psycopg3 creates a server-side prepared statement, reducing:
+- Query parsing overhead
+- Network round-trips for query plans
+- PostgreSQL CPU usage for repeated queries
+
+Set to 0 to disable, 1 to prepare immediately, or higher values to reduce memory usage.
+
+### 3. Optimized Utility Module
+
+New utility module provides psycopg3-specific optimizations with automatic fallbacks:
+
+**Location**: `mcpgateway/utils/psycopg3_optimizations.py`
+
+Features:
+- `bulk_insert_with_copy()` - COPY protocol for bulk inserts
+- `bulk_insert_metrics()` - Optimized metrics insertion
+- `execute_pipelined()` - Pipeline mode for batch queries
+- `is_psycopg3_backend()` - Runtime backend detection
 
 ## Consequences
 
@@ -49,6 +93,7 @@ We will use `psycopg[binary]` (psycopg3) as the only supported PostgreSQL adapte
 
 - **Better security**: Server-side parameter binding prevents SQL injection at the protocol level
 - **Improved performance**: Prepared statements and binary protocol reduce overhead
+- **COPY protocol**: 5-10x faster bulk inserts for large import operations (1000+ rows)
 - **Future-ready**: Native async support enables future async migration if needed
 - **Active maintenance**: Psycopg3 receives regular updates and security fixes
 - **Better connection pooling**: Option to use psycopg_pool for advanced scenarios
