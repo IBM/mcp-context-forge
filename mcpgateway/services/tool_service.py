@@ -301,7 +301,7 @@ class ToolService:
 
         Queries the database to get tools with their metrics, ordered by the number of executions
         in descending order. Returns a list of TopPerformer objects containing tool details and
-        performance metrics.
+        performance metrics. Results are cached for performance.
 
         Args:
             db (Session): Database session for querying tool metrics.
@@ -316,6 +316,17 @@ class ToolService:
                 - success_rate: Success rate percentage, or None if no metrics.
                 - last_execution: Timestamp of the last execution, or None if no metrics.
         """
+        # Check cache first (if enabled)
+        # First-Party
+        from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
+
+        effective_limit = limit or 5
+        cache_key = f"top_tools:{effective_limit}"
+
+        if is_cache_enabled():
+            cached = metrics_cache.get(cache_key)
+            if cached is not None:
+                return cached
 
         success_rate = case(
             (func.count(ToolMetric.id) > 0, func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)).cast(Float) * 100 / func.count(ToolMetric.id)), else_=None  # pylint: disable=not-callable
@@ -333,12 +344,17 @@ class ToolService:
             .outerjoin(ToolMetric, ToolMetric.tool_id == DbTool.id)
             .group_by(DbTool.id, DbTool.name)
             .order_by(desc("execution_count"))
-            .limit(limit or 5)
+            .limit(effective_limit)
         )
 
         results = db.execute(query).all()
+        top_performers = build_top_performers(results)
 
-        return build_top_performers(results)
+        # Cache the result (if enabled)
+        if is_cache_enabled():
+            metrics_cache.set(cache_key, top_performers)
+
+        return top_performers
 
     def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
         """Retrieve the team name given a team ID.
@@ -3128,6 +3144,7 @@ class ToolService:
         from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
 
         metrics_cache.invalidate("tools")
+        metrics_cache.invalidate_prefix("top_tools:")
 
     async def create_tool_from_a2a_agent(
         self,
