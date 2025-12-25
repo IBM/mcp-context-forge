@@ -59,7 +59,7 @@ if TYPE_CHECKING:
 
 # ---------------------------------------------------------------------------
 # 1. Parse the URL so we can inspect backend ("postgresql", "sqlite", ...)
-#    and the specific driver ("psycopg2", "asyncpg", empty string = default).
+#    and the specific driver ("psycopg", "asyncpg", empty string = default).
 # ---------------------------------------------------------------------------
 url = make_url(settings.database_url)
 backend = url.get_backend_name()  # e.g. 'postgresql', 'sqlite'
@@ -70,15 +70,17 @@ driver = url.get_driver_name() or "default"
 connect_args: dict[str, object] = {}
 
 # ---------------------------------------------------------------------------
-# 2. PostgreSQL (synchronous psycopg2 only)
-#    The keep-alive parameters below are recognised exclusively by libpq /
-#    psycopg2 and let the kernel detect broken network links quickly.
+# 2. PostgreSQL (synchronous psycopg3)
+#    The keep-alive parameters below are recognised by libpq and let the
+#    kernel detect broken network links quickly.
 #
 #    Additionally, support PostgreSQL-specific options like search_path
 #    via the 'options' query parameter in DATABASE_URL.
-#    Example: postgresql://user:pass@host/db?options=-c%20search_path=mcp_gateway
+#    Example: postgresql+psycopg://user:pass@host/db?options=-c%20search_path=mcp_gateway
+#
+#    IMPORTANT: Use postgresql+psycopg:// (not postgresql://) for psycopg3.
 # ---------------------------------------------------------------------------
-if backend == "postgresql" and driver in ("psycopg2", "default", ""):
+if backend == "postgresql" and driver in ("psycopg", "default", ""):
     connect_args.update(
         keepalives=1,  # enable TCP keep-alive probes
         keepalives_idle=30,  # seconds of idleness before first probe

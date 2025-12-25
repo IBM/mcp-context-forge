@@ -425,7 +425,7 @@ def generate_kubernetes_manifests(config: MCPStackConfig, output_dir: Path, verb
         db_user = postgres.user or "postgres"
         db_password = postgres.password or "mysecretpassword"
         db_name = postgres.database or "mcp"
-        gateway_dict["env_vars"]["DATABASE_URL"] = f"postgresql://{db_user}:{db_password}@postgres:5432/{db_name}"
+        gateway_dict["env_vars"]["DATABASE_URL"] = f"postgresql+psycopg://{db_user}:{db_password}@postgres:5432/{db_name}"
 
         # Add init container to wait for PostgreSQL
         init_containers.append({"name": "wait-for-postgres", "image": "busybox:1.36", "command": ["sh", "-c", "until nc -z postgres 5432; do echo waiting for postgres; sleep 2; done"]})

@@ -91,7 +91,7 @@ By default, MCP Gateway uses SQLite for simplicity. You can configure alternativ
 === "PostgreSQL"
     ```bash
     # .env file
-    DATABASE_URL=postgresql://postgres:changeme@localhost:5432/mcp
+    DATABASE_URL=postgresql+psycopg://postgres:changeme@localhost:5432/mcp
     ```
 
 !!! tip "MariaDB & MySQL Full Compatibility"

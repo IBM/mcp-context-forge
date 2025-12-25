@@ -100,7 +100,7 @@ Uncomment one service block in `docker-compose.yml` and align `DATABASE_URL`:
 
 | Service block         | Connection string                             | Notes                          |
 | --------------------- | --------------------------------------------- | ------------------------------ |
-| `postgres:` (default) | `postgresql://postgres:...@postgres:5432/mcp` | Recommended for production     |
+| `postgres:` (default) | `postgresql+psycopg://postgres:...@postgres:5432/mcp` | Recommended for production     |
 | `mariadb:`            | `mysql+pymysql://mysql:...@mariadb:3306/mcp`  | **Fully supported** - MariaDB 10.6+ |
 | `mysql:`              | `mysql+pymysql://admin:...@mysql:3306/mcp`    | Alternative MySQL variant      |
 

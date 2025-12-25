@@ -96,7 +96,7 @@ spec:
             # $(...) placeholders are expanded correctly inside the pod.
             - name: DATABASE_URL
               value: >-
-                postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)
+                postgresql+psycopg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)
             - name: REDIS_URL
               value: "redis://$(REDIS_HOST):$(REDIS_PORT)/0"
 

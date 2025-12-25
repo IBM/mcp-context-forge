@@ -20,10 +20,10 @@ Set the `DATABASE_URL` environment variable with the `options` parameter:
 
 ```bash
 # Single custom schema
-export DATABASE_URL="postgresql://user:password@host:5432/dbname?options=-c%20search_path=mcp_gateway"
+export DATABASE_URL="postgresql+psycopg://user:password@host:5432/dbname?options=-c%20search_path=mcp_gateway"
 
 # Multiple schemas in search path (searches mcp_gateway first, then public)
-export DATABASE_URL="postgresql://user:password@host:5432/dbname?options=-c%20search_path=mcp_gateway,public"
+export DATABASE_URL="postgresql+psycopg://user:password@host:5432/dbname?options=-c%20search_path=mcp_gateway,public"
 ```
 
 ### URL Encoding
@@ -40,7 +40,7 @@ services:
   mcpgateway:
     image: mcpgateway:latest
     environment:
-      - DATABASE_URL=postgresql://user:password@postgres:5432/mcp?options=-c%20search_path=mcp_gateway
+      - DATABASE_URL=postgresql+psycopg://user:password@postgres:5432/mcp?options=-c%20search_path=mcp_gateway
     depends_on:
       - postgres
 
@@ -62,7 +62,7 @@ kind: ConfigMap
 metadata:
   name: mcpgateway-config
 data:
-  DATABASE_URL: "postgresql://$(DB_USER):$(DB_PASS)@postgres:5432/mcp?options=-c%20search_path=mcp_gateway"
+  DATABASE_URL: "postgresql+psycopg://$(DB_USER):$(DB_PASS)@postgres:5432/mcp?options=-c%20search_path=mcp_gateway"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -194,7 +194,7 @@ CREATE SCHEMA mcp_gateway;
 
 **Solution**:
 1. Verify PostgreSQL version supports the `options` parameter (PostgreSQL 9.0+)
-2. Check that the psycopg2 driver is being used (not asyncpg)
+2. Check that the psycopg3 driver is being used (not asyncpg)
 3. Verify URL encoding is correct
 
 ## Technical Details
@@ -203,7 +203,7 @@ CREATE SCHEMA mcp_gateway;
 
 1. The `DATABASE_URL` is parsed by SQLAlchemy's `make_url()` function
 2. The `options` query parameter is extracted from the URL
-3. The options are passed to psycopg2 via the `connect_args` dictionary
+3. The options are passed to psycopg via the `connect_args` dictionary
 4. PostgreSQL applies the `search_path` setting for all connections
 5. All table operations use the specified schema
 
@@ -226,21 +226,21 @@ Alembic migrations automatically respect the `search_path` setting:
 
 ```bash
 # .env file
-DATABASE_URL=postgresql://dev:devpass@localhost:5432/mcp_dev?options=-c%20search_path=mcp_gateway
+DATABASE_URL=postgresql+psycopg://dev:devpass@localhost:5432/mcp_dev?options=-c%20search_path=mcp_gateway
 ```
 
 ### Production Environment
 
 ```bash
 # Secure production setup with restricted public schema
-DATABASE_URL=postgresql://mcp_app:${DB_PASSWORD}@db.prod.example.com:5432/mcp_prod?options=-c%20search_path=mcp_gateway&sslmode=require
+DATABASE_URL=postgresql+psycopg://mcp_app:${DB_PASSWORD}@db.prod.example.com:5432/mcp_prod?options=-c%20search_path=mcp_gateway&sslmode=require
 ```
 
 ### Multi-Schema Setup
 
 ```bash
 # Search mcp_gateway first, fall back to shared schema
-DATABASE_URL=postgresql://user:pass@host:5432/db?options=-c%20search_path=mcp_gateway,shared,public
+DATABASE_URL=postgresql+psycopg://user:pass@host:5432/db?options=-c%20search_path=mcp_gateway,shared,public
 ```
 
 ## Security Considerations
@@ -253,7 +253,7 @@ DATABASE_URL=postgresql://user:pass@host:5432/db?options=-c%20search_path=mcp_ga
 ## References
 
 - [PostgreSQL search_path Documentation](https://www.postgresql.org/docs/current/ddl-schemas.html#DDL-SCHEMAS-PATH)
-- [psycopg2 Connection Options](https://www.psycopg.org/docs/module.html#psycopg2.connect)
+- [Psycopg3 Connection Options](https://www.psycopg.org/psycopg3/docs/api/connections.html)
 - [GitHub Issue #1535](https://github.com/IBM/mcp-context-forge/issues/1535)
 
 ## Support

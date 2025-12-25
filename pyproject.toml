@@ -176,7 +176,12 @@ redis-pure = [
 ]
 
 postgres = [
-    "psycopg2-binary>=2.9.11",
+    "psycopg[binary]>=3.2.0",
+]
+
+# psycopg3 with C extension for maximum performance (requires build tools)
+postgres-c = [
+    "psycopg[c]>=3.2.0",
 ]
 
 mysql = [

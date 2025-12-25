@@ -13,7 +13,7 @@ MCP Gateway supports multiple database backends with full feature parity across 
 | Database    | Support Level | Connection String Example                                    | Notes                          |
 |-------------|---------------|--------------------------------------------------------------|--------------------------------|
 | SQLite      | ✅ Full       | `sqlite:///./mcp.db`                                        | Default, file-based            |
-| PostgreSQL  | ✅ Full       | `postgresql://postgres:changeme@localhost:5432/mcp`         | Recommended for production     |
+| PostgreSQL  | ✅ Full       | `postgresql+psycopg://postgres:changeme@localhost:5432/mcp` | Recommended for production     |
 | MariaDB     | ✅ Full       | `mysql+pymysql://mysql:changeme@localhost:3306/mcp`         | **36+ tables**, MariaDB 10.6+ |
 | MySQL       | ✅ Full       | `mysql+pymysql://admin:changeme@localhost:3306/mcp`         | Alternative MySQL variant      |
 
@@ -154,7 +154,7 @@ DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
 # Database connection (choose one)
 DATABASE_URL=sqlite:///./mcp.db                                        # SQLite (default)
 DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp          # MariaDB/MySQL
-DATABASE_URL=postgresql://postgres:changeme@localhost:5432/mcp          # PostgreSQL
+DATABASE_URL=postgresql+psycopg://postgres:changeme@localhost:5432/mcp  # PostgreSQL
 
 # Connection pool settings (optional)
 DB_POOL_SIZE=200
