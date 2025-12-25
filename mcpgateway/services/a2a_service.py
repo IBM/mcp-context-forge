@@ -1033,12 +1033,24 @@ class A2AAgentService:
     async def aggregate_metrics(self, db: Session) -> Dict[str, Any]:
         """Aggregate metrics for all A2A agents.
 
+        Uses in-memory caching (10s TTL) to reduce database load under high
+        request rates. Cache is invalidated when metrics are reset.
+
         Args:
             db: Database session.
 
         Returns:
             Aggregated metrics.
         """
+        # Check cache first (if enabled)
+        # First-Party
+        from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
+
+        if is_cache_enabled():
+            cached = metrics_cache.get("a2a")
+            if cached is not None:
+                return cached
+
         # Get total/active agent counts from cache (avoids 2 COUNT queries per call)
         counts = a2a_stats_cache.get_counts(db)
         total_agents = counts["total"]
@@ -1069,7 +1081,7 @@ class A2AAgentService:
             max_rt = 0.0
         failed_interactions = total_interactions - successful_interactions
 
-        return {
+        metrics = {
             "total_agents": total_agents,
             "active_agents": active_agents,
             "total_interactions": total_interactions,
@@ -1080,6 +1092,12 @@ class A2AAgentService:
             "min_response_time": min_rt,
             "max_response_time": max_rt,
         }
+
+        # Cache the result (if enabled)
+        if is_cache_enabled():
+            metrics_cache.set("a2a", metrics)
+
+        return metrics
 
     async def reset_metrics(self, db: Session, agent_id: Optional[str] = None) -> None:
         """Reset metrics for agents.
@@ -1097,6 +1115,12 @@ class A2AAgentService:
 
         db.execute(delete_query)
         db.commit()
+
+        # Invalidate metrics cache
+        # First-Party
+        from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
+
+        metrics_cache.invalidate("a2a")
 
         logger.info("Reset A2A agent metrics" + (f" for agent {agent_id}" if agent_id else ""))
 
@@ -1116,13 +1140,13 @@ class A2AAgentService:
             agent.auth_value = encode_auth(agent.auth_value)
         return agent
 
-    def _db_to_schema(self, db: Session, db_agent: DbA2AAgent, include_metrics: bool = True, team_map: Optional[Dict[str, str]] = None) -> A2AAgentRead:
+    def _db_to_schema(self, db: Session, db_agent: DbA2AAgent, include_metrics: bool = False, team_map: Optional[Dict[str, str]] = None) -> A2AAgentRead:
         """Convert database model to schema.
 
         Args:
             db (Session): Database session.
             db_agent (DbA2AAgent): Database agent model.
-            include_metrics (bool): Whether to include metrics in the result. Defaults to True.
+            include_metrics (bool): Whether to include metrics in the result. Defaults to False.
                 Set to False for list operations to avoid N+1 query issues.
             team_map (Optional[Dict[str, str]]): Pre-fetched team_id -> team_name mapping.
                 If provided, avoids N+1 queries for team name lookups in list operations.

@@ -293,3 +293,31 @@ def assert_max_queries(test_engine):
         return _assert_max(test_engine, max_count, message)
 
     return _fixture
+
+
+# ---------------------------------------------------------------------------
+# Cache invalidation fixtures for test isolation
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def clear_metrics_cache():
+    """Clear the metrics cache before and after each test to ensure isolation.
+
+    This prevents cached values from one test affecting subsequent tests.
+    """
+    try:
+        from mcpgateway.cache.metrics_cache import metrics_cache
+
+        metrics_cache.invalidate()
+    except ImportError:
+        pass  # Cache module not available
+
+    yield
+
+    try:
+        from mcpgateway.cache.metrics_cache import metrics_cache
+
+        metrics_cache.invalidate()
+    except ImportError:
+        pass

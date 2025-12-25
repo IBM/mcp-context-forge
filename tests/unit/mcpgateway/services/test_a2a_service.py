@@ -498,7 +498,7 @@ class TestA2AAgentService:
         print(f"sample_db_agent: {sample_db_agent}")
         # Patch decode_auth to return a dummy decoded dict
         with patch("mcpgateway.schemas.decode_auth", return_value={"user": "decoded"}):
-            result = service._db_to_schema(mock_db, sample_db_agent)
+            result = service._db_to_schema(mock_db, sample_db_agent, include_metrics=True)
 
         # Verify
         assert result.id == sample_db_agent.id
