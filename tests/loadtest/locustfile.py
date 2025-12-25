@@ -41,7 +41,8 @@ from typing import Any
 import uuid
 
 # Third-Party
-from locust import between, events, HttpUser, tag, task
+from locust import between, events, tag, task
+from locust.contrib.fasthttp import FastHttpUser
 from locust.runners import MasterRunner, WorkerRunner
 
 # Configure logging
@@ -430,11 +431,14 @@ def _json_rpc_request(method: str, params: dict[str, Any] | None = None) -> dict
 # =============================================================================
 
 
-class BaseUser(HttpUser):
-    """Base user class with common configuration."""
+class BaseUser(FastHttpUser):
+    """Base user class with common configuration.
+
+    Uses FastHttpUser (gevent-based) for maximum throughput.
+    """
 
     abstract = True
-    wait_time = between(0.5, 2.0)
+    wait_time = between(0.1, 0.5)
 
     def __init__(self, *args, **kwargs):
         """Initialize base user with auth headers."""
