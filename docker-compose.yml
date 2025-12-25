@@ -133,7 +133,7 @@ services:
       # - KEY_FILE=/app/certs/key.pem
       # - KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD}  # Optional: Set in .env for passphrase-protected keys
       # Uncomment to enable plugins
-      - PLUGINS_ENABLED=true
+      - PLUGINS_ENABLED=false
       # Uncomment to enable catalog
       - MCPGATEWAY_CATALOG_ENABLED=true
       - MCPGATEWAY_CATALOG_FILE=/app/mcp-catalog.yml
