@@ -305,7 +305,7 @@ class ToolService:
 
         Args:
             db (Session): Database session for querying tool metrics.
-            limit (Optional[int]): Maximum number of tools to return. Defaults to 5. If None, returns all tools.
+            limit (Optional[int]): Maximum number of tools to return. Defaults to 5.
 
         Returns:
             List[TopPerformer]: A list of TopPerformer objects, each containing:
@@ -355,13 +355,13 @@ class ToolService:
         team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
         return team.name if team else None
 
-    def _convert_tool_to_read(self, tool: DbTool, include_metrics: bool = True) -> ToolRead:
+    def _convert_tool_to_read(self, tool: DbTool, include_metrics: bool = False) -> ToolRead:
         """Converts a DbTool instance into a ToolRead model, including aggregated metrics and
         new API gateway fields: request_type and authentication credentials (masked).
 
         Args:
             tool (DbTool): The ORM instance of the tool.
-            include_metrics (bool): Whether to include metrics in the result. Defaults to True.
+            include_metrics (bool): Whether to include metrics in the result. Defaults to False.
 
         Returns:
             ToolRead: The Pydantic model representing the tool, including aggregated metrics and new fields.
@@ -3021,6 +3021,9 @@ class ToolService:
         """
         Aggregate metrics for all tool invocations across all tools.
 
+        Uses in-memory caching (10s TTL) to reduce database load under high
+        request rates. Cache is invalidated when metrics are reset.
+
         Args:
             db: Database session
 
@@ -3051,6 +3054,14 @@ class ToolService:
             >>> result['failure_rate']
             0.2
         """
+        # Check cache first (if enabled)
+        # First-Party
+        from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
+
+        if is_cache_enabled():
+            cached = metrics_cache.get("tools")
+            if cached is not None:
+                return cached
 
         # Query to get all aggregated metrics at once
         result = db.execute(
@@ -3070,7 +3081,7 @@ class ToolService:
         failed = result.failed or 0
         failure_rate = failed / total if total > 0 else 0.0
 
-        return {
+        metrics = {
             "total_executions": total,
             "successful_executions": successful,
             "failed_executions": failed,
@@ -3080,6 +3091,12 @@ class ToolService:
             "avg_response_time": result.avg_rt,
             "last_execution_time": result.last_time,
         }
+
+        # Cache the result (if enabled)
+        if is_cache_enabled():
+            metrics_cache.set("tools", metrics)
+
+        return metrics
 
     async def reset_metrics(self, db: Session, tool_id: Optional[int] = None) -> None:
         """
@@ -3105,6 +3122,12 @@ class ToolService:
         else:
             db.execute(delete(ToolMetric))
         db.commit()
+
+        # Invalidate metrics cache
+        # First-Party
+        from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
+
+        metrics_cache.invalidate("tools")
 
     async def create_tool_from_a2a_agent(
         self,

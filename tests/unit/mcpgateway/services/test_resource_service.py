@@ -1299,7 +1299,7 @@ class TestUtilityMethods:
         metric1.timestamp = metric2.timestamp = datetime.now(timezone.utc)
         mock_resource.metrics = [metric1, metric2]
 
-        result = resource_service._convert_resource_to_read(mock_resource)
+        result = resource_service._convert_resource_to_read(mock_resource, include_metrics=True)
         m = result.metrics  # ResourceMetrics model
 
         assert m.total_executions == 2
@@ -1311,7 +1311,7 @@ class TestUtilityMethods:
         """Conversion when metrics list is empty."""
         mock_resource.metrics = []
 
-        m = resource_service._convert_resource_to_read(mock_resource).metrics
+        m = resource_service._convert_resource_to_read(mock_resource, include_metrics=True).metrics
         assert m.total_executions == 0
         assert m.failure_rate == 0.0
         assert m.min_response_time is None
@@ -1320,7 +1320,7 @@ class TestUtilityMethods:
         """Conversion when metrics is None."""
         mock_resource.metrics = None
 
-        m = resource_service._convert_resource_to_read(mock_resource).metrics
+        m = resource_service._convert_resource_to_read(mock_resource, include_metrics=True).metrics
         assert m.total_executions == 0
         assert m.failure_rate == 0.0
         assert m.min_response_time is None

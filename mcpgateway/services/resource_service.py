@@ -177,7 +177,7 @@ class ResourceService:
 
         Args:
             db (Session): Database session for querying resource metrics.
-            limit (Optional[int]): Maximum number of resources to return. Defaults to 5. If None, returns all resources.
+            limit (Optional[int]): Maximum number of resources to return. Defaults to 5.
 
         Returns:
             List[TopPerformer]: A list of TopPerformer objects, each containing:
@@ -208,20 +208,19 @@ class ResourceService:
             .order_by(desc("execution_count"))
         )
 
-        if limit is not None:
-            query = query.limit(limit)
+        query = query.limit(limit or 5)
 
         results = query.all()
 
         return build_top_performers(results)
 
-    def _convert_resource_to_read(self, resource: DbResource, include_metrics: bool = True) -> ResourceRead:
+    def _convert_resource_to_read(self, resource: DbResource, include_metrics: bool = False) -> ResourceRead:
         """
         Converts a DbResource instance into a ResourceRead model, optionally including aggregated metrics.
 
         Args:
             resource (DbResource): The ORM instance of the resource.
-            include_metrics (bool): Whether to include metrics in the result. Defaults to True.
+            include_metrics (bool): Whether to include metrics in the result. Defaults to False.
                 Set to False for list operations to avoid N+1 query issues.
 
         Returns:
@@ -239,7 +238,7 @@ class ResourceService:
             ...     id="ca627760127d409080fdefc309147e08", uri='res://x', name='R', description=None, mime_type='text/plain', size=123,
             ...     created_at=now, updated_at=now, enabled=True, tags=[{"id": "t", "label": "T"}], metrics=[m1, m2]
             ... )
-            >>> out = svc._convert_resource_to_read(r)
+            >>> out = svc._convert_resource_to_read(r, include_metrics=True)
             >>> out.metrics.total_executions
             2
             >>> out.metrics.successful_executions
@@ -2820,6 +2819,9 @@ class ResourceService:
         """
         Aggregate metrics for all resource invocations across all resources.
 
+        Uses in-memory caching (10s TTL) to reduce database load under high
+        request rates. Cache is invalidated when metrics are reset.
+
         Args:
             db: Database session
 
@@ -2837,6 +2839,15 @@ class ResourceService:
             >>> hasattr(result, 'total_executions')
             True
         """
+        # Check cache first (if enabled)
+        # First-Party
+        from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
+
+        if is_cache_enabled():
+            cached = metrics_cache.get("resources")
+            if cached is not None:
+                return ResourceMetrics(**cached)
+
         # Execute a single query to get all metrics at once
         result = db.execute(
             select(
@@ -2854,7 +2865,7 @@ class ResourceService:
         successful_executions = result.successful_executions or 0
         failed_executions = result.failed_executions or 0
 
-        return ResourceMetrics(
+        metrics = ResourceMetrics(
             total_executions=total_executions,
             successful_executions=successful_executions,
             failed_executions=failed_executions,
@@ -2864,6 +2875,12 @@ class ResourceService:
             avg_response_time=result.avg_response_time,
             last_execution_time=result.last_execution_time,
         )
+
+        # Cache the result as dict for serialization compatibility (if enabled)
+        if is_cache_enabled():
+            metrics_cache.set("resources", metrics.model_dump())
+
+        return metrics
 
     async def reset_metrics(self, db: Session) -> None:
         """
@@ -2884,3 +2901,9 @@ class ResourceService:
         """
         db.execute(delete(ResourceMetric))
         db.commit()
+
+        # Invalidate metrics cache
+        # First-Party
+        from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
+
+        metrics_cache.invalidate("resources")
