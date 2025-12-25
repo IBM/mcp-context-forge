@@ -158,6 +158,13 @@ TOOL_NAMES: list[str] = []
 RESOURCE_URIS: list[str] = []
 PROMPT_NAMES: list[str] = []
 
+# Tools that require arguments and are tested with proper arguments in specific user classes
+# These should be excluded from generic rpc_call_tool to avoid false failures
+TOOLS_WITH_REQUIRED_ARGS: set[str] = {
+    "fast-time-convert-time",  # Requires: time, source_timezone, target_timezone
+    "fast-time-get-system-time",  # Requires: timezone
+}
+
 
 # =============================================================================
 # Event Handlers
@@ -935,9 +942,15 @@ class MCPJsonRpcUser(BaseUser):
     @task(5)
     @tag("mcp", "rpc", "tools")
     def rpc_call_tool(self):
-        """JSON-RPC: Call a tool."""
-        if TOOL_NAMES:
-            tool_name = random.choice(TOOL_NAMES)
+        """JSON-RPC: Call a tool with empty arguments.
+
+        Note: Tools that require arguments are excluded here and tested
+        separately in dedicated user classes (e.g., FastTimeUser) with proper arguments.
+        """
+        # Filter out tools that require arguments - they're tested with proper args elsewhere
+        callable_tools = [t for t in TOOL_NAMES if t not in TOOLS_WITH_REQUIRED_ARGS]
+        if callable_tools:
+            tool_name = random.choice(callable_tools)
             payload = _json_rpc_request("tools/call", {"name": tool_name, "arguments": {}})
             self._rpc_request(payload, "/rpc tools/call")
 
