@@ -20,7 +20,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from locust import between, events, HttpUser, tag, task
+from locust import between, events, tag, task
+from locust.contrib.fasthttp import FastHttpUser
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -153,15 +154,15 @@ def on_test_stop(environment: Any, **_kwargs: Any) -> None:
     print("=" * 80 + "\n")
 
 
-class HighThroughputUser(HttpUser):
+class HighThroughputUser(FastHttpUser):
     """High-throughput user with minimal wait time.
 
-    Focuses on fast, read-only endpoints to maximize RPS.
-    All responses are validated to catch backend failures.
+    Uses FastHttpUser (gevent-based) for maximum RPS.
+    Focuses on fast, read-only endpoints.
     """
 
     # Minimal wait time for maximum throughput
-    wait_time = between(0.01, 0.05)
+    wait_time = between(0.001, 0.01)
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         """Initialize user with auth headers attribute.

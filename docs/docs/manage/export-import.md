@@ -221,7 +221,7 @@ AUTH_ENCRYPTION_SECRET=your-prod-secret
 JWT_SECRET_KEY=your-prod-jwt-secret
 
 # Database
-DATABASE_URL=postgresql://user:pass@prod-db:5432/mcpgateway
+DATABASE_URL=postgresql+psycopg://user:pass@prod-db:5432/mcpgateway
 
 # Gateway settings
 HOST=prod.mcpgateway.com

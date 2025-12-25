@@ -568,7 +568,7 @@ mcpContextForge:
     # (derived URLs are defined in deployment-mcp.yaml)
 
     # ─ Optional database / redis overrides ─
-    # DATABASE_URL: "postgresql://admin:s3cr3t@db.acme.com:5432/prod" # override the auto-generated URL
+    # DATABASE_URL: "postgresql+psycopg://admin:s3cr3t@db.acme.com:5432/prod" # override the auto-generated URL
     # REDIS_URL:    "redis://cache.acme.com:6379/0"                   # override the auto-generated URL
 
   ####################################################################

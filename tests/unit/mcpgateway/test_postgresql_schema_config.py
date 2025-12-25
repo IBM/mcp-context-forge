@@ -54,15 +54,15 @@ class TestPostgreSQLSchemaConfiguration:
 
     def test_connect_args_generation_postgresql(self):
         """Test that connect_args includes options for PostgreSQL."""
-        # Simulate the logic from db.py
-        url_string = "postgresql://user:pass@host:5432/db?options=-c%20search_path=mcp_gateway"
+        # Simulate the logic from db.py - must use postgresql+psycopg:// for psycopg3
+        url_string = "postgresql+psycopg://user:pass@host:5432/db?options=-c%20search_path=mcp_gateway"
         url = make_url(url_string)
         backend = url.get_backend_name()
         driver = url.get_driver_name() or "default"
 
         connect_args = {}
 
-        if backend == "postgresql" and driver in ("psycopg2", "default", ""):
+        if backend == "postgresql" and driver in ("psycopg", "default", ""):
             connect_args.update(
                 keepalives=1,
                 keepalives_idle=30,
@@ -138,15 +138,15 @@ class TestPostgreSQLSchemaConfiguration:
 
     def test_backward_compatibility_no_options(self):
         """Test that existing deployments without options continue to work."""
-        # Standard PostgreSQL URL without options
-        url_string = "postgresql://user:pass@host:5432/db"
+        # Standard PostgreSQL URL without options - must use postgresql+psycopg:// for psycopg3
+        url_string = "postgresql+psycopg://user:pass@host:5432/db"
         url = make_url(url_string)
         backend = url.get_backend_name()
         driver = url.get_driver_name() or "default"
 
         connect_args = {}
 
-        if backend == "postgresql" and driver in ("psycopg2", "default", ""):
+        if backend == "postgresql" and driver in ("psycopg", "default", ""):
             connect_args.update(
                 keepalives=1,
                 keepalives_idle=30,

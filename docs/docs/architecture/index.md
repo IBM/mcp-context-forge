@@ -18,7 +18,7 @@ The **MCP Gateway** (ContextForge) is a production-grade gateway, proxy, and reg
 **2. Multi-Database ORM Layer with SQLAlchemy 2.0**
 
 - **SQLAlchemy 2.0** ORM with async support for database operations
-- Supports **PostgreSQL** (via psycopg2), **SQLite** (default, file-based), and **MariaDB/MySQL** (via pymysql)
+- Supports **PostgreSQL** (via psycopg3), **SQLite** (default, file-based), and **MariaDB/MySQL** (via pymysql)
 - **Alembic** for schema migrations and version control
 - Connection pooling with configurable pool sizes (200 default), overflow (10), and recycling (3600s)
 

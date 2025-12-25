@@ -1142,12 +1142,32 @@ pip install -e ".[dev]"
 
 You can configure the gateway with SQLite, PostgreSQL (or any other compatible database) in .env.
 
-When using PostgreSQL, you need to install `psycopg2` driver.
+When using PostgreSQL, you need to install the `psycopg` (psycopg3) driver.
+
+**System Dependencies**: The PostgreSQL adapter requires the `libpq` development headers to compile:
 
 ```bash
-uv pip install psycopg2-binary   # dev convenience
+# Debian/Ubuntu
+sudo apt-get install libpq-dev
+
+# RHEL/CentOS/Fedora
+sudo dnf install postgresql-devel
+
+# macOS (Homebrew)
+brew install libpq
+```
+
+Then install the Python package:
+
+```bash
+uv pip install 'psycopg[binary]'   # dev convenience (pre-built wheels)
 # or
-uv pip install psycopg2          # production build
+uv pip install 'psycopg[c]'        # production build (requires compiler)
+```
+
+Connection URL format (must use `+psycopg` for psycopg3):
+```bash
+DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/mcp
 ```
 
 #### Quick Postgres container
