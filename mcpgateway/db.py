@@ -31,7 +31,9 @@ import uuid
 
 # Third-Party
 import jsonschema
-from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index, Integer, JSON, make_url, MetaData, select, String, Table, Text, UniqueConstraint, VARCHAR
+from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, Text, UniqueConstraint, VARCHAR
 from sqlalchemy.engine import Engine
 from sqlalchemy.event import listen
 from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
@@ -2288,15 +2290,26 @@ class Tool(Base):
         """
         return select(func.count(ToolMetric.id)).where(ToolMetric.tool_id == cls.id).label("execution_count")  # pylint: disable=not-callable
 
+    def _metrics_loaded(self) -> bool:
+        """Check if metrics relationship is loaded without triggering lazy load.
+
+        Returns:
+            bool: True if metrics are loaded, False otherwise.
+        """
+        return "metrics" in sa_inspect(self).dict
+
     @property
     def successful_executions(self) -> int:
         """
         Returns the count of successful tool executions,
         computed from the associated ToolMetric records.
+        Returns 0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             int: The count of successful tool executions.
         """
+        if not self._metrics_loaded():
+            return 0
         return sum(1 for m in self.metrics if m.is_success)
 
     @property
@@ -2304,10 +2317,13 @@ class Tool(Base):
         """
         Returns the count of failed tool executions,
         computed from the associated ToolMetric records.
+        Returns 0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             int: The count of failed tool executions.
         """
+        if not self._metrics_loaded():
+            return 0
         return sum(1 for m in self.metrics if not m.is_success)
 
     @property
@@ -2315,11 +2331,13 @@ class Tool(Base):
         """
         Returns the failure rate (as a float between 0 and 1) computed as:
             (failed executions) / (total executions).
-        Returns 0.0 if there are no executions.
+        Returns 0.0 if there are no executions or metrics are not loaded.
 
         Returns:
             float: The failure rate as a value between 0 and 1.
         """
+        if not self._metrics_loaded():
+            return 0.0
         total: int = self.execution_count
         # execution_count is a @hybrid_property, not a callable here
         if total == 0:  # pylint: disable=comparison-with-callable
@@ -2330,11 +2348,13 @@ class Tool(Base):
     def min_response_time(self) -> Optional[float]:
         """
         Returns the minimum response time among all tool executions.
-        Returns None if no executions exist.
+        Returns None if no executions exist or metrics are not loaded.
 
         Returns:
             Optional[float]: The minimum response time, or None if no executions exist.
         """
+        if not self._metrics_loaded():
+            return None
         times: List[float] = [m.response_time for m in self.metrics]
         return min(times) if times else None
 
@@ -2342,11 +2362,13 @@ class Tool(Base):
     def max_response_time(self) -> Optional[float]:
         """
         Returns the maximum response time among all tool executions.
-        Returns None if no executions exist.
+        Returns None if no executions exist or metrics are not loaded.
 
         Returns:
             Optional[float]: The maximum response time, or None if no executions exist.
         """
+        if not self._metrics_loaded():
+            return None
         times: List[float] = [m.response_time for m in self.metrics]
         return max(times) if times else None
 
@@ -2354,11 +2376,13 @@ class Tool(Base):
     def avg_response_time(self) -> Optional[float]:
         """
         Returns the average response time among all tool executions.
-        Returns None if no executions exist.
+        Returns None if no executions exist or metrics are not loaded.
 
         Returns:
             Optional[float]: The average response time, or None if no executions exist.
         """
+        if not self._metrics_loaded():
+            return None
         times: List[float] = [m.response_time for m in self.metrics]
         return sum(times) / len(times) if times else None
 
@@ -2366,11 +2390,13 @@ class Tool(Base):
     def last_execution_time(self) -> Optional[datetime]:
         """
         Returns the timestamp of the most recent tool execution.
-        Returns None if no executions exist.
+        Returns None if no executions exist or metrics are not loaded.
 
         Returns:
             Optional[datetime]: The timestamp of the most recent execution, or None if no executions exist.
         """
+        if not self._metrics_loaded():
+            return None
         if not self.metrics:
             return None
         return max(m.timestamp for m in self.metrics)
@@ -2520,15 +2546,26 @@ class Resource(Base):
             )
         raise ValueError("Resource has no content")
 
+    def _metrics_loaded(self) -> bool:
+        """Check if metrics relationship is loaded without triggering lazy load.
+
+        Returns:
+            bool: True if metrics are loaded, False otherwise.
+        """
+        return "metrics" in sa_inspect(self).dict
+
     @property
     def execution_count(self) -> int:
         """
         Returns the number of times the resource has been invoked,
         calculated from the associated ResourceMetric records.
+        Returns 0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             int: The total count of resource invocations.
         """
+        if not self._metrics_loaded():
+            return 0
         return len(self.metrics)
 
     @property
@@ -2536,10 +2573,13 @@ class Resource(Base):
         """
         Returns the count of successful resource invocations,
         computed from the associated ResourceMetric records.
+        Returns 0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             int: The count of successful resource invocations.
         """
+        if not self._metrics_loaded():
+            return 0
         return sum(1 for m in self.metrics if m.is_success)
 
     @property
@@ -2547,10 +2587,13 @@ class Resource(Base):
         """
         Returns the count of failed resource invocations,
         computed from the associated ResourceMetric records.
+        Returns 0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             int: The count of failed resource invocations.
         """
+        if not self._metrics_loaded():
+            return 0
         return sum(1 for m in self.metrics if not m.is_success)
 
     @property
@@ -2558,11 +2601,13 @@ class Resource(Base):
         """
         Returns the failure rate (as a float between 0 and 1) computed as:
             (failed invocations) / (total invocations).
-        Returns 0.0 if there are no invocations.
+        Returns 0.0 if there are no invocations or metrics are not loaded.
 
         Returns:
             float: The failure rate as a value between 0 and 1.
         """
+        if not self._metrics_loaded():
+            return 0.0
         total: int = self.execution_count
         if total == 0:
             return 0.0
@@ -2572,11 +2617,13 @@ class Resource(Base):
     def min_response_time(self) -> Optional[float]:
         """
         Returns the minimum response time among all resource invocations.
-        Returns None if no invocations exist.
+        Returns None if no invocations exist or metrics are not loaded.
 
         Returns:
             Optional[float]: The minimum response time, or None if no invocations exist.
         """
+        if not self._metrics_loaded():
+            return None
         times: List[float] = [m.response_time for m in self.metrics]
         return min(times) if times else None
 
@@ -2584,11 +2631,13 @@ class Resource(Base):
     def max_response_time(self) -> Optional[float]:
         """
         Returns the maximum response time among all resource invocations.
-        Returns None if no invocations exist.
+        Returns None if no invocations exist or metrics are not loaded.
 
         Returns:
             Optional[float]: The maximum response time, or None if no invocations exist.
         """
+        if not self._metrics_loaded():
+            return None
         times: List[float] = [m.response_time for m in self.metrics]
         return max(times) if times else None
 
@@ -2596,11 +2645,13 @@ class Resource(Base):
     def avg_response_time(self) -> Optional[float]:
         """
         Returns the average response time among all resource invocations.
-        Returns None if no invocations exist.
+        Returns None if no invocations exist or metrics are not loaded.
 
         Returns:
             Optional[float]: The average response time, or None if no invocations exist.
         """
+        if not self._metrics_loaded():
+            return None
         times: List[float] = [m.response_time for m in self.metrics]
         return sum(times) / len(times) if times else None
 
@@ -2608,11 +2659,13 @@ class Resource(Base):
     def last_execution_time(self) -> Optional[datetime]:
         """
         Returns the timestamp of the most recent resource invocation.
-        Returns None if no invocations exist.
+        Returns None if no invocations exist or metrics are not loaded.
 
         Returns:
             Optional[datetime]: The timestamp of the most recent invocation, or None if no invocations exist.
         """
+        if not self._metrics_loaded():
+            return None
         if not self.metrics:
             return None
         return max(m.timestamp for m in self.metrics)
@@ -2751,15 +2804,26 @@ class Prompt(Base):
         except jsonschema.exceptions.ValidationError as e:
             raise ValueError(f"Invalid prompt arguments: {str(e)}") from e
 
+    def _metrics_loaded(self) -> bool:
+        """Check if metrics relationship is loaded without triggering lazy load.
+
+        Returns:
+            bool: True if metrics are loaded, False otherwise.
+        """
+        return "metrics" in sa_inspect(self).dict
+
     @property
     def execution_count(self) -> int:
         """
         Returns the number of times the prompt has been invoked,
         calculated from the associated PromptMetric records.
+        Returns 0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             int: The total count of prompt invocations.
         """
+        if not self._metrics_loaded():
+            return 0
         return len(self.metrics)
 
     @property
@@ -2767,10 +2831,13 @@ class Prompt(Base):
         """
         Returns the count of successful prompt invocations,
         computed from the associated PromptMetric records.
+        Returns 0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             int: The count of successful prompt invocations.
         """
+        if not self._metrics_loaded():
+            return 0
         return sum(1 for m in self.metrics if m.is_success)
 
     @property
@@ -2778,10 +2845,13 @@ class Prompt(Base):
         """
         Returns the count of failed prompt invocations,
         computed from the associated PromptMetric records.
+        Returns 0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             int: The count of failed prompt invocations.
         """
+        if not self._metrics_loaded():
+            return 0
         return sum(1 for m in self.metrics if not m.is_success)
 
     @property
@@ -2789,11 +2859,13 @@ class Prompt(Base):
         """
         Returns the failure rate (as a float between 0 and 1) computed as:
             (failed invocations) / (total invocations).
-        Returns 0.0 if there are no invocations.
+        Returns 0.0 if there are no invocations or metrics are not loaded.
 
         Returns:
             float: The failure rate as a value between 0 and 1.
         """
+        if not self._metrics_loaded():
+            return 0.0
         total: int = self.execution_count
         if total == 0:
             return 0.0
@@ -2803,11 +2875,13 @@ class Prompt(Base):
     def min_response_time(self) -> Optional[float]:
         """
         Returns the minimum response time among all prompt invocations.
-        Returns None if no invocations exist.
+        Returns None if no invocations exist or metrics are not loaded.
 
         Returns:
             Optional[float]: The minimum response time, or None if no invocations exist.
         """
+        if not self._metrics_loaded():
+            return None
         times: List[float] = [m.response_time for m in self.metrics]
         return min(times) if times else None
 
@@ -2815,11 +2889,13 @@ class Prompt(Base):
     def max_response_time(self) -> Optional[float]:
         """
         Returns the maximum response time among all prompt invocations.
-        Returns None if no invocations exist.
+        Returns None if no invocations exist or metrics are not loaded.
 
         Returns:
             Optional[float]: The maximum response time, or None if no invocations exist.
         """
+        if not self._metrics_loaded():
+            return None
         times: List[float] = [m.response_time for m in self.metrics]
         return max(times) if times else None
 
@@ -2827,11 +2903,13 @@ class Prompt(Base):
     def avg_response_time(self) -> Optional[float]:
         """
         Returns the average response time among all prompt invocations.
-        Returns None if no invocations exist.
+        Returns None if no invocations exist or metrics are not loaded.
 
         Returns:
             Optional[float]: The average response time, or None if no invocations exist.
         """
+        if not self._metrics_loaded():
+            return None
         times: List[float] = [m.response_time for m in self.metrics]
         return sum(times) / len(times) if times else None
 
@@ -2839,11 +2917,13 @@ class Prompt(Base):
     def last_execution_time(self) -> Optional[datetime]:
         """
         Returns the timestamp of the most recent prompt invocation.
-        Returns None if no invocations exist.
+        Returns None if no invocations exist or metrics are not loaded.
 
         Returns:
             Optional[datetime]: The timestamp of the most recent invocation, or None if no invocations exist.
         """
+        if not self._metrics_loaded():
+            return None
         if not self.metrics:
             return None
         return max(m.timestamp for m in self.metrics)
@@ -2904,15 +2984,26 @@ class Server(Base):
     # API token relationships
     scoped_tokens: Mapped[List["EmailApiToken"]] = relationship("EmailApiToken", back_populates="server")
 
+    def _metrics_loaded(self) -> bool:
+        """Check if metrics relationship is loaded without triggering lazy load.
+
+        Returns:
+            bool: True if metrics are loaded, False otherwise.
+        """
+        return "metrics" in sa_inspect(self).dict
+
     @property
     def execution_count(self) -> int:
         """
         Returns the number of times the server has been invoked,
         calculated from the associated ServerMetric records.
+        Returns 0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             int: The total count of server invocations.
         """
+        if not self._metrics_loaded():
+            return 0
         return len(self.metrics)
 
     @property
@@ -2920,10 +3011,13 @@ class Server(Base):
         """
         Returns the count of successful server invocations,
         computed from the associated ServerMetric records.
+        Returns 0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             int: The count of successful server invocations.
         """
+        if not self._metrics_loaded():
+            return 0
         return sum(1 for m in self.metrics if m.is_success)
 
     @property
@@ -2931,10 +3025,13 @@ class Server(Base):
         """
         Returns the count of failed server invocations,
         computed from the associated ServerMetric records.
+        Returns 0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             int: The count of failed server invocations.
         """
+        if not self._metrics_loaded():
+            return 0
         return sum(1 for m in self.metrics if not m.is_success)
 
     @property
@@ -2942,23 +3039,13 @@ class Server(Base):
         """
         Returns the failure rate (as a float between 0 and 1) computed as:
             (failed invocations) / (total invocations).
-        Returns 0.0 if there are no invocations.
+        Returns 0.0 if there are no invocations or metrics are not loaded.
 
         Returns:
             float: The failure rate as a value between 0 and 1.
-
-        Examples:
-            >>> tool = Tool(custom_name="test_tool", custom_name_slug="test-tool", input_schema={})
-            >>> tool.failure_rate  # No metrics yet
-            0.0
-            >>> tool.metrics = [
-            ...     ToolMetric(tool_id=tool.id, response_time=1.0, is_success=True),
-            ...     ToolMetric(tool_id=tool.id, response_time=2.0, is_success=False),
-            ...     ToolMetric(tool_id=tool.id, response_time=1.5, is_success=True),
-            ... ]
-            >>> tool.failure_rate
-            0.3333333333333333
         """
+        if not self._metrics_loaded():
+            return 0.0
         total: int = self.execution_count
         if total == 0:
             return 0.0
@@ -2968,11 +3055,13 @@ class Server(Base):
     def min_response_time(self) -> Optional[float]:
         """
         Returns the minimum response time among all server invocations.
-        Returns None if no invocations exist.
+        Returns None if no invocations exist or metrics are not loaded.
 
         Returns:
             Optional[float]: The minimum response time, or None if no invocations exist.
         """
+        if not self._metrics_loaded():
+            return None
         times: List[float] = [m.response_time for m in self.metrics]
         return min(times) if times else None
 
@@ -2980,11 +3069,13 @@ class Server(Base):
     def max_response_time(self) -> Optional[float]:
         """
         Returns the maximum response time among all server invocations.
-        Returns None if no invocations exist.
+        Returns None if no invocations exist or metrics are not loaded.
 
         Returns:
             Optional[float]: The maximum response time, or None if no invocations exist.
         """
+        if not self._metrics_loaded():
+            return None
         times: List[float] = [m.response_time for m in self.metrics]
         return max(times) if times else None
 
@@ -2992,11 +3083,13 @@ class Server(Base):
     def avg_response_time(self) -> Optional[float]:
         """
         Returns the average response time among all server invocations.
-        Returns None if no invocations exist.
+        Returns None if no invocations exist or metrics are not loaded.
 
         Returns:
             Optional[float]: The average response time, or None if no invocations exist.
         """
+        if not self._metrics_loaded():
+            return None
         times: List[float] = [m.response_time for m in self.metrics]
         return sum(times) / len(times) if times else None
 
@@ -3004,11 +3097,13 @@ class Server(Base):
     def last_execution_time(self) -> Optional[datetime]:
         """
         Returns the timestamp of the most recent server invocation.
-        Returns None if no invocations exist.
+        Returns None if no invocations exist or metrics are not loaded.
 
         Returns:
             Optional[datetime]: The timestamp of the most recent invocation, or None if no invocations exist.
         """
+        if not self._metrics_loaded():
+            return None
         if not self.metrics:
             return None
         return max(m.timestamp for m in self.metrics)
@@ -3214,40 +3309,60 @@ class A2AAgent(Base):
     # Relationship with registered OAuth clients (DCR)
     # registered_oauth_clients: Mapped[List["RegisteredOAuthClient"]] = relationship("RegisteredOAuthClient", back_populates="gateway", cascade="all, delete-orphan")
 
+    def _metrics_loaded(self) -> bool:
+        """Check if metrics relationship is loaded without triggering lazy load.
+
+        Returns:
+            bool: True if metrics are loaded, False otherwise.
+        """
+        return "metrics" in sa_inspect(self).dict
+
     @property
     def execution_count(self) -> int:
         """Total number of interactions with this agent.
+        Returns 0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             int: The total count of interactions.
         """
+        if not self._metrics_loaded():
+            return 0
         return len(self.metrics)
 
     @property
     def successful_executions(self) -> int:
         """Number of successful interactions.
+        Returns 0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             int: The count of successful interactions.
         """
+        if not self._metrics_loaded():
+            return 0
         return sum(1 for m in self.metrics if m.is_success)
 
     @property
     def failed_executions(self) -> int:
         """Number of failed interactions.
+        Returns 0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             int: The count of failed interactions.
         """
+        if not self._metrics_loaded():
+            return 0
         return sum(1 for m in self.metrics if not m.is_success)
 
     @property
     def failure_rate(self) -> float:
         """Failure rate as a percentage.
+        Returns 0.0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             float: The failure rate percentage.
         """
+        if not self._metrics_loaded():
+            return 0.0
         if not self.metrics:
             return 0.0
         return (self.failed_executions / len(self.metrics)) * 100
@@ -3255,10 +3370,13 @@ class A2AAgent(Base):
     @property
     def avg_response_time(self) -> Optional[float]:
         """Average response time in seconds.
+        Returns None if metrics are not loaded (avoids lazy loading).
 
         Returns:
             Optional[float]: The average response time, or None if no metrics.
         """
+        if not self._metrics_loaded():
+            return None
         if not self.metrics:
             return None
         return sum(m.response_time for m in self.metrics) / len(self.metrics)
@@ -3266,10 +3384,13 @@ class A2AAgent(Base):
     @property
     def last_execution_time(self) -> Optional[datetime]:
         """Timestamp of the most recent interaction.
+        Returns None if metrics are not loaded (avoids lazy loading).
 
         Returns:
             Optional[datetime]: The timestamp of the last interaction, or None if no metrics.
         """
+        if not self._metrics_loaded():
+            return None
         if not self.metrics:
             return None
         return max(m.timestamp for m in self.metrics)
