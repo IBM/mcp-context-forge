@@ -121,7 +121,7 @@ def invalidate_user_cache(email: str) -> None:
     if count > 0:
         with _cache_stats_lock:
             _cache_stats["invalidations"] += count
-    
+
     logger.info(f"Invalidated {count} cache entries for user: {email}")
 
 
@@ -137,13 +137,13 @@ def get_cache_stats() -> dict:
         misses = _cache_stats["misses"]
         invalidations = _cache_stats["invalidations"]
         revocation_removals = _cache_stats["revocation_removals"]
-    
+
     # Get cache sizes with locks for accuracy
     with _jwt_cache_lock:
         jwt_cache_size = len(_jwt_verification_cache)
     with _user_cache_lock:
         user_cache_size = len(_user_cache)
-    
+
     return {
         "jwt_cache_enabled": settings.jwt_cache_enabled,
         "jwt_cache_size": jwt_cache_size,
@@ -213,10 +213,10 @@ async def verify_jwt_token(token: str) -> dict:
         with _jwt_cache_lock:
             if token_hash in _jwt_verification_cache:
                 cached_payload = _jwt_verification_cache[token_hash]
-                
+
                 with _cache_stats_lock:
                     _cache_stats["hits"] += 1
-                
+
                 # SECURITY: Check token revocation even for cached results
                 # This prevents revoked tokens from being used during cache TTL
                 jti = cached_payload.get("jti")
@@ -224,8 +224,8 @@ async def verify_jwt_token(token: str) -> dict:
                     try:
                         # Import here to avoid circular dependency
                         # First-Party
-                        from mcpgateway.auth import _check_token_revoked_sync
-                        
+                        from mcpgateway.auth import _check_token_revoked_sync  # pylint: disable=import-outside-toplevel
+
                         # Check revocation in thread pool to avoid blocking
                         is_revoked = await asyncio.to_thread(_check_token_revoked_sync, jti)
                         if is_revoked:
@@ -233,10 +233,10 @@ async def verify_jwt_token(token: str) -> dict:
                             with _jwt_cache_lock:
                                 if token_hash in _jwt_verification_cache:
                                     del _jwt_verification_cache[token_hash]
-                            
+
                             with _cache_stats_lock:
                                 _cache_stats["revocation_removals"] += 1
-                            
+
                             logger.warning(f"Cached token {token_hash[:16]}... was revoked, removed from cache")
                             raise HTTPException(
                                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -248,7 +248,7 @@ async def verify_jwt_token(token: str) -> dict:
                     except Exception as e:
                         # Log but don't fail on revocation check errors
                         logger.warning(f"Revocation check failed for cached token: {e}")
-                
+
                 logger.debug(f"JWT verification cache hit for token: {token_hash[:16]}...")
                 return cached_payload
 
@@ -261,7 +261,7 @@ async def verify_jwt_token(token: str) -> dict:
 
         # Import the verification key helper
         # First-Party
-        from mcpgateway.utils.jwt_config_helper import get_jwt_public_key_or_secret
+        from mcpgateway.utils.jwt_config_helper import get_jwt_public_key_or_secret  # pylint: disable=import-outside-toplevel
 
         # First decode to check claims
         unverified = jwt.decode(token, options={"verify_signature": False})
@@ -442,10 +442,9 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
                 return {"sub": proxy_user, "source": "proxy", "token": None}
             # If no proxy header but proxy auth is trusted, treat as anonymous
             return "anonymous"
-        else:
-            # Warning: MCP auth disabled without proxy trust - security risk!
-            # This case is already warned about in config validation
-            return "anonymous"
+        # Warning: MCP auth disabled without proxy trust - security risk!
+        # This case is already warned about in config validation
+        return "anonymous"
 
     # Standard JWT authentication flow - prioritize manual cookie reading
     token = None
@@ -914,14 +913,14 @@ async def require_admin_auth(
         True
     """
     # First-Party
-    from mcpgateway.config import settings
+    from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel,redefined-outer-name,reimported
 
     # Try email authentication first if enabled
-    if getattr(settings, "email_auth_enabled", False):
+    if getattr(settings, "email_auth_enabled", False):  # pylint: disable=too-many-nested-blocks
         try:
             # First-Party
-            from mcpgateway.db import get_db
-            from mcpgateway.services.email_auth_service import EmailAuthService
+            from mcpgateway.db import get_db  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
 
             token = jwt_token
             if not token and credentials:
@@ -941,17 +940,15 @@ async def require_admin_auth(
 
                         if current_user and current_user.is_admin:
                             return current_user.email
-                        elif current_user:
+                        if current_user:
                             # User is authenticated but not admin - check if this is a browser request
                             accept_header = request.headers.get("accept", "")
                             if "text/html" in accept_header:
                                 # Redirect browser to login page with error
                                 root_path = request.scope.get("root_path", "")
                                 raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Admin privileges required", headers={"Location": f"{root_path}/admin/login?error=admin_required"})
-                            else:
-                                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required")
-                        else:
-                            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+                            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required")
+                        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
                 except Exception:
                     raise Exception
                 finally:
@@ -974,12 +971,11 @@ async def require_admin_auth(
     try:
         if basic_credentials:
             return await verify_basic_credentials(basic_credentials)
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="No basic auth credentials provided",
-                headers={"WWW-Authenticate": "Basic"},
-            )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No basic auth credentials provided",
+            headers={"WWW-Authenticate": "Basic"},
+        )
     except HTTPException:
         # If both methods fail, check if we should redirect browser users to login page
         if getattr(settings, "email_auth_enabled", False):
@@ -988,10 +984,8 @@ async def require_admin_auth(
             if "text/html" in accept_header or is_htmx:
                 root_path = request.scope.get("root_path", "")
                 raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Authentication required", headers={"Location": f"{root_path}/admin/login"})
-            else:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required. Please login with email/password or use basic auth.", headers={"WWW-Authenticate": "Bearer"}
-                )
-        else:
-            # Re-raise the basic auth error
-            raise
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required. Please login with email/password or use basic auth.", headers={"WWW-Authenticate": "Bearer"}
+            )
+        # Re-raise the basic auth error
+        raise
