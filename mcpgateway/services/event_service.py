@@ -57,12 +57,10 @@ import asyncio
 import importlib.util
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
-# Third-Party
-import orjson
-
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils import json_compat as orjson
 from mcpgateway.utils.redis_client import get_redis_client
 
 REDIS_AVAILABLE = importlib.util.find_spec("redis.asyncio") is not None

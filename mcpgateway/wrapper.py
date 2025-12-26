@@ -56,9 +56,9 @@ from urllib.parse import urlencode
 
 # Third-Party
 import httpx
-import orjson
 
 # First-Party
+from mcpgateway.utils import json_compat as orjson
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 
 # -----------------------

@@ -13,7 +13,6 @@ import os
 
 # Third-Party
 from dotenv import load_dotenv
-import orjson
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
@@ -31,6 +30,7 @@ from mcpgateway.services.mcp_client_chat_service import (
     WatsonxConfig,
     WatsonxProvider,
 )
+from mcpgateway.utils import json_compat as orjson
 
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)

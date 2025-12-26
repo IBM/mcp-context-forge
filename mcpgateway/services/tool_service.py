@@ -27,12 +27,21 @@ import uuid
 
 # Third-Party
 import httpx
-import jq
 import jsonschema
+
+# Optional: jq filter support (doesn't build on Python 3.14 free-threaded yet)
+try:
+    # Third-Party
+    import jq
+
+    JQ_AVAILABLE = True
+except ImportError:
+    jq = None  # type: ignore[assignment]
+    JQ_AVAILABLE = False
+# Third-Party
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
-import orjson
 from sqlalchemy import and_, case, delete, desc, Float, func, not_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload, selectinload, Session
@@ -69,6 +78,7 @@ from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.utils import json_compat as orjson
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
@@ -115,6 +125,11 @@ def extract_using_jq(data, jq_filter=""):
     """
     if jq_filter == "":
         return data
+
+    # Check if jq is available
+    if not JQ_AVAILABLE:
+        return ["JQ filter support is not available. Install with: pip install 'mcp-contextforge-gateway[jq]'"]
+
     if isinstance(data, str):
         # If the input is a string, parse it as JSON
         try:

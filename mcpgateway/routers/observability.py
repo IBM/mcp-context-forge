@@ -14,13 +14,13 @@ from typing import List, Optional
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query
-import orjson
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import SessionLocal
 from mcpgateway.schemas import ObservabilitySpanRead, ObservabilityTraceRead, ObservabilityTraceWithSpans
 from mcpgateway.services.observability_service import ObservabilityService
+from mcpgateway.utils import json_compat as orjson
 
 router = APIRouter(prefix="/observability", tags=["Observability"])
 

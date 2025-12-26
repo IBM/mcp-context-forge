@@ -124,16 +124,22 @@ uv:
 		fi; \
 	fi
 
+# Python version for free-threaded builds (GIL disabled)
+PYTHON_VERSION ?= 3.14t
+
 .PHONY: venv
 venv:
 	@rm -Rf "$(VENV_DIR)"
 	@test -d "$(VENVS_DIR)" || mkdir -p "$(VENVS_DIR)"
-	@python3 -m venv "$(VENV_DIR)"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m pip install --upgrade pip setuptools pdm"
-	# Eventually, we want to transition to using uv/uvx exclusively, at which point we will only need
-	# a virtual environment if the user has not installed uv into their account.
-	@/bin/bash -c "type uv || ( source $(VENV_DIR)/bin/activate && python3 -m pip install --upgrade uv )"
-	@echo -e "✅  Virtual env created.\n💡  Enter it with:\n    . $(VENV_DIR)/bin/activate\n"
+	# Ensure uv is installed
+	@/bin/bash -c "type uv >/dev/null 2>&1 || (echo '🐍 Installing uv...' && curl -LsSf https://astral.sh/uv/install.sh | sh)"
+	# Install Python 3.14 free-threaded via uv and create venv
+	@echo "🐍 Installing Python $(PYTHON_VERSION) free-threaded via uv..."
+	@uv python install $(PYTHON_VERSION)
+	@uv venv "$(VENV_DIR)" --python $(PYTHON_VERSION)
+	@echo -e "✅  Virtual env created with Python $(PYTHON_VERSION) (free-threaded, GIL disabled)."
+	@echo -e "💡  Enter it with:\n    . $(VENV_DIR)/bin/activate\n"
+	@echo -e "💡  Set PYTHON_GIL=0 to disable GIL at runtime (recommended for free-threaded builds).\n"
 
 .PHONY: activate
 activate:
@@ -763,6 +769,7 @@ generate-report:                           ## Display most recent load test repo
 # help: load-test-timeserver  - Load test fast_time_server (5 users, 30s)
 # help: load-test-fasttime    - Load test fast_time MCP tools (50 users, 60s)
 # help: load-test-1000        - High-load test (1000 users, 120s)
+# help: load-test-3000        - Extreme load test (3000 users, 180s) - Python 3.14 free-threaded
 # help: load-test-summary     - Parse CSV reports and show summary statistics
 
 # Default load test configuration
@@ -939,6 +946,36 @@ load-test-1000:                            ## High-load test (1000 users, 120s) 
 				--csv=reports/loadtest_1000 \
 				--only-summary"; \
 		echo "✅ Report: reports/loadtest_1000.html"; \
+	else \
+		echo "❌ Cancelled"; \
+	fi
+
+load-test-3000:                            ## Extreme load test (3000 users, 180s) - Python 3.14 free-threaded
+	@echo "🔥 Running EXTREME LOAD test (3000 users, ~3000 RPS)..."
+	@echo "   Host: http://localhost:8080 (via nginx)"
+	@echo "   Users: 3000, Spawn: 100/s, Duration: 180s"
+	@echo "   ⚠️  Requires Python 3.14 free-threaded gateway (PYTHON_GIL=0)"
+	@echo "   ⚠️  Requires tuned compose stack with 4+ replicas"
+	@echo ""
+	@echo "   💡 Recommended setup:"
+	@echo "      1. make compose-down compose-clean"
+	@echo "      2. GATEWAY_REPLICAS=4 make compose-up"
+	@echo ""
+	@read -p "Continue? [y/N] " -n 1 -r; echo; \
+	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+		test -d "$(VENV_DIR)" || $(MAKE) venv; \
+		mkdir -p reports; \
+		/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+			locust -f $(LOADTEST_LOCUSTFILE) \
+				--host=http://localhost:8080 \
+				--users=3000 \
+				--spawn-rate=100 \
+				--run-time=180s \
+				--headless \
+				--html=reports/loadtest_3000.html \
+				--csv=reports/loadtest_3000 \
+				--only-summary"; \
+		echo "✅ Report: reports/loadtest_3000.html"; \
 	else \
 		echo "❌ Cancelled"; \
 	fi

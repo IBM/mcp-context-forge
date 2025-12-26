@@ -16,13 +16,13 @@ import uuid
 
 # Third-Party
 from fastapi import Request
-import orjson
 from sse_starlette.sse import EventSourceResponse
 
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.transports.base import Transport
+from mcpgateway.utils import json_compat as orjson
 
 # Initialize logging service first
 logging_service = LoggingService()

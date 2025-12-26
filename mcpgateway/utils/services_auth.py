@@ -39,11 +39,11 @@ import os
 
 # Third-Party
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-import orjson
 from pydantic import SecretStr
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.utils import json_compat as orjson
 
 
 def get_key() -> bytes:

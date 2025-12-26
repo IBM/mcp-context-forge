@@ -25,13 +25,14 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Framework :: FastAPI",
     "Framework :: AsyncIO",
     "Topic :: Internet :: WWW/HTTP :: WSGI :: Application",
     "Topic :: Software Development :: Libraries :: Application Frameworks"
 ]
 readme = "README.md"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.11,<3.15"
 
 # SPDX licence expression + explicit licence file (PEP 639)
 license = "Apache-2.0"
@@ -56,12 +57,10 @@ dependencies = [
     "httpx>=0.28.1",
     "httpx[http2]>=0.28.1",
     "jinja2>=3.1.6",
-    "jq>=1.10.0",
     "jsonpath-ng>=1.7.0",
     "jsonschema>=4.25.1",
     "mcp>=1.25.0",
     "oauthlib>=3.3.1",
-    "orjson>=3.11.5",
     "parse>=1.20.2",
     "prometheus-fastapi-instrumentator>=7.1.0",
     "prometheus_client>=0.23.1",
@@ -178,8 +177,10 @@ redis-pure = [
 # PostgreSQL adapter with psycopg3
 # Requires system dependency: libpq-dev (Debian/Ubuntu) or postgresql-devel (RHEL/Fedora)
 # Install with: sudo apt-get install libpq-dev (or dnf install postgresql-devel)
+# Note: Using [c] instead of [c,binary] for Python 3.14 free-threaded compatibility
+# (psycopg-binary doesn't have cp314t wheels yet)
 postgres = [
-    "psycopg[c,binary]>=3.3.2",
+    "psycopg[c]>=3.3.2",
 ]
 
 mysql = [
@@ -236,6 +237,17 @@ aiosqlite = [
 # Async PostgreSQL driver (optional)
 asyncpg = [
     "asyncpg>=0.31.0",
+]
+
+# JQ filter support (optional) - doesn't build on Python 3.14 free-threaded yet
+jq = [
+    "jq>=1.10.0",
+]
+
+# Fast JSON serialization (optional) - doesn't support Python 3.14 free-threaded yet
+# Falls back to standard json library when not available
+orjson = [
+    "orjson>=3.11.5",
 ]
 
 # Plugin templating tools (optional) - copier pulls jinja2-ansible-filters which is GPL licensed

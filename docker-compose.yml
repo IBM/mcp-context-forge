@@ -76,9 +76,11 @@ services:
     # Environment - pick ONE database URL line, comment the rest
     # ──────────────────────────────────────────────────────────────────────
     environment:
-      # HTTP Server: granian (default, Rust-based) or gunicorn (Python-based alternative)
+      # Python 3.14 Free-Threading: Disable GIL for true multi-threaded parallelism
+      - PYTHON_GIL=0
+      # HTTP Server: gunicorn (Python-based) or granian (Rust-based, recommended for free-threaded Python)
       - HTTP_SERVER=gunicorn
-      # - HTTP_SERVER=gunicorn  # Alternative: use Gunicorn with Uvicorn workers
+      # - HTTP_SERVER=granian  # Alternative: Rust-based HTTP server (better thread-safety)
       - HOST=0.0.0.0
       - PORT=4444
       # Transport: sse, streamablehttp, http, or all (default: all)
@@ -224,7 +226,8 @@ services:
 
     deploy:
       mode: replicated
-      replicas: 2
+      # For 3000 users: increase to 4 replicas (4 × 16 workers = 64 workers)
+      replicas: ${GATEWAY_REPLICAS:-4}
       resources:
         limits:
           cpus: '8'
@@ -664,6 +667,7 @@ services:
       fast_time_server:
         condition: service_started
     environment:
+      - PYTHON_GIL=0
       - JWT_SECRET_KEY=my-test-key
     # This is a one-shot container that exits after registration
     restart: "no"

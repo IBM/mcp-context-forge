@@ -17,7 +17,6 @@ import uuid
 
 # Third-Party
 import httpx
-import orjson
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -36,6 +35,7 @@ from mcpgateway.services.llm_provider_service import (
     LLMProviderNotFoundError,
 )
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils import json_compat as orjson
 from mcpgateway.utils.services_auth import decode_auth
 
 # Initialize logging

@@ -216,8 +216,8 @@ async def oauth_callback(
         # Standard
         import base64
 
-        # Third-Party
-        import orjson
+        # First-Party
+        from mcpgateway.utils import json_compat as orjson
 
         try:
             # Expect state as base64url(payload || signature) where the last 32 bytes

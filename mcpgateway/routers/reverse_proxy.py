@@ -19,12 +19,12 @@ import uuid
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
-import orjson
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import get_db
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils import json_compat as orjson
 from mcpgateway.utils.verify_credentials import require_auth
 
 # Initialize logging

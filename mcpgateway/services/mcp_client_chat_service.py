@@ -24,8 +24,8 @@ import time
 from typing import Any, AsyncGenerator, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
-# Third-Party
-import orjson
+# First-Party
+from mcpgateway.utils import json_compat as orjson
 
 try:
     # Third-Party

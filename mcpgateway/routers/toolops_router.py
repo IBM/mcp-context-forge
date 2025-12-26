@@ -19,7 +19,6 @@ from typing import Any, Dict, List
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-import orjson
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -28,6 +27,7 @@ from mcpgateway.main import get_db
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.toolops.toolops_altk_service import enrich_tool, execute_tool_nl_test_cases, validation_generate_test_cases
+from mcpgateway.utils import json_compat as orjson
 
 # Initialize router
 toolops_router = APIRouter(prefix="/toolops", tags=["Toolops"])

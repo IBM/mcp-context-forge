@@ -33,12 +33,10 @@ import asyncio
 import sys
 from typing import Any, AsyncGenerator, Dict, Optional
 
-# Third-Party
-import orjson
-
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.transports.base import Transport
+from mcpgateway.utils import json_compat as orjson
 
 # Initialize logging service first
 logging_service = LoggingService()

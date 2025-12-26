@@ -24,11 +24,11 @@ from typing import Any
 
 # Third-Party
 from fastapi import HTTPException, Request, Response
-import orjson
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.utils import json_compat as orjson
 
 logger = logging.getLogger(__name__)
 

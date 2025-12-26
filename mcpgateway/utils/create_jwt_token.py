@@ -49,10 +49,10 @@ from typing import Any, Dict, List, Sequence
 
 # Third-Party
 import jwt  # PyJWT
-import orjson
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.utils import json_compat as orjson
 
 __all__: Sequence[str] = (
     "create_jwt_token",

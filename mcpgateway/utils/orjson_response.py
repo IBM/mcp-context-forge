@@ -24,7 +24,9 @@ from typing import Any
 
 # Third-Party
 from fastapi.responses import JSONResponse
-import orjson
+
+# First-Party
+from mcpgateway.utils import json_compat as orjson
 
 
 class ORJSONResponse(JSONResponse):

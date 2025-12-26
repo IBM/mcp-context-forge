@@ -133,12 +133,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from mcp.server import Server as MCPServer
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-import orjson
 from sse_starlette.sse import EventSourceResponse
 from starlette.applications import Starlette
 from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
 import uvicorn
+
+# First-Party
+from mcpgateway.utils import json_compat as orjson
 
 try:
     # Third-Party

@@ -61,7 +61,6 @@ import uuid
 
 # Third-Party
 from fastapi import HTTPException, status
-import orjson
 
 # First-Party
 from mcpgateway import __version__
@@ -71,6 +70,7 @@ from mcpgateway.db import get_db, SessionMessageRecord, SessionRecord
 from mcpgateway.services import PromptService, ResourceService, ToolService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.transports import SSETransport
+from mcpgateway.utils import json_compat as orjson
 from mcpgateway.utils.create_jwt_token import create_jwt_token
 from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.utils.retry_manager import ResilientHttpClient

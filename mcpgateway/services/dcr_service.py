@@ -19,13 +19,13 @@ from typing import Any, Dict, List
 
 # Third-Party
 import aiohttp
-import orjson
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import get_settings
 from mcpgateway.db import RegisteredOAuthClient
 from mcpgateway.services.encryption_service import get_encryption_service
+from mcpgateway.utils import json_compat as orjson
 
 logger = logging.getLogger(__name__)
 

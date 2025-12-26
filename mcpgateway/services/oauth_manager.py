@@ -23,12 +23,12 @@ from typing import Any, Dict, Optional
 
 # Third-Party
 import aiohttp
-import orjson
 from requests_oauthlib import OAuth2Session
 
 # First-Party
 from mcpgateway.config import get_settings
 from mcpgateway.services.encryption_service import get_encryption_service
+from mcpgateway.utils import json_compat as orjson
 from mcpgateway.utils.redis_client import get_redis_client as _get_shared_redis_client
 
 logger = logging.getLogger(__name__)

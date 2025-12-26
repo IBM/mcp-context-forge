@@ -25,8 +25,10 @@ from typing import Any, Dict, Optional
 # Third-Party
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
-import orjson
 from pydantic import BaseModel, Field
+
+# First-Party
+from mcpgateway.utils import json_compat as orjson
 
 try:
     # Third-Party

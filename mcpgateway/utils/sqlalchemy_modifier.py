@@ -14,8 +14,10 @@ from typing import Any, Iterable, List, Union
 import uuid
 
 # Third-Party
-import orjson
 from sqlalchemy import and_, func, or_, text
+
+# First-Party
+from mcpgateway.utils import json_compat as orjson
 
 
 def _ensure_list(values: Union[str, Iterable[str]]) -> List[str]:

@@ -22,7 +22,6 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.types import TextContent
-import orjson
 
 # First-Party
 from mcpgateway.common.models import TransportType
@@ -32,6 +31,7 @@ from mcpgateway.plugins.framework.errors import convert_exception_to_error, Plug
 from mcpgateway.plugins.framework.external.mcp.tls_utils import create_ssl_context
 from mcpgateway.plugins.framework.hooks.registry import get_hook_registry
 from mcpgateway.plugins.framework.models import MCPClientTLSConfig, PluginConfig, PluginContext, PluginErrorModel, PluginPayload, PluginResult
+from mcpgateway.utils import json_compat as orjson
 
 logger = logging.getLogger(__name__)
 

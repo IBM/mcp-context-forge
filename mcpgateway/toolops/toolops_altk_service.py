@@ -23,8 +23,8 @@ Structure:
 import os
 from typing import Any
 
-# Third-Party
-import orjson
+# First-Party
+from mcpgateway.utils import json_compat as orjson
 
 try:
     # Third-Party

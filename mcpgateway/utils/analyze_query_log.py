@@ -16,8 +16,8 @@ from pathlib import Path
 import sys
 from typing import Any, Dict, List
 
-# Third-Party
-import orjson
+# First-Party
+from mcpgateway.utils import json_compat as orjson
 
 
 def load_json_log(filepath: Path) -> List[Dict[str, Any]]:

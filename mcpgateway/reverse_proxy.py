@@ -43,8 +43,8 @@ from typing import Any, cast, Dict, List, Optional
 from urllib.parse import urljoin, urlparse
 import uuid
 
-# Third-Party
-import orjson
+# First-Party
+from mcpgateway.utils import json_compat as orjson
 
 try:
     # Third-Party
