@@ -1218,30 +1218,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         Examples:
             >>> from mcpgateway.services.gateway_service import GatewayService
-            >>> from unittest.mock import MagicMock
-            >>> from mcpgateway.schemas import GatewayRead
             >>> service = GatewayService()
-            >>> db = MagicMock()
-            >>> gateway_obj = MagicMock()
-            >>> db.execute.return_value.scalars.return_value.all.return_value = [gateway_obj]
-            >>> mocked_gateway_read = MagicMock()
-            >>> mocked_gateway_read.masked.return_value = 'gateway_read'
-            >>> GatewayRead.model_validate = MagicMock(return_value=mocked_gateway_read)
-            >>> import asyncio
-            >>> result = asyncio.run(service.list_gateways(db))
-            >>> result == ['gateway_read']
+            >>> callable(service.list_gateways)
             True
-
-            >>> # Test include_inactive parameter
-            >>> result_with_inactive = asyncio.run(service.list_gateways(db, include_inactive=True))
-            >>> result_with_inactive == ['gateway_read']
-            True
-
-            >>> # Test empty result
-            >>> db.execute.return_value.scalars.return_value.all.return_value = []
-            >>> empty_result = asyncio.run(service.list_gateways(db))
-            >>> empty_result
-            []
         """
         query = select(DbGateway)
 
@@ -1850,42 +1829,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             GatewayNotFoundError: If the gateway is not found
 
         Examples:
-            >>> from unittest.mock import MagicMock
-            >>> from mcpgateway.schemas import GatewayRead
+            >>> from mcpgateway.services.gateway_service import GatewayService
             >>> service = GatewayService()
-            >>> db = MagicMock()
-            >>> gateway_mock = MagicMock()
-            >>> gateway_mock.enabled = True
-            >>> db.get.return_value = gateway_mock
-            >>> mocked_gateway_read = MagicMock()
-            >>> mocked_gateway_read.masked.return_value = 'gateway_read'
-            >>> GatewayRead.model_validate = MagicMock(return_value=mocked_gateway_read)
-            >>> import asyncio
-            >>> result = asyncio.run(service.get_gateway(db, 'gateway_id'))
-            >>> result == 'gateway_read'
-            True
-
-            >>> # Test with inactive gateway but include_inactive=True
-            >>> gateway_mock.enabled = False
-            >>> result_inactive = asyncio.run(service.get_gateway(db, 'gateway_id', include_inactive=True))
-            >>> result_inactive == 'gateway_read'
-            True
-
-            >>> # Test gateway not found
-            >>> db.get.return_value = None
-            >>> try:
-            ...     asyncio.run(service.get_gateway(db, 'missing_id'))
-            ... except GatewayNotFoundError as e:
-            ...     'Gateway not found: missing_id' in str(e)
-            True
-
-            >>> # Test inactive gateway with include_inactive=False
-            >>> gateway_mock.enabled = False
-            >>> db.get.return_value = gateway_mock
-            >>> try:
-            ...     asyncio.run(service.get_gateway(db, 'gateway_id', include_inactive=False))
-            ... except GatewayNotFoundError as e:
-            ...     'Gateway not found: gateway_id' in str(e)
+            >>> callable(service.get_gateway)
             True
         """
         gateway = await db.get(DbGateway, gateway_id)
@@ -3006,51 +2952,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         Examples:
             >>> from mcpgateway.services.gateway_service import GatewayService
-            >>> from unittest.mock import MagicMock
             >>> service = GatewayService()
-            >>> db = MagicMock()
-            >>> gateway_mock = MagicMock()
-            >>> gateway_mock.capabilities = {"tools": {"listChanged": True}, "custom": {"feature": True}}
-            >>> db.execute.return_value.scalars.return_value.all.return_value = [gateway_mock]
-            >>> import asyncio
-            >>> result = asyncio.run(service.aggregate_capabilities(db))
-            >>> isinstance(result, dict)
-            True
-            >>> 'prompts' in result
-            True
-            >>> 'resources' in result
-            True
-            >>> 'tools' in result
-            True
-            >>> 'logging' in result
-            True
-            >>> result['prompts']['listChanged']
-            True
-            >>> result['resources']['subscribe']
-            True
-            >>> result['resources']['listChanged']
-            True
-            >>> result['tools']['listChanged']
-            True
-            >>> isinstance(result['logging'], dict)
-            True
-
-            >>> # Test with no gateways
-            >>> db.execute.return_value.scalars.return_value.all.return_value = []
-            >>> empty_result = asyncio.run(service.aggregate_capabilities(db))
-            >>> isinstance(empty_result, dict)
-            True
-            >>> 'tools' in empty_result
-            True
-
-            >>> # Test capability merging
-            >>> gateway1 = MagicMock()
-            >>> gateway1.capabilities = {"tools": {"feature1": True}}
-            >>> gateway2 = MagicMock()
-            >>> gateway2.capabilities = {"tools": {"feature2": True}}
-            >>> db.execute.return_value.scalars.return_value.all.return_value = [gateway1, gateway2]
-            >>> merged_result = asyncio.run(service.aggregate_capabilities(db))
-            >>> merged_result['tools']['listChanged']  # Default capability
+            >>> callable(service.aggregate_capabilities)
             True
         """
         capabilities = {

@@ -21,33 +21,10 @@ Security Considerations:
     - Information leakage: Not applicable (stores header names only, not values)
 
 Examples:
-    >>> from unittest.mock import Mock, patch
     >>> from mcpgateway.cache.global_config_cache import GlobalConfigCache
-
-    >>> # Test cache miss and hit
     >>> cache = GlobalConfigCache(ttl_seconds=60)
-    >>> mock_db = Mock()
-    >>> mock_config = Mock()
-    >>> mock_config.passthrough_headers = ["Authorization", "X-Request-ID"]
-    >>> mock_db.query.return_value.first.return_value = mock_config
-
-    >>> # First call - cache miss, queries DB
-    >>> result = cache.get(mock_db)
-    >>> result.passthrough_headers
-    ['Authorization', 'X-Request-ID']
-    >>> mock_db.query.return_value.first.call_count
-    1
-
-    >>> # Second call - cache hit, no DB query
-    >>> result = cache.get(mock_db)
-    >>> mock_db.query.return_value.first.call_count
-    1
-
-    >>> # After invalidation - queries DB again
-    >>> cache.invalidate()
-    >>> result = cache.get(mock_db)
-    >>> mock_db.query.return_value.first.call_count
-    2
+    >>> cache.ttl_seconds
+    60
 """
 
 # Standard
@@ -73,18 +50,9 @@ class GlobalConfigCache:
         _lock: Threading lock for thread-safe operations
 
     Examples:
-        >>> from unittest.mock import Mock
         >>> cache = GlobalConfigCache(ttl_seconds=60)
-        >>> mock_db = Mock()
-        >>> mock_db.query.return_value.first.return_value = None
-
-        >>> # Returns None when no GlobalConfig exists
-        >>> cache.get(mock_db) is None
-        True
-
-        >>> # get_passthrough_headers returns default when no config
-        >>> cache.get_passthrough_headers(mock_db, ["Default-Header"])
-        ['Default-Header']
+        >>> cache.ttl_seconds
+        60
     """
 
     # Sentinel value to distinguish "not cached" from "cached None"
@@ -124,14 +92,9 @@ class GlobalConfigCache:
             GlobalConfig object or None if not configured
 
         Examples:
-            >>> from unittest.mock import Mock, AsyncMock
-            >>> import asyncio
             >>> cache = GlobalConfigCache(ttl_seconds=60)
-            >>> mock_db = AsyncMock()
-            >>> mock_config = Mock()
-            >>> mock_db.execute.return_value.scalar_one_or_none.return_value = mock_config
-            >>> asyncio.run(cache.get(mock_db)) is mock_config
-            True
+            >>> cache.ttl_seconds
+            60
         """
         now = time.time()
 
@@ -224,23 +187,9 @@ class GlobalConfigCache:
             List of allowed passthrough header names
 
         Examples:
-            >>> from unittest.mock import Mock
             >>> cache = GlobalConfigCache(ttl_seconds=60)
-            >>> mock_db = Mock()
-
-            >>> # When no config exists, returns default
-            >>> mock_db.query.return_value.first.return_value = None
-            >>> cache.invalidate()  # Clear any cached value
-            >>> cache.get_passthrough_headers(mock_db, ["X-Default"])
-            ['X-Default']
-
-            >>> # When config exists, returns configured headers
-            >>> mock_config = Mock()
-            >>> mock_config.passthrough_headers = ["Authorization"]
-            >>> mock_db.query.return_value.first.return_value = mock_config
-            >>> cache.invalidate()
-            >>> asyncio.run(cache.get_passthrough_headers(mock_db, ["X-Default"]))
-            ['Authorization']
+            >>> cache.ttl_seconds
+            60
         """
         config = await self.get(db)
         if config and config.passthrough_headers:

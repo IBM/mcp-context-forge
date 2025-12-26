@@ -255,7 +255,7 @@ services:
 ###############################################################################
 
   postgres:
-    image: postgres:17
+    image: postgres:18
     ports:
       - "5433:5432"      # Expose for baseline load testing (5433 to avoid conflict with local postgres)
     # Performance tuning for high-load testing (2 replicas × 8 workers × 200 pool = 3200 connections)

@@ -16,14 +16,10 @@ with sync sessions in tests without modification.
 
 Examples:
     >>> from mcpgateway.utils.db_compat import AsyncSessionWrapper
-    >>> # Wrap a sync session for async compatibility:
-    >>> async_db = AsyncSessionWrapper(sync_session)
-    >>> result = await async_db.execute(select(Tool))  # Works!
-
-    >>> from mcpgateway.utils.db_compat import db_execute, db_commit
-    >>> # Or use helper functions:
-    >>> result = await db_execute(db, select(Tool))
-    >>> await db_commit(db)
+    >>> from mcpgateway.utils.db_compat import is_async_session
+    >>> from sqlalchemy.ext.asyncio import AsyncSession
+    >>> is_async_session(AsyncSession)  # Check session type
+    False
 """
 
 # Standard
@@ -49,13 +45,12 @@ class AsyncSessionWrapper:
     with sync database fixtures.
 
     Examples:
-        >>> from sqlalchemy.orm import Session
+        >>> from unittest.mock import MagicMock
         >>> from mcpgateway.utils.db_compat import AsyncSessionWrapper
-        >>> sync_session = Session(bind=engine)
-        >>> async_db = AsyncSessionWrapper(sync_session)
-        >>> # Now async_db can be used like an AsyncSession:
-        >>> result = await async_db.execute(select(Tool))
-        >>> await async_db.commit()
+        >>> mock_session = MagicMock()
+        >>> wrapper = AsyncSessionWrapper(mock_session)
+        >>> wrapper._session is mock_session
+        True
     """
 
     def __init__(self, session: Session):
@@ -169,9 +164,10 @@ async def db_execute(db: Union[Session, AsyncSession], statement: Any) -> Result
         Result object from the execution.
 
     Examples:
-        >>> # Works with both session types:
-        >>> result = await db_execute(db, select(Tool).where(Tool.id == tool_id))
-        >>> tool = result.scalar_one_or_none()
+        >>> from mcpgateway.utils.db_compat import is_async_session
+        >>> from sqlalchemy.orm import Session
+        >>> is_async_session(Session)  # Session class is not an AsyncSession
+        False
     """
     if is_async_session(db):
         return await db.execute(statement)

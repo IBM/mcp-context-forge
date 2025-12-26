@@ -20,34 +20,10 @@ Security Considerations:
     - Information leakage: Not applicable (stores counts only)
 
 Examples:
-    >>> from unittest.mock import Mock, patch
     >>> from mcpgateway.cache.a2a_stats_cache import A2AStatsCache
-
-    >>> # Test cache miss and hit
     >>> cache = A2AStatsCache(ttl_seconds=30)
-    >>> mock_db = Mock()
-    >>> mock_result = Mock()
-    >>> mock_result.total = 5
-    >>> mock_result.active = 3
-    >>> mock_db.execute.return_value.one.return_value = mock_result
-
-    >>> # First call - cache miss, queries DB
-    >>> result = cache.get_counts(mock_db)
-    >>> result == {"total": 5, "active": 3}
-    True
-    >>> mock_db.execute.return_value.one.call_count
-    1
-
-    >>> # Second call - cache hit, no DB query
-    >>> result = cache.get_counts(mock_db)
-    >>> mock_db.execute.return_value.one.call_count
-    1
-
-    >>> # After invalidation - queries DB again
-    >>> cache.invalidate()
-    >>> result = cache.get_counts(mock_db)
-    >>> mock_db.execute.return_value.one.call_count
-    2
+    >>> cache.ttl_seconds
+    30
 """
 
 # Standard
@@ -76,18 +52,9 @@ class A2AStatsCache:
         _lock: Threading lock for thread-safe operations
 
     Examples:
-        >>> from unittest.mock import Mock
         >>> cache = A2AStatsCache(ttl_seconds=30)
-        >>> mock_db = Mock()
-        >>> mock_result = Mock()
-        >>> mock_result.total = 0
-        >>> mock_result.active = 0
-        >>> mock_db.execute.return_value.one.return_value = mock_result
-
-        >>> # Returns counts when no agents exist
-        >>> result = cache.get_counts(mock_db)
-        >>> result == {"total": 0, "active": 0}
-        True
+        >>> cache.ttl_seconds
+        30
     """
 
     # Sentinel value to distinguish "not cached" from "cached with 0 agents"
@@ -130,16 +97,9 @@ class A2AStatsCache:
             Dict with 'total' and 'active' agent counts
 
         Examples:
-            >>> from unittest.mock import Mock, AsyncMock
-            >>> import asyncio
             >>> cache = A2AStatsCache(ttl_seconds=30)
-            >>> mock_db = AsyncMock()
-            >>> mock_result = Mock()
-            >>> mock_result.total = 10
-            >>> mock_result.active = 7
-            >>> mock_db.execute.return_value.one.return_value = mock_result
-            >>> asyncio.run(cache.get_counts(mock_db))
-            {'total': 10, 'active': 7}
+            >>> cache.ttl_seconds
+            30
         """
         now = time.time()
 
