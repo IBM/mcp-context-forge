@@ -12877,7 +12877,7 @@ async def get_plugins_partial(request: Request, db: Session = Depends(get_db), u
 
         # Get plugin data
         plugins = plugin_service.get_all_plugins()
-        stats = plugin_service.get_plugin_statistics()
+        stats = await plugin_service.get_plugin_statistics()
 
         # Prepare context for template
         context = {"request": request, "plugins": plugins, "stats": stats, "plugins_enabled": plugin_manager is not None, "root_path": request.scope.get("root_path", "")}
@@ -13006,7 +13006,7 @@ async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user
             plugin_service.set_plugin_manager(plugin_manager)
 
         # Get statistics
-        stats = plugin_service.get_plugin_statistics()
+        stats = await plugin_service.get_plugin_statistics()
 
         # Log marketplace analytics access
         structured_logger.info(
@@ -15400,7 +15400,7 @@ async def get_performance_history(
     service = get_performance_service(db)
     start_time = datetime.now(timezone.utc) - timedelta(hours=hours)
 
-    history = service.get_history(
+    history = await service.get_history(
         db=db,
         period_type=period_type,
         start_time=start_time,

@@ -78,6 +78,9 @@ class AdminStatsCache:
         observability_ttl: Optional[int] = None,
         users_ttl: Optional[int] = None,
         teams_ttl: Optional[int] = None,
+        tags_ttl: Optional[int] = None,
+        plugins_ttl: Optional[int] = None,
+        performance_ttl: Optional[int] = None,
         enabled: Optional[bool] = None,
     ):
         """Initialize the admin stats cache.
@@ -87,6 +90,9 @@ class AdminStatsCache:
             observability_ttl: TTL for observability stats in seconds (default: 30)
             users_ttl: TTL for user listings in seconds (default: 30)
             teams_ttl: TTL for team listings in seconds (default: 60)
+            tags_ttl: TTL for tags listing in seconds (default: 120)
+            plugins_ttl: TTL for plugin stats in seconds (default: 120)
+            performance_ttl: TTL for performance aggregates in seconds (default: 60)
             enabled: Whether caching is enabled (default: True)
 
         Examples:
@@ -103,6 +109,9 @@ class AdminStatsCache:
             self._observability_ttl = observability_ttl or getattr(settings, "admin_stats_cache_observability_ttl", 30)
             self._users_ttl = users_ttl or getattr(settings, "admin_stats_cache_users_ttl", 30)
             self._teams_ttl = teams_ttl or getattr(settings, "admin_stats_cache_teams_ttl", 60)
+            self._tags_ttl = tags_ttl or getattr(settings, "admin_stats_cache_tags_ttl", 120)
+            self._plugins_ttl = plugins_ttl or getattr(settings, "admin_stats_cache_plugins_ttl", 120)
+            self._performance_ttl = performance_ttl or getattr(settings, "admin_stats_cache_performance_ttl", 60)
             self._enabled = enabled if enabled is not None else getattr(settings, "admin_stats_cache_enabled", True)
             self._cache_prefix = getattr(settings, "cache_prefix", "mcpgw:")
         except ImportError:
@@ -110,6 +119,9 @@ class AdminStatsCache:
             self._observability_ttl = observability_ttl or 30
             self._users_ttl = users_ttl or 30
             self._teams_ttl = teams_ttl or 60
+            self._tags_ttl = tags_ttl or 120
+            self._plugins_ttl = plugins_ttl or 120
+            self._performance_ttl = performance_ttl or 60
             self._enabled = enabled if enabled is not None else True
             self._cache_prefix = "mcpgw:"
 
@@ -129,7 +141,7 @@ class AdminStatsCache:
         self._redis_hit_count = 0
         self._redis_miss_count = 0
 
-        logger.info(f"AdminStatsCache initialized: enabled={self._enabled}, " f"system_ttl={self._system_ttl}s, observability_ttl={self._observability_ttl}s")
+        logger.info(f"AdminStatsCache initialized: enabled={self._enabled}, " f"system_ttl={self._system_ttl}s, observability_ttl={self._observability_ttl}s, tags_ttl={self._tags_ttl}s")
 
     def _get_redis_key(self, key_type: str, identifier: str = "") -> str:
         """Generate Redis key with proper prefix.
@@ -489,6 +501,239 @@ class AdminStatsCache:
         with self._lock:
             self._cache[cache_key] = CacheEntry(value=teams, expiry=time.time() + self._teams_ttl)
 
+    async def get_tags(self, entity_types_hash: str) -> Optional[Any]:
+        """Get cached tags listing.
+
+        Args:
+            entity_types_hash: Hash of entity types filter
+
+        Returns:
+            Cached tags list or None on cache miss
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AdminStatsCache()
+            >>> result = asyncio.run(cache.get_tags("all"))
+            >>> result is None
+            True
+        """
+        if not self._enabled:
+            return None
+
+        cache_key = self._get_redis_key("tags", entity_types_hash)
+
+        # Try Redis first
+        redis = await self._get_redis_client()
+        if redis:
+            try:
+                data = await redis.get(cache_key)
+                if data:
+                    # Third-Party
+                    import orjson  # pylint: disable=import-outside-toplevel
+
+                    self._hit_count += 1
+                    self._redis_hit_count += 1
+                    return orjson.loads(data)
+                self._redis_miss_count += 1
+            except Exception as e:
+                logger.warning(f"AdminStatsCache Redis get failed: {e}")
+
+        # Fall back to in-memory cache
+        with self._lock:
+            entry = self._cache.get(cache_key)
+            if entry and not entry.is_expired():
+                self._hit_count += 1
+                return entry.value
+
+        self._miss_count += 1
+        return None
+
+    async def set_tags(self, tags: Any, entity_types_hash: str) -> None:
+        """Store tags listing in cache.
+
+        Args:
+            tags: Tags list data
+            entity_types_hash: Hash of entity types filter
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AdminStatsCache()
+            >>> asyncio.run(cache.set_tags([{"name": "api", "count": 10}], "all"))
+        """
+        if not self._enabled:
+            return
+
+        cache_key = self._get_redis_key("tags", entity_types_hash)
+
+        # Store in Redis
+        redis = await self._get_redis_client()
+        if redis:
+            try:
+                # Third-Party
+                import orjson  # pylint: disable=import-outside-toplevel
+
+                await redis.setex(cache_key, self._tags_ttl, orjson.dumps(tags))
+            except Exception as e:
+                logger.warning(f"AdminStatsCache Redis set failed: {e}")
+
+        # Store in in-memory cache
+        with self._lock:
+            self._cache[cache_key] = CacheEntry(value=tags, expiry=time.time() + self._tags_ttl)
+
+    async def get_plugin_stats(self) -> Optional[Dict[str, Any]]:
+        """Get cached plugin statistics.
+
+        Returns:
+            Cached plugin stats or None on cache miss
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AdminStatsCache()
+            >>> result = asyncio.run(cache.get_plugin_stats())
+            >>> result is None
+            True
+        """
+        if not self._enabled:
+            return None
+
+        cache_key = self._get_redis_key("plugins", "stats")
+
+        # Try Redis first
+        redis = await self._get_redis_client()
+        if redis:
+            try:
+                data = await redis.get(cache_key)
+                if data:
+                    # Third-Party
+                    import orjson  # pylint: disable=import-outside-toplevel
+
+                    self._hit_count += 1
+                    self._redis_hit_count += 1
+                    return orjson.loads(data)
+                self._redis_miss_count += 1
+            except Exception as e:
+                logger.warning(f"AdminStatsCache Redis get failed: {e}")
+
+        # Fall back to in-memory cache
+        with self._lock:
+            entry = self._cache.get(cache_key)
+            if entry and not entry.is_expired():
+                self._hit_count += 1
+                return entry.value
+
+        self._miss_count += 1
+        return None
+
+    async def set_plugin_stats(self, stats: Dict[str, Any]) -> None:
+        """Store plugin statistics in cache.
+
+        Args:
+            stats: Plugin statistics dictionary
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AdminStatsCache()
+            >>> asyncio.run(cache.set_plugin_stats({"total_plugins": 5}))
+        """
+        if not self._enabled:
+            return
+
+        cache_key = self._get_redis_key("plugins", "stats")
+
+        # Store in Redis
+        redis = await self._get_redis_client()
+        if redis:
+            try:
+                # Third-Party
+                import orjson  # pylint: disable=import-outside-toplevel
+
+                await redis.setex(cache_key, self._plugins_ttl, orjson.dumps(stats))
+            except Exception as e:
+                logger.warning(f"AdminStatsCache Redis set failed: {e}")
+
+        # Store in in-memory cache
+        with self._lock:
+            self._cache[cache_key] = CacheEntry(value=stats, expiry=time.time() + self._plugins_ttl)
+
+    async def get_performance_history(self, cache_key_suffix: str) -> Optional[Dict[str, Any]]:
+        """Get cached performance aggregates.
+
+        Args:
+            cache_key_suffix: Cache key suffix with filter params
+
+        Returns:
+            Cached performance data or None on cache miss
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AdminStatsCache()
+            >>> result = asyncio.run(cache.get_performance_history("hourly:168"))
+            >>> result is None
+            True
+        """
+        if not self._enabled:
+            return None
+
+        cache_key = self._get_redis_key("performance", cache_key_suffix)
+
+        # Try Redis first
+        redis = await self._get_redis_client()
+        if redis:
+            try:
+                data = await redis.get(cache_key)
+                if data:
+                    # Third-Party
+                    import orjson  # pylint: disable=import-outside-toplevel
+
+                    self._hit_count += 1
+                    self._redis_hit_count += 1
+                    return orjson.loads(data)
+                self._redis_miss_count += 1
+            except Exception as e:
+                logger.warning(f"AdminStatsCache Redis get failed: {e}")
+
+        # Fall back to in-memory cache
+        with self._lock:
+            entry = self._cache.get(cache_key)
+            if entry and not entry.is_expired():
+                self._hit_count += 1
+                return entry.value
+
+        self._miss_count += 1
+        return None
+
+    async def set_performance_history(self, data: Dict[str, Any], cache_key_suffix: str) -> None:
+        """Store performance aggregates in cache.
+
+        Args:
+            data: Performance data dictionary
+            cache_key_suffix: Cache key suffix with filter params
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AdminStatsCache()
+            >>> asyncio.run(cache.set_performance_history({"aggregates": []}, "hourly:168"))
+        """
+        if not self._enabled:
+            return
+
+        cache_key = self._get_redis_key("performance", cache_key_suffix)
+
+        # Store in Redis
+        redis = await self._get_redis_client()
+        if redis:
+            try:
+                # Third-Party
+                import orjson  # pylint: disable=import-outside-toplevel
+
+                await redis.setex(cache_key, self._performance_ttl, orjson.dumps(data))
+            except Exception as e:
+                logger.warning(f"AdminStatsCache Redis set failed: {e}")
+
+        # Store in in-memory cache
+        with self._lock:
+            self._cache[cache_key] = CacheEntry(value=data, expiry=time.time() + self._performance_ttl)
+
     async def invalidate_system_stats(self) -> None:
         """Invalidate system stats cache.
 
@@ -532,6 +777,39 @@ class AdminStatsCache:
         """
         logger.debug("AdminStatsCache: Invalidating teams cache")
         await self._invalidate_prefix("teams")
+
+    async def invalidate_tags(self) -> None:
+        """Invalidate tags cache.
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AdminStatsCache()
+            >>> asyncio.run(cache.invalidate_tags())
+        """
+        logger.debug("AdminStatsCache: Invalidating tags cache")
+        await self._invalidate_prefix("tags")
+
+    async def invalidate_plugins(self) -> None:
+        """Invalidate plugins cache.
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AdminStatsCache()
+            >>> asyncio.run(cache.invalidate_plugins())
+        """
+        logger.debug("AdminStatsCache: Invalidating plugins cache")
+        await self._invalidate_prefix("plugins")
+
+    async def invalidate_performance(self) -> None:
+        """Invalidate performance cache.
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AdminStatsCache()
+            >>> asyncio.run(cache.invalidate_performance())
+        """
+        logger.debug("AdminStatsCache: Invalidating performance cache")
+        await self._invalidate_prefix("performance")
 
     async def _invalidate_prefix(self, prefix: str) -> None:
         """Invalidate all cache entries with given prefix.
@@ -601,6 +879,9 @@ class AdminStatsCache:
                 "observability": self._observability_ttl,
                 "users": self._users_ttl,
                 "teams": self._teams_ttl,
+                "tags": self._tags_ttl,
+                "plugins": self._plugins_ttl,
+                "performance": self._performance_ttl,
             },
         }
 

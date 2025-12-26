@@ -941,6 +941,9 @@ class Settings(BaseSettings):
     admin_stats_cache_observability_ttl: int = Field(default=30, ge=10, le=120, description="TTL in seconds for observability stats cache")
     admin_stats_cache_users_ttl: int = Field(default=30, ge=10, le=120, description="TTL in seconds for user listings cache")
     admin_stats_cache_teams_ttl: int = Field(default=60, ge=10, le=300, description="TTL in seconds for team listings cache")
+    admin_stats_cache_tags_ttl: int = Field(default=120, ge=30, le=600, description="TTL in seconds for tags listing cache")
+    admin_stats_cache_plugins_ttl: int = Field(default=120, ge=30, le=600, description="TTL in seconds for plugin stats cache")
+    admin_stats_cache_performance_ttl: int = Field(default=60, ge=15, le=300, description="TTL in seconds for performance aggregates cache")
 
     # Log Search Configuration
     log_search_max_results: int = Field(default=1000, description="Maximum results per log search query")

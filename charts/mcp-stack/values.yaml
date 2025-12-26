@@ -202,6 +202,9 @@ mcpContextForge:
     ADMIN_STATS_CACHE_OBSERVABILITY_TTL: "30" # Observability stats cache TTL (seconds)
     ADMIN_STATS_CACHE_USERS_TTL: "30"  # User listings cache TTL (seconds)
     ADMIN_STATS_CACHE_TEAMS_TTL: "60"  # Team listings cache TTL (seconds)
+    ADMIN_STATS_CACHE_TAGS_TTL: "120"  # Tags listing cache TTL (seconds)
+    ADMIN_STATS_CACHE_PLUGINS_TTL: "120"  # Plugin stats cache TTL (seconds)
+    ADMIN_STATS_CACHE_PERFORMANCE_TTL: "60"  # Performance aggregates cache TTL (seconds)
 
     # ─ Protocol & feature toggles ─
     PROTOCOL_VERSION: 2025-03-26
