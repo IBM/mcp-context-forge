@@ -16,6 +16,7 @@ volumes:                # Named volumes survive podman-compose down/up
   pgadmindata:
   redisinsight_data:
   nginx_cache:
+  grafanadata:
 
 ###############################################################################
 #  CORE SERVICE - MCP Gateway
@@ -145,6 +146,9 @@ services:
       - LOG_LEVEL=ERROR  # Default to ERROR for production performance
       - DISABLE_ACCESS_LOG=true  # Disable uvicorn access logs for performance (massive I/O overhead)
       - STRUCTURED_LOGGING_DATABASE_ENABLED=false  # Disable DB logging for performance (use true only for debugging)
+      # Audit trail logging - disabled by default for performance
+      # WARNING: Causes a DB write on EVERY API request - can generate millions of rows during load testing!
+      - AUDIT_TRAIL_ENABLED=false  # Set to true for compliance requirements (SOC2, HIPAA, etc.)
       # Security event logging - disabled by default for performance
       # WARNING: "all" level logs every request and causes massive DB write load
       - SECURITY_LOGGING_ENABLED=false  # Set to true to enable security event logging
@@ -255,7 +259,7 @@ services:
 ###############################################################################
 
   postgres:
-    image: postgres:17
+    image: postgres:18
     ports:
       - "5433:5432"      # Expose for baseline load testing (5433 to avoid conflict with local postgres)
     # Performance tuning for high-load testing (2 replicas × 8 workers × 200 pool = 3200 connections)
@@ -285,29 +289,48 @@ services:
       - "max_parallel_workers_per_gather=2"
       - "-c"
       - "max_parallel_workers=4"
-      # === ROLLBACK DEBUGGING ===
-      - "-c"
-      - "log_min_error_statement=error"
-      - "-c"
-      - "log_min_messages=warning"
-      - "-c"
-      - "log_error_verbosity=verbose"
-      - "-c"
-      - "log_line_prefix=%t [%p]: user=%u,db=%d,app=%a,client=%h "
-      - "-c"
-      - "log_lock_waits=on"
-      - "-c"
-      - "deadlock_timeout=1s"
-      - "-c"
-      - "log_temp_files=0"
-      - "-c"
-      - "log_checkpoints=on"
-      - "-c"
-      - "log_connections=on"
-      - "-c"
-      - "log_disconnections=on"
-      - "-c"
-      - "idle_in_transaction_session_timeout=60s"
+      # === PG_STAT_STATEMENTS - Query performance tracking ===
+      # Uncomment to enable query statistics (slight overhead, ~2-5%)
+      # After enabling, run in psql:
+      #   CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+      #   SELECT * FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 10;
+      # - "-c"
+      # - "shared_preload_libraries=pg_stat_statements"
+      # - "-c"
+      # - "pg_stat_statements.track=all"
+      # - "-c"
+      # - "pg_stat_statements.max=10000"
+      # === AUTO_EXPLAIN - Slow query plan logging ===
+      # Uncomment to auto-log execution plans for slow queries
+      # - "-c"
+      # - "shared_preload_libraries=auto_explain"
+      # - "-c"
+      # - "auto_explain.log_min_duration=1000"
+      # - "-c"
+      # - "auto_explain.log_analyze=on"
+      # === ROLLBACK DEBUGGING (disabled for performance) ===
+      # - "-c"
+      # - "log_min_error_statement=error"
+      # - "-c"
+      # - "log_min_messages=warning"
+      # - "-c"
+      # - "log_error_verbosity=verbose"
+      # - "-c"
+      # - "log_line_prefix=%t [%p]: user=%u,db=%d,app=%a,client=%h "
+      # - "-c"
+      # - "log_lock_waits=on"
+      # - "-c"
+      # - "deadlock_timeout=1s"
+      # - "-c"
+      # - "log_temp_files=0"
+      # - "-c"
+      # - "log_checkpoints=on"
+      # - "-c"
+      # - "log_connections=on"
+      # - "-c"
+      # - "log_disconnections=on"
+      # - "-c"
+      # - "idle_in_transaction_session_timeout=60s"
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=mysecretpassword
@@ -326,7 +349,7 @@ services:
       resources:
         limits:
           cpus: '4'
-          memory: 4G
+          memory: 8G
         reservations:
           cpus: '2'
           memory: 2G
@@ -434,21 +457,106 @@ services:
           memory: 1G
 
 ###############################################################################
-#  OPTIONAL ADMIN TOOLS - handy web UIs for DB & cache (disabled by default)
+#  OPTIONAL MONITORING & DEBUGGING TOOLS (disabled by default)
 ###############################################################################
-  # pgadmin:              # 🔧 Postgres admin UI
-  #   image: dpage/pgadmin4:latest
-  #   environment:
-  #     - PGADMIN_DEFAULT_EMAIL=admin@example.com
-  #     - PGADMIN_DEFAULT_PASSWORD=changeme
-  #   ports:
-  #     - "5050:80"      # http://localhost:5050
-  #   volumes:
-  #     - pgadmindata:/var/lib/pgadmin
+
+  # # ──────────────────────────────────────────────────────────────────────
+  # # Prometheus PostgreSQL Exporter - Metrics for Prometheus/Grafana
+  # # Exposes PostgreSQL metrics at :9187/metrics
+  # # ──────────────────────────────────────────────────────────────────────
+  # postgres_exporter:
+  #   image: quay.io/prometheuscommunity/postgres-exporter:latest
+  #   restart: unless-stopped
   #   networks: [mcpnet]
+  #   ports:
+  #     - "9187:9187"    # http://localhost:9187/metrics
+  #   environment:
+  #     - DATA_SOURCE_NAME=postgresql://postgres:mysecretpassword@postgres:5432/mcp?sslmode=disable
+  #     # Enable extra metrics collectors
+  #     - PG_EXPORTER_AUTO_DISCOVER_DATABASES=true
+  #     - PG_EXPORTER_EXTEND_QUERY_PATH=/etc/postgres_exporter/queries.yaml
   #   depends_on:
   #     postgres:
   #       condition: service_healthy
+
+  # # ──────────────────────────────────────────────────────────────────────
+  # # Prometheus Redis Exporter - Metrics for Prometheus/Grafana
+  # # Exposes Redis metrics at :9121/metrics
+  # # ──────────────────────────────────────────────────────────────────────
+  # redis_exporter:
+  #   image: oliver006/redis_exporter:latest
+  #   restart: unless-stopped
+  #   networks: [mcpnet]
+  #   ports:
+  #     - "9121:9121"    # http://localhost:9121/metrics
+  #   environment:
+  #     - REDIS_ADDR=redis://redis:6379
+  #   depends_on:
+  #     redis:
+  #       condition: service_started
+
+  # # ──────────────────────────────────────────────────────────────────────
+  # # Prometheus + Grafana Stack - Full observability
+  # # ──────────────────────────────────────────────────────────────────────
+  # prometheus:
+  #   image: prom/prometheus:latest
+  #   restart: unless-stopped
+  #   networks: [mcpnet]
+  #   ports:
+  #     - "9090:9090"    # http://localhost:9090
+  #   volumes:
+  #     - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+  #   command:
+  #     - '--config.file=/etc/prometheus/prometheus.yml'
+  #     - '--storage.tsdb.retention.time=7d'
+
+  # grafana:
+  #   image: grafana/grafana:latest
+  #   restart: unless-stopped
+  #   networks: [mcpnet]
+  #   ports:
+  #     - "3000:3000"    # http://localhost:3000 (admin/admin)
+  #   environment:
+  #     - GF_SECURITY_ADMIN_PASSWORD=changeme
+  #     - GF_USERS_ALLOW_SIGN_UP=false
+  #   volumes:
+  #     - grafanadata:/var/lib/grafana
+  #   depends_on:
+  #     - prometheus
+
+###############################################################################
+#  OPTIONAL ADMIN TOOLS - handy web UIs for DB & cache (disabled by default)
+###############################################################################
+  pgadmin:              # 🔧 Postgres admin UI
+    image: dpage/pgadmin4:9.11.0
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@example.com
+      - PGADMIN_DEFAULT_PASSWORD=changeme
+    ports:
+      - "5050:80"      # http://localhost:5050
+    volumes:
+      - pgadmindata:/var/lib/pgadmin
+    networks: [mcpnet]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Redis Commander - a web-based Redis GUI
+  # ──────────────────────────────────────────────────────────────────────
+  redis_commander:       # 🔧 Redis key browser
+    image: rediscommander/redis-commander:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    depends_on:
+      redis:
+        condition: service_started
+    ports:
+      - "8081:8081"    # http://localhost:8081
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+      - HTTP_USER=admin
+      - HTTP_PASSWORD=changeme
 
   # # ──────────────────────────────────────────────────────────────────────
   # # Redis Insight - a powerful Redis GUI (recently updated)
@@ -494,64 +602,6 @@ services:
   #     # ──────────────────────────────────────────────────────────────────
   #     - RI_APP_HOST=0.0.0.0          # <- listen on all interfaces
   #     - RI_APP_PORT=5540             # <- UI port (container-side)
-
-  #     # ──────────────────────────────────────────────────────────────────
-  #     # (Optional) Enable HTTPS for the UI
-  #     # ──────────────────────────────────────────────────────────────────
-  #     # - RI_SERVER_TLS_KEY=/certs/tls.key
-  #     # - RI_SERVER_TLS_CERT=/certs/tls.crt
-
-  # # ──────────────────────────────────────────────────────────────────────
-  # # Redis Commander - a web-based Redis GUI
-  # # ──────────────────────────────────────────────────────────────────────
-  # redis_commander:       # 🔧 Redis key browser
-  #   image: rediscommander/redis-commander:latest
-  #   restart: unless-stopped
-  #   networks: [mcpnet]
-  #   depends_on:
-  #     redis:
-  #       condition: service_started
-  #   ports:
-  #     - "8081:8081"    # <- change if you want a different host port
-
-  #   # ─────────────────────────────────────────────────────────────────────────
-  #   # Mount your local certs directory (only needed if you want real cert validation)
-  #   # ─────────────────────────────────────────────────────────────────────────
-  #   # volumes:
-  #   #   - ./certs:/certs:ro   # <- put your selfsigned.crt (PEM) in ./certs
-
-  #   environment:
-  #     # ──────────────────────────────────────────────────────────────────────
-  #     # LEGACY HOST LIST (for showing in UI - not used for TLS)
-  #     # ──────────────────────────────────────────────────────────────────────
-  #     - REDIS_HOSTS=local:redis:6379
-
-  #     # ──────────────────────────────────────────────────────────────────────
-  #     # CORE REDIS/TLS
-  #     # ──────────────────────────────────────────────────────────────────────
-  #     - REDIS_HOST=redis                # <- your Redis hostname or IP
-  #     - REDIS_PORT=6379                 # <- your Redis port
-  #     - REDIS_USERNAME=admin          # ← REQUIRED when Redis has users/ACLs
-  #     - REDIS_PASSWORD=${REDIS_PASSWORD}# <- if you need a Redis auth password
-  #     # - REDIS_TLS=true                  # <- turn on TLS
-  #     - CLUSTER_NO_TLS_VALIDATION=true  # <- skip SNI/hostname checks in clusters
-
-  #     # ──────────────────────────────────────────────────────────────────────
-  #     # SELF-SIGNED: trust no-CA by default
-  #     # ──────────────────────────────────────────────────────────────────────
-  #     - NODE_TLS_REJECT_UNAUTHORIZED=0  # <- Node.js will accept your self-signed cert
-
-  #     # ──────────────────────────────────────────────────────────────────────
-  #     # HTTP BASIC-AUTH FOR THE WEB UI
-  #     # ──────────────────────────────────────────────────────────────────────
-  #     - HTTP_USER=admin                # <- change your UI username
-  #     - HTTP_PASSWORD=changeme         # <- change your UI password
-
-  #     # ──────────────────────────────────────────────────────────────────────
-  #     # OPTIONAL: ENABLE REAL CERT VALIDATION (instead of skipping checks)
-  #     # ──────────────────────────────────────────────────────────────────────
-  #     # - REDIS_TLS_CA_CERT_FILE=/certs/selfsigned.crt
-  #     # - REDIS_TLS_SERVER_NAME=redis.example.com
 
 
   # mongo_express:         # 🔧 MongoDB GUI (works if mongodb service is enabled)

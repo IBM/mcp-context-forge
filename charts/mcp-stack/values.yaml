@@ -261,6 +261,11 @@ mcpContextForge:
     LOG_BACKUP_COUNT: "5"            # number of backup files to keep
     LOG_BUFFER_SIZE_MB: "1.0"        # size of in-memory log buffer (MB)
 
+    # ─ Audit Trail ─
+    # Logs all CRUD operations on resources for compliance (SOC2, HIPAA, etc.)
+    # WARNING: Causes a DB write on EVERY API request - disable for load testing!
+    AUDIT_TRAIL_ENABLED: "false"     # enable audit trail logging (default: false for performance)
+
     # ─ Metrics Buffer ─
     # Batches metric writes to reduce DB pressure under high load
     METRICS_BUFFER_ENABLED: "true"   # enable buffered metrics writes
