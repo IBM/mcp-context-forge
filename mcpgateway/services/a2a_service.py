@@ -827,8 +827,10 @@ class A2AAgentService:
         db.commit()
         db.refresh(agent)
 
-        # Invalidate cache since active agent count changed
+        # Invalidate caches since agent status changed
         a2a_stats_cache.invalidate()
+        cache = _get_registry_cache()
+        await cache.invalidate_agents()
 
         status = "activated" if activate else "deactivated"
         logger.info(f"A2A agent {status}: {agent.name} (ID: {agent.id})")

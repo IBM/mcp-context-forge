@@ -1865,7 +1865,7 @@ class ToolService:
             )
             raise ToolError(f"Failed to delete tool: {str(e)}")
 
-    async def toggle_tool_status(self, db: Session, tool_id: str, activate: bool, reachable: bool, user_email: Optional[str] = None) -> ToolRead:
+    async def toggle_tool_status(self, db: Session, tool_id: str, activate: bool, reachable: bool, user_email: Optional[str] = None, skip_cache_invalidation: bool = False) -> ToolRead:
         """
         Toggle the activation status of a tool.
 
@@ -1875,6 +1875,7 @@ class ToolService:
             activate (bool): True to activate, False to deactivate.
             reachable (bool): True if the tool is reachable.
             user_email: Optional[str] The email of the user to check if the user has permission to modify.
+            skip_cache_invalidation: If True, skip cache invalidation (used for batch operations).
 
         Returns:
             ToolRead: The updated tool object.
@@ -1929,6 +1930,11 @@ class ToolService:
 
                 db.commit()
                 db.refresh(tool)
+
+                # Invalidate cache after status change (skip for batch operations)
+                if not skip_cache_invalidation:
+                    cache = _get_registry_cache()
+                    await cache.invalidate_tools()
 
                 if not tool.enabled:
                     # Inactive

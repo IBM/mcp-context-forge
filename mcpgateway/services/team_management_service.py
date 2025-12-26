@@ -826,7 +826,9 @@ class TeamManagementService:
     async def list_teams(self, limit: int = 100, offset: int = 0, visibility_filter: Optional[str] = None) -> Tuple[List[EmailTeam], int]:
         """List teams with pagination.
 
-        Uses caching to reduce database queries for frequently accessed team listings.
+        Note: This method returns ORM objects and cannot be cached since callers
+        depend on ORM methods (e.g., team.get_member_count()) and attributes
+        (created_at, updated_at) that cannot be serialized.
 
         Args:
             limit: Maximum number of teams to return
@@ -839,14 +841,6 @@ class TeamManagementService:
         Examples:
             Team discovery and administration.
         """
-        # Check cache first (only for first page without filters for simplicity)
-        cache = self._get_admin_stats_cache()
-        if cache and offset == 0 and not visibility_filter:
-            cached = await cache.get_teams_list(limit, offset)
-            if cached is not None:
-                # Convert cached dicts back to EmailTeam-like objects for compatibility
-                return cached.get("teams", []), cached.get("total", 0)
-
         try:
             query = self.db.query(EmailTeam).filter(EmailTeam.is_active.is_(True), EmailTeam.is_personal.is_(False))  # Exclude personal teams from listings
 
@@ -855,28 +849,6 @@ class TeamManagementService:
 
             total_count = query.count()
             teams = query.offset(offset).limit(limit).all()
-
-            # Store in cache (only first page without filters)
-            if cache and offset == 0 and not visibility_filter:
-                try:
-                    # Serialize teams for caching
-                    teams_data = [
-                        {
-                            "id": t.id,
-                            "name": t.name,
-                            "slug": t.slug,
-                            "description": t.description,
-                            "visibility": t.visibility,
-                            "is_personal": t.is_personal,
-                            "is_active": t.is_active,
-                            "created_by": t.created_by,
-                            "max_members": t.max_members,
-                        }
-                        for t in teams
-                    ]
-                    await cache.set_teams_list({"teams": teams_data, "total": total_count}, limit, offset)
-                except Exception as e:
-                    logger.debug(f"Failed to cache teams list: {e}")
 
             return teams, total_count
 

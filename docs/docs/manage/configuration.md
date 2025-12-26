@@ -481,16 +481,12 @@ Cache is automatically invalidated when items are created, updated, or deleted.
 ADMIN_STATS_CACHE_ENABLED=true      # Enable admin stats caching
 ADMIN_STATS_CACHE_SYSTEM_TTL=60     # System stats cache TTL in seconds (10-300)
 ADMIN_STATS_CACHE_OBSERVABILITY_TTL=30  # Observability stats TTL (10-120)
-ADMIN_STATS_CACHE_USERS_TTL=30      # Users list cache TTL in seconds (10-120)
-ADMIN_STATS_CACHE_TEAMS_TTL=60      # Teams list cache TTL in seconds (10-300)
 ```
 
 When `ADMIN_STATS_CACHE_ENABLED=true` (default), admin dashboard statistics are cached:
 
 - **System stats**: Cached for `ADMIN_STATS_CACHE_SYSTEM_TTL` seconds (default: 60)
 - **Observability**: Cached for `ADMIN_STATS_CACHE_OBSERVABILITY_TTL` seconds (default: 30)
-- **User listings**: Cached for `ADMIN_STATS_CACHE_USERS_TTL` seconds (default: 30)
-- **Team listings**: Cached for `ADMIN_STATS_CACHE_TEAMS_TTL` seconds (default: 60)
 
 See [ADR-029](../architecture/adr/029-registry-admin-stats-caching.md) for implementation details.
 

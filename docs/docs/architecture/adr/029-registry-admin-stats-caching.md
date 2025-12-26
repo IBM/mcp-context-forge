@@ -71,8 +71,6 @@ Implement distributed caching for registry list endpoints and admin dashboard st
    - `ADMIN_STATS_CACHE_ENABLED` (default: true)
    - `ADMIN_STATS_CACHE_SYSTEM_TTL` (default: 60s)
    - `ADMIN_STATS_CACHE_OBSERVABILITY_TTL` (default: 30s)
-   - `ADMIN_STATS_CACHE_USERS_TTL` (default: 30s)
-   - `ADMIN_STATS_CACHE_TEAMS_TTL` (default: 60s)
 
 ### Cache Key Scheme
 

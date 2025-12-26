@@ -939,8 +939,6 @@ class Settings(BaseSettings):
     admin_stats_cache_enabled: bool = Field(default=True, description="Enable caching for admin dashboard statistics")
     admin_stats_cache_system_ttl: int = Field(default=60, ge=10, le=300, description="TTL in seconds for system stats cache")
     admin_stats_cache_observability_ttl: int = Field(default=30, ge=10, le=120, description="TTL in seconds for observability stats cache")
-    admin_stats_cache_users_ttl: int = Field(default=30, ge=10, le=120, description="TTL in seconds for user listings cache")
-    admin_stats_cache_teams_ttl: int = Field(default=60, ge=10, le=300, description="TTL in seconds for team listings cache")
     admin_stats_cache_tags_ttl: int = Field(default=120, ge=30, le=600, description="TTL in seconds for tags listing cache")
     admin_stats_cache_plugins_ttl: int = Field(default=120, ge=30, le=600, description="TTL in seconds for plugin stats cache")
     admin_stats_cache_performance_ttl: int = Field(default=60, ge=15, le=300, description="TTL in seconds for performance aggregates cache")

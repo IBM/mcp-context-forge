@@ -1267,6 +1267,11 @@ class ServerService:
                 server.updated_at = datetime.now(timezone.utc)
                 db.commit()
                 db.refresh(server)
+
+                # Invalidate cache after status change
+                cache = _get_registry_cache()
+                await cache.invalidate_servers()
+
                 if activate:
                     await self._notify_server_activated(server)
                 else:

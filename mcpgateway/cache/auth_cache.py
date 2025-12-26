@@ -38,6 +38,10 @@ from typing import Any, Dict, Optional, Set
 
 logger = logging.getLogger(__name__)
 
+# Sentinel value to represent "user is not a member" in Redis cache
+# This allows distinguishing between "not a member" (cached) and "cache miss"
+_NOT_A_MEMBER_SENTINEL = "__NOT_A_MEMBER__"
+
 
 @dataclass
 class CachedAuthContext:
@@ -479,14 +483,14 @@ class AuthCache:
     async def get_user_role(self, email: str, team_id: str) -> Optional[str]:
         """Get cached user role in a team.
 
-        Returns None on cache miss (caller should check DB).
+        Returns:
+            - None: Cache miss (caller should check DB)
+            - "": User is not a member of the team (cached negative result)
+            - Role string: User's role in the team (cached)
 
         Args:
             email: User email
             team_id: Team ID
-
-        Returns:
-            Role string if cached, None if not in cache
 
         Examples:
             >>> import asyncio
@@ -506,11 +510,14 @@ class AuthCache:
             try:
                 redis_key = self._get_redis_key("role", cache_key)
                 data = await redis.get(redis_key)
-                if data:
+                if data is not None:
                     self._hit_count += 1
                     self._redis_hit_count += 1
                     # Role is stored as plain string, decode it
-                    return data.decode() if isinstance(data, bytes) else data
+                    decoded = data.decode() if isinstance(data, bytes) else data
+                    # Convert sentinel to empty string (user is not a member)
+                    # This distinguishes from None (cache miss)
+                    return "" if decoded == _NOT_A_MEMBER_SENTINEL else decoded
                 self._redis_miss_count += 1
             except Exception as e:
                 logger.warning(f"AuthCache Redis get_user_role failed: {e}")
@@ -519,7 +526,8 @@ class AuthCache:
         entry = self._role_cache.get(cache_key)
         if entry and not entry.is_expired():
             self._hit_count += 1
-            return entry.value
+            # Return empty string for None (not a member) to distinguish from cache miss
+            return "" if entry.value is None else entry.value
 
         self._miss_count += 1
         return None
@@ -541,8 +549,8 @@ class AuthCache:
             return
 
         cache_key = f"{email}:{team_id}"
-        # Store None as empty string for Redis compatibility
-        role_value = role if role is not None else ""
+        # Store None as sentinel value to distinguish "not a member" from cache miss
+        role_value = role if role is not None else _NOT_A_MEMBER_SENTINEL
 
         # Store in Redis
         redis = await self._get_redis_client()

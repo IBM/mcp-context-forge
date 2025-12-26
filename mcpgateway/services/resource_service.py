@@ -1942,6 +1942,10 @@ class ResourceService:
                 db.commit()
                 db.refresh(resource)
 
+                # Invalidate cache after status change
+                cache = _get_registry_cache()
+                await cache.invalidate_resources()
+
                 # Notify subscribers
                 if activate:
                     await self._notify_resource_activated(resource)

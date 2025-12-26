@@ -2106,6 +2106,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 db.commit()
                 db.refresh(gateway)
 
+                # Invalidate cache after status change
+                cache = _get_registry_cache()
+                await cache.invalidate_gateways()
+
                 # Notify Subscribers
                 if not gateway.enabled:
                     # Inactive
@@ -2119,12 +2123,17 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 tools = db.query(DbTool).filter(DbTool.gateway_id == gateway_id).all()
 
+                # Toggle tools with skip_cache_invalidation=True to avoid N invalidations
                 if only_update_reachable:
                     for tool in tools:
-                        await self.tool_service.toggle_tool_status(db, tool.id, tool.enabled, reachable)
+                        await self.tool_service.toggle_tool_status(db, tool.id, tool.enabled, reachable, skip_cache_invalidation=True)
                 else:
                     for tool in tools:
-                        await self.tool_service.toggle_tool_status(db, tool.id, activate, reachable)
+                        await self.tool_service.toggle_tool_status(db, tool.id, activate, reachable, skip_cache_invalidation=True)
+
+                # Invalidate tools cache once after all tool status changes
+                if tools:
+                    await cache.invalidate_tools()
 
                 logger.info(f"Gateway status: {gateway.name} - {'enabled' if activate else 'disabled'} and {'accessible' if reachable else 'inaccessible'}")
 

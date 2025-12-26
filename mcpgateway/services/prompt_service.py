@@ -1652,6 +1652,11 @@ class PromptService:
                 prompt.updated_at = datetime.now(timezone.utc)
                 db.commit()
                 db.refresh(prompt)
+
+                # Invalidate cache after status change
+                cache = _get_registry_cache()
+                await cache.invalidate_prompts()
+
                 if activate:
                     await self._notify_prompt_activated(prompt)
                 else:
