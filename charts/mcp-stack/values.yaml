@@ -178,6 +178,13 @@ mcpContextForge:
     REDIS_LEADER_KEY: "gateway_service_leader"  # Leader key name
     REDIS_LEADER_HEARTBEAT_INTERVAL: "5"  # Heartbeat interval (seconds)
 
+    # ─ Auth Cache (reduces DB queries per auth from 3-4 to 0-1) ─
+    AUTH_CACHE_ENABLED: "true"       # Enable auth data caching (user, team, revocation)
+    AUTH_CACHE_USER_TTL: "60"        # User data cache TTL (seconds)
+    AUTH_CACHE_REVOCATION_TTL: "30"  # Token revocation cache TTL (seconds, security-critical)
+    AUTH_CACHE_TEAM_TTL: "60"        # Team membership cache TTL (seconds)
+    AUTH_CACHE_BATCH_QUERIES: "true" # Batch auth DB queries into single call
+
     # ─ Protocol & feature toggles ─
     PROTOCOL_VERSION: 2025-03-26
     MCPGATEWAY_UI_ENABLED: "true"    # toggle Admin UI

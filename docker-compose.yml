@@ -96,6 +96,12 @@ services:
       - REDIS_SOCKET_TIMEOUT=5.0
       - REDIS_SOCKET_CONNECT_TIMEOUT=5.0
       - REDIS_HEALTH_CHECK_INTERVAL=30
+      # Auth Cache Configuration (reduces DB queries per auth request from 3-4 to 0-1)
+      - AUTH_CACHE_ENABLED=true
+      - AUTH_CACHE_USER_TTL=60
+      - AUTH_CACHE_REVOCATION_TTL=30
+      - AUTH_CACHE_TEAM_TTL=60
+      - AUTH_CACHE_BATCH_QUERIES=true
       # MCP Server Health Check
       # Interval in seconds between health checks (default: 300)
       - HEALTH_CHECK_INTERVAL=300

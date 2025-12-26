@@ -420,7 +420,30 @@ REDIS_PARSER=auto                   # auto, hiredis, python (auto uses hiredis i
 REDIS_LEADER_TTL=15                 # Leader TTL (seconds)
 REDIS_LEADER_KEY=gateway_service_leader
 REDIS_LEADER_HEARTBEAT_INTERVAL=5   # Heartbeat interval (seconds)
+
+# Authentication Cache (ADR-028 - reduces DB queries per auth from 3-4 to 0-1)
+AUTH_CACHE_ENABLED=true             # Enable auth data caching (user, team, revocation)
+AUTH_CACHE_USER_TTL=60              # User data cache TTL in seconds (10-300)
+AUTH_CACHE_REVOCATION_TTL=30        # Token revocation cache TTL (5-120, security-critical)
+AUTH_CACHE_TEAM_TTL=60              # Team membership cache TTL in seconds (10-300)
+AUTH_CACHE_BATCH_QUERIES=true       # Batch auth DB queries into single call
 ```
+
+#### Authentication Cache
+
+When `AUTH_CACHE_ENABLED=true` (default), authentication data is cached to reduce database queries:
+
+- **User data**: Cached for `AUTH_CACHE_USER_TTL` seconds (default: 60)
+- **Team memberships**: Cached for `AUTH_CACHE_TEAM_TTL` seconds (default: 60)
+- **Token revocations**: Cached for `AUTH_CACHE_REVOCATION_TTL` seconds (default: 30)
+
+The cache uses Redis when available (`CACHE_TYPE=redis`) and falls back to in-memory caching.
+
+When `AUTH_CACHE_BATCH_QUERIES=true` (default), the 3 separate authentication database queries are batched into a single query, reducing thread pool contention and connection overhead.
+
+**Security Note**: Keep `AUTH_CACHE_REVOCATION_TTL` short (30s default) to limit the window where revoked tokens may still work.
+
+See [ADR-028](../architecture/adr/028-auth-caching.md) for implementation details.
 
 ### Logging Settings
 

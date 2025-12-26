@@ -467,6 +467,18 @@ class TeamManagementService:
                 self.db.commit()
                 self._log_team_member_action(membership.id, team_id, user_email, role, "added", invited_by)
 
+            # Invalidate auth cache for user's team membership
+            try:
+                # Standard
+                import asyncio  # pylint: disable=import-outside-toplevel
+
+                # First-Party
+                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+                asyncio.create_task(auth_cache.invalidate_team(user_email))
+            except Exception as cache_error:
+                logger.debug(f"Failed to invalidate auth cache on team add: {cache_error}")
+
             logger.info(f"Added {user_email} to team {team_id} with role {role}")
             return True
 
@@ -523,6 +535,19 @@ class TeamManagementService:
             membership.is_active = False
             self.db.commit()
             self._log_team_member_action(membership.id, team_id, user_email, membership.role, "removed", removed_by)
+
+            # Invalidate auth cache for user's team membership
+            try:
+                # Standard
+                import asyncio  # pylint: disable=import-outside-toplevel
+
+                # First-Party
+                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+                asyncio.create_task(auth_cache.invalidate_team(user_email))
+            except Exception as cache_error:
+                logger.debug(f"Failed to invalidate auth cache on team remove: {cache_error}")
+
             logger.info(f"Removed {user_email} from team {team_id} by {removed_by}")
             return True
 

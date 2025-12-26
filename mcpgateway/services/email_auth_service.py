@@ -489,6 +489,18 @@ class EmailAuthService:
             self.db.commit()
             success = True
 
+            # Invalidate auth cache for user
+            try:
+                # Standard
+                import asyncio  # pylint: disable=import-outside-toplevel
+
+                # First-Party
+                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+                asyncio.create_task(auth_cache.invalidate_user(email))
+            except Exception as cache_error:
+                logger.debug(f"Failed to invalidate auth cache on password change: {cache_error}")
+
             logger.info(f"Password changed successfully for {email}")
 
         except Exception as e:
