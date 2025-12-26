@@ -34,6 +34,21 @@ from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.services_auth import encode_auth  # ,decode_auth
 
+# Cache import (lazy to avoid circular dependencies)
+_registry_cache = None
+
+
+def _get_registry_cache():
+    """Get registry cache singleton lazily."""
+    global _registry_cache  # pylint: disable=global-statement
+    if _registry_cache is None:
+        # First-Party
+        from mcpgateway.cache.registry_cache import registry_cache  # pylint: disable=import-outside-toplevel
+
+        _registry_cache = registry_cache
+    return _registry_cache
+
+
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -390,6 +405,15 @@ class A2AAgentService:
             []
 
         """
+        # Check cache (cursor not implemented yet, so always cache)
+        cache = _get_registry_cache()
+        if cursor is None:
+            filters_hash = cache._hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
+            cached = await cache.get("agents", filters_hash)
+            if cached is not None:
+                # Reconstruct A2AAgentRead objects from cached dicts
+                return [A2AAgentRead.model_validate(a) for a in cached]
+
         query = select(DbA2AAgent)
 
         if not include_inactive:
@@ -413,7 +437,17 @@ class A2AAgentService:
         team_map = self._batch_get_team_names(db, team_ids)
 
         # Skip metrics to avoid N+1 queries in list operations
-        return [self._db_to_schema(db=db, db_agent=agent, include_metrics=False, team_map=team_map) for agent in agents]
+        result = [self._db_to_schema(db=db, db_agent=agent, include_metrics=False, team_map=team_map) for agent in agents]
+
+        # Cache results
+        if cursor is None:
+            try:
+                cache_data = [a.model_dump(mode="json") for a in result]
+                await cache.set("agents", cache_data, filters_hash)
+            except AttributeError:
+                pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)
+
+        return result
 
     async def list_agents_for_user(
         self, db: Session, user_info: Dict[str, Any], team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100

@@ -34,6 +34,21 @@ from typing import Any, Dict
 from sqlalchemy import case, func, literal, select
 from sqlalchemy.orm import Session
 
+# Cache import (lazy to avoid circular dependencies)
+_admin_stats_cache = None
+
+
+def _get_admin_stats_cache():
+    """Get admin stats cache singleton lazily."""
+    global _admin_stats_cache  # pylint: disable=global-statement
+    if _admin_stats_cache is None:
+        # First-Party
+        from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+        _admin_stats_cache = admin_stats_cache
+    return _admin_stats_cache
+
+
 # First-Party
 from mcpgateway.db import (
     A2AAgent,
@@ -125,6 +140,33 @@ class SystemStatsService:
         except Exception as e:
             logger.error(f"Error collecting system metrics: {str(e)}")
             raise
+
+    async def get_comprehensive_stats_cached(self, db: Session) -> Dict[str, Any]:
+        """Get comprehensive system metrics with caching.
+
+        This is the async-friendly version that uses the admin stats cache.
+        Call this from async endpoints for optimal performance.
+
+        Args:
+            db: Database session for querying metrics
+
+        Returns:
+            Dictionary containing categorized metrics with totals and breakdowns
+
+        Examples:
+            >>> service = SystemStatsService()
+            >>> # import asyncio
+            >>> # stats = asyncio.run(service.get_comprehensive_stats_cached(db))
+        """
+        cache = _get_admin_stats_cache()
+        cached = await cache.get_system_stats()
+        if cached is not None:
+            return cached
+
+        # Cache miss - compute and cache
+        stats = self.get_comprehensive_stats(db)
+        await cache.set_system_stats(stats)
+        return stats
 
     def _get_user_stats(self, db: Session) -> Dict[str, Any]:
         """Get user-related metrics.

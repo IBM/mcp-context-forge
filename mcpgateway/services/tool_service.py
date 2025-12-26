@@ -80,6 +80,21 @@ from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 from mcpgateway.utils.validate_signature import validate_signature
 
+# Cache import (lazy to avoid circular dependencies)
+_registry_cache = None
+
+
+def _get_registry_cache():
+    """Get registry cache singleton lazily."""
+    global _registry_cache  # pylint: disable=global-statement
+    if _registry_cache is None:
+        # First-Party
+        from mcpgateway.cache.registry_cache import registry_cache  # pylint: disable=import-outside-toplevel
+
+        _registry_cache = registry_cache
+    return _registry_cache
+
+
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -848,6 +863,11 @@ class ToolService:
 
             # Refresh db_tool after logging commits (they expire the session objects)
             db.refresh(db_tool)
+
+            # Invalidate cache after successful creation
+            cache = _get_registry_cache()
+            await cache.invalidate_tools()
+
             return self._convert_tool_to_read(db_tool)
         except IntegrityError as ie:
             db.rollback()
@@ -1369,6 +1389,16 @@ class ToolService:
             >>> isinstance(tools, list)
             True
         """
+        # Check cache for first page only (cursor=None)
+        cache = _get_registry_cache()
+        if cursor is None:
+            filters_hash = cache._hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, gateway_id=gateway_id, limit=limit)
+            cached = await cache.get("tools", filters_hash)
+            if cached is not None:
+                # Reconstruct ToolRead objects from cached dicts
+                cached_tools = [ToolRead.model_validate(t) for t in cached["tools"]]
+                return (cached_tools, cached.get("next_cursor"))
+
         # Determine page size based on limit parameter
         # limit=None: use default, limit=0: no limit (all), limit>0: use specified (capped)
         if limit is None:
@@ -1442,6 +1472,14 @@ class ToolService:
             last_tool = tools[-1]  # Get last DB object (not ToolRead)
             next_cursor = encode_cursor({"id": last_tool.id})
             logger.debug(f"Generated next_cursor for id={last_tool.id}")
+
+        # Cache first page results
+        if cursor is None:
+            try:
+                cache_data = {"tools": [t.model_dump(mode="json") for t in result], "next_cursor": next_cursor}
+                await cache.set("tools", cache_data, filters_hash)
+            except AttributeError:
+                pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)
 
         return (result, next_cursor)
 
@@ -1776,6 +1814,10 @@ class ToolService:
                 },
                 db=db,
             )
+
+            # Invalidate cache after successful deletion
+            cache = _get_registry_cache()
+            await cache.invalidate_tools()
         except PermissionError as pe:
             db.rollback()
 
@@ -2771,6 +2813,10 @@ class ToolService:
                 },
                 db=db,
             )
+
+            # Invalidate cache after successful update
+            cache = _get_registry_cache()
+            await cache.invalidate_tools()
 
             return self._convert_tool_to_read(tool)
         except PermissionError as pe:

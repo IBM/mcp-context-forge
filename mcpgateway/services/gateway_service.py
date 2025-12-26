@@ -103,6 +103,21 @@ from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 from mcpgateway.utils.validate_signature import validate_signature
 from mcpgateway.validation.tags import validate_tags_field
 
+# Cache import (lazy to avoid circular dependencies)
+_registry_cache = None
+
+
+def _get_registry_cache():
+    """Get registry cache singleton lazily."""
+    global _registry_cache  # pylint: disable=global-statement
+    if _registry_cache is None:
+        # First-Party
+        from mcpgateway.cache.registry_cache import registry_cache  # pylint: disable=import-outside-toplevel
+
+        _registry_cache = registry_cache
+    return _registry_cache
+
+
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -1238,6 +1253,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             >>> empty_result
             []
         """
+        # Check cache
+        cache = _get_registry_cache()
+        filters_hash = cache._hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
+        cached = await cache.get("gateways", filters_hash)
+        if cached is not None:
+            # Reconstruct GatewayRead objects from cached dicts
+            return [GatewayRead.model_validate(g) for g in cached]
+
         query = select(DbGateway)
 
         if not include_inactive:
@@ -1259,6 +1282,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         for g in gateways:
             g.team = team_names.get(g.team_id) if g.team_id else None
             result.append(GatewayRead.model_validate(self._prepare_gateway_for_read(g)).masked())
+
+        # Cache results
+        try:
+            cache_data = [g.model_dump(mode="json") for g in result]
+            await cache.set("gateways", cache_data, filters_hash)
+        except AttributeError:
+            pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)
+
         return result
 
     async def list_gateways_for_user(

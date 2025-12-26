@@ -185,6 +185,23 @@ mcpContextForge:
     AUTH_CACHE_TEAM_TTL: "60"        # Team membership cache TTL (seconds)
     AUTH_CACHE_BATCH_QUERIES: "true" # Batch auth DB queries into single call
 
+    # ─ Registry Cache (reduces DB queries for list endpoints) ─
+    REGISTRY_CACHE_ENABLED: "true"     # Enable registry list caching
+    REGISTRY_CACHE_TOOLS_TTL: "20"     # Tools list cache TTL (seconds)
+    REGISTRY_CACHE_PROMPTS_TTL: "15"   # Prompts list cache TTL (seconds)
+    REGISTRY_CACHE_RESOURCES_TTL: "15" # Resources list cache TTL (seconds)
+    REGISTRY_CACHE_AGENTS_TTL: "20"    # A2A agents list cache TTL (seconds)
+    REGISTRY_CACHE_SERVERS_TTL: "20"   # Servers list cache TTL (seconds)
+    REGISTRY_CACHE_GATEWAYS_TTL: "20"  # Gateways list cache TTL (seconds)
+    REGISTRY_CACHE_CATALOG_TTL: "300" # Catalog servers cache TTL (seconds, longer since external)
+
+    # ─ Admin Stats Cache (reduces aggregate queries for dashboard) ─
+    ADMIN_STATS_CACHE_ENABLED: "true"  # Enable admin stats caching
+    ADMIN_STATS_CACHE_SYSTEM_TTL: "60" # System stats cache TTL (seconds)
+    ADMIN_STATS_CACHE_OBSERVABILITY_TTL: "30" # Observability stats cache TTL (seconds)
+    ADMIN_STATS_CACHE_USERS_TTL: "30"  # User listings cache TTL (seconds)
+    ADMIN_STATS_CACHE_TEAMS_TTL: "60"  # Team listings cache TTL (seconds)
+
     # ─ Protocol & feature toggles ─
     PROTOCOL_VERSION: 2025-03-26
     MCPGATEWAY_UI_ENABLED: "true"    # toggle Admin UI

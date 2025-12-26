@@ -13394,9 +13394,9 @@ async def get_system_stats(
         # First-Party
         from mcpgateway.services.system_stats_service import SystemStatsService  # pylint: disable=import-outside-toplevel
 
-        # Get metrics
+        # Get metrics (using cached version for performance)
         service = SystemStatsService()
-        stats = service.get_comprehensive_stats(db)
+        stats = await service.get_comprehensive_stats_cached(db)
 
         LOGGER.info(f"System metrics retrieved successfully for user {user}")
 

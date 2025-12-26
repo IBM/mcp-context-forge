@@ -73,6 +73,21 @@ try:
 except ImportError:
     PLUGINS_AVAILABLE = False
 
+# Cache import (lazy to avoid circular dependencies)
+_registry_cache = None
+
+
+def _get_registry_cache():
+    """Get registry cache singleton lazily."""
+    global _registry_cache  # pylint: disable=global-statement
+    if _registry_cache is None:
+        # First-Party
+        from mcpgateway.cache.registry_cache import registry_cache  # pylint: disable=import-outside-toplevel
+
+        _registry_cache = registry_cache
+    return _registry_cache
+
+
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -840,6 +855,16 @@ class ResourceService:
             >>> isinstance(result2, list)
             True
         """
+        # Check cache for first page only (cursor=None)
+        cache = _get_registry_cache()
+        if cursor is None:
+            filters_hash = cache._hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
+            cached = await cache.get("resources", filters_hash)
+            if cached is not None:
+                # Reconstruct ResourceRead objects from cached dicts
+                cached_resources = [ResourceRead.model_validate(r) for r in cached["resources"]]
+                return (cached_resources, cached.get("next_cursor"))
+
         page_size = settings.pagination_default_page_size
         query = select(DbResource).where(DbResource.uri_template.is_(None)).order_by(DbResource.id)  # Consistent ordering for cursor pagination
 
@@ -873,11 +898,17 @@ class ResourceService:
         if has_more:
             resources = resources[:page_size]  # Trim to page_size
 
+        # Batch fetch team names to avoid N+1 queries
+        team_ids = {r.team_id for r in resources if r.team_id}
+        team_map = {}
+        if team_ids:
+            teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids), EmailTeam.is_active.is_(True))).all()
+            team_map = {str(team.id): team.name for team in teams}
+
         # Convert to ResourceRead objects (skip metrics to avoid N+1 queries)
         result = []
         for t in resources:
-            team_name = self._get_team_name(db, getattr(t, "team_id", None))
-            t.team = team_name
+            t.team = team_map.get(str(t.team_id)) if t.team_id else None
             result.append(self._convert_resource_to_read(t, include_metrics=False))
 
         # Generate next_cursor if there are more results
@@ -886,6 +917,14 @@ class ResourceService:
             last_resource = resources[-1]  # Get last DB object
             next_cursor = encode_cursor({"id": last_resource.id})
             logger.debug(f"Generated next_cursor for id={last_resource.id}")
+
+        # Cache first page results
+        if cursor is None:
+            try:
+                cache_data = {"resources": [r.model_dump(mode="json") for r in result], "next_cursor": next_cursor}
+                await cache.set("resources", cache_data, filters_hash)
+            except AttributeError:
+                pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)
 
         return (result, next_cursor)
 
@@ -920,7 +959,7 @@ class ResourceService:
             >>> _rs.TeamManagementService = FakeTeamService
             >>> # Force DB to return one fake row with a 'team' attribute
             >>> class FakeResource:
-            ...     pass
+            ...     team_id = None
             >>> fake_resource = FakeResource()
             >>> db.execute.return_value.scalars.return_value.all.return_value = [fake_resource]
             >>> service._convert_resource_to_read = MagicMock(return_value="converted")
@@ -930,7 +969,7 @@ class ResourceService:
             Without team_id (default/public access):
             >>> db2 = MagicMock()
             >>> class FakeResource2:
-            ...     pass
+            ...     team_id = None
             >>> fake_resource2 = FakeResource2()
             >>> db2.execute.return_value.scalars.return_value.all.return_value = [fake_resource2]
             >>> service._convert_resource_to_read = MagicMock(return_value="converted2")
@@ -986,10 +1025,17 @@ class ResourceService:
         query = query.offset(skip).limit(limit)
 
         resources = db.execute(query).scalars().all()
+
+        # Batch fetch team names to avoid N+1 queries
+        resource_team_ids = {r.team_id for r in resources if r.team_id}
+        team_map = {}
+        if resource_team_ids:
+            teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(resource_team_ids), EmailTeam.is_active.is_(True))).all()
+            team_map = {str(team.id): team.name for team in teams}
+
         result = []
         for t in resources:
-            team_name = self._get_team_name(db, getattr(t, "team_id", None))
-            t.team = team_name
+            t.team = team_map.get(str(t.team_id)) if t.team_id else None
             result.append(self._convert_resource_to_read(t, include_metrics=False))
         return result
 
@@ -1039,10 +1085,17 @@ class ResourceService:
             query = query.where(DbResource.enabled)
         # Cursor-based pagination logic can be implemented here in the future.
         resources = db.execute(query).scalars().all()
+
+        # Batch fetch team names to avoid N+1 queries
+        resource_team_ids = {r.team_id for r in resources if r.team_id}
+        team_map = {}
+        if resource_team_ids:
+            teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(resource_team_ids), EmailTeam.is_active.is_(True))).all()
+            team_map = {str(team.id): team.name for team in teams}
+
         result = []
         for t in resources:
-            team_name = self._get_team_name(db, getattr(t, "team_id", None))
-            t.team = team_name
+            t.team = team_map.get(str(t.team_id)) if t.team_id else None
             result.append(self._convert_resource_to_read(t, include_metrics=False))
         return result
 

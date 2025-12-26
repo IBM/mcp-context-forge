@@ -41,6 +41,21 @@ from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 
+# Cache import (lazy to avoid circular dependencies)
+_registry_cache = None
+
+
+def _get_registry_cache():
+    """Get registry cache singleton lazily."""
+    global _registry_cache  # pylint: disable=global-statement
+    if _registry_cache is None:
+        # First-Party
+        from mcpgateway.cache.registry_cache import registry_cache  # pylint: disable=import-outside-toplevel
+
+        _registry_cache = registry_cache
+    return _registry_cache
+
+
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -689,6 +704,14 @@ class ServerService:
             >>> isinstance(result, list)
             True
         """
+        # Check cache
+        cache = _get_registry_cache()
+        filters_hash = cache._hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
+        cached = await cache.get("servers", filters_hash)
+        if cached is not None:
+            # Reconstruct ServerRead objects from cached dicts
+            return [ServerRead.model_validate(s) for s in cached]
+
         query = select(DbServer)
         if not include_inactive:
             query = query.where(DbServer.enabled)
@@ -711,6 +734,13 @@ class ServerService:
         for s in servers:
             s.team = team_map.get(s.team_id) if s.team_id else None
             result.append(self._convert_server_to_read(s, include_metrics=False))
+
+        # Cache results
+        try:
+            cache_data = [s.model_dump(mode="json") for s in result]
+            await cache.set("servers", cache_data, filters_hash)
+        except AttributeError:
+            pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)
 
         return result
 

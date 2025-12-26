@@ -1544,7 +1544,7 @@ class TestResourceServiceMetricsExtended:
                 # third positional arg is the tags list (signature: session, col, values, match_any=True)
                 assert called_args[2] == ["test", "production"]
                 # and the fake condition returned must have been passed to where()
-                mock_query.where.assert_called_with(fake_condition)
+                mock_query.where.assert_any_call(fake_condition)
                 # finally, your service should return the list produced by mock_db.execute(...)
                 assert isinstance(result, list)
                 assert len(result) == 1

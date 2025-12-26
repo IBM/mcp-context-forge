@@ -924,6 +924,23 @@ class Settings(BaseSettings):
     auth_cache_team_ttl: int = Field(default=60, ge=10, le=300, description="TTL in seconds for team membership cache")
     auth_cache_batch_queries: bool = Field(default=True, description="Batch auth DB queries into single call (reduces 3 queries to 1)")
 
+    # Registry Cache Configuration (reduces DB queries for list endpoints)
+    registry_cache_enabled: bool = Field(default=True, description="Enable caching for registry list endpoints (tools, prompts, resources, etc.)")
+    registry_cache_tools_ttl: int = Field(default=20, ge=5, le=300, description="TTL in seconds for tools list cache")
+    registry_cache_prompts_ttl: int = Field(default=15, ge=5, le=300, description="TTL in seconds for prompts list cache")
+    registry_cache_resources_ttl: int = Field(default=15, ge=5, le=300, description="TTL in seconds for resources list cache")
+    registry_cache_agents_ttl: int = Field(default=20, ge=5, le=300, description="TTL in seconds for agents list cache")
+    registry_cache_servers_ttl: int = Field(default=20, ge=5, le=300, description="TTL in seconds for servers list cache")
+    registry_cache_gateways_ttl: int = Field(default=20, ge=5, le=300, description="TTL in seconds for gateways list cache")
+    registry_cache_catalog_ttl: int = Field(default=300, ge=60, le=600, description="TTL in seconds for catalog servers list cache (external catalog, changes infrequently)")
+
+    # Admin Stats Cache Configuration (reduces dashboard query overhead)
+    admin_stats_cache_enabled: bool = Field(default=True, description="Enable caching for admin dashboard statistics")
+    admin_stats_cache_system_ttl: int = Field(default=60, ge=10, le=300, description="TTL in seconds for system stats cache")
+    admin_stats_cache_observability_ttl: int = Field(default=30, ge=10, le=120, description="TTL in seconds for observability stats cache")
+    admin_stats_cache_users_ttl: int = Field(default=30, ge=10, le=120, description="TTL in seconds for user listings cache")
+    admin_stats_cache_teams_ttl: int = Field(default=60, ge=10, le=300, description="TTL in seconds for team listings cache")
+
     # Log Search Configuration
     log_search_max_results: int = Field(default=1000, description="Maximum results per log search query")
     log_retention_days: int = Field(default=30, description="Number of days to retain logs in database")
