@@ -1415,6 +1415,7 @@ class ToolService:
             try:
                 cursor_data = decode_cursor(cursor)
                 last_id = cursor_data.get("id")
+                last_created = cursor_data.get("created_at")
                 logger.debug(f"Decoded cursor: last_id={last_id}")
             except ValueError as e:
                 logger.warning(f"Invalid cursor, ignoring: {e}")
@@ -1432,8 +1433,16 @@ class ToolService:
         query = select(DbTool, EmailTeam.name.label("team_name")).outerjoin(EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True))).order_by(DbTool.id)
 
         # Apply cursor filter (WHERE id > last_id)
-        if last_id:
-            query = query.where(DbTool.id > last_id)
+        if last_id and last_created:
+            query = query.where(
+                or_(
+                    DbTool.created_at < last_created,
+                    and_(
+                        DbTool.created_at == last_created,
+                        DbTool.id < last_id
+                    )
+                )
+            )
 
         if not include_inactive:
             query = query.where(DbTool.enabled)
@@ -1658,10 +1667,13 @@ class ToolService:
         if last_id:
             query = query.where(DbTool.id > last_id)
 
-        query = query.order_by(DbTool.id)
+        # 2. Offset Pagination (Admin UI)
+        elif offset is not None:
+             query = query.offset(offset)
 
         # Execute query with LEFT JOIN for team names in single query
         query_with_join = query.outerjoin(EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True))).add_columns(EmailTeam.name.label("team_name"))
+        
         if page_size is not None:
             rows = db.execute(query_with_join.limit(page_size + 1)).all()
         else:
@@ -1685,9 +1697,13 @@ class ToolService:
             result.append(self._convert_tool_to_read(tool, include_metrics=False))
 
         next_cursor = None
-        if has_more and tools:
+        # Only generate cursor if using cursor pagination (or no pagination args)
+        if has_more and tools and offset is None:
             last_tool = tools[-1]
-            next_cursor = encode_cursor({"id": last_tool.id})
+            next_cursor = encode_cursor({
+                "created_at": last_tool.created_at.isoformat(),
+                "id": last_tool.id
+            })
 
         return (result, next_cursor)
 

@@ -12570,56 +12570,6 @@ async def admin_get_grpc_methods(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-# Team-scoped resource section endpoints
-@admin_router.get("/sections/tools")
-@require_permission("admin")
-async def get_tools_section(
-    team_id: Optional[str] = None,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-):
-    """Get tools data filtered by team.
-
-    Args:
-        team_id: Optional team ID to filter by
-        db: Database session
-        user: Current authenticated user context
-
-    Returns:
-        JSONResponse: Tools data with team filtering applied
-    """
-    try:
-        local_tool_service = ToolService()
-        user_email = get_user_email(user)
-
-        # Get team-filtered tools
-        tools_list, _ = await local_tool_service.list_tools_for_user(db, user_email, team_id=team_id, include_inactive=True)
-
-        # Convert to JSON-serializable format
-        tools = []
-        for tool in tools_list:
-            tool_dict = (
-                tool.model_dump(by_alias=True)
-                if hasattr(tool, "model_dump")
-                else {
-                    "id": tool.id,
-                    "name": tool.name,
-                    "description": tool.description,
-                    "tags": tool.tags or [],
-                    "isActive": getattr(tool, "enabled", False),
-                    "team_id": getattr(tool, "team_id", None),
-                    "visibility": getattr(tool, "visibility", "private"),
-                }
-            )
-            tools.append(tool_dict)
-
-        return ORJSONResponse(content=jsonable_encoder({"tools": tools, "team_id": team_id}))
-
-    except Exception as e:
-        LOGGER.error(f"Error loading tools section: {e}")
-        return ORJSONResponse(content={"error": str(e)}, status_code=500)
-
-
 @admin_router.get("/sections/resources")
 @require_permission("admin")
 async def get_resources_section(
