@@ -67,6 +67,30 @@ Expected output:
 }
 ```
 
+### Check JWT Cache Performance
+
+```bash
+# JWT verification cache statistics
+curl -s $BASE_URL/health/jwt_cache | jq '.'
+```
+
+Expected output:
+
+```json
+{
+  "jwt_cache_enabled": true,
+  "jwt_cache_ttl": 30,
+  "jwt_cache_max_size": 10000,
+  "user_cache_ttl": 60,
+  "user_cache_max_size": 5000,
+  "hits": 8624,
+  "misses": 3156,
+  "invalidations": 12,
+  "revocation_removals": 3,
+  "hit_rate": 0.732
+}
+```
+
 ### Check Readiness
 
 ```bash
