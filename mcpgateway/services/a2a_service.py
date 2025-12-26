@@ -313,8 +313,15 @@ class A2AAgentService:
             db.commit()
             db.refresh(new_agent)
 
-            # Invalidate cache since agent count changed
+            # Invalidate caches since agent count changed
             a2a_stats_cache.invalidate()
+            cache = _get_registry_cache()
+            await cache.invalidate_agents()
+            # Also invalidate tags cache since agent tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
 
             # Automatically create a tool for the A2A agent if not already present
             tool_service = ToolService()
@@ -754,6 +761,15 @@ class A2AAgentService:
             db.commit()
             db.refresh(agent)
 
+            # Invalidate cache after successful update
+            cache = _get_registry_cache()
+            await cache.invalidate_agents()
+            # Also invalidate tags cache since agent tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
+
             logger.info(f"Updated A2A agent: {agent.name} (ID: {agent.id})")
             return self._db_to_schema(db=db, db_agent=agent)
         except PermissionError:
@@ -866,8 +882,15 @@ class A2AAgentService:
             db.delete(agent)
             db.commit()
 
-            # Invalidate cache since agent count changed
+            # Invalidate caches since agent count changed
             a2a_stats_cache.invalidate()
+            cache = _get_registry_cache()
+            await cache.invalidate_agents()
+            # Also invalidate tags cache since agent tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
 
             logger.info(f"Deleted A2A agent: {agent_name} (ID: {agent_id})")
 

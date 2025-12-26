@@ -871,6 +871,11 @@ class ToolService:
             # Invalidate cache after successful creation
             cache = _get_registry_cache()
             await cache.invalidate_tools()
+            # Also invalidate tags cache since tool tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
 
             return self._convert_tool_to_read(db_tool)
         except IntegrityError as ie:
@@ -1822,6 +1827,11 @@ class ToolService:
             # Invalidate cache after successful deletion
             cache = _get_registry_cache()
             await cache.invalidate_tools()
+            # Also invalidate tags cache since tool tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
         except PermissionError as pe:
             db.rollback()
 
@@ -2821,6 +2831,11 @@ class ToolService:
             # Invalidate cache after successful update
             cache = _get_registry_cache()
             await cache.invalidate_tools()
+            # Also invalidate tags cache since tool tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
 
             return self._convert_tool_to_read(tool)
         except PermissionError as pe:

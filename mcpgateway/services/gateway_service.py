@@ -1735,6 +1735,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 db.commit()
                 db.refresh(gateway)
 
+                # Invalidate cache after successful update
+                cache = _get_registry_cache()
+                await cache.invalidate_gateways()
+                # Also invalidate tags cache since gateway tags may have changed
+                # First-Party
+                from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+                await admin_stats_cache.invalidate_tags()
+
                 # Notify subscribers
                 await self._notify_gateway_updated(gateway)
 
@@ -2299,6 +2308,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Hard delete gateway
             db.delete(gateway)
             db.commit()
+
+            # Invalidate cache after successful deletion
+            cache = _get_registry_cache()
+            await cache.invalidate_gateways()
+            # Also invalidate tags cache since gateway tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
 
             # Update tracking
             self._active_gateways.discard(gateway.url)

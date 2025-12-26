@@ -500,6 +500,11 @@ class PromptService:
             # Invalidate cache after successful creation
             cache = _get_registry_cache()
             await cache.invalidate_prompts()
+            # Also invalidate tags cache since prompt tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
 
             return PromptRead.model_validate(prompt_dict)
 
@@ -1506,6 +1511,11 @@ class PromptService:
             # Invalidate cache after successful update
             cache = _get_registry_cache()
             await cache.invalidate_prompts()
+            # Also invalidate tags cache since prompt tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
 
             return PromptRead.model_validate(self._convert_db_prompt(prompt))
 
@@ -1854,6 +1864,11 @@ class PromptService:
             # Invalidate cache after successful deletion
             cache = _get_registry_cache()
             await cache.invalidate_prompts()
+            # Also invalidate tags cache since prompt tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
         except PermissionError as pe:
             db.rollback()
 

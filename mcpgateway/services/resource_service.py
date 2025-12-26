@@ -2227,6 +2227,15 @@ class ResourceService:
             db.commit()
             db.refresh(resource)
 
+            # Invalidate cache after successful update
+            cache = _get_registry_cache()
+            await cache.invalidate_resources()
+            # Also invalidate tags cache since resource tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
+
             # Notify subscribers
             await self._notify_resource_updated(resource)
 
@@ -2427,6 +2436,15 @@ class ResourceService:
 
             db.delete(resource)
             db.commit()
+
+            # Invalidate cache after successful deletion
+            cache = _get_registry_cache()
+            await cache.invalidate_resources()
+            # Also invalidate tags cache since resource tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
 
             # Notify subscribers.
             await self._notify_resource_deleted(resource_info)

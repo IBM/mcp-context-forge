@@ -1097,6 +1097,15 @@ class ServerService:
             # Force loading relationships
             _ = server.tools, server.resources, server.prompts
 
+            # Invalidate cache after successful update
+            cache = _get_registry_cache()
+            await cache.invalidate_servers()
+            # Also invalidate tags cache since server tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
+
             await self._notify_server_updated(server)
             logger.info(f"Updated server: {server.name}")
 
@@ -1376,6 +1385,15 @@ class ServerService:
             server_info = {"id": server.id, "name": server.name}
             db.delete(server)
             db.commit()
+
+            # Invalidate cache after successful deletion
+            cache = _get_registry_cache()
+            await cache.invalidate_servers()
+            # Also invalidate tags cache since server tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
 
             await self._notify_server_deleted(server_info)
             logger.info(f"Deleted server: {server_info['name']}")
