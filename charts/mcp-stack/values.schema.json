@@ -736,6 +736,11 @@
               "description": "Health check timeout in seconds",
               "default": "10"
             },
+            "GATEWAY_HEALTH_CHECK_TIMEOUT": {
+              "type": "string",
+              "description": "Per-check timeout to bound total time of one gateway health check (seconds)",
+              "default": "5.0"
+            },
             "UNHEALTHY_THRESHOLD": {
               "type": "string",
               "description": "Unhealthy threshold",

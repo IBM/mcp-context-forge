@@ -310,6 +310,7 @@ mcpContextForge:
     # ─ Health checks ─
     HEALTH_CHECK_INTERVAL: "60"      # seconds between peer health checks
     HEALTH_CHECK_TIMEOUT: "10"       # request timeout per health check
+    GATEWAY_HEALTH_CHECK_TIMEOUT: "5.0" # per-check timeout to bound total time of one gateway health check
     UNHEALTHY_THRESHOLD: "3"         # failed checks before peer marked unhealthy
     GATEWAY_VALIDATION_TIMEOUT: "5"  # gateway URL validation timeout (seconds)
     FILELOCK_NAME: gateway_healthcheck_init.lock # lock file used at start-up
