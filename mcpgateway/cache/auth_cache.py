@@ -81,7 +81,11 @@ class CacheEntry:
     expiry: float
 
     def is_expired(self) -> bool:
-        """Check if this cache entry has expired."""
+        """Check if this cache entry has expired.
+
+        Returns:
+            bool: True if the entry has expired, False otherwise.
+        """
         return time.time() >= self.expiry
 
 
