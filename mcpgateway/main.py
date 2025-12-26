@@ -4715,9 +4715,24 @@ async def healthcheck(db: Session = Depends(get_db)):
         logger.error(error_message)
         return {"status": "unhealthy", "error": error_message}
 
-    # Include JWT cache statistics in health response
+    return {"status": "healthy"}
+
+
+@app.get("/health/jwt_cache", tags=["health"])
+async def jwt_cache_health():
+    """
+    Get JWT cache statistics and health status.
+
+    Returns:
+        A dictionary with JWT cache metrics including hit rate, cache sizes,
+        TTL settings, and enabled status. Useful for monitoring cache
+        effectiveness and debugging authentication performance.
+    """
     jwt_cache_stats = get_cache_stats()
-    return {"status": "healthy", "jwt_cache": jwt_cache_stats}
+    return {
+        "status": "healthy",
+        "cache_stats": jwt_cache_stats,
+    }
 
 
 @app.get("/ready")

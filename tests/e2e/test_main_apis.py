@@ -345,6 +345,24 @@ class TestHealthChecks:
         assert response.status_code == 200
         assert response.json()["status"] == "healthy"
 
+    async def test_health_jwt_cache(self, client: AsyncClient):
+        """Test /health/jwt_cache endpoint returns cache statistics."""
+        response = await client.get("/health/jwt_cache")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "healthy"
+        assert "cache_stats" in data
+        
+        # Verify cache stats structure
+        cache_stats = data["cache_stats"]
+        required_fields = [
+            "jwt_cache_enabled", "jwt_cache_size", "jwt_cache_max_size",
+            "user_cache_size", "user_cache_max_size",
+            "cache_hits", "cache_misses", "cache_invalidations", "hit_rate"
+        ]
+        for field in required_fields:
+            assert field in cache_stats, f"Missing required field: {field}"
+
     async def test_readiness_check(self, client: AsyncClient):
         """Test /ready endpoint returns ready status."""
         response = await client.get("/ready")

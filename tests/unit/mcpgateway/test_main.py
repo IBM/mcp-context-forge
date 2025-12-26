@@ -316,6 +316,37 @@ class TestHealthAndInfrastructure:
         assert response.status_code == 200
         assert response.json()["status"] == "healthy"
 
+    def test_health_jwt_cache(self, test_client):
+        """Test the JWT cache health endpoint."""
+        response = test_client.get("/health/jwt_cache")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "healthy"
+        assert "cache_stats" in data
+        
+        # Verify cache stats structure
+        cache_stats = data["cache_stats"]
+        assert "jwt_cache_enabled" in cache_stats
+        assert "jwt_cache_size" in cache_stats
+        assert "jwt_cache_max_size" in cache_stats
+        assert "user_cache_size" in cache_stats
+        assert "user_cache_max_size" in cache_stats
+        assert "cache_hits" in cache_stats
+        assert "cache_misses" in cache_stats
+        assert "cache_invalidations" in cache_stats
+        assert "hit_rate" in cache_stats
+        
+        # Verify data types
+        assert isinstance(cache_stats["jwt_cache_enabled"], bool)
+        assert isinstance(cache_stats["jwt_cache_size"], int)
+        assert isinstance(cache_stats["jwt_cache_max_size"], int)
+        assert isinstance(cache_stats["user_cache_size"], int)
+        assert isinstance(cache_stats["user_cache_max_size"], int)
+        assert isinstance(cache_stats["cache_hits"], int)
+        assert isinstance(cache_stats["cache_misses"], int)
+        assert isinstance(cache_stats["cache_invalidations"], int)
+        assert isinstance(cache_stats["hit_rate"], (int, float))
+
     def test_ready_check(self, test_client):
         """Test the readiness check endpoint."""
         response = test_client.get("/ready")
