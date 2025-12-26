@@ -22,8 +22,8 @@ from datetime import timedelta
 from typing import List, Optional, Tuple
 
 # Third-Party
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # First-Party
 from mcpgateway.config import settings
@@ -42,7 +42,7 @@ class TeamManagementService:
     role assignments, and team access control.
 
     Attributes:
-        db (Session): SQLAlchemy database session
+        db (AsyncSession): SQLAlchemy async database session
 
     Examples:
         >>> from unittest.mock import Mock
@@ -53,11 +53,11 @@ class TeamManagementService:
         True
     """
 
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         """Initialize the team management service.
 
         Args:
-            db: SQLAlchemy database session
+            db: SQLAlchemy async database session
 
         Examples:
             Basic initialization:
@@ -76,7 +76,7 @@ class TeamManagementService:
         """
         self.db = db
 
-    def _log_team_member_action(self, team_member_id: str, team_id: str, user_email: str, role: str, action: str, action_by: Optional[str]):
+    async def _log_team_member_action(self, team_member_id: str, team_id: str, user_email: str, role: str, action: str, action_by: Optional[str]):
         """
         Log a team member action to EmailTeamMemberHistory.
 
@@ -92,11 +92,11 @@ class TeamManagementService:
             >>> from mcpgateway.services.team_management_service import TeamManagementService
             >>> from unittest.mock import Mock
             >>> service = TeamManagementService(Mock())
-            >>> service._log_team_member_action("tm-123", "team-123", "user@example.com", "member", "added", "admin@example.com")
+            >>> # service._log_team_member_action("tm-123", "team-123", "user@example.com", "member", "added", "admin@example.com")
         """
         history = EmailTeamMemberHistory(team_member_id=team_member_id, team_id=team_id, user_email=user_email, role=role, action=action, action_by=action_by, action_timestamp=utc_now())
         self.db.add(history)
-        self.db.commit()
+        await self.db.commit()
 
     async def create_team(self, name: str, description: Optional[str], created_by: str, visibility: Optional[str] = "public", max_members: Optional[int] = None) -> EmailTeam:
         """Create a new team.
@@ -177,7 +177,8 @@ class TeamManagementService:
             from mcpgateway.utils.create_slug import slugify  # pylint: disable=import-outside-toplevel
 
             potential_slug = slugify(name)
-            existing_inactive_team = self.db.query(EmailTeam).filter(EmailTeam.slug == potential_slug, EmailTeam.is_active.is_(False)).first()
+            result = await self.db.execute(select(EmailTeam).where(EmailTeam.slug == potential_slug, EmailTeam.is_active.is_(False)))
+            existing_inactive_team = result.scalar_one_or_none()
 
             if existing_inactive_team:
                 # Reactivate the existing team with new details
@@ -191,7 +192,8 @@ class TeamManagementService:
                 team = existing_inactive_team
 
                 # Check if the creator already has an inactive membership
-                existing_membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team.id, EmailTeamMember.user_email == created_by).first()
+                result = await self.db.execute(select(EmailTeamMember).where(EmailTeamMember.team_id == team.id, EmailTeamMember.user_email == created_by))
+                existing_membership = result.scalar_one_or_none()
 
                 if existing_membership:
                     # Reactivate existing membership as owner
@@ -210,19 +212,19 @@ class TeamManagementService:
                 team = EmailTeam(name=name, description=description, created_by=created_by, is_personal=False, visibility=visibility, max_members=max_members, is_active=True)
                 self.db.add(team)
 
-                self.db.flush()  # Get the team ID
+                await self.db.flush()  # Get the team ID
 
                 # Add the creator as owner
                 membership = EmailTeamMember(team_id=team.id, user_email=created_by, role="owner", joined_at=utc_now(), is_active=True)
                 self.db.add(membership)
 
-            self.db.commit()
+            await self.db.commit()
 
             logger.info(f"Created team '{team.name}' by {created_by}")
             return team
 
         except Exception as e:
-            self.db.rollback()
+            await self.db.rollback()
             logger.error(f"Failed to create team '{name}': {e}")
             raise
 
@@ -243,7 +245,8 @@ class TeamManagementService:
             True
         """
         try:
-            team = self.db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
+            result = await self.db.execute(select(EmailTeam).where(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)))
+            team = result.scalar_one_or_none()
 
             return team
 
@@ -268,7 +271,8 @@ class TeamManagementService:
             True
         """
         try:
-            team = self.db.query(EmailTeam).filter(EmailTeam.slug == slug, EmailTeam.is_active.is_(True)).first()
+            result = await self.db.execute(select(EmailTeam).where(EmailTeam.slug == slug, EmailTeam.is_active.is_(True)))
+            team = result.scalar_one_or_none()
 
             return team
 
@@ -331,13 +335,13 @@ class TeamManagementService:
                 team.max_members = max_members
 
             team.updated_at = utc_now()
-            self.db.commit()
+            await self.db.commit()
 
             logger.info(f"Updated team {team_id} by {updated_by}")
             return True
 
         except Exception as e:
-            self.db.rollback()
+            await self.db.rollback()
             logger.error(f"Failed to update team {team_id}: {e}")
             return False
 
@@ -377,22 +381,23 @@ class TeamManagementService:
             team.updated_at = utc_now()
 
             # Get all active memberships before deactivating (for history logging)
-            memberships = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)).all()
+            result = await self.db.execute(select(EmailTeamMember).where(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)))
+            memberships = result.scalars().all()
 
             # Log history for each membership (before bulk update)
             for membership in memberships:
-                self._log_team_member_action(membership.id, team_id, membership.user_email, membership.role, "team-deleted", deleted_by)
+                await self._log_team_member_action(membership.id, team_id, membership.user_email, membership.role, "team-deleted", deleted_by)
 
             # Bulk update: deactivate all memberships in single query instead of looping
-            self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)).update({EmailTeamMember.is_active: False}, synchronize_session=False)
+            await self.db.execute(update(EmailTeamMember).where(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)).values(is_active=False))
 
-            self.db.commit()
+            await self.db.commit()
 
             logger.info(f"Deleted team {team_id} by {deleted_by}")
             return True
 
         except Exception as e:
-            self.db.rollback()
+            await self.db.rollback()
             logger.error(f"Failed to delete team {team_id}: {e}")
             return False
 
@@ -433,13 +438,15 @@ class TeamManagementService:
                 return False
 
             # Check if user exists
-            user = self.db.query(EmailUser).filter(EmailUser.email == user_email).first()
+            result = await self.db.execute(select(EmailUser).where(EmailUser.email == user_email))
+            user = result.scalar_one_or_none()
             if not user:
                 logger.warning(f"User {user_email} not found")
                 return False
 
             # Check if user is already a member
-            existing_membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email).first()
+            result = await self.db.execute(select(EmailTeamMember).where(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email))
+            existing_membership = result.scalar_one_or_none()
 
             if existing_membership and existing_membership.is_active:
                 logger.warning(f"User {user_email} is already a member of team {team_id}")
@@ -447,7 +454,11 @@ class TeamManagementService:
 
             # Check team member limit
             if team.max_members:
-                current_member_count = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)).count()
+                # Third-Party
+                from sqlalchemy import func  # pylint: disable=import-outside-toplevel
+
+                result = await self.db.execute(select(func.count()).select_from(EmailTeamMember).where(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)))
+                current_member_count = result.scalar()
 
                 if current_member_count >= team.max_members:
                     logger.warning(f"Team {team_id} has reached maximum member limit")
@@ -459,19 +470,19 @@ class TeamManagementService:
                 existing_membership.role = role
                 existing_membership.joined_at = utc_now()
                 existing_membership.invited_by = invited_by
-                self.db.commit()
-                self._log_team_member_action(existing_membership.id, team_id, user_email, role, "reactivated", invited_by)
+                await self.db.commit()
+                await self._log_team_member_action(existing_membership.id, team_id, user_email, role, "reactivated", invited_by)
             else:
                 membership = EmailTeamMember(team_id=team_id, user_email=user_email, role=role, joined_at=utc_now(), invited_by=invited_by, is_active=True)
                 self.db.add(membership)
-                self.db.commit()
-                self._log_team_member_action(membership.id, team_id, user_email, role, "added", invited_by)
+                await self.db.commit()
+                await self._log_team_member_action(membership.id, team_id, user_email, role, "added", invited_by)
 
             logger.info(f"Added {user_email} to team {team_id} with role {role}")
             return True
 
         except Exception as e:
-            self.db.rollback()
+            await self.db.rollback()
             logger.error(f"Failed to add {user_email} to team {team_id}: {e}")
             return False
 
@@ -505,7 +516,8 @@ class TeamManagementService:
                 return False
 
             # Find the membership
-            membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)).first()
+            result = await self.db.execute(select(EmailTeamMember).where(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)))
+            membership = result.scalar_one_or_none()
 
             if not membership:
                 logger.warning(f"User {user_email} is not a member of team {team_id}")
@@ -513,7 +525,13 @@ class TeamManagementService:
 
             # Prevent removing the last owner
             if membership.role == "owner":
-                owner_count = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.role == "owner", EmailTeamMember.is_active.is_(True)).count()
+                # Third-Party
+                from sqlalchemy import func  # pylint: disable=import-outside-toplevel
+
+                result = await self.db.execute(
+                    select(func.count()).select_from(EmailTeamMember).where(EmailTeamMember.team_id == team_id, EmailTeamMember.role == "owner", EmailTeamMember.is_active.is_(True))
+                )
+                owner_count = result.scalar()
 
                 if owner_count <= 1:
                     logger.warning(f"Cannot remove the last owner from team {team_id}")
@@ -521,13 +539,13 @@ class TeamManagementService:
 
             # Remove membership (soft delete)
             membership.is_active = False
-            self.db.commit()
-            self._log_team_member_action(membership.id, team_id, user_email, membership.role, "removed", removed_by)
+            await self.db.commit()
+            await self._log_team_member_action(membership.id, team_id, user_email, membership.role, "removed", removed_by)
             logger.info(f"Removed {user_email} from team {team_id} by {removed_by}")
             return True
 
         except Exception as e:
-            self.db.rollback()
+            await self.db.rollback()
             logger.error(f"Failed to remove {user_email} from team {team_id}: {e}")
             return False
 
@@ -567,7 +585,8 @@ class TeamManagementService:
                 return False
 
             # Find the membership
-            membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)).first()
+            result = await self.db.execute(select(EmailTeamMember).where(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)))
+            membership = result.scalar_one_or_none()
 
             if not membership:
                 logger.warning(f"User {user_email} is not a member of team {team_id}")
@@ -575,7 +594,13 @@ class TeamManagementService:
 
             # Prevent changing the role of the last owner to non-owner
             if membership.role == "owner" and new_role != "owner":
-                owner_count = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.role == "owner", EmailTeamMember.is_active.is_(True)).count()
+                # Third-Party
+                from sqlalchemy import func  # pylint: disable=import-outside-toplevel
+
+                result = await self.db.execute(
+                    select(func.count()).select_from(EmailTeamMember).where(EmailTeamMember.team_id == team_id, EmailTeamMember.role == "owner", EmailTeamMember.is_active.is_(True))
+                )
+                owner_count = result.scalar()
 
                 if owner_count <= 1:
                     logger.warning(f"Cannot remove owner role from the last owner of team {team_id}")
@@ -583,14 +608,14 @@ class TeamManagementService:
 
             # Update the role
             membership.role = new_role
-            self.db.commit()
-            self._log_team_member_action(membership.id, team_id, user_email, new_role, "role_changed", updated_by)
+            await self.db.commit()
+            await self._log_team_member_action(membership.id, team_id, user_email, new_role, "role_changed", updated_by)
 
             logger.info(f"Updated role of {user_email} in team {team_id} to {new_role} by {updated_by}")
             return True
 
         except Exception as e:
-            self.db.rollback()
+            await self.db.rollback()
             logger.error(f"Failed to update role of {user_email} in team {team_id}: {e}")
             return False
 
@@ -608,13 +633,14 @@ class TeamManagementService:
             User dashboard showing team memberships.
         """
         try:
-            query = self.db.query(EmailTeam).join(EmailTeamMember).filter(EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True), EmailTeam.is_active.is_(True))
+            stmt = select(EmailTeam).join(EmailTeamMember).where(EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True), EmailTeam.is_active.is_(True))
 
             if not include_personal:
-                query = query.filter(EmailTeam.is_personal.is_(False))
+                stmt = stmt.where(EmailTeam.is_personal.is_(False))
 
-            teams = query.all()
-            return teams
+            result = await self.db.execute(stmt)
+            teams = result.scalars().all()
+            return list(teams)
 
         except Exception as e:
             logger.error(f"Failed to get teams for user {user_email}: {e}")
@@ -649,8 +675,9 @@ class TeamManagementService:
         try:
             # Get all teams the user belongs to in a single query
             try:
-                query = self.db.query(EmailTeam).join(EmailTeamMember).filter(EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True), EmailTeam.is_active.is_(True))
-                user_teams = query.all()
+                stmt = select(EmailTeam).join(EmailTeamMember).where(EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True), EmailTeam.is_active.is_(True))
+                result = await self.db.execute(stmt)
+                user_teams = result.scalars().all()
             except Exception as e:
                 logger.error(f"Failed to get teams for user {user_email}: {e}")
                 return []
@@ -684,14 +711,13 @@ class TeamManagementService:
             Team member management and role display.
         """
         try:
-            members = (
-                self.db.query(EmailUser, EmailTeamMember)
-                .join(EmailTeamMember, EmailUser.email == EmailTeamMember.user_email)
-                .filter(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True))
-                .all()
+            stmt = (
+                select(EmailUser, EmailTeamMember).join(EmailTeamMember, EmailUser.email == EmailTeamMember.user_email).where(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True))
             )
+            result = await self.db.execute(stmt)
+            members = result.all()
 
-            return members
+            return list(members)
 
         except Exception as e:
             logger.error(f"Failed to get members for team {team_id}: {e}")
@@ -711,7 +737,8 @@ class TeamManagementService:
             Access control and permission checking.
         """
         try:
-            membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.user_email == user_email, EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)).first()
+            result = await self.db.execute(select(EmailTeamMember).where(EmailTeamMember.user_email == user_email, EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)))
+            membership = result.scalar_one_or_none()
 
             return membership.role if membership else None
 
@@ -734,15 +761,25 @@ class TeamManagementService:
             Team discovery and administration.
         """
         try:
-            query = self.db.query(EmailTeam).filter(EmailTeam.is_active.is_(True), EmailTeam.is_personal.is_(False))  # Exclude personal teams from listings
+            # Third-Party
+            from sqlalchemy import func  # pylint: disable=import-outside-toplevel
+
+            base_filter = [EmailTeam.is_active.is_(True), EmailTeam.is_personal.is_(False)]  # Exclude personal teams from listings
 
             if visibility_filter:
-                query = query.filter(EmailTeam.visibility == visibility_filter)
+                base_filter.append(EmailTeam.visibility == visibility_filter)
 
-            total_count = query.count()
-            teams = query.offset(offset).limit(limit).all()
+            # Get total count
+            count_stmt = select(func.count()).select_from(EmailTeam).where(*base_filter)
+            count_result = await self.db.execute(count_stmt)
+            total_count = count_result.scalar()
 
-            return teams, total_count
+            # Get teams with pagination
+            stmt = select(EmailTeam).where(*base_filter).offset(offset).limit(limit)
+            result = await self.db.execute(stmt)
+            teams = result.scalars().all()
+
+            return list(teams), total_count
 
         except Exception as e:
             logger.error(f"Failed to list teams: {e}")
@@ -766,9 +803,15 @@ class TeamManagementService:
             # Optimized: Use subquery instead of loading all IDs into memory (2 queries → 1)
             user_team_subquery = select(EmailTeamMember.team_id).where(EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)).scalar_subquery()
 
-            query = self.db.query(EmailTeam).filter(EmailTeam.visibility == "public", EmailTeam.is_active.is_(True), EmailTeam.is_personal.is_(False), ~EmailTeam.id.in_(user_team_subquery))
+            stmt = (
+                select(EmailTeam)
+                .where(EmailTeam.visibility == "public", EmailTeam.is_active.is_(True), EmailTeam.is_personal.is_(False), ~EmailTeam.id.in_(user_team_subquery))
+                .offset(skip)
+                .limit(limit)
+            )
+            result = await self.db.execute(stmt)
 
-            return query.offset(skip).limit(limit).all()
+            return list(result.scalars().all())
 
         except Exception as e:
             logger.error(f"Failed to discover public teams for {user_email}: {e}")
@@ -798,13 +841,15 @@ class TeamManagementService:
                 raise ValueError("Can only request to join public teams")
 
             # Check if user is already a member
-            existing_member = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)).first()
+            result = await self.db.execute(select(EmailTeamMember).where(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)))
+            existing_member = result.scalar_one_or_none()
 
             if existing_member:
                 raise ValueError("User is already a member of this team")
 
             # Check for existing requests (any status)
-            existing_request = self.db.query(EmailTeamJoinRequest).filter(EmailTeamJoinRequest.team_id == team_id, EmailTeamJoinRequest.user_email == user_email).first()
+            result = await self.db.execute(select(EmailTeamJoinRequest).where(EmailTeamJoinRequest.team_id == team_id, EmailTeamJoinRequest.user_email == user_email))
+            existing_request = result.scalar_one_or_none()
 
             if existing_request:
                 if existing_request.status == "pending" and not existing_request.is_expired():
@@ -824,14 +869,14 @@ class TeamManagementService:
                 join_request = EmailTeamJoinRequest(team_id=team_id, user_email=user_email, message=message, expires_at=utc_now() + timedelta(days=7))
                 self.db.add(join_request)
 
-            self.db.commit()
-            self.db.refresh(join_request)
+            await self.db.commit()
+            await self.db.refresh(join_request)
 
             logger.info(f"Created join request for user {user_email} to team {team_id}")
             return join_request
 
         except Exception as e:
-            self.db.rollback()
+            await self.db.rollback()
             logger.error(f"Failed to create join request: {e}")
             raise
 
@@ -845,9 +890,9 @@ class TeamManagementService:
             List[EmailTeamJoinRequest]: List of pending join requests
         """
         try:
-            return (
-                self.db.query(EmailTeamJoinRequest).filter(EmailTeamJoinRequest.team_id == team_id, EmailTeamJoinRequest.status == "pending").order_by(EmailTeamJoinRequest.requested_at.desc()).all()
-            )
+            stmt = select(EmailTeamJoinRequest).where(EmailTeamJoinRequest.team_id == team_id, EmailTeamJoinRequest.status == "pending").order_by(EmailTeamJoinRequest.requested_at.desc())
+            result = await self.db.execute(stmt)
+            return list(result.scalars().all())
 
         except Exception as e:
             logger.error(f"Failed to list join requests for team {team_id}: {e}")
@@ -868,14 +913,15 @@ class TeamManagementService:
         """
         try:
             # Get join request
-            join_request = self.db.query(EmailTeamJoinRequest).filter(EmailTeamJoinRequest.id == request_id, EmailTeamJoinRequest.status == "pending").first()
+            result = await self.db.execute(select(EmailTeamJoinRequest).where(EmailTeamJoinRequest.id == request_id, EmailTeamJoinRequest.status == "pending"))
+            join_request = result.scalar_one_or_none()
 
             if not join_request:
                 raise ValueError("Join request not found or already processed")
 
             if join_request.is_expired():
                 join_request.status = "expired"
-                self.db.commit()
+                await self.db.commit()
                 raise ValueError("Join request has expired")
 
             # Add user to team
@@ -887,16 +933,16 @@ class TeamManagementService:
             join_request.reviewed_at = utc_now()
             join_request.reviewed_by = approved_by
 
-            self.db.flush()
-            self._log_team_member_action(member.id, join_request.team_id, join_request.user_email, member.role, "added", approved_by)
+            await self.db.flush()
+            await self._log_team_member_action(member.id, join_request.team_id, join_request.user_email, member.role, "added", approved_by)
 
-            self.db.refresh(member)
+            await self.db.refresh(member)
 
             logger.info(f"Approved join request {request_id}: user {join_request.user_email} joined team {join_request.team_id}")
             return member
 
         except Exception as e:
-            self.db.rollback()
+            await self.db.rollback()
             logger.error(f"Failed to approve join request {request_id}: {e}")
             raise
 
@@ -915,7 +961,8 @@ class TeamManagementService:
         """
         try:
             # Get join request
-            join_request = self.db.query(EmailTeamJoinRequest).filter(EmailTeamJoinRequest.id == request_id, EmailTeamJoinRequest.status == "pending").first()
+            result = await self.db.execute(select(EmailTeamJoinRequest).where(EmailTeamJoinRequest.id == request_id, EmailTeamJoinRequest.status == "pending"))
+            join_request = result.scalar_one_or_none()
 
             if not join_request:
                 raise ValueError("Join request not found or already processed")
@@ -925,13 +972,13 @@ class TeamManagementService:
             join_request.reviewed_at = utc_now()
             join_request.reviewed_by = rejected_by
 
-            self.db.commit()
+            await self.db.commit()
 
             logger.info(f"Rejected join request {request_id}: user {join_request.user_email} for team {join_request.team_id}")
             return True
 
         except Exception as e:
-            self.db.rollback()
+            await self.db.rollback()
             logger.error(f"Failed to reject join request {request_id}: {e}")
             raise
 
@@ -949,13 +996,14 @@ class TeamManagementService:
             Get all requests made by a user or for a specific team.
         """
         try:
-            query = self.db.query(EmailTeamJoinRequest).filter(EmailTeamJoinRequest.user_email == user_email)
+            filters = [EmailTeamJoinRequest.user_email == user_email]
 
             if team_id:
-                query = query.filter(EmailTeamJoinRequest.team_id == team_id)
+                filters.append(EmailTeamJoinRequest.team_id == team_id)
 
-            requests = query.all()
-            return requests
+            stmt = select(EmailTeamJoinRequest).where(*filters)
+            result = await self.db.execute(stmt)
+            return list(result.scalars().all())
 
         except Exception as e:
             logger.error(f"Failed to get join requests for user {user_email}: {e}")
@@ -976,9 +1024,10 @@ class TeamManagementService:
         """
         try:
             # Get the join request
-            join_request = (
-                self.db.query(EmailTeamJoinRequest).filter(EmailTeamJoinRequest.id == request_id, EmailTeamJoinRequest.user_email == user_email, EmailTeamJoinRequest.status == "pending").first()
+            result = await self.db.execute(
+                select(EmailTeamJoinRequest).where(EmailTeamJoinRequest.id == request_id, EmailTeamJoinRequest.user_email == user_email, EmailTeamJoinRequest.status == "pending")
             )
+            join_request = result.scalar_one_or_none()
 
             if not join_request:
                 logger.warning(f"Join request {request_id} not found for user {user_email} or not pending")
@@ -989,12 +1038,12 @@ class TeamManagementService:
             join_request.reviewed_at = utc_now()
             join_request.reviewed_by = user_email
 
-            self.db.commit()
+            await self.db.commit()
 
             logger.info(f"Cancelled join request {request_id} by user {user_email}")
             return True
 
         except Exception as e:
-            self.db.rollback()
+            await self.db.rollback()
             logger.error(f"Failed to cancel join request {request_id}: {e}")
             return False

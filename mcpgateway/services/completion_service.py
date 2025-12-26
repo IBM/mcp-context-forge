@@ -22,7 +22,7 @@ from typing import Any, Dict, List
 
 # Third-Party
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # First-Party
 from mcpgateway.common.models import CompleteResult
@@ -79,7 +79,7 @@ class CompletionService:
         logger.info("Shutting down completion service")
         self._custom_completions.clear()
 
-    async def handle_completion(self, db: Session, request: Dict[str, Any]) -> CompleteResult:
+    async def handle_completion(self, db: AsyncSession, request: Dict[str, Any]) -> CompleteResult:
         """Handle completion request.
 
         Args:
@@ -130,7 +130,7 @@ class CompletionService:
             logger.error(f"Completion error: {e}")
             raise CompletionError(str(e))
 
-    async def _complete_prompt_argument(self, db: Session, ref: Dict[str, Any], arg_name: str, arg_value: str) -> CompleteResult:
+    async def _complete_prompt_argument(self, db: AsyncSession, ref: Dict[str, Any], arg_name: str, arg_value: str) -> CompleteResult:
         """Complete prompt argument value.
 
         Args:
@@ -177,7 +177,8 @@ class CompletionService:
             raise CompletionError("Missing prompt name")
 
         # Only consider prompts that are enabled (renamed from `is_active` -> `enabled`)
-        prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_name).where(DbPrompt.enabled)).scalar_one_or_none()
+        result = await db.execute(select(DbPrompt).where(DbPrompt.name == prompt_name).where(DbPrompt.enabled))
+        prompt = result.scalar_one_or_none()
 
         if not prompt:
             raise CompletionError(f"Prompt not found: {prompt_name}")
@@ -217,7 +218,7 @@ class CompletionService:
         # No completions available
         return CompleteResult(completion={"values": [], "total": 0, "hasMore": False})
 
-    async def _complete_resource_uri(self, db: Session, ref: Dict[str, Any], arg_value: str) -> CompleteResult:
+    async def _complete_resource_uri(self, db: AsyncSession, ref: Dict[str, Any], arg_value: str) -> CompleteResult:
         """Complete resource URI.
 
         Args:
@@ -266,7 +267,8 @@ class CompletionService:
             raise CompletionError("Missing URI template")
 
         # List matching resources
-        resources = db.execute(select(DbResource).where(DbResource.enabled)).scalars().all()
+        result = await db.execute(select(DbResource).where(DbResource.enabled))
+        resources = result.scalars().all()
 
         # Filter by URI pattern
         matches = []

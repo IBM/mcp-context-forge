@@ -20,12 +20,14 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import Gateway, get_db
+from mcpgateway.db import _use_async, Gateway, get_async_db, get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions
+
+_db_dependency = get_async_db if _use_async else get_db
+# First-Party
 from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.dcr_service import DcrError, DcrService
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
@@ -38,7 +40,7 @@ oauth_router = APIRouter(prefix="/oauth", tags=["oauth"])
 
 @oauth_router.get("/authorize/{gateway_id}")
 async def initiate_oauth_flow(
-    gateway_id: str, request: Request, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)
+    gateway_id: str, request: Request, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db=Depends(_db_dependency)
 ) -> RedirectResponse:  # noqa: ARG001
     """Initiates the OAuth 2.0 Authorization Code flow for a specified gateway.
 
@@ -71,7 +73,7 @@ async def initiate_oauth_flow(
     """
     try:
         # Get gateway configuration
-        gateway = db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none()
+        gateway = await db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none()
 
         if not gateway:
             raise HTTPException(status_code=404, detail="Gateway not found")
@@ -134,7 +136,7 @@ async def initiate_oauth_flow(
                     # Update gateway's oauth_config and auth_type in database for future use
                     gateway.oauth_config = oauth_config
                     gateway.auth_type = "oauth"  # Ensure auth_type is set for OAuth-protected servers
-                    db.commit()
+                    await db.commit()
 
                     logger.info(f"Updated gateway {gateway_id} with DCR credentials and auth_type=oauth")
 
@@ -181,7 +183,7 @@ async def oauth_callback(
     state: str = Query(..., description="State parameter for CSRF protection"),
     # Remove the gateway_id parameter requirement
     request: Request = None,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ) -> HTMLResponse:
     """Handle the OAuth callback and complete the authorization process.
 
@@ -247,7 +249,7 @@ async def oauth_callback(
             gateway_id = state.split("_")[0]
 
         # Get gateway configuration
-        gateway = db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none()
+        gateway = await db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none()
 
         if not gateway:
             return HTMLResponse(
@@ -449,7 +451,7 @@ async def oauth_callback(
 
 
 @oauth_router.get("/status/{gateway_id}")
-async def get_oauth_status(gateway_id: str, db: Session = Depends(get_db)) -> dict:
+async def get_oauth_status(gateway_id: str, db=Depends(_db_dependency)) -> dict:
     """Get OAuth status for a gateway.
 
     Args:
@@ -464,7 +466,7 @@ async def get_oauth_status(gateway_id: str, db: Session = Depends(get_db)) -> di
     """
     try:
         # Get gateway configuration
-        gateway = db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none()
+        gateway = await db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none()
 
         if not gateway:
             raise HTTPException(status_code=404, detail="Gateway not found")
@@ -505,7 +507,7 @@ async def get_oauth_status(gateway_id: str, db: Session = Depends(get_db)) -> di
 
 
 @oauth_router.post("/fetch-tools/{gateway_id}")
-async def fetch_tools_after_oauth(gateway_id: str, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:
+async def fetch_tools_after_oauth(gateway_id: str, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db=Depends(_db_dependency)) -> Dict[str, Any]:
     """Fetch tools from MCP server after OAuth completion for Authorization Code flow.
 
     Args:
@@ -540,7 +542,7 @@ async def fetch_tools_after_oauth(gateway_id: str, current_user: EmailUserRespon
 
 
 @oauth_router.get("/registered-clients")
-async def list_registered_oauth_clients(current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:  # noqa: ARG001
+async def list_registered_oauth_clients(current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db=Depends(_db_dependency)) -> Dict[str, Any]:  # noqa: ARG001
     """List all registered OAuth clients (created via DCR).
 
     This endpoint shows OAuth clients that were dynamically registered with external
@@ -561,7 +563,7 @@ async def list_registered_oauth_clients(current_user: EmailUserResponse = Depend
         from mcpgateway.db import RegisteredOAuthClient
 
         # Query all registered clients
-        clients = db.execute(select(RegisteredOAuthClient)).scalars().all()
+        clients = await db.execute(select(RegisteredOAuthClient)).scalars().all()
 
         # Build response
         clients_data = []
@@ -593,7 +595,7 @@ async def list_registered_oauth_clients(current_user: EmailUserResponse = Depend
 async def get_registered_client_for_gateway(
     gateway_id: str,
     current_user: EmailUserResponse = Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),  # noqa: ARG001
+    db=Depends(_db_dependency),  # noqa: ARG001
 ) -> Dict[str, Any]:
     """Get the registered OAuth client for a specific gateway.
 
@@ -613,7 +615,7 @@ async def get_registered_client_for_gateway(
         from mcpgateway.db import RegisteredOAuthClient
 
         # Query registered client for this gateway
-        client = db.execute(select(RegisteredOAuthClient).where(RegisteredOAuthClient.gateway_id == gateway_id)).scalar_one_or_none()
+        client = await db.execute(select(RegisteredOAuthClient).where(RegisteredOAuthClient.gateway_id == gateway_id)).scalar_one_or_none()
 
         if not client:
             raise HTTPException(status_code=404, detail=f"No registered OAuth client found for gateway {gateway_id}")
@@ -641,7 +643,7 @@ async def get_registered_client_for_gateway(
 
 
 @oauth_router.delete("/registered-clients/{client_id}")
-async def delete_registered_client(client_id: str, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:  # noqa: ARG001
+async def delete_registered_client(client_id: str, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db=Depends(_db_dependency)) -> Dict[str, Any]:  # noqa: ARG001
     """Delete a registered OAuth client.
 
     This will revoke the client registration locally. Note: This does not automatically
@@ -664,7 +666,7 @@ async def delete_registered_client(client_id: str, current_user: EmailUserRespon
         from mcpgateway.db import RegisteredOAuthClient
 
         # Find the client
-        client = db.execute(select(RegisteredOAuthClient).where(RegisteredOAuthClient.id == client_id)).scalar_one_or_none()
+        client = await db.execute(select(RegisteredOAuthClient).where(RegisteredOAuthClient.id == client_id)).scalar_one_or_none()
 
         if not client:
             raise HTTPException(status_code=404, detail=f"Registered client {client_id} not found")
@@ -673,8 +675,8 @@ async def delete_registered_client(client_id: str, current_user: EmailUserRespon
         gateway_id = client.gateway_id
 
         # Delete the client
-        db.delete(client)
-        db.commit()
+        await db.delete(client)
+        await db.commit()
 
         logger.info(f"Deleted registered OAuth client {client_id} for gateway {gateway_id} (issuer: {issuer})")
 

@@ -22,7 +22,7 @@ import uuid
 
 # Third-Party
 from sqlalchemy import and_, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # First-Party
 from mcpgateway.config import settings
@@ -205,11 +205,11 @@ class TokenCatalogService:
         True
     """
 
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         """Initialize TokenCatalogService with database session.
 
         Args:
-            db: SQLAlchemy database session for token operations
+            db: SQLAlchemy async database session for token operations
         """
         self.db = db
 
@@ -349,7 +349,8 @@ class TokenCatalogService:
         #     raise ValueError("team_id is required for token creation. " "Please select a specific team before creating a token. " "You cannot create tokens while viewing 'All Teams'.")
 
         # Validate user exists
-        user = self.db.execute(select(EmailUser).where(EmailUser.email == user_email)).scalar_one_or_none()
+        result = await self.db.execute(select(EmailUser).where(EmailUser.email == user_email))
+        user = result.scalar_one_or_none()
 
         if not user:
             raise ValueError(f"User not found: {user_email}")
@@ -360,23 +361,24 @@ class TokenCatalogService:
             from mcpgateway.db import EmailTeam, EmailTeamMember  # pylint: disable=import-outside-toplevel
 
             # Check if team exists
-            team = self.db.execute(select(EmailTeam).where(EmailTeam.id == team_id)).scalar_one_or_none()
+            result = await self.db.execute(select(EmailTeam).where(EmailTeam.id == team_id))
+            team = result.scalar_one_or_none()
 
             if not team:
                 raise ValueError(f"Team not found: {team_id}")
 
             # Verify user is an active member of the team
-            membership = self.db.execute(
-                select(EmailTeamMember).where(and_(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)))
-            ).scalar_one_or_none()
+            result = await self.db.execute(select(EmailTeamMember).where(and_(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True))))
+            membership = result.scalar_one_or_none()
 
             if not membership:
                 raise ValueError(f"User {user_email} is not an active member of team {team_id}. Only team members can create tokens for the team.")
 
         # Check for duplicate active token name for this user+team
-        existing_token = self.db.execute(
+        result = await self.db.execute(
             select(EmailApiToken).where(and_(EmailApiToken.user_email == user_email, EmailApiToken.name == name, EmailApiToken.team_id == team_id, EmailApiToken.is_active.is_(True)))
-        ).scalar_one_or_none()
+        )
+        existing_token = result.scalar_one_or_none()
 
         if existing_token:
             raise ValueError(f"Token with name '{name}' already exists for user {user_email} in team {team_id}. Please choose a different name.")
@@ -417,8 +419,8 @@ class TokenCatalogService:
         )
 
         self.db.add(api_token)
-        self.db.commit()
-        self.db.refresh(api_token)
+        await self.db.commit()
+        await self.db.refresh(api_token)
 
         token_type = f"team-scoped (team: {team_id})" if team_id else "public-only"
         logger.info(f"Created {token_type} API token '{name}' for user {user_email}. Token ID: {api_token.id}, Expires: {expires_at or 'Never'}")
@@ -451,8 +453,8 @@ class TokenCatalogService:
 
         query = query.order_by(EmailApiToken.created_at.desc()).limit(limit).offset(offset)
 
-        result = self.db.execute(query)
-        return result.scalars().all()
+        result = await self.db.execute(query)
+        return list(result.scalars().all())
 
     async def list_team_tokens(self, team_id: str, user_email: str, include_inactive: bool = False, limit: int = 100, offset: int = 0) -> List[EmailApiToken]:
         """List API tokens for a team (only accessible by team owners).
@@ -474,9 +476,10 @@ class TokenCatalogService:
         # First-Party
         from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
 
-        membership = self.db.execute(
+        result = await self.db.execute(
             select(EmailTeamMember).where(and_(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.role == "owner", EmailTeamMember.is_active.is_(True)))
-        ).scalar_one_or_none()
+        )
+        membership = result.scalar_one_or_none()
 
         if not membership:
             raise ValueError(f"Only team owners can view team tokens for {team_id}")
@@ -492,8 +495,8 @@ class TokenCatalogService:
             query = query.where(and_(EmailApiToken.is_active.is_(True), or_(EmailApiToken.expires_at.is_(None), EmailApiToken.expires_at > utc_now())))
 
         query = query.order_by(EmailApiToken.created_at.desc()).limit(limit).offset(offset)
-        result = self.db.execute(query)
-        return result.scalars().all()
+        result = await self.db.execute(query)
+        return list(result.scalars().all())
 
     async def get_token(self, token_id: str, user_email: Optional[str] = None) -> Optional[EmailApiToken]:
         """Get a specific token by ID.
@@ -514,7 +517,7 @@ class TokenCatalogService:
         if user_email:
             query = query.where(EmailApiToken.user_email == user_email)
 
-        result = self.db.execute(query)
+        result = await self.db.execute(query)
         return result.scalar_one_or_none()
 
     async def update_token(
@@ -546,9 +549,10 @@ class TokenCatalogService:
 
         # Check for duplicate name if changing
         if name and name != token.name:
-            existing = self.db.execute(
+            result = await self.db.execute(
                 select(EmailApiToken).where(and_(EmailApiToken.user_email == user_email, EmailApiToken.name == name, EmailApiToken.id != token_id, EmailApiToken.is_active.is_(True)))
-            ).scalar_one_or_none()
+            )
+            existing = result.scalar_one_or_none()
 
             if existing:
                 raise ValueError(f"Token name '{name}' already exists")
@@ -568,8 +572,8 @@ class TokenCatalogService:
             token.time_restrictions = scope.time_restrictions
             token.usage_limits = scope.usage_limits
 
-        self.db.commit()
-        self.db.refresh(token)
+        await self.db.commit()
+        await self.db.refresh(token)
 
         logger.info(f"Updated token '{token.name}' for user {user_email}")
 
@@ -601,7 +605,7 @@ class TokenCatalogService:
         revocation = TokenRevocation(jti=token.jti, revoked_by=revoked_by, reason=reason)
 
         self.db.add(revocation)
-        self.db.commit()
+        await self.db.commit()
 
         logger.info(f"Revoked token '{token.name}' (JTI: {token.jti}) by {revoked_by}")
 
@@ -620,7 +624,8 @@ class TokenCatalogService:
             >>> service = TokenCatalogService(None)  # Would use real DB session
             >>> # Returns bool: True if token is revoked
         """
-        revocation = self.db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti)).scalar_one_or_none()
+        result = await self.db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti))
+        revocation = result.scalar_one_or_none()
 
         return revocation is not None
 
@@ -669,14 +674,15 @@ class TokenCatalogService:
         )
 
         self.db.add(usage_log)
-        self.db.commit()
+        await self.db.commit()
 
         # Update token last_used timestamp
-        token = self.db.execute(select(EmailApiToken).where(EmailApiToken.jti == jti)).scalar_one_or_none()
+        result = await self.db.execute(select(EmailApiToken).where(EmailApiToken.jti == jti))
+        token = result.scalar_one_or_none()
 
         if token:
             token.last_used = utc_now()
-            self.db.commit()
+            await self.db.commit()
 
     async def get_token_usage_stats(self, user_email: str, token_id: Optional[str] = None, days: int = 30) -> dict:
         """Get token usage statistics.
@@ -703,7 +709,8 @@ class TokenCatalogService:
             if token:
                 query = query.where(TokenUsageLog.token_jti == token.jti)
 
-        usage_logs = self.db.execute(query).scalars().all()
+        result = await self.db.execute(query)
+        usage_logs = result.scalars().all()
 
         # Calculate statistics
         total_requests = len(usage_logs)
@@ -745,7 +752,7 @@ class TokenCatalogService:
             >>> service = TokenCatalogService(None)  # Would use real DB session
             >>> # Returns Optional[TokenRevocation] if token is revoked
         """
-        result = self.db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti))
+        result = await self.db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti))
         return result.scalar_one_or_none()
 
     async def cleanup_expired_tokens(self) -> int:
@@ -758,12 +765,13 @@ class TokenCatalogService:
             >>> service = TokenCatalogService(None)  # Would use real DB session
             >>> # Returns int: Number of tokens cleaned up
         """
-        expired_tokens = self.db.execute(select(EmailApiToken).where(and_(EmailApiToken.expires_at < utc_now(), EmailApiToken.is_active.is_(True)))).scalars().all()
+        result = await self.db.execute(select(EmailApiToken).where(and_(EmailApiToken.expires_at < utc_now(), EmailApiToken.is_active.is_(True))))
+        expired_tokens = result.scalars().all()
 
         for token in expired_tokens:
             token.is_active = False
 
-        self.db.commit()
+        await self.db.commit()
 
         logger.info(f"Cleaned up {len(expired_tokens)} expired tokens")
 

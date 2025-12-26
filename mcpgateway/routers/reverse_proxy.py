@@ -20,11 +20,13 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 import orjson
-from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import get_db
+from mcpgateway.db import _use_async, get_async_db, get_db
 from mcpgateway.services.logging_service import LoggingService
+
+_db_dependency = get_async_db if _use_async else get_db
+# First-Party
 from mcpgateway.utils.verify_credentials import require_auth
 
 # Initialize logging
@@ -154,7 +156,7 @@ manager = ReverseProxyManager()
 @router.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ):
     """WebSocket endpoint for reverse proxy connections.
 

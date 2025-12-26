@@ -61,7 +61,9 @@ async def test_token_from_cookie(monkeypatch):
     mock_user = MagicMock()
     mock_user.email = "user@example.com"
 
-    with patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=MagicMock()) as mock_session, \
+    # Force sync path by setting _use_async to False
+    with patch("mcpgateway.middleware.auth_middleware._use_async", False), \
+         patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=MagicMock()) as mock_session, \
          patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)):
         response = await middleware.dispatch(request, call_next)
 
@@ -84,7 +86,9 @@ async def test_token_from_header(monkeypatch):
     mock_user = MagicMock()
     mock_user.email = "header@example.com"
 
-    with patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=MagicMock()) as mock_session, \
+    # Force sync path by setting _use_async to False
+    with patch("mcpgateway.middleware.auth_middleware._use_async", False), \
+         patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=MagicMock()) as mock_session, \
          patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)):
         response = await middleware.dispatch(request, call_next)
 
@@ -111,7 +115,9 @@ async def test_authentication_failure(monkeypatch):
     mock_security_logger = MagicMock()
     mock_security_logger.log_authentication_attempt = MagicMock(return_value=None)
 
-    with patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=MagicMock()) as mock_session, \
+    # Force sync path by setting _use_async to False
+    with patch("mcpgateway.middleware.auth_middleware._use_async", False), \
+         patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=MagicMock()) as mock_session, \
          patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=Exception("Invalid token"))), \
          patch("mcpgateway.middleware.auth_middleware.logger") as mock_logger, \
          patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger):
@@ -123,7 +129,7 @@ async def test_authentication_failure(monkeypatch):
     assert "user" not in request.state.__dict__
     # Verify log message contains failure text
     logged_messages = [args[0] for args, _ in mock_logger.info.call_args_list]
-    assert any("✗ Auth context extraction failed" in msg for msg in logged_messages)
+    assert any("Auth context extraction failed" in msg for msg in logged_messages)
     mock_session.return_value.close.assert_called_once()
 
 
@@ -142,7 +148,9 @@ async def test_db_close_exception(monkeypatch):
     mock_db = MagicMock()
     mock_db.close.side_effect = Exception("close error")
 
-    with patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_db), \
+    # Force sync path by setting _use_async to False
+    with patch("mcpgateway.middleware.auth_middleware._use_async", False), \
+         patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_db), \
          patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)), \
          patch("mcpgateway.middleware.auth_middleware.logger") as mock_logger:
         response = await middleware.dispatch(request, call_next)

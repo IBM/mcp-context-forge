@@ -15,10 +15,9 @@ from typing import Optional
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr
-from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import SessionLocal
+from mcpgateway.db import _use_async, get_async_db, get_db, SessionLocal
 from mcpgateway.routers.email_auth import create_access_token, get_client_ip, get_user_agent
 from mcpgateway.schemas import AuthenticationResponse, EmailUserResponse
 from mcpgateway.services.email_auth_service import EmailAuthService
@@ -31,8 +30,11 @@ logger = logging_service.get_logger(__name__)
 # Create router
 auth_router = APIRouter(prefix="/auth", tags=["Authentication"])
 
+# Dynamic database dependency based on async configuration
+_db_dependency = get_async_db if _use_async else get_db
 
-def get_db():
+
+def _get_db_local():
     """Database dependency.
 
     Commits the transaction on successful completion to avoid implicit rollbacks
@@ -113,7 +115,7 @@ class LoginRequest(BaseModel):
 
 
 @auth_router.post("/login", response_model=AuthenticationResponse)
-async def login(login_request: LoginRequest, request: Request, db: Session = Depends(get_db)):
+async def login(login_request: LoginRequest, request: Request, db=Depends(_db_dependency)):
     """Authenticate user and return session JWT token.
 
     This endpoint provides Tier 1 authentication for session-based access.

@@ -17,7 +17,8 @@ from typing import List, Optional
 
 # Third-Party
 from sqlalchemy import and_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 # First-Party
 from mcpgateway.db import Permissions, Role, UserRole, utc_now
@@ -44,11 +45,11 @@ class RoleService:
         True
     """
 
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         """Initialize role service.
 
         Args:
-            db: Database session
+            db: Async database session
 
         Examples:
             Basic initialization:
@@ -221,8 +222,8 @@ class RoleService:
         role = Role(name=name, description=description, scope=scope, permissions=permissions, created_by=created_by, inherits_from=inherits_from, is_system_role=is_system_role)
 
         self.db.add(role)
-        self.db.commit()
-        self.db.refresh(role)
+        await self.db.commit()
+        await self.db.refresh(role)
 
         logger.info(f"Created role: {role.name} (scope: {role.scope}, id: {role.id})")
         return role
@@ -244,7 +245,7 @@ class RoleService:
             >>> asyncio.iscoroutinefunction(service.get_role_by_id)
             True
         """
-        result = self.db.execute(select(Role).where(Role.id == role_id))
+        result = await self.db.execute(select(Role).where(Role.id == role_id))
         return result.scalar_one_or_none()
 
     async def get_role_by_name(self, name: str, scope: str) -> Optional[Role]:
@@ -265,7 +266,7 @@ class RoleService:
             >>> asyncio.iscoroutinefunction(service.get_role_by_name)
             True
         """
-        result = self.db.execute(select(Role).where(and_(Role.name == name, Role.scope == scope, Role.is_active.is_(True))))
+        result = await self.db.execute(select(Role).where(and_(Role.name == name, Role.scope == scope, Role.is_active.is_(True))))
         return result.scalar_one_or_none()
 
     async def list_roles(self, scope: Optional[str] = None, include_system: bool = True, include_inactive: bool = False) -> List[Role]:
@@ -315,8 +316,8 @@ class RoleService:
 
         query = query.order_by(Role.scope, Role.name)
 
-        result = self.db.execute(query)
-        return result.scalars().all()
+        result = await self.db.execute(query)
+        return list(result.scalars().all())
 
     async def update_role(
         self,
@@ -460,8 +461,8 @@ class RoleService:
         # Update timestamp
         role.updated_at = utc_now()
 
-        self.db.commit()
-        self.db.refresh(role)
+        await self.db.commit()
+        await self.db.refresh(role)
 
         logger.info(f"Updated role: {role.name} (id: {role.id})")
         return role
@@ -516,9 +517,13 @@ class RoleService:
         role.updated_at = utc_now()
 
         # Deactivate all user assignments of this role
-        self.db.execute(select(UserRole).where(UserRole.role_id == role_id)).update({"is_active": False})
+        # Third-Party
+        from sqlalchemy import update  # pylint: disable=import-outside-toplevel
 
-        self.db.commit()
+        stmt = update(UserRole).where(UserRole.role_id == role_id).values(is_active=False)
+        await self.db.execute(stmt)
+
+        await self.db.commit()
 
         logger.info(f"Deleted role: {role.name} (id: {role.id})")
         return True
@@ -619,8 +624,8 @@ class RoleService:
         user_role = UserRole(user_email=user_email, role_id=role_id, scope=scope, scope_id=scope_id, granted_by=granted_by, expires_at=expires_at)
 
         self.db.add(user_role)
-        self.db.commit()
-        self.db.refresh(user_role)
+        await self.db.commit()
+        await self.db.refresh(user_role)
 
         logger.info(f"Assigned role {role.name} to {user_email} (scope: {scope}, scope_id: {scope_id})")
         return user_role
@@ -663,7 +668,7 @@ class RoleService:
             return False
 
         user_role.is_active = False
-        self.db.commit()
+        await self.db.commit()
 
         logger.info(f"Revoked role {role_id} from {user_email} (scope: {scope}, scope_id: {scope_id})")
         return True
@@ -695,7 +700,7 @@ class RoleService:
         else:
             conditions.append(UserRole.scope_id.is_(None))
 
-        result = self.db.execute(select(UserRole).where(and_(*conditions)))
+        result = await self.db.execute(select(UserRole).where(and_(*conditions)))
         return result.scalar_one_or_none()
 
     async def list_user_roles(self, user_email: str, scope: Optional[str] = None, include_expired: bool = False) -> List[UserRole]:
@@ -728,7 +733,7 @@ class RoleService:
             >>> isinstance(result, list) and len(result) == 2
             True
         """
-        query = select(UserRole).join(Role).where(and_(UserRole.user_email == user_email, UserRole.is_active.is_(True), Role.is_active.is_(True)))
+        query = select(UserRole).join(Role).options(selectinload(UserRole.role)).where(and_(UserRole.user_email == user_email, UserRole.is_active.is_(True), Role.is_active.is_(True)))
 
         if scope:
             query = query.where(UserRole.scope == scope)
@@ -739,8 +744,8 @@ class RoleService:
 
         query = query.order_by(UserRole.scope, Role.name)
 
-        result = self.db.execute(query)
-        return result.scalars().all()
+        result = await self.db.execute(query)
+        return list(result.scalars().all())
 
     async def list_role_assignments(self, role_id: str, scope: Optional[str] = None, include_expired: bool = False) -> List[UserRole]:
         """List all user assignments for a role.
@@ -782,8 +787,8 @@ class RoleService:
 
         query = query.order_by(UserRole.user_email)
 
-        result = self.db.execute(query)
-        return result.scalars().all()
+        result = await self.db.execute(query)
+        return list(result.scalars().all())
 
     async def _would_create_cycle(self, parent_id: str, child_id: Optional[str]) -> bool:
         """Check if setting parent_id as parent of child_id would create a cycle.
@@ -859,7 +864,7 @@ class RoleService:
             visited.add(current)
 
             # Get parent of current role
-            result = self.db.execute(select(Role.inherits_from).where(Role.id == current))
+            result = await self.db.execute(select(Role.inherits_from).where(Role.id == current))
             current = result.scalar_one_or_none()
 
         return False

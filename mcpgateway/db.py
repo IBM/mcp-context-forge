@@ -22,11 +22,11 @@ Examples:
 """
 
 # Standard
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta, timezone
 import logging
 import os
-from typing import Any, cast, Dict, Generator, List, Optional, TYPE_CHECKING
+from typing import Any, AsyncGenerator, cast, Dict, Generator, List, Optional, TYPE_CHECKING, Union
 import uuid
 
 # Third-Party
@@ -37,6 +37,7 @@ from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table,
 from sqlalchemy.engine import Engine
 from sqlalchemy.event import listen
 from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
+from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import DeclarativeBase, joinedload, Mapped, mapped_column, relationship, Session, sessionmaker
 from sqlalchemy.orm.attributes import get_history
@@ -64,6 +65,95 @@ if TYPE_CHECKING:
 url = make_url(settings.database_url)
 backend = url.get_backend_name()  # e.g. 'postgresql', 'sqlite'
 driver = url.get_driver_name() or "default"
+
+# ---------------------------------------------------------------------------
+# 1b. Determine async capability for PostgreSQL and SQLite
+#     asyncpg is the default async driver for PostgreSQL when available.
+#     aiosqlite is the async driver for SQLite when available.
+#     URL formats:
+#       postgresql+asyncpg://  -> Use asyncpg (async)
+#       postgresql+psycopg://  -> Use psycopg3 (sync, explicit)
+#       postgresql://          -> Auto-upgrade to asyncpg if available
+#       sqlite+aiosqlite://    -> Use aiosqlite (async)
+#       sqlite://              -> Auto-upgrade to aiosqlite if available
+# ---------------------------------------------------------------------------
+_use_async = False
+_async_url: Optional[str] = None
+_asyncpg_available = False
+_aiosqlite_available = False
+
+if backend == "postgresql":
+    # Check if asyncpg is available
+    try:
+        # Third-Party
+        import asyncpg  # noqa: F401
+
+        _asyncpg_available = True
+    except ImportError:
+        _asyncpg_available = False
+        if driver == "asyncpg":
+            logger.error("asyncpg driver requested but not installed. Install with: pip install asyncpg")
+        else:
+            logger.debug("asyncpg not installed, using psycopg3 for PostgreSQL")
+
+    # Determine async mode based on driver specification
+    if driver == "asyncpg":
+        if _asyncpg_available:
+            _use_async = True
+            _async_url = settings.database_url
+            logger.info("Using asyncpg async driver for PostgreSQL")
+        else:
+            # Fallback to psycopg3 if asyncpg requested but not available
+            _use_async = False
+            logger.warning("asyncpg requested but not available, falling back to psycopg3")
+    elif driver in ("default", ""):
+        # Auto-upgrade to asyncpg if available
+        if _asyncpg_available:
+            _use_async = True
+            _async_url = settings.database_url.replace("postgresql://", "postgresql+asyncpg://")
+            logger.info("Auto-upgrading PostgreSQL connection to asyncpg (async mode)")
+        else:
+            _use_async = False
+            logger.info("Using psycopg3 for PostgreSQL (asyncpg not available)")
+    elif driver == "psycopg":
+        # Explicit psycopg3, keep sync mode
+        _use_async = False
+        logger.info("Using psycopg3 sync driver for PostgreSQL (explicitly configured)")
+
+elif backend == "sqlite":
+    # Check if aiosqlite is available for async SQLite support
+    try:
+        # Third-Party
+        import aiosqlite  # noqa: F401
+
+        _aiosqlite_available = True
+    except ImportError:
+        _aiosqlite_available = False
+        if driver == "aiosqlite":
+            logger.error("aiosqlite driver requested but not installed. Install with: pip install aiosqlite")
+        else:
+            logger.debug("aiosqlite not installed, using sync SQLite")
+
+    # Determine async mode based on driver specification
+    if driver == "aiosqlite":
+        if _aiosqlite_available:
+            _use_async = True
+            _async_url = settings.database_url
+            logger.info("Using aiosqlite async driver for SQLite")
+        else:
+            _use_async = False
+            logger.warning("aiosqlite requested but not available, falling back to sync SQLite")
+    elif driver in ("default", "", "pysqlite"):
+        # Auto-upgrade to aiosqlite if available
+        # Note: pysqlite is SQLite's default driver name
+        if _aiosqlite_available:
+            _use_async = True
+            # Convert sqlite:/// to sqlite+aiosqlite:///
+            _async_url = settings.database_url.replace("sqlite:///", "sqlite+aiosqlite:///")
+            logger.info("Auto-upgrading SQLite connection to aiosqlite (async mode)")
+        else:
+            _use_async = False
+            logger.debug("Using sync SQLite (aiosqlite not available)")
 
 # Start with an empty dict and add options only when the driver can accept
 # them; this prevents unexpected TypeError at connect time.
@@ -126,6 +216,9 @@ def build_engine() -> Engine:
     and connection arguments determined by the backend type. It also configures
     the connection pool size and timeout based on application settings.
 
+    For asyncpg URLs, this function converts them to psycopg3 since asyncpg
+    is async-only and can't be used with a sync SQLAlchemy engine.
+
     Environment variables:
         SQLALCHEMY_ECHO: Set to 'true' to log all SQL queries (useful for N+1 detection)
 
@@ -134,6 +227,26 @@ def build_engine() -> Engine:
     """
     if _sqlalchemy_echo:
         logger.info("SQLALCHEMY_ECHO enabled - all SQL queries will be logged")
+
+    # For asyncpg URLs, use psycopg3 for the sync engine since asyncpg is async-only
+    sync_database_url = settings.database_url
+    sync_connect_args = connect_args.copy()  # Start with the global connect_args
+
+    if backend == "postgresql" and driver == "asyncpg":
+        sync_database_url = settings.database_url.replace("postgresql+asyncpg://", "postgresql+psycopg://")
+        # Set psycopg3-specific connection arguments since the global connect_args is empty for asyncpg
+        sync_connect_args.update(
+            keepalives=1,  # enable TCP keep-alive probes
+            keepalives_idle=30,  # seconds of idleness before first probe
+            keepalives_interval=5,  # seconds between probes
+            keepalives_count=5,  # drop the link after N failed probes
+            prepare_threshold=settings.db_prepare_threshold,
+        )
+        # Extract and apply PostgreSQL options from URL query parameters
+        url_options = url.query.get("options")
+        if url_options:
+            sync_connect_args["options"] = url_options
+        logger.info("Using psycopg3 for sync engine (asyncpg is async-only)")
 
     if backend == "sqlite":
         # SQLite supports connection pooling with proper configuration
@@ -144,7 +257,7 @@ def build_engine() -> Engine:
         logger.info("Configuring SQLite with pool_size=%s, max_overflow=%s", sqlite_pool_size, sqlite_max_overflow)
 
         return create_engine(
-            settings.database_url,
+            sync_database_url,
             pool_pre_ping=True,  # quick liveness check per checkout
             pool_size=sqlite_pool_size,
             max_overflow=sqlite_max_overflow,
@@ -152,7 +265,7 @@ def build_engine() -> Engine:
             pool_recycle=settings.db_pool_recycle,
             # SQLite specific optimizations
             poolclass=QueuePool,  # Explicit pool class
-            connect_args=connect_args,
+            connect_args=sync_connect_args,
             # Log pool events in debug mode
             echo_pool=settings.log_level == "DEBUG",
             # Log all SQL queries when SQLALCHEMY_ECHO=true (useful for N+1 detection)
@@ -164,13 +277,13 @@ def build_engine() -> Engine:
         logger.info("Configuring MariaDB/MySQL with pool_size=%s, max_overflow=%s", settings.db_pool_size, settings.db_max_overflow)
 
         return create_engine(
-            settings.database_url,
+            sync_database_url,
             pool_pre_ping=True,
             pool_size=settings.db_pool_size,
             max_overflow=settings.db_max_overflow,
             pool_timeout=settings.db_pool_timeout,
             pool_recycle=settings.db_pool_recycle,
-            connect_args=connect_args,
+            connect_args=sync_connect_args,
             isolation_level="READ_COMMITTED",  # Fix PyMySQL sync issues
             # Log all SQL queries when SQLALCHEMY_ECHO=true (useful for N+1 detection)
             echo=_sqlalchemy_echo,
@@ -178,19 +291,107 @@ def build_engine() -> Engine:
 
     # Other databases support full pooling configuration
     return create_engine(
-        settings.database_url,
+        sync_database_url,
         pool_pre_ping=True,  # quick liveness check per checkout
         pool_size=settings.db_pool_size,
         max_overflow=settings.db_max_overflow,
         pool_timeout=settings.db_pool_timeout,
         pool_recycle=settings.db_pool_recycle,
-        connect_args=connect_args,
+        connect_args=sync_connect_args,
         # Log all SQL queries when SQLALCHEMY_ECHO=true (useful for N+1 detection)
         echo=_sqlalchemy_echo,
     )
 
 
+def build_async_engine() -> Optional[AsyncEngine]:
+    """Build async SQLAlchemy engine for PostgreSQL with asyncpg or SQLite with aiosqlite.
+
+    This function constructs an async SQLAlchemy engine using the appropriate
+    async driver. It is called when:
+    - DATABASE_URL uses postgresql+asyncpg:// scheme, or
+    - DATABASE_URL uses postgresql:// and asyncpg is available (auto-upgrade), or
+    - DATABASE_URL uses sqlite+aiosqlite:// scheme, or
+    - DATABASE_URL uses sqlite:// and aiosqlite is available (auto-upgrade)
+
+    asyncpg provides native async PostgreSQL support with:
+    - True async I/O (no thread pool required)
+    - Automatic connection pooling
+    - Binary protocol support for better performance
+    - Prepared statement caching
+
+    aiosqlite provides async SQLite support with:
+    - Thread-safe async wrapper around sqlite3
+    - Compatible with SQLAlchemy async sessions
+    - Useful for testing and development
+
+    Returns:
+        AsyncEngine for async connections, or None if not applicable.
+
+    Note:
+        async pools are sized smaller than sync pools because
+        a single connection can handle multiple concurrent async operations.
+    """
+    if not _use_async or not _async_url:
+        return None
+
+    if _sqlalchemy_echo:
+        logger.info("SQLALCHEMY_ECHO enabled for async engine - all SQL queries will be logged")
+
+    # Build async engine based on backend type
+    if backend == "sqlite":
+        # aiosqlite configuration
+        logger.info("Building async SQLite engine with aiosqlite")
+
+        return create_async_engine(
+            _async_url,
+            echo=_sqlalchemy_echo,
+            # aiosqlite doesn't support pool_pre_ping, use NullPool for simplicity
+            # StaticPool is used for in-memory databases to keep the same connection
+            pool_pre_ping=False,
+        )
+
+    # PostgreSQL with asyncpg
+    async_connect_args: dict[str, object] = {}
+
+    # Extract PostgreSQL options from URL query parameters for asyncpg
+    # asyncpg uses server_settings instead of the 'options' connect arg
+    url_options = url.query.get("options")
+    if url_options:
+        # Parse options like "-c search_path=schema_name"
+        if "search_path" in url_options:
+            # Extract search_path value
+            parts = url_options.split("=")
+            if len(parts) >= 2:
+                search_path = parts[-1].strip()
+                async_connect_args["server_settings"] = {"search_path": search_path}
+                logger.info(f"asyncpg search_path set to: {search_path}")
+
+    # asyncpg pool sizing: smaller than sync because async handles concurrency better
+    # A single connection can process multiple queries concurrently
+    async_pool_size = min(settings.db_pool_size, 20)  # Cap at 20 for async
+    async_max_overflow = min(settings.db_max_overflow, 10)  # Cap at 10
+
+    logger.info(
+        "Building async PostgreSQL engine with asyncpg: pool_size=%s, max_overflow=%s",
+        async_pool_size,
+        async_max_overflow,
+    )
+
+    return create_async_engine(
+        _async_url,
+        pool_pre_ping=True,
+        pool_size=async_pool_size,
+        max_overflow=async_max_overflow,
+        pool_timeout=settings.db_pool_timeout,
+        pool_recycle=settings.db_pool_recycle,
+        connect_args=async_connect_args,
+        echo=_sqlalchemy_echo,
+    )
+
+
+# Build engines
 engine = build_engine()
+async_engine: Optional[AsyncEngine] = build_async_engine()
 
 # Initialize SQLAlchemy instrumentation for observability
 if settings.observability_enabled:
@@ -256,8 +457,23 @@ if backend == "sqlite":
         cursor.close()
 
 
-# Session factory
+# Session factories
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# Async session factory (only created if async engine exists)
+AsyncSessionLocal: Optional[async_sessionmaker[AsyncSession]] = None
+if async_engine is not None:
+    AsyncSessionLocal = async_sessionmaker(
+        bind=async_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autocommit=False,
+        autoflush=False,
+    )
+    logger.info("Async session factory created for asyncpg")
+
+# Type alias for either session type (useful for services that support both)
+DBSession = Union[Session, AsyncSession]
 
 
 def _refresh_gateway_slugs_batched(session: Session, batch_size: int) -> None:
@@ -4141,6 +4357,176 @@ def fresh_db_session() -> Generator[Session, Any, None]:
         raise
     finally:
         db.close()
+
+
+async def get_async_db() -> AsyncGenerator[AsyncSession, None]:
+    """Async dependency to get database session for PostgreSQL with asyncpg.
+
+    This is the async equivalent of get_db() for use with asyncpg driver.
+    Use this when DATABASE_URL is configured with postgresql+asyncpg:// or
+    when asyncpg is available and auto-upgrade is enabled.
+
+    Yields:
+        AsyncSession: An async SQLAlchemy database session.
+
+    Raises:
+        RuntimeError: If async database session is not available (e.g., using SQLite
+            or psycopg3 sync driver).
+        Exception: Re-raises any exception after rolling back the transaction.
+
+    Examples:
+        >>> # In an async FastAPI route:
+        >>> # @app.get("/items")
+        >>> # async def get_items(db: AsyncSession = Depends(get_async_db)):
+        >>> #     result = await db.execute(select(Item))
+        >>> #     return result.scalars().all()
+    """
+    if AsyncSessionLocal is None:
+        raise RuntimeError("Async database session not available. " "Ensure DATABASE_URL uses postgresql+asyncpg:// or asyncpg is installed.")
+
+    async with AsyncSessionLocal() as db:
+        try:
+            yield db
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+
+
+@asynccontextmanager
+async def fresh_async_db_session() -> AsyncGenerator[AsyncSession, None]:
+    """Get a fresh async database session for isolated operations.
+
+    This is the async equivalent of fresh_db_session() for use with asyncpg.
+    Use this when you need a new async session independent of the request lifecycle,
+    such as for background tasks or metrics recording after releasing the main session.
+
+    Yields:
+        AsyncSession: A fresh async SQLAlchemy database session.
+
+    Raises:
+        RuntimeError: If async database session is not available.
+        Exception: Any exception raised during database operations is re-raised
+            after rolling back the transaction.
+
+    Examples:
+        >>> # In an async function:
+        >>> # async with fresh_async_db_session() as db:
+        >>> #     db.add(metric)
+        >>> #     await db.commit()
+    """
+    if AsyncSessionLocal is None:
+        raise RuntimeError("Async database session not available. " "Ensure DATABASE_URL uses postgresql+asyncpg:// or asyncpg is installed.")
+
+    async with AsyncSessionLocal() as db:
+        try:
+            yield db
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+
+
+async def get_async_compat_db() -> AsyncGenerator[Any, None]:
+    """Async-compatible database dependency that works with both sync and async backends.
+
+    This dependency provides an async-compatible session regardless of the underlying
+    database backend. When using async backends (asyncpg, aiosqlite), it returns
+    a real AsyncSession. When using sync backends (sqlite, psycopg3), it wraps
+    the sync Session in an AsyncSessionWrapper to provide async compatibility.
+
+    This is the recommended dependency for services that are written with async
+    database operations (using 'await') but need to work in tests with sync sessions.
+
+    Yields:
+        AsyncSession or AsyncSessionWrapper: An async-compatible database session.
+
+    Examples:
+        >>> # In a FastAPI route:
+        >>> # @app.get("/items")
+        >>> # async def get_items(db = Depends(get_async_compat_db)):
+        >>> #     result = await db.execute(select(Item))  # Works with both!
+        >>> #     return result.scalars().all()
+    """
+    if _use_async and AsyncSessionLocal is not None:
+        # Use real async session
+        async with AsyncSessionLocal() as db:
+            try:
+                yield db
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                raise
+    else:
+        # Wrap sync session for async compatibility
+        # First-Party
+        from mcpgateway.utils.db_compat import AsyncSessionWrapper
+
+        db = SessionLocal()
+        wrapped = AsyncSessionWrapper(db)
+        try:
+            yield wrapped
+            await wrapped.commit()
+        except Exception:
+            await wrapped.rollback()
+            raise
+        finally:
+            await wrapped.close()
+
+
+def get_db_dependency():
+    """Factory that returns the async-compatible session dependency.
+
+    This function returns `get_async_compat_db` which works with both sync and
+    async database backends. When using async backends (asyncpg, aiosqlite), it
+    provides a real AsyncSession. When using sync backends, it wraps the sync
+    Session in an AsyncSessionWrapper for async compatibility.
+
+    This is the recommended way to get database sessions in FastAPI routes when
+    services use async database operations (await db.execute(), etc.).
+
+    Usage in FastAPI routes:
+        from mcpgateway.db import get_db_dependency
+
+        @app.get("/items")
+        async def get_items(db = Depends(get_db_dependency())):
+            # Works with both sync and async sessions
+            result = await db.execute(select(Item))
+            ...
+
+    Returns:
+        Callable: The get_async_compat_db dependency function.
+    """
+    return get_async_compat_db
+
+
+async def get_wrapped_sync_db() -> AsyncGenerator[Any, None]:
+    """Database dependency that always uses wrapped sync session.
+
+    This function always uses a sync session wrapped in AsyncSessionWrapper,
+    regardless of whether asyncpg is available. This is useful for code that:
+    1. Uses both await db.execute() and db.query() patterns
+    2. Needs lazy loading support (which doesn't work with real AsyncSession)
+
+    The wrapper provides async-compatible methods while still using a sync
+    connection that supports lazy loading and the legacy .query() API.
+
+    Yields:
+        AsyncSessionWrapper: A wrapped sync session with async-compatible interface.
+    """
+    # First-Party
+    from mcpgateway.utils.db_compat import AsyncSessionWrapper
+
+    db = SessionLocal()
+    wrapped = AsyncSessionWrapper(db)
+    try:
+        yield wrapped
+        await wrapped.commit()
+    except Exception:
+        await wrapped.rollback()
+        raise
+    finally:
+        await wrapped.close()
 
 
 def patch_string_columns_for_mariadb(base, engine_) -> None:

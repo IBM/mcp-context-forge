@@ -35,6 +35,7 @@ from mcp.client.streamable_http import streamablehttp_client
 import orjson
 from sqlalchemy import and_, case, delete, desc, Float, func, not_, or_, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
@@ -296,7 +297,7 @@ class ToolService:
         await self._event_service.shutdown()
         logger.info("Tool service shutdown complete")
 
-    async def get_top_tools(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
+    async def get_top_tools(self, db: AsyncSession, limit: Optional[int] = 5) -> List[TopPerformer]:
         """Retrieve the top-performing tools based on execution count.
 
         Queries the database to get tools with their metrics, ordered by the number of executions
@@ -347,7 +348,7 @@ class ToolService:
             .limit(effective_limit)
         )
 
-        results = db.execute(query).all()
+        results = (await db.execute(query)).all()
         top_performers = build_top_performers(results)
 
         # Cache the result (if enabled)
@@ -356,11 +357,11 @@ class ToolService:
 
         return top_performers
 
-    def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
+    async def _get_team_name(self, db: AsyncSession, team_id: Optional[str]) -> Optional[str]:
         """Retrieve the team name given a team ID.
 
         Args:
-            db (Session): Database session for querying teams.
+            db (AsyncSession): Database session for querying teams.
             team_id (Optional[str]): The ID of the team.
 
         Returns:
@@ -368,7 +369,8 @@ class ToolService:
         """
         if not team_id:
             return None
-        team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
+        result = await db.execute(select(EmailTeam).where(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)))
+        team = result.scalar_one_or_none()
         return team.name if team else None
 
     def _convert_tool_to_read(self, tool: DbTool, include_metrics: bool = False) -> ToolRead:
@@ -440,7 +442,7 @@ class ToolService:
 
         return ToolRead.model_validate(tool_dict)
 
-    async def _record_tool_metric(self, db: Session, tool: DbTool, start_time: float, success: bool, error_message: Optional[str]) -> None:
+    async def _record_tool_metric(self, db: AsyncSession, tool: DbTool, start_time: float, success: bool, error_message: Optional[str]) -> None:
         """
         Records a metric for a tool invocation.
 
@@ -449,7 +451,7 @@ class ToolService:
         into the database. The metric is then committed to the database.
 
         Args:
-            db (Session): The SQLAlchemy database session.
+            db (AsyncSession): The SQLAlchemy database session.
             tool (DbTool): The tool that was invoked.
             start_time (float): The monotonic start time of the invocation.
             success (bool): True if the invocation succeeded; otherwise, False.
@@ -464,7 +466,7 @@ class ToolService:
             error_message=error_message,
         )
         db.add(metric)
-        db.commit()
+        await db.commit()
 
     def _record_tool_metric_by_id(
         self,
@@ -668,7 +670,7 @@ class ToolService:
 
     async def register_tool(
         self,
-        db: Session,
+        db: AsyncSession,
         tool: ToolCreate,
         created_by: Optional[str] = None,
         created_from_ip: Optional[str] = None,
@@ -745,13 +747,13 @@ class ToolService:
             # Check for existing tool with the same name and visibility
             if visibility.lower() == "public":
                 # Check for existing public tool with the same name
-                existing_tool = db.execute(select(DbTool).where(DbTool.name == tool.name, DbTool.visibility == "public")).scalar_one_or_none()
+                existing_tool = (await db.execute(select(DbTool).where(DbTool.name == tool.name, DbTool.visibility == "public"))).scalar_one_or_none()
                 if existing_tool:
                     raise ToolNameConflictError(existing_tool.name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
             elif visibility.lower() == "team" and team_id:
                 # Check for existing team tool with the same name, team_id
-                existing_tool = db.execute(
-                    select(DbTool).where(DbTool.name == tool.name, DbTool.visibility == "team", DbTool.team_id == team_id)  # pylint: disable=comparison-with-callable
+                existing_tool = (
+                    await db.execute(select(DbTool).where(DbTool.name == tool.name, DbTool.visibility == "team", DbTool.team_id == team_id))  # pylint: disable=comparison-with-callable
                 ).scalar_one_or_none()
                 if existing_tool:
                     raise ToolNameConflictError(existing_tool.name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
@@ -798,8 +800,8 @@ class ToolService:
                 plugin_chain_post=tool.plugin_chain_post if tool.integration_type == "REST" else None,
             )
             db.add(db_tool)
-            db.commit()
-            db.refresh(db_tool)
+            await db.commit()
+            await db.refresh(db_tool)
             await self._notify_tool_added(db_tool)
 
             # Structured logging: Audit trail for tool creation
@@ -847,10 +849,11 @@ class ToolService:
             )
 
             # Refresh db_tool after logging commits (they expire the session objects)
-            db.refresh(db_tool)
+            # Include gateway relationship to avoid lazy loading issues with async sessions
+            await db.refresh(db_tool, ["gateway"])
             return self._convert_tool_to_read(db_tool)
         except IntegrityError as ie:
-            db.rollback()
+            await db.rollback()
             logger.error(f"IntegrityError during tool registration: {ie}")
 
             # Structured logging: Log database integrity error
@@ -869,7 +872,7 @@ class ToolService:
             )
             raise ie
         except ToolNameConflictError as tnce:
-            db.rollback()
+            await db.rollback()
             logger.error(f"ToolNameConflictError during tool registration: {tnce}")
 
             # Structured logging: Log name conflict error
@@ -888,7 +891,7 @@ class ToolService:
             )
             raise tnce
         except Exception as e:
-            db.rollback()
+            await db.rollback()
 
             # Structured logging: Log generic tool creation failure
             structured_logger.log(
@@ -908,7 +911,7 @@ class ToolService:
 
     async def register_tools_bulk(
         self,
-        db: Session,
+        db: AsyncSession,
         tools: List[ToolCreate],
         created_by: Optional[str] = None,
         created_from_ip: Optional[str] = None,
@@ -977,7 +980,7 @@ class ToolService:
 
         for chunk_start in range(0, len(tools), chunk_size):
             chunk = tools[chunk_start : chunk_start + chunk_size]
-            chunk_stats = self._process_tool_chunk(
+            chunk_stats = await self._process_tool_chunk(
                 db=db,
                 chunk=chunk,
                 conflict_strategy=conflict_strategy,
@@ -1001,9 +1004,9 @@ class ToolService:
 
         return stats
 
-    def _process_tool_chunk(
+    async def _process_tool_chunk(
         self,
-        db: Session,
+        db: AsyncSession,
         chunk: List[ToolCreate],
         conflict_strategy: str,
         visibility: str,
@@ -1049,7 +1052,7 @@ class ToolService:
                 # Private tools - check by owner
                 existing_tools_query = select(DbTool).where(DbTool.name.in_(tool_names), DbTool.visibility == "private", DbTool.owner_email == (owner_email or created_by))
 
-            existing_tools = db.execute(existing_tools_query).scalars().all()
+            existing_tools = (await db.execute(existing_tools_query)).scalars().all()
             existing_tools_map = {tool.name: tool for tool in existing_tools}
 
             tools_to_add = []
@@ -1088,11 +1091,11 @@ class ToolService:
                 db.add_all(tools_to_add)
 
             # Commit the chunk
-            db.commit()
+            await db.commit()
 
             # Refresh tools for notifications and audit trail
             for db_tool in tools_to_add:
-                db.refresh(db_tool)
+                await db.refresh(db_tool)
                 # Notify subscribers (sync call in async context handled by caller)
 
             # Log bulk audit trail entry
@@ -1107,7 +1110,7 @@ class ToolService:
                 )
 
         except Exception as e:
-            db.rollback()
+            await db.rollback()
             logger.error(f"Failed to process tool chunk: {str(e)}")
             stats["failed"] += len(chunk)
             stats["errors"].append(f"Chunk processing failed: {str(e)}")
@@ -1327,7 +1330,7 @@ class ToolService:
 
     async def list_tools(
         self,
-        db: Session,
+        db: AsyncSession,
         include_inactive: bool = False,
         cursor: Optional[str] = None,
         tags: Optional[List[str]] = None,
@@ -1398,7 +1401,12 @@ class ToolService:
         )
 
         # Build query with LEFT JOIN for team names in single query instead of batch fetching
-        query = select(DbTool, EmailTeam.name.label("team_name")).outerjoin(EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True))).order_by(DbTool.id)
+        query = (
+            select(DbTool, EmailTeam.name.label("team_name"))
+            .options(selectinload(DbTool.gateway))
+            .outerjoin(EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True)))
+            .order_by(DbTool.id)
+        )
 
         # Apply cursor filter (WHERE id > last_id)
         if last_id:
@@ -1420,7 +1428,7 @@ class ToolService:
         # Fetch page_size + 1 to determine if there are more results (unless no limit)
         if page_size is not None:
             query = query.limit(page_size + 1)
-        rows = db.execute(query).all()
+        rows = (await db.execute(query)).all()
 
         # Check if there are more results (only when paginating)
         has_more = page_size is not None and len(rows) > page_size
@@ -1446,7 +1454,7 @@ class ToolService:
         return (result, next_cursor)
 
     async def list_server_tools(
-        self, db: Session, server_id: str, include_inactive: bool = False, include_metrics: bool = False, cursor: Optional[str] = None, _request_headers: Optional[Dict[str, str]] = None
+        self, db: AsyncSession, server_id: str, include_inactive: bool = False, include_metrics: bool = False, cursor: Optional[str] = None, _request_headers: Optional[Dict[str, str]] = None
     ) -> List[ToolRead]:
         """
         Retrieve a list of registered tools from the database.
@@ -1502,7 +1510,7 @@ class ToolService:
         # Execute the query with LEFT JOIN for team names in single query
         query_with_join = query.outerjoin(EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True))).add_columns(EmailTeam.name.label("team_name"))
 
-        rows = db.execute(query_with_join).all()
+        rows = (await db.execute(query_with_join)).all()
 
         # Add team names to tools based on join result
         result = []
@@ -1516,7 +1524,7 @@ class ToolService:
 
     async def list_tools_for_user(
         self,
-        db: Session,
+        db: AsyncSession,
         user_email: str,
         team_id: Optional[str] = None,
         visibility: Optional[str] = None,
@@ -1573,7 +1581,7 @@ class ToolService:
         user_teams = await team_service.get_user_teams(user_email)
         team_ids = [team.id for team in user_teams]
 
-        query = select(DbTool)
+        query = select(DbTool).options(selectinload(DbTool.gateway))
 
         # Apply active/inactive filter
         if not include_inactive:
@@ -1620,9 +1628,9 @@ class ToolService:
         # Execute query with LEFT JOIN for team names in single query
         query_with_join = query.outerjoin(EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True))).add_columns(EmailTeam.name.label("team_name"))
         if page_size is not None:
-            rows = db.execute(query_with_join.limit(page_size + 1)).all()
+            rows = (await db.execute(query_with_join.limit(page_size + 1))).all()
         else:
-            rows = db.execute(query_with_join).all()
+            rows = (await db.execute(query_with_join)).all()
 
         # Check if there are more results (only when paginating)
         has_more = page_size is not None and len(rows) > page_size
@@ -1646,7 +1654,7 @@ class ToolService:
 
         return (result, next_cursor)
 
-    async def get_tool(self, db: Session, tool_id: str) -> ToolRead:
+    async def get_tool(self, db: AsyncSession, tool_id: str) -> ToolRead:
         """
         Retrieve a tool by its ID.
 
@@ -1672,10 +1680,10 @@ class ToolService:
             >>> asyncio.run(service.get_tool(db, 'tool_id'))
             'tool_read'
         """
-        tool = db.get(DbTool, tool_id)
+        tool = await db.get(DbTool, tool_id, options=[selectinload(DbTool.gateway)])
         if not tool:
             raise ToolNotFoundError(f"Tool not found: {tool_id}")
-        tool.team = self._get_team_name(db, getattr(tool, "team_id", None))
+        tool.team = await self._get_team_name(db, getattr(tool, "team_id", None))
 
         tool_read = self._convert_tool_to_read(tool)
 
@@ -1696,7 +1704,7 @@ class ToolService:
 
         return tool_read
 
-    async def delete_tool(self, db: Session, tool_id: str, user_email: Optional[str] = None) -> None:
+    async def delete_tool(self, db: AsyncSession, tool_id: str, user_email: Optional[str] = None) -> None:
         """
         Delete a tool by its ID.
 
@@ -1724,7 +1732,7 @@ class ToolService:
             >>> asyncio.run(service.delete_tool(db, 'tool_id'))
         """
         try:
-            tool = db.get(DbTool, tool_id)
+            tool = await db.get(DbTool, tool_id)
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
 
@@ -1741,8 +1749,8 @@ class ToolService:
             tool_name = tool.name
             tool_team_id = tool.team_id
 
-            db.delete(tool)
-            db.commit()
+            await db.delete(tool)
+            await db.commit()
             await self._notify_tool_deleted(tool_info)
             logger.info(f"Permanently deleted tool: {tool_info['name']}")
 
@@ -1777,7 +1785,7 @@ class ToolService:
                 db=db,
             )
         except PermissionError as pe:
-            db.rollback()
+            await db.rollback()
 
             # Structured logging: Log permission error
             structured_logger.log(
@@ -1793,7 +1801,7 @@ class ToolService:
             )
             raise
         except Exception as e:
-            db.rollback()
+            await db.rollback()
 
             # Structured logging: Log generic tool deletion failure
             structured_logger.log(
@@ -1809,7 +1817,7 @@ class ToolService:
             )
             raise ToolError(f"Failed to delete tool: {str(e)}")
 
-    async def toggle_tool_status(self, db: Session, tool_id: str, activate: bool, reachable: bool, user_email: Optional[str] = None) -> ToolRead:
+    async def toggle_tool_status(self, db: AsyncSession, tool_id: str, activate: bool, reachable: bool, user_email: Optional[str] = None) -> ToolRead:
         """
         Toggle the activation status of a tool.
 
@@ -1847,7 +1855,7 @@ class ToolService:
             'tool_read'
         """
         try:
-            tool = db.get(DbTool, tool_id)
+            tool = await db.get(DbTool, tool_id, options=[selectinload(DbTool.gateway)])
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
 
@@ -1871,8 +1879,8 @@ class ToolService:
             if is_activated or is_reachable:
                 tool.updated_at = datetime.now(timezone.utc)
 
-                db.commit()
-                db.refresh(tool)
+                await db.commit()
+                await db.refresh(tool, ["gateway"])
 
                 if not tool.enabled:
                     # Inactive
@@ -1939,7 +1947,7 @@ class ToolService:
             )
             raise e
         except Exception as e:
-            db.rollback()
+            await db.rollback()
 
             # Structured logging: Log generic tool status toggle failure
             structured_logger.log(
@@ -1957,7 +1965,7 @@ class ToolService:
 
     async def invoke_tool(
         self,
-        db: Session,
+        db: AsyncSession,
         name: str,
         arguments: Dict[str, Any],
         request_headers: Optional[Dict[str, str]] = None,
@@ -2011,9 +2019,9 @@ class ToolService:
         # ═══════════════════════════════════════════════════════════════════════════
 
         # Eager load tool WITH gateway in single query to prevent lazy load N+1
-        tool = db.execute(select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.name == name).where(DbTool.enabled)).scalar_one_or_none()
+        tool = (await db.execute(select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.name == name).where(DbTool.enabled))).scalar_one_or_none()
         if not tool:
-            inactive_tool = db.execute(select(DbTool).where(DbTool.name == name).where(not_(DbTool.enabled))).scalar_one_or_none()
+            inactive_tool = (await db.execute(select(DbTool).where(DbTool.name == name).where(not_(DbTool.enabled)))).scalar_one_or_none()
             if inactive_tool:
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
             raise ToolNotFoundError(f"Tool not found: {name}")
@@ -2029,7 +2037,7 @@ class ToolService:
 
         # Get passthrough headers from in-memory cache (Issue #1715)
         # This eliminates 42,000+ redundant DB queries under load
-        passthrough_allowed = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
+        passthrough_allowed = await global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
 
         # Access gateway now (already eager-loaded) to prevent later lazy load
         gateway = tool.gateway
@@ -2081,8 +2089,8 @@ class ToolService:
         # All needed data has been extracted to local variables above.
         # The session will be closed again by FastAPI's get_db() finally block (safe no-op).
         # ═══════════════════════════════════════════════════════════════════════════
-        db.rollback()  # End the transaction so connection returns to "idle" not "idle in transaction"
-        db.close()
+        await db.rollback()  # End the transaction so connection returns to "idle" not "idle in transaction"
+        await db.close()
 
         # Plugin hook: tool pre-invoke
         # Use existing context_table from previous hooks if available
@@ -2580,7 +2588,7 @@ class ToolService:
 
     async def update_tool(
         self,
-        db: Session,
+        db: AsyncSession,
         tool_id: str,
         tool_update: ToolUpdate,
         modified_by: Optional[str] = None,
@@ -2631,7 +2639,7 @@ class ToolService:
             'tool_read'
         """
         try:
-            tool = db.get(DbTool, tool_id)
+            tool = await db.get(DbTool, tool_id, options=[selectinload(DbTool.gateway)])
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
 
@@ -2649,13 +2657,13 @@ class ToolService:
                 # Check for existing tool with the same name and visibility
                 if tool_update.visibility.lower() == "public":
                     # Check for existing public tool with the same name
-                    existing_tool = db.execute(select(DbTool).where(DbTool.custom_name == tool_update.custom_name, DbTool.visibility == "public")).scalar_one_or_none()
+                    existing_tool = (await db.execute(select(DbTool).where(DbTool.custom_name == tool_update.custom_name, DbTool.visibility == "public"))).scalar_one_or_none()
                     if existing_tool:
                         raise ToolNameConflictError(existing_tool.custom_name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
                 elif tool_update.visibility.lower() == "team" and tool_update.team_id:
                     # Check for existing team tool with the same name
-                    existing_tool = db.execute(
-                        select(DbTool).where(DbTool.custom_name == tool_update.custom_name, DbTool.visibility == "team", DbTool.team_id == tool_update.team_id)
+                    existing_tool = (
+                        await db.execute(select(DbTool).where(DbTool.custom_name == tool_update.custom_name, DbTool.visibility == "team", DbTool.team_id == tool_update.team_id))
                     ).scalar_one_or_none()
                     if existing_tool:
                         raise ToolNameConflictError(existing_tool.custom_name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
@@ -2718,8 +2726,8 @@ class ToolService:
             logger.info(f"Update tool: {tool.name} (output_schema: {tool.output_schema})")
 
             tool.updated_at = datetime.now(timezone.utc)
-            db.commit()
-            db.refresh(tool)
+            await db.commit()
+            await db.refresh(tool, ["gateway"])
             await self._notify_tool_updated(tool)
             logger.info(f"Updated tool: {tool.name}")
 
@@ -2774,7 +2782,7 @@ class ToolService:
 
             return self._convert_tool_to_read(tool)
         except PermissionError as pe:
-            db.rollback()
+            await db.rollback()
 
             # Structured logging: Log permission error
             structured_logger.log(
@@ -2790,7 +2798,7 @@ class ToolService:
             )
             raise
         except IntegrityError as ie:
-            db.rollback()
+            await db.rollback()
             logger.error(f"IntegrityError during tool update: {ie}")
 
             # Structured logging: Log database integrity error
@@ -2808,7 +2816,7 @@ class ToolService:
             )
             raise ie
         except ToolNotFoundError as tnfe:
-            db.rollback()
+            await db.rollback()
             logger.error(f"Tool not found during update: {tnfe}")
 
             # Structured logging: Log not found error
@@ -2825,7 +2833,7 @@ class ToolService:
             )
             raise tnfe
         except ToolNameConflictError as tnce:
-            db.rollback()
+            await db.rollback()
             logger.error(f"Tool name conflict during update: {tnce}")
 
             # Structured logging: Log name conflict error
@@ -2843,7 +2851,7 @@ class ToolService:
             )
             raise tnce
         except Exception as ex:
-            db.rollback()
+            await db.rollback()
 
             # Structured logging: Log generic tool update failure
             structured_logger.log(
@@ -3033,7 +3041,7 @@ class ToolService:
     #         self._event_subscribers.remove(queue)
 
     # --- Metrics ---
-    async def aggregate_metrics(self, db: Session) -> Dict[str, Any]:
+    async def aggregate_metrics(self, db: AsyncSession) -> Dict[str, Any]:
         """
         Aggregate metrics for all tool invocations across all tools.
 
@@ -3080,15 +3088,17 @@ class ToolService:
                 return cached
 
         # Query to get all aggregated metrics at once
-        result = db.execute(
-            select(
-                func.count(ToolMetric.id).label("total"),  # pylint: disable=not-callable
-                func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)).label("successful"),  # pylint: disable=not-callable
-                func.sum(case((ToolMetric.is_success.is_(False), 1), else_=0)).label("failed"),  # pylint: disable=not-callable
-                func.min(ToolMetric.response_time).label("min_rt"),  # pylint: disable=not-callable
-                func.max(ToolMetric.response_time).label("max_rt"),  # pylint: disable=not-callable
-                func.avg(ToolMetric.response_time).label("avg_rt"),  # pylint: disable=not-callable
-                func.max(ToolMetric.timestamp).label("last_time"),  # pylint: disable=not-callable
+        result = (
+            await db.execute(
+                select(
+                    func.count(ToolMetric.id).label("total"),  # pylint: disable=not-callable
+                    func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)).label("successful"),  # pylint: disable=not-callable
+                    func.sum(case((ToolMetric.is_success.is_(False), 1), else_=0)).label("failed"),  # pylint: disable=not-callable
+                    func.min(ToolMetric.response_time).label("min_rt"),  # pylint: disable=not-callable
+                    func.max(ToolMetric.response_time).label("max_rt"),  # pylint: disable=not-callable
+                    func.avg(ToolMetric.response_time).label("avg_rt"),  # pylint: disable=not-callable
+                    func.max(ToolMetric.timestamp).label("last_time"),  # pylint: disable=not-callable
+                )
             )
         ).one()
 
@@ -3114,7 +3124,7 @@ class ToolService:
 
         return metrics
 
-    async def reset_metrics(self, db: Session, tool_id: Optional[int] = None) -> None:
+    async def reset_metrics(self, db: AsyncSession, tool_id: Optional[int] = None) -> None:
         """
         Reset all tool metrics by deleting all records from the tool metrics table.
 
@@ -3134,10 +3144,10 @@ class ToolService:
         """
 
         if tool_id:
-            db.execute(delete(ToolMetric).where(ToolMetric.tool_id == tool_id))
+            await db.execute(delete(ToolMetric).where(ToolMetric.tool_id == tool_id))
         else:
-            db.execute(delete(ToolMetric))
-        db.commit()
+            await db.execute(delete(ToolMetric))
+        await db.commit()
 
         # Invalidate metrics cache
         # First-Party
@@ -3148,7 +3158,7 @@ class ToolService:
 
     async def create_tool_from_a2a_agent(
         self,
-        db: Session,
+        db: AsyncSession,
         agent: DbA2AAgent,
         created_by: Optional[str] = None,
         created_from_ip: Optional[str] = None,
@@ -3173,8 +3183,8 @@ class ToolService:
         """
         # Check if tool already exists for this agent
         tool_name = f"a2a_{agent.slug}"
-        existing_query = select(DbTool).where(DbTool.original_name == tool_name)
-        existing_tool = db.execute(existing_query).scalar_one_or_none()
+        existing_query = select(DbTool).options(selectinload(DbTool.gateway)).where(DbTool.original_name == tool_name)
+        existing_tool = (await db.execute(existing_query)).scalar_one_or_none()
 
         if existing_tool:
             # Tool already exists, return it
@@ -3232,7 +3242,7 @@ class ToolService:
             created_user_agent=created_user_agent,
         )
 
-    async def _invoke_a2a_tool(self, db: Session, tool: DbTool, arguments: Dict[str, Any]) -> ToolResult:
+    async def _invoke_a2a_tool(self, db: AsyncSession, tool: DbTool, arguments: Dict[str, Any]) -> ToolResult:
         """Invoke an A2A agent through its corresponding tool.
 
         Args:
@@ -3254,7 +3264,7 @@ class ToolService:
 
         # Get the A2A agent
         agent_query = select(DbA2AAgent).where(DbA2AAgent.id == agent_id)
-        agent = db.execute(agent_query).scalar_one_or_none()
+        agent = (await db.execute(agent_query)).scalar_one_or_none()
 
         if not agent:
             raise ToolNotFoundError(f"A2A agent not found for tool '{tool.name}' (agent ID: {agent_id})")

@@ -28,7 +28,7 @@ from typing import Optional
 # Third-Party
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # First-Party
 from mcpgateway.config import settings
@@ -96,7 +96,7 @@ class EmailAuthService:
     and security features like account lockout and failed attempt tracking.
 
     Attributes:
-        db (Session): Database session
+        db (AsyncSession): Async database session
         password_service (Argon2PasswordService): Password hashing service
 
     Examples:
@@ -106,7 +106,7 @@ class EmailAuthService:
         ...     # Service is ready to use
     """
 
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         """Initialize the email authentication service.
 
         Args:
@@ -267,7 +267,7 @@ class EmailAuthService:
         """
         try:
             stmt = select(EmailUser).where(EmailUser.email == email.lower())
-            result = self.db.execute(stmt)
+            result = await self.db.execute(stmt)
             return result.scalar_one_or_none()
         except Exception as e:
             logger.error(f"Error getting user by email {email}: {e}")
@@ -322,8 +322,8 @@ class EmailAuthService:
 
         try:
             self.db.add(user)
-            self.db.commit()
-            self.db.refresh(user)
+            await self.db.commit()
+            await self.db.refresh(user)
 
             logger.info(f"Created new user: {email}")
 
@@ -344,22 +344,22 @@ class EmailAuthService:
             # Log registration event
             registration_event = EmailAuthEvent.create_registration_event(user_email=email, success=True)
             self.db.add(registration_event)
-            self.db.commit()
+            await self.db.commit()
 
             return user
 
         except IntegrityError as e:
-            self.db.rollback()
+            await self.db.rollback()
             logger.error(f"Database error creating user {email}: {e}")
             raise UserExistsError(f"User with email {email} already exists") from e
         except Exception as e:
-            self.db.rollback()
+            await self.db.rollback()
             logger.error(f"Unexpected error creating user {email}: {e}")
 
             # Log failed registration
             registration_event = EmailAuthEvent.create_registration_event(user_email=email, success=False, failure_reason=str(e))
             self.db.add(registration_event)
-            self.db.commit()
+            await self.db.commit()
 
             raise
 
@@ -419,13 +419,13 @@ class EmailAuthService:
                     logger.warning(f"Account locked for {email} after {max_attempts} failed attempts")
                     failure_reason = "Account locked due to too many failed attempts"
 
-                self.db.commit()
+                await self.db.commit()
                 logger.info(f"Authentication failed for {email}: invalid password")
                 return None
 
             # Authentication successful
             user.reset_failed_attempts()
-            self.db.commit()
+            await self.db.commit()
 
             auth_success = True
             logger.info(f"Authentication successful for {email}")
@@ -436,7 +436,7 @@ class EmailAuthService:
             # Log authentication event
             auth_event = EmailAuthEvent.create_login_attempt(user_email=email, success=auth_success, ip_address=ip_address, user_agent=user_agent, failure_reason=failure_reason)
             self.db.add(auth_event)
-            self.db.commit()
+            await self.db.commit()
 
     async def change_password(self, email: str, old_password: Optional[str], new_password: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> bool:
         """Change a user's password.
@@ -486,20 +486,20 @@ class EmailAuthService:
             new_password_hash = self.password_service.hash_password(new_password)
             user.password_hash = new_password_hash
 
-            self.db.commit()
+            await self.db.commit()
             success = True
 
             logger.info(f"Password changed successfully for {email}")
 
         except Exception as e:
-            self.db.rollback()
+            await self.db.rollback()
             logger.error(f"Error changing password for {email}: {e}")
             raise
         finally:
             # Log password change event
             password_event = EmailAuthEvent.create_password_change_event(user_email=email, success=success, ip_address=ip_address, user_agent=user_agent)
             self.db.add(password_event)
-            self.db.commit()
+            await self.db.commit()
 
         return success
 
@@ -541,7 +541,7 @@ class EmailAuthService:
             existing_admin.is_admin = True
             existing_admin.is_active = True
 
-            self.db.commit()
+            await self.db.commit()
             logger.info(f"Updated platform admin user: {email}")
             return existing_admin
 
@@ -560,7 +560,7 @@ class EmailAuthService:
         user = await self.get_user_by_email(email)
         if user:
             user.reset_failed_attempts()  # This also updates last_login
-            self.db.commit()
+            await self.db.commit()
 
     async def list_users(self, limit: int = 100, offset: int = 0) -> list[EmailUser]:
         """List all users with pagination.
@@ -578,7 +578,7 @@ class EmailAuthService:
         """
         try:
             stmt = select(EmailUser).offset(offset).limit(limit)
-            result = self.db.execute(stmt)
+            result = await self.db.execute(stmt)
             return list(result.scalars().all())
         except Exception as e:
             logger.error(f"Error listing users: {e}")
@@ -604,7 +604,7 @@ class EmailAuthService:
         """
         try:
             stmt = select(EmailUser)
-            result = self.db.execute(stmt)
+            result = await self.db.execute(stmt)
             return len(list(result.scalars().all()))
         except Exception as e:
             logger.error(f"Error counting users: {e}")
@@ -627,7 +627,7 @@ class EmailAuthService:
                 stmt = stmt.where(EmailAuthEvent.user_email == email)
             stmt = stmt.order_by(EmailAuthEvent.timestamp.desc()).offset(offset).limit(limit)
 
-            result = self.db.execute(stmt)
+            result = await self.db.execute(stmt)
             return list(result.scalars().all())
         except Exception as e:
             logger.error(f"Error getting auth events: {e}")
@@ -652,7 +652,7 @@ class EmailAuthService:
         try:
             # Get existing user
             stmt = select(EmailUser).where(EmailUser.email == email)
-            result = self.db.execute(stmt)
+            result = await self.db.execute(stmt)
             user = result.scalar_one_or_none()
 
             if not user:
@@ -672,11 +672,11 @@ class EmailAuthService:
 
             user.updated_at = datetime.now(timezone.utc)
 
-            self.db.commit()
+            await self.db.commit()
             return user
 
         except Exception as e:
-            self.db.rollback()
+            await self.db.rollback()
             logger.error(f"Error updating user {email}: {e}")
             raise
 
@@ -694,7 +694,7 @@ class EmailAuthService:
         """
         try:
             stmt = select(EmailUser).where(EmailUser.email == email)
-            result = self.db.execute(stmt)
+            result = await self.db.execute(stmt)
             user = result.scalar_one_or_none()
 
             if not user:
@@ -703,12 +703,12 @@ class EmailAuthService:
             user.is_active = True
             user.updated_at = datetime.now(timezone.utc)
 
-            self.db.commit()
+            await self.db.commit()
             logger.info(f"User {email} activated")
             return user
 
         except Exception as e:
-            self.db.rollback()
+            await self.db.rollback()
             logger.error(f"Error activating user {email}: {e}")
             raise
 
@@ -726,7 +726,7 @@ class EmailAuthService:
         """
         try:
             stmt = select(EmailUser).where(EmailUser.email == email)
-            result = self.db.execute(stmt)
+            result = await self.db.execute(stmt)
             user = result.scalar_one_or_none()
 
             if not user:
@@ -735,12 +735,12 @@ class EmailAuthService:
             user.is_active = False
             user.updated_at = datetime.now(timezone.utc)
 
-            self.db.commit()
+            await self.db.commit()
             logger.info(f"User {email} deactivated")
             return user
 
         except Exception as e:
-            self.db.rollback()
+            await self.db.rollback()
             logger.error(f"Error deactivating user {email}: {e}")
             raise
 
@@ -759,7 +759,7 @@ class EmailAuthService:
         """
         try:
             stmt = select(EmailUser).where(EmailUser.email == email)
-            result = self.db.execute(stmt)
+            result = await self.db.execute(stmt)
             user = result.scalar_one_or_none()
 
             if not user:
@@ -770,7 +770,7 @@ class EmailAuthService:
             from mcpgateway.db import EmailTeam, EmailTeamMember  # pylint: disable=import-outside-toplevel
 
             teams_owned_stmt = select(EmailTeam).where(EmailTeam.created_by == email)
-            teams_owned = self.db.execute(teams_owned_stmt).scalars().all()
+            teams_owned = (await self.db.execute(teams_owned_stmt)).scalars().all()
 
             if teams_owned:
                 # For each team, try to transfer ownership to another owner
@@ -780,7 +780,7 @@ class EmailAuthService:
                         select(EmailTeamMember).where(EmailTeamMember.team_id == team.id, EmailTeamMember.user_email != email, EmailTeamMember.role == "owner").order_by(EmailTeamMember.role.desc())
                     )
 
-                    potential_owners = self.db.execute(potential_owners_stmt).scalars().all()
+                    potential_owners = (await self.db.execute(potential_owners_stmt)).scalars().all()
 
                     if potential_owners:
                         # Transfer ownership to the first available owner
@@ -790,37 +790,37 @@ class EmailAuthService:
                     else:
                         # No other owners available - check if it's a single-user team
                         all_members_stmt = select(EmailTeamMember).where(EmailTeamMember.team_id == team.id)
-                        all_members = self.db.execute(all_members_stmt).scalars().all()
+                        all_members = (await self.db.execute(all_members_stmt)).scalars().all()
 
                         if len(all_members) == 1 and all_members[0].user_email == email:
                             # This is a single-user personal team - cascade delete it
                             logger.info(f"Deleting personal team '{team.name}' (single member: {email})")
                             # Delete team members first (should be just the owner)
                             delete_team_members_stmt = delete(EmailTeamMember).where(EmailTeamMember.team_id == team.id)
-                            self.db.execute(delete_team_members_stmt)
+                            await self.db.execute(delete_team_members_stmt)
                             # Delete the team
-                            self.db.delete(team)
+                            await self.db.delete(team)
                         else:
                             # Multi-member team with no other owners - cannot delete user
                             raise ValueError(f"Cannot delete user {email}: owns team '{team.name}' with {len(all_members)} members but no other owners to transfer ownership to")
 
             # Delete related auth events first
             auth_events_stmt = delete(EmailAuthEvent).where(EmailAuthEvent.user_email == email)
-            self.db.execute(auth_events_stmt)
+            await self.db.execute(auth_events_stmt)
 
             # Remove user from all team memberships
             team_members_stmt = delete(EmailTeamMember).where(EmailTeamMember.user_email == email)
-            self.db.execute(team_members_stmt)
+            await self.db.execute(team_members_stmt)
 
             # Delete the user
-            self.db.delete(user)
-            self.db.commit()
+            await self.db.delete(user)
+            await self.db.commit()
 
             logger.info(f"User {email} deleted permanently")
             return True
 
         except Exception as e:
-            self.db.rollback()
+            await self.db.rollback()
             logger.error(f"Error deleting user {email}: {e}")
             raise
 
@@ -831,7 +831,7 @@ class EmailAuthService:
             int: Number of active admin users
         """
         stmt = select(func.count(EmailUser.email)).where(EmailUser.is_admin.is_(True), EmailUser.is_active.is_(True))  # pylint: disable=not-callable
-        result = self.db.execute(stmt)
+        result = await self.db.execute(stmt)
         return result.scalar() or 0
 
     async def is_last_active_admin(self, email: str) -> bool:
@@ -845,7 +845,7 @@ class EmailAuthService:
         """
         # First check if the user is an active admin
         stmt = select(EmailUser).where(EmailUser.email == email)
-        result = self.db.execute(stmt)
+        result = await self.db.execute(stmt)
         user = result.scalar_one_or_none()
 
         if not user or not user.is_admin or not user.is_active:

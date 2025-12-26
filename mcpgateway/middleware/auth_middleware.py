@@ -28,7 +28,7 @@ from starlette.responses import Response
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
-from mcpgateway.db import SessionLocal
+from mcpgateway.db import _use_async, AsyncSessionLocal, SessionLocal
 from mcpgateway.services.security_logger import get_security_logger
 
 logger = logging.getLogger(__name__)
@@ -101,23 +101,80 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # Try to authenticate and populate user context
+        # Use async session when available, otherwise fall back to sync
+        if _use_async and AsyncSessionLocal is not None:
+            await self._authenticate_async(request, token)
+        else:
+            await self._authenticate_sync(request, token)
+
+        # Continue with request
+        return await call_next(request)
+
+    async def _authenticate_async(self, request: Request, token: str) -> None:
+        """Authenticate using async database session.
+
+        Args:
+            request: Incoming HTTP request
+            token: JWT token to validate
+        """
+        async with AsyncSessionLocal() as db:
+            try:
+                credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+                user = await get_current_user(credentials, request=request)
+
+                user_email = user.email
+                user_id = user_email
+
+                request.state.user = user
+                logger.info(f"Authenticated user: {user_email if user_email else user_id}")
+
+                if _should_log_auth_success():
+                    security_logger.log_authentication_attempt(
+                        user_id=user_id,
+                        user_email=user_email,
+                        auth_method="bearer_token",
+                        success=True,
+                        client_ip=request.client.host if request.client else "unknown",
+                        user_agent=request.headers.get("user-agent"),
+                        db=db,
+                    )
+                    await db.commit()
+
+            except Exception as e:
+                logger.info(f"Auth context extraction failed (continuing as anonymous): {e}")
+
+                if _should_log_auth_failure():
+                    security_logger.log_authentication_attempt(
+                        user_id="unknown",
+                        user_email=None,
+                        auth_method="bearer_token",
+                        success=False,
+                        client_ip=request.client.host if request.client else "unknown",
+                        user_agent=request.headers.get("user-agent"),
+                        failure_reason=str(e),
+                        db=db,
+                    )
+                    await db.commit()
+
+    async def _authenticate_sync(self, request: Request, token: str) -> None:
+        """Authenticate using sync database session.
+
+        Args:
+            request: Incoming HTTP request
+            token: JWT token to validate
+        """
         db = None
         try:
             db = SessionLocal()
             credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-            # get_current_user now uses fresh DB sessions internally, no session needed here
             user = await get_current_user(credentials, request=request)
 
-            # Note: EmailUser uses 'email' as primary key, not 'id'
-            # User is already detached (created with fresh session that was closed)
             user_email = user.email
-            user_id = user_email  # For EmailUser, email IS the ID
+            user_id = user_email
 
-            # Store user in request state for downstream use
             request.state.user = user
-            logger.info(f"✓ Authenticated user: {user_email if user_email else user_id}")
+            logger.info(f"Authenticated user: {user_email if user_email else user_id}")
 
-            # Log successful authentication (only if logging level is "all")
             if _should_log_auth_success():
                 security_logger.log_authentication_attempt(
                     user_id=user_id,
@@ -130,10 +187,8 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                 )
 
         except Exception as e:
-            # Silently fail - let route handlers enforce auth if needed
-            logger.info(f"✗ Auth context extraction failed (continuing as anonymous): {e}")
+            logger.info(f"Auth context extraction failed (continuing as anonymous): {e}")
 
-            # Log failed authentication attempt (based on logging level)
             if _should_log_auth_failure():
                 security_logger.log_authentication_attempt(
                     user_id="unknown",
@@ -147,12 +202,8 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                 )
 
         finally:
-            # Always close database session
             if db:
                 try:
                     db.close()
                 except Exception as close_error:
                     logger.debug(f"Failed to close database session: {close_error}")
-
-        # Continue with request
-        return await call_next(request)

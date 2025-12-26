@@ -51,7 +51,6 @@ import orjson
 from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as starletteRequest
 from starlette.responses import Response as starletteResponse
@@ -68,7 +67,7 @@ from mcpgateway.common.models import InitializeResult
 from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
 from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.config import settings
-from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
+from mcpgateway.db import _use_async, get_async_db, get_db, refresh_slugs_on_startup
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
@@ -1363,48 +1362,8 @@ a2a_router = APIRouter(prefix="/a2a", tags=["A2A Agents"])
 # Basic Auth setup
 
 
-# Database dependency
-def get_db():
-    """
-    Dependency function to provide a database session.
-
-    Commits the transaction on successful completion to avoid implicit rollbacks
-    for read-only operations. Rolls back explicitly on exception.
-
-    Yields:
-        Session: A SQLAlchemy session object for interacting with the database.
-
-    Raises:
-        Exception: Re-raises any exception after rolling back the transaction.
-
-    Ensures:
-        The database session is closed after the request completes, even in the case of an exception.
-
-    Examples:
-        >>> # Test that get_db returns a generator
-        >>> db_gen = get_db()
-        >>> hasattr(db_gen, '__next__')
-        True
-        >>> # Test cleanup happens
-        >>> try:
-        ...     db = next(db_gen)
-        ...     type(db).__name__
-        ... finally:
-        ...     try:
-        ...         next(db_gen)
-        ...     except StopIteration:
-        ...         pass  # Expected - generator cleanup
-        'Session'
-    """
-    db = SessionLocal()
-    try:
-        yield db
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
+# Dynamic database dependency - uses async for asyncpg, sync for sqlite/psycopg
+_db_dependency = get_async_db if _use_async else get_db
 
 
 def require_api_key(api_key: str) -> None:
@@ -1715,7 +1674,7 @@ async def handle_notification(request: Request, user=Depends(get_current_user)) 
 
 
 @protocol_router.post("/completion/complete")
-async def handle_completion(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
+async def handle_completion(request: Request, db=Depends(_db_dependency), user=Depends(get_current_user_with_permissions)):
     """
     Handles the completion of tasks by processing a completion request.
 
@@ -1733,7 +1692,7 @@ async def handle_completion(request: Request, db: Session = Depends(get_db), use
 
 
 @protocol_router.post("/sampling/createMessage")
-async def handle_sampling(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
+async def handle_sampling(request: Request, db=Depends(_db_dependency), user=Depends(get_current_user_with_permissions)):
     """
     Handles the creation of a new message for sampling.
 
@@ -1762,7 +1721,7 @@ async def list_servers(
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> List[ServerRead]:
     """
@@ -1814,7 +1773,7 @@ async def list_servers(
 
 @server_router.get("/{server_id}", response_model=ServerRead)
 @require_permission("servers.read")
-async def get_server(server_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> ServerRead:
+async def get_server(server_id: str, db=Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> ServerRead:
     """
     Retrieves a server by its ID.
 
@@ -1844,7 +1803,7 @@ async def create_server(
     request: Request,
     team_id: Optional[str] = Body(None, description="Team ID to assign server to"),
     visibility: Optional[str] = Body("public", description="Server visibility: private, team, public"),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> ServerRead:
     """
@@ -1913,7 +1872,7 @@ async def update_server(
     server_id: str,
     server: ServerUpdate,
     request: Request,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> ServerRead:
     """
@@ -1970,7 +1929,7 @@ async def update_server(
 async def toggle_server_status(
     server_id: str,
     activate: bool = True,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> ServerRead:
     """
@@ -2002,7 +1961,7 @@ async def toggle_server_status(
 
 @server_router.delete("/{server_id}", response_model=Dict[str, str])
 @require_permission("servers.delete")
-async def delete_server(server_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_server(server_id: str, db=Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
     Deletes a server by its ID.
 
@@ -2145,7 +2104,7 @@ async def server_get_tools(
     server_id: str,
     include_inactive: bool = False,
     include_metrics: bool = False,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> List[Dict[str, Any]]:
     """
@@ -2175,7 +2134,7 @@ async def server_get_tools(
 async def server_get_resources(
     server_id: str,
     include_inactive: bool = False,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> List[Dict[str, Any]]:
     """
@@ -2204,7 +2163,7 @@ async def server_get_resources(
 async def server_get_prompts(
     server_id: str,
     include_inactive: bool = False,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> List[Dict[str, Any]]:
     """
@@ -2241,7 +2200,7 @@ async def list_a2a_agents(
     visibility: Optional[str] = Query(None, description="Filter by visibility (private, team, public)"),
     skip: int = Query(0, ge=0, description="Number of agents to skip for pagination"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of agents to return"),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> List[A2AAgentRead]:
     """
@@ -2285,7 +2244,7 @@ async def list_a2a_agents(
 
 @a2a_router.get("/{agent_id}", response_model=A2AAgentRead)
 @require_permission("a2a.read")
-async def get_a2a_agent(agent_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> A2AAgentRead:
+async def get_a2a_agent(agent_id: str, db=Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> A2AAgentRead:
     """
     Retrieves an A2A agent by its ID.
 
@@ -2317,7 +2276,7 @@ async def create_a2a_agent(
     request: Request,
     team_id: Optional[str] = Body(None, description="Team ID to assign agent to"),
     visibility: Optional[str] = Body("public", description="Agent visibility: private, team, public"),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> A2AAgentRead:
     """
@@ -2390,7 +2349,7 @@ async def update_a2a_agent(
     agent_id: str,
     agent: A2AAgentUpdate,
     request: Request,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> A2AAgentRead:
     """
@@ -2448,7 +2407,7 @@ async def update_a2a_agent(
 async def toggle_a2a_agent_status(
     agent_id: str,
     activate: bool = True,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> A2AAgentRead:
     """
@@ -2482,7 +2441,7 @@ async def toggle_a2a_agent_status(
 
 @a2a_router.delete("/{agent_id}", response_model=Dict[str, str])
 @require_permission("a2a.delete")
-async def delete_a2a_agent(agent_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_a2a_agent(agent_id: str, db=Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
     Deletes an A2A agent by its ID.
 
@@ -2521,7 +2480,7 @@ async def invoke_a2a_agent(
     agent_name: str,
     parameters: Dict[str, Any] = Body(default_factory=dict),
     interaction_type: str = Body(default="query"),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """
@@ -2580,7 +2539,7 @@ async def list_tools(
     team_id: Optional[str] = Query(None, description="Filter by team ID"),
     visibility: Optional[str] = Query(None, description="Filter by visibility: private, team, public"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID"),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     apijsonpath: JsonPathModifier = Body(None),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[ToolRead], List[Dict], Dict]:
@@ -2663,7 +2622,7 @@ async def create_tool(
     tool: ToolCreate,
     request: Request,
     team_id: Optional[str] = Body(None, description="Team ID to assign tool to"),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> ToolRead:
     """
@@ -2740,7 +2699,7 @@ async def create_tool(
 @require_permission("tools.read")
 async def get_tool(
     tool_id: str,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
     apijsonpath: JsonPathModifier = Body(None),
 ) -> Union[ToolRead, Dict]:
@@ -2779,7 +2738,7 @@ async def update_tool(
     tool_id: str,
     tool: ToolUpdate,
     request: Request,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> ToolRead:
     """
@@ -2837,7 +2796,7 @@ async def update_tool(
 
 @tool_router.delete("/{tool_id}")
 @require_permission("tools.delete")
-async def delete_tool(tool_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_tool(tool_id: str, db=Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
     Permanently deletes a tool by ID.
 
@@ -2870,7 +2829,7 @@ async def delete_tool(tool_id: str, db: Session = Depends(get_db), user=Depends(
 async def toggle_tool_status(
     tool_id: str,
     activate: bool = True,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """
@@ -2912,7 +2871,7 @@ async def toggle_tool_status(
 @resource_router.get("/templates/list", response_model=ListResourceTemplatesResult)
 @require_permission("resources.read")
 async def list_resource_templates(
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> ListResourceTemplatesResult:
     """
@@ -2936,7 +2895,7 @@ async def list_resource_templates(
 async def toggle_resource_status(
     resource_id: str,
     activate: bool = True,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """
@@ -2981,7 +2940,7 @@ async def list_resources(
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> List[Dict[str, Any]]:
     """
@@ -3044,7 +3003,7 @@ async def create_resource(
     request: Request,
     team_id: Optional[str] = Body(None, description="Team ID to assign resource to"),
     visibility: Optional[str] = Body("public", description="Resource visibility: private, team, public"),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> ResourceRead:
     """
@@ -3112,7 +3071,7 @@ async def create_resource(
 
 @resource_router.get("/{resource_id}")
 @require_permission("resources.read")
-async def read_resource(resource_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Any:
+async def read_resource(resource_id: str, request: Request, db=Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> Any:
     """
     Read a resource by its ID with plugin support.
 
@@ -3191,7 +3150,7 @@ async def update_resource(
     resource_id: str,
     resource: ResourceUpdate,
     request: Request,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> ResourceRead:
     """
@@ -3244,7 +3203,7 @@ async def update_resource(
 
 @resource_router.delete("/{resource_id}")
 @require_permission("resources.delete")
-async def delete_resource(resource_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_resource(resource_id: str, db=Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
     Delete a resource by its ID.
 
@@ -3297,7 +3256,7 @@ async def subscribe_resource(user=Depends(get_current_user_with_permissions)) ->
 async def toggle_prompt_status(
     prompt_id: str,
     activate: bool = True,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """
@@ -3342,7 +3301,7 @@ async def list_prompts(
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> List[Dict[str, Any]]:
     """
@@ -3402,7 +3361,7 @@ async def create_prompt(
     request: Request,
     team_id: Optional[str] = Body(None, description="Team ID to assign prompt to"),
     visibility: Optional[str] = Body("public", description="Prompt visibility: private, team, public"),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> PromptRead:
     """
@@ -3483,7 +3442,7 @@ async def get_prompt(
     request: Request,
     prompt_id: str,
     args: Dict[str, str] = Body({}),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> Any:
     """Get a prompt by prompt_id with arguments.
@@ -3539,7 +3498,7 @@ async def get_prompt(
 async def get_prompt_no_args(
     request: Request,
     prompt_id: str,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> Any:
     """Get a prompt by ID without arguments.
@@ -3584,7 +3543,7 @@ async def update_prompt(
     prompt_id: str,
     prompt: PromptUpdate,
     request: Request,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> PromptRead:
     """
@@ -3644,7 +3603,7 @@ async def update_prompt(
 
 @prompt_router.delete("/{prompt_id}")
 @require_permission("prompts.delete")
-async def delete_prompt(prompt_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_prompt(prompt_id: str, db=Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
     Delete a prompt by ID.
 
@@ -3688,7 +3647,7 @@ async def delete_prompt(prompt_id: str, db: Session = Depends(get_db), user=Depe
 async def toggle_gateway_status(
     gateway_id: str,
     activate: bool = True,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """
@@ -3736,7 +3695,7 @@ async def list_gateways(
     include_inactive: bool = False,
     team_id: Optional[str] = Query(None, description="Filter by team ID"),
     visibility: Optional[str] = Query(None, description="Filter by visibility: private, team, public"),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> List[GatewayRead]:
     """
@@ -3782,7 +3741,7 @@ async def list_gateways(
 async def register_gateway(
     gateway: GatewayCreate,
     request: Request,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[GatewayRead, JSONResponse]:
     """
@@ -3852,7 +3811,7 @@ async def register_gateway(
 
 @gateway_router.get("/{gateway_id}", response_model=GatewayRead)
 @require_permission("gateways.read")
-async def get_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Union[GatewayRead, JSONResponse]:
+async def get_gateway(gateway_id: str, db=Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> Union[GatewayRead, JSONResponse]:
     """
     Retrieve a gateway by ID.
 
@@ -3880,7 +3839,7 @@ async def update_gateway(
     gateway_id: str,
     gateway: GatewayUpdate,
     request: Request,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[GatewayRead, JSONResponse]:
     """
@@ -3936,7 +3895,7 @@ async def update_gateway(
 
 @gateway_router.delete("/{gateway_id}")
 @require_permission("gateways.delete")
-async def delete_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_gateway(gateway_id: str, db=Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
     Delete a gateway by ID.
 
@@ -4067,7 +4026,7 @@ async def subscribe_roots_changes(
 ##################
 @utility_router.post("/rpc/")
 @utility_router.post("/rpc")
-async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depends(require_auth)):
+async def handle_rpc(request: Request, db=Depends(_db_dependency), user=Depends(require_auth)):
     """Handle RPC requests.
 
     Args:
@@ -4615,7 +4574,7 @@ async def set_log_level(request: Request, user=Depends(get_current_user_with_per
 ####################
 @metrics_router.get("", response_model=dict)
 @require_permission("admin.metrics")
-async def get_metrics(db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> dict:
+async def get_metrics(db=Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> dict:
     """
     Retrieve aggregated metrics for all entity types (Tools, Resources, Servers, Prompts, A2A Agents).
 
@@ -4649,7 +4608,7 @@ async def get_metrics(db: Session = Depends(get_db), user=Depends(get_current_us
 
 @metrics_router.post("/reset", response_model=dict)
 @require_permission("admin.metrics")
-async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] = None, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> dict:
+async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] = None, db=Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> dict:
     """
     Reset metrics for a specific entity type and optionally a specific entity ID,
     or perform a global reset if no entity is specified.
@@ -4697,7 +4656,7 @@ async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] =
 # Healthcheck      #
 ####################
 @app.get("/health")
-async def healthcheck(db: Session = Depends(get_db)):
+async def healthcheck(db=Depends(_db_dependency)):
     """
     Perform a basic health check to verify database connectivity.
 
@@ -4709,7 +4668,7 @@ async def healthcheck(db: Session = Depends(get_db)):
     """
     try:
         # Execute the query using text() for an explicit textual SQL expression.
-        db.execute(text("SELECT 1"))
+        await db.execute(text("SELECT 1"))
     except Exception as e:
         error_message = f"Database connection error: {str(e)}"
         logger.error(error_message)
@@ -4718,7 +4677,7 @@ async def healthcheck(db: Session = Depends(get_db)):
 
 
 @app.get("/ready")
-async def readiness_check(db: Session = Depends(get_db)):
+async def readiness_check(db=Depends(_db_dependency)):
     """
     Perform a readiness check to verify if the application is ready to receive traffic.
 
@@ -4729,8 +4688,8 @@ async def readiness_check(db: Session = Depends(get_db)):
         JSONResponse with status 200 if ready, 503 if not.
     """
     try:
-        # Run the blocking DB check in a thread to avoid blocking the event loop
-        await asyncio.to_thread(db.execute, text("SELECT 1"))
+        # Execute async DB check
+        await db.execute(text("SELECT 1"))
         return ORJSONResponse(content={"status": "ready"}, status_code=200)
     except Exception as e:
         error_message = f"Readiness check failed: {str(e)}"
@@ -4802,7 +4761,7 @@ async def security_health(request: Request):
 async def list_tags(
     entity_types: Optional[str] = None,
     include_entities: bool = False,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> List[TagInfo]:
     """
@@ -4842,7 +4801,7 @@ async def list_tags(
 async def get_entities_by_tag(
     tag_name: str,
     entity_types: Optional[str] = None,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> List[TaggedEntity]:
     """
@@ -4892,7 +4851,7 @@ async def export_configuration(
     tags: Optional[str] = None,
     include_inactive: bool = False,
     include_dependencies: bool = True,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """
@@ -4967,7 +4926,7 @@ async def export_configuration(
 @export_import_router.post("/export/selective", response_model=Dict[str, Any])
 @require_permission("admin.export")
 async def export_selective_configuration(
-    entity_selections: Dict[str, List[str]] = Body(...), include_dependencies: bool = True, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)
+    entity_selections: Dict[str, List[str]] = Body(...), include_dependencies: bool = True, db=Depends(_db_dependency), user=Depends(get_current_user_with_permissions)
 ) -> Dict[str, Any]:
     """
     Export specific entities by their IDs/names.
@@ -5026,7 +4985,7 @@ async def import_configuration(
     dry_run: bool = False,
     rekey_secret: Optional[str] = None,
     selected_entities: Optional[Dict[str, List[str]]] = None,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """

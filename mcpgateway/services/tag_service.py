@@ -18,7 +18,7 @@ from typing import Dict, List, Optional
 
 # Third-Party
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # First-Party
 from mcpgateway.db import Gateway as DbGateway
@@ -51,7 +51,7 @@ class TagService:
         True
     """
 
-    async def get_all_tags(self, db: Session, entity_types: Optional[List[str]] = None, include_entities: bool = False) -> List[TagInfo]:
+    async def get_all_tags(self, db: AsyncSession, entity_types: Optional[List[str]] = None, include_entities: bool = False) -> List[TagInfo]:
         """Retrieve all unique tags across specified entity types.
 
         This method aggregates tags from multiple entity types and returns comprehensive
@@ -148,7 +148,7 @@ class TagService:
             if include_entities:
                 # Get full entity details
                 stmt = select(model).where(model.tags.isnot(None))
-                result = db.execute(stmt)
+                result = await db.execute(stmt)
 
                 for entity in result.scalars():
                     tags = entity.tags if entity.tags else []
@@ -189,7 +189,7 @@ class TagService:
             else:
                 # Just get tags without entity details
                 stmt = select(model.tags).where(model.tags.isnot(None))
-                result = db.execute(stmt)
+                result = await db.execute(stmt)
 
                 for row in result:
                     tags = row[0] if row[0] else []
@@ -277,7 +277,7 @@ class TagService:
             return tag.get("id") or tag.get("label") or str(tag)
         return str(tag)
 
-    async def get_entities_by_tag(self, db: Session, tag_name: str, entity_types: Optional[List[str]] = None) -> List[TaggedEntity]:
+    async def get_entities_by_tag(self, db: AsyncSession, tag_name: str, entity_types: Optional[List[str]] = None) -> List[TaggedEntity]:
         """Get all entities that have a specific tag.
 
         This method searches across specified entity types to find all entities
@@ -361,7 +361,7 @@ class TagService:
             # Query entities that have this tag
             # Using JSON contains for PostgreSQL/SQLite JSON columns
             stmt = select(model).where(func.json_extract(model.tags, "$").op("LIKE")(f'%"{tag_name}"%'))
-            result = db.execute(stmt)
+            result = await db.execute(stmt)
 
             for entity in result.scalars():
                 entity_tags = entity.tags or []
@@ -395,7 +395,7 @@ class TagService:
 
         return entities
 
-    async def get_tag_counts(self, db: Session) -> Dict[str, int]:
+    async def get_tag_counts(self, db: AsyncSession) -> Dict[str, int]:
         """Get count of unique tags per entity type.
 
         This method calculates the total number of tag instances (not unique tag names)
@@ -446,27 +446,27 @@ class TagService:
 
         # Count unique tags for tools
         tool_tags_stmt = select(func.json_array_length(DbTool.tags)).where(DbTool.tags.isnot(None))
-        tool_tags = db.execute(tool_tags_stmt).scalars().all()
+        tool_tags = (await db.execute(tool_tags_stmt)).scalars().all()
         counts["tools"] = sum(tool_tags)
 
         # Count unique tags for resources
         resource_tags_stmt = select(func.json_array_length(DbResource.tags)).where(DbResource.tags.isnot(None))
-        resource_tags = db.execute(resource_tags_stmt).scalars().all()
+        resource_tags = (await db.execute(resource_tags_stmt)).scalars().all()
         counts["resources"] = sum(resource_tags)
 
         # Count unique tags for prompts
         prompt_tags_stmt = select(func.json_array_length(DbPrompt.tags)).where(DbPrompt.tags.isnot(None))
-        prompt_tags = db.execute(prompt_tags_stmt).scalars().all()
+        prompt_tags = (await db.execute(prompt_tags_stmt)).scalars().all()
         counts["prompts"] = sum(prompt_tags)
 
         # Count unique tags for servers
         server_tags_stmt = select(func.json_array_length(DbServer.tags)).where(DbServer.tags.isnot(None))
-        server_tags = db.execute(server_tags_stmt).scalars().all()
+        server_tags = (await db.execute(server_tags_stmt)).scalars().all()
         counts["servers"] = sum(server_tags)
 
         # Count unique tags for gateways
         gateway_tags_stmt = select(func.json_array_length(DbGateway.tags)).where(DbGateway.tags.isnot(None))
-        gateway_tags = db.execute(gateway_tags_stmt).scalars().all()
+        gateway_tags = (await db.execute(gateway_tags_stmt)).scalars().all()
         counts["gateways"] = sum(gateway_tags)
 
         return counts

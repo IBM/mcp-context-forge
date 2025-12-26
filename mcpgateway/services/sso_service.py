@@ -24,7 +24,8 @@ import urllib.parse
 # Third-Party
 import httpx
 from sqlalchemy import and_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 # First-Party
 from mcpgateway.config import settings
@@ -53,11 +54,11 @@ class SSOService:
         True
     """
 
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         """Initialize SSO service with database session.
 
         Args:
-            db: SQLAlchemy database session
+            db: SQLAlchemy async database session
         """
         self.db = db
         self.auth_service = EmailAuthService(db)
@@ -89,7 +90,7 @@ class SSOService:
 
         return None
 
-    def list_enabled_providers(self) -> List[SSOProvider]:
+    async def list_enabled_providers(self) -> List[SSOProvider]:
         """Get list of enabled SSO providers.
 
         Returns:
@@ -98,16 +99,17 @@ class SSOService:
         Examples:
             Returns empty list when DB has no providers:
             >>> from unittest.mock import MagicMock
+            >>> import asyncio
             >>> service = SSOService(MagicMock())
             >>> service.db.execute.return_value.scalars.return_value.all.return_value = []
-            >>> service.list_enabled_providers()
+            >>> asyncio.run(service.list_enabled_providers())
             []
         """
         stmt = select(SSOProvider).where(SSOProvider.is_enabled.is_(True))
-        result = self.db.execute(stmt)
+        result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
-    def get_provider(self, provider_id: str) -> Optional[SSOProvider]:
+    async def get_provider(self, provider_id: str) -> Optional[SSOProvider]:
         """Get SSO provider by ID.
 
         Args:
@@ -118,16 +120,17 @@ class SSOService:
 
         Examples:
             >>> from unittest.mock import MagicMock
+            >>> import asyncio
             >>> service = SSOService(MagicMock())
             >>> service.db.execute.return_value.scalar_one_or_none.return_value = None
-            >>> service.get_provider('x') is None
+            >>> asyncio.run(service.get_provider('x')) is None
             True
         """
         stmt = select(SSOProvider).where(SSOProvider.id == provider_id)
-        result = self.db.execute(stmt)
+        result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
-    def get_provider_by_name(self, provider_name: str) -> Optional[SSOProvider]:
+    async def get_provider_by_name(self, provider_name: str) -> Optional[SSOProvider]:
         """Get SSO provider by name.
 
         Args:
@@ -138,16 +141,17 @@ class SSOService:
 
         Examples:
             >>> from unittest.mock import MagicMock
+            >>> import asyncio
             >>> service = SSOService(MagicMock())
             >>> service.db.execute.return_value.scalar_one_or_none.return_value = None
-            >>> service.get_provider_by_name('github') is None
+            >>> asyncio.run(service.get_provider_by_name('github')) is None
             True
         """
         stmt = select(SSOProvider).where(SSOProvider.name == provider_name)
-        result = self.db.execute(stmt)
+        result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
-    def create_provider(self, provider_data: Dict[str, Any]) -> SSOProvider:
+    async def create_provider(self, provider_data: Dict[str, Any]) -> SSOProvider:
         """Create new SSO provider configuration.
 
         Args:
@@ -158,6 +162,7 @@ class SSOService:
 
         Examples:
             >>> from unittest.mock import MagicMock
+            >>> import asyncio
             >>> service = SSOService(MagicMock())
             >>> service._encrypt_secret = lambda s: 'ENC(' + s + ')'
             >>> data = {
@@ -166,7 +171,7 @@ class SSOService:
             ...     'authorization_url': 'https://example/auth', 'token_url': 'https://example/token',
             ...     'userinfo_url': 'https://example/user', 'scope': 'user:email'
             ... }
-            >>> provider = service.create_provider(data)
+            >>> provider = asyncio.run(service.create_provider(data))
             >>> hasattr(provider, 'id') and provider.id == 'github'
             True
             >>> provider.client_secret_encrypted.startswith('ENC(')
@@ -178,11 +183,11 @@ class SSOService:
 
         provider = SSOProvider(**provider_data)
         self.db.add(provider)
-        self.db.commit()
-        self.db.refresh(provider)
+        await self.db.commit()
+        await self.db.refresh(provider)
         return provider
 
-    def update_provider(self, provider_id: str, provider_data: Dict[str, Any]) -> Optional[SSOProvider]:
+    async def update_provider(self, provider_id: str, provider_data: Dict[str, Any]) -> Optional[SSOProvider]:
         """Update existing SSO provider configuration.
 
         Args:
@@ -195,20 +200,24 @@ class SSOService:
         Examples:
             >>> from types import SimpleNamespace
             >>> from unittest.mock import MagicMock
+            >>> import asyncio
             >>> svc = SSOService(MagicMock())
             >>> # Existing provider object
             >>> existing = SimpleNamespace(id='github', name='github', client_id='old', client_secret_encrypted='X', is_enabled=True)
-            >>> svc.get_provider = lambda _id: existing
+            >>> async def mock_get_provider(_id): return existing
+            >>> svc.get_provider = mock_get_provider
             >>> svc._encrypt_secret = lambda s: 'ENC-' + s
-            >>> svc.db.commit = lambda: None
-            >>> svc.db.refresh = lambda obj: None
-            >>> updated = svc.update_provider('github', {'client_id': 'new', 'client_secret': 'sec'})
+            >>> async def mock_commit(): pass
+            >>> async def mock_refresh(obj): pass
+            >>> svc.db.commit = mock_commit
+            >>> svc.db.refresh = mock_refresh
+            >>> updated = asyncio.run(svc.update_provider('github', {'client_id': 'new', 'client_secret': 'sec'}))
             >>> updated.client_id
             'new'
             >>> updated.client_secret_encrypted
             'ENC-sec'
         """
-        provider = self.get_provider(provider_id)
+        provider = await self.get_provider(provider_id)
         if not provider:
             return None
 
@@ -222,11 +231,11 @@ class SSOService:
                 setattr(provider, key, value)
 
         provider.updated_at = utc_now()
-        self.db.commit()
-        self.db.refresh(provider)
+        await self.db.commit()
+        await self.db.refresh(provider)
         return provider
 
-    def delete_provider(self, provider_id: str) -> bool:
+    async def delete_provider(self, provider_id: str) -> bool:
         """Delete SSO provider configuration.
 
         Args:
@@ -238,22 +247,27 @@ class SSOService:
         Examples:
             >>> from types import SimpleNamespace
             >>> from unittest.mock import MagicMock
+            >>> import asyncio
             >>> svc = SSOService(MagicMock())
-            >>> svc.db.delete = lambda obj: None
-            >>> svc.db.commit = lambda: None
-            >>> svc.get_provider = lambda _id: SimpleNamespace(id='github')
-            >>> svc.delete_provider('github')
+            >>> async def mock_delete(obj): pass
+            >>> async def mock_commit(): pass
+            >>> svc.db.delete = mock_delete
+            >>> svc.db.commit = mock_commit
+            >>> async def mock_get_provider(_id): return SimpleNamespace(id='github')
+            >>> svc.get_provider = mock_get_provider
+            >>> asyncio.run(svc.delete_provider('github'))
             True
-            >>> svc.get_provider = lambda _id: None
-            >>> svc.delete_provider('missing')
+            >>> async def mock_get_provider_none(_id): return None
+            >>> svc.get_provider = mock_get_provider_none
+            >>> asyncio.run(svc.delete_provider('missing'))
             False
         """
-        provider = self.get_provider(provider_id)
+        provider = await self.get_provider(provider_id)
         if not provider:
             return False
 
-        self.db.delete(provider)
-        self.db.commit()
+        await self.db.delete(provider)
+        await self.db.commit()
         return True
 
     def generate_pkce_challenge(self) -> Tuple[str, str]:
@@ -282,7 +296,7 @@ class SSOService:
 
         return code_verifier, code_challenge
 
-    def get_authorization_url(self, provider_id: str, redirect_uri: str, scopes: Optional[List[str]] = None) -> Optional[str]:
+    async def get_authorization_url(self, provider_id: str, redirect_uri: str, scopes: Optional[List[str]] = None) -> Optional[str]:
         """Generate OAuth authorization URL for provider.
 
         Args:
@@ -296,21 +310,25 @@ class SSOService:
         Examples:
             >>> from types import SimpleNamespace
             >>> from unittest.mock import MagicMock
+            >>> import asyncio
             >>> service = SSOService(MagicMock())
             >>> provider = SimpleNamespace(id='github', is_enabled=True, provider_type='oauth2', client_id='cid', authorization_url='https://example/auth', scope='user:email')
-            >>> service.get_provider = lambda _pid: provider
+            >>> async def mock_get_provider(_pid): return provider
+            >>> service.get_provider = mock_get_provider
             >>> service.db.add = lambda x: None
-            >>> service.db.commit = lambda: None
-            >>> url = service.get_authorization_url('github', 'https://app/callback', ['email'])
+            >>> async def mock_commit(): pass
+            >>> service.db.commit = mock_commit
+            >>> url = asyncio.run(service.get_authorization_url('github', 'https://app/callback', ['email']))
             >>> isinstance(url, str) and 'client_id=cid' in url and 'state=' in url
             True
 
             Missing provider returns None:
-            >>> service.get_provider = lambda _pid: None
-            >>> service.get_authorization_url('missing', 'https://app/callback') is None
+            >>> async def mock_get_provider_none(_pid): return None
+            >>> service.get_provider = mock_get_provider_none
+            >>> asyncio.run(service.get_authorization_url('missing', 'https://app/callback')) is None
             True
         """
-        provider = self.get_provider(provider_id)
+        provider = await self.get_provider(provider_id)
         if not provider or not provider.is_enabled:
             return None
 
@@ -326,7 +344,7 @@ class SSOService:
         # Create auth session
         auth_session = SSOAuthSession(provider_id=provider_id, state=state, code_verifier=code_verifier, nonce=nonce, redirect_uri=redirect_uri)
         self.db.add(auth_session)
-        self.db.commit()
+        await self.db.commit()
 
         # Build authorization URL
         params = {
@@ -359,12 +377,14 @@ class SSOService:
             Happy-path with patched exchanges and user info:
             >>> import asyncio
             >>> from types import SimpleNamespace
-            >>> from unittest.mock import MagicMock
+            >>> from unittest.mock import MagicMock, AsyncMock
             >>> svc = SSOService(MagicMock())
             >>> # Mock DB auth session lookup
             >>> provider = SimpleNamespace(id='github', is_enabled=True, provider_type='oauth2')
             >>> auth_session = SimpleNamespace(provider_id='github', state='st', provider=provider, is_expired=False)
-            >>> svc.db.execute.return_value.scalar_one_or_none.return_value = auth_session
+            >>> mock_result = MagicMock()
+            >>> mock_result.scalar_one_or_none.return_value = auth_session
+            >>> svc.db.execute = AsyncMock(return_value=mock_result)
             >>> # Patch token exchange and user info retrieval
             >>> async def _ex(p, sess, c):
             ...     return {'access_token': 'tok'}
@@ -372,8 +392,8 @@ class SSOService:
             ...     return {'email': 'user@example.com'}
             >>> svc._exchange_code_for_tokens = _ex
             >>> svc._get_user_info = _ui
-            >>> svc.db.delete = lambda obj: None
-            >>> svc.db.commit = lambda: None
+            >>> svc.db.delete = AsyncMock()
+            >>> svc.db.commit = AsyncMock()
             >>> out = asyncio.run(svc.handle_oauth_callback('github', 'code', 'st'))
             >>> out['email']
             'user@example.com'
@@ -381,25 +401,32 @@ class SSOService:
             Early return cases:
             >>> # No session
             >>> svc2 = SSOService(MagicMock())
-            >>> svc2.db.execute.return_value.scalar_one_or_none.return_value = None
+            >>> mock_result2 = MagicMock()
+            >>> mock_result2.scalar_one_or_none.return_value = None
+            >>> svc2.db.execute = AsyncMock(return_value=mock_result2)
             >>> asyncio.run(svc2.handle_oauth_callback('github', 'c', 's')) is None
             True
             >>> # Expired session
             >>> expired = SimpleNamespace(provider_id='github', state='st', provider=SimpleNamespace(is_enabled=True), is_expired=True)
             >>> svc3 = SSOService(MagicMock())
-            >>> svc3.db.execute.return_value.scalar_one_or_none.return_value = expired
+            >>> mock_result3 = MagicMock()
+            >>> mock_result3.scalar_one_or_none.return_value = expired
+            >>> svc3.db.execute = AsyncMock(return_value=mock_result3)
             >>> asyncio.run(svc3.handle_oauth_callback('github', 'c', 'st')) is None
             True
             >>> # Disabled provider
             >>> disabled = SimpleNamespace(provider_id='github', state='st', provider=SimpleNamespace(is_enabled=False), is_expired=False)
             >>> svc4 = SSOService(MagicMock())
-            >>> svc4.db.execute.return_value.scalar_one_or_none.return_value = disabled
+            >>> mock_result4 = MagicMock()
+            >>> mock_result4.scalar_one_or_none.return_value = disabled
+            >>> svc4.db.execute = AsyncMock(return_value=mock_result4)
             >>> asyncio.run(svc4.handle_oauth_callback('github', 'c', 'st')) is None
             True
         """
         # Validate auth session
-        stmt = select(SSOAuthSession).where(SSOAuthSession.state == state, SSOAuthSession.provider_id == provider_id)
-        auth_session = self.db.execute(stmt).scalar_one_or_none()
+        stmt = select(SSOAuthSession).where(SSOAuthSession.state == state, SSOAuthSession.provider_id == provider_id).options(selectinload(SSOAuthSession.provider))
+        result = await self.db.execute(stmt)
+        auth_session = result.scalar_one_or_none()
 
         if not auth_session or auth_session.is_expired:
             return None
@@ -424,8 +451,8 @@ class SSOService:
                 return None
 
             # Clean up auth session
-            self.db.delete(auth_session)
-            self.db.commit()
+            await self.db.delete(auth_session)
+            await self.db.commit()
 
             return user_info
 
@@ -433,8 +460,8 @@ class SSOService:
             # Clean up auth session on error
             logger.error(f"OAuth callback failed for provider {provider_id}: {type(e).__name__}: {str(e)}")
             logger.exception("Full traceback for OAuth callback failure:")
-            self.db.delete(auth_session)
-            self.db.commit()
+            await self.db.delete(auth_session)
+            await self.db.commit()
             return None
 
     async def _exchange_code_for_tokens(self, provider: SSOProvider, auth_session: SSOAuthSession, code: str) -> Optional[Dict[str, Any]]:
@@ -657,10 +684,10 @@ class SSOService:
             user.email_verified = True
             user.last_login = utc_now()
 
-            self.db.commit()
+            await self.db.commit()
         else:
             # Auto-create user if enabled
-            provider = self.get_provider(user_info.get("provider"))
+            provider = await self.get_provider(user_info.get("provider"))
             if not provider or not provider.auto_create_users:
                 return None
 
@@ -673,8 +700,8 @@ class SSOService:
             # Check if admin approval is required
             if settings.sso_require_admin_approval:
                 # Check if user is already pending approval
-
-                pending = self.db.execute(select(PendingUserApproval).where(PendingUserApproval.email == email)).scalar_one_or_none()
+                result = await self.db.execute(select(PendingUserApproval).where(PendingUserApproval.email == email))
+                pending = result.scalar_one_or_none()
 
                 if pending:
                     if pending.status == "pending" and not pending.is_expired():
@@ -695,7 +722,7 @@ class SSOService:
                         expires_at=utc_now() + timedelta(days=30),  # 30-day approval window
                     )
                     self.db.add(pending)
-                    self.db.commit()
+                    await self.db.commit()
                     logger.info(f"Created pending approval request for SSO user: {email}")
                     return None  # No token until approved
 
@@ -719,11 +746,12 @@ class SSOService:
 
             # If user was created from approved request, mark request as used
             if settings.sso_require_admin_approval:
-                pending = self.db.execute(select(PendingUserApproval).where(and_(PendingUserApproval.email == email, PendingUserApproval.status == "approved"))).scalar_one_or_none()
+                result = await self.db.execute(select(PendingUserApproval).where(and_(PendingUserApproval.email == email, PendingUserApproval.status == "approved")))
+                pending = result.scalar_one_or_none()
                 if pending:
                     # Mark as used (we could delete or keep for audit trail)
                     pending.status = "completed"
-                    self.db.commit()
+                    await self.db.commit()
 
         # Generate JWT token for user
         token_data = {

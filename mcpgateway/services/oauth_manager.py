@@ -25,6 +25,7 @@ from typing import Any, Dict, Optional
 import aiohttp
 import orjson
 from requests_oauthlib import OAuth2Session
+from sqlalchemy import delete, select
 
 # First-Party
 from mcpgateway.config import get_settings
@@ -667,22 +668,23 @@ class OAuthManager:
         if settings.cache_type == "database":
             try:
                 # First-Party
-                from mcpgateway.db import get_db, OAuthState  # pylint: disable=import-outside-toplevel
+                from mcpgateway.db import get_async_db, OAuthState  # pylint: disable=import-outside-toplevel
 
-                db_gen = get_db()
-                db = next(db_gen)
-                try:
-                    # Clean up expired states first
-                    db.query(OAuthState).filter(OAuthState.expires_at < datetime.now(timezone.utc)).delete()
+                async for db in get_async_db():
+                    try:
+                        # Clean up expired states first
+                        stmt = delete(OAuthState).where(OAuthState.expires_at < datetime.now(timezone.utc))
+                        await db.execute(stmt)
 
-                    # Store new state with code_verifier
-                    oauth_state = OAuthState(gateway_id=gateway_id, state=state, code_verifier=code_verifier, expires_at=expires_at, used=False)
-                    db.add(oauth_state)
-                    db.commit()
-                    logger.debug(f"Stored OAuth state in database for gateway {gateway_id}")
-                    return
-                finally:
-                    db_gen.close()
+                        # Store new state with code_verifier
+                        oauth_state = OAuthState(gateway_id=gateway_id, state=state, code_verifier=code_verifier, expires_at=expires_at, used=False)
+                        db.add(oauth_state)
+                        await db.commit()
+                        logger.debug(f"Stored OAuth state in database for gateway {gateway_id}")
+                        return
+                    except Exception as e:
+                        await db.rollback()
+                        raise e
             except Exception as e:
                 logger.warning(f"Failed to store state in database: {e}, falling back to memory")
 
@@ -758,42 +760,44 @@ class OAuthManager:
         if settings.cache_type == "database":
             try:
                 # First-Party
-                from mcpgateway.db import get_db, OAuthState  # pylint: disable=import-outside-toplevel
+                from mcpgateway.db import get_async_db, OAuthState  # pylint: disable=import-outside-toplevel
 
-                db_gen = get_db()
-                db = next(db_gen)
-                try:
-                    # Find the state
-                    oauth_state = db.query(OAuthState).filter(OAuthState.gateway_id == gateway_id, OAuthState.state == state).first()
+                async for db in get_async_db():
+                    try:
+                        # Find the state
+                        stmt = select(OAuthState).where(OAuthState.gateway_id == gateway_id, OAuthState.state == state)
+                        result = await db.execute(stmt)
+                        oauth_state = result.scalar_one_or_none()
 
-                    if not oauth_state:
-                        logger.warning(f"State not found in database for gateway {gateway_id}")
-                        return False
+                        if not oauth_state:
+                            logger.warning(f"State not found in database for gateway {gateway_id}")
+                            return False
 
-                    # Check if state has expired
-                    # Ensure oauth_state.expires_at is timezone-aware. If naive, assume UTC.
-                    expires_at = oauth_state.expires_at
-                    if expires_at.tzinfo is None:
-                        expires_at = expires_at.replace(tzinfo=timezone.utc)
+                        # Check if state has expired
+                        # Ensure oauth_state.expires_at is timezone-aware. If naive, assume UTC.
+                        expires_at = oauth_state.expires_at
+                        if expires_at.tzinfo is None:
+                            expires_at = expires_at.replace(tzinfo=timezone.utc)
 
-                    if expires_at < datetime.now(timezone.utc):
-                        logger.warning(f"State has expired for gateway {gateway_id}")
-                        db.delete(oauth_state)
-                        db.commit()
-                        return False
+                        if expires_at < datetime.now(timezone.utc):
+                            logger.warning(f"State has expired for gateway {gateway_id}")
+                            await db.delete(oauth_state)
+                            await db.commit()
+                            return False
 
-                    # Check if state was already used
-                    if oauth_state.used:
-                        logger.warning(f"State has already been used for gateway {gateway_id} - possible replay attack")
-                        return False
+                        # Check if state was already used
+                        if oauth_state.used:
+                            logger.warning(f"State has already been used for gateway {gateway_id} - possible replay attack")
+                            return False
 
-                    # Mark as used and delete (single-use)
-                    db.delete(oauth_state)
-                    db.commit()
-                    logger.debug(f"Successfully validated OAuth state from database for gateway {gateway_id}")
-                    return True
-                finally:
-                    db_gen.close()
+                        # Mark as used and delete (single-use)
+                        await db.delete(oauth_state)
+                        await db.commit()
+                        logger.debug(f"Successfully validated OAuth state from database for gateway {gateway_id}")
+                        return True
+                    except Exception as e:
+                        await db.rollback()
+                        raise e
             except Exception as e:
                 logger.warning(f"Failed to validate state in database: {e}, falling back to memory")
 
@@ -871,40 +875,42 @@ class OAuthManager:
         if settings.cache_type == "database":
             try:
                 # First-Party
-                from mcpgateway.db import get_db, OAuthState  # pylint: disable=import-outside-toplevel
+                from mcpgateway.db import get_async_db, OAuthState  # pylint: disable=import-outside-toplevel
 
-                db_gen = get_db()
-                db = next(db_gen)
-                try:
-                    oauth_state = db.query(OAuthState).filter(OAuthState.gateway_id == gateway_id, OAuthState.state == state).first()
+                async for db in get_async_db():
+                    try:
+                        stmt = select(OAuthState).where(OAuthState.gateway_id == gateway_id, OAuthState.state == state)
+                        result = await db.execute(stmt)
+                        oauth_state = result.scalar_one_or_none()
 
-                    if not oauth_state:
-                        return None
+                        if not oauth_state:
+                            return None
 
-                    # Check expiration
-                    expires_at = oauth_state.expires_at
-                    if expires_at.tzinfo is None:
-                        expires_at = expires_at.replace(tzinfo=timezone.utc)
+                        # Check expiration
+                        expires_at = oauth_state.expires_at
+                        if expires_at.tzinfo is None:
+                            expires_at = expires_at.replace(tzinfo=timezone.utc)
 
-                    if expires_at < datetime.now(timezone.utc):
-                        db.delete(oauth_state)
-                        db.commit()
-                        return None
+                        if expires_at < datetime.now(timezone.utc):
+                            await db.delete(oauth_state)
+                            await db.commit()
+                            return None
 
-                    # Check if already used
-                    if oauth_state.used:
-                        return None
+                        # Check if already used
+                        if oauth_state.used:
+                            return None
 
-                    # Build state data
-                    state_data = {"state": oauth_state.state, "gateway_id": oauth_state.gateway_id, "code_verifier": oauth_state.code_verifier, "expires_at": oauth_state.expires_at.isoformat()}
+                        # Build state data
+                        state_data = {"state": oauth_state.state, "gateway_id": oauth_state.gateway_id, "code_verifier": oauth_state.code_verifier, "expires_at": oauth_state.expires_at.isoformat()}
 
-                    # Mark as used and delete
-                    db.delete(oauth_state)
-                    db.commit()
+                        # Mark as used and delete
+                        await db.delete(oauth_state)
+                        await db.commit()
 
-                    return state_data
-                finally:
-                    db_gen.close()
+                        return state_data
+                    except Exception as e:
+                        await db.rollback()
+                        raise e
             except Exception as e:
                 logger.warning(f"Failed to validate state in database: {e}")
 

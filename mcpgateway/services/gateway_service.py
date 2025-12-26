@@ -59,7 +59,7 @@ from mcp.client.streamable_http import streamablehttp_client
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 try:
     # Third-Party - check if redis is available
@@ -504,11 +504,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         self._active_gateways.clear()
         logger.info("Gateway service shutdown complete")
 
-    def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
+    async def _get_team_name(self, db: AsyncSession, team_id: Optional[str]) -> Optional[str]:
         """Retrieve the team name given a team ID.
 
         Args:
-            db (Session): Database session for querying teams.
+            db (AsyncSession): Database session for querying teams.
             team_id (Optional[str]): The ID of the team.
 
         Returns:
@@ -516,12 +516,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         """
         if not team_id:
             return None
-        team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
+        result = await db.execute(select(EmailTeam).where(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)))
+        team = result.scalar_one_or_none()
         return team.name if team else None
 
-    def _check_gateway_uniqueness(
+    async def _check_gateway_uniqueness(
         self,
-        db: Session,
+        db: AsyncSession,
         url: str,
         auth_value: Optional[Dict[str, str]],
         oauth_config: Optional[Dict[str, Any]],
@@ -548,20 +549,21 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         """
         # Build base query based on visibility
         if visibility == "public":
-            query = db.query(DbGateway).filter(DbGateway.url == url, DbGateway.visibility == "public")
+            query = select(DbGateway).where(DbGateway.url == url, DbGateway.visibility == "public")
         elif visibility == "team" and team_id:
-            query = db.query(DbGateway).filter(DbGateway.url == url, DbGateway.visibility == "team", DbGateway.team_id == team_id)
+            query = select(DbGateway).where(DbGateway.url == url, DbGateway.visibility == "team", DbGateway.team_id == team_id)
         elif visibility == "private":
             # Check for duplicates within the same user's private gateways
-            query = db.query(DbGateway).filter(DbGateway.url == url, DbGateway.visibility == "private", DbGateway.owner_email == owner_email)  # Scoped to same user
+            query = select(DbGateway).where(DbGateway.url == url, DbGateway.visibility == "private", DbGateway.owner_email == owner_email)  # Scoped to same user
         else:
             return None
 
         # Exclude current gateway if updating
         if gateway_id:
-            query = query.filter(DbGateway.id != gateway_id)
+            query = query.where(DbGateway.id != gateway_id)
 
-        existing_gateways = query.all()
+        result = await db.execute(query)
+        existing_gateways = result.scalars().all()
 
         # Check each existing gateway
         for existing in existing_gateways:
@@ -605,7 +607,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
     async def register_gateway(
         self,
-        db: Session,
+        db: AsyncSession,
         gateway: GatewayCreate,
         created_by: Optional[str] = None,
         created_from_ip: Optional[str] = None,
@@ -671,12 +673,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             slug_name = slugify(gateway.name)
             if visibility.lower() == "public":
                 # Check for existing public gateway with the same slug
-                existing_gateway = db.execute(select(DbGateway).where(DbGateway.slug == slug_name, DbGateway.visibility == "public")).scalar_one_or_none()
+                result = await db.execute(select(DbGateway).where(DbGateway.slug == slug_name, DbGateway.visibility == "public"))
+                existing_gateway = result.scalar_one_or_none()
                 if existing_gateway:
                     raise GatewayNameConflictError(existing_gateway.slug, enabled=existing_gateway.enabled, gateway_id=existing_gateway.id, visibility=existing_gateway.visibility)
             elif visibility.lower() == "team" and team_id:
                 # Check for existing team gateway with the same slug
-                existing_gateway = db.execute(select(DbGateway).where(DbGateway.slug == slug_name, DbGateway.visibility == "team", DbGateway.team_id == team_id)).scalar_one_or_none()
+                result = await db.execute(select(DbGateway).where(DbGateway.slug == slug_name, DbGateway.visibility == "team", DbGateway.team_id == team_id))
+                existing_gateway = result.scalar_one_or_none()
                 if existing_gateway:
                     raise GatewayNameConflictError(existing_gateway.slug, enabled=existing_gateway.enabled, gateway_id=existing_gateway.id, visibility=existing_gateway.visibility)
 
@@ -696,7 +700,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             # Check for duplicate gateway
             if not gateway.one_time_auth:
-                duplicate_gateway = self._check_gateway_uniqueness(
+                duplicate_gateway = await self._check_gateway_uniqueness(
                     db=db, url=normalized_url, auth_value=decoded_auth_value, oauth_config=gateway.oauth_config, team_id=team_id, owner_email=owner_email, visibility=visibility
                 )
 
@@ -855,8 +859,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             # Add to DB
             db.add(db_gateway)
-            db.commit()
-            db.refresh(db_gateway)
+            await db.commit()
+            await db.refresh(db_gateway)
 
             # Update tracking
             self._active_gateways.add(db_gateway.url)
@@ -913,7 +917,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             )
 
             # Add team name for response
-            db_gateway.team = self._get_team_name(db, db_gateway.team_id)
+            db_gateway.team = await self._get_team_name(db, db_gateway.team_id)
             return GatewayRead.model_validate(self._prepare_gateway_for_read(db_gateway)).masked()
         except* GatewayConnectionError as ge:  # pragma: no mutate
             if TYPE_CHECKING:
@@ -1021,7 +1025,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             logger.error(f"Other grouped errors: {other.exceptions}")
             raise other.exceptions[0]
 
-    async def fetch_tools_after_oauth(self, db: Session, gateway_id: str, app_user_email: str) -> Dict[str, Any]:
+    async def fetch_tools_after_oauth(self, db: AsyncSession, gateway_id: str, app_user_email: str) -> Dict[str, Any]:
         """Fetch tools from MCP server after OAuth completion for Authorization Code flow.
 
         Args:
@@ -1037,7 +1041,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         """
         try:
             # Get the gateway
-            gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+            result = await db.execute(select(DbGateway).where(DbGateway.id == gateway_id))
+            gateway = result.scalar_one_or_none()
 
             if not gateway:
                 raise ValueError(f"Gateway {gateway_id} not found")
@@ -1085,9 +1090,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 raise ValueError(f"Unsupported transport type: {gateway.transport}")
 
             # Handle tools, resources, and prompts using helper methods
-            tools_to_add = self._update_or_create_tools(db, tools, gateway, "oauth")
-            resources_to_add = self._update_or_create_resources(db, resources, gateway, "oauth")
-            prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, "oauth")
+            tools_to_add = await self._update_or_create_tools(db, tools, gateway, "oauth")
+            resources_to_add = await self._update_or_create_resources(db, resources, gateway, "oauth")
+            prompts_to_add = await self._update_or_create_prompts(db, prompts, gateway, "oauth")
 
             # Clean up items that are no longer available from the gateway
             new_tool_names = [tool.name for tool in tools]
@@ -1103,9 +1108,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 # Delete child records first to avoid FK constraint violations
                 for i in range(0, len(stale_tool_ids), 500):
                     chunk = stale_tool_ids[i : i + 500]
-                    db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
-                    db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
-                    db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
+                    await db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
+                    await db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
+                    await db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
 
             # Bulk delete resources that are no longer available from the gateway
             stale_resource_ids = [resource.id for resource in gateway.resources if resource.uri not in new_resource_uris]
@@ -1113,10 +1118,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 # Delete child records first to avoid FK constraint violations
                 for i in range(0, len(stale_resource_ids), 500):
                     chunk = stale_resource_ids[i : i + 500]
-                    db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk)))
-                    db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk)))
-                    db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk)))
-                    db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
+                    await db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk)))
+                    await db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk)))
+                    await db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk)))
+                    await db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
 
             # Bulk delete prompts that are no longer available from the gateway
             stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.name not in new_prompt_names]
@@ -1124,9 +1129,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 # Delete child records first to avoid FK constraint violations
                 for i in range(0, len(stale_prompt_ids), 500):
                     chunk = stale_prompt_ids[i : i + 500]
-                    db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk)))
-                    db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
-                    db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
+                    await db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk)))
+                    await db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
+                    await db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
 
             # Expire gateway to clear cached relationships after bulk deletes
             # This prevents SQLAlchemy from trying to re-delete already-deleted items
@@ -1162,7 +1167,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 for i in range(0, len(tools_to_add), chunk_size):
                     chunk = tools_to_add[i : i + chunk_size]
                     db.add_all(chunk)
-                    db.flush()  # Flush each chunk to avoid excessive memory usage
+                    await db.flush()  # Flush each chunk to avoid excessive memory usage
                 items_added += len(tools_to_add)
                 logger.info(f"Added {len(tools_to_add)} new tools to database")
 
@@ -1170,7 +1175,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 for i in range(0, len(resources_to_add), chunk_size):
                     chunk = resources_to_add[i : i + chunk_size]
                     db.add_all(chunk)
-                    db.flush()
+                    await db.flush()
                 items_added += len(resources_to_add)
                 logger.info(f"Added {len(resources_to_add)} new resources to database")
 
@@ -1178,17 +1183,17 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 for i in range(0, len(prompts_to_add), chunk_size):
                     chunk = prompts_to_add[i : i + chunk_size]
                     db.add_all(chunk)
-                    db.flush()
+                    await db.flush()
                 items_added += len(prompts_to_add)
                 logger.info(f"Added {len(prompts_to_add)} new prompts to database")
 
             if items_added > 0:
-                db.commit()
+                await db.commit()
                 logger.info(f"Total {items_added} new items added to database")
             else:
                 logger.info("No new items to add to database")
                 # Still commit to save any updates to existing items
-                db.commit()
+                await db.commit()
 
             return {"capabilities": capabilities, "tools": tools, "resources": resources, "prompts": prompts}
 
@@ -1200,7 +1205,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             logger.error(f"Failed to fetch tools after OAuth for gateway {gateway_id}: {e}")
             raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(e)}")
 
-    async def list_gateways(self, db: Session, include_inactive: bool = False, tags: Optional[List[str]] = None) -> List[GatewayRead]:
+    async def list_gateways(self, db: AsyncSession, include_inactive: bool = False, tags: Optional[List[str]] = None) -> List[GatewayRead]:
         """List all registered gateways.
 
         Args:
@@ -1246,23 +1251,25 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         if tags:
             query = query.where(json_contains_expr(db, DbGateway.tags, tags, match_any=True))
 
-        gateways = db.execute(query).scalars().all()
+        result = await db.execute(query)
+        gateways = result.scalars().all()
 
         # Batch fetch team names
         team_ids = {g.team_id for g in gateways if g.team_id}
         team_names = {}
         if team_ids:
-            teams = db.query(EmailTeam).filter(EmailTeam.id.in_(team_ids), EmailTeam.is_active.is_(True)).all()
+            teams_result = await db.execute(select(EmailTeam).where(EmailTeam.id.in_(team_ids), EmailTeam.is_active.is_(True)))
+            teams = teams_result.scalars().all()
             team_names = {team.id: team.name for team in teams}
 
-        result = []
+        result_list = []
         for g in gateways:
             g.team = team_names.get(g.team_id) if g.team_id else None
-            result.append(GatewayRead.model_validate(self._prepare_gateway_for_read(g)).masked())
-        return result
+            result_list.append(GatewayRead.model_validate(self._prepare_gateway_for_read(g)).masked())
+        return result_list
 
     async def list_gateways_for_user(
-        self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
+        self, db: AsyncSession, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
     ) -> List[GatewayRead]:
         """
         List gateways user has access to with team filtering.
@@ -1327,25 +1334,27 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         # Apply pagination following existing patterns
         query = query.offset(skip).limit(limit)
 
-        gateways = db.execute(query).scalars().all()
+        result = await db.execute(query)
+        gateways = result.scalars().all()
 
         # Batch fetch team names to avoid N+1 queries
         gateway_team_ids = {g.team_id for g in gateways if g.team_id}
         team_names = {}
         if gateway_team_ids:
-            teams = db.query(EmailTeam).filter(EmailTeam.id.in_(gateway_team_ids), EmailTeam.is_active.is_(True)).all()
+            teams_result = await db.execute(select(EmailTeam).where(EmailTeam.id.in_(gateway_team_ids), EmailTeam.is_active.is_(True)))
+            teams = teams_result.scalars().all()
             team_names = {team.id: team.name for team in teams}
 
-        result = []
+        result_list = []
         for g in gateways:
             g.team = team_names.get(g.team_id) if g.team_id else None
             logger.info(f"Gateway: {g.team_id}, Team: {g.team}")
-            result.append(GatewayRead.model_validate(self._prepare_gateway_for_read(g)).masked())
-        return result
+            result_list.append(GatewayRead.model_validate(self._prepare_gateway_for_read(g)).masked())
+        return result_list
 
     async def update_gateway(
         self,
-        db: Session,
+        db: AsyncSession,
         gateway_id: str,
         gateway_update: GatewayUpdate,
         modified_by: Optional[str] = None,
@@ -1381,7 +1390,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         """
         try:  # pylint: disable=too-many-nested-blocks
             # Find gateway
-            gateway = db.get(DbGateway, gateway_id)
+            gateway = await db.get(DbGateway, gateway_id)
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
@@ -1412,7 +1421,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     else:
                         vis = gateway.visibility
                     if vis == "public":
-                        existing_gateway = db.execute(select(DbGateway).where(DbGateway.slug == new_slug, DbGateway.visibility == "public", DbGateway.id != gateway_id)).scalar_one_or_none()
+                        result = await db.execute(select(DbGateway).where(DbGateway.slug == new_slug, DbGateway.visibility == "public", DbGateway.id != gateway_id))
+                        existing_gateway = result.scalar_one_or_none()
                         if existing_gateway:
                             raise GatewayNameConflictError(
                                 new_slug,
@@ -1421,9 +1431,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 visibility=existing_gateway.visibility,
                             )
                     elif vis == "team" and gateway.team_id:
-                        existing_gateway = db.execute(
-                            select(DbGateway).where(DbGateway.slug == new_slug, DbGateway.visibility == "team", DbGateway.team_id == gateway.team_id, DbGateway.id != gateway_id)
-                        ).scalar_one_or_none()
+                        result = await db.execute(select(DbGateway).where(DbGateway.slug == new_slug, DbGateway.visibility == "team", DbGateway.team_id == gateway.team_id, DbGateway.id != gateway_id))
+                        existing_gateway = result.scalar_one_or_none()
                         if existing_gateway:
                             raise GatewayNameConflictError(
                                 new_slug,
@@ -1456,7 +1465,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 # Check for duplicates with updated credentials
                 if not gateway_update.one_time_auth:
-                    duplicate_gateway = self._check_gateway_uniqueness(
+                    duplicate_gateway = await self._check_gateway_uniqueness(
                         db=db,
                         url=normalized_url,
                         auth_value=final_auth_value,
@@ -1576,13 +1585,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         gateway.oauth_config = None
 
                     # Update tools using helper method
-                    tools_to_add = self._update_or_create_tools(db, tools, gateway, "update")
+                    tools_to_add = await self._update_or_create_tools(db, tools, gateway, "update")
 
                     # Update resources using helper method
-                    resources_to_add = self._update_or_create_resources(db, resources, gateway, "update")
+                    resources_to_add = await self._update_or_create_resources(db, resources, gateway, "update")
 
                     # Update prompts using helper method
-                    prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, "update")
+                    prompts_to_add = await self._update_or_create_prompts(db, prompts, gateway, "update")
 
                     # Log newly added items
                     items_added = len(tools_to_add) + len(resources_to_add) + len(prompts_to_add)
@@ -1604,9 +1613,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         # Delete child records first to avoid FK constraint violations
                         for i in range(0, len(stale_tool_ids), 500):
                             chunk = stale_tool_ids[i : i + 500]
-                            db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
-                            db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
-                            db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
+                            await db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
+                            await db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
+                            await db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
 
                     # Bulk delete resources that are no longer available from the gateway
                     stale_resource_ids = [resource.id for resource in gateway.resources if resource.uri not in new_resource_uris]
@@ -1614,10 +1623,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         # Delete child records first to avoid FK constraint violations
                         for i in range(0, len(stale_resource_ids), 500):
                             chunk = stale_resource_ids[i : i + 500]
-                            db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk)))
-                            db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk)))
-                            db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk)))
-                            db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
+                            await db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk)))
+                            await db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk)))
+                            await db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk)))
+                            await db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
 
                     # Bulk delete prompts that are no longer available from the gateway
                     stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.name not in new_prompt_names]
@@ -1625,9 +1634,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         # Delete child records first to avoid FK constraint violations
                         for i in range(0, len(stale_prompt_ids), 500):
                             chunk = stale_prompt_ids[i : i + 500]
-                            db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk)))
-                            db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
-                            db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
+                            await db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk)))
+                            await db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
+                            await db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
 
                     # Expire gateway to clear cached relationships after bulk deletes
                     # This prevents SQLAlchemy from trying to re-delete already-deleted items
@@ -1660,17 +1669,17 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         for i in range(0, len(tools_to_add), chunk_size):
                             chunk = tools_to_add[i : i + chunk_size]
                             db.add_all(chunk)
-                            db.flush()
+                            await db.flush()
                     if resources_to_add:
                         for i in range(0, len(resources_to_add), chunk_size):
                             chunk = resources_to_add[i : i + chunk_size]
                             db.add_all(chunk)
-                            db.flush()
+                            await db.flush()
                     if prompts_to_add:
                         for i in range(0, len(prompts_to_add), chunk_size):
                             chunk = prompts_to_add[i : i + chunk_size]
                             db.add_all(chunk)
-                            db.flush()
+                            await db.flush()
 
                     # Update tracking with new URL
                     self._active_gateways.discard(gateway.url)
@@ -1697,8 +1706,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 else:
                     gateway.version = 1
 
-                db.commit()
-                db.refresh(gateway)
+                await db.commit()
+                await db.refresh(gateway)
 
                 # Notify subscribers
                 await self._notify_gateway_updated(gateway)
@@ -1745,7 +1754,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     db=db,
                 )
 
-                gateway.team = self._get_team_name(db, getattr(gateway, "team_id", None))
+                gateway.team = await self._get_team_name(db, getattr(gateway, "team_id", None))
 
                 return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway))
             # Gateway is inactive and include_inactive is False → skip update, return None
@@ -1796,7 +1805,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             )
             raise ie
         except PermissionError as pe:
-            db.rollback()
+            await db.rollback()
 
             structured_logger.log(
                 level="WARNING",
@@ -1811,7 +1820,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             )
             raise
         except Exception as e:
-            db.rollback()
+            await db.rollback()
 
             structured_logger.log(
                 level="ERROR",
@@ -1826,7 +1835,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             )
             raise GatewayError(f"Failed to update gateway: {str(e)}")
 
-    async def get_gateway(self, db: Session, gateway_id: str, include_inactive: bool = True) -> GatewayRead:
+    async def get_gateway(self, db: AsyncSession, gateway_id: str, include_inactive: bool = True) -> GatewayRead:
         """Get a gateway by its ID.
 
         Args:
@@ -1879,13 +1888,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             ...     'Gateway not found: gateway_id' in str(e)
             True
         """
-        gateway = db.get(DbGateway, gateway_id)
+        gateway = await db.get(DbGateway, gateway_id)
 
         if not gateway:
             raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
         if gateway.enabled or include_inactive:
-            gateway.team = self._get_team_name(db, getattr(gateway, "team_id", None))
+            gateway.team = await self._get_team_name(db, getattr(gateway, "team_id", None))
 
             # Structured logging: Log gateway view
             structured_logger.log(
@@ -1908,7 +1917,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
-    async def toggle_gateway_status(self, db: Session, gateway_id: str, activate: bool, reachable: bool = True, only_update_reachable: bool = False, user_email: Optional[str] = None) -> GatewayRead:
+    async def toggle_gateway_status(
+        self, db: AsyncSession, gateway_id: str, activate: bool, reachable: bool = True, only_update_reachable: bool = False, user_email: Optional[str] = None
+    ) -> GatewayRead:
         """
         Toggle the activation status of a gateway.
 
@@ -1929,7 +1940,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             PermissionError: If user doesn't own the agent.
         """
         try:
-            gateway = db.get(DbGateway, gateway_id)
+            gateway = await db.get(DbGateway, gateway_id)
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
@@ -1963,9 +1974,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         new_prompt_names = [prompt.name for prompt in prompts]
 
                         # Update tools, resources, and prompts using helper methods
-                        tools_to_add = self._update_or_create_tools(db, tools, gateway, "rediscovery")
-                        resources_to_add = self._update_or_create_resources(db, resources, gateway, "rediscovery")
-                        prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, "rediscovery")
+                        tools_to_add = await self._update_or_create_tools(db, tools, gateway, "rediscovery")
+                        resources_to_add = await self._update_or_create_resources(db, resources, gateway, "rediscovery")
+                        prompts_to_add = await self._update_or_create_prompts(db, prompts, gateway, "rediscovery")
 
                         # Log newly added items
                         items_added = len(tools_to_add) + len(resources_to_add) + len(prompts_to_add)
@@ -1987,9 +1998,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             # Delete child records first to avoid FK constraint violations
                             for i in range(0, len(stale_tool_ids), 500):
                                 chunk = stale_tool_ids[i : i + 500]
-                                db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
-                                db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
-                                db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
+                                await db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
+                                await db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
+                                await db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
 
                         # Bulk delete resources that are no longer available from the gateway
                         stale_resource_ids = [resource.id for resource in gateway.resources if resource.uri not in new_resource_uris]
@@ -1997,10 +2008,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             # Delete child records first to avoid FK constraint violations
                             for i in range(0, len(stale_resource_ids), 500):
                                 chunk = stale_resource_ids[i : i + 500]
-                                db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk)))
-                                db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk)))
-                                db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk)))
-                                db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
+                                await db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk)))
+                                await db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk)))
+                                await db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk)))
+                                await db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
 
                         # Bulk delete prompts that are no longer available from the gateway
                         stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.name not in new_prompt_names]
@@ -2008,9 +2019,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             # Delete child records first to avoid FK constraint violations
                             for i in range(0, len(stale_prompt_ids), 500):
                                 chunk = stale_prompt_ids[i : i + 500]
-                                db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk)))
-                                db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
-                                db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
+                                await db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk)))
+                                await db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
+                                await db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
 
                         # Expire gateway to clear cached relationships after bulk deletes
                         # This prevents SQLAlchemy from trying to re-delete already-deleted items
@@ -2043,24 +2054,24 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             for i in range(0, len(tools_to_add), chunk_size):
                                 chunk = tools_to_add[i : i + chunk_size]
                                 db.add_all(chunk)
-                                db.flush()
+                                await db.flush()
                         if resources_to_add:
                             for i in range(0, len(resources_to_add), chunk_size):
                                 chunk = resources_to_add[i : i + chunk_size]
                                 db.add_all(chunk)
-                                db.flush()
+                                await db.flush()
                         if prompts_to_add:
                             for i in range(0, len(prompts_to_add), chunk_size):
                                 chunk = prompts_to_add[i : i + chunk_size]
                                 db.add_all(chunk)
-                                db.flush()
+                                await db.flush()
                     except Exception as e:
                         logger.warning(f"Failed to initialize reactivated gateway: {e}")
                 else:
                     self._active_gateways.discard(gateway.url)
 
-                db.commit()
-                db.refresh(gateway)
+                await db.commit()
+                await db.refresh(gateway)
 
                 # Notify Subscribers
                 if not gateway.enabled:
@@ -2073,7 +2084,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     # Active (Enabled and Reachable)
                     await self._notify_gateway_activated(gateway)
 
-                tools = db.query(DbTool).filter(DbTool.gateway_id == gateway_id).all()
+                tools_result = await db.execute(select(DbTool).where(DbTool.gateway_id == gateway_id))
+                tools = tools_result.scalars().all()
 
                 if only_update_reachable:
                     for tool in tools:
@@ -2122,7 +2134,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     db=db,
                 )
 
-            gateway.team = self._get_team_name(db, getattr(gateway, "team_id", None))
+            gateway.team = await self._get_team_name(db, getattr(gateway, "team_id", None))
             return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
 
         except PermissionError as e:
@@ -2140,7 +2152,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             )
             raise e
         except Exception as e:
-            db.rollback()
+            await db.rollback()
 
             # Structured logging: Log generic gateway status toggle failure
             structured_logger.log(
@@ -2176,7 +2188,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         }
         await self._publish_event(event)
 
-    async def delete_gateway(self, db: Session, gateway_id: str, user_email: Optional[str] = None) -> None:
+    async def delete_gateway(self, db: AsyncSession, gateway_id: str, user_email: Optional[str] = None) -> None:
         """
         Delete a gateway by its ID.
 
@@ -2208,7 +2220,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         """
         try:
             # Find gateway
-            gateway = db.get(DbGateway, gateway_id)
+            gateway = await db.get(DbGateway, gateway_id)
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
@@ -2237,33 +2249,33 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             if tool_ids:
                 for i in range(0, len(tool_ids), 500):
                     chunk = tool_ids[i : i + 500]
-                    db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
-                    db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
-                    db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
+                    await db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
+                    await db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
+                    await db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
 
             # Delete resource children and resources
             if resource_ids:
                 for i in range(0, len(resource_ids), 500):
                     chunk = resource_ids[i : i + 500]
-                    db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk)))
-                    db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk)))
-                    db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk)))
-                    db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
+                    await db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk)))
+                    await db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk)))
+                    await db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk)))
+                    await db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
 
             # Delete prompt children and prompts
             if prompt_ids:
                 for i in range(0, len(prompt_ids), 500):
                     chunk = prompt_ids[i : i + 500]
-                    db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk)))
-                    db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
-                    db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
+                    await db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk)))
+                    await db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
+                    await db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
 
             # Expire gateway to clear cached relationships after bulk deletes
             db.expire(gateway)
 
             # Hard delete gateway
-            db.delete(gateway)
-            db.commit()
+            await db.delete(gateway)
+            await db.commit()
 
             # Update tracking
             self._active_gateways.discard(gateway.url)
@@ -2307,7 +2319,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             )
 
         except PermissionError as pe:
-            db.rollback()
+            await db.rollback()
 
             # Structured logging: Log permission error
             structured_logger.log(
@@ -2323,7 +2335,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             )
             raise
         except Exception as e:
-            db.rollback()
+            await db.rollback()
 
             # Structured logging: Log generic gateway deletion failure
             structured_logger.log(
@@ -2493,7 +2505,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             return result.get("result")
 
-    async def _forward_request_to_all(self, db: Session, method: str, params: Optional[Dict[str, Any]] = None, app_user_email: Optional[str] = None) -> Any:
+    async def _forward_request_to_all(self, db: AsyncSession, method: str, params: Optional[Dict[str, Any]] = None, app_user_email: Optional[str] = None) -> Any:
         """
         Forward a request to all active gateways that can handle the method.
 
@@ -2512,7 +2524,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 1: Fetch all required data before HTTP calls
         # ═══════════════════════════════════════════════════════════════════════════
-        active_gateways = db.execute(select(DbGateway).where(DbGateway.enabled.is_(True))).scalars().all()
+        result = await db.execute(select(DbGateway).where(DbGateway.enabled.is_(True)))
+        active_gateways = result.scalars().all()
 
         if not active_gateways:
             raise GatewayConnectionError("No active gateways available to forward request")
@@ -2550,8 +2563,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls
         # This prevents connection pool exhaustion during slow upstream requests.
         # ═══════════════════════════════════════════════════════════════════════════
-        db.rollback()  # End the transaction so connection returns to "idle" not "idle in transaction"
-        db.close()
+        await db.rollback()  # End the transaction so connection returns to "idle" not "idle in transaction"
+        await db.close()
 
         errors: List[str] = []
 
@@ -2981,7 +2994,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     logger.debug(f"Health check failed for gateway {gateway_name}: {e}")
                     await self._handle_gateway_failure(gateway)
 
-    async def aggregate_capabilities(self, db: Session) -> Dict[str, Any]:
+    async def aggregate_capabilities(self, db: AsyncSession) -> Dict[str, Any]:
         """
         Aggregate capabilities across all gateways.
 
@@ -3048,7 +3061,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         }
 
         # Get all active gateways
-        gateways = db.execute(select(DbGateway).where(DbGateway.enabled)).scalars().all()
+        result = await db.execute(select(DbGateway).where(DbGateway.enabled))
+        gateways = result.scalars().all()
 
         # Combine capabilities
         for gateway in gateways:
@@ -3227,10 +3241,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Only return active gateways
             return db.execute(select(DbGateway).where(DbGateway.enabled)).scalars().all()
 
-    def get_first_gateway_by_url(self, db: Session, url: str, team_id: Optional[str] = None, include_inactive: bool = False) -> Optional[GatewayRead]:
+    async def get_first_gateway_by_url(self, db: AsyncSession, url: str, team_id: Optional[str] = None, include_inactive: bool = False) -> Optional[GatewayRead]:
         """Return the first DbGateway matching the given URL and optional team_id.
 
-        This is a synchronous helper intended for use from request handlers where
+        This is an async helper intended for use from request handlers where
         a simple DB lookup is needed. It normalizes the provided URL similar to
         how gateways are stored and matches by the `url` column. If team_id is
         provided, it restricts the search to that team.
@@ -3249,12 +3263,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             query = query.where(DbGateway.enabled)
         if team_id:
             query = query.where(DbGateway.team_id == team_id)
-        result = db.execute(query).scalars().first()
+        result = await db.execute(query)
+        gateway = result.scalars().first()
         # Wrap the DB object in the GatewayRead schema for consistency with
         # other service methods. Return None if no match found.
-        if result is None:
+        if gateway is None:
             return None
-        return GatewayRead.model_validate(result)
+        return GatewayRead.model_validate(gateway)
 
     async def _run_leader_heartbeat(self) -> None:
         """Run leader heartbeat loop to keep leader key alive.
@@ -3575,7 +3590,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             visibility="public",  # Federated tools should be public for discovery
         )
 
-    def _update_or_create_tools(self, db: Session, tools: List[Any], gateway: DbGateway, created_via: str) -> List[DbTool]:
+    async def _update_or_create_tools(self, db: AsyncSession, tools: List[Any], gateway: DbGateway, created_via: str) -> List[DbTool]:
         """Helper to handle update-or-create logic for tools from MCP server.
 
         Args:
@@ -3598,7 +3613,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             return []
 
         existing_tools_query = select(DbTool).where(DbTool.gateway_id == gateway.id, DbTool.original_name.in_(tool_names))
-        existing_tools = db.execute(existing_tools_query).scalars().all()
+        result = await db.execute(existing_tools_query)
+        existing_tools = result.scalars().all()
         existing_tools_map = {tool.original_name: tool for tool in existing_tools}
 
         for tool in tools:
@@ -3656,7 +3672,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         return tools_to_add
 
-    def _update_or_create_resources(self, db: Session, resources: List[Any], gateway: DbGateway, created_via: str) -> List[DbResource]:
+    async def _update_or_create_resources(self, db: AsyncSession, resources: List[Any], gateway: DbGateway, created_via: str) -> List[DbResource]:
         """Helper to handle update-or-create logic for resources from MCP server.
 
         Args:
@@ -3679,7 +3695,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             return []
 
         existing_resources_query = select(DbResource).where(DbResource.gateway_id == gateway.id, DbResource.uri.in_(resource_uris))
-        existing_resources = db.execute(existing_resources_query).scalars().all()
+        result = await db.execute(existing_resources_query)
+        existing_resources = result.scalars().all()
         existing_resources_map = {resource.uri: resource for resource in existing_resources}
 
         for resource in resources:
@@ -3732,7 +3749,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         return resources_to_add
 
-    def _update_or_create_prompts(self, db: Session, prompts: List[Any], gateway: DbGateway, created_via: str) -> List[DbPrompt]:
+    async def _update_or_create_prompts(self, db: AsyncSession, prompts: List[Any], gateway: DbGateway, created_via: str) -> List[DbPrompt]:
         """Helper to handle update-or-create logic for prompts from MCP server.
 
         Args:
@@ -3755,7 +3772,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             return []
 
         existing_prompts_query = select(DbPrompt).where(DbPrompt.gateway_id == gateway.id, DbPrompt.name.in_(prompt_names))
-        existing_prompts = db.execute(existing_prompts_query).scalars().all()
+        result = await db.execute(existing_prompts_query)
+        existing_prompts = result.scalars().all()
         existing_prompts_map = {prompt.name: prompt for prompt in existing_prompts}
 
         for prompt in prompts:

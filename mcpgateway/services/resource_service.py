@@ -38,7 +38,7 @@ from mcp.client.streamable_http import streamablehttp_client
 import parse
 from sqlalchemy import and_, case, delete, desc, Float, func, not_, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # First-Party
 from mcpgateway.common.models import ResourceContent, ResourceTemplate, TextContent
@@ -168,7 +168,7 @@ class ResourceService:
         await self._event_service.shutdown()
         logger.info("Resource service shutdown complete")
 
-    async def get_top_resources(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
+    async def get_top_resources(self, db: AsyncSession, limit: Optional[int] = 5) -> List[TopPerformer]:
         """Retrieve the top-performing resources based on execution count.
 
         Queries the database to get resources with their metrics, ordered by the number of executions
@@ -177,7 +177,7 @@ class ResourceService:
         Results are cached for performance.
 
         Args:
-            db (Session): Database session for querying resource metrics.
+            db (AsyncSession): Database session for querying resource metrics.
             limit (Optional[int]): Maximum number of resources to return. Defaults to 5.
 
         Returns:
@@ -201,29 +201,27 @@ class ResourceService:
             if cached is not None:
                 return cached
 
+        success_rate = case(
+            (func.count(ResourceMetric.id) > 0, func.sum(case((ResourceMetric.is_success.is_(True), 1), else_=0)).cast(Float) * 100 / func.count(ResourceMetric.id)),  # pylint: disable=not-callable
+            else_=None,
+        )
+
         query = (
-            db.query(
+            select(
                 DbResource.id,
                 DbResource.uri.label("name"),  # Using URI as the name field for TopPerformer
                 func.count(ResourceMetric.id).label("execution_count"),  # pylint: disable=not-callable
                 func.avg(ResourceMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
-                case(
-                    (
-                        func.count(ResourceMetric.id) > 0,  # pylint: disable=not-callable
-                        func.sum(case((ResourceMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(ResourceMetric.id) * 100,  # pylint: disable=not-callable
-                    ),
-                    else_=None,
-                ).label("success_rate"),
+                success_rate.label("success_rate"),
                 func.max(ResourceMetric.timestamp).label("last_execution"),  # pylint: disable=not-callable
             )
-            .outerjoin(ResourceMetric)
+            .outerjoin(ResourceMetric, ResourceMetric.resource_id == DbResource.id)
             .group_by(DbResource.id, DbResource.uri)
             .order_by(desc("execution_count"))
+            .limit(effective_limit)
         )
 
-        query = query.limit(effective_limit)
-
-        results = query.all()
+        results = (await db.execute(query)).all()
         top_performers = build_top_performers(results)
 
         # Cache the result (if enabled)
@@ -314,11 +312,11 @@ class ResourceService:
         resource_dict["version"] = getattr(resource, "version", None)
         return ResourceRead.model_validate(resource_dict)
 
-    def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
+    async def _get_team_name(self, db: AsyncSession, team_id: Optional[str]) -> Optional[str]:
         """Retrieve the team name given a team ID.
 
         Args:
-            db (Session): Database session for querying teams.
+            db (AsyncSession): Database session for querying teams.
             team_id (Optional[str]): The ID of the team.
 
         Returns:
@@ -326,12 +324,13 @@ class ResourceService:
         """
         if not team_id:
             return None
-        team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
+        result = await db.execute(select(EmailTeam).where(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)))
+        team = result.scalar_one_or_none()
         return team.name if team else None
 
     async def register_resource(
         self,
-        db: Session,
+        db: AsyncSession,
         resource: ResourceCreate,
         created_by: Optional[str] = None,
         created_from_ip: Optional[str] = None,
@@ -390,12 +389,14 @@ class ResourceService:
             if visibility.lower() == "public":
                 logger.info(f"visibility:: {visibility}")
                 # Check for existing public resource with the same uri
-                existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "public")).scalar_one_or_none()
+                result = await db.execute(select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "public"))
+                existing_resource = result.scalar_one_or_none()
                 if existing_resource:
                     raise ResourceURIConflictError(resource.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
             elif visibility.lower() == "team" and team_id:
                 # Check for existing team resource with the same uri
-                existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "team", DbResource.team_id == team_id)).scalar_one_or_none()
+                result = await db.execute(select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "team", DbResource.team_id == team_id))
+                existing_resource = result.scalar_one_or_none()
                 if existing_resource:
                     raise ResourceURIConflictError(resource.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
 
@@ -433,8 +434,8 @@ class ResourceService:
 
             # Add to DB
             db.add(db_resource)
-            db.commit()
-            db.refresh(db_resource)
+            await db.commit()
+            await db.refresh(db_resource)
 
             # Notify subscribers
             await self._notify_resource_added(db_resource)
@@ -485,7 +486,7 @@ class ResourceService:
                 db=db,
             )
 
-            db_resource.team = self._get_team_name(db, db_resource.team_id)
+            db_resource.team = await self._get_team_name(db, db_resource.team_id)
             return self._convert_resource_to_read(db_resource)
         except IntegrityError as ie:
             logger.error(f"IntegrityErrors in group: {ie}")
@@ -524,7 +525,7 @@ class ResourceService:
             )
             raise rce
         except Exception as e:
-            db.rollback()
+            await db.rollback()
 
             # Structured logging: Log generic resource creation failure
             structured_logger.log(
@@ -544,7 +545,7 @@ class ResourceService:
 
     async def register_resources_bulk(
         self,
-        db: Session,
+        db: AsyncSession,
         resources: List[ResourceCreate],
         created_by: Optional[str] = None,
         created_from_ip: Optional[str] = None,
@@ -626,7 +627,8 @@ class ResourceService:
                     # Private resources - check by owner
                     existing_resources_query = select(DbResource).where(DbResource.uri.in_(resource_uris), DbResource.visibility == "private", DbResource.owner_email == (owner_email or created_by))
 
-                existing_resources = db.execute(existing_resources_query).scalars().all()
+                result = await db.execute(existing_resources_query)
+                existing_resources = result.scalars().all()
                 existing_resources_map = {resource.uri: resource for resource in existing_resources}
 
                 resources_to_add = []
@@ -728,11 +730,11 @@ class ResourceService:
                     db.add_all(resources_to_add)
 
                 # Commit the chunk
-                db.commit()
+                await db.commit()
 
                 # Refresh resources for notifications and audit trail
                 for db_resource in resources_to_add:
-                    db.refresh(db_resource)
+                    await db.refresh(db_resource)
                     # Notify subscribers
                     await self._notify_resource_added(db_resource)
 
@@ -765,7 +767,7 @@ class ResourceService:
                 logger.info(f"Bulk registered {len(resources_to_add)} resources, updated {len(resources_to_update)} resources in chunk")
 
             except Exception as e:
-                db.rollback()
+                await db.rollback()
                 logger.error(f"Failed to process chunk in bulk resource registration: {str(e)}")
                 stats["failed"] += len(chunk)
                 stats["errors"].append(f"Chunk processing failed: {str(e)}")
@@ -795,7 +797,7 @@ class ResourceService:
 
         return stats
 
-    async def list_resources(self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None) -> tuple[List[ResourceRead], Optional[str]]:
+    async def list_resources(self, db: AsyncSession, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None) -> tuple[List[ResourceRead], Optional[str]]:
         """
         Retrieve a list of registered resources from the database with pagination support.
 
@@ -866,7 +868,8 @@ class ResourceService:
 
         # Fetch page_size + 1 to determine if there are more results
         query = query.limit(page_size + 1)
-        resources = db.execute(query).scalars().all()
+        query_result = await db.execute(query)
+        resources = query_result.scalars().all()
 
         # Check if there are more results
         has_more = len(resources) > page_size
@@ -876,7 +879,7 @@ class ResourceService:
         # Convert to ResourceRead objects (skip metrics to avoid N+1 queries)
         result = []
         for t in resources:
-            team_name = self._get_team_name(db, getattr(t, "team_id", None))
+            team_name = await self._get_team_name(db, getattr(t, "team_id", None))
             t.team = team_name
             result.append(self._convert_resource_to_read(t, include_metrics=False))
 
@@ -890,7 +893,7 @@ class ResourceService:
         return (result, next_cursor)
 
     async def list_resources_for_user(
-        self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
+        self, db: AsyncSession, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
     ) -> List[ResourceRead]:
         """
         List resources user has access to with team filtering.
@@ -985,15 +988,16 @@ class ResourceService:
         # Apply pagination following existing patterns
         query = query.offset(skip).limit(limit)
 
-        resources = db.execute(query).scalars().all()
+        query_result = await db.execute(query)
+        resources = query_result.scalars().all()
         result = []
         for t in resources:
-            team_name = self._get_team_name(db, getattr(t, "team_id", None))
+            team_name = await self._get_team_name(db, getattr(t, "team_id", None))
             t.team = team_name
             result.append(self._convert_resource_to_read(t, include_metrics=False))
         return result
 
-    async def list_server_resources(self, db: Session, server_id: str, include_inactive: bool = False) -> List[ResourceRead]:
+    async def list_server_resources(self, db: AsyncSession, server_id: str, include_inactive: bool = False) -> List[ResourceRead]:
         """
         Retrieve a list of registered resources from the database.
 
@@ -1038,15 +1042,16 @@ class ResourceService:
         if not include_inactive:
             query = query.where(DbResource.enabled)
         # Cursor-based pagination logic can be implemented here in the future.
-        resources = db.execute(query).scalars().all()
+        query_result = await db.execute(query)
+        resources = query_result.scalars().all()
         result = []
         for t in resources:
-            team_name = self._get_team_name(db, getattr(t, "team_id", None))
+            team_name = await self._get_team_name(db, getattr(t, "team_id", None))
             t.team = team_name
             result.append(self._convert_resource_to_read(t, include_metrics=False))
         return result
 
-    async def _record_resource_metric(self, db: Session, resource: DbResource, start_time: float, success: bool, error_message: Optional[str]) -> None:
+    async def _record_resource_metric(self, db: AsyncSession, resource: DbResource, start_time: float, success: bool, error_message: Optional[str]) -> None:
         """
         Records a metric for a resource access.
 
@@ -1067,9 +1072,9 @@ class ResourceService:
             error_message=error_message,
         )
         db.add(metric)
-        db.commit()
+        await db.commit()
 
-    async def _record_invoke_resource_metric(self, db: Session, resource_id: str, start_time: float, success: bool, error_message: Optional[str]) -> None:
+    async def _record_invoke_resource_metric(self, db: AsyncSession, resource_id: str, start_time: float, success: bool, error_message: Optional[str]) -> None:
         """
         Records a metric for invoking resource.
 
@@ -1090,7 +1095,7 @@ class ResourceService:
             error_message=error_message,
         )
         db.add(metric)
-        db.commit()
+        await db.commit()
 
     def create_ssl_context(self, ca_certificate: str) -> ssl.SSLContext:
         """Create an SSL context with the provided CA certificate.
@@ -1105,7 +1110,7 @@ class ResourceService:
         ctx.load_verify_locations(cadata=ca_certificate)
         return ctx
 
-    async def invoke_resource(self, db: Session, resource_id: str, resource_uri: str, resource_template_uri: Optional[str] = None) -> Any:
+    async def invoke_resource(self, db: AsyncSession, resource_id: str, resource_uri: str, resource_template_uri: Optional[str] = None) -> Any:
         """
         Invoke a resource via its configured gateway using SSE or StreamableHTTP transport.
 
@@ -1209,14 +1214,16 @@ class ResourceService:
         logger.info(f"Invoking the resource: {uri}")
         gateway_id = None
         resource_info = None
-        resource_info = db.execute(select(DbResource).where(DbResource.id == resource_id)).scalar_one_or_none()
+        result = await db.execute(select(DbResource).where(DbResource.id == resource_id))
+        resource_info = result.scalar_one_or_none()
         user_email = settings.platform_admin_email
 
         if resource_info:
             gateway_id = getattr(resource_info, "gateway_id", None)
             resource_name = getattr(resource_info, "name", None)
             if gateway_id:
-                gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+                gateway_result = await db.execute(select(DbGateway).where(DbGateway.id == gateway_id))
+                gateway = gateway_result.scalar_one_or_none()
 
                 start_time = time.monotonic()
                 success = False
@@ -1361,8 +1368,8 @@ class ResourceService:
                         # All needed data has been extracted to local variables above.
                         # The session will be closed again by FastAPI's get_db() finally block (safe no-op).
                         # ═══════════════════════════════════════════════════════════════════════════
-                        db.rollback()  # End the transaction so connection returns to "idle" not "idle in transaction"
-                        db.close()
+                        await db.rollback()  # End the transaction so connection returns to "idle" not "idle in transaction"
+                        await db.close()
 
                         async def connect_to_sse_session(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | None:
                             """
@@ -1515,7 +1522,7 @@ class ResourceService:
 
     async def read_resource(
         self,
-        db: Session,
+        db: AsyncSession,
         resource_id: Optional[Union[int, str]] = None,
         resource_uri: Optional[str] = None,
         request_id: Optional[str] = None,
@@ -1584,7 +1591,7 @@ class ResourceService:
         content = None
         uri = resource_uri or "unknown"
         if resource_id:
-            resource_db = db.get(DbResource, resource_id)
+            resource_db = await db.get(DbResource, resource_id)
             uri = resource_db.uri if resource_db else None
 
         # Create database span for observability dashboard
@@ -1698,13 +1705,15 @@ class ResourceService:
                     query = select(DbResource).where(DbResource.uri == str(uri)).where(DbResource.enabled)
                     if include_inactive:
                         query = select(DbResource).where(DbResource.uri == str(uri))
-                    resource_db = db.execute(query).scalar_one_or_none()
+                    result = await db.execute(query)
+                    resource_db = result.scalar_one_or_none()
                     if resource_db:
                         # resource_id = resource_db.id
                         content = resource_db.content
                     else:
                         # Check the inactivity first
-                        check_inactivity = db.execute(select(DbResource).where(DbResource.uri == str(resource_uri)).where(not_(DbResource.enabled))).scalar_one_or_none()
+                        inactivity_result = await db.execute(select(DbResource).where(DbResource.uri == str(resource_uri)).where(not_(DbResource.enabled)))
+                        check_inactivity = inactivity_result.scalar_one_or_none()
                         if check_inactivity:
                             raise ResourceNotFoundError(f"Resource '{resource_uri}' exists but is inactive")
 
@@ -1730,12 +1739,14 @@ class ResourceService:
                     query = select(DbResource).where(DbResource.id == str(resource_id)).where(DbResource.enabled)
                     if include_inactive:
                         query = select(DbResource).where(DbResource.id == str(resource_id))
-                    resource_db = db.execute(query).scalar_one_or_none()
+                    result = await db.execute(query)
+                    resource_db = result.scalar_one_or_none()
                     if resource_db:
                         original_uri = resource_db.uri or None
                         content = resource_db.content
                     else:
-                        check_inactivity = db.execute(select(DbResource).where(DbResource.id == str(resource_id)).where(not_(DbResource.enabled))).scalar_one_or_none()
+                        inactivity_result = await db.execute(select(DbResource).where(DbResource.id == str(resource_id)).where(not_(DbResource.enabled)))
+                        check_inactivity = inactivity_result.scalar_one_or_none()
                         if check_inactivity:
                             raise ResourceNotFoundError(f"Resource '{resource_id}' exists but is inactive")
                         raise ResourceNotFoundError(f"Resource not found for the resource id: {resource_id}")
@@ -1829,7 +1840,7 @@ class ResourceService:
                     except Exception as e:
                         logger.warning(f"Failed to end observability span for resource reading: {e}")
 
-    async def toggle_resource_status(self, db: Session, resource_id: int, activate: bool, user_email: Optional[str] = None) -> ResourceRead:
+    async def toggle_resource_status(self, db: AsyncSession, resource_id: int, activate: bool, user_email: Optional[str] = None) -> ResourceRead:
         """
         Toggle the activation status of a resource.
 
@@ -1866,7 +1877,7 @@ class ResourceService:
             'resource_read'
         """
         try:
-            resource = db.get(DbResource, resource_id)
+            resource = await db.get(DbResource, resource_id)
             if not resource:
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
@@ -1882,8 +1893,8 @@ class ResourceService:
             if resource.enabled != activate:
                 resource.enabled = activate
                 resource.updated_at = datetime.now(timezone.utc)
-                db.commit()
-                db.refresh(resource)
+                await db.commit()
+                await db.refresh(resource)
 
                 # Notify subscribers
                 if activate:
@@ -1928,7 +1939,7 @@ class ResourceService:
                     db=db,
                 )
 
-            resource.team = self._get_team_name(db, resource.team_id)
+            resource.team = await self._get_team_name(db, resource.team_id)
             return self._convert_resource_to_read(resource)
         except PermissionError as e:
             # Structured logging: Log permission error
@@ -1945,7 +1956,7 @@ class ResourceService:
             )
             raise e
         except Exception as e:
-            db.rollback()
+            await db.rollback()
 
             # Structured logging: Log generic resource status toggle failure
             structured_logger.log(
@@ -1961,7 +1972,7 @@ class ResourceService:
             )
             raise ResourceError(f"Failed to toggle resource status: {str(e)}")
 
-    async def subscribe_resource(self, db: Session, subscription: ResourceSubscription) -> None:
+    async def subscribe_resource(self, db: AsyncSession, subscription: ResourceSubscription) -> None:
         """
         Subscribe to a resource.
 
@@ -1984,11 +1995,13 @@ class ResourceService:
         """
         try:
             # Verify resource exists
-            resource = db.execute(select(DbResource).where(DbResource.uri == subscription.uri).where(DbResource.enabled)).scalar_one_or_none()
+            result = await db.execute(select(DbResource).where(DbResource.uri == subscription.uri).where(DbResource.enabled))
+            resource = result.scalar_one_or_none()
 
             if not resource:
                 # Check if inactive resource exists
-                inactive_resource = db.execute(select(DbResource).where(DbResource.uri == subscription.uri).where(not_(DbResource.enabled))).scalar_one_or_none()
+                inactive_result = await db.execute(select(DbResource).where(DbResource.uri == subscription.uri).where(not_(DbResource.enabled)))
+                inactive_resource = inactive_result.scalar_one_or_none()
 
                 if inactive_resource:
                     raise ResourceNotFoundError(f"Resource '{subscription.uri}' exists but is inactive")
@@ -1998,15 +2011,15 @@ class ResourceService:
             # Create subscription
             db_sub = DbSubscription(resource_id=resource.id, subscriber_id=subscription.subscriber_id)
             db.add(db_sub)
-            db.commit()
+            await db.commit()
 
             logger.info(f"Added subscription for {subscription.uri} by {subscription.subscriber_id}")
 
         except Exception as e:
-            db.rollback()
+            await db.rollback()
             raise ResourceError(f"Failed to subscribe: {str(e)}")
 
-    async def unsubscribe_resource(self, db: Session, subscription: ResourceSubscription) -> None:
+    async def unsubscribe_resource(self, db: AsyncSession, subscription: ResourceSubscription) -> None:
         """
         Unsubscribe from a resource.
 
@@ -2027,24 +2040,25 @@ class ResourceService:
         """
         try:
             # Find resource
-            resource = db.execute(select(DbResource).where(DbResource.uri == subscription.uri)).scalar_one_or_none()
+            result = await db.execute(select(DbResource).where(DbResource.uri == subscription.uri))
+            resource = result.scalar_one_or_none()
 
             if not resource:
                 return
 
             # Remove subscription
-            db.execute(select(DbSubscription).where(DbSubscription.resource_id == resource.id).where(DbSubscription.subscriber_id == subscription.subscriber_id)).delete()
-            db.commit()
+            await db.execute(delete(DbSubscription).where(DbSubscription.resource_id == resource.id).where(DbSubscription.subscriber_id == subscription.subscriber_id))
+            await db.commit()
 
             logger.info(f"Removed subscription for {subscription.uri} by {subscription.subscriber_id}")
 
         except Exception as e:
-            db.rollback()
+            await db.rollback()
             logger.error(f"Failed to unsubscribe: {str(e)}")
 
     async def update_resource(
         self,
-        db: Session,
+        db: AsyncSession,
         resource_id: Union[int, str],
         resource_update: ResourceUpdate,
         modified_by: Optional[str] = None,
@@ -2096,7 +2110,7 @@ class ResourceService:
         """
         try:
             logger.info(f"Updating resource: {resource_id}")
-            resource = db.get(DbResource, resource_id)
+            resource = await db.get(DbResource, resource_id)
             if not resource:
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
@@ -2106,12 +2120,14 @@ class ResourceService:
                 team_id = resource_update.team_id or resource.team_id
                 if visibility.lower() == "public":
                     # Check for existing public resources with the same uri
-                    existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource_update.uri, DbResource.visibility == "public")).scalar_one_or_none()
+                    result = await db.execute(select(DbResource).where(DbResource.uri == resource_update.uri, DbResource.visibility == "public"))
+                    existing_resource = result.scalar_one_or_none()
                     if existing_resource:
                         raise ResourceURIConflictError(resource_update.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
                 elif visibility.lower() == "team" and team_id:
                     # Check for existing team resource with the same uri
-                    existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource_update.uri, DbResource.visibility == "team", DbResource.team_id == team_id)).scalar_one_or_none()
+                    result = await db.execute(select(DbResource).where(DbResource.uri == resource_update.uri, DbResource.visibility == "team", DbResource.team_id == team_id))
+                    existing_resource = result.scalar_one_or_none()
                     if existing_resource:
                         raise ResourceURIConflictError(resource_update.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
 
@@ -2167,8 +2183,8 @@ class ResourceService:
                 resource.version = resource.version + 1
             else:
                 resource.version = 1
-            db.commit()
-            db.refresh(resource)
+            await db.commit()
+            await db.refresh(resource)
 
             # Notify subscribers
             await self._notify_resource_updated(resource)
@@ -2226,7 +2242,7 @@ class ResourceService:
 
             return self._convert_resource_to_read(resource)
         except PermissionError as pe:
-            db.rollback()
+            await db.rollback()
 
             # Structured logging: Log permission error
             structured_logger.log(
@@ -2242,7 +2258,7 @@ class ResourceService:
             )
             raise
         except IntegrityError as ie:
-            db.rollback()
+            await db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
 
             # Structured logging: Log database integrity error
@@ -2277,7 +2293,7 @@ class ResourceService:
             )
             raise pe
         except Exception as e:
-            db.rollback()
+            await db.rollback()
             if isinstance(e, ResourceNotFoundError):
                 # Structured logging: Log not found error
                 structured_logger.log(
@@ -2308,7 +2324,7 @@ class ResourceService:
             )
             raise ResourceError(f"Failed to update resource: {str(e)}")
 
-    async def delete_resource(self, db: Session, resource_id: Union[int, str], user_email: Optional[str] = None) -> None:
+    async def delete_resource(self, db: AsyncSession, resource_id: Union[int, str], user_email: Optional[str] = None) -> None:
         """
         Delete a resource.
 
@@ -2337,11 +2353,12 @@ class ResourceService:
         """
         try:
             # Find resource by its URI.
-            resource = db.execute(select(DbResource).where(DbResource.id == resource_id)).scalar_one_or_none()
+            result = await db.execute(select(DbResource).where(DbResource.id == resource_id))
+            resource = result.scalar_one_or_none()
 
             if not resource:
                 # If resource doesn't exist, rollback and re-raise a ResourceNotFoundError.
-                db.rollback()
+                await db.rollback()
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
             # Check ownership if user_email provided
@@ -2361,15 +2378,15 @@ class ResourceService:
             }
 
             # Remove subscriptions using SQLAlchemy's delete() expression.
-            db.execute(delete(DbSubscription).where(DbSubscription.resource_id == resource.id))
+            await db.execute(delete(DbSubscription).where(DbSubscription.resource_id == resource.id))
 
             # Hard delete the resource.
             resource_uri = resource.uri
             resource_name = resource.name
             resource_team_id = resource.team_id
 
-            db.delete(resource)
-            db.commit()
+            await db.delete(resource)
+            await db.commit()
 
             # Notify subscribers.
             await self._notify_resource_deleted(resource_info)
@@ -2409,7 +2426,7 @@ class ResourceService:
             )
 
         except PermissionError as pe:
-            db.rollback()
+            await db.rollback()
 
             # Structured logging: Log permission error
             structured_logger.log(
@@ -2440,7 +2457,7 @@ class ResourceService:
             )
             raise
         except Exception as e:
-            db.rollback()
+            await db.rollback()
 
             # Structured logging: Log generic resource deletion failure
             structured_logger.log(
@@ -2456,7 +2473,7 @@ class ResourceService:
             )
             raise ResourceError(f"Failed to delete resource: {str(e)}")
 
-    async def get_resource_by_id(self, db: Session, resource_id: str, include_inactive: bool = False) -> ResourceRead:
+    async def get_resource_by_id(self, db: AsyncSession, resource_id: str, include_inactive: bool = False) -> ResourceRead:
         """
         Get a resource by ID.
 
@@ -2488,12 +2505,14 @@ class ResourceService:
         if not include_inactive:
             query = query.where(DbResource.enabled)
 
-        resource = db.execute(query).scalar_one_or_none()
+        result = await db.execute(query)
+        resource = result.scalar_one_or_none()
 
         if not resource:
             if not include_inactive:
                 # Check if inactive resource exists
-                inactive_resource = db.execute(select(DbResource).where(DbResource.id == resource_id).where(not_(DbResource.enabled))).scalar_one_or_none()
+                inactive_result = await db.execute(select(DbResource).where(DbResource.id == resource_id).where(not_(DbResource.enabled)))
+                inactive_resource = inactive_result.scalar_one_or_none()
 
                 if inactive_resource:
                     raise ResourceNotFoundError(f"Resource '{resource_id}' exists but is inactive")
@@ -2620,7 +2639,7 @@ class ResourceService:
 
         return "application/octet-stream"
 
-    async def _read_template_resource(self, db: Session, uri: str, include_inactive: Optional[bool] = False) -> ResourceContent:
+    async def _read_template_resource(self, db: AsyncSession, uri: str, include_inactive: Optional[bool] = False) -> ResourceContent:
         """
         Read a templated resource.
 
@@ -2650,7 +2669,8 @@ class ResourceService:
                 break
 
         if template:
-            check_inactivity = db.execute(select(DbResource).where(DbResource.id == str(template.id)).where(not_(DbResource.enabled))).scalar_one_or_none()
+            inactivity_result = await db.execute(select(DbResource).where(DbResource.id == str(template.id)).where(not_(DbResource.enabled)))
+            check_inactivity = inactivity_result.scalar_one_or_none()
             if check_inactivity:
                 raise ResourceNotFoundError(f"Resource '{template.id}' exists but is inactive")
         else:
@@ -2799,7 +2819,7 @@ class ResourceService:
         await self._event_service.publish_event(event)
 
     # --- Resource templates ---
-    async def list_resource_templates(self, db: Session, include_inactive: bool = False) -> List[ResourceTemplate]:
+    async def list_resource_templates(self, db: AsyncSession, include_inactive: bool = False) -> List[ResourceTemplate]:
         """
         List resource templates.
 
@@ -2828,12 +2848,13 @@ class ResourceService:
         if not include_inactive:
             query = query.where(DbResource.enabled)
         # Cursor-based pagination logic can be implemented here in the future.
-        templates = db.execute(query).scalars().all()
+        query_result = await db.execute(query)
+        templates = query_result.scalars().all()
         result = [ResourceTemplate.model_validate(t) for t in templates]
         return result
 
     # --- Metrics ---
-    async def aggregate_metrics(self, db: Session) -> ResourceMetrics:
+    async def aggregate_metrics(self, db: AsyncSession) -> ResourceMetrics:
         """
         Aggregate metrics for all resource invocations across all resources.
 
@@ -2867,7 +2888,7 @@ class ResourceService:
                 return ResourceMetrics(**cached)
 
         # Execute a single query to get all metrics at once
-        result = db.execute(
+        query_result = await db.execute(
             select(
                 func.count().label("total_executions"),  # pylint: disable=not-callable
                 func.sum(case((ResourceMetric.is_success.is_(True), 1), else_=0)).label("successful_executions"),  # pylint: disable=not-callable
@@ -2877,7 +2898,8 @@ class ResourceService:
                 func.avg(ResourceMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
                 func.max(ResourceMetric.timestamp).label("last_execution_time"),  # pylint: disable=not-callable
             ).select_from(ResourceMetric)
-        ).one()
+        )
+        result = query_result.one()
 
         total_executions = result.total_executions or 0
         successful_executions = result.successful_executions or 0
@@ -2900,7 +2922,7 @@ class ResourceService:
 
         return metrics
 
-    async def reset_metrics(self, db: Session) -> None:
+    async def reset_metrics(self, db: AsyncSession) -> None:
         """
         Reset all resource metrics by deleting all records from the resource metrics table.
 
@@ -2917,8 +2939,8 @@ class ResourceService:
             >>> import asyncio
             >>> asyncio.run(service.reset_metrics(db))
         """
-        db.execute(delete(ResourceMetric))
-        db.commit()
+        await db.execute(delete(ResourceMetric))
+        await db.commit()
 
         # Invalidate metrics cache
         # First-Party

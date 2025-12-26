@@ -21,10 +21,12 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 import orjson
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.main import get_db
+from mcpgateway.db import _use_async, get_async_db, get_db
+
+_db_dependency = get_async_db if _use_async else get_db
+# First-Party
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.toolops.toolops_altk_service import enrich_tool, execute_tool_nl_test_cases, validation_generate_test_cases
@@ -69,7 +71,7 @@ async def generate_testcases_for_tool(
     number_of_test_cases: int = Query(2, description="Maximum number of tool test cases"),
     number_of_nl_variations: int = Query(1, description="Number of NL utterance variations per test case"),
     mode: str = Query("generate", description="Three modes: 'generate' for test case generation, 'query' for obtaining test cases from DB , 'status' to check test generation status"),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ) -> List[Dict]:
     """
     Generate test cases for a tool
@@ -104,7 +106,7 @@ async def generate_testcases_for_tool(
 
 
 @toolops_router.post("/validation/execute_tool_nl_testcases")
-async def execute_tool_nl_testcases(tool_nl_test_input: ToolNLTestInput, db: Session = Depends(get_db)) -> List:
+async def execute_tool_nl_testcases(tool_nl_test_input: ToolNLTestInput, db=Depends(_db_dependency)) -> List:
     """
     Execute test cases for a tool
 
@@ -139,7 +141,7 @@ async def execute_tool_nl_testcases(tool_nl_test_input: ToolNLTestInput, db: Ses
 
 
 @toolops_router.post("/enrichment/enrich_tool")
-async def enrich_a_tool(tool_id: str = Query(None, description="Tool ID"), db: Session = Depends(get_db)) -> dict[str, Any]:
+async def enrich_a_tool(tool_id: str = Query(None, description="Tool ID"), db=Depends(_db_dependency)) -> dict[str, Any]:
     """
     Enriches an input tool
 

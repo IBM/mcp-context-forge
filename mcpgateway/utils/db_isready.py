@@ -267,25 +267,35 @@ def wait_for_db_ready(
 
     url_obj: URL = make_url(database_url)
     backend: str = url_obj.get_backend_name()
+    driver: str = url_obj.get_driver_name() or ""
     target: str = _format_target(url_obj)
+
+    # For asyncpg URLs, use psycopg3 for the sync probe since asyncpg is async-only
+    probe_url = database_url
+    if backend.startswith("postgresql") and driver == "asyncpg":
+        probe_url = database_url.replace("postgresql+asyncpg://", "postgresql+psycopg://")
+        log.debug("Using psycopg3 for sync database probe (asyncpg is async-only)")
 
     log.info(f"Probing {backend} at {target} (timeout={timeout}s, interval={interval}s, max_tries={max_tries})")
 
     connect_args: Dict[str, Any] = {}
-    if backend.startswith(("postgresql", "mysql")):
-        # Most drivers honour this parameter - harmless for others.
+
+    if backend.startswith("postgresql"):
+        # psycopg3 uses 'connect_timeout' for connection timeout
+        connect_args["connect_timeout"] = timeout
+    elif backend.startswith("mysql"):
         connect_args["connect_timeout"] = timeout
 
     if backend == "sqlite":
         # SQLite doesn't support pool overflow/timeout parameters
         engine: Engine = create_engine(
-            database_url,
+            probe_url,
             connect_args=connect_args,
         )
     else:
         # Other databases support full pooling configuration
         engine: Engine = create_engine(
-            database_url,
+            probe_url,
             pool_pre_ping=True,
             pool_size=1,
             max_overflow=0,

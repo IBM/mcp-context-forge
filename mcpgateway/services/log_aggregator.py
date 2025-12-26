@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 # Third-Party
 from sqlalchemy import and_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -38,7 +39,7 @@ class LogAggregator:
     def aggregate_performance_metrics(
         self, component: Optional[str], operation_type: Optional[str], window_start: Optional[datetime] = None, window_end: Optional[datetime] = None, db: Optional[Session] = None
     ) -> Optional[PerformanceMetric]:
-        """Aggregate performance metrics for a component and operation.
+        """Aggregate performance metrics for a component and operation (sync version for background tasks).
 
         Args:
             component: Component name
@@ -135,8 +136,99 @@ class LogAggregator:
             if should_close:
                 db.close()
 
+    async def aggregate_performance_metrics_async(
+        self, db: AsyncSession, component: Optional[str], operation_type: Optional[str], window_start: Optional[datetime] = None, window_end: Optional[datetime] = None
+    ) -> Optional[PerformanceMetric]:
+        """Aggregate performance metrics for a component and operation (async version).
+
+        Args:
+            db: Async database session
+            component: Component name
+            operation_type: Operation name
+            window_start: Start of aggregation window (defaults to N minutes ago)
+            window_end: End of aggregation window (defaults to now)
+
+        Returns:
+            Created PerformanceMetric or None if no data
+        """
+        if not self.enabled:
+            return None
+        if not component or not operation_type:
+            return None
+
+        window_start, window_end = self._resolve_window_bounds(window_start, window_end)
+
+        try:
+            # Query structured logs for this component/operation in time window
+            stmt = select(StructuredLogEntry).where(
+                and_(
+                    StructuredLogEntry.component == component,
+                    StructuredLogEntry.operation_type == operation_type,
+                    StructuredLogEntry.timestamp >= window_start,
+                    StructuredLogEntry.timestamp < window_end,
+                    StructuredLogEntry.duration_ms.isnot(None),
+                )
+            )
+
+            result = await db.execute(stmt)
+            results = result.scalars().all()
+
+            if not results:
+                return None
+
+            # Extract durations
+            durations = sorted(r.duration_ms for r in results if r.duration_ms is not None)
+
+            if not durations:
+                return None
+
+            # Calculate statistics
+            count = len(durations)
+            avg_duration = statistics.fmean(durations) if hasattr(statistics, "fmean") else statistics.mean(durations)
+            min_duration = durations[0]
+            max_duration = durations[-1]
+
+            # Calculate percentiles
+            p50 = self._percentile(durations, 0.50)
+            p95 = self._percentile(durations, 0.95)
+            p99 = self._percentile(durations, 0.99)
+
+            # Count errors
+            error_count = self._calculate_error_count(results)
+            error_rate = error_count / count if count > 0 else 0.0
+
+            metric = await self._upsert_metric_async(
+                db=db,
+                component=component,
+                operation_type=operation_type,
+                window_start=window_start,
+                window_end=window_end,
+                request_count=count,
+                error_count=error_count,
+                error_rate=error_rate,
+                avg_duration_ms=avg_duration,
+                min_duration_ms=min_duration,
+                max_duration_ms=max_duration,
+                p50_duration_ms=p50,
+                p95_duration_ms=p95,
+                p99_duration_ms=p99,
+                metric_metadata={
+                    "sample_size": count,
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+
+            logger.info(f"Aggregated performance metrics for {component}.{operation_type}: " f"{count} requests, {avg_duration:.2f}ms avg, {error_rate:.2%} error rate")
+
+            return metric
+
+        except Exception as e:
+            logger.error(f"Failed to aggregate performance metrics: {e}")
+            await db.rollback()
+            return None
+
     def aggregate_all_components(self, window_start: Optional[datetime] = None, window_end: Optional[datetime] = None, db: Optional[Session] = None) -> List[PerformanceMetric]:
-        """Aggregate metrics for all components and operations.
+        """Aggregate metrics for all components and operations (sync version for background tasks).
 
         Args:
             window_start: Start of aggregation window
@@ -185,8 +277,49 @@ class LogAggregator:
             if should_close:
                 db.close()
 
+    async def aggregate_all_components_async(self, db: AsyncSession, window_start: Optional[datetime] = None, window_end: Optional[datetime] = None) -> List[PerformanceMetric]:
+        """Aggregate metrics for all components and operations (async version).
+
+        Args:
+            db: Async database session
+            window_start: Start of aggregation window
+            window_end: End of aggregation window
+
+        Returns:
+            List of created PerformanceMetric records
+        """
+        if not self.enabled:
+            return []
+
+        window_start, window_end = self._resolve_window_bounds(window_start, window_end)
+
+        stmt = (
+            select(StructuredLogEntry.component, StructuredLogEntry.operation_type)
+            .where(
+                and_(
+                    StructuredLogEntry.timestamp >= window_start,
+                    StructuredLogEntry.timestamp < window_end,
+                    StructuredLogEntry.duration_ms.isnot(None),
+                    StructuredLogEntry.operation_type.isnot(None),
+                )
+            )
+            .distinct()
+        )
+
+        result = await db.execute(stmt)
+        pairs = result.all()
+
+        metrics = []
+        for component, operation in pairs:
+            if component and operation:
+                metric = await self.aggregate_performance_metrics_async(db=db, component=component, operation_type=operation, window_start=window_start, window_end=window_end)
+                if metric:
+                    metrics.append(metric)
+
+        return metrics
+
     def get_recent_metrics(self, component: Optional[str] = None, operation: Optional[str] = None, hours: int = 24, db: Optional[Session] = None) -> List[PerformanceMetric]:
-        """Get recent performance metrics.
+        """Get recent performance metrics (sync version for background tasks).
 
         Args:
             component: Optional component filter
@@ -220,8 +353,34 @@ class LogAggregator:
             if should_close:
                 db.close()
 
+    async def get_recent_metrics_async(self, db: AsyncSession, component: Optional[str] = None, operation: Optional[str] = None, hours: int = 24) -> List[PerformanceMetric]:
+        """Get recent performance metrics (async version).
+
+        Args:
+            db: Async database session
+            component: Optional component filter
+            operation: Optional operation filter
+            hours: Hours of history to retrieve
+
+        Returns:
+            List of PerformanceMetric records
+        """
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+        stmt = select(PerformanceMetric).where(PerformanceMetric.window_start >= since)
+
+        if component:
+            stmt = stmt.where(PerformanceMetric.component == component)
+        if operation:
+            stmt = stmt.where(PerformanceMetric.operation_type == operation)
+
+        stmt = stmt.order_by(PerformanceMetric.window_start.desc())
+
+        result = await db.execute(stmt)
+        return list(result.scalars().all())
+
     def get_degradation_alerts(self, threshold_multiplier: float = 1.5, hours: int = 24, db: Optional[Session] = None) -> List[Dict[str, Any]]:
-        """Identify performance degradations by comparing recent vs baseline.
+        """Identify performance degradations by comparing recent vs baseline (sync version for background tasks).
 
         Args:
             threshold_multiplier: Alert if recent is X times slower than baseline
@@ -289,8 +448,70 @@ class LogAggregator:
             if should_close:
                 db.close()
 
+    async def get_degradation_alerts_async(self, db: AsyncSession, threshold_multiplier: float = 1.5, hours: int = 24) -> List[Dict[str, Any]]:
+        """Identify performance degradations by comparing recent vs baseline (async version).
+
+        Args:
+            db: Async database session
+            threshold_multiplier: Alert if recent is X times slower than baseline
+            hours: Hours of recent data to check
+
+        Returns:
+            List of degradation alerts with details
+        """
+        recent_cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        baseline_cutoff = recent_cutoff - timedelta(hours=hours * 2)
+
+        # Get unique component/operation pairs
+        stmt = select(PerformanceMetric.component, PerformanceMetric.operation_type).distinct()
+
+        result = await db.execute(stmt)
+        pairs = result.all()
+
+        alerts = []
+        for component, operation in pairs:
+            # Get recent metrics
+            recent_stmt = select(PerformanceMetric).where(
+                and_(PerformanceMetric.component == component, PerformanceMetric.operation_type == operation, PerformanceMetric.window_start >= recent_cutoff)
+            )
+            recent_result = await db.execute(recent_stmt)
+            recent_metrics = recent_result.scalars().all()
+
+            # Get baseline metrics
+            baseline_stmt = select(PerformanceMetric).where(
+                and_(
+                    PerformanceMetric.component == component,
+                    PerformanceMetric.operation_type == operation,
+                    PerformanceMetric.window_start >= baseline_cutoff,
+                    PerformanceMetric.window_start < recent_cutoff,
+                )
+            )
+            baseline_result = await db.execute(baseline_stmt)
+            baseline_metrics = baseline_result.scalars().all()
+
+            if not recent_metrics or not baseline_metrics:
+                continue
+
+            recent_avg = statistics.mean([m.avg_duration_ms for m in recent_metrics])
+            baseline_avg = statistics.mean([m.avg_duration_ms for m in baseline_metrics])
+
+            if recent_avg > baseline_avg * threshold_multiplier:
+                alerts.append(
+                    {
+                        "component": component,
+                        "operation": operation,
+                        "recent_avg_ms": recent_avg,
+                        "baseline_avg_ms": baseline_avg,
+                        "degradation_ratio": recent_avg / baseline_avg,
+                        "recent_error_rate": statistics.mean([m.error_rate for m in recent_metrics]),
+                        "baseline_error_rate": statistics.mean([m.error_rate for m in baseline_metrics]),
+                    }
+                )
+
+        return alerts
+
     def backfill(self, hours: float, db: Optional[Session] = None) -> int:
-        """Backfill metrics for a historical time range.
+        """Backfill metrics for a historical time range (sync version for background tasks).
 
         Args:
             hours: Number of hours of history to aggregate (supports fractional hours)
@@ -332,6 +553,40 @@ class LogAggregator:
         finally:
             if should_close:
                 db.close()
+
+    async def backfill_async(self, db: AsyncSession, hours: float) -> int:
+        """Backfill metrics for a historical time range (async version).
+
+        Args:
+            db: Async database session
+            hours: Number of hours of history to aggregate (supports fractional hours)
+
+        Returns:
+            Count of performance metric windows processed
+        """
+        if not self.enabled or hours <= 0:
+            return 0
+
+        window_minutes = self.aggregation_window_minutes
+        window_delta = timedelta(minutes=window_minutes)
+        total_windows = max(1, math.ceil((hours * 60) / window_minutes))
+
+        _, latest_end = self._resolve_window_bounds(None, None)
+        current_start = latest_end - (window_delta * total_windows)
+        processed = 0
+
+        while current_start < latest_end:
+            current_end = current_start + window_delta
+            created = await self.aggregate_all_components_async(
+                db=db,
+                window_start=current_start,
+                window_end=current_end,
+            )
+            if created:
+                processed += 1
+            current_start = current_end
+
+        return processed
 
     @staticmethod
     def _percentile(sorted_values: List[float], percentile: float) -> float:
@@ -507,6 +762,97 @@ class LogAggregator:
 
         db.commit()
         db.refresh(metric)
+        return metric
+
+    async def _upsert_metric_async(
+        self,
+        db: AsyncSession,
+        component: str,
+        operation_type: str,
+        window_start: datetime,
+        window_end: datetime,
+        request_count: int,
+        error_count: int,
+        error_rate: float,
+        avg_duration_ms: float,
+        min_duration_ms: float,
+        max_duration_ms: float,
+        p50_duration_ms: float,
+        p95_duration_ms: float,
+        p99_duration_ms: float,
+        metric_metadata: Optional[Dict[str, Any]],
+    ) -> PerformanceMetric:
+        """Create or update a performance metric window (async version).
+
+        Args:
+            db: Async database session
+            component: Component name
+            operation_type: Operation type
+            window_start: Window start time
+            window_end: Window end time
+            request_count: Total request count
+            error_count: Total error count
+            error_rate: Error rate (0.0-1.0)
+            avg_duration_ms: Average duration in milliseconds
+            min_duration_ms: Minimum duration in milliseconds
+            max_duration_ms: Maximum duration in milliseconds
+            p50_duration_ms: 50th percentile duration
+            p95_duration_ms: 95th percentile duration
+            p99_duration_ms: 99th percentile duration
+            metric_metadata: Additional metadata
+
+        Returns:
+            PerformanceMetric: Created or updated metric
+        """
+
+        existing_stmt = select(PerformanceMetric).where(
+            and_(
+                PerformanceMetric.component == component,
+                PerformanceMetric.operation_type == operation_type,
+                PerformanceMetric.window_start == window_start,
+                PerformanceMetric.window_end == window_end,
+            )
+        )
+
+        result = await db.execute(existing_stmt)
+        existing_metrics = result.scalars().all()
+        metric = existing_metrics[0] if existing_metrics else None
+
+        if len(existing_metrics) > 1:
+            logger.warning(
+                "Found %s duplicate performance metric rows for %s.%s window %s-%s; pruning extras",
+                len(existing_metrics),
+                component,
+                operation_type,
+                window_start.isoformat(),
+                window_end.isoformat(),
+            )
+            for duplicate in existing_metrics[1:]:
+                await db.delete(duplicate)
+
+        if metric is None:
+            metric = PerformanceMetric(
+                component=component,
+                operation_type=operation_type,
+                window_start=window_start,
+                window_end=window_end,
+                window_duration_seconds=int((window_end - window_start).total_seconds()),
+            )
+            db.add(metric)
+
+        metric.request_count = request_count
+        metric.error_count = error_count
+        metric.error_rate = error_rate
+        metric.avg_duration_ms = avg_duration_ms
+        metric.min_duration_ms = min_duration_ms
+        metric.max_duration_ms = max_duration_ms
+        metric.p50_duration_ms = p50_duration_ms
+        metric.p95_duration_ms = p95_duration_ms
+        metric.p99_duration_ms = p99_duration_ms
+        metric.metric_metadata = metric_metadata
+
+        await db.commit()
+        await db.refresh(metric)
         return metric
 
 

@@ -24,12 +24,17 @@ from sqlalchemy.sql import func as sa_func
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import (
+    _use_async,
     AuditTrail,
+    get_async_db,
     get_db,
     PerformanceMetric,
     SecurityEvent,
     StructuredLogEntry,
 )
+
+_db_dependency = get_async_db if _use_async else get_db
+# First-Party
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.log_aggregator import get_log_aggregator
 
@@ -294,7 +299,7 @@ class PerformanceMetricResponse(BaseModel):
 # API Endpoints
 @router.post("/search", response_model=LogSearchResponse)
 @require_permission("logs:read")
-async def search_logs(request: LogSearchRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> LogSearchResponse:
+async def search_logs(request: LogSearchRequest, user=Depends(get_current_user_with_permissions), db=Depends(_db_dependency)) -> LogSearchResponse:
     """Search structured logs with filters and pagination.
 
     Args:
@@ -357,7 +362,7 @@ async def search_logs(request: LogSearchRequest, user=Depends(get_current_user_w
 
         # Get total count
         count_stmt = select(sa_func.count()).select_from(stmt.subquery())
-        total = db.execute(count_stmt).scalar() or 0
+        total = (await db.execute(count_stmt)).scalar() or 0
 
         # Apply sorting
         sort_column = getattr(StructuredLogEntry, request.sort_by, StructuredLogEntry.timestamp)
@@ -370,7 +375,7 @@ async def search_logs(request: LogSearchRequest, user=Depends(get_current_user_w
         stmt = stmt.limit(request.limit).offset(request.offset)
 
         # Execute query
-        results = db.execute(stmt).scalars().all()
+        results = (await db.execute(stmt)).scalars().all()
 
         # Convert to response models
         log_entries = [
@@ -402,7 +407,7 @@ async def search_logs(request: LogSearchRequest, user=Depends(get_current_user_w
 
 @router.get("/trace/{correlation_id}", response_model=CorrelationTraceResponse)
 @require_permission("logs:read")
-async def trace_correlation_id(correlation_id: str, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> CorrelationTraceResponse:
+async def trace_correlation_id(correlation_id: str, user=Depends(get_current_user_with_permissions), db=Depends(_db_dependency)) -> CorrelationTraceResponse:
     """Get all logs and events for a correlation ID.
 
     Args:
@@ -420,17 +425,17 @@ async def trace_correlation_id(correlation_id: str, user=Depends(get_current_use
         # Get structured logs
         log_stmt = select(StructuredLogEntry).where(StructuredLogEntry.correlation_id == correlation_id).order_by(StructuredLogEntry.timestamp)
 
-        logs = db.execute(log_stmt).scalars().all()
+        logs = (await db.execute(log_stmt)).scalars().all()
 
         # Get security events
         security_stmt = select(SecurityEvent).where(SecurityEvent.correlation_id == correlation_id).order_by(SecurityEvent.timestamp)
 
-        security_events = db.execute(security_stmt).scalars().all()
+        security_events = (await db.execute(security_stmt)).scalars().all()
 
         # Get audit trails
         audit_stmt = select(AuditTrail).where(AuditTrail.correlation_id == correlation_id).order_by(AuditTrail.timestamp)
 
-        audit_trails = db.execute(audit_stmt).scalars().all()
+        audit_trails = (await db.execute(audit_stmt)).scalars().all()
 
         # Calculate metrics
         durations = [log.duration_ms for log in logs if log.duration_ms is not None]
@@ -450,7 +455,7 @@ async def trace_correlation_id(correlation_id: str, user=Depends(get_current_use
                     .limit(1)
                 )
 
-                perf = db.execute(perf_stmt).scalar_one_or_none()
+                perf = (await db.execute(perf_stmt)).scalar_one_or_none()
                 if perf:
                     perf_metrics = {
                         "avg_duration_ms": perf.avg_duration_ms,
@@ -524,7 +529,7 @@ async def get_security_events(
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ) -> List[SecurityEventResponse]:
     """Get security events with filters.
 
@@ -565,7 +570,7 @@ async def get_security_events(
 
         stmt = stmt.order_by(desc(SecurityEvent.timestamp)).limit(limit).offset(offset)
 
-        events = db.execute(stmt).scalars().all()
+        events = (await db.execute(stmt)).scalars().all()
 
         return [
             SecurityEventResponse(
@@ -601,7 +606,7 @@ async def get_audit_trails(
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ) -> List[AuditTrailResponse]:
     """Get audit trails with filters.
 
@@ -645,7 +650,7 @@ async def get_audit_trails(
 
         stmt = stmt.order_by(desc(AuditTrail.timestamp)).limit(limit).offset(offset)
 
-        trails = db.execute(stmt).scalars().all()
+        trails = (await db.execute(stmt)).scalars().all()
 
         return [
             AuditTrailResponse(
@@ -678,7 +683,7 @@ async def get_performance_metrics(
     hours: float = Query(24.0, ge=MIN_PERFORMANCE_RANGE_HOURS, le=1000.0, description="Historical window to display"),
     aggregation: str = Query(_DEFAULT_AGGREGATION_KEY, regex="^(5m|24h)$", description="Aggregation level for metrics"),
     user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ) -> List[PerformanceMetricResponse]:
     """Get performance metrics.
 
@@ -724,7 +729,7 @@ async def get_performance_metrics(
 
         stmt = stmt.order_by(desc(PerformanceMetric.window_start), desc(PerformanceMetric.timestamp))
 
-        metrics = db.execute(stmt).scalars().all()
+        metrics = (await db.execute(stmt)).scalars().all()
 
         metrics = _deduplicate_metrics(metrics)
 

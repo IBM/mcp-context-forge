@@ -20,7 +20,8 @@ from typing import Any, Dict, List
 # Third-Party
 import aiohttp
 import orjson
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # First-Party
 from mcpgateway.config import get_settings
@@ -111,7 +112,7 @@ class DcrService:
         except aiohttp.ClientError as e:
             raise DcrError(f"Failed to discover AS metadata for {issuer}: {e}")
 
-    async def register_client(self, gateway_id: str, gateway_name: str, issuer: str, redirect_uri: str, scopes: List[str], db: Session) -> RegisteredOAuthClient:
+    async def register_client(self, gateway_id: str, gateway_name: str, issuer: str, redirect_uri: str, scopes: List[str], db: AsyncSession) -> RegisteredOAuthClient:
         """Register as OAuth client with upstream AS (RFC 7591).
 
         Args:
@@ -195,14 +196,14 @@ class DcrService:
         )
 
         db.add(registered_client)
-        db.commit()
-        db.refresh(registered_client)
+        await db.commit()
+        await db.refresh(registered_client)
 
         logger.info(f"Successfully registered client {registered_client.client_id} with {issuer} for gateway {gateway_id}")
 
         return registered_client
 
-    async def get_or_register_client(self, gateway_id: str, gateway_name: str, issuer: str, redirect_uri: str, scopes: List[str], db: Session) -> RegisteredOAuthClient:
+    async def get_or_register_client(self, gateway_id: str, gateway_name: str, issuer: str, redirect_uri: str, scopes: List[str], db: AsyncSession) -> RegisteredOAuthClient:
         """Get existing registered client or register new one.
 
         Args:
@@ -220,11 +221,11 @@ class DcrService:
             DcrError: If client not found and auto-register is disabled
         """
         # Try to find existing client
-        existing_client = (
-            db.query(RegisteredOAuthClient)
-            .filter(RegisteredOAuthClient.gateway_id == gateway_id, RegisteredOAuthClient.issuer == issuer, RegisteredOAuthClient.is_active.is_(True))  # pylint: disable=singleton-comparison
-            .first()
+        stmt = select(RegisteredOAuthClient).where(
+            RegisteredOAuthClient.gateway_id == gateway_id, RegisteredOAuthClient.issuer == issuer, RegisteredOAuthClient.is_active.is_(True)  # pylint: disable=singleton-comparison
         )
+        result = await db.execute(stmt)
+        existing_client = result.scalar_one_or_none()
 
         if existing_client:
             logger.debug(f"Found existing registered client for gateway {gateway_id} and issuer {issuer}")
@@ -240,7 +241,7 @@ class DcrService:
         logger.info(f"No existing client found for gateway {gateway_id}, registering new client with {issuer}")
         return await self.register_client(gateway_id, gateway_name, issuer, redirect_uri, scopes, db)
 
-    async def update_client_registration(self, client_record: RegisteredOAuthClient, db: Session) -> RegisteredOAuthClient:
+    async def update_client_registration(self, client_record: RegisteredOAuthClient, db: AsyncSession) -> RegisteredOAuthClient:
         """Update existing client registration (RFC 7591 section 4.2).
 
         Args:
@@ -280,8 +281,8 @@ class DcrService:
                         if "client_secret" in updated_response:
                             client_record.client_secret_encrypted = encryption.encrypt_secret(updated_response["client_secret"])
 
-                        db.commit()
-                        db.refresh(client_record)
+                        await db.commit()
+                        await db.refresh(client_record)
 
                         logger.info(f"Successfully updated client registration for {client_record.client_id}")
                         return client_record
@@ -291,7 +292,7 @@ class DcrService:
         except aiohttp.ClientError as e:
             raise DcrError(f"Failed to update client registration: {e}")
 
-    async def delete_client_registration(self, client_record: RegisteredOAuthClient, db: Session) -> bool:  # pylint: disable=unused-argument
+    async def delete_client_registration(self, client_record: RegisteredOAuthClient, db: AsyncSession) -> bool:  # pylint: disable=unused-argument
         """Delete/revoke client registration (RFC 7591 section 4.3).
 
         Args:

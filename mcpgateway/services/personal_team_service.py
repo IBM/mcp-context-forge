@@ -21,7 +21,8 @@ Examples:
 from typing import Optional
 
 # Third-Party
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # First-Party
 from mcpgateway.db import EmailTeam, EmailTeamMember, EmailTeamMemberHistory, EmailUser, utc_now
@@ -39,7 +40,7 @@ class PersonalTeamService:
     and manages team membership for personal workspaces.
 
     Attributes:
-        db (Session): SQLAlchemy database session
+        db (AsyncSession): SQLAlchemy async database session
 
     Examples:
         >>> from unittest.mock import Mock
@@ -50,11 +51,11 @@ class PersonalTeamService:
         True
     """
 
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         """Initialize the personal team service.
 
         Args:
-            db: SQLAlchemy database session
+            db: SQLAlchemy async database session
 
         Examples:
             >>> from unittest.mock import Mock
@@ -92,7 +93,8 @@ class PersonalTeamService:
         """
         try:
             # Check if user already has a personal team
-            existing_team = self.db.query(EmailTeam).filter(EmailTeam.created_by == user.email, EmailTeam.is_personal.is_(True), EmailTeam.is_active.is_(True)).first()
+            result = await self.db.execute(select(EmailTeam).where(EmailTeam.created_by == user.email, EmailTeam.is_personal.is_(True), EmailTeam.is_active.is_(True)))
+            existing_team = result.scalar_one_or_none()
 
             if existing_team:
                 logger.warning(f"User {user.email} already has a personal team: {existing_team.id}")
@@ -118,23 +120,23 @@ class PersonalTeamService:
             )
 
             self.db.add(team)
-            self.db.flush()  # Get the team ID
+            await self.db.flush()  # Get the team ID
 
             # Add the user as the owner of their personal team
             membership = EmailTeamMember(team_id=team.id, user_email=user.email, role="owner", joined_at=utc_now(), is_active=True)
 
             self.db.add(membership)
-            self.db.flush()  # Get the membership ID
+            await self.db.flush()  # Get the membership ID
             # Insert history record
             history = EmailTeamMemberHistory(team_member_id=membership.id, team_id=team.id, user_email=user.email, role="owner", action="added", action_by=user.email, action_timestamp=utc_now())
             self.db.add(history)
-            self.db.commit()
+            await self.db.commit()
 
             logger.info(f"Created personal team '{team.name}' for user {user.email}")
             return team
 
         except Exception as e:
-            self.db.rollback()
+            await self.db.rollback()
             logger.error(f"Failed to create personal team for {user.email}: {e}")
             raise
 
@@ -155,7 +157,8 @@ class PersonalTeamService:
             True
         """
         try:
-            team = self.db.query(EmailTeam).filter(EmailTeam.created_by == user_email, EmailTeam.is_personal.is_(True), EmailTeam.is_active.is_(True)).first()
+            result = await self.db.execute(select(EmailTeam).where(EmailTeam.created_by == user_email, EmailTeam.is_personal.is_(True), EmailTeam.is_active.is_(True)))
+            team = result.scalar_one_or_none()
 
             return team
 
@@ -200,7 +203,7 @@ class PersonalTeamService:
                 raise Exception(f"Failed to get or create personal team for {user.email}")
             return team
 
-    def is_personal_team(self, team_id: str) -> bool:
+    async def is_personal_team(self, team_id: str) -> bool:
         """Check if a team is a personal team.
 
         Args:
@@ -216,7 +219,8 @@ class PersonalTeamService:
             True
         """
         try:
-            team = self.db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
+            result = await self.db.execute(select(EmailTeam).where(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)))
+            team = result.scalar_one_or_none()
 
             return team is not None and team.is_personal
 
@@ -245,7 +249,7 @@ class PersonalTeamService:
             >>> asyncio.iscoroutinefunction(service.delete_personal_team)
             True
         """
-        if self.is_personal_team(team_id):
+        if await self.is_personal_team(team_id):
             raise ValueError("Personal teams cannot be deleted")
         return False
 
@@ -262,7 +266,8 @@ class PersonalTeamService:
             Used for access control and team management operations.
         """
         try:
-            team = self.db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_personal.is_(True), EmailTeam.is_active.is_(True)).first()
+            result = await self.db.execute(select(EmailTeam).where(EmailTeam.id == team_id, EmailTeam.is_personal.is_(True), EmailTeam.is_active.is_(True)))
+            team = result.scalar_one_or_none()
 
             return team.created_by if team else None
 

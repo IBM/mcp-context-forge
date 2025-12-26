@@ -60,7 +60,7 @@ from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
-from mcpgateway.db import extract_json_field, get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
+from mcpgateway.db import extract_json_field, get_db, get_wrapped_sync_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Tool as DbTool
@@ -232,6 +232,11 @@ import_service: ImportService = ImportService()
 a2a_service: Optional[A2AAgentService] = A2AAgentService() if settings.mcpgateway_a2a_enabled else None
 # Initialize gRPC service only if gRPC features are enabled AND grpcio is installed
 grpc_service_mgr: Optional[Any] = GrpcService() if (settings.mcpgateway_grpc_enabled and GRPC_AVAILABLE and GrpcService is not None) else None
+
+# Use wrapped sync session for admin routes
+# This supports both await db.execute() and db.query() patterns
+# and enables lazy loading (which doesn't work with real AsyncSession)
+_db_dependency = get_wrapped_sync_db
 
 # Set up basic authentication
 
@@ -629,7 +634,7 @@ admin_router = APIRouter(prefix="/admin", tags=["Admin UI"])
 @admin_router.get("/config/passthrough-headers", response_model=GlobalConfigRead)
 @rate_limit(requests_per_minute=30)  # Lower limit for config endpoints
 async def get_global_passthrough_headers(
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     _user=Depends(get_current_user_with_permissions),
 ) -> GlobalConfigRead:
     """Get the global passthrough headers configuration.
@@ -652,7 +657,8 @@ async def get_global_passthrough_headers(
         True
     """
     # Use cache for reads (Issue #1715)
-    passthrough_headers = global_config_cache.get_passthrough_headers(db, [])
+    # Use sync version since admin routes use sync sessions
+    passthrough_headers = global_config_cache.get_passthrough_headers_sync(db, [])
     return GlobalConfigRead(passthrough_headers=passthrough_headers)
 
 
@@ -661,7 +667,7 @@ async def get_global_passthrough_headers(
 async def update_global_passthrough_headers(
     request: Request,  # pylint: disable=unused-argument
     config_update: GlobalConfigUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     _user=Depends(get_current_user_with_permissions),
 ) -> GlobalConfigRead:
     """Update the global passthrough headers configuration.
@@ -695,7 +701,7 @@ async def update_global_passthrough_headers(
             db.add(config)
         else:
             config.passthrough_headers = config_update.passthrough_headers
-        db.commit()
+        await db.commit()
         # Invalidate cache so changes propagate immediately (Issue #1715)
         global_config_cache.invalidate()
         return GlobalConfigRead(passthrough_headers=config.passthrough_headers)
@@ -843,7 +849,7 @@ async def get_a2a_stats_cache_stats(
 
 @admin_router.get("/config/settings")
 async def get_configuration_settings(
-    _db: Session = Depends(get_db),
+    _db: Session = Depends(_db_dependency),
     _user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """Get application configuration settings grouped by category.
@@ -998,7 +1004,7 @@ async def get_configuration_settings(
 @admin_router.get("/servers", response_model=List[ServerRead])
 async def admin_list_servers(
     include_inactive: bool = False,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> List[Dict[str, Any]]:
     """
@@ -1099,7 +1105,7 @@ async def admin_list_servers(
 
 
 @admin_router.get("/servers/{server_id}", response_model=ServerRead)
-async def admin_get_server(server_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_server(server_id: str, db: Session = Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Retrieve server details for the admin UI.
 
@@ -1203,7 +1209,7 @@ async def admin_get_server(server_id: str, db: Session = Depends(get_db), user=D
 
 
 @admin_router.post("/servers", response_model=ServerRead)
-async def admin_add_server(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> JSONResponse:
+async def admin_add_server(request: Request, db: Session = Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> JSONResponse:
     """
     Add a new server via the admin UI.
 
@@ -1428,7 +1434,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
 async def admin_edit_server(
     server_id: str,
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> JSONResponse:
     """
@@ -1644,7 +1650,7 @@ async def admin_edit_server(
 async def admin_toggle_server(
     server_id: str,
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> Response:
     """
@@ -1767,7 +1773,7 @@ async def admin_toggle_server(
 
 
 @admin_router.post("/servers/{server_id}/delete")
-async def admin_delete_server(server_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+async def admin_delete_server(server_id: str, request: Request, db: Session = Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Delete a server via the admin UI.
 
@@ -1868,7 +1874,7 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
 @admin_router.get("/resources", response_model=List[ResourceRead])
 async def admin_list_resources(
     include_inactive: bool = False,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> List[Dict[str, Any]]:
     """
@@ -1978,7 +1984,7 @@ async def admin_list_resources(
 @admin_router.get("/prompts", response_model=List[PromptRead])
 async def admin_list_prompts(
     include_inactive: bool = False,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> List[Dict[str, Any]]:
     """
@@ -2087,7 +2093,7 @@ async def admin_list_prompts(
 @admin_router.get("/gateways", response_model=List[GatewayRead])
 async def admin_list_gateways(
     include_inactive: bool = False,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> List[Dict[str, Any]]:
     """
@@ -2194,7 +2200,7 @@ async def admin_list_gateways(
 @admin_router.get("/gateways/ids")
 async def admin_list_gateway_ids(
     include_inactive: bool = False,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """
@@ -2224,7 +2230,7 @@ async def admin_list_gateway_ids(
 async def admin_toggle_gateway(
     gateway_id: str,
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> RedirectResponse:
     """
@@ -2338,7 +2344,7 @@ async def admin_ui(
     request: Request,
     team_id: Optional[str] = Query(None),
     include_inactive: bool = False,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
     _jwt_token: str = Depends(get_jwt_token),
 ) -> Any:
@@ -2970,7 +2976,7 @@ async def admin_login_page(request: Request) -> Response:
 
 
 @admin_router.post("/login")
-async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
+async def admin_login_handler(request: Request, db: Session = Depends(_db_dependency)) -> RedirectResponse:
     """
     Handle admin login form submission.
 
@@ -3048,7 +3054,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                     needs_password_change = True
                     # Set the flag in database for future reference
                     user.password_change_required = True
-                    db.commit()
+                    await db.commit()
                     LOGGER.info(f"User {email} is using default password - forcing password change")
 
             if needs_password_change:
@@ -3195,7 +3201,7 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
 
 
 @admin_router.post("/change-password-required")
-async def change_password_required_handler(request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
+async def change_password_required_handler(request: Request, db: Session = Depends(_db_dependency)) -> RedirectResponse:
     """
     Handle password change requirement form submission.
 
@@ -3291,7 +3297,7 @@ async def change_password_required_handler(request: Request, db: Session = Depen
             if success:
                 # Clear the password_change_required flag
                 current_user.password_change_required = False
-                db.commit()
+                await db.commit()
 
                 # Create new JWT token
                 token, _ = await create_access_token(current_user)
@@ -3502,7 +3508,7 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
 @require_permission("teams.read")
 async def admin_list_teams(
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
     unified: bool = False,
 ) -> HTMLResponse:
@@ -3596,7 +3602,7 @@ async def admin_list_teams(
 @require_permission("teams.create")
 async def admin_create_team(
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Create team via admin UI form submission.
@@ -3696,7 +3702,7 @@ async def admin_create_team(
 async def admin_view_team_members(
     team_id: str,
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """View team members via admin UI.
@@ -3939,7 +3945,7 @@ async def admin_view_team_members(
 async def admin_get_team_edit(
     team_id: str,
     _request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     _user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Get team edit form via admin UI.
@@ -4016,7 +4022,7 @@ async def admin_get_team_edit(
 async def admin_update_team(
     team_id: str,
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> Response:
     """Update team via admin UI.
@@ -4098,7 +4104,7 @@ async def admin_update_team(
 async def admin_delete_team(
     team_id: str,
     _request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Delete team via admin UI.
@@ -4152,7 +4158,7 @@ async def admin_delete_team(
 async def admin_add_team_member(
     team_id: str,
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Add member to team via admin UI.
@@ -4236,7 +4242,7 @@ async def admin_add_team_member(
 async def admin_update_team_member_role(
     team_id: str,
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Update team member role via admin UI.
@@ -4321,7 +4327,7 @@ async def admin_update_team_member_role(
 async def admin_remove_team_member(
     team_id: str,
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Remove member from team via admin UI.
@@ -4402,7 +4408,7 @@ async def admin_remove_team_member(
 async def admin_leave_team(
     team_id: str,
     request: Request,  # pylint: disable=unused-argument
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Leave a team via admin UI.
@@ -4486,7 +4492,7 @@ async def admin_leave_team(
 async def admin_create_join_request(
     team_id: str,
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Create a join request for a team via admin UI.
@@ -4568,7 +4574,7 @@ async def admin_create_join_request(
 async def admin_cancel_join_request(
     team_id: str,
     request_id: str,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Cancel a join request via admin UI.
@@ -4615,7 +4621,7 @@ async def admin_cancel_join_request(
 async def admin_list_join_requests(
     team_id: str,
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """List join requests for a team via admin UI.
@@ -4702,7 +4708,7 @@ async def admin_list_join_requests(
 async def admin_approve_join_request(
     team_id: str,
     request_id: str,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Approve a join request via admin UI.
@@ -4761,7 +4767,7 @@ async def admin_approve_join_request(
 async def admin_reject_join_request(
     team_id: str,
     request_id: str,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Reject a join request via admin UI.
@@ -4824,7 +4830,7 @@ async def admin_reject_join_request(
 @require_permission("admin.user_management")
 async def admin_list_users(
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> Response:
     """List users for admin UI via HTMX.
@@ -4960,7 +4966,7 @@ async def admin_list_users(
 @require_permission("admin.user_management")
 async def admin_create_user(
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Create a new user via admin UI.
@@ -4998,7 +5004,7 @@ async def admin_create_user(
         # If the user was created with the default password, force password change
         if password == settings.default_user_password.get_secret_value():  # nosec B105
             new_user.password_change_required = True
-            db.commit()
+            await db.commit()
 
         LOGGER.info(f"Admin {user} created user: {new_user.email}")
 
@@ -5043,7 +5049,7 @@ async def admin_create_user(
 async def admin_get_user_edit(
     user_email: str,
     _request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     _user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Get user edit form via admin UI.
@@ -5291,7 +5297,7 @@ async def admin_get_user_edit(
 async def admin_update_user(
     user_email: str,
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     _user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Update user via admin UI.
@@ -5373,7 +5379,7 @@ async def admin_update_user(
 async def admin_activate_user(
     user_email: str,
     _request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Activate user via admin UI.
@@ -5440,7 +5446,7 @@ async def admin_activate_user(
 async def admin_deactivate_user(
     user_email: str,
     _request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Deactivate user via admin UI.
@@ -5515,7 +5521,7 @@ async def admin_deactivate_user(
 async def admin_delete_user(
     user_email: str,
     _request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Delete user via admin UI.
@@ -5567,7 +5573,7 @@ async def admin_delete_user(
 async def admin_force_password_change(
     user_email: str,
     _request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Force user to change password on next login.
@@ -5627,7 +5633,7 @@ async def admin_force_password_change(
 
         # Set password_change_required flag
         user_obj.password_change_required = True
-        db.commit()
+        await db.commit()
 
         LOGGER.info(f"Admin {current_user_email} forced password change for user {decoded_email}")
 
@@ -5697,7 +5703,7 @@ async def admin_list_tools(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
     include_inactive: bool = False,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """
@@ -5757,7 +5763,7 @@ async def admin_list_tools(
 
     # Get total count
     count_query = select(func.count()).select_from(query.alias())  # pylint: disable=not-callable
-    total_items = db.execute(count_query).scalar() or 0
+    total_items = (await db.execute(count_query)).scalar() or 0
 
     # Calculate pagination metadata
     total_pages = math.ceil(total_items / per_page) if total_items > 0 else 0
@@ -5765,12 +5771,12 @@ async def admin_list_tools(
 
     # Execute paginated query
     paginated_query = query.offset(offset).limit(per_page)
-    tools = db.execute(paginated_query).scalars().all()
+    tools = (await db.execute(paginated_query)).scalars().all()
 
     # Convert to ToolRead using tool_service
     result = []
     for t in tools:
-        team_name = tool_service._get_team_name(db, getattr(t, "team_id", None))  # pylint: disable=protected-access
+        team_name = await tool_service._get_team_name(db, getattr(t, "team_id", None))  # pylint: disable=protected-access
         t.team = team_name
         result.append(tool_service._convert_tool_to_read(t, include_metrics=False))  # pylint: disable=protected-access
 
@@ -5812,7 +5818,7 @@ async def admin_tools_partial_html(
     include_inactive: bool = False,
     render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ):
     """
@@ -5904,7 +5910,7 @@ async def admin_tools_partial_html(
     if not include_inactive:
         count_query = count_query.where(DbTool.enabled.is_(True))
 
-    total_items = db.scalar(count_query) or 0
+    total_items = (await db.scalar(count_query)) or 0
 
     # Apply pagination
     offset = (page - 1) * per_page
@@ -5912,7 +5918,7 @@ async def admin_tools_partial_html(
     query = query.order_by(DbTool.url, DbTool.original_name, DbTool.id).offset(offset).limit(per_page)
 
     # Execute query
-    tools_db = list(db.scalars(query).all())
+    tools_db = list((await db.scalars(query)).all())
 
     # Convert to Pydantic models
     local_tool_service = ToolService()
@@ -5995,7 +6001,7 @@ async def admin_tools_partial_html(
 async def admin_get_all_tool_ids(
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ):
     """
@@ -6049,7 +6055,7 @@ async def admin_get_all_tool_ids(
     query = query.where(or_(*access_conditions))
 
     # Get all IDs
-    tool_ids = [row[0] for row in db.execute(query).all()]
+    tool_ids = [row[0] for row in (await db.execute(query)).all()]
 
     return {"tool_ids": tool_ids, "count": len(tool_ids)}
 
@@ -6060,7 +6066,7 @@ async def admin_search_tools(
     include_inactive: bool = False,
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of results to return"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ):
     """
@@ -6145,7 +6151,7 @@ async def admin_search_tools(
     ).limit(limit)
 
     # Execute query
-    results = db.execute(query).all()
+    results = (await db.execute(query)).all()
 
     # Format results
     tools = []
@@ -6163,7 +6169,7 @@ async def admin_prompts_partial_html(
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ):
     """Return paginated prompts HTML partials for the admin UI.
@@ -6248,13 +6254,13 @@ async def admin_prompts_partial_html(
     if not include_inactive:
         count_query = count_query.where(DbPrompt.enabled.is_(True))
 
-    total_items = db.scalar(count_query) or 0
+    total_items = (await db.scalar(count_query)) or 0
 
     # Apply pagination ordering and limits
     offset = (page - 1) * per_page
     query = query.order_by(DbPrompt.name, DbPrompt.id).offset(offset).limit(per_page)
 
-    prompts_db = list(db.scalars(query).all())
+    prompts_db = list((await db.scalars(query)).all())
 
     # Convert to schemas using PromptService
     local_prompt_service = PromptService()
@@ -6336,7 +6342,7 @@ async def admin_resources_partial_html(
     include_inactive: bool = False,
     render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ):
     """Return HTML partial for paginated resources list (HTMX endpoint).
@@ -6424,13 +6430,13 @@ async def admin_resources_partial_html(
     if not include_inactive:
         count_query = count_query.where(DbResource.enabled.is_(True))
 
-    total_items = db.scalar(count_query) or 0
+    total_items = (await db.scalar(count_query)) or 0
 
     # Apply pagination ordering and limits
     offset = (page - 1) * per_page
     query = query.order_by(DbResource.name, DbResource.id).offset(offset).limit(per_page)
 
-    resources_db = list(db.scalars(query).all())
+    resources_db = list((await db.scalars(query)).all())
 
     # Convert to schemas using ResourceService
     local_resource_service = ResourceService()
@@ -6505,7 +6511,7 @@ async def admin_resources_partial_html(
 async def admin_get_all_prompt_ids(
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ):
     """Return all prompt IDs accessible to the current user (select-all helper).
@@ -6555,7 +6561,7 @@ async def admin_get_all_prompt_ids(
         access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
 
     query = query.where(or_(*access_conditions))
-    prompt_ids = [row[0] for row in db.execute(query).all()]
+    prompt_ids = [row[0] for row in (await db.execute(query)).all()]
     return {"prompt_ids": prompt_ids, "count": len(prompt_ids)}
 
 
@@ -6563,7 +6569,7 @@ async def admin_get_all_prompt_ids(
 async def admin_get_all_resource_ids(
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ):
     """Return all resource IDs accessible to the current user (select-all helper).
@@ -6613,7 +6619,7 @@ async def admin_get_all_resource_ids(
         access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
 
     query = query.where(or_(*access_conditions))
-    resource_ids = [row[0] for row in db.execute(query).all()]
+    resource_ids = [row[0] for row in (await db.execute(query)).all()]
     return {"resource_ids": resource_ids, "count": len(resource_ids)}
 
 
@@ -6623,7 +6629,7 @@ async def admin_search_resources(
     include_inactive: bool = False,
     limit: int = Query(100, ge=1, le=1000),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ):
     """Search resources by name or description for selector search.
@@ -6691,7 +6697,7 @@ async def admin_search_resources(
         func.lower(DbResource.name),
     ).limit(limit)
 
-    results = db.execute(query).all()
+    results = (await db.execute(query)).all()
     resources = []
     for row in results:
         resources.append({"id": row.id, "name": row.name, "description": row.description})
@@ -6705,7 +6711,7 @@ async def admin_search_prompts(
     include_inactive: bool = False,
     limit: int = Query(100, ge=1, le=1000),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ):
     """Search prompts by name or description for selector search.
@@ -6774,7 +6780,7 @@ async def admin_search_prompts(
         func.lower(DbPrompt.name),
     ).limit(limit)
 
-    results = db.execute(query).all()
+    results = (await db.execute(query)).all()
     prompts = []
     for row in results:
         prompts.append({"id": row.id, "name": row.name, "description": row.description})
@@ -6783,7 +6789,7 @@ async def admin_search_prompts(
 
 
 @admin_router.get("/tools/{tool_id}", response_model=ToolRead)
-async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_tool(tool_id: str, db: Session = Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Retrieve specific tool details for the admin UI.
 
@@ -6887,7 +6893,7 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depen
 @admin_router.post("/tools")
 async def admin_add_tool(
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> JSONResponse:
     """
@@ -7113,7 +7119,7 @@ async def admin_add_tool(
 async def admin_edit_tool(
     tool_id: str,
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> Response:
     """
@@ -7381,7 +7387,7 @@ async def admin_edit_tool(
 
 
 @admin_router.post("/tools/{tool_id}/delete")
-async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Delete a tool via the admin UI.
 
@@ -7484,7 +7490,7 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
 async def admin_toggle_tool(
     tool_id: str,
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> RedirectResponse:
     """
@@ -7607,7 +7613,7 @@ async def admin_toggle_tool(
 
 
 @admin_router.get("/gateways/{gateway_id}", response_model=GatewayRead)
-async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_gateway(gateway_id: str, db: Session = Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get gateway details for the admin UI.
 
     Args:
@@ -7695,7 +7701,7 @@ async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user
 
 
 @admin_router.post("/gateways")
-async def admin_add_gateway(request: Request, db: Session = Depends(get_db), user: dict[str, Any] = Depends(get_current_user_with_permissions)) -> JSONResponse:
+async def admin_add_gateway(request: Request, db: Session = Depends(_db_dependency), user: dict[str, Any] = Depends(get_current_user_with_permissions)) -> JSONResponse:
     """Add a gateway via the admin UI.
 
     Expects form fields:
@@ -8034,7 +8040,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
 async def admin_edit_gateway(
     gateway_id: str,
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> JSONResponse:
     """Edit a gateway via the admin UI.
@@ -8301,7 +8307,7 @@ async def admin_edit_gateway(
 
 
 @admin_router.post("/gateways/{gateway_id}/delete")
-async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Delete a gateway via the admin UI.
 
@@ -8401,7 +8407,7 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
 
 
 @admin_router.get("/resources/test/{resource_uri:path}")
-async def admin_test_resource(resource_uri: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_test_resource(resource_uri: str, db: Session = Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Test reading a resource by its URI for the admin UI.
 
@@ -8482,7 +8488,7 @@ async def admin_test_resource(resource_uri: str, db: Session = Depends(get_db), 
 
 
 @admin_router.get("/resources/{resource_id}")
-async def admin_get_resource(resource_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_resource(resource_id: str, db: Session = Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get resource details for the admin UI.
 
     Args:
@@ -8581,7 +8587,7 @@ async def admin_get_resource(resource_id: str, db: Session = Depends(get_db), us
 
 
 @admin_router.post("/resources")
-async def admin_add_resource(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Response:
+async def admin_add_resource(request: Request, db: Session = Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> Response:
     """
     Add a resource via the admin UI.
 
@@ -8719,7 +8725,7 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
 async def admin_edit_resource(
     resource_id: str,
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> JSONResponse:
     """
@@ -8860,7 +8866,7 @@ async def admin_edit_resource(
 
 
 @admin_router.post("/resources/{resource_id}/delete")
-async def admin_delete_resource(resource_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+async def admin_delete_resource(resource_id: str, request: Request, db: Session = Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Delete a resource via the admin UI.
 
@@ -8950,7 +8956,7 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
 async def admin_toggle_resource(
     resource_id: str,
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> RedirectResponse:
     """
@@ -9072,7 +9078,7 @@ async def admin_toggle_resource(
 
 
 @admin_router.get("/prompts/{prompt_id}")
-async def admin_get_prompt(prompt_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_prompt(prompt_id: str, db: Session = Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get prompt details for the admin UI.
 
     Args:
@@ -9172,7 +9178,7 @@ async def admin_get_prompt(prompt_id: str, db: Session = Depends(get_db), user=D
 
 
 @admin_router.post("/prompts")
-async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> JSONResponse:
+async def admin_add_prompt(request: Request, db: Session = Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> JSONResponse:
     """Add a prompt via the admin UI.
 
     Expects form fields:
@@ -9288,7 +9294,7 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
 async def admin_edit_prompt(
     prompt_id: str,
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> JSONResponse:
     """Edit a prompt via the admin UI.
@@ -9419,7 +9425,7 @@ async def admin_edit_prompt(
 
 
 @admin_router.post("/prompts/{prompt_id}/delete")
-async def admin_delete_prompt(prompt_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+async def admin_delete_prompt(prompt_id: str, request: Request, db: Session = Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Delete a prompt via the admin UI.
 
@@ -9504,7 +9510,7 @@ async def admin_delete_prompt(prompt_id: str, request: Request, db: Session = De
 async def admin_toggle_prompt(
     prompt_id: str,
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> RedirectResponse:
     """
@@ -9750,7 +9756,7 @@ MetricsDict = Dict[str, Union[ToolMetrics, ResourceMetrics, ServerMetrics, Promp
 
 # @admin_router.get("/metrics", response_model=MetricsDict)
 # async def admin_get_metrics(
-#     db: Session = Depends(get_db),
+#     db: Session = Depends(_db_dependency),
 #     user=Depends(get_current_user_with_permissions),
 # ) -> MetricsDict:
 #     """
@@ -9788,7 +9794,7 @@ MetricsDict = Dict[str, Union[ToolMetrics, ResourceMetrics, ServerMetrics, Promp
 
 @admin_router.get("/metrics")
 async def get_aggregated_metrics(
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     _user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """Retrieve aggregated metrics and top performers for all entity types.
@@ -9831,7 +9837,7 @@ async def admin_metrics_partial_html(
     entity_type: str = Query("tools", description="Entity type: tools, resources, prompts, or servers"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(10, ge=1, le=1000, description="Items per page"),
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ):
     """
@@ -9907,7 +9913,7 @@ async def admin_metrics_partial_html(
 
 
 @admin_router.post("/metrics/reset", response_model=Dict[str, object])
-async def admin_reset_metrics(db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, object]:
+async def admin_reset_metrics(db: Session = Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> Dict[str, object]:
     """
     Reset all metrics for tools, resources, servers, and prompts.
     Each service must implement its own reset_metrics method.
@@ -9957,7 +9963,9 @@ async def admin_reset_metrics(db: Session = Depends(get_db), user=Depends(get_cu
 
 
 @admin_router.post("/gateways/test", response_model=GatewayTestResponse)
-async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str] = Query(None), user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> GatewayTestResponse:
+async def admin_test_gateway(
+    request: GatewayTestRequest, team_id: Optional[str] = Query(None), user=Depends(get_current_user_with_permissions), db: Session = Depends(_db_dependency)
+) -> GatewayTestResponse:
     """
     Test a gateway by sending a request to its URL.
     This endpoint allows administrators to test the connectivity and response
@@ -10106,7 +10114,7 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
 
     # Attempt to find a registered gateway matching this URL and team
     try:
-        gateway = gateway_service.get_first_gateway_by_url(db, str(request.base_url), team_id=team_id)
+        gateway = await gateway_service.get_first_gateway_by_url(db, str(request.base_url), team_id=team_id)
     except Exception:
         gateway = None
 
@@ -10482,7 +10490,7 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
 async def admin_list_tags(
     entity_types: Optional[str] = None,
     include_entities: bool = False,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> List[Dict[str, Any]]:
     """
@@ -10562,7 +10570,7 @@ async def admin_list_tags(
 @rate_limit(requests_per_minute=settings.mcpgateway_bulk_import_rate_limit)
 async def admin_import_tools(
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> JSONResponse:
     """Bulk import multiple tools in a single request.
@@ -11153,7 +11161,7 @@ async def admin_export_configuration(
     tags: Optional[str] = None,
     include_inactive: bool = False,
     include_dependencies: bool = True,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ):
     """
@@ -11232,7 +11240,7 @@ async def admin_export_configuration(
 
 
 @admin_router.post("/export/selective")
-async def admin_export_selective(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
+async def admin_export_selective(request: Request, db: Session = Depends(_db_dependency), user=Depends(get_current_user_with_permissions)):
     """
     Export selected entities via Admin UI with entity selection.
 
@@ -11295,7 +11303,7 @@ async def admin_export_selective(request: Request, db: Session = Depends(get_db)
 
 
 @admin_router.post("/import/preview")
-async def admin_import_preview(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
+async def admin_import_preview(request: Request, db: Session = Depends(_db_dependency), user=Depends(get_current_user_with_permissions)):
     """
     Preview import file to show available items for selective import.
 
@@ -11348,7 +11356,7 @@ async def admin_import_preview(request: Request, db: Session = Depends(get_db), 
 
 
 @admin_router.post("/import/configuration")
-async def admin_import_configuration(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
+async def admin_import_configuration(request: Request, db: Session = Depends(_db_dependency), user=Depends(get_current_user_with_permissions)):
     """
     Import configuration via Admin UI.
 
@@ -11457,7 +11465,7 @@ async def admin_list_import_statuses(user=Depends(get_current_user_with_permissi
 @admin_router.get("/a2a/{agent_id}", response_model=A2AAgentRead)
 async def admin_get_agent(
     agent_id: str,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """Get A2A agent details for the admin UI.
@@ -11555,7 +11563,7 @@ async def admin_get_agent(
 @admin_router.get("/a2a")
 async def admin_list_a2a_agents(
     include_inactive: bool = False,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> List[A2AAgentRead]:
     """
@@ -11655,7 +11663,7 @@ async def admin_list_a2a_agents(
 @admin_router.post("/a2a")
 async def admin_add_a2a_agent(
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> JSONResponse:
     """Add a new A2A agent via admin UI.
@@ -11864,7 +11872,7 @@ async def admin_add_a2a_agent(
 async def admin_edit_a2a_agent(
     agent_id: str,
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> JSONResponse:
     """
@@ -12148,7 +12156,7 @@ async def admin_edit_a2a_agent(
 async def admin_toggle_a2a_agent(
     agent_id: str,
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
 ) -> RedirectResponse:
     """Toggle A2A agent status via admin UI.
@@ -12207,7 +12215,7 @@ async def admin_toggle_a2a_agent(
 async def admin_delete_a2a_agent(
     agent_id: str,
     request: Request,  # pylint: disable=unused-argument
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
 ) -> RedirectResponse:
     """Delete A2A agent via admin UI.
@@ -12256,7 +12264,7 @@ async def admin_delete_a2a_agent(
 async def admin_test_a2a_agent(
     agent_id: str,
     request: Request,  # pylint: disable=unused-argument
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
 ) -> JSONResponse:
     """Test A2A agent via admin UI.
@@ -12316,7 +12324,7 @@ async def admin_test_a2a_agent(
 async def admin_list_grpc_services(
     include_inactive: bool = False,
     team_id: Optional[str] = Query(None),
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ):
     """List all gRPC services.
@@ -12344,7 +12352,7 @@ async def admin_list_grpc_services(
 async def admin_create_grpc_service(
     service: GrpcServiceCreate,
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ):
     """Create a new gRPC service.
@@ -12379,7 +12387,7 @@ async def admin_create_grpc_service(
 @admin_router.get("/grpc/{service_id}", response_model=GrpcServiceRead)
 async def admin_get_grpc_service(
     service_id: str,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ):
     """Get a specific gRPC service.
@@ -12410,7 +12418,7 @@ async def admin_update_grpc_service(
     service_id: str,
     service: GrpcServiceUpdate,
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ):
     """Update a gRPC service.
@@ -12448,7 +12456,7 @@ async def admin_update_grpc_service(
 @admin_router.post("/grpc/{service_id}/toggle")
 async def admin_toggle_grpc_service(
     service_id: str,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
 ):
     """Toggle a gRPC service's enabled status.
@@ -12478,7 +12486,7 @@ async def admin_toggle_grpc_service(
 @admin_router.post("/grpc/{service_id}/delete")
 async def admin_delete_grpc_service(
     service_id: str,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
 ):
     """Delete a gRPC service.
@@ -12507,7 +12515,7 @@ async def admin_delete_grpc_service(
 @admin_router.post("/grpc/{service_id}/reflect")
 async def admin_reflect_grpc_service(
     service_id: str,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
 ):
     """Trigger re-reflection on a gRPC service.
@@ -12539,7 +12547,7 @@ async def admin_reflect_grpc_service(
 @admin_router.get("/grpc/{service_id}/methods")
 async def admin_get_grpc_methods(
     service_id: str,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
 ):
     """Get methods for a gRPC service.
@@ -12570,7 +12578,7 @@ async def admin_get_grpc_methods(
 @require_permission("admin")
 async def get_tools_section(
     team_id: Optional[str] = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ):
     """Get tools data filtered by team.
@@ -12619,7 +12627,7 @@ async def get_tools_section(
 @require_permission("admin")
 async def get_resources_section(
     team_id: Optional[str] = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ):
     """Get resources data filtered by team.
@@ -12674,7 +12682,7 @@ async def get_resources_section(
 @require_permission("admin")
 async def get_prompts_section(
     team_id: Optional[str] = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ):
     """Get prompts data filtered by team.
@@ -12731,7 +12739,7 @@ async def get_prompts_section(
 async def get_servers_section(
     team_id: Optional[str] = None,
     include_inactive: bool = False,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ):
     """Get servers data filtered by team.
@@ -12786,7 +12794,7 @@ async def get_servers_section(
 @require_permission("admin")
 async def get_gateways_section(
     team_id: Optional[str] = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ):
     """Get gateways data filtered by team.
@@ -12849,7 +12857,7 @@ async def get_gateways_section(
 
 
 @admin_router.get("/plugins/partial")
-async def get_plugins_partial(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> HTMLResponse:  # pylint: disable=unused-argument
+async def get_plugins_partial(request: Request, db: Session = Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> HTMLResponse:  # pylint: disable=unused-argument
     """Render the plugins partial HTML template.
 
     This endpoint returns a rendered HTML partial containing plugin information,
@@ -12904,7 +12912,7 @@ async def list_plugins(
     mode: Optional[str] = None,
     hook: Optional[str] = None,
     tag: Optional[str] = None,
-    db: Session = Depends(get_db),  # pylint: disable=unused-argument
+    db: Session = Depends(_db_dependency),  # pylint: disable=unused-argument
     user=Depends(get_current_user_with_permissions),
 ) -> PluginListResponse:
     """Get list of all plugins with optional filtering.
@@ -12979,7 +12987,7 @@ async def list_plugins(
 
 
 @admin_router.get("/plugins/stats", response_model=PluginStatsResponse)
-async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> PluginStatsResponse:  # pylint: disable=unused-argument
+async def get_plugin_stats(request: Request, db: Session = Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> PluginStatsResponse:  # pylint: disable=unused-argument
     """Get plugin statistics.
 
     Args:
@@ -13039,7 +13047,7 @@ async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user
 
 
 @admin_router.get("/plugins/{name}", response_model=PluginDetail)
-async def get_plugin_details(name: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> PluginDetail:  # pylint: disable=unused-argument
+async def get_plugin_details(name: str, request: Request, db: Session = Depends(_db_dependency), user=Depends(get_current_user_with_permissions)) -> PluginDetail:  # pylint: disable=unused-argument
     """Get detailed information about a specific plugin.
 
     Args:
@@ -13138,7 +13146,7 @@ async def list_catalog_servers(
     show_available_only: bool = True,
     limit: int = 100,
     offset: int = 0,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     _user=Depends(get_current_user_with_permissions),
 ) -> CatalogListResponse:
     """Get list of catalog servers with filtering.
@@ -13186,7 +13194,7 @@ async def list_catalog_servers(
 async def register_catalog_server(
     server_id: str,
     request: Optional[CatalogServerRegisterRequest] = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     _user=Depends(get_current_user_with_permissions),
 ) -> CatalogServerRegisterResponse:
     """Register a catalog server.
@@ -13212,7 +13220,7 @@ async def register_catalog_server(
 @admin_router.get("/mcp-registry/{server_id}/status", response_model=CatalogServerStatusResponse)
 async def check_catalog_server_status(
     server_id: str,
-    _db: Session = Depends(get_db),
+    _db: Session = Depends(_db_dependency),
     _user=Depends(get_current_user_with_permissions),
 ) -> CatalogServerStatusResponse:
     """Check catalog server availability.
@@ -13238,7 +13246,7 @@ async def check_catalog_server_status(
 @require_permission("servers.create")
 async def bulk_register_catalog_servers(
     request: CatalogBulkRegisterRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     _user=Depends(get_current_user_with_permissions),
 ) -> CatalogBulkRegisterResponse:
     """Register multiple catalog servers at once.
@@ -13267,7 +13275,7 @@ async def catalog_partial(
     auth_type: Optional[str] = None,
     search: Optional[str] = None,
     page: int = 1,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     _user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Get HTML partial for catalog servers (used by HTMX).
@@ -13359,7 +13367,7 @@ async def catalog_partial(
 @admin_router.get("/system/stats")
 async def get_system_stats(
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ):
     """Get comprehensive system metrics for administrators.
@@ -13396,7 +13404,7 @@ async def get_system_stats(
 
         # Get metrics
         service = SystemStatsService()
-        stats = service.get_comprehensive_stats(db)
+        stats = await service.get_comprehensive_stats(db)
 
         LOGGER.info(f"System metrics retrieved successfully for user {user}")
 
@@ -13573,7 +13581,7 @@ async def get_observability_stats(request: Request, hours: int = Query(24, ge=1,
 
         return request.app.state.templates.TemplateResponse("observability_stats.html", {"request": request, "stats": stats})
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
+        await db.commit()  # Commit read-only transaction to avoid implicit rollback
         db.close()
 
 
@@ -13668,7 +13676,7 @@ async def get_observability_traces(
         root_path = request.scope.get("root_path", "")
         return request.app.state.templates.TemplateResponse("observability_traces_list.html", {"request": request, "traces": traces, "root_path": root_path})
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
+        await db.commit()  # Commit read-only transaction to avoid implicit rollback
         db.close()
 
 
@@ -13697,7 +13705,7 @@ async def get_observability_trace_detail(request: Request, trace_id: str, _user=
         root_path = request.scope.get("root_path", "")
         return request.app.state.templates.TemplateResponse("observability_trace_detail.html", {"request": request, "trace": trace, "root_path": root_path})
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
+        await db.commit()  # Commit read-only transaction to avoid implicit rollback
         db.close()
 
 
@@ -13735,8 +13743,8 @@ async def save_observability_query(
         query = ObservabilitySavedQuery(name=name, description=description, user_email=user_email, filter_config=filter_config, is_shared=is_shared)
 
         db.add(query)
-        db.commit()
-        db.refresh(query)
+        await db.commit()
+        await db.refresh(query)
 
         return {"id": query.id, "name": query.name, "description": query.description, "filter_config": query.filter_config, "is_shared": query.is_shared, "created_at": query.created_at.isoformat()}
     except Exception as e:
@@ -13744,7 +13752,7 @@ async def save_observability_query(
         LOGGER.error(f"Failed to save query: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
+        await db.commit()  # Commit read-only transaction to avoid implicit rollback
         db.close()
 
 
@@ -13788,7 +13796,7 @@ async def list_observability_queries(request: Request, user=Depends(get_current_
             for q in queries
         ]
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
+        await db.commit()  # Commit read-only transaction to avoid implicit rollback
         db.close()
 
 
@@ -13831,7 +13839,7 @@ async def get_observability_query(request: Request, query_id: int, user=Depends(
             "use_count": query.use_count,
         }
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
+        await db.commit()  # Commit read-only transaction to avoid implicit rollback
         db.close()
 
 
@@ -13882,8 +13890,8 @@ async def update_observability_query(
         if is_shared is not None:
             query.is_shared = is_shared
 
-        db.commit()
-        db.refresh(query)
+        await db.commit()
+        await db.refresh(query)
 
         return {
             "id": query.id,
@@ -13900,7 +13908,7 @@ async def update_observability_query(
         LOGGER.error(f"Failed to update query: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
+        await db.commit()  # Commit read-only transaction to avoid implicit rollback
         db.close()
 
 
@@ -13926,10 +13934,10 @@ async def delete_observability_query(request: Request, query_id: int, user=Depen
         if not query:
             raise HTTPException(status_code=404, detail="Query not found or unauthorized")
 
-        db.delete(query)
-        db.commit()
+        await db.delete(query)
+        await db.commit()
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
+        await db.commit()  # Commit read-only transaction to avoid implicit rollback
         db.close()
 
 
@@ -13964,8 +13972,8 @@ async def track_query_usage(request: Request, query_id: int, user=Depends(get_cu
         query.use_count += 1
         query.last_used_at = utc_now()
 
-        db.commit()
-        db.refresh(query)
+        await db.commit()
+        await db.refresh(query)
 
         return {"use_count": query.use_count, "last_used_at": query.last_used_at.isoformat()}
     except HTTPException:
@@ -13975,7 +13983,7 @@ async def track_query_usage(request: Request, query_id: int, user=Depends(get_cu
         LOGGER.error(f"Failed to track query usage: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
+        await db.commit()  # Commit read-only transaction to avoid implicit rollback
         db.close()
 
 
@@ -14052,7 +14060,7 @@ async def get_latency_percentiles(
         LOGGER.error(f"Failed to calculate latency percentiles: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
+        await db.commit()  # Commit read-only transaction to avoid implicit rollback
         db.close()
 
 
@@ -14128,7 +14136,7 @@ async def get_timeseries_metrics(
         LOGGER.error(f"Failed to calculate timeseries metrics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
+        await db.commit()  # Commit read-only transaction to avoid implicit rollback
         db.close()
 
 
@@ -14191,7 +14199,7 @@ async def get_top_slow_endpoints(
         LOGGER.error(f"Failed to get top slow endpoints: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
+        await db.commit()  # Commit read-only transaction to avoid implicit rollback
         db.close()
 
 
@@ -14252,7 +14260,7 @@ async def get_top_volume_endpoints(
         LOGGER.error(f"Failed to get top volume endpoints: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
+        await db.commit()  # Commit read-only transaction to avoid implicit rollback
         db.close()
 
 
@@ -14316,7 +14324,7 @@ async def get_top_error_endpoints(
         LOGGER.error(f"Failed to get top error endpoints: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
+        await db.commit()  # Commit read-only transaction to avoid implicit rollback
         db.close()
 
 
@@ -14406,7 +14414,7 @@ async def get_latency_heatmap(
         LOGGER.error(f"Failed to generate latency heatmap: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
+        await db.commit()  # Commit read-only transaction to avoid implicit rollback
         db.close()
 
 
@@ -14470,7 +14478,7 @@ async def get_tool_usage(
         LOGGER.error(f"Failed to get tool usage statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
+        await db.commit()  # Commit read-only transaction to avoid implicit rollback
         db.close()
 
 
@@ -14563,7 +14571,7 @@ async def get_tool_performance(
         LOGGER.error(f"Failed to get tool performance metrics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
+        await db.commit()  # Commit read-only transaction to avoid implicit rollback
         db.close()
 
 
@@ -14626,7 +14634,7 @@ async def get_tool_errors(
         LOGGER.error(f"Failed to get tool error statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
+        await db.commit()  # Commit read-only transaction to avoid implicit rollback
         db.close()
 
 
@@ -14697,7 +14705,7 @@ async def get_tool_chains(
         LOGGER.error(f"Failed to get tool chain statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
+        await db.commit()  # Commit read-only transaction to avoid implicit rollback
         db.close()
 
 
@@ -14790,7 +14798,7 @@ async def get_prompt_usage(
         LOGGER.error(f"Failed to get prompt usage statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
+        await db.commit()  # Commit read-only transaction to avoid implicit rollback
         db.close()
 
 
@@ -14883,7 +14891,7 @@ async def get_prompt_performance(
         LOGGER.error(f"Failed to get prompt performance metrics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
+        await db.commit()  # Commit read-only transaction to avoid implicit rollback
         db.close()
 
 
@@ -14938,7 +14946,7 @@ async def get_prompts_errors(
 
         return {"prompts": prompts_data, "time_range_hours": hours}
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
+        await db.commit()  # Commit read-only transaction to avoid implicit rollback
         db.close()
 
 
@@ -15031,7 +15039,7 @@ async def get_resource_usage(
         LOGGER.error(f"Failed to get resource usage statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
+        await db.commit()  # Commit read-only transaction to avoid implicit rollback
         db.close()
 
 
@@ -15124,7 +15132,7 @@ async def get_resource_performance(
         LOGGER.error(f"Failed to get resource performance metrics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
+        await db.commit()  # Commit read-only transaction to avoid implicit rollback
         db.close()
 
 
@@ -15179,7 +15187,7 @@ async def get_resources_errors(
 
         return {"resources": resources_data, "time_range_hours": hours}
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
+        await db.commit()  # Commit read-only transaction to avoid implicit rollback
         db.close()
 
 
@@ -15215,7 +15223,7 @@ async def get_resources_partial(
 @admin_router.get("/performance/stats", response_class=HTMLResponse)
 async def get_performance_stats(
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     _user=Depends(get_current_user_with_permissions),
 ):
     """Get comprehensive performance metrics for the dashboard.
@@ -15275,7 +15283,7 @@ async def get_performance_stats(
 
 @admin_router.get("/performance/system")
 async def get_performance_system(
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     _user=Depends(get_current_user_with_permissions),
 ):
     """Get current system resource metrics.
@@ -15300,7 +15308,7 @@ async def get_performance_system(
 
 @admin_router.get("/performance/workers")
 async def get_performance_workers(
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     _user=Depends(get_current_user_with_permissions),
 ):
     """Get metrics for all worker processes.
@@ -15325,7 +15333,7 @@ async def get_performance_workers(
 
 @admin_router.get("/performance/requests")
 async def get_performance_requests(
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     _user=Depends(get_current_user_with_permissions),
 ):
     """Get HTTP request performance metrics.
@@ -15350,7 +15358,7 @@ async def get_performance_requests(
 
 @admin_router.get("/performance/cache")
 async def get_performance_cache(
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     _user=Depends(get_current_user_with_permissions),
 ):
     """Get Redis cache metrics.
@@ -15377,7 +15385,7 @@ async def get_performance_cache(
 async def get_performance_history(
     period_type: str = Query("hourly", description="Aggregation period: hourly or daily"),
     hours: int = Query(24, ge=1, le=168, description="Number of hours to look back"),
-    db: Session = Depends(get_db),
+    db: Session = Depends(_db_dependency),
     _user=Depends(get_current_user_with_permissions),
 ):
     """Get historical performance aggregates.

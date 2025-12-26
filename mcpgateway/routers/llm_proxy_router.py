@@ -11,12 +11,14 @@ LLM proxy service. It routes requests to configured LLM providers.
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
-from mcpgateway.db import get_db
+from mcpgateway.db import _use_async, get_async_db, get_db
+
+_db_dependency = get_async_db if _use_async else get_db
+# First-Party
 from mcpgateway.llm_schemas import ChatCompletionRequest, ChatCompletionResponse
 from mcpgateway.services.llm_provider_service import (
     LLMModelNotFoundError,
@@ -55,7 +57,7 @@ llm_proxy_service = LLMProxyService()
 )
 async def chat_completions(
     request: ChatCompletionRequest,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     current_user: dict = Depends(get_current_user),
 ):
     """Create a chat completion.
@@ -135,7 +137,7 @@ async def chat_completions(
     description="List available models from configured providers. OpenAI-compatible API.",
 )
 async def list_models(
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     current_user: dict = Depends(get_current_user),
 ):
     """List available models.

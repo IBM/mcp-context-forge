@@ -14,19 +14,23 @@ functions for protecting routes.
 # Standard
 from functools import wraps
 import logging
-from typing import Callable, Generator, List, Optional
+from typing import Callable, Generator, List, Optional, Union
 import uuid
 
 # Third-Party
 from fastapi import Cookie, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
-from mcpgateway.db import SessionLocal
+from mcpgateway.db import _use_async, get_async_db, get_db, SessionLocal
 from mcpgateway.services.permission_service import PermissionService
+
+# Select appropriate database dependency based on async mode
+_db_dependency = get_async_db if _use_async else get_db
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +38,8 @@ logger = logging.getLogger(__name__)
 security = HTTPBearer(auto_error=False)
 
 
-def get_db() -> Generator[Session, None, None]:
-    """Get database session for dependency injection.
+def _get_db_sync() -> Generator[Session, None, None]:
+    """Get database session for dependency injection (sync version).
 
     Commits the transaction on successful completion to avoid implicit rollbacks
     for read-only operations. Rolls back explicitly on exception.
@@ -47,7 +51,7 @@ def get_db() -> Generator[Session, None, None]:
         Exception: Re-raises any exception after rolling back the transaction.
 
     Examples:
-        >>> gen = get_db()
+        >>> gen = _get_db_sync()
         >>> db = next(gen)
         >>> hasattr(db, 'query')
         True
@@ -63,7 +67,7 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
-async def get_permission_service(db: Session = Depends(get_db)) -> PermissionService:
+async def get_permission_service(db: Union[Session, AsyncSession] = Depends(_db_dependency)) -> PermissionService:
     """Get permission service instance for dependency injection.
 
     Args:
@@ -81,7 +85,10 @@ async def get_permission_service(db: Session = Depends(get_db)) -> PermissionSer
 
 
 async def get_current_user_with_permissions(
-    request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security), jwt_token: Optional[str] = Cookie(default=None), db: Session = Depends(get_db)
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    jwt_token: Optional[str] = Cookie(default=None),
+    db: Union[Session, AsyncSession] = Depends(_db_dependency),
 ):
     """Extract current user from JWT token and prepare for permission checking.
 

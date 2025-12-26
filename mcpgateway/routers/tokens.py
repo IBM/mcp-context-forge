@@ -13,15 +13,17 @@ from typing import Optional
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import get_db
+from mcpgateway.db import _use_async, get_async_db, get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import TokenCreateRequest, TokenCreateResponse, TokenListResponse, TokenResponse, TokenRevokeRequest, TokenUpdateRequest, TokenUsageStatsResponse
 from mcpgateway.services.token_catalog_service import TokenCatalogService, TokenScope
 
 router = APIRouter(prefix="/tokens", tags=["tokens"])
+
+# Dynamic database dependency based on async configuration
+_db_dependency = get_async_db if _use_async else get_db
 
 
 @router.post("", response_model=TokenCreateResponse, status_code=status.HTTP_201_CREATED)
@@ -29,7 +31,7 @@ router = APIRouter(prefix="/tokens", tags=["tokens"])
 async def create_token(
     request: TokenCreateRequest,
     current_user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ) -> TokenCreateResponse:
     """Create a new API token for the current user.
 
@@ -111,7 +113,7 @@ async def list_tokens(
     include_inactive: bool = False,
     limit: int = 50,
     offset: int = 0,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     current_user=Depends(get_current_user_with_permissions),
 ) -> TokenListResponse:
     """List API tokens for the current user.
@@ -175,7 +177,7 @@ async def list_tokens(
 async def get_token(
     token_id: str,
     current_user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ) -> TokenResponse:
     """Get details of a specific token.
 
@@ -225,7 +227,7 @@ async def update_token(
     token_id: str,
     request: TokenUpdateRequest,
     current_user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ) -> TokenResponse:
     """Update an existing token.
 
@@ -293,7 +295,7 @@ async def revoke_token(
     token_id: str,
     request: Optional[TokenRevokeRequest] = None,
     current_user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ) -> None:
     """Revoke (delete) a token.
 
@@ -320,7 +322,7 @@ async def get_token_usage_stats(
     token_id: str,
     days: int = 30,
     current_user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ) -> TokenUsageStatsResponse:
     """Get usage statistics for a specific token.
 
@@ -356,7 +358,7 @@ async def list_all_tokens(
     limit: int = 100,
     offset: int = 0,
     current_user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ) -> TokenListResponse:
     """Admin endpoint to list all tokens or tokens for a specific user.
 
@@ -429,7 +431,7 @@ async def admin_revoke_token(
     token_id: str,
     request: Optional[TokenRevokeRequest] = None,
     current_user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ) -> None:
     """Admin endpoint to revoke any token.
 
@@ -461,7 +463,7 @@ async def create_team_token(
     team_id: str,
     request: TokenCreateRequest,
     current_user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ) -> TokenCreateResponse:
     """Create a new API token for a team (only team owners can do this).
 
@@ -535,7 +537,7 @@ async def list_team_tokens(
     limit: int = 50,
     offset: int = 0,
     current_user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ) -> TokenListResponse:
     """List API tokens for a team (only team owners can do this).
 

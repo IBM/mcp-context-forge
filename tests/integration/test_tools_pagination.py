@@ -35,7 +35,12 @@ from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorator
 
 @pytest.fixture
 def test_db_and_client():
-    """Create a test database and FastAPI TestClient with auth overrides."""
+    """Create a test database and FastAPI TestClient with auth overrides.
+
+    Note: Uses sync mode because admin.py endpoints still use sync database
+    operations. Once admin.py is converted to async, this fixture should
+    be updated to use async sessions.
+    """
     mp = MonkeyPatch()
 
     # Create temp SQLite file
@@ -52,8 +57,13 @@ def test_db_and_client():
 
     engine = create_engine(url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
     TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+    # Patch db module - use sync mode for admin.py compatibility
     mp.setattr(db_mod, "engine", engine, raising=False)
     mp.setattr(db_mod, "SessionLocal", TestSessionLocal, raising=False)
+    mp.setattr(db_mod, "_use_async", False, raising=False)
+    mp.setattr(db_mod, "async_engine", None, raising=False)
+    mp.setattr(db_mod, "AsyncSessionLocal", None, raising=False)
     mp.setattr(main_mod, "SessionLocal", TestSessionLocal, raising=False)
     mp.setattr(main_mod, "engine", engine, raising=False)
 
@@ -61,7 +71,7 @@ def test_db_and_client():
     db_mod.Base.metadata.create_all(bind=engine)
 
     def override_get_db():
-        """Override database dependency."""
+        """Override database dependency with sync session."""
         db = TestSessionLocal()
         try:
             yield db

@@ -17,11 +17,12 @@ from typing import Any, Dict, Optional
 
 # Third-Party
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import AuditTrail, SecurityEvent, SessionLocal
+from mcpgateway.db import AsyncSessionLocal, AuditTrail, fresh_async_db_session, fresh_db_session, SecurityEvent
 from mcpgateway.utils.correlation_id import get_correlation_id
 
 logger = logging.getLogger(__name__)
@@ -321,7 +322,7 @@ class SecurityLogger:
         return event
 
     def _count_recent_failures(self, user_id: Optional[str] = None, client_ip: Optional[str] = None, minutes: Optional[int] = None, db: Optional[Session] = None) -> int:
-        """Count recent authentication failures.
+        """Count recent authentication failures (sync version).
 
         Args:
             user_id: User identifier
@@ -338,25 +339,83 @@ class SecurityLogger:
         window_minutes = minutes or self.rate_limit_window_minutes
         since = datetime.now(timezone.utc) - timedelta(minutes=window_minutes)
 
-        should_close = False
         if db is None:
-            db = SessionLocal()
-            should_close = True
+            with fresh_db_session() as fresh_db:
+                return self._do_count_recent_failures(fresh_db, user_id, client_ip, since)
 
-        try:
-            stmt = select(func.count(SecurityEvent.id)).where(SecurityEvent.event_type == SecurityEventType.AUTHENTICATION_FAILURE, SecurityEvent.timestamp >= since)  # pylint: disable=not-callable
+        return self._do_count_recent_failures(db, user_id, client_ip, since)
 
-            if user_id:
-                stmt = stmt.where(SecurityEvent.user_id == user_id)
-            if client_ip:
-                stmt = stmt.where(SecurityEvent.client_ip == client_ip)
+    def _do_count_recent_failures(self, db: Session, user_id: Optional[str], client_ip: Optional[str], since: datetime) -> int:
+        """Internal method to count recent failures.
 
-            result = db.execute(stmt).scalar()
-            return result or 0
+        Args:
+            db: Database session
+            user_id: User identifier
+            client_ip: Client IP address
+            since: Time threshold
 
-        finally:
-            if should_close:
-                db.close()
+        Returns:
+            Count of recent failures
+        """
+        stmt = select(func.count(SecurityEvent.id)).where(SecurityEvent.event_type == SecurityEventType.AUTHENTICATION_FAILURE, SecurityEvent.timestamp >= since)  # pylint: disable=not-callable
+
+        if user_id:
+            stmt = stmt.where(SecurityEvent.user_id == user_id)
+        if client_ip:
+            stmt = stmt.where(SecurityEvent.client_ip == client_ip)
+
+        result = db.execute(stmt).scalar()
+        return result or 0
+
+    async def _count_recent_failures_async(self, user_id: Optional[str] = None, client_ip: Optional[str] = None, minutes: Optional[int] = None, db: Optional[AsyncSession] = None) -> int:
+        """Count recent authentication failures (async version).
+
+        Args:
+            user_id: User identifier
+            client_ip: Client IP address
+            minutes: Time window in minutes
+            db: Optional async database session
+
+        Returns:
+            Count of recent failures
+        """
+        if not user_id and not client_ip:
+            return 0
+
+        if AsyncSessionLocal is None:
+            # Fallback to sync if async not available
+            return self._count_recent_failures(user_id, client_ip, minutes, None)
+
+        window_minutes = minutes or self.rate_limit_window_minutes
+        since = datetime.now(timezone.utc) - timedelta(minutes=window_minutes)
+
+        if db is None:
+            async with fresh_async_db_session() as fresh_db:
+                return await self._do_count_recent_failures_async(fresh_db, user_id, client_ip, since)
+
+        return await self._do_count_recent_failures_async(db, user_id, client_ip, since)
+
+    async def _do_count_recent_failures_async(self, db: AsyncSession, user_id: Optional[str], client_ip: Optional[str], since: datetime) -> int:
+        """Internal async method to count recent failures.
+
+        Args:
+            db: Async database session
+            user_id: User identifier
+            client_ip: Client IP address
+            since: Time threshold
+
+        Returns:
+            Count of recent failures
+        """
+        stmt = select(func.count(SecurityEvent.id)).where(SecurityEvent.event_type == SecurityEventType.AUTHENTICATION_FAILURE, SecurityEvent.timestamp >= since)  # pylint: disable=not-callable
+
+        if user_id:
+            stmt = stmt.where(SecurityEvent.user_id == user_id)
+        if client_ip:
+            stmt = stmt.where(SecurityEvent.client_ip == client_ip)
+
+        result = await db.execute(stmt)
+        return result.scalar() or 0
 
     def _calculate_auth_threat_score(self, success: bool, failed_attempts: int, auth_method: str) -> float:  # pylint: disable=unused-argument
         """Calculate threat score for authentication attempt.
@@ -412,6 +471,61 @@ class SecurityLogger:
 
         return False
 
+    def _build_security_event(
+        self,
+        event_type: str,
+        severity: SecuritySeverity,
+        category: str,
+        client_ip: str,
+        description: str,
+        threat_score: float,
+        user_id: Optional[str] = None,
+        user_email: Optional[str] = None,
+        user_agent: Optional[str] = None,
+        action_taken: Optional[str] = None,
+        failed_attempts_count: int = 0,
+        threat_indicators: Optional[Dict[str, Any]] = None,
+        context: Optional[Dict[str, Any]] = None,
+        correlation_id: Optional[str] = None,
+    ) -> SecurityEvent:
+        """Build a SecurityEvent object.
+
+        Args:
+            event_type: Type of security event
+            severity: Event severity
+            category: Event category
+            client_ip: Client IP address
+            description: Event description
+            threat_score: Threat score (0.0-1.0)
+            user_id: User identifier
+            user_email: User email
+            user_agent: User agent string
+            action_taken: Action taken
+            failed_attempts_count: Failed attempts count
+            threat_indicators: Threat indicators
+            context: Additional context
+            correlation_id: Correlation ID
+
+        Returns:
+            SecurityEvent instance
+        """
+        return SecurityEvent(
+            event_type=event_type,
+            severity=severity.value,
+            category=category,
+            user_id=user_id,
+            user_email=user_email,
+            client_ip=client_ip,
+            user_agent=user_agent,
+            description=description,
+            action_taken=action_taken,
+            threat_score=threat_score,
+            threat_indicators=threat_indicators or {},
+            failed_attempts_count=failed_attempts_count,
+            context=context,
+            correlation_id=correlation_id,
+        )
+
     def _create_security_event(
         self,
         event_type: str,
@@ -430,7 +544,7 @@ class SecurityLogger:
         correlation_id: Optional[str] = None,
         db: Optional[Session] = None,
     ) -> Optional[SecurityEvent]:
-        """Create a security event record.
+        """Create a security event record (sync version).
 
         Args:
             event_type: Type of security event
@@ -452,33 +566,60 @@ class SecurityLogger:
         Returns:
             Created SecurityEvent or None
         """
-        should_close = False
         if db is None:
-            db = SessionLocal()
-            should_close = True
+            with fresh_db_session() as fresh_db:
+                return self._do_create_security_event(
+                    fresh_db,
+                    event_type,
+                    severity,
+                    category,
+                    client_ip,
+                    description,
+                    threat_score,
+                    user_id,
+                    user_email,
+                    user_agent,
+                    action_taken,
+                    failed_attempts_count,
+                    threat_indicators,
+                    context,
+                    correlation_id,
+                )
 
+        return self._do_create_security_event(
+            db, event_type, severity, category, client_ip, description, threat_score, user_id, user_email, user_agent, action_taken, failed_attempts_count, threat_indicators, context, correlation_id
+        )
+
+    def _do_create_security_event(
+        self,
+        db: Session,
+        event_type: str,
+        severity: SecuritySeverity,
+        category: str,
+        client_ip: str,
+        description: str,
+        threat_score: float,
+        user_id: Optional[str],
+        user_email: Optional[str],
+        user_agent: Optional[str],
+        action_taken: Optional[str],
+        failed_attempts_count: int,
+        threat_indicators: Optional[Dict[str, Any]],
+        context: Optional[Dict[str, Any]],
+        correlation_id: Optional[str],
+    ) -> Optional[SecurityEvent]:
+        """Internal method to create security event (sync).
+
+        Returns:
+            Created SecurityEvent or None
+        """
         try:
-            event = SecurityEvent(
-                event_type=event_type,
-                severity=severity.value,
-                category=category,
-                user_id=user_id,
-                user_email=user_email,
-                client_ip=client_ip,
-                user_agent=user_agent,
-                description=description,
-                action_taken=action_taken,
-                threat_score=threat_score,
-                threat_indicators=threat_indicators or {},
-                failed_attempts_count=failed_attempts_count,
-                context=context,
-                correlation_id=correlation_id,
+            event = self._build_security_event(
+                event_type, severity, category, client_ip, description, threat_score, user_id, user_email, user_agent, action_taken, failed_attempts_count, threat_indicators, context, correlation_id
             )
-
             db.add(event)
             db.commit()
             db.refresh(event)
-
             return event
 
         except Exception as e:
@@ -486,9 +627,173 @@ class SecurityLogger:
             db.rollback()
             return None
 
-        finally:
-            if should_close:
-                db.close()
+    async def _create_security_event_async(
+        self,
+        event_type: str,
+        severity: SecuritySeverity,
+        category: str,
+        client_ip: str,
+        description: str,
+        threat_score: float,
+        user_id: Optional[str] = None,
+        user_email: Optional[str] = None,
+        user_agent: Optional[str] = None,
+        action_taken: Optional[str] = None,
+        failed_attempts_count: int = 0,
+        threat_indicators: Optional[Dict[str, Any]] = None,
+        context: Optional[Dict[str, Any]] = None,
+        correlation_id: Optional[str] = None,
+        db: Optional[AsyncSession] = None,
+    ) -> Optional[SecurityEvent]:
+        """Create a security event record (async version).
+
+        Args:
+            event_type: Type of security event
+            severity: Event severity
+            category: Event category
+            client_ip: Client IP address
+            description: Event description
+            threat_score: Threat score (0.0-1.0)
+            user_id: User identifier
+            user_email: User email
+            user_agent: User agent string
+            action_taken: Action taken
+            failed_attempts_count: Failed attempts count
+            threat_indicators: Threat indicators
+            context: Additional context
+            correlation_id: Correlation ID
+            db: Optional async database session
+
+        Returns:
+            Created SecurityEvent or None
+        """
+        if AsyncSessionLocal is None:
+            # Fallback to sync if async not available
+            return self._create_security_event(
+                event_type,
+                severity,
+                category,
+                client_ip,
+                description,
+                threat_score,
+                user_id,
+                user_email,
+                user_agent,
+                action_taken,
+                failed_attempts_count,
+                threat_indicators,
+                context,
+                correlation_id,
+                None,
+            )
+
+        if db is None:
+            async with fresh_async_db_session() as fresh_db:
+                return await self._do_create_security_event_async(
+                    fresh_db,
+                    event_type,
+                    severity,
+                    category,
+                    client_ip,
+                    description,
+                    threat_score,
+                    user_id,
+                    user_email,
+                    user_agent,
+                    action_taken,
+                    failed_attempts_count,
+                    threat_indicators,
+                    context,
+                    correlation_id,
+                )
+
+        return await self._do_create_security_event_async(
+            db, event_type, severity, category, client_ip, description, threat_score, user_id, user_email, user_agent, action_taken, failed_attempts_count, threat_indicators, context, correlation_id
+        )
+
+    async def _do_create_security_event_async(
+        self,
+        db: AsyncSession,
+        event_type: str,
+        severity: SecuritySeverity,
+        category: str,
+        client_ip: str,
+        description: str,
+        threat_score: float,
+        user_id: Optional[str],
+        user_email: Optional[str],
+        user_agent: Optional[str],
+        action_taken: Optional[str],
+        failed_attempts_count: int,
+        threat_indicators: Optional[Dict[str, Any]],
+        context: Optional[Dict[str, Any]],
+        correlation_id: Optional[str],
+    ) -> Optional[SecurityEvent]:
+        """Internal async method to create security event.
+
+        Returns:
+            Created SecurityEvent or None
+        """
+        try:
+            event = self._build_security_event(
+                event_type, severity, category, client_ip, description, threat_score, user_id, user_email, user_agent, action_taken, failed_attempts_count, threat_indicators, context, correlation_id
+            )
+            db.add(event)
+            await db.commit()
+            await db.refresh(event)
+            return event
+
+        except Exception as e:
+            logger.error(f"Failed to create security event: {e}")
+            await db.rollback()
+            return None
+
+    def _build_audit_trail(  # pylint: disable=too-many-positional-arguments
+        self,
+        action: str,
+        resource_type: str,
+        user_id: str,
+        success: bool,
+        resource_id: Optional[str] = None,
+        resource_name: Optional[str] = None,
+        user_email: Optional[str] = None,
+        team_id: Optional[str] = None,
+        client_ip: Optional[str] = None,
+        user_agent: Optional[str] = None,
+        old_values: Optional[Dict[str, Any]] = None,
+        new_values: Optional[Dict[str, Any]] = None,
+        changes: Optional[Dict[str, Any]] = None,
+        data_classification: Optional[str] = None,
+        requires_review: bool = False,
+        error_message: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
+        correlation_id: Optional[str] = None,
+    ) -> AuditTrail:
+        """Build an AuditTrail object.
+
+        Returns:
+            AuditTrail instance
+        """
+        return AuditTrail(
+            action=action,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            resource_name=resource_name,
+            user_id=user_id,
+            user_email=user_email,
+            team_id=team_id,
+            client_ip=client_ip,
+            user_agent=user_agent,
+            old_values=old_values,
+            new_values=new_values,
+            changes=changes,
+            data_classification=data_classification,
+            requires_review=requires_review,
+            success=success,
+            error_message=error_message,
+            context=context,
+            correlation_id=correlation_id,
+        )
 
     def _create_audit_trail(  # pylint: disable=too-many-positional-arguments
         self,
@@ -512,7 +817,7 @@ class SecurityLogger:
         correlation_id: Optional[str] = None,
         db: Optional[Session] = None,
     ) -> Optional[AuditTrail]:
-        """Create an audit trail record.
+        """Create an audit trail record (sync version).
 
         Args:
             action: Action performed
@@ -538,37 +843,103 @@ class SecurityLogger:
         Returns:
             Created AuditTrail or None
         """
-        should_close = False
         if db is None:
-            db = SessionLocal()
-            should_close = True
+            with fresh_db_session() as fresh_db:
+                return self._do_create_audit_trail(
+                    fresh_db,
+                    action,
+                    resource_type,
+                    user_id,
+                    success,
+                    resource_id,
+                    resource_name,
+                    user_email,
+                    team_id,
+                    client_ip,
+                    user_agent,
+                    old_values,
+                    new_values,
+                    changes,
+                    data_classification,
+                    requires_review,
+                    error_message,
+                    context,
+                    correlation_id,
+                )
 
+        return self._do_create_audit_trail(
+            db,
+            action,
+            resource_type,
+            user_id,
+            success,
+            resource_id,
+            resource_name,
+            user_email,
+            team_id,
+            client_ip,
+            user_agent,
+            old_values,
+            new_values,
+            changes,
+            data_classification,
+            requires_review,
+            error_message,
+            context,
+            correlation_id,
+        )
+
+    def _do_create_audit_trail(  # pylint: disable=too-many-positional-arguments
+        self,
+        db: Session,
+        action: str,
+        resource_type: str,
+        user_id: str,
+        success: bool,
+        resource_id: Optional[str],
+        resource_name: Optional[str],
+        user_email: Optional[str],
+        team_id: Optional[str],
+        client_ip: Optional[str],
+        user_agent: Optional[str],
+        old_values: Optional[Dict[str, Any]],
+        new_values: Optional[Dict[str, Any]],
+        changes: Optional[Dict[str, Any]],
+        data_classification: Optional[str],
+        requires_review: bool,
+        error_message: Optional[str],
+        context: Optional[Dict[str, Any]],
+        correlation_id: Optional[str],
+    ) -> Optional[AuditTrail]:
+        """Internal method to create audit trail (sync).
+
+        Returns:
+            Created AuditTrail or None
+        """
         try:
-            audit = AuditTrail(
-                action=action,
-                resource_type=resource_type,
-                resource_id=resource_id,
-                resource_name=resource_name,
-                user_id=user_id,
-                user_email=user_email,
-                team_id=team_id,
-                client_ip=client_ip,
-                user_agent=user_agent,
-                old_values=old_values,
-                new_values=new_values,
-                changes=changes,
-                data_classification=data_classification,
-                requires_review=requires_review,
-                success=success,
-                error_message=error_message,
-                context=context,
-                correlation_id=correlation_id,
+            audit = self._build_audit_trail(
+                action,
+                resource_type,
+                user_id,
+                success,
+                resource_id,
+                resource_name,
+                user_email,
+                team_id,
+                client_ip,
+                user_agent,
+                old_values,
+                new_values,
+                changes,
+                data_classification,
+                requires_review,
+                error_message,
+                context,
+                correlation_id,
             )
-
             db.add(audit)
             db.commit()
             db.refresh(audit)
-
             return audit
 
         except Exception as e:
@@ -576,9 +947,181 @@ class SecurityLogger:
             db.rollback()
             return None
 
-        finally:
-            if should_close:
-                db.close()
+    async def _create_audit_trail_async(  # pylint: disable=too-many-positional-arguments
+        self,
+        action: str,
+        resource_type: str,
+        user_id: str,
+        success: bool,
+        resource_id: Optional[str] = None,
+        resource_name: Optional[str] = None,
+        user_email: Optional[str] = None,
+        team_id: Optional[str] = None,
+        client_ip: Optional[str] = None,
+        user_agent: Optional[str] = None,
+        old_values: Optional[Dict[str, Any]] = None,
+        new_values: Optional[Dict[str, Any]] = None,
+        changes: Optional[Dict[str, Any]] = None,
+        data_classification: Optional[str] = None,
+        requires_review: bool = False,
+        error_message: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
+        correlation_id: Optional[str] = None,
+        db: Optional[AsyncSession] = None,
+    ) -> Optional[AuditTrail]:
+        """Create an audit trail record (async version).
+
+        Args:
+            action: Action performed
+            resource_type: Resource type
+            user_id: User performing action
+            success: Whether action succeeded
+            resource_id: Resource identifier
+            resource_name: Resource name
+            user_email: User email
+            team_id: Team context
+            client_ip: Client IP
+            user_agent: User agent
+            old_values: Previous values
+            new_values: New values
+            changes: Calculated changes
+            data_classification: Data classification
+            requires_review: Whether manual review needed
+            error_message: Error message if failed
+            context: Additional context
+            correlation_id: Correlation ID
+            db: Optional async database session
+
+        Returns:
+            Created AuditTrail or None
+        """
+        if AsyncSessionLocal is None:
+            # Fallback to sync if async not available
+            return self._create_audit_trail(
+                action,
+                resource_type,
+                user_id,
+                success,
+                resource_id,
+                resource_name,
+                user_email,
+                team_id,
+                client_ip,
+                user_agent,
+                old_values,
+                new_values,
+                changes,
+                data_classification,
+                requires_review,
+                error_message,
+                context,
+                correlation_id,
+                None,
+            )
+
+        if db is None:
+            async with fresh_async_db_session() as fresh_db:
+                return await self._do_create_audit_trail_async(
+                    fresh_db,
+                    action,
+                    resource_type,
+                    user_id,
+                    success,
+                    resource_id,
+                    resource_name,
+                    user_email,
+                    team_id,
+                    client_ip,
+                    user_agent,
+                    old_values,
+                    new_values,
+                    changes,
+                    data_classification,
+                    requires_review,
+                    error_message,
+                    context,
+                    correlation_id,
+                )
+
+        return await self._do_create_audit_trail_async(
+            db,
+            action,
+            resource_type,
+            user_id,
+            success,
+            resource_id,
+            resource_name,
+            user_email,
+            team_id,
+            client_ip,
+            user_agent,
+            old_values,
+            new_values,
+            changes,
+            data_classification,
+            requires_review,
+            error_message,
+            context,
+            correlation_id,
+        )
+
+    async def _do_create_audit_trail_async(  # pylint: disable=too-many-positional-arguments
+        self,
+        db: AsyncSession,
+        action: str,
+        resource_type: str,
+        user_id: str,
+        success: bool,
+        resource_id: Optional[str],
+        resource_name: Optional[str],
+        user_email: Optional[str],
+        team_id: Optional[str],
+        client_ip: Optional[str],
+        user_agent: Optional[str],
+        old_values: Optional[Dict[str, Any]],
+        new_values: Optional[Dict[str, Any]],
+        changes: Optional[Dict[str, Any]],
+        data_classification: Optional[str],
+        requires_review: bool,
+        error_message: Optional[str],
+        context: Optional[Dict[str, Any]],
+        correlation_id: Optional[str],
+    ) -> Optional[AuditTrail]:
+        """Internal async method to create audit trail.
+
+        Returns:
+            Created AuditTrail or None
+        """
+        try:
+            audit = self._build_audit_trail(
+                action,
+                resource_type,
+                user_id,
+                success,
+                resource_id,
+                resource_name,
+                user_email,
+                team_id,
+                client_ip,
+                user_agent,
+                old_values,
+                new_values,
+                changes,
+                data_classification,
+                requires_review,
+                error_message,
+                context,
+                correlation_id,
+            )
+            db.add(audit)
+            await db.commit()
+            await db.refresh(audit)
+            return audit
+
+        except Exception as e:
+            logger.error(f"Failed to create audit trail: {e}")
+            await db.rollback()
+            return None
 
 
 # Global security logger instance

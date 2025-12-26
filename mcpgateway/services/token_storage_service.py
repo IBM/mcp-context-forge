@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional
 
 # Third-Party
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # First-Party
 from mcpgateway.config import get_settings
@@ -59,11 +59,11 @@ class TokenStorageService:
         True
     """
 
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         """Initialize Token Storage Service.
 
         Args:
-            db: Database session
+            db: Async database session
         """
         self.db = db
         try:
@@ -104,7 +104,8 @@ class TokenStorageService:
             # Calculate expiration
             expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
             # Create or update token record - now scoped by app_user_email
-            token_record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).scalar_one_or_none()
+            result = await self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email))
+            token_record = result.scalar_one_or_none()
 
             if token_record:
                 # Update existing record
@@ -123,11 +124,11 @@ class TokenStorageService:
                 self.db.add(token_record)
                 logger.info(f"Stored new OAuth tokens for gateway {gateway_id}, app user {app_user_email}, OAuth user {user_id}")
 
-            self.db.commit()
+            await self.db.commit()
             return token_record
 
         except Exception as e:
-            self.db.rollback()
+            await self.db.rollback()
             logger.error(f"Failed to store OAuth tokens: {str(e)}")
             raise OAuthError(f"Token storage failed: {str(e)}")
 
@@ -143,7 +144,8 @@ class TokenStorageService:
             Valid access token or None if no valid token available for this user
         """
         try:
-            token_record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).scalar_one_or_none()
+            result = await self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email))
+            token_record = result.scalar_one_or_none()
 
             if not token_record:
                 logger.debug(f"No OAuth tokens found for gateway {gateway_id}, app user {app_user_email}")
@@ -189,7 +191,8 @@ class TokenStorageService:
             # First-Party
             from mcpgateway.db import Gateway  # pylint: disable=import-outside-toplevel
 
-            gateway = self.db.query(Gateway).filter(Gateway.id == token_record.gateway_id).first()
+            result = await self.db.execute(select(Gateway).where(Gateway.id == token_record.gateway_id))
+            gateway = result.scalar_one_or_none()
 
             if not gateway or not gateway.oauth_config:
                 logger.error(f"No OAuth configuration found for gateway {token_record.gateway_id}")
@@ -241,7 +244,7 @@ class TokenStorageService:
             token_record.expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
             token_record.updated_at = datetime.now(timezone.utc)
 
-            self.db.commit()
+            await self.db.commit()
             logger.info(f"Successfully refreshed token for gateway {token_record.gateway_id}, user {token_record.app_user_email}")
 
             return new_access_token
@@ -251,8 +254,8 @@ class TokenStorageService:
             # If refresh fails, we should clear the token to force re-authentication
             if "invalid" in str(e).lower() or "expired" in str(e).lower():
                 logger.warning(f"Refresh token appears invalid/expired, clearing tokens for gateway {token_record.gateway_id}")
-                self.db.delete(token_record)
-                self.db.commit()
+                await self.db.delete(token_record)
+                await self.db.commit()
             return None
 
     def _is_token_expired(self, token_record: OAuthToken, threshold_seconds: int = 300) -> bool:
@@ -302,17 +305,15 @@ class TokenStorageService:
         Examples:
             >>> from types import SimpleNamespace
             >>> from datetime import datetime, timedelta
+            >>> from unittest.mock import AsyncMock, MagicMock
             >>> svc = TokenStorageService(None)
             >>> now = datetime.now(tz=timezone.utc)
             >>> future = now + timedelta(seconds=60)
             >>> rec = SimpleNamespace(user_id='u1', app_user_email='u1', token_type='bearer', expires_at=future, scopes=['s1'], created_at=now, updated_at=now)
-            >>> class _Res:
-            ...     def scalar_one_or_none(self):
-            ...         return rec
-            >>> class _DB:
-            ...     def execute(self, *_args, **_kw):
-            ...         return _Res()
-            >>> svc.db = _DB()
+            >>> mock_result = MagicMock()
+            >>> mock_result.scalar_one_or_none.return_value = rec
+            >>> svc.db = MagicMock()
+            >>> svc.db.execute = AsyncMock(return_value=mock_result)
             >>> import asyncio
             >>> info = asyncio.run(svc.get_token_info('g1', 'u1'))
             >>> info['user_id']
@@ -321,7 +322,8 @@ class TokenStorageService:
             True
         """
         try:
-            token_record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).scalar_one_or_none()
+            result = await self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email))
+            token_record = result.scalar_one_or_none()
 
             if not token_record:
                 return None
@@ -353,33 +355,38 @@ class TokenStorageService:
 
         Examples:
             >>> from types import SimpleNamespace
-            >>> from unittest.mock import MagicMock
+            >>> from unittest.mock import MagicMock, AsyncMock
             >>> svc = TokenStorageService(MagicMock())
             >>> rec = SimpleNamespace()
-            >>> svc.db.execute.return_value.scalar_one_or_none.return_value = rec
-            >>> svc.db.delete = lambda obj: None
-            >>> svc.db.commit = lambda: None
+            >>> mock_result = MagicMock()
+            >>> mock_result.scalar_one_or_none.return_value = rec
+            >>> svc.db.execute = AsyncMock(return_value=mock_result)
+            >>> svc.db.delete = AsyncMock()
+            >>> svc.db.commit = AsyncMock()
             >>> import asyncio
             >>> asyncio.run(svc.revoke_user_tokens('g1', 'u1'))
             True
             >>> # Not found
-            >>> svc.db.execute.return_value.scalar_one_or_none.return_value = None
+            >>> mock_result2 = MagicMock()
+            >>> mock_result2.scalar_one_or_none.return_value = None
+            >>> svc.db.execute = AsyncMock(return_value=mock_result2)
             >>> asyncio.run(svc.revoke_user_tokens('g1', 'u1'))
             False
         """
         try:
-            token_record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).scalar_one_or_none()
+            result = await self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email))
+            token_record = result.scalar_one_or_none()
 
             if token_record:
-                self.db.delete(token_record)
-                self.db.commit()
+                await self.db.delete(token_record)
+                await self.db.commit()
                 logger.info(f"Revoked OAuth tokens for gateway {gateway_id}, user {app_user_email}")
                 return True
 
             return False
 
         except Exception as e:
-            self.db.rollback()
+            await self.db.rollback()
             logger.error(f"Failed to revoke OAuth tokens: {str(e)}")
             return False
 
@@ -394,11 +401,13 @@ class TokenStorageService:
 
         Examples:
             >>> from types import SimpleNamespace
-            >>> from unittest.mock import MagicMock
+            >>> from unittest.mock import MagicMock, AsyncMock
             >>> svc = TokenStorageService(MagicMock())
-            >>> svc.db.execute.return_value.scalars.return_value.all.return_value = [SimpleNamespace(), SimpleNamespace()]
-            >>> svc.db.delete = lambda obj: None
-            >>> svc.db.commit = lambda: None
+            >>> mock_result = MagicMock()
+            >>> mock_result.scalars.return_value.all.return_value = [SimpleNamespace(), SimpleNamespace()]
+            >>> svc.db.execute = AsyncMock(return_value=mock_result)
+            >>> svc.db.delete = AsyncMock()
+            >>> svc.db.commit = AsyncMock()
             >>> import asyncio
             >>> asyncio.run(svc.cleanup_expired_tokens(1))
             2
@@ -406,17 +415,18 @@ class TokenStorageService:
         try:
             cutoff_date = datetime.now(tz=timezone.utc) - timedelta(days=max_age_days)
 
-            expired_tokens = self.db.execute(select(OAuthToken).where(OAuthToken.expires_at < cutoff_date)).scalars().all()
+            result = await self.db.execute(select(OAuthToken).where(OAuthToken.expires_at < cutoff_date))
+            expired_tokens = result.scalars().all()
 
             count = len(expired_tokens)
             for token in expired_tokens:
-                self.db.delete(token)
+                await self.db.delete(token)
 
-            self.db.commit()
+            await self.db.commit()
             logger.info(f"Cleaned up {count} expired OAuth tokens")
             return count
 
         except Exception as e:
-            self.db.rollback()
+            await self.db.rollback()
             logger.error(f"Failed to cleanup expired tokens: {str(e)}")
             return 0

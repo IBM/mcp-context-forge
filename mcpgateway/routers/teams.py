@@ -24,11 +24,10 @@ from typing import Any, cast, List
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
-from mcpgateway.db import get_db
+from mcpgateway.db import _use_async, get_async_db, get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import (
     EmailUserResponse,
@@ -55,6 +54,9 @@ logger = logging_service.get_logger(__name__)
 
 # Create router
 teams_router = APIRouter()
+
+# Dynamic database dependency based on async configuration
+_db_dependency = get_async_db if _use_async else get_db
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +177,7 @@ async def list_teams(
 
 @teams_router.get("/{team_id}", response_model=TeamResponse)
 @require_permission("teams.read")
-async def get_team(team_id: str, current_user: EmailUserResponse = Depends(get_current_user), db: Session = Depends(get_db)) -> TeamResponse:
+async def get_team(team_id: str, current_user: EmailUserResponse = Depends(get_current_user), db=Depends(_db_dependency)) -> TeamResponse:
     """Get a specific team by ID.
 
     Args:
@@ -225,7 +227,7 @@ async def get_team(team_id: str, current_user: EmailUserResponse = Depends(get_c
 
 @teams_router.put("/{team_id}", response_model=TeamResponse)
 @require_permission("teams.update")
-async def update_team(team_id: str, request: TeamUpdateRequest, current_user: EmailUserResponse = Depends(get_current_user), db: Session = Depends(get_db)) -> TeamResponse:
+async def update_team(team_id: str, request: TeamUpdateRequest, current_user: EmailUserResponse = Depends(get_current_user), db=Depends(_db_dependency)) -> TeamResponse:
     """Update a team.
 
     Args:
@@ -280,7 +282,7 @@ async def update_team(team_id: str, request: TeamUpdateRequest, current_user: Em
 
 @teams_router.delete("/{team_id}", response_model=SuccessResponse)
 @require_permission("teams.delete")
-async def delete_team(team_id: str, current_user: EmailUserResponse = Depends(get_current_user), db: Session = Depends(get_db)) -> SuccessResponse:
+async def delete_team(team_id: str, current_user: EmailUserResponse = Depends(get_current_user), db=Depends(_db_dependency)) -> SuccessResponse:
     """Delete a team.
 
     Args:
@@ -321,7 +323,7 @@ async def delete_team(team_id: str, current_user: EmailUserResponse = Depends(ge
 
 @teams_router.get("/{team_id}/members", response_model=List[TeamMemberResponse])
 @require_permission("teams.read")
-async def list_team_members(team_id: str, current_user: EmailUserResponse = Depends(get_current_user), db: Session = Depends(get_db)) -> List[TeamMemberResponse]:
+async def list_team_members(team_id: str, current_user: EmailUserResponse = Depends(get_current_user), db=Depends(_db_dependency)) -> List[TeamMemberResponse]:
     """List team members.
 
     Args:
@@ -361,7 +363,7 @@ async def list_team_members(team_id: str, current_user: EmailUserResponse = Depe
 @teams_router.put("/{team_id}/members/{user_email}", response_model=TeamMemberResponse)
 @require_permission("teams.manage_members")
 async def update_team_member(
-    team_id: str, user_email: str, request: TeamMemberUpdateRequest, current_user: EmailUserResponse = Depends(get_current_user), db: Session = Depends(get_db)
+    team_id: str, user_email: str, request: TeamMemberUpdateRequest, current_user: EmailUserResponse = Depends(get_current_user), db=Depends(_db_dependency)
 ) -> TeamMemberResponse:
     """Update a team member's role.
 
@@ -404,7 +406,7 @@ async def update_team_member(
 
 @teams_router.delete("/{team_id}/members/{user_email}", response_model=SuccessResponse)
 @require_permission("teams.manage_members")
-async def remove_team_member(team_id: str, user_email: str, current_user: EmailUserResponse = Depends(get_current_user), db: Session = Depends(get_db)) -> SuccessResponse:
+async def remove_team_member(team_id: str, user_email: str, current_user: EmailUserResponse = Depends(get_current_user), db=Depends(_db_dependency)) -> SuccessResponse:
     """Remove a team member.
 
     Args:
@@ -446,7 +448,7 @@ async def remove_team_member(team_id: str, user_email: str, current_user: EmailU
 
 @teams_router.post("/{team_id}/invitations", response_model=TeamInvitationResponse, status_code=status.HTTP_201_CREATED)
 @require_permission("teams.manage_members")
-async def invite_team_member(team_id: str, request: TeamInviteRequest, current_user: EmailUserResponse = Depends(get_current_user), db: Session = Depends(get_db)) -> TeamInvitationResponse:
+async def invite_team_member(team_id: str, request: TeamInviteRequest, current_user: EmailUserResponse = Depends(get_current_user), db=Depends(_db_dependency)) -> TeamInvitationResponse:
     """Invite a user to join a team.
 
     Args:
@@ -503,7 +505,7 @@ async def invite_team_member(team_id: str, request: TeamInviteRequest, current_u
 
 @teams_router.get("/{team_id}/invitations", response_model=List[TeamInvitationResponse])
 @require_permission("teams.read")
-async def list_team_invitations(team_id: str, current_user: EmailUserResponse = Depends(get_current_user), db: Session = Depends(get_db)) -> List[TeamInvitationResponse]:
+async def list_team_invitations(team_id: str, current_user: EmailUserResponse = Depends(get_current_user), db=Depends(_db_dependency)) -> List[TeamInvitationResponse]:
     """List team invitations.
 
     Args:
@@ -560,7 +562,7 @@ async def list_team_invitations(team_id: str, current_user: EmailUserResponse = 
 
 @teams_router.post("/invitations/{token}/accept", response_model=TeamMemberResponse)
 @require_permission("teams.read")
-async def accept_team_invitation(token: str, current_user: EmailUserResponse = Depends(get_current_user), db: Session = Depends(get_db)) -> TeamMemberResponse:
+async def accept_team_invitation(token: str, current_user: EmailUserResponse = Depends(get_current_user), db=Depends(_db_dependency)) -> TeamMemberResponse:
     """Accept a team invitation.
 
     Args:
@@ -595,7 +597,7 @@ async def accept_team_invitation(token: str, current_user: EmailUserResponse = D
 
 @teams_router.delete("/invitations/{invitation_id}", response_model=SuccessResponse)
 @require_permission("teams.manage_members")
-async def cancel_team_invitation(invitation_id: str, current_user: EmailUserResponse = Depends(get_current_user), db: Session = Depends(get_db)) -> SuccessResponse:
+async def cancel_team_invitation(invitation_id: str, current_user: EmailUserResponse = Depends(get_current_user), db=Depends(_db_dependency)) -> SuccessResponse:
     """Cancel a team invitation.
 
     Args:
@@ -692,7 +694,7 @@ async def request_to_join_team(
     team_id: str,
     join_request: TeamJoinRequest,
     current_user: EmailUserResponse = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ) -> TeamJoinRequestResponse:
     """Request to join a public team.
 
@@ -751,7 +753,7 @@ async def request_to_join_team(
 async def leave_team(
     team_id: str,
     current_user: EmailUserResponse = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ) -> SuccessResponse:
     """Leave a team.
 
@@ -804,7 +806,7 @@ async def leave_team(
 async def list_team_join_requests(
     team_id: str,
     current_user: EmailUserResponse = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ) -> List[TeamJoinRequestResponse]:
     """List pending join requests for a team.
 
@@ -862,7 +864,7 @@ async def approve_join_request(
     team_id: str,
     request_id: str,
     current_user: EmailUserResponse = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ) -> TeamMemberResponse:
     """Approve a team join request.
 
@@ -919,7 +921,7 @@ async def reject_join_request(
     team_id: str,
     request_id: str,
     current_user: EmailUserResponse = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ) -> SuccessResponse:
     """Reject a team join request.
 

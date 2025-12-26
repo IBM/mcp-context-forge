@@ -22,7 +22,8 @@ from typing import Any, cast, Dict, List, Optional, TypedDict
 
 # Third-Party
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 # First-Party
 from mcpgateway.config import settings
@@ -141,7 +142,7 @@ class ExportService:
         """Shutdown the export service."""
         logger.info("Export service shutdown")
 
-    async def _fetch_all_tools(self, db: Session, tags: Optional[List[str]], include_inactive: bool) -> List[Any]:
+    async def _fetch_all_tools(self, db: AsyncSession, tags: Optional[List[str]], include_inactive: bool) -> List[Any]:
         """Fetch all tools by following pagination cursors.
 
         Args:
@@ -162,7 +163,7 @@ class ExportService:
             cursor = next_cursor
         return all_tools
 
-    async def _fetch_all_prompts(self, db: Session, tags: Optional[List[str]], include_inactive: bool) -> List[Any]:
+    async def _fetch_all_prompts(self, db: AsyncSession, tags: Optional[List[str]], include_inactive: bool) -> List[Any]:
         """Fetch all prompts by following pagination cursors.
 
         Args:
@@ -183,7 +184,7 @@ class ExportService:
             cursor = next_cursor
         return all_prompts
 
-    async def _fetch_all_resources(self, db: Session, tags: Optional[List[str]], include_inactive: bool) -> List[Any]:
+    async def _fetch_all_resources(self, db: AsyncSession, tags: Optional[List[str]], include_inactive: bool) -> List[Any]:
         """Fetch all resources by following pagination cursors.
 
         Args:
@@ -206,7 +207,7 @@ class ExportService:
 
     async def export_configuration(
         self,
-        db: Session,
+        db: AsyncSession,
         include_types: Optional[List[str]] = None,
         exclude_types: Optional[List[str]] = None,
         tags: Optional[List[str]] = None,
@@ -332,7 +333,7 @@ class ExportService:
             logger.error(f"Export failed: {str(e)}")
             raise ExportError(f"Failed to export configuration: {str(e)}")
 
-    async def _export_tools(self, db: Session, tags: Optional[List[str]], include_inactive: bool) -> List[Dict[str, Any]]:
+    async def _export_tools(self, db: AsyncSession, tags: Optional[List[str]], include_inactive: bool) -> List[Dict[str, Any]]:
         """Export tools with encrypted authentication data.
 
         Uses batch queries to fetch auth data efficiently, avoiding N+1 query patterns.
@@ -358,7 +359,8 @@ class ExportService:
 
         auth_data_map: Dict[Any, tuple] = {}
         if tool_ids_needing_auth:
-            db_tools_with_auth = db.execute(select(DbTool.id, DbTool.auth_type, DbTool.auth_value).where(DbTool.id.in_(tool_ids_needing_auth))).all()
+            result = await db.execute(select(DbTool.id, DbTool.auth_type, DbTool.auth_value).where(DbTool.id.in_(tool_ids_needing_auth)))
+            db_tools_with_auth = result.all()
             auth_data_map = {row[0]: (row[1], row[2]) for row in db_tools_with_auth}
 
         exported_tools = []
@@ -403,7 +405,7 @@ class ExportService:
 
         return exported_tools
 
-    async def _export_gateways(self, db: Session, tags: Optional[List[str]], include_inactive: bool) -> List[Dict[str, Any]]:
+    async def _export_gateways(self, db: AsyncSession, tags: Optional[List[str]], include_inactive: bool) -> List[Dict[str, Any]]:
         """Export gateways with encrypted authentication data.
 
         Uses batch queries to fetch auth data efficiently, avoiding N+1 query patterns.
@@ -427,7 +429,8 @@ class ExportService:
 
         auth_data_map: Dict[Any, tuple] = {}
         if gateway_ids_needing_auth:
-            db_gateways_with_auth = db.execute(select(DbGateway.id, DbGateway.auth_type, DbGateway.auth_value).where(DbGateway.id.in_(gateway_ids_needing_auth))).all()
+            result = await db.execute(select(DbGateway.id, DbGateway.auth_type, DbGateway.auth_value).where(DbGateway.id.in_(gateway_ids_needing_auth)))
+            db_gateways_with_auth = result.all()
             auth_data_map = {row[0]: (row[1], row[2]) for row in db_gateways_with_auth}
 
         exported_gateways = []
@@ -463,7 +466,7 @@ class ExportService:
 
         return exported_gateways
 
-    async def _export_servers(self, db: Session, tags: Optional[List[str]], include_inactive: bool, root_path: str = "") -> List[Dict[str, Any]]:
+    async def _export_servers(self, db: AsyncSession, tags: Optional[List[str]], include_inactive: bool, root_path: str = "") -> List[Dict[str, Any]]:
         """Export virtual servers with their tool associations.
 
         Args:
@@ -495,7 +498,7 @@ class ExportService:
 
         return exported_servers
 
-    async def _export_prompts(self, db: Session, tags: Optional[List[str]], include_inactive: bool) -> List[Dict[str, Any]]:
+    async def _export_prompts(self, db: AsyncSession, tags: Optional[List[str]], include_inactive: bool) -> List[Dict[str, Any]]:
         """Export prompts with their templates and schemas.
 
         Args:
@@ -537,7 +540,7 @@ class ExportService:
 
         return exported_prompts
 
-    async def _export_resources(self, db: Session, tags: Optional[List[str]], include_inactive: bool) -> List[Dict[str, Any]]:
+    async def _export_resources(self, db: AsyncSession, tags: Optional[List[str]], include_inactive: bool) -> List[Dict[str, Any]]:
         """Export resources with their content metadata.
 
         Args:
@@ -582,7 +585,7 @@ class ExportService:
 
         return exported_roots
 
-    async def _extract_dependencies(self, db: Session, entities: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:  # pylint: disable=unused-argument
+    async def _extract_dependencies(self, db: AsyncSession, entities: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:  # pylint: disable=unused-argument
         """Extract dependency relationships between entities.
 
         Args:
@@ -632,7 +635,7 @@ class ExportService:
 
         logger.debug("Export data validation passed")
 
-    async def export_selective(self, db: Session, entity_selections: Dict[str, List[str]], include_dependencies: bool = True, exported_by: str = "system", root_path: str = "") -> Dict[str, Any]:
+    async def export_selective(self, db: AsyncSession, entity_selections: Dict[str, List[str]], include_dependencies: bool = True, exported_by: str = "system", root_path: str = "") -> Dict[str, Any]:
         """Export specific entities by their IDs/names.
 
         Args:
@@ -723,7 +726,7 @@ class ExportService:
         logger.info(f"Selective export completed with {sum(export_data['metadata']['entity_counts'].values())} entities")
         return cast(Dict[str, Any], export_data)
 
-    async def _export_selected_tools(self, db: Session, tool_ids: List[str]) -> List[Dict[str, Any]]:
+    async def _export_selected_tools(self, db: AsyncSession, tool_ids: List[str]) -> List[Dict[str, Any]]:
         """Export specific tools by their IDs using batch queries.
 
         Uses a single batch query instead of fetching all tools N times.
@@ -739,7 +742,8 @@ class ExportService:
             return []
 
         # Batch query for selected tools only
-        db_tools = db.execute(select(DbTool).where(DbTool.id.in_(tool_ids))).scalars().all()
+        result = await db.execute(select(DbTool).where(DbTool.id.in_(tool_ids)))
+        db_tools = result.scalars().all()
 
         exported_tools = []
         for db_tool in db_tools:
@@ -776,7 +780,7 @@ class ExportService:
 
         return exported_tools
 
-    async def _export_selected_gateways(self, db: Session, gateway_ids: List[str]) -> List[Dict[str, Any]]:
+    async def _export_selected_gateways(self, db: AsyncSession, gateway_ids: List[str]) -> List[Dict[str, Any]]:
         """Export specific gateways by their IDs using batch queries.
 
         Uses a single batch query instead of fetching all gateways N times.
@@ -792,7 +796,8 @@ class ExportService:
             return []
 
         # Batch query for selected gateways only
-        db_gateways = db.execute(select(DbGateway).where(DbGateway.id.in_(gateway_ids))).scalars().all()
+        result = await db.execute(select(DbGateway).where(DbGateway.id.in_(gateway_ids)))
+        db_gateways = result.scalars().all()
 
         exported_gateways = []
         for db_gateway in db_gateways:
@@ -818,7 +823,7 @@ class ExportService:
 
         return exported_gateways
 
-    async def _export_selected_servers(self, db: Session, server_ids: List[str], root_path: str = "") -> List[Dict[str, Any]]:
+    async def _export_selected_servers(self, db: AsyncSession, server_ids: List[str], root_path: str = "") -> List[Dict[str, Any]]:
         """Export specific servers by their IDs using batch queries.
 
         Uses a single batch query instead of fetching all servers N times.
@@ -834,8 +839,9 @@ class ExportService:
         if not server_ids:
             return []
 
-        # Batch query for selected servers only
-        db_servers = db.execute(select(DbServer).where(DbServer.id.in_(server_ids))).scalars().all()
+        # Batch query for selected servers only with eager loading of tools
+        result = await db.execute(select(DbServer).options(selectinload(DbServer.tools)).where(DbServer.id.in_(server_ids)))
+        db_servers = result.scalars().all()
 
         exported_servers = []
         for db_server in db_servers:
@@ -858,7 +864,7 @@ class ExportService:
 
         return exported_servers
 
-    async def _export_selected_prompts(self, db: Session, prompt_names: List[str]) -> List[Dict[str, Any]]:
+    async def _export_selected_prompts(self, db: AsyncSession, prompt_names: List[str]) -> List[Dict[str, Any]]:
         """Export specific prompts by their names using batch queries.
 
         Uses a single batch query instead of fetching all prompts N times.
@@ -874,7 +880,8 @@ class ExportService:
             return []
 
         # Batch query for selected prompts only
-        db_prompts = db.execute(select(DbPrompt).where(DbPrompt.name.in_(prompt_names))).scalars().all()
+        result = await db.execute(select(DbPrompt).where(DbPrompt.name.in_(prompt_names)))
+        db_prompts = result.scalars().all()
 
         exported_prompts = []
         for db_prompt in db_prompts:
@@ -896,7 +903,7 @@ class ExportService:
 
         return exported_prompts
 
-    async def _export_selected_resources(self, db: Session, resource_uris: List[str]) -> List[Dict[str, Any]]:
+    async def _export_selected_resources(self, db: AsyncSession, resource_uris: List[str]) -> List[Dict[str, Any]]:
         """Export specific resources by their URIs using batch queries.
 
         Uses a single batch query instead of fetching all resources N times.
@@ -912,7 +919,8 @@ class ExportService:
             return []
 
         # Batch query for selected resources only
-        db_resources = db.execute(select(DbResource).where(DbResource.uri.in_(resource_uris))).scalars().all()
+        result = await db.execute(select(DbResource).where(DbResource.uri.in_(resource_uris)))
+        db_resources = result.scalars().all()
 
         exported_resources = []
         for db_resource in db_resources:

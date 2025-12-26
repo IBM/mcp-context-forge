@@ -110,7 +110,7 @@ class GlobalConfigCache:
         self._hit_count = 0
         self._miss_count = 0
 
-    def get(self, db):
+    async def get(self, db):
         """
         Get GlobalConfig from cache or database.
 
@@ -118,18 +118,19 @@ class GlobalConfigCache:
         lock contention on the hot path (cache hit).
 
         Args:
-            db: SQLAlchemy database session
+            db: SQLAlchemy async database session
 
         Returns:
             GlobalConfig object or None if not configured
 
         Examples:
-            >>> from unittest.mock import Mock
+            >>> from unittest.mock import Mock, AsyncMock
+            >>> import asyncio
             >>> cache = GlobalConfigCache(ttl_seconds=60)
-            >>> mock_db = Mock()
+            >>> mock_db = AsyncMock()
             >>> mock_config = Mock()
-            >>> mock_db.query.return_value.first.return_value = mock_config
-            >>> cache.get(mock_db) is mock_config
+            >>> mock_db.execute.return_value.scalar_one_or_none.return_value = mock_config
+            >>> asyncio.run(cache.get(mock_db)) is mock_config
             True
         """
         now = time.time()
@@ -148,10 +149,55 @@ class GlobalConfigCache:
                 return self._cache
 
             # Import here to avoid circular imports
+            # Third-Party
+            from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
             # First-Party
             from mcpgateway.db import GlobalConfig  # pylint: disable=import-outside-toplevel
 
-            # Refresh from database
+            # Refresh from database using async-compatible select
+            result = await db.execute(select(GlobalConfig))
+            self._cache = result.scalar_one_or_none()
+            self._expiry = now + self.ttl_seconds
+            self._miss_count += 1
+
+            if self._cache:
+                logger.debug(f"GlobalConfig cache refreshed (TTL: {self.ttl_seconds}s)")
+            else:
+                logger.debug("GlobalConfig not found in database, using defaults")
+
+            return self._cache
+
+    def get_sync(self, db):
+        """
+        Get GlobalConfig from cache or database (sync version).
+
+        Sync version of get() for use with sync database sessions.
+
+        Args:
+            db: SQLAlchemy sync database session
+
+        Returns:
+            GlobalConfig object or None if not configured
+        """
+        now = time.time()
+
+        # Fast path: cache hit (no lock needed for read)
+        if now < self._expiry and self._cache is not self._NOT_CACHED:
+            self._hit_count += 1
+            return self._cache
+
+        # Slow path: cache miss or expired - acquire lock
+        with self._lock:
+            # Double-check after acquiring lock
+            if now < self._expiry and self._cache is not self._NOT_CACHED:
+                self._hit_count += 1
+                return self._cache
+
+            # First-Party
+            from mcpgateway.db import GlobalConfig  # pylint: disable=import-outside-toplevel
+
+            # Refresh from database using sync query
             self._cache = db.query(GlobalConfig).first()
             self._expiry = now + self.ttl_seconds
             self._miss_count += 1
@@ -163,7 +209,7 @@ class GlobalConfigCache:
 
             return self._cache
 
-    def get_passthrough_headers(self, db, default: list[str]) -> list[str]:
+    async def get_passthrough_headers(self, db, default: list[str]) -> list[str]:
         """
         Get passthrough headers from cache with fallback to default.
 
@@ -193,10 +239,28 @@ class GlobalConfigCache:
             >>> mock_config.passthrough_headers = ["Authorization"]
             >>> mock_db.query.return_value.first.return_value = mock_config
             >>> cache.invalidate()
-            >>> cache.get_passthrough_headers(mock_db, ["X-Default"])
+            >>> asyncio.run(cache.get_passthrough_headers(mock_db, ["X-Default"]))
             ['Authorization']
         """
-        config = self.get(db)
+        config = await self.get(db)
+        if config and config.passthrough_headers:
+            return config.passthrough_headers
+        return default
+
+    def get_passthrough_headers_sync(self, db, default: list[str]) -> list[str]:
+        """
+        Get passthrough headers from cache with fallback to default (sync version).
+
+        Sync version of get_passthrough_headers() for use with sync database sessions.
+
+        Args:
+            db: SQLAlchemy sync database session
+            default: Default headers to use if GlobalConfig is not configured
+
+        Returns:
+            List of allowed passthrough header names
+        """
+        config = self.get_sync(db)
         if config and config.passthrough_headers:
             return config.passthrough_headers
         return default

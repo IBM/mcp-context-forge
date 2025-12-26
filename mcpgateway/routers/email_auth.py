@@ -24,12 +24,11 @@ from typing import Optional
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer
-from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
-from mcpgateway.db import EmailUser, SessionLocal
+from mcpgateway.db import _use_async, EmailUser, get_async_db, get_db, SessionLocal
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import AuthenticationResponse, AuthEventResponse, ChangePasswordRequest, EmailLoginRequest, EmailRegistrationRequest, EmailUserResponse, SuccessResponse, UserListResponse
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, EmailValidationError, PasswordValidationError, UserExistsError
@@ -46,8 +45,11 @@ email_auth_router = APIRouter()
 # Security scheme
 bearer_scheme = HTTPBearer(auto_error=False)
 
+# Dynamic database dependency based on async configuration
+_db_dependency = get_async_db if _use_async else get_db
 
-def get_db():
+
+def _get_db_local():
     """Database dependency.
 
     Commits the transaction on successful completion to avoid implicit rollbacks
@@ -189,7 +191,7 @@ async def create_legacy_access_token(user: EmailUser) -> tuple[str, int]:
 
 
 @email_auth_router.post("/login", response_model=AuthenticationResponse)
-async def login(login_request: EmailLoginRequest, request: Request, db: Session = Depends(get_db)):
+async def login(login_request: EmailLoginRequest, request: Request, db=Depends(_db_dependency)):
     """Authenticate user with email and password.
 
     Args:
@@ -240,7 +242,7 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
                 needs_password_change = True
                 # Set the flag in database for future reference
                 user.password_change_required = True
-                db.commit()
+                await db.commit()
 
         if needs_password_change:
             # For API login, return a specific error indicating password change is required
@@ -262,7 +264,7 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
 
 
 @email_auth_router.post("/register", response_model=AuthenticationResponse)
-async def register(registration_request: EmailRegistrationRequest, request: Request, db: Session = Depends(get_db)):
+async def register(registration_request: EmailRegistrationRequest, request: Request, db=Depends(_db_dependency)):
     """Register a new user account.
 
     Args:
@@ -319,7 +321,7 @@ async def register(registration_request: EmailRegistrationRequest, request: Requ
 
 
 @email_auth_router.post("/change-password", response_model=SuccessResponse)
-async def change_password(password_request: ChangePasswordRequest, request: Request, current_user: EmailUser = Depends(get_current_user), db: Session = Depends(get_db)):
+async def change_password(password_request: ChangePasswordRequest, request: Request, current_user: EmailUser = Depends(get_current_user), db=Depends(_db_dependency)):
     """Change user's password.
 
     Args:
@@ -386,7 +388,7 @@ async def get_current_user_profile(current_user: EmailUser = Depends(get_current
 
 
 @email_auth_router.get("/events", response_model=list[AuthEventResponse])
-async def get_auth_events(limit: int = 50, offset: int = 0, current_user: EmailUser = Depends(get_current_user), db: Session = Depends(get_db)):
+async def get_auth_events(limit: int = 50, offset: int = 0, current_user: EmailUser = Depends(get_current_user), db=Depends(_db_dependency)):
     """Get authentication events for the current user.
 
     Args:
@@ -528,7 +530,7 @@ async def create_user(user_request: EmailRegistrationRequest, current_user_ctx: 
         # If the user was created with the default password, force password change
         if user_request.password == settings.default_user_password.get_secret_value():  # nosec B105
             user.password_change_required = True
-            db.commit()
+            await db.commit()
 
         logger.info(f"Admin {current_user_ctx['email']} created user: {user.email}")
 
@@ -620,8 +622,8 @@ async def update_user(user_email: str, user_request: EmailRegistrationRequest, c
             user.password_hash = password_service.hash_password(user_request.password)
             user.password_change_required = False  # Clear password change requirement
 
-        db.commit()
-        db.refresh(user)
+        await db.commit()
+        await db.refresh(user)
 
         logger.info(f"Admin {current_user_ctx['email']} updated user: {user.email}")
 

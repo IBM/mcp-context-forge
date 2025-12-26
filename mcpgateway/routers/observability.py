@@ -15,11 +15,13 @@ from typing import List, Optional
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query
 import orjson
-from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import SessionLocal
+from mcpgateway.db import _use_async, get_async_db, get_db, SessionLocal
 from mcpgateway.schemas import ObservabilitySpanRead, ObservabilityTraceRead, ObservabilityTraceWithSpans
+
+_db_dependency = get_async_db if _use_async else get_db
+# First-Party
 from mcpgateway.services.observability_service import ObservabilityService
 
 router = APIRouter(prefix="/observability", tags=["Observability"])
@@ -61,7 +63,7 @@ def list_traces(
     attribute_search: Optional[str] = Query(None, description="Free-text search within trace attributes"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum results"),
     offset: int = Query(0, ge=0, description="Result offset"),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ):
     """List traces with optional filtering.
 
@@ -131,7 +133,7 @@ def list_traces(
 def query_traces_advanced(
     # Third-Party
     request_body: dict,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ):
     """Advanced trace querying with attribute filtering.
 
@@ -233,7 +235,7 @@ def query_traces_advanced(
 
 
 @router.get("/traces/{trace_id}", response_model=ObservabilityTraceWithSpans)
-def get_trace(trace_id: str, db: Session = Depends(get_db)):
+def get_trace(trace_id: str, db=Depends(_db_dependency)):
     """Get a trace by ID with all its spans and events.
 
     Returns a complete trace with all nested spans and their events,
@@ -283,7 +285,7 @@ def list_spans(
     end_time: Optional[datetime] = Query(None, description="Filter spans before this time"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum results"),
     offset: int = Query(0, ge=0, description="Result offset"),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ):
     """List spans with optional filtering.
 
@@ -334,7 +336,7 @@ def list_spans(
 @router.delete("/traces/cleanup")
 def cleanup_old_traces(
     days: int = Query(7, ge=1, description="Delete traces older than this many days"),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ):
     """Delete traces older than a specified number of days.
 
@@ -367,7 +369,7 @@ def cleanup_old_traces(
 @router.get("/stats")
 def get_stats(
     hours: int = Query(24, ge=1, le=168, description="Time window in hours"),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ):
     """Get observability statistics.
 
@@ -427,7 +429,7 @@ def get_stats(
 def export_traces(
     request_body: dict,
     format: str = Query("json", description="Export format (json, csv, ndjson)"),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ):
     """Export traces in various formats.
 
@@ -591,7 +593,7 @@ def export_traces(
 
 
 @router.get("/analytics/query-performance")
-def get_query_performance(hours: int = Query(24, ge=1, le=168, description="Time window in hours"), db: Session = Depends(get_db)):
+def get_query_performance(hours: int = Query(24, ge=1, le=168, description="Time window in hours"), db=Depends(_db_dependency)):
     """Get query performance analytics.
 
     Returns performance metrics about trace queries including:

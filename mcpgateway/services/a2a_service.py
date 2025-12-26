@@ -19,7 +19,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 import httpx
 from sqlalchemy import and_, case, delete, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # First-Party
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
@@ -146,11 +146,11 @@ class A2AAgentService:
             logger.info("Shutting down A2A Agent Service")
             self._initialized = False
 
-    def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
+    async def _get_team_name(self, db: AsyncSession, team_id: Optional[str]) -> Optional[str]:
         """Retrieve the team name given a team ID.
 
         Args:
-            db (Session): Database session for querying teams.
+            db (AsyncSession): Database session for querying teams.
             team_id (Optional[str]): The ID of the team.
 
         Returns:
@@ -159,17 +159,18 @@ class A2AAgentService:
         if not team_id:
             return None
 
-        team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
+        result = await db.execute(select(EmailTeam).where(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)))
+        team = result.scalar_one_or_none()
         return team.name if team else None
 
-    def _batch_get_team_names(self, db: Session, team_ids: List[str]) -> Dict[str, str]:
+    async def _batch_get_team_names(self, db: AsyncSession, team_ids: List[str]) -> Dict[str, str]:
         """Batch retrieve team names for multiple team IDs.
 
         This method fetches team names in a single query to avoid N+1 issues
         when converting multiple agents to schemas in list operations.
 
         Args:
-            db (Session): Database session for querying teams.
+            db (AsyncSession): Database session for querying teams.
             team_ids (List[str]): List of team IDs to look up.
 
         Returns:
@@ -179,13 +180,14 @@ class A2AAgentService:
             return {}
 
         # Single query for all teams
-        teams = db.query(EmailTeam.id, EmailTeam.name).filter(EmailTeam.id.in_(team_ids), EmailTeam.is_active.is_(True)).all()
+        result = await db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids), EmailTeam.is_active.is_(True)))
+        teams = result.all()
 
         return {team.id: team.name for team in teams}
 
     async def register_agent(
         self,
-        db: Session,
+        db: AsyncSession,
         agent_data: A2AAgentCreate,
         created_by: Optional[str] = None,
         created_from_ip: Optional[str] = None,
@@ -200,7 +202,7 @@ class A2AAgentService:
         """Register a new A2A agent.
 
         Args:
-            db (Session): Database session.
+            db (AsyncSession): Database session.
             agent_data (A2AAgentCreate): Data required to create an agent.
             created_by (Optional[str]): User who created the agent.
             created_from_ip (Optional[str]): IP address of the creator.
@@ -232,12 +234,14 @@ class A2AAgentService:
                 logger.info(f"agent_data.name: {agent_data.name}")
                 logger.info(f"agent_data.slug: {agent_data.slug}")
                 # Check for existing public a2a agent with the same slug
-                existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "public")).scalar_one_or_none()
+                result = await db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "public"))
+                existing_agent = result.scalar_one_or_none()
                 if existing_agent:
                     raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
             elif visibility.lower() == "team" and team_id:
                 # Check for existing team a2a agent with the same slug
-                existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == team_id)).scalar_one_or_none()
+                result = await db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == team_id))
+                existing_agent = result.scalar_one_or_none()
                 if existing_agent:
                     raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
 
@@ -291,8 +295,8 @@ class A2AAgentService:
             )
 
             db.add(new_agent)
-            db.commit()
-            db.refresh(new_agent)
+            await db.commit()
+            await db.refresh(new_agent)
 
             # Invalidate cache since agent count changed
             a2a_stats_cache.invalidate()
@@ -328,22 +332,24 @@ class A2AAgentService:
                 },
             )
 
-            return self._db_to_schema(db=db, db_agent=new_agent)
+            return await self._db_to_schema(db=db, db_agent=new_agent)
 
         except A2AAgentNameConflictError as ie:
-            db.rollback()
+            await db.rollback()
             raise ie
         except IntegrityError as ie:
-            db.rollback()
+            await db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
             raise ie
         except ValueError as ve:
             raise ve
         except Exception as e:
-            db.rollback()
+            await db.rollback()
             raise A2AAgentError(f"Failed to register A2A agent: {str(e)}")
 
-    async def list_agents(self, db: Session, cursor: Optional[str] = None, include_inactive: bool = False, tags: Optional[List[str]] = None) -> List[A2AAgentRead]:  # pylint: disable=unused-argument
+    async def list_agents(
+        self, db: AsyncSession, cursor: Optional[str] = None, include_inactive: bool = False, tags: Optional[List[str]] = None
+    ) -> List[A2AAgentRead]:  # pylint: disable=unused-argument
         """List A2A agents with optional filtering.
 
         Args:
@@ -406,17 +412,18 @@ class A2AAgentService:
 
         query = query.order_by(desc(DbA2AAgent.created_at))
 
-        agents = db.execute(query).scalars().all()
+        result = await db.execute(query)
+        agents = result.scalars().all()
 
         # Batch fetch team names to avoid N+1 queries
         team_ids = list({a.team_id for a in agents if a.team_id})
-        team_map = self._batch_get_team_names(db, team_ids)
+        team_map = await self._batch_get_team_names(db, team_ids)
 
         # Skip metrics to avoid N+1 queries in list operations
-        return [self._db_to_schema(db=db, db_agent=agent, include_metrics=False, team_map=team_map) for agent in agents]
+        return [await self._db_to_schema(db=db, db_agent=agent, include_metrics=False, team_map=team_map) for agent in agents]
 
     async def list_agents_for_user(
-        self, db: Session, user_info: Dict[str, Any], team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
+        self, db: AsyncSession, user_info: Dict[str, Any], team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
     ) -> List[A2AAgentRead]:
         """
         List A2A agents user has access to with team filtering.
@@ -485,16 +492,17 @@ class A2AAgentService:
         query = query.order_by(desc(DbA2AAgent.created_at))
         query = query.offset(skip).limit(limit)
 
-        agents = db.execute(query).scalars().all()
+        result = await db.execute(query)
+        agents = result.scalars().all()
 
         # Batch fetch team names to avoid N+1 queries
         team_ids = list({a.team_id for a in agents if a.team_id})
-        team_map = self._batch_get_team_names(db, team_ids)
+        team_map = await self._batch_get_team_names(db, team_ids)
 
         # Skip metrics to avoid N+1 queries in list operations
-        return [self._db_to_schema(db=db, db_agent=agent, include_metrics=False, team_map=team_map) for agent in agents]
+        return [await self._db_to_schema(db=db, db_agent=agent, include_metrics=False, team_map=team_map) for agent in agents]
 
-    async def get_agent(self, db: Session, agent_id: str, include_inactive: bool = True) -> A2AAgentRead:
+    async def get_agent(self, db: AsyncSession, agent_id: str, include_inactive: bool = True) -> A2AAgentRead:
         """Retrieve an A2A agent by ID.
 
         Args:
@@ -575,7 +583,8 @@ class A2AAgentService:
 
         """
         query = select(DbA2AAgent).where(DbA2AAgent.id == agent_id)
-        agent = db.execute(query).scalar_one_or_none()
+        result = await db.execute(query)
+        agent = result.scalar_one_or_none()
 
         if not agent:
             raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
@@ -589,10 +598,10 @@ class A2AAgentService:
         if not agent.enabled and not include_inactive:
             raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
 
-        # ✅ Delegate conversion and masking to _db_to_schema()
-        return self._db_to_schema(db=db, db_agent=agent)
+        # Delegate conversion and masking to _db_to_schema()
+        return await self._db_to_schema(db=db, db_agent=agent)
 
-    async def get_agent_by_name(self, db: Session, agent_name: str) -> A2AAgentRead:
+    async def get_agent_by_name(self, db: AsyncSession, agent_name: str) -> A2AAgentRead:
         """Retrieve an A2A agent by name.
 
         Args:
@@ -606,16 +615,17 @@ class A2AAgentService:
             A2AAgentNotFoundError: If the agent is not found.
         """
         query = select(DbA2AAgent).where(DbA2AAgent.name == agent_name)
-        agent = db.execute(query).scalar_one_or_none()
+        result = await db.execute(query)
+        agent = result.scalar_one_or_none()
 
         if not agent:
             raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
 
-        return self._db_to_schema(db=db, db_agent=agent)
+        return await self._db_to_schema(db=db, db_agent=agent)
 
     async def update_agent(
         self,
-        db: Session,
+        db: AsyncSession,
         agent_id: str,
         agent_data: A2AAgentUpdate,
         modified_by: Optional[str] = None,
@@ -648,7 +658,8 @@ class A2AAgentService:
         """
         try:
             query = select(DbA2AAgent).where(DbA2AAgent.id == agent_id)
-            agent = db.execute(query).scalar_one_or_none()
+            result = await db.execute(query)
+            agent = result.scalar_one_or_none()
 
             if not agent:
                 raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
@@ -669,12 +680,14 @@ class A2AAgentService:
                 # Check for existing server with the same slug within the same team or public scope
                 if visibility.lower() == "public":
                     # Check for existing public a2a agent with the same slug
-                    existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == new_slug, DbA2AAgent.visibility == "public")).scalar_one_or_none()
+                    result = await db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == new_slug, DbA2AAgent.visibility == "public"))
+                    existing_agent = result.scalar_one_or_none()
                     if existing_agent:
                         raise A2AAgentNameConflictError(name=new_slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
                 elif visibility.lower() == "team" and team_id:
                     # Check for existing team a2a agent with the same slug
-                    existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == new_slug, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == team_id)).scalar_one_or_none()
+                    result = await db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == new_slug, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == team_id))
+                    existing_agent = result.scalar_one_or_none()
                     if existing_agent:
                         raise A2AAgentNameConflictError(name=new_slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
             # Update fields
@@ -713,29 +726,29 @@ class A2AAgentService:
 
             agent.version += 1
 
-            db.commit()
-            db.refresh(agent)
+            await db.commit()
+            await db.refresh(agent)
 
             logger.info(f"Updated A2A agent: {agent.name} (ID: {agent.id})")
-            return self._db_to_schema(db=db, db_agent=agent)
+            return await self._db_to_schema(db=db, db_agent=agent)
         except PermissionError:
-            db.rollback()
+            await db.rollback()
             raise
         except A2AAgentNameConflictError as ie:
-            db.rollback()
+            await db.rollback()
             raise ie
         except A2AAgentNotFoundError as nf:
-            db.rollback()
+            await db.rollback()
             raise nf
         except IntegrityError as ie:
-            db.rollback()
+            await db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
             raise ie
         except Exception as e:
-            db.rollback()
+            await db.rollback()
             raise A2AAgentError(f"Failed to update A2A agent: {str(e)}")
 
-    async def toggle_agent_status(self, db: Session, agent_id: str, activate: bool, reachable: Optional[bool] = None, user_email: Optional[str] = None) -> A2AAgentRead:
+    async def toggle_agent_status(self, db: AsyncSession, agent_id: str, activate: bool, reachable: Optional[bool] = None, user_email: Optional[str] = None) -> A2AAgentRead:
         """Toggle the activation status of an A2A agent.
 
         Args:
@@ -753,7 +766,8 @@ class A2AAgentService:
             PermissionError: If user doesn't own the agent.
         """
         query = select(DbA2AAgent).where(DbA2AAgent.id == agent_id)
-        agent = db.execute(query).scalar_one_or_none()
+        result = await db.execute(query)
+        agent = result.scalar_one_or_none()
 
         if not agent:
             raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
@@ -770,8 +784,8 @@ class A2AAgentService:
         if reachable is not None:
             agent.reachable = reachable
 
-        db.commit()
-        db.refresh(agent)
+        await db.commit()
+        await db.refresh(agent)
 
         # Invalidate cache since active agent count changed
         a2a_stats_cache.invalidate()
@@ -794,9 +808,9 @@ class A2AAgentService:
             },
         )
 
-        return self._db_to_schema(db=db, db_agent=agent)
+        return await self._db_to_schema(db=db, db_agent=agent)
 
-    async def delete_agent(self, db: Session, agent_id: str, user_email: Optional[str] = None) -> None:
+    async def delete_agent(self, db: AsyncSession, agent_id: str, user_email: Optional[str] = None) -> None:
         """Delete an A2A agent.
 
         Args:
@@ -810,7 +824,8 @@ class A2AAgentService:
         """
         try:
             query = select(DbA2AAgent).where(DbA2AAgent.id == agent_id)
-            agent = db.execute(query).scalar_one_or_none()
+            result = await db.execute(query)
+            agent = result.scalar_one_or_none()
 
             if not agent:
                 raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
@@ -825,8 +840,8 @@ class A2AAgentService:
                     raise PermissionError("Only the owner can delete this agent")
 
             agent_name = agent.name
-            db.delete(agent)
-            db.commit()
+            await db.delete(agent)
+            await db.commit()
 
             # Invalidate cache since agent count changed
             a2a_stats_cache.invalidate()
@@ -844,12 +859,12 @@ class A2AAgentService:
                 custom_fields={"agent_name": agent_name},
             )
         except PermissionError:
-            db.rollback()
+            await db.rollback()
             raise
 
     async def invoke_agent(
         self,
-        db: Session,
+        db: AsyncSession,
         agent_name: str,
         parameters: Dict[str, Any],
         interaction_type: str = "query",
@@ -892,15 +907,16 @@ class A2AAgentService:
         # Fetch auth_value if needed (before closing session)
         auth_token_value = None
         if agent_auth_type in ("api_key", "bearer"):
-            db_row = db.execute(select(DbA2AAgent).where(DbA2AAgent.name == agent_name)).scalar_one_or_none()
+            result = await db.execute(select(DbA2AAgent).where(DbA2AAgent.name == agent_name))
+            db_row = result.scalar_one_or_none()
             auth_token_value = getattr(db_row, "auth_value", None) if db_row else None
 
         # ═══════════════════════════════════════════════════════════════════════════
         # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls
         # This prevents connection pool exhaustion during slow upstream requests.
         # ═══════════════════════════════════════════════════════════════════════════
-        db.rollback()  # End the transaction so connection returns to "idle" not "idle in transaction"
-        db.close()
+        await db.rollback()  # End the transaction so connection returns to "idle" not "idle in transaction"
+        await db.close()
 
         start_time = datetime.now(timezone.utc)
         success = False
@@ -1030,7 +1046,7 @@ class A2AAgentService:
 
         return response or {"error": error_message}
 
-    async def aggregate_metrics(self, db: Session) -> Dict[str, Any]:
+    async def aggregate_metrics(self, db: AsyncSession) -> Dict[str, Any]:
         """Aggregate metrics for all A2A agents.
 
         Uses in-memory caching (10s TTL) to reduce database load under high
@@ -1052,7 +1068,7 @@ class A2AAgentService:
                 return cached
 
         # Get total/active agent counts from cache (avoids 2 COUNT queries per call)
-        counts = a2a_stats_cache.get_counts(db)
+        counts = await a2a_stats_cache.get_counts(db)
         total_agents = counts["total"]
         active_agents = counts["active"]
 
@@ -1065,7 +1081,8 @@ class A2AAgentService:
             func.max(A2AAgentMetric.response_time).label("max_response_time"),
         )
 
-        metrics_result = db.execute(metrics_query).first()
+        result = await db.execute(metrics_query)
+        metrics_result = result.first()
 
         if metrics_result:
             total_interactions = metrics_result.total_interactions or 0
@@ -1099,7 +1116,7 @@ class A2AAgentService:
 
         return metrics
 
-    async def reset_metrics(self, db: Session, agent_id: Optional[str] = None) -> None:
+    async def reset_metrics(self, db: AsyncSession, agent_id: Optional[str] = None) -> None:
         """Reset metrics for agents.
 
         Args:
@@ -1113,8 +1130,8 @@ class A2AAgentService:
             # Reset all metrics
             delete_query = delete(A2AAgentMetric)
 
-        db.execute(delete_query)
-        db.commit()
+        await db.execute(delete_query)
+        await db.commit()
 
         # Invalidate metrics cache
         # First-Party
@@ -1140,11 +1157,11 @@ class A2AAgentService:
             agent.auth_value = encode_auth(agent.auth_value)
         return agent
 
-    def _db_to_schema(self, db: Session, db_agent: DbA2AAgent, include_metrics: bool = False, team_map: Optional[Dict[str, str]] = None) -> A2AAgentRead:
+    async def _db_to_schema(self, db: AsyncSession, db_agent: DbA2AAgent, include_metrics: bool = False, team_map: Optional[Dict[str, str]] = None) -> A2AAgentRead:
         """Convert database model to schema.
 
         Args:
-            db (Session): Database session.
+            db (AsyncSession): Database session.
             db_agent (DbA2AAgent): Database agent model.
             include_metrics (bool): Whether to include metrics in the result. Defaults to False.
                 Set to False for list operations to avoid N+1 query issues.
@@ -1167,7 +1184,7 @@ class A2AAgentService:
         if team_map is not None and team_id:
             team_name = team_map.get(team_id)
         else:
-            team_name = self._get_team_name(db, team_id)
+            team_name = await self._get_team_name(db, team_id)
         setattr(db_agent, "team", team_name)
 
         # Compute metrics only if requested (avoids N+1 queries in list operations)

@@ -20,7 +20,7 @@ from typing import Deque, Optional
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import A2AAgentMetric, fresh_db_session, PromptMetric, ResourceMetric, ServerMetric, ToolMetric
+from mcpgateway.db import A2AAgentMetric, AsyncSessionLocal, fresh_async_db_session, fresh_db_session, PromptMetric, ResourceMetric, ServerMetric, ToolMetric
 
 logger = logging.getLogger(__name__)
 
@@ -412,15 +412,25 @@ class MetricsBufferService:
             f"servers={len(server_metrics)}, a2a_agents={len(a2a_agent_metrics)}"
         )
 
-        # Flush in thread to avoid blocking event loop
-        await asyncio.to_thread(
-            self._flush_to_db,
-            tool_metrics,
-            resource_metrics,
-            prompt_metrics,
-            server_metrics,
-            a2a_agent_metrics,
-        )
+        # Use async DB if available, otherwise fall back to thread-based sync
+        if AsyncSessionLocal is not None:
+            await self._flush_to_db_async(
+                tool_metrics,
+                resource_metrics,
+                prompt_metrics,
+                server_metrics,
+                a2a_agent_metrics,
+            )
+        else:
+            # Flush in thread to avoid blocking event loop
+            await asyncio.to_thread(
+                self._flush_to_db,
+                tool_metrics,
+                resource_metrics,
+                prompt_metrics,
+                server_metrics,
+                a2a_agent_metrics,
+            )
 
         self._total_flushed += total
         self._flush_count += 1
@@ -535,6 +545,123 @@ class MetricsBufferService:
 
         except Exception as e:
             logger.error(f"Failed to flush metrics to database: {e}", exc_info=True)
+            # Metrics are lost on failure - acceptable trade-off for performance
+            # Could implement retry queue if needed
+
+    async def _flush_to_db_async(
+        self,
+        tool_metrics: list[BufferedToolMetric],
+        resource_metrics: list[BufferedResourceMetric],
+        prompt_metrics: list[BufferedPromptMetric],
+        server_metrics: list[BufferedServerMetric],
+        a2a_agent_metrics: list[BufferedA2AAgentMetric],
+    ) -> None:
+        """Write buffered metrics to database (async version).
+
+        Args:
+            tool_metrics: List of buffered tool metrics to write.
+            resource_metrics: List of buffered resource metrics to write.
+            prompt_metrics: List of buffered prompt metrics to write.
+            server_metrics: List of buffered server metrics to write.
+            a2a_agent_metrics: List of buffered A2A agent metrics to write.
+        """
+        try:
+            async with fresh_async_db_session() as db:
+                # Bulk insert tool metrics
+                if tool_metrics:
+                    await db.run_sync(
+                        lambda session: session.bulk_insert_mappings(
+                            ToolMetric,
+                            [
+                                {
+                                    "tool_id": m.tool_id,
+                                    "timestamp": m.timestamp,
+                                    "response_time": m.response_time,
+                                    "is_success": m.is_success,
+                                    "error_message": m.error_message,
+                                }
+                                for m in tool_metrics
+                            ],
+                        )
+                    )
+
+                # Bulk insert resource metrics
+                if resource_metrics:
+                    await db.run_sync(
+                        lambda session: session.bulk_insert_mappings(
+                            ResourceMetric,
+                            [
+                                {
+                                    "resource_id": m.resource_id,
+                                    "timestamp": m.timestamp,
+                                    "response_time": m.response_time,
+                                    "is_success": m.is_success,
+                                    "error_message": m.error_message,
+                                }
+                                for m in resource_metrics
+                            ],
+                        )
+                    )
+
+                # Bulk insert prompt metrics
+                if prompt_metrics:
+                    await db.run_sync(
+                        lambda session: session.bulk_insert_mappings(
+                            PromptMetric,
+                            [
+                                {
+                                    "prompt_id": m.prompt_id,
+                                    "timestamp": m.timestamp,
+                                    "response_time": m.response_time,
+                                    "is_success": m.is_success,
+                                    "error_message": m.error_message,
+                                }
+                                for m in prompt_metrics
+                            ],
+                        )
+                    )
+
+                # Bulk insert server metrics
+                if server_metrics:
+                    await db.run_sync(
+                        lambda session: session.bulk_insert_mappings(
+                            ServerMetric,
+                            [
+                                {
+                                    "server_id": m.server_id,
+                                    "timestamp": m.timestamp,
+                                    "response_time": m.response_time,
+                                    "is_success": m.is_success,
+                                    "error_message": m.error_message,
+                                }
+                                for m in server_metrics
+                            ],
+                        )
+                    )
+
+                # Bulk insert A2A agent metrics
+                if a2a_agent_metrics:
+                    await db.run_sync(
+                        lambda session: session.bulk_insert_mappings(
+                            A2AAgentMetric,
+                            [
+                                {
+                                    "a2a_agent_id": m.a2a_agent_id,
+                                    "timestamp": m.timestamp,
+                                    "response_time": m.response_time,
+                                    "is_success": m.is_success,
+                                    "interaction_type": m.interaction_type,
+                                    "error_message": m.error_message,
+                                }
+                                for m in a2a_agent_metrics
+                            ],
+                        )
+                    )
+
+                await db.commit()
+
+        except Exception as e:
+            logger.error(f"Failed to flush metrics to database (async): {e}", exc_info=True)
             # Metrics are lost on failure - acceptable trade-off for performance
             # Could implement retry queue if needed
 
@@ -717,6 +844,210 @@ class MetricsBufferService:
                 db.commit()
         except Exception as e:
             logger.error(f"Failed to write A2A agent metric: {e}")
+
+    async def _write_tool_metric_immediately_async(
+        self,
+        tool_id: str,
+        start_time: float,
+        success: bool,
+        error_message: Optional[str],
+    ) -> None:
+        """Write a single tool metric immediately (async version).
+
+        Args:
+            tool_id: UUID of the tool.
+            start_time: Monotonic start time for response_time calculation.
+            success: Whether the operation succeeded.
+            error_message: Optional error message if failed.
+        """
+        if AsyncSessionLocal is None:
+            self._write_tool_metric_immediately(tool_id, start_time, success, error_message)
+            return
+
+        try:
+            async with fresh_async_db_session() as db:
+                metric = ToolMetric(
+                    tool_id=tool_id,
+                    timestamp=datetime.now(timezone.utc),
+                    response_time=time.monotonic() - start_time,
+                    is_success=success,
+                    error_message=error_message,
+                )
+                db.add(metric)
+                await db.commit()
+        except Exception as e:
+            logger.error(f"Failed to write tool metric (async): {e}")
+
+    async def _write_resource_metric_immediately_async(
+        self,
+        resource_id: str,
+        start_time: float,
+        success: bool,
+        error_message: Optional[str],
+    ) -> None:
+        """Write a single resource metric immediately (async version).
+
+        Args:
+            resource_id: UUID of the resource.
+            start_time: Monotonic start time for response_time calculation.
+            success: Whether the operation succeeded.
+            error_message: Optional error message if failed.
+        """
+        if AsyncSessionLocal is None:
+            self._write_resource_metric_immediately(resource_id, start_time, success, error_message)
+            return
+
+        try:
+            async with fresh_async_db_session() as db:
+                metric = ResourceMetric(
+                    resource_id=resource_id,
+                    timestamp=datetime.now(timezone.utc),
+                    response_time=time.monotonic() - start_time,
+                    is_success=success,
+                    error_message=error_message,
+                )
+                db.add(metric)
+                await db.commit()
+        except Exception as e:
+            logger.error(f"Failed to write resource metric (async): {e}")
+
+    async def _write_prompt_metric_immediately_async(
+        self,
+        prompt_id: str,
+        start_time: float,
+        success: bool,
+        error_message: Optional[str],
+    ) -> None:
+        """Write a single prompt metric immediately (async version).
+
+        Args:
+            prompt_id: UUID of the prompt.
+            start_time: Monotonic start time for response_time calculation.
+            success: Whether the operation succeeded.
+            error_message: Optional error message if failed.
+        """
+        if AsyncSessionLocal is None:
+            self._write_prompt_metric_immediately(prompt_id, start_time, success, error_message)
+            return
+
+        try:
+            async with fresh_async_db_session() as db:
+                metric = PromptMetric(
+                    prompt_id=prompt_id,
+                    timestamp=datetime.now(timezone.utc),
+                    response_time=time.monotonic() - start_time,
+                    is_success=success,
+                    error_message=error_message,
+                )
+                db.add(metric)
+                await db.commit()
+        except Exception as e:
+            logger.error(f"Failed to write prompt metric (async): {e}")
+
+    async def _write_server_metric_immediately_async(
+        self,
+        server_id: str,
+        start_time: float,
+        success: bool,
+        error_message: Optional[str],
+    ) -> None:
+        """Write a single server metric immediately (async version).
+
+        Args:
+            server_id: UUID of the server.
+            start_time: Monotonic start time for response_time calculation.
+            success: Whether the operation succeeded.
+            error_message: Optional error message if failed.
+        """
+        if AsyncSessionLocal is None:
+            self._write_server_metric_immediately(server_id, start_time, success, error_message)
+            return
+
+        try:
+            async with fresh_async_db_session() as db:
+                metric = ServerMetric(
+                    server_id=server_id,
+                    timestamp=datetime.now(timezone.utc),
+                    response_time=time.monotonic() - start_time,
+                    is_success=success,
+                    error_message=error_message,
+                )
+                db.add(metric)
+                await db.commit()
+        except Exception as e:
+            logger.error(f"Failed to write server metric (async): {e}")
+
+    async def _write_a2a_agent_metric_immediately_async(
+        self,
+        a2a_agent_id: str,
+        start_time: float,
+        success: bool,
+        interaction_type: str,
+        error_message: Optional[str],
+    ) -> None:
+        """Write a single A2A agent metric immediately (async version).
+
+        Args:
+            a2a_agent_id: UUID of the A2A agent.
+            start_time: Monotonic start time for response_time calculation.
+            success: Whether the operation succeeded.
+            interaction_type: Type of interaction (e.g., "invoke").
+            error_message: Optional error message if failed.
+        """
+        if AsyncSessionLocal is None:
+            self._write_a2a_agent_metric_immediately(a2a_agent_id, start_time, success, interaction_type, error_message)
+            return
+
+        try:
+            async with fresh_async_db_session() as db:
+                metric = A2AAgentMetric(
+                    a2a_agent_id=a2a_agent_id,
+                    timestamp=datetime.now(timezone.utc),
+                    response_time=time.monotonic() - start_time,
+                    is_success=success,
+                    interaction_type=interaction_type,
+                    error_message=error_message,
+                )
+                db.add(metric)
+                await db.commit()
+        except Exception as e:
+            logger.error(f"Failed to write A2A agent metric (async): {e}")
+
+    async def _write_a2a_agent_metric_with_duration_immediately_async(
+        self,
+        a2a_agent_id: str,
+        response_time: float,
+        success: bool,
+        interaction_type: str,
+        error_message: Optional[str],
+    ) -> None:
+        """Write a single A2A agent metric with pre-calculated duration immediately (async version).
+
+        Args:
+            a2a_agent_id: UUID of the A2A agent.
+            response_time: Pre-calculated response time in seconds.
+            success: Whether the operation succeeded.
+            interaction_type: Type of interaction (e.g., "invoke").
+            error_message: Optional error message if failed.
+        """
+        if AsyncSessionLocal is None:
+            self._write_a2a_agent_metric_with_duration_immediately(a2a_agent_id, response_time, success, interaction_type, error_message)
+            return
+
+        try:
+            async with fresh_async_db_session() as db:
+                metric = A2AAgentMetric(
+                    a2a_agent_id=a2a_agent_id,
+                    timestamp=datetime.now(timezone.utc),
+                    response_time=response_time,
+                    is_success=success,
+                    interaction_type=interaction_type,
+                    error_message=error_message,
+                )
+                db.add(metric)
+                await db.commit()
+        except Exception as e:
+            logger.error(f"Failed to write A2A agent metric (async): {e}")
 
     def get_stats(self) -> dict:
         """Get buffer statistics for monitoring.

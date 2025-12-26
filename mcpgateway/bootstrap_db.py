@@ -41,7 +41,7 @@ from typing import cast
 from alembic import command
 from alembic.config import Config
 from filelock import FileLock
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import inspect, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
@@ -128,40 +128,87 @@ async def bootstrap_admin_user(conn: Connection) -> None:
 
     try:
         # Import services here to avoid circular imports
+        # Third-Party
+        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
         # First-Party
-        from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import utc_now  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.argon2_service import Argon2PasswordService  # pylint: disable=import-outside-toplevel
+
+        password_service = Argon2PasswordService()
 
         # Use session bound to the locked connection
         with Session(bind=conn) as db:
-            auth_service = EmailAuthService(db)
-
-            # Check if admin user already exists
-            existing_user = await auth_service.get_user_by_email(settings.platform_admin_email)
+            # Check if admin user already exists (sync query)
+            email = settings.platform_admin_email.lower()
+            stmt = select(EmailUser).where(EmailUser.email == email)
+            existing_user = db.execute(stmt).scalar_one_or_none()
             if existing_user:
                 logger.info(f"Admin user {settings.platform_admin_email} already exists - skipping creation")
                 return
 
             # Create admin user
             logger.info(f"Creating platform admin user: {settings.platform_admin_email}")
-            admin_user = await auth_service.create_platform_admin(
-                email=settings.platform_admin_email,
-                password=settings.platform_admin_password.get_secret_value(),
+            password_hash = password_service.hash_password(settings.platform_admin_password.get_secret_value())
+            admin_user = EmailUser(
+                email=email,
+                password_hash=password_hash,
                 full_name=settings.platform_admin_full_name,
+                is_admin=True,
+                is_active=True,
+                auth_provider="local",
+                email_verified_at=utc_now(),
+                password_change_required=True,  # Force admin to change default password
             )
-
-            # Mark admin user as email verified and require password change on first login
-            # First-Party
-            from mcpgateway.db import utc_now  # pylint: disable=import-outside-toplevel
-
-            admin_user.email_verified_at = utc_now()
-            admin_user.password_change_required = True  # Force admin to change default password
+            db.add(admin_user)
             db.commit()
 
-            # Personal team is automatically created during user creation if enabled
+            # Create personal team if enabled
             if settings.auto_create_personal_teams:
+                # First-Party
+                from mcpgateway.db import EmailTeamMember, EmailTeamMemberHistory  # pylint: disable=import-outside-toplevel
+
+                display_name = settings.platform_admin_full_name or email
+                email_slug = email.replace("@", "-").replace(".", "-").lower()
+                team_slug = f"personal-{email_slug}"
+
+                personal_team = EmailTeam(
+                    name=f"{display_name}'s Team",
+                    slug=team_slug,
+                    description=f"Personal workspace for {email}",
+                    created_by=email,
+                    is_personal=True,
+                    visibility="private",
+                    is_active=True,
+                )
+                db.add(personal_team)
+                db.flush()  # Get the team ID
+
+                # Add admin as owner of their personal team
+                membership = EmailTeamMember(
+                    team_id=personal_team.id,
+                    user_email=email,
+                    role="owner",
+                    joined_at=utc_now(),
+                    is_active=True,
+                )
+                db.add(membership)
+                db.flush()
+
+                # Record membership history
+                history = EmailTeamMemberHistory(
+                    team_member_id=membership.id,
+                    team_id=personal_team.id,
+                    user_email=email,
+                    role="owner",
+                    action="added",
+                    action_by=email,
+                    action_timestamp=utc_now(),
+                )
+                db.add(history)
+                db.commit()
                 logger.info("Personal team automatically created for admin user")
 
-            db.commit()
             logger.info(f"Platform admin user created successfully: {settings.platform_admin_email}")
 
     except Exception as e:
@@ -184,17 +231,18 @@ async def bootstrap_default_roles(conn: Connection) -> None:
         return
 
     try:
+        # Third-Party
+        from sqlalchemy import and_, select  # pylint: disable=import-outside-toplevel
+
         # First-Party
-        from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
-        from mcpgateway.services.role_service import RoleService  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import Role, UserRole  # pylint: disable=import-outside-toplevel
 
         # Use session bound to the locked connection
         with Session(bind=conn) as db:
-            role_service = RoleService(db)
-            auth_service = EmailAuthService(db)
-
-            # Check if admin user exists
-            admin_user = await auth_service.get_user_by_email(settings.platform_admin_email)
+            # Check if admin user exists (sync query)
+            email = settings.platform_admin_email.lower()
+            stmt = select(EmailUser).where(EmailUser.email == email)
+            admin_user = db.execute(stmt).scalar_one_or_none()
             if not admin_user:
                 logger.info("Admin user not found - skipping role assignment")
                 return
@@ -225,19 +273,20 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                 },
             ]
 
-            # Create default roles
+            # Create default roles (sync queries)
             created_roles = []
             for role_def in default_roles:
                 try:
                     # Check if role already exists
-                    existing_role = await role_service.get_role_by_name(str(role_def["name"]), str(role_def["scope"]))
+                    stmt = select(Role).where(and_(Role.name == role_def["name"], Role.scope == role_def["scope"]))
+                    existing_role = db.execute(stmt).scalar_one_or_none()
                     if existing_role:
                         logger.info(f"System role {role_def['name']} already exists - skipping")
                         created_roles.append(existing_role)
                         continue
 
                     # Create the role
-                    role = await role_service.create_role(
+                    role = Role(
                         name=str(role_def["name"]),
                         description=str(role_def["description"]),
                         scope=str(role_def["scope"]),
@@ -245,6 +294,8 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                         created_by=settings.platform_admin_email,
                         is_system_role=bool(role_def["is_system_role"]),
                     )
+                    db.add(role)
+                    db.commit()
                     created_roles.append(role)
                     logger.info(f"Created system role: {role.name}")
 
@@ -257,10 +308,19 @@ async def bootstrap_default_roles(conn: Connection) -> None:
             if platform_admin_role:
                 try:
                     # Check if assignment already exists
-                    existing_assignment = await role_service.get_user_role_assignment(user_email=admin_user.email, role_id=platform_admin_role.id, scope="global", scope_id=None)
+                    stmt = select(UserRole).where(and_(UserRole.user_email == admin_user.email, UserRole.role_id == platform_admin_role.id, UserRole.scope == "global"))
+                    existing_assignment = db.execute(stmt).scalar_one_or_none()
 
                     if not existing_assignment or not existing_assignment.is_active:
-                        await role_service.assign_role_to_user(user_email=admin_user.email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=admin_user.email)
+                        user_role = UserRole(
+                            user_email=admin_user.email,
+                            role_id=platform_admin_role.id,
+                            scope="global",
+                            scope_id=None,
+                            granted_by=admin_user.email,
+                        )
+                        db.add(user_role)
+                        db.commit()
                         logger.info(f"Assigned platform_admin role to {admin_user.email}")
                     else:
                         logger.info("Admin user already has platform_admin role")
@@ -390,7 +450,10 @@ async def main() -> None:
     Raises:
         Exception: If migration or bootstrap fails
     """
-    engine = create_engine(settings.database_url)
+    # Import the sync engine from db.py which handles asyncpg -> psycopg3 conversion
+    # First-Party
+    from mcpgateway.db import engine  # pylint: disable=import-outside-toplevel
+
     ini_path = files("mcpgateway").joinpath("alembic.ini")
     cfg = Config(str(ini_path))  # path in container
     cfg.attributes["configure_logger"] = True

@@ -18,7 +18,7 @@ from typing import List, Optional, Tuple
 import httpx
 from sqlalchemy import and_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # First-Party
 from mcpgateway.db import LLMModel, LLMProvider, LLMProviderType
@@ -103,9 +103,9 @@ class LLMProviderService:
     # Provider CRUD Operations
     # ---------------------------------------------------------------------------
 
-    def create_provider(
+    async def create_provider(
         self,
-        db: Session,
+        db: AsyncSession,
         provider_data: LLMProviderCreate,
         created_by: Optional[str] = None,
     ) -> LLMProvider:
@@ -123,7 +123,7 @@ class LLMProviderService:
             LLMProviderNameConflictError: If provider name already exists.
         """
         # Check for name conflict
-        existing = db.execute(select(LLMProvider).where(LLMProvider.name == provider_data.name)).scalar_one_or_none()
+        existing = (await db.execute(select(LLMProvider).where(LLMProvider.name == provider_data.name))).scalar_one_or_none()
 
         if existing:
             raise LLMProviderNameConflictError(provider_data.name, existing.id)
@@ -153,16 +153,16 @@ class LLMProviderService:
 
         try:
             db.add(provider)
-            db.commit()
-            db.refresh(provider)
+            await db.commit()
+            await db.refresh(provider)
             logger.info(f"Created LLM provider: {provider.name} (ID: {provider.id})")
             return provider
         except IntegrityError as e:
-            db.rollback()
+            await db.rollback()
             logger.error(f"Failed to create LLM provider: {e}")
             raise LLMProviderNameConflictError(provider_data.name)
 
-    def get_provider(self, db: Session, provider_id: str) -> LLMProvider:
+    async def get_provider(self, db: AsyncSession, provider_id: str) -> LLMProvider:
         """Get an LLM provider by ID.
 
         Args:
@@ -175,14 +175,14 @@ class LLMProviderService:
         Raises:
             LLMProviderNotFoundError: If provider not found.
         """
-        provider = db.execute(select(LLMProvider).where(LLMProvider.id == provider_id)).scalar_one_or_none()
+        provider = (await db.execute(select(LLMProvider).where(LLMProvider.id == provider_id))).scalar_one_or_none()
 
         if not provider:
             raise LLMProviderNotFoundError(f"Provider not found: {provider_id}")
 
         return provider
 
-    def get_provider_by_slug(self, db: Session, slug: str) -> LLMProvider:
+    async def get_provider_by_slug(self, db: AsyncSession, slug: str) -> LLMProvider:
         """Get an LLM provider by slug.
 
         Args:
@@ -195,16 +195,16 @@ class LLMProviderService:
         Raises:
             LLMProviderNotFoundError: If provider not found.
         """
-        provider = db.execute(select(LLMProvider).where(LLMProvider.slug == slug)).scalar_one_or_none()
+        provider = (await db.execute(select(LLMProvider).where(LLMProvider.slug == slug))).scalar_one_or_none()
 
         if not provider:
             raise LLMProviderNotFoundError(f"Provider not found: {slug}")
 
         return provider
 
-    def list_providers(
+    async def list_providers(
         self,
-        db: Session,
+        db: AsyncSession,
         enabled_only: bool = False,
         page: int = 1,
         page_size: int = 50,
@@ -229,18 +229,18 @@ class LLMProviderService:
         count_query = select(LLMProvider.id)
         if enabled_only:
             count_query = count_query.where(LLMProvider.enabled.is_(True))
-        total = len(db.execute(count_query).all())
+        total = len((await db.execute(count_query)).all())
 
         # Apply pagination
         offset = (page - 1) * page_size
         query = query.offset(offset).limit(page_size).order_by(LLMProvider.name)
 
-        providers = list(db.execute(query).scalars().all())
+        providers = list((await db.execute(query)).scalars().all())
         return providers, total
 
-    def update_provider(
+    async def update_provider(
         self,
-        db: Session,
+        db: AsyncSession,
         provider_id: str,
         provider_data: LLMProviderUpdate,
         modified_by: Optional[str] = None,
@@ -261,15 +261,17 @@ class LLMProviderService:
             LLMProviderNameConflictError: If new name conflicts.
             IntegrityError: If database constraint violation.
         """
-        provider = self.get_provider(db, provider_id)
+        provider = await self.get_provider(db, provider_id)
 
         # Check for name conflict if name is being changed
         if provider_data.name and provider_data.name != provider.name:
-            existing = db.execute(
-                select(LLMProvider).where(
-                    and_(
-                        LLMProvider.name == provider_data.name,
-                        LLMProvider.id != provider_id,
+            existing = (
+                await db.execute(
+                    select(LLMProvider).where(
+                        and_(
+                            LLMProvider.name == provider_data.name,
+                            LLMProvider.id != provider_id,
+                        )
                     )
                 )
             ).scalar_one_or_none()
@@ -307,16 +309,16 @@ class LLMProviderService:
         provider.modified_by = modified_by
 
         try:
-            db.commit()
-            db.refresh(provider)
+            await db.commit()
+            await db.refresh(provider)
             logger.info(f"Updated LLM provider: {provider.name} (ID: {provider.id})")
             return provider
         except IntegrityError as e:
-            db.rollback()
+            await db.rollback()
             logger.error(f"Failed to update LLM provider: {e}")
             raise
 
-    def delete_provider(self, db: Session, provider_id: str) -> bool:
+    async def delete_provider(self, db: AsyncSession, provider_id: str) -> bool:
         """Delete an LLM provider.
 
         Args:
@@ -329,15 +331,15 @@ class LLMProviderService:
         Raises:
             LLMProviderNotFoundError: If provider not found.
         """
-        provider = self.get_provider(db, provider_id)
+        provider = await self.get_provider(db, provider_id)
         provider_name = provider.name
 
-        db.delete(provider)
-        db.commit()
+        await db.delete(provider)
+        await db.commit()
         logger.info(f"Deleted LLM provider: {provider_name} (ID: {provider_id})")
         return True
 
-    def toggle_provider(self, db: Session, provider_id: str) -> LLMProvider:
+    async def toggle_provider(self, db: AsyncSession, provider_id: str) -> LLMProvider:
         """Toggle provider enabled status.
 
         Args:
@@ -347,10 +349,10 @@ class LLMProviderService:
         Returns:
             Updated LLMProvider instance.
         """
-        provider = self.get_provider(db, provider_id)
+        provider = await self.get_provider(db, provider_id)
         provider.enabled = not provider.enabled
-        db.commit()
-        db.refresh(provider)
+        await db.commit()
+        await db.refresh(provider)
         logger.info(f"Toggled LLM provider: {provider.name} enabled={provider.enabled}")
         return provider
 
@@ -358,9 +360,9 @@ class LLMProviderService:
     # Model CRUD Operations
     # ---------------------------------------------------------------------------
 
-    def create_model(
+    async def create_model(
         self,
-        db: Session,
+        db: AsyncSession,
         model_data: LLMModelCreate,
     ) -> LLMModel:
         """Create a new LLM model.
@@ -377,14 +379,16 @@ class LLMProviderService:
             LLMModelConflictError: If model already exists for provider.
         """
         # Verify provider exists
-        self.get_provider(db, model_data.provider_id)
+        await self.get_provider(db, model_data.provider_id)
 
         # Check for conflict
-        existing = db.execute(
-            select(LLMModel).where(
-                and_(
-                    LLMModel.provider_id == model_data.provider_id,
-                    LLMModel.model_id == model_data.model_id,
+        existing = (
+            await db.execute(
+                select(LLMModel).where(
+                    and_(
+                        LLMModel.provider_id == model_data.provider_id,
+                        LLMModel.model_id == model_data.model_id,
+                    )
                 )
             )
         ).scalar_one_or_none()
@@ -410,16 +414,16 @@ class LLMProviderService:
 
         try:
             db.add(model)
-            db.commit()
-            db.refresh(model)
+            await db.commit()
+            await db.refresh(model)
             logger.info(f"Created LLM model: {model.model_id} (ID: {model.id})")
             return model
         except IntegrityError as e:
-            db.rollback()
+            await db.rollback()
             logger.error(f"Failed to create LLM model: {e}")
             raise LLMModelConflictError(f"Model conflict: {model_data.model_id}")
 
-    def get_model(self, db: Session, model_id: str) -> LLMModel:
+    async def get_model(self, db: AsyncSession, model_id: str) -> LLMModel:
         """Get an LLM model by ID.
 
         Args:
@@ -432,16 +436,16 @@ class LLMProviderService:
         Raises:
             LLMModelNotFoundError: If model not found.
         """
-        model = db.execute(select(LLMModel).where(LLMModel.id == model_id)).scalar_one_or_none()
+        model = (await db.execute(select(LLMModel).where(LLMModel.id == model_id))).scalar_one_or_none()
 
         if not model:
             raise LLMModelNotFoundError(f"Model not found: {model_id}")
 
         return model
 
-    def list_models(
+    async def list_models(
         self,
-        db: Session,
+        db: AsyncSession,
         provider_id: Optional[str] = None,
         enabled_only: bool = False,
         page: int = 1,
@@ -472,18 +476,18 @@ class LLMProviderService:
             count_query = count_query.where(LLMModel.provider_id == provider_id)
         if enabled_only:
             count_query = count_query.where(LLMModel.enabled.is_(True))
-        total = len(db.execute(count_query).all())
+        total = len((await db.execute(count_query)).all())
 
         # Apply pagination
         offset = (page - 1) * page_size
         query = query.offset(offset).limit(page_size).order_by(LLMModel.model_name)
 
-        models = list(db.execute(query).scalars().all())
+        models = list((await db.execute(query)).scalars().all())
         return models, total
 
-    def update_model(
+    async def update_model(
         self,
-        db: Session,
+        db: AsyncSession,
         model_id: str,
         model_data: LLMModelUpdate,
     ) -> LLMModel:
@@ -497,7 +501,7 @@ class LLMProviderService:
         Returns:
             Updated LLMModel instance.
         """
-        model = self.get_model(db, model_id)
+        model = await self.get_model(db, model_id)
 
         if model_data.model_id is not None:
             model.model_id = model_data.model_id
@@ -524,12 +528,12 @@ class LLMProviderService:
         if model_data.deprecated is not None:
             model.deprecated = model_data.deprecated
 
-        db.commit()
-        db.refresh(model)
+        await db.commit()
+        await db.refresh(model)
         logger.info(f"Updated LLM model: {model.model_id} (ID: {model.id})")
         return model
 
-    def delete_model(self, db: Session, model_id: str) -> bool:
+    async def delete_model(self, db: AsyncSession, model_id: str) -> bool:
         """Delete an LLM model.
 
         Args:
@@ -539,15 +543,15 @@ class LLMProviderService:
         Returns:
             True if deleted successfully.
         """
-        model = self.get_model(db, model_id)
+        model = await self.get_model(db, model_id)
         model_name = model.model_id
 
-        db.delete(model)
-        db.commit()
+        await db.delete(model)
+        await db.commit()
         logger.info(f"Deleted LLM model: {model_name} (ID: {model_id})")
         return True
 
-    def toggle_model(self, db: Session, model_id: str) -> LLMModel:
+    async def toggle_model(self, db: AsyncSession, model_id: str) -> LLMModel:
         """Toggle model enabled status.
 
         Args:
@@ -557,10 +561,10 @@ class LLMProviderService:
         Returns:
             Updated LLMModel instance.
         """
-        model = self.get_model(db, model_id)
+        model = await self.get_model(db, model_id)
         model.enabled = not model.enabled
-        db.commit()
-        db.refresh(model)
+        await db.commit()
+        await db.refresh(model)
         logger.info(f"Toggled LLM model: {model.model_id} enabled={model.enabled}")
         return model
 
@@ -568,7 +572,7 @@ class LLMProviderService:
     # Gateway Models (for LLM Chat dropdown)
     # ---------------------------------------------------------------------------
 
-    def get_gateway_models(self, db: Session) -> List[GatewayModelInfo]:
+    async def get_gateway_models(self, db: AsyncSession) -> List[GatewayModelInfo]:
         """Get enabled models for the LLM Chat dropdown.
 
         Args:
@@ -591,7 +595,7 @@ class LLMProviderService:
             .order_by(LLMProvider.name, LLMModel.model_name)
         )
 
-        results = db.execute(query).all()
+        results = (await db.execute(query)).all()
 
         models = []
         for model, provider in results:
@@ -617,7 +621,7 @@ class LLMProviderService:
 
     async def check_provider_health(
         self,
-        db: Session,
+        db: AsyncSession,
         provider_id: str,
     ) -> ProviderHealthCheck:
         """Check health of an LLM provider.
@@ -629,7 +633,7 @@ class LLMProviderService:
         Returns:
             ProviderHealthCheck result.
         """
-        provider = self.get_provider(db, provider_id)
+        provider = await self.get_provider(db, provider_id)
 
         start_time = datetime.now(timezone.utc)
         status = HealthStatus.UNKNOWN
@@ -697,7 +701,7 @@ class LLMProviderService:
         # Update provider health status
         provider.health_status = status.value
         provider.last_health_check = end_time
-        db.commit()
+        await db.commit()
 
         return ProviderHealthCheck(
             provider_id=provider.id,

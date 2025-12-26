@@ -88,6 +88,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "aiohttp>=3.12.15",
+    "aiosqlite>=0.22.1",
     "argparse-manpage>=4.7",
     "autoflake>=2.3.1",
     "bandit>=1.8.6",
@@ -175,10 +176,15 @@ redis-pure = [
     "redis>=7.1.0",
 ]
 
-# PostgreSQL adapter with psycopg3
-# Requires system dependency: libpq-dev (Debian/Ubuntu) or postgresql-devel (RHEL/Fedora)
-# Install with: sudo apt-get install libpq-dev (or dnf install postgresql-devel)
+# PostgreSQL adapters: asyncpg (default async) + psycopg3 (sync fallback)
+# asyncpg: Pure Python async driver, no system dependencies required
+# psycopg3: Requires libpq-dev (Debian/Ubuntu) or postgresql-devel (RHEL/Fedora)
+# URL formats:
+#   postgresql+asyncpg://  -> Use asyncpg (async, default if available)
+#   postgresql+psycopg://  -> Use psycopg3 (sync, explicit)
+#   postgresql://          -> Auto-upgrade to asyncpg if installed
 postgres = [
+    "asyncpg>=0.31.0",
     "psycopg[c,binary]>=3.3.2",
 ]
 

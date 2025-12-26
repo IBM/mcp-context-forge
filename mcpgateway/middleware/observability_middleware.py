@@ -27,7 +27,7 @@ from starlette.responses import Response
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import SessionLocal
+from mcpgateway.db import _use_async, AsyncSessionLocal, SessionLocal
 from mcpgateway.instrumentation.sqlalchemy import attach_trace_to_session
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService, parse_traceparent
 
@@ -77,6 +77,14 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         if request.url.path in ["/health", "/healthz", "/ready", "/metrics"] or request.url.path.startswith("/static/"):
             return await call_next(request)
 
+        # Use async or sync based on configuration
+        if _use_async and AsyncSessionLocal is not None:
+            return await self._dispatch_async(request, call_next)
+        else:
+            return await self._dispatch_sync(request, call_next)
+
+    async def _dispatch_sync(self, request: Request, call_next: Callable) -> Response:
+        """Sync database session implementation of dispatch."""
         # Extract request context
         http_method = request.method
         http_url = str(request.url)
@@ -207,3 +215,124 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     db.close()
                 except Exception as close_error:
                     logger.warning(f"Failed to close database session: {close_error}")
+
+    async def _dispatch_async(self, request: Request, call_next: Callable) -> Response:
+        """Async database session implementation of dispatch."""
+        # Extract request context
+        http_method = request.method
+        http_url = str(request.url)
+        user_email = None
+        ip_address = request.client.host if request.client else None
+        user_agent = request.headers.get("user-agent")
+
+        # Try to extract user from request state (set by auth middleware)
+        if hasattr(request.state, "user") and hasattr(request.state.user, "email"):
+            user_email = request.state.user.email
+
+        # Extract W3C Trace Context from headers (for distributed tracing)
+        external_trace_id = None
+        external_parent_span_id = None
+        traceparent_header = request.headers.get("traceparent")
+        if traceparent_header:
+            parsed = parse_traceparent(traceparent_header)
+            if parsed:
+                external_trace_id, external_parent_span_id, _flags = parsed
+                logger.debug(f"Extracted W3C trace context: trace_id={external_trace_id}, parent_span_id={external_parent_span_id}")
+
+        trace_id = None
+        span_id = None
+        start_time = time.time()
+
+        async with AsyncSessionLocal() as db:
+            try:
+                # Start trace (use external trace_id if provided for distributed tracing)
+                trace_id = self.service.start_trace(
+                    db=db,
+                    name=f"{http_method} {request.url.path}",
+                    trace_id=external_trace_id,  # Use external trace ID if provided
+                    parent_span_id=external_parent_span_id,  # Track parent span from upstream
+                    http_method=http_method,
+                    http_url=http_url,
+                    user_email=user_email,
+                    user_agent=user_agent,
+                    ip_address=ip_address,
+                    attributes={
+                        "http.route": request.url.path,
+                        "http.query": str(request.url.query) if request.url.query else None,
+                    },
+                    resource_attributes={
+                        "service.name": "mcp-gateway",
+                        "service.version": getattr(settings, "version", "unknown"),
+                    },
+                )
+
+                # Store trace_id in request state for use in route handlers
+                request.state.trace_id = trace_id
+
+                # Set trace_id in context variable for access throughout async call stack
+                current_trace_id.set(trace_id)
+
+                # Attach trace_id to database session for SQL query instrumentation
+                attach_trace_to_session(db, trace_id)
+
+                # Start request span
+                span_id = self.service.start_span(db=db, trace_id=trace_id, name="http.request", kind="server", attributes={"http.method": http_method, "http.url": http_url})
+
+                await db.commit()
+
+            except Exception as e:
+                # If trace setup failed, log and continue without tracing
+                logger.warning(f"Failed to setup observability trace: {e}")
+                await db.rollback()
+                # Continue without tracing
+                return await call_next(request)
+
+            # Process request (trace is set up at this point)
+            try:
+                response = await call_next(request)
+                status_code = response.status_code
+
+                # End span successfully
+                if span_id:
+                    self.service.end_span(
+                        db, span_id, status="ok" if status_code < 400 else "error", attributes={"http.status_code": status_code, "http.response_size": response.headers.get("content-length")}
+                    )
+
+                # End trace
+                if trace_id:
+                    duration_ms = (time.time() - start_time) * 1000
+                    self.service.end_trace(db, trace_id, status="ok" if status_code < 400 else "error", http_status_code=status_code, attributes={"response_time_ms": duration_ms})
+
+                await db.commit()
+                return response
+
+            except Exception as e:
+                # Log exception in span
+                if span_id:
+                    try:
+                        self.service.end_span(db, span_id, status="error", status_message=str(e), attributes={"exception.type": type(e).__name__, "exception.message": str(e)})
+
+                        # Add exception event
+                        self.service.add_event(
+                            db,
+                            span_id,
+                            name="exception",
+                            severity="error",
+                            message=str(e),
+                            exception_type=type(e).__name__,
+                            exception_message=str(e),
+                            exception_stacktrace=traceback.format_exc(),
+                        )
+                    except Exception as log_error:
+                        logger.warning(f"Failed to log exception in span: {log_error}")
+
+                # End trace with error
+                if trace_id:
+                    try:
+                        self.service.end_trace(db, trace_id, status="error", status_message=str(e), http_status_code=500)
+                    except Exception as trace_error:
+                        logger.warning(f"Failed to end trace: {trace_error}")
+
+                await db.commit()
+                # Re-raise the original exception
+                raise

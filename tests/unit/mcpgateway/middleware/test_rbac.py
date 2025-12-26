@@ -9,7 +9,8 @@ from mcpgateway.middleware import rbac
 @pytest.mark.asyncio
 async def test_get_db_yields_and_closes():
     mock_session = MagicMock()
-    with patch("mcpgateway.middleware.rbac.SessionLocal", return_value=mock_session):
+    # get_db is imported from mcpgateway.db, so patch SessionLocal there
+    with patch("mcpgateway.db.SessionLocal", return_value=mock_session):
         gen = rbac.get_db()
         db = next(gen)
         assert db == mock_session

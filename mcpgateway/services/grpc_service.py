@@ -30,7 +30,7 @@ except ImportError:
 
 # Third-Party
 from sqlalchemy import and_, desc, select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # First-Party
 from mcpgateway.db import GrpcService as DbGrpcService
@@ -81,7 +81,7 @@ class GrpcService:
 
     async def register_service(
         self,
-        db: Session,
+        db: AsyncSession,
         service_data: GrpcServiceCreate,
         user_email: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -101,7 +101,8 @@ class GrpcService:
             GrpcServiceNameConflictError: If service name already exists
         """
         # Check for name conflicts
-        existing = db.execute(select(DbGrpcService).where(DbGrpcService.name == service_data.name)).scalar_one_or_none()
+        result = await db.execute(select(DbGrpcService).where(DbGrpcService.name == service_data.name))
+        existing = result.scalar_one_or_none()
 
         if existing:
             raise GrpcServiceNameConflictError(name=service_data.name, is_active=existing.enabled, service_id=existing.id)
@@ -132,8 +133,8 @@ class GrpcService:
             db_service.created_user_agent = metadata.get("user_agent")
 
         db.add(db_service)
-        db.commit()
-        db.refresh(db_service)
+        await db.commit()
+        await db.refresh(db_service)
 
         logger.info(f"Registered gRPC service: {db_service.name} (target: {db_service.target})")
 
@@ -148,7 +149,7 @@ class GrpcService:
 
     async def list_services(
         self,
-        db: Session,
+        db: AsyncSession,
         include_inactive: bool = False,
         user_email: Optional[str] = None,
         team_id: Optional[str] = None,
@@ -181,12 +182,13 @@ class GrpcService:
 
         query = query.order_by(desc(DbGrpcService.created_at))
 
-        services = db.execute(query).scalars().all()
+        result = await db.execute(query)
+        services = result.scalars().all()
         return [GrpcServiceRead.model_validate(svc) for svc in services]
 
     async def get_service(
         self,
-        db: Session,
+        db: AsyncSession,
         service_id: str,
         user_email: Optional[str] = None,
     ) -> GrpcServiceRead:
@@ -212,7 +214,8 @@ class GrpcService:
             if team_filter is not None:
                 query = query.where(team_filter)
 
-        service = db.execute(query).scalar_one_or_none()
+        result = await db.execute(query)
+        service = result.scalar_one_or_none()
 
         if not service:
             raise GrpcServiceNotFoundError(f"gRPC service with ID '{service_id}' not found")
@@ -221,7 +224,7 @@ class GrpcService:
 
     async def update_service(
         self,
-        db: Session,
+        db: AsyncSession,
         service_id: str,
         service_data: GrpcServiceUpdate,
         user_email: Optional[str] = None,
@@ -243,14 +246,16 @@ class GrpcService:
             GrpcServiceNotFoundError: If service not found
             GrpcServiceNameConflictError: If new name conflicts
         """
-        service = db.execute(select(DbGrpcService).where(DbGrpcService.id == service_id)).scalar_one_or_none()
+        result = await db.execute(select(DbGrpcService).where(DbGrpcService.id == service_id))
+        service = result.scalar_one_or_none()
 
         if not service:
             raise GrpcServiceNotFoundError(f"gRPC service with ID '{service_id}' not found")
 
         # Check name conflict if name is being changed
         if service_data.name and service_data.name != service.name:
-            existing = db.execute(select(DbGrpcService).where(and_(DbGrpcService.name == service_data.name, DbGrpcService.id != service_id))).scalar_one_or_none()
+            conflict_result = await db.execute(select(DbGrpcService).where(and_(DbGrpcService.name == service_data.name, DbGrpcService.id != service_id)))
+            existing = conflict_result.scalar_one_or_none()
 
             if existing:
                 raise GrpcServiceNameConflictError(name=service_data.name, is_active=existing.enabled, service_id=existing.id)
@@ -271,8 +276,8 @@ class GrpcService:
 
         service.version += 1
 
-        db.commit()
-        db.refresh(service)
+        await db.commit()
+        await db.refresh(service)
 
         logger.info(f"Updated gRPC service: {service.name}")
 
@@ -280,7 +285,7 @@ class GrpcService:
 
     async def toggle_service(
         self,
-        db: Session,
+        db: AsyncSession,
         service_id: str,
         activate: bool,
     ) -> GrpcServiceRead:
@@ -297,7 +302,8 @@ class GrpcService:
         Raises:
             GrpcServiceNotFoundError: If service not found
         """
-        service = db.execute(select(DbGrpcService).where(DbGrpcService.id == service_id)).scalar_one_or_none()
+        result = await db.execute(select(DbGrpcService).where(DbGrpcService.id == service_id))
+        service = result.scalar_one_or_none()
 
         if not service:
             raise GrpcServiceNotFoundError(f"gRPC service with ID '{service_id}' not found")
@@ -305,8 +311,8 @@ class GrpcService:
         service.enabled = activate
         service.updated_at = datetime.now(timezone.utc)
 
-        db.commit()
-        db.refresh(service)
+        await db.commit()
+        await db.refresh(service)
 
         action = "activated" if activate else "deactivated"
         logger.info(f"gRPC service {service.name} {action}")
@@ -315,7 +321,7 @@ class GrpcService:
 
     async def delete_service(
         self,
-        db: Session,
+        db: AsyncSession,
         service_id: str,
     ) -> None:
         """Delete a gRPC service.
@@ -327,19 +333,20 @@ class GrpcService:
         Raises:
             GrpcServiceNotFoundError: If service not found
         """
-        service = db.execute(select(DbGrpcService).where(DbGrpcService.id == service_id)).scalar_one_or_none()
+        result = await db.execute(select(DbGrpcService).where(DbGrpcService.id == service_id))
+        service = result.scalar_one_or_none()
 
         if not service:
             raise GrpcServiceNotFoundError(f"gRPC service with ID '{service_id}' not found")
 
-        db.delete(service)
-        db.commit()
+        await db.delete(service)
+        await db.commit()
 
         logger.info(f"Deleted gRPC service: {service.name}")
 
     async def reflect_service(
         self,
-        db: Session,
+        db: AsyncSession,
         service_id: str,
     ) -> GrpcServiceRead:
         """Trigger reflection on a gRPC service to discover services and methods.
@@ -355,7 +362,8 @@ class GrpcService:
             GrpcServiceNotFoundError: If service not found
             GrpcServiceError: If reflection fails
         """
-        service = db.execute(select(DbGrpcService).where(DbGrpcService.id == service_id)).scalar_one_or_none()
+        result = await db.execute(select(DbGrpcService).where(DbGrpcService.id == service_id))
+        service = result.scalar_one_or_none()
 
         if not service:
             raise GrpcServiceNotFoundError(f"gRPC service with ID '{service_id}' not found")
@@ -366,14 +374,14 @@ class GrpcService:
         except Exception as e:
             logger.error(f"Reflection failed for {service.name}: {e}")
             service.reachable = False
-            db.commit()
+            await db.commit()
             raise GrpcServiceError(f"Reflection failed: {str(e)}")
 
         return GrpcServiceRead.model_validate(service)
 
     async def get_service_methods(
         self,
-        db: Session,
+        db: AsyncSession,
         service_id: str,
     ) -> List[Dict[str, Any]]:
         """Get the list of methods for a gRPC service.
@@ -388,7 +396,8 @@ class GrpcService:
         Raises:
             GrpcServiceNotFoundError: If service not found
         """
-        service = db.execute(select(DbGrpcService).where(DbGrpcService.id == service_id)).scalar_one_or_none()
+        result = await db.execute(select(DbGrpcService).where(DbGrpcService.id == service_id))
+        service = result.scalar_one_or_none()
 
         if not service:
             raise GrpcServiceNotFoundError(f"gRPC service with ID '{service_id}' not found")
@@ -414,7 +423,7 @@ class GrpcService:
 
     async def _perform_reflection(
         self,
-        db: Session,
+        db: AsyncSession,
         service: DbGrpcService,
     ) -> None:
         """Perform gRPC server reflection to discover services.
@@ -529,12 +538,12 @@ class GrpcService:
             service.last_reflection = datetime.now(timezone.utc)
             service.reachable = True
 
-            db.commit()
+            await db.commit()
 
         except Exception as e:
             logger.error(f"Reflection error for {service.target}: {e}")
             service.reachable = False
-            db.commit()
+            await db.commit()
             raise
 
         finally:
@@ -542,7 +551,7 @@ class GrpcService:
 
     async def invoke_method(
         self,
-        db: Session,
+        db: AsyncSession,
         service_id: str,
         method_name: str,
         request_data: Dict[str, Any],
@@ -562,7 +571,8 @@ class GrpcService:
             GrpcServiceNotFoundError: If service not found
             GrpcServiceError: If invocation fails
         """
-        service = db.execute(select(DbGrpcService).where(DbGrpcService.id == service_id)).scalar_one_or_none()
+        result = await db.execute(select(DbGrpcService).where(DbGrpcService.id == service_id))
+        service = result.scalar_one_or_none()
 
         if not service:
             raise GrpcServiceNotFoundError(f"gRPC service with ID '{service_id}' not found")

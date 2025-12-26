@@ -14,11 +14,10 @@ from typing import Dict, List, Optional
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import get_db
+from mcpgateway.db import _use_async, get_async_db, get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.sso_service import SSOService
 
@@ -64,6 +63,9 @@ class SSOProviderUpdateRequest(BaseModel):
 # Create router
 sso_router = APIRouter(prefix="/auth/sso", tags=["SSO Authentication"])
 
+# Dynamic database dependency based on async configuration
+_db_dependency = get_async_db if _use_async else get_db
+
 
 class SSOProviderResponse(BaseModel):
     """SSO provider information for client."""
@@ -92,7 +94,7 @@ class SSOCallbackResponse(BaseModel):
 
 @sso_router.get("/providers", response_model=List[SSOProviderResponse])
 async def list_sso_providers(
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ) -> List[SSOProviderResponse]:
     """List available SSO providers for login.
 
@@ -124,7 +126,7 @@ async def initiate_sso_login(
     provider_id: str,
     redirect_uri: str = Query(..., description="Callback URI after authentication"),
     scopes: Optional[str] = Query(None, description="Space-separated OAuth scopes"),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ) -> SSOLoginResponse:
     """Initiate SSO authentication flow.
 
@@ -173,7 +175,7 @@ async def handle_sso_callback(
     state: str = Query(..., description="CSRF state parameter"),
     request: Request = None,
     response: Response = None,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ):
     """Handle SSO authentication callback.
 
@@ -242,7 +244,7 @@ async def handle_sso_callback(
 @require_permission("admin.sso_providers:create")
 async def create_sso_provider(
     provider_data: SSOProviderCreateRequest,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict:
     """Create new SSO provider configuration (Admin only).
@@ -280,7 +282,7 @@ async def create_sso_provider(
 @sso_router.get("/admin/providers", response_model=List[Dict])
 @require_permission("admin.sso_providers:read")
 async def list_all_sso_providers(
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> List[Dict]:
     """List all SSO providers including disabled ones (Admin only).
@@ -299,7 +301,7 @@ async def list_all_sso_providers(
     from mcpgateway.db import SSOProvider
 
     stmt = select(SSOProvider)
-    result = db.execute(stmt)
+    result = await db.execute(stmt)
     providers = result.scalars().all()
 
     return [
@@ -322,7 +324,7 @@ async def list_all_sso_providers(
 @require_permission("admin.sso_providers:read")
 async def get_sso_provider(
     provider_id: str,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict:
     """Get SSO provider details (Admin only).
@@ -369,7 +371,7 @@ async def get_sso_provider(
 async def update_sso_provider(
     provider_id: str,
     provider_data: SSOProviderUpdateRequest,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict:
     """Update SSO provider configuration (Admin only).
@@ -411,7 +413,7 @@ async def update_sso_provider(
 @require_permission("admin.sso_providers:delete")
 async def delete_sso_provider(
     provider_id: str,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict:
     """Delete SSO provider configuration (Admin only).
@@ -465,7 +467,7 @@ class ApprovalActionRequest(BaseModel):
 @require_permission("admin.user_management")
 async def list_pending_approvals(
     include_expired: bool = Query(False, description="Include expired approval requests"),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> List[PendingUserApprovalResponse]:
     """List pending SSO user approval requests (Admin only).
@@ -496,7 +498,7 @@ async def list_pending_approvals(
     query = query.where(PendingUserApproval.status == "pending")
     query = query.order_by(PendingUserApproval.requested_at.desc())
 
-    result = db.execute(query)
+    result = await db.execute(query)
     pending_approvals = result.scalars().all()
 
     return [
@@ -519,7 +521,7 @@ async def list_pending_approvals(
 async def handle_approval_request(
     approval_id: str,
     request: ApprovalActionRequest,
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict:
     """Approve or reject a pending SSO user registration (Admin only).
@@ -543,7 +545,7 @@ async def handle_approval_request(
     from mcpgateway.db import PendingUserApproval
 
     # Get pending approval
-    approval = db.execute(select(PendingUserApproval).where(PendingUserApproval.id == approval_id)).scalar_one_or_none()
+    approval = await db.execute(select(PendingUserApproval).where(PendingUserApproval.id == approval_id)).scalar_one_or_none()
 
     if not approval:
         raise HTTPException(status_code=404, detail="Approval request not found")
@@ -553,21 +555,21 @@ async def handle_approval_request(
 
     if approval.is_expired():
         approval.status = "expired"
-        db.commit()
+        await db.commit()
         raise HTTPException(status_code=400, detail="Approval request has expired")
 
     admin_email = user["email"]
 
     if request.action == "approve":
         approval.approve(admin_email, request.notes)
-        db.commit()
+        await db.commit()
         return {"message": f"User {approval.email} approved successfully"}
 
     elif request.action == "reject":
         if not request.reason:
             raise HTTPException(status_code=400, detail="Rejection reason is required")
         approval.reject(admin_email, request.reason, request.notes)
-        db.commit()
+        await db.commit()
         return {"message": f"User {approval.email} rejected"}
 
     else:

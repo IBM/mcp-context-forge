@@ -19,7 +19,7 @@ import uuid
 import httpx
 import orjson
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # First-Party
 from mcpgateway.config import settings
@@ -82,9 +82,9 @@ class LLMProxyService:
             logger.info("Shutdown LLM Proxy Service")
             self._initialized = False
 
-    def _resolve_model(
+    async def _resolve_model(
         self,
-        db: Session,
+        db: AsyncSession,
         model_id: str,
     ) -> Tuple[LLMProvider, LLMModel]:
         """Resolve a model ID to provider and model.
@@ -101,15 +101,15 @@ class LLMProxyService:
             LLMProviderNotFoundError: If provider not found or disabled.
         """
         # Try to find by model.id first
-        model = db.execute(select(LLMModel).where(LLMModel.id == model_id)).scalar_one_or_none()
+        model = (await db.execute(select(LLMModel).where(LLMModel.id == model_id))).scalar_one_or_none()
 
         # Try by model_id
         if not model:
-            model = db.execute(select(LLMModel).where(LLMModel.model_id == model_id)).scalar_one_or_none()
+            model = (await db.execute(select(LLMModel).where(LLMModel.model_id == model_id))).scalar_one_or_none()
 
         # Try by model_alias
         if not model:
-            model = db.execute(select(LLMModel).where(LLMModel.model_alias == model_id)).scalar_one_or_none()
+            model = (await db.execute(select(LLMModel).where(LLMModel.model_alias == model_id))).scalar_one_or_none()
 
         if not model:
             raise LLMModelNotFoundError(f"Model not found: {model_id}")
@@ -118,7 +118,7 @@ class LLMProxyService:
             raise LLMModelNotFoundError(f"Model is disabled: {model_id}")
 
         # Get provider
-        provider = db.execute(select(LLMProvider).where(LLMProvider.id == model.provider_id)).scalar_one_or_none()
+        provider = (await db.execute(select(LLMProvider).where(LLMProvider.id == model.provider_id))).scalar_one_or_none()
 
         if not provider:
             raise LLMProviderNotFoundError(f"Provider not found for model: {model_id}")
@@ -386,7 +386,7 @@ class LLMProxyService:
 
     async def chat_completion(
         self,
-        db: Session,
+        db: AsyncSession,
         request: ChatCompletionRequest,
     ) -> ChatCompletionResponse:
         """Process a chat completion request (non-streaming).
@@ -404,7 +404,7 @@ class LLMProxyService:
         if not self._client:
             await self.initialize()
 
-        provider, model = self._resolve_model(db, request.model)
+        provider, model = await self._resolve_model(db, request.model)
 
         # Build request based on provider type
         if provider.provider_type == LLMProviderType.AZURE_OPENAI:
@@ -445,7 +445,7 @@ class LLMProxyService:
 
     async def chat_completion_stream(
         self,
-        db: Session,
+        db: AsyncSession,
         request: ChatCompletionRequest,
     ) -> AsyncGenerator[str, None]:
         """Process a streaming chat completion request.
@@ -460,7 +460,7 @@ class LLMProxyService:
         if not self._client:
             await self.initialize()
 
-        provider, model = self._resolve_model(db, request.model)
+        provider, model = await self._resolve_model(db, request.model)
 
         # Build request based on provider type
         if provider.provider_type == LLMProviderType.AZURE_OPENAI:

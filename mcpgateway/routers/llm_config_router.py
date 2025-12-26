@@ -12,11 +12,13 @@ from typing import Optional
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
-from mcpgateway.db import get_db
+from mcpgateway.db import _use_async, get_async_db, get_db
+
+_db_dependency = get_async_db if _use_async else get_db
+# First-Party
 from mcpgateway.llm_schemas import (
     GatewayModelsResponse,
     LLMModelCreate,
@@ -539,7 +541,7 @@ async def toggle_model(
     description="Get enabled models for the LLM Chat dropdown.",
 )
 async def get_gateway_models(
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
     current_user: dict = Depends(get_current_user),
 ) -> GatewayModelsResponse:
     """Get enabled models for the LLM Chat dropdown.

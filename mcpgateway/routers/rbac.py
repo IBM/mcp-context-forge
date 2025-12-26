@@ -26,7 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import Permissions, SessionLocal
+from mcpgateway.db import _use_async, get_async_db, get_db, Permissions, SessionLocal
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_admin_permission, require_permission
 from mcpgateway.schemas import PermissionCheckRequest, PermissionCheckResponse, PermissionListResponse, RoleCreateRequest, RoleResponse, RoleUpdateRequest, UserRoleAssignRequest, UserRoleResponse
 from mcpgateway.services.permission_service import PermissionService
@@ -36,8 +36,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/rbac", tags=["RBAC"])
 
+# Dynamic database dependency based on async configuration
+_db_dependency = get_async_db if _use_async else get_db
 
-def get_db() -> Generator[Session, None, None]:
+
+def _get_db_local() -> Generator[Session, None, None]:
     """Get database session for dependency injection.
 
     Commits the transaction on successful completion to avoid implicit rollbacks
@@ -71,7 +74,7 @@ def get_db() -> Generator[Session, None, None]:
 
 @router.post("/roles", response_model=RoleResponse)
 @require_admin_permission()
-async def create_role(role_data: RoleCreateRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def create_role(role_data: RoleCreateRequest, user=Depends(get_current_user_with_permissions), db=Depends(_db_dependency)):
     """Create a new role.
 
     Requires admin permissions to create roles.
@@ -121,7 +124,7 @@ async def list_roles(
     scope: Optional[str] = Query(None, description="Filter by scope"),
     active_only: bool = Query(True, description="Show only active roles"),
     user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ):
     """List all roles.
 
@@ -155,7 +158,7 @@ async def list_roles(
 
 @router.get("/roles/{role_id}", response_model=RoleResponse)
 @require_permission("admin.user_management")
-async def get_role(role_id: str, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def get_role(role_id: str, user=Depends(get_current_user_with_permissions), db=Depends(_db_dependency)):
     """Get role details by ID.
 
     Args:
@@ -192,7 +195,7 @@ async def get_role(role_id: str, user=Depends(get_current_user_with_permissions)
 
 @router.put("/roles/{role_id}", response_model=RoleResponse)
 @require_admin_permission()
-async def update_role(role_id: str, role_data: RoleUpdateRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def update_role(role_id: str, role_data: RoleUpdateRequest, user=Depends(get_current_user_with_permissions), db=Depends(_db_dependency)):
     """Update an existing role.
 
     Args:
@@ -234,7 +237,7 @@ async def update_role(role_id: str, role_data: RoleUpdateRequest, user=Depends(g
 
 @router.delete("/roles/{role_id}")
 @require_admin_permission()
-async def delete_role(role_id: str, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def delete_role(role_id: str, user=Depends(get_current_user_with_permissions), db=Depends(_db_dependency)):
     """Delete a role.
 
     Args:
@@ -275,7 +278,7 @@ async def delete_role(role_id: str, user=Depends(get_current_user_with_permissio
 
 @router.post("/users/{user_email}/roles", response_model=UserRoleResponse)
 @require_permission("admin.user_management")
-async def assign_role_to_user(user_email: str, assignment_data: UserRoleAssignRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def assign_role_to_user(user_email: str, assignment_data: UserRoleAssignRequest, user=Depends(get_current_user_with_permissions), db=Depends(_db_dependency)):
     """Assign a role to a user.
 
     Args:
@@ -319,7 +322,7 @@ async def get_user_roles(
     scope: Optional[str] = Query(None, description="Filter by scope"),
     active_only: bool = Query(True, description="Show only active assignments"),
     user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ):
     """Get roles assigned to a user.
 
@@ -360,7 +363,7 @@ async def revoke_user_role(
     scope: Optional[str] = Query(None, description="Scope filter"),
     scope_id: Optional[str] = Query(None, description="Scope ID filter"),
     user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
+    db=Depends(_db_dependency),
 ):
     """Revoke a role from a user.
 
@@ -405,7 +408,7 @@ async def revoke_user_role(
 
 @router.post("/permissions/check", response_model=PermissionCheckResponse)
 @require_permission("admin.security_audit")
-async def check_permission(check_data: PermissionCheckRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def check_permission(check_data: PermissionCheckRequest, user=Depends(get_current_user_with_permissions), db=Depends(_db_dependency)):
     """Check if a user has specific permission.
 
     Args:
@@ -445,7 +448,7 @@ async def check_permission(check_data: PermissionCheckRequest, user=Depends(get_
 
 @router.get("/permissions/user/{user_email}", response_model=List[str])
 @require_permission("admin.security_audit")
-async def get_user_permissions(user_email: str, team_id: Optional[str] = Query(None, description="Team context"), user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def get_user_permissions(user_email: str, team_id: Optional[str] = Query(None, description="Team context"), user=Depends(get_current_user_with_permissions), db=Depends(_db_dependency)):
     """Get all effective permissions for a user.
 
     Args:
@@ -504,7 +507,7 @@ async def get_available_permissions(user=Depends(get_current_user_with_permissio
 
 
 @router.get("/my/roles", response_model=List[UserRoleResponse])
-async def get_my_roles(user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def get_my_roles(user=Depends(get_current_user_with_permissions), db=Depends(_db_dependency)):
     """Get current user's role assignments.
 
     Args:
@@ -534,7 +537,7 @@ async def get_my_roles(user=Depends(get_current_user_with_permissions), db: Sess
 
 
 @router.get("/my/permissions", response_model=List[str])
-async def get_my_permissions(team_id: Optional[str] = Query(None, description="Team context"), user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def get_my_permissions(team_id: Optional[str] = Query(None, description="Team context"), user=Depends(get_current_user_with_permissions), db=Depends(_db_dependency)):
     """Get current user's effective permissions.
 
     Args:

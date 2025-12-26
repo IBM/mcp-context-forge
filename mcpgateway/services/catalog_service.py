@@ -15,7 +15,7 @@ from typing import Any, Dict, Optional
 # Third-Party
 import httpx
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 import yaml
 
 # First-Party
@@ -88,7 +88,7 @@ class CatalogService:
             logger.error(f"Failed to load catalog: {e}")
             return {"catalog_servers": [], "categories": [], "auth_types": []}
 
-    async def get_catalog_servers(self, request: CatalogListRequest, db) -> CatalogListResponse:
+    async def get_catalog_servers(self, request: CatalogListRequest, db: AsyncSession) -> CatalogListResponse:
         """Get filtered list of catalog servers.
 
         Args:
@@ -110,7 +110,7 @@ class CatalogService:
                 from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
 
                 stmt = select(DbGateway.url).where(DbGateway.enabled)
-                result = db.execute(stmt)
+                result = await db.execute(stmt)
                 registered_urls = {row[0] for row in result}
             except Exception as e:
                 logger.warning(f"Failed to check registered servers: {e}")
@@ -166,7 +166,7 @@ class CatalogService:
 
         return CatalogListResponse(servers=paginated, total=total, categories=all_categories, auth_types=all_auth_types, providers=all_providers, all_tags=all_tags)
 
-    async def register_catalog_server(self, catalog_id: str, request: Optional[CatalogServerRegisterRequest], db: Session) -> CatalogServerRegisterResponse:
+    async def register_catalog_server(self, catalog_id: str, request: Optional[CatalogServerRegisterRequest], db: AsyncSession) -> CatalogServerRegisterResponse:
         """Register a catalog server as a gateway.
 
         Args:
@@ -198,7 +198,7 @@ class CatalogService:
                 from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
 
                 stmt = select(DbGateway).where(DbGateway.url == server_data["url"])
-                result = db.execute(stmt)
+                result = await db.execute(stmt)
                 existing = result.scalar_one_or_none()
             except Exception as e:
                 logger.warning(f"Error checking existing registration: {e}")
@@ -293,8 +293,8 @@ class CatalogService:
                 )
 
                 db.add(db_gateway)
-                db.commit()
-                db.refresh(db_gateway)
+                await db.commit()
+                await db.refresh(db_gateway)
 
                 # First-Party
                 from mcpgateway.schemas import GatewayRead  # pylint: disable=import-outside-toplevel
@@ -350,7 +350,7 @@ class CatalogService:
             tool_count = 0
             if gateway_read.id:
                 stmt = select(DbTool).where(DbTool.gateway_id == gateway_read.id)
-                result = db.execute(stmt)
+                result = await db.execute(stmt)
                 tools = result.scalars().all()
                 tool_count = len(tools)
 
@@ -439,7 +439,7 @@ class CatalogService:
             logger.error(f"Failed to check server status for {catalog_id}: {e}")
             return CatalogServerStatusResponse(server_id=catalog_id, is_available=False, is_registered=False, error=str(e))
 
-    async def bulk_register_servers(self, request: CatalogBulkRegisterRequest, db: Session) -> CatalogBulkRegisterResponse:
+    async def bulk_register_servers(self, request: CatalogBulkRegisterRequest, db: AsyncSession) -> CatalogBulkRegisterResponse:
         """Register multiple catalog servers.
 
         Args:

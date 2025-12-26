@@ -26,7 +26,7 @@ import uuid
 from jinja2 import Environment, meta, select_autoescape
 from sqlalchemy import and_, case, delete, desc, Float, func, not_, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # First-Party
 from mcpgateway.common.models import Message, PromptResult, Role, TextContent
@@ -164,7 +164,7 @@ class PromptService:
         await self._event_service.shutdown()
         logger.info("Prompt service shutdown complete")
 
-    async def get_top_prompts(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
+    async def get_top_prompts(self, db: AsyncSession, limit: Optional[int] = 5) -> List[TopPerformer]:
         """Retrieve the top-performing prompts based on execution count.
 
         Queries the database to get prompts with their metrics, ordered by the number of executions
@@ -172,7 +172,7 @@ class PromptService:
         performance metrics. Results are cached for performance.
 
         Args:
-            db (Session): Database session for querying prompt metrics.
+            db (AsyncSession): Database session for querying prompt metrics.
             limit (Optional[int]): Maximum number of prompts to return. Defaults to 5.
 
         Returns:
@@ -196,29 +196,27 @@ class PromptService:
             if cached is not None:
                 return cached
 
+        success_rate = case(
+            (func.count(PromptMetric.id) > 0, func.sum(case((PromptMetric.is_success.is_(True), 1), else_=0)).cast(Float) * 100 / func.count(PromptMetric.id)),  # pylint: disable=not-callable
+            else_=None,
+        )
+
         query = (
-            db.query(
+            select(
                 DbPrompt.id,
                 DbPrompt.name,
                 func.count(PromptMetric.id).label("execution_count"),  # pylint: disable=not-callable
                 func.avg(PromptMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
-                case(
-                    (
-                        func.count(PromptMetric.id) > 0,  # pylint: disable=not-callable
-                        func.sum(case((PromptMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(PromptMetric.id) * 100,  # pylint: disable=not-callable
-                    ),
-                    else_=None,
-                ).label("success_rate"),
+                success_rate.label("success_rate"),
                 func.max(PromptMetric.timestamp).label("last_execution"),  # pylint: disable=not-callable
             )
-            .outerjoin(PromptMetric)
+            .outerjoin(PromptMetric, PromptMetric.prompt_id == DbPrompt.id)
             .group_by(DbPrompt.id, DbPrompt.name)
             .order_by(desc("execution_count"))
+            .limit(effective_limit)
         )
 
-        query = query.limit(effective_limit)
-
-        results = query.all()
+        results = (await db.execute(query)).all()
         top_performers = build_top_performers(results)
 
         # Cache the result (if enabled)
@@ -304,11 +302,11 @@ class PromptService:
             "owner_email": getattr(db_prompt, "owner_email", None),
         }
 
-    def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
+    async def _get_team_name(self, db: AsyncSession, team_id: Optional[str]) -> Optional[str]:
         """Retrieve the team name given a team ID.
 
         Args:
-            db (Session): Database session for querying teams.
+            db (AsyncSession): Database session for querying teams.
             team_id (Optional[str]): The ID of the team.
 
         Returns:
@@ -316,12 +314,13 @@ class PromptService:
         """
         if not team_id:
             return None
-        team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
+        result = await db.execute(select(EmailTeam).where(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)))
+        team = result.scalar_one_or_none()
         return team.name if team else None
 
     async def register_prompt(
         self,
-        db: Session,
+        db: AsyncSession,
         prompt: PromptCreate,
         created_by: Optional[str] = None,
         created_from_ip: Optional[str] = None,
@@ -416,19 +415,21 @@ class PromptService:
             # Check for existing server with the same name
             if visibility.lower() == "public":
                 # Check for existing public prompt with the same name
-                existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt.name, DbPrompt.visibility == "public")).scalar_one_or_none()
+                result = await db.execute(select(DbPrompt).where(DbPrompt.name == prompt.name, DbPrompt.visibility == "public"))
+                existing_prompt = result.scalar_one_or_none()
                 if existing_prompt:
                     raise PromptNameConflictError(prompt.name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
             elif visibility.lower() == "team":
                 # Check for existing team prompt with the same name
-                existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt.name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id)).scalar_one_or_none()
+                result = await db.execute(select(DbPrompt).where(DbPrompt.name == prompt.name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id))
+                existing_prompt = result.scalar_one_or_none()
                 if existing_prompt:
                     raise PromptNameConflictError(prompt.name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
 
             # Add to DB
             db.add(db_prompt)
-            db.commit()
-            db.refresh(db_prompt)
+            await db.commit()
+            await db.refresh(db_prompt)
             # Notify subscribers
             await self._notify_prompt_added(db_prompt)
 
@@ -475,7 +476,7 @@ class PromptService:
                 db=db,
             )
 
-            db_prompt.team = self._get_team_name(db, db_prompt.team_id)
+            db_prompt.team = await self._get_team_name(db, db_prompt.team_id)
             prompt_dict = self._convert_db_prompt(db_prompt)
             return PromptRead.model_validate(prompt_dict)
 
@@ -495,7 +496,7 @@ class PromptService:
             )
             raise ie
         except PromptNameConflictError as se:
-            db.rollback()
+            await db.rollback()
 
             structured_logger.log(
                 level="WARNING",
@@ -509,7 +510,7 @@ class PromptService:
             )
             raise se
         except Exception as e:
-            db.rollback()
+            await db.rollback()
 
             structured_logger.log(
                 level="ERROR",
@@ -526,7 +527,7 @@ class PromptService:
 
     async def register_prompts_bulk(
         self,
-        db: Session,
+        db: AsyncSession,
         prompts: List[PromptCreate],
         created_by: Optional[str] = None,
         created_from_ip: Optional[str] = None,
@@ -608,7 +609,7 @@ class PromptService:
                     # Private prompts - check by owner
                     existing_prompts_query = select(DbPrompt).where(DbPrompt.name.in_(prompt_names), DbPrompt.visibility == "private", DbPrompt.owner_email == (owner_email or created_by))
 
-                existing_prompts = db.execute(existing_prompts_query).scalars().all()
+                existing_prompts = (await db.execute(existing_prompts_query)).scalars().all()
                 existing_prompts_map = {prompt.name: prompt for prompt in existing_prompts}
 
                 prompts_to_add = []
@@ -720,11 +721,11 @@ class PromptService:
                     db.add_all(prompts_to_add)
 
                 # Commit the chunk
-                db.commit()
+                await db.commit()
 
                 # Refresh prompts for notifications and audit trail
                 for db_prompt in prompts_to_add:
-                    db.refresh(db_prompt)
+                    await db.refresh(db_prompt)
                     # Notify subscribers
                     await self._notify_prompt_added(db_prompt)
 
@@ -757,7 +758,7 @@ class PromptService:
                 logger.info(f"Bulk registered {len(prompts_to_add)} prompts, updated {len(prompts_to_update)} prompts in chunk")
 
             except Exception as e:
-                db.rollback()
+                await db.rollback()
                 logger.error(f"Failed to process chunk in bulk prompt registration: {str(e)}")
                 stats["failed"] += len(chunk)
                 stats["errors"].append(f"Chunk processing failed: {str(e)}")
@@ -787,7 +788,7 @@ class PromptService:
 
         return stats
 
-    async def list_prompts(self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None) -> tuple[List[PromptRead], Optional[str]]:
+    async def list_prompts(self, db: AsyncSession, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None) -> tuple[List[PromptRead], Optional[str]]:
         """
         Retrieve a list of prompt templates from the database with pagination support.
 
@@ -849,7 +850,7 @@ class PromptService:
 
         # Fetch page_size + 1 to determine if there are more results
         query = query.limit(page_size + 1)
-        prompts = db.execute(query).scalars().all()
+        prompts = (await db.execute(query)).scalars().all()
 
         # Check if there are more results
         has_more = len(prompts) > page_size
@@ -859,7 +860,7 @@ class PromptService:
         # Convert to PromptRead objects (skip metrics to avoid N+1 queries)
         result = []
         for t in prompts:
-            team_name = self._get_team_name(db, getattr(t, "team_id", None))
+            team_name = await self._get_team_name(db, getattr(t, "team_id", None))
             t.team = team_name
             result.append(PromptRead.model_validate(self._convert_db_prompt(t, include_metrics=False)))
 
@@ -873,7 +874,7 @@ class PromptService:
         return (result, next_cursor)
 
     async def list_prompts_for_user(
-        self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
+        self, db: AsyncSession, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
     ) -> List[PromptRead]:
         """
         List prompts user has access to with team filtering.
@@ -937,15 +938,15 @@ class PromptService:
         # Apply pagination following existing patterns
         query = query.offset(skip).limit(limit)
 
-        prompts = db.execute(query).scalars().all()
+        prompts = (await db.execute(query)).scalars().all()
         result = []
         for t in prompts:
-            team_name = self._get_team_name(db, getattr(t, "team_id", None))
+            team_name = await self._get_team_name(db, getattr(t, "team_id", None))
             t.team = team_name
             result.append(PromptRead.model_validate(self._convert_db_prompt(t, include_metrics=False)))
         return result
 
-    async def list_server_prompts(self, db: Session, server_id: str, include_inactive: bool = False, cursor: Optional[str] = None) -> List[PromptRead]:
+    async def list_server_prompts(self, db: AsyncSession, server_id: str, include_inactive: bool = False, cursor: Optional[str] = None) -> List[PromptRead]:
         """
         Retrieve a list of prompt templates from the database.
 
@@ -985,15 +986,15 @@ class PromptService:
             query = query.where(DbPrompt.enabled)
         # Cursor-based pagination logic can be implemented here in the future.
         logger.debug(cursor)
-        prompts = db.execute(query).scalars().all()
+        prompts = (await db.execute(query)).scalars().all()
         result = []
         for t in prompts:
-            team_name = self._get_team_name(db, getattr(t, "team_id", None))
+            team_name = await self._get_team_name(db, getattr(t, "team_id", None))
             t.team = team_name
             result.append(PromptRead.model_validate(self._convert_db_prompt(t, include_metrics=False)))
         return result
 
-    async def _record_prompt_metric(self, db: Session, prompt: DbPrompt, start_time: float, success: bool, error_message: Optional[str]) -> None:
+    async def _record_prompt_metric(self, db: AsyncSession, prompt: DbPrompt, start_time: float, success: bool, error_message: Optional[str]) -> None:
         """
         Records a metric for a prompt invocation.
 
@@ -1014,11 +1015,11 @@ class PromptService:
             error_message=error_message,
         )
         db.add(metric)
-        db.commit()
+        await db.commit()
 
     async def get_prompt(
         self,
-        db: Session,
+        db: AsyncSession,
         prompt_id: Union[int, str],
         arguments: Optional[Dict[str, str]] = None,
         user: Optional[str] = None,
@@ -1145,20 +1146,24 @@ class PromptService:
 
                 # Find prompt by ID or name
                 if prompt_id is not None:
-                    prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id).where(DbPrompt.enabled)).scalar_one_or_none()
+                    result = await db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id).where(DbPrompt.enabled))
+                    prompt = result.scalar_one_or_none()
                     search_key = prompt_id
                 else:
                     # Look up by name (active prompts only)
                     # Note: Team/owner scoping could be added here when user context is available
-                    prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_name).where(DbPrompt.enabled)).scalar_one_or_none()
+                    result = await db.execute(select(DbPrompt).where(DbPrompt.name == prompt_name).where(DbPrompt.enabled))
+                    prompt = result.scalar_one_or_none()
                     search_key = prompt_name
 
                 if not prompt:
                     # Check if an inactive prompt exists
                     if prompt_id is not None:
-                        inactive_prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id).where(not_(DbPrompt.enabled))).scalar_one_or_none()
+                        result = await db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id).where(not_(DbPrompt.enabled)))
+                        inactive_prompt = result.scalar_one_or_none()
                     else:
-                        inactive_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_name).where(not_(DbPrompt.enabled))).scalar_one_or_none()
+                        result = await db.execute(select(DbPrompt).where(DbPrompt.name == prompt_name).where(not_(DbPrompt.enabled)))
+                        inactive_prompt = result.scalar_one_or_none()
 
                     if inactive_prompt:
                         raise PromptNotFoundError(f"Prompt '{search_key}' exists but is inactive")
@@ -1283,7 +1288,7 @@ class PromptService:
 
     async def update_prompt(
         self,
-        db: Session,
+        db: AsyncSession,
         prompt_id: Union[int, str],
         prompt_update: PromptUpdate,
         modified_by: Optional[str] = None,
@@ -1332,7 +1337,7 @@ class PromptService:
             ...     pass
         """
         try:
-            prompt = db.get(DbPrompt, prompt_id)
+            prompt = await db.get(DbPrompt, prompt_id)
             if not prompt:
                 raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
 
@@ -1342,12 +1347,14 @@ class PromptService:
                 team_id = prompt_update.team_id or prompt.team_id
                 if visibility.lower() == "public":
                     # Check for existing public prompts with the same name
-                    existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_update.name, DbPrompt.visibility == "public")).scalar_one_or_none()
+                    result = await db.execute(select(DbPrompt).where(DbPrompt.name == prompt_update.name, DbPrompt.visibility == "public"))
+                    existing_prompt = result.scalar_one_or_none()
                     if existing_prompt:
                         raise PromptNameConflictError(prompt_update.name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
                 elif visibility.lower() == "team" and team_id:
                     # Check for existing team prompt with the same name
-                    existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_update.name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id)).scalar_one_or_none()
+                    result = await db.execute(select(DbPrompt).where(DbPrompt.name == prompt_update.name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id))
+                    existing_prompt = result.scalar_one_or_none()
                     logger.info(f"Existing prompt check result: {existing_prompt}")
                     if existing_prompt:
                         raise PromptNameConflictError(prompt_update.name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
@@ -1404,8 +1411,8 @@ class PromptService:
             else:
                 prompt.version = 1
 
-            db.commit()
-            db.refresh(prompt)
+            await db.commit()
+            await db.refresh(prompt)
 
             await self._notify_prompt_updated(prompt)
 
@@ -1439,11 +1446,11 @@ class PromptService:
                 db=db,
             )
 
-            prompt.team = self._get_team_name(db, prompt.team_id)
+            prompt.team = await self._get_team_name(db, prompt.team_id)
             return PromptRead.model_validate(self._convert_db_prompt(prompt))
 
         except PermissionError as pe:
-            db.rollback()
+            await db.rollback()
 
             structured_logger.log(
                 level="WARNING",
@@ -1458,7 +1465,7 @@ class PromptService:
             )
             raise
         except IntegrityError as ie:
-            db.rollback()
+            await db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
 
             structured_logger.log(
@@ -1474,7 +1481,7 @@ class PromptService:
             )
             raise ie
         except PromptNotFoundError as e:
-            db.rollback()
+            await db.rollback()
             logger.error(f"Prompt not found: {e}")
 
             structured_logger.log(
@@ -1490,7 +1497,7 @@ class PromptService:
             )
             raise e
         except PromptNameConflictError as pnce:
-            db.rollback()
+            await db.rollback()
             logger.error(f"Prompt name conflict: {pnce}")
 
             structured_logger.log(
@@ -1506,7 +1513,7 @@ class PromptService:
             )
             raise pnce
         except Exception as e:
-            db.rollback()
+            await db.rollback()
 
             structured_logger.log(
                 level="ERROR",
@@ -1521,7 +1528,7 @@ class PromptService:
             )
             raise PromptError(f"Failed to update prompt: {str(e)}")
 
-    async def toggle_prompt_status(self, db: Session, prompt_id: int, activate: bool, user_email: Optional[str] = None) -> PromptRead:
+    async def toggle_prompt_status(self, db: AsyncSession, prompt_id: int, activate: bool, user_email: Optional[str] = None) -> PromptRead:
         """
         Toggle the activation status of a prompt.
 
@@ -1558,7 +1565,7 @@ class PromptService:
             ...     pass
         """
         try:
-            prompt = db.get(DbPrompt, prompt_id)
+            prompt = await db.get(DbPrompt, prompt_id)
             if not prompt:
                 raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
 
@@ -1573,8 +1580,8 @@ class PromptService:
             if prompt.enabled != activate:
                 prompt.enabled = activate
                 prompt.updated_at = datetime.now(timezone.utc)
-                db.commit()
-                db.refresh(prompt)
+                await db.commit()
+                await db.refresh(prompt)
                 if activate:
                     await self._notify_prompt_activated(prompt)
                 else:
@@ -1608,7 +1615,7 @@ class PromptService:
                     db=db,
                 )
 
-            prompt.team = self._get_team_name(db, prompt.team_id)
+            prompt.team = await self._get_team_name(db, prompt.team_id)
             return PromptRead.model_validate(self._convert_db_prompt(prompt))
         except PermissionError as e:
             structured_logger.log(
@@ -1624,7 +1631,7 @@ class PromptService:
             )
             raise e
         except Exception as e:
-            db.rollback()
+            await db.rollback()
 
             structured_logger.log(
                 level="ERROR",
@@ -1640,7 +1647,7 @@ class PromptService:
             raise PromptError(f"Failed to toggle prompt status: {str(e)}")
 
     # Get prompt details for admin ui
-    async def get_prompt_details(self, db: Session, prompt_id: Union[int, str], include_inactive: bool = False) -> Dict[str, Any]:  # pylint: disable=unused-argument
+    async def get_prompt_details(self, db: AsyncSession, prompt_id: Union[int, str], include_inactive: bool = False) -> Dict[str, Any]:  # pylint: disable=unused-argument
         """
         Get prompt details by ID.
 
@@ -1668,11 +1675,11 @@ class PromptService:
             >>> result == prompt_dict
             True
         """
-        prompt = db.get(DbPrompt, prompt_id)
+        prompt = await db.get(DbPrompt, prompt_id)
         if not prompt:
             raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
         # Return the fully converted prompt including metrics
-        prompt.team = self._get_team_name(db, prompt.team_id)
+        prompt.team = await self._get_team_name(db, prompt.team_id)
         prompt_data = self._convert_db_prompt(prompt)
 
         audit_trail.log_action(
@@ -1703,7 +1710,7 @@ class PromptService:
 
         return prompt_data
 
-    async def delete_prompt(self, db: Session, prompt_id: Union[int, str], user_email: Optional[str] = None) -> None:
+    async def delete_prompt(self, db: AsyncSession, prompt_id: Union[int, str], user_email: Optional[str] = None) -> None:
         """
         Delete a prompt template by its ID.
 
@@ -1735,7 +1742,7 @@ class PromptService:
             ...     pass
         """
         try:
-            prompt = db.get(DbPrompt, prompt_id)
+            prompt = await db.get(DbPrompt, prompt_id)
             if not prompt:
                 raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
 
@@ -1752,8 +1759,8 @@ class PromptService:
             prompt_name = prompt.name
             prompt_team_id = prompt.team_id
 
-            db.delete(prompt)
-            db.commit()
+            await db.delete(prompt)
+            await db.commit()
             await self._notify_prompt_deleted(prompt_info)
             logger.info(f"Deleted prompt: {prompt_info['name']}")
 
@@ -1784,7 +1791,7 @@ class PromptService:
                 db=db,
             )
         except PermissionError as pe:
-            db.rollback()
+            await db.rollback()
 
             # Structured logging: Log permission error
             structured_logger.log(
@@ -1800,7 +1807,7 @@ class PromptService:
             )
             raise
         except Exception as e:
-            db.rollback()
+            await db.rollback()
             if isinstance(e, PromptNotFoundError):
                 # Structured logging: Log not found error
                 structured_logger.log(
@@ -2078,7 +2085,7 @@ class PromptService:
         await self._event_service.publish_event(event)
 
     # --- Metrics ---
-    async def aggregate_metrics(self, db: Session) -> Dict[str, Any]:
+    async def aggregate_metrics(self, db: AsyncSession) -> Dict[str, Any]:
         """
         Aggregate metrics for all prompt invocations across all prompts.
 
@@ -2121,15 +2128,17 @@ class PromptService:
                 return cached
 
         # Execute a single query to get all metrics at once
-        result = db.execute(
-            select(
-                func.count(PromptMetric.id).label("total_executions"),  # pylint: disable=not-callable
-                func.sum(case((PromptMetric.is_success.is_(True), 1), else_=0)).label("successful_executions"),  # pylint: disable=not-callable
-                func.sum(case((PromptMetric.is_success.is_(False), 1), else_=0)).label("failed_executions"),  # pylint: disable=not-callable
-                func.min(PromptMetric.response_time).label("min_response_time"),  # pylint: disable=not-callable
-                func.max(PromptMetric.response_time).label("max_response_time"),  # pylint: disable=not-callable
-                func.avg(PromptMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
-                func.max(PromptMetric.timestamp).label("last_execution_time"),  # pylint: disable=not-callable
+        result = (
+            await db.execute(
+                select(
+                    func.count(PromptMetric.id).label("total_executions"),  # pylint: disable=not-callable
+                    func.sum(case((PromptMetric.is_success.is_(True), 1), else_=0)).label("successful_executions"),  # pylint: disable=not-callable
+                    func.sum(case((PromptMetric.is_success.is_(False), 1), else_=0)).label("failed_executions"),  # pylint: disable=not-callable
+                    func.min(PromptMetric.response_time).label("min_response_time"),  # pylint: disable=not-callable
+                    func.max(PromptMetric.response_time).label("max_response_time"),  # pylint: disable=not-callable
+                    func.avg(PromptMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
+                    func.max(PromptMetric.timestamp).label("last_execution_time"),  # pylint: disable=not-callable
+                )
             )
         ).one()
 
@@ -2155,7 +2164,7 @@ class PromptService:
 
         return metrics
 
-    async def reset_metrics(self, db: Session) -> None:
+    async def reset_metrics(self, db: AsyncSession) -> None:
         """
         Reset all prompt metrics by deleting all records from the prompt metrics table.
 
@@ -2173,8 +2182,8 @@ class PromptService:
             >>> asyncio.run(service.reset_metrics(db))
         """
 
-        db.execute(delete(PromptMetric))
-        db.commit()
+        await db.execute(delete(PromptMetric))
+        await db.commit()
 
         # Invalidate metrics cache
         # First-Party

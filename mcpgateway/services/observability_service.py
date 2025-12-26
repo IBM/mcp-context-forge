@@ -36,8 +36,9 @@ from typing import Any, Dict, List, Optional, Tuple
 import uuid
 
 # Third-Party
-from sqlalchemy import desc
-from sqlalchemy.orm import joinedload, Session
+from sqlalchemy import desc, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 # First-Party
 from mcpgateway.db import ObservabilityEvent, ObservabilityMetric, ObservabilitySpan, ObservabilityTrace
@@ -178,9 +179,9 @@ class ObservabilityService:
     # Trace Management
     # ==============================
 
-    def start_trace(
+    async def start_trace(
         self,
-        db: Session,
+        db: AsyncSession,
         name: str,
         trace_id: Optional[str] = None,
         parent_span_id: Optional[str] = None,
@@ -211,7 +212,7 @@ class ObservabilityService:
             Trace ID (UUID string or W3C format)
 
         Examples:
-            >>> trace_id = service.start_trace(  # doctest: +SKIP
+            >>> trace_id = await service.start_trace(  # doctest: +SKIP
             ...     db,
             ...     "POST /tools/invoke",
             ...     http_method="POST",
@@ -243,13 +244,13 @@ class ObservabilityService:
             created_at=utc_now(),
         )
         db.add(trace)
-        db.commit()
+        await db.commit()
         logger.debug(f"Started trace {trace_id}: {name}")
         return trace_id
 
-    def end_trace(
+    async def end_trace(
         self,
-        db: Session,
+        db: AsyncSession,
         trace_id: str,
         status: str = "ok",
         status_message: Optional[str] = None,
@@ -267,14 +268,15 @@ class ObservabilityService:
             attributes: Additional attributes to merge
 
         Examples:
-            >>> service.end_trace(  # doctest: +SKIP
+            >>> await service.end_trace(  # doctest: +SKIP
             ...     db,
             ...     trace_id,
             ...     status="ok",
             ...     http_status_code=200
             ... )
         """
-        trace = db.query(ObservabilityTrace).filter_by(trace_id=trace_id).first()
+        result = await db.execute(select(ObservabilityTrace).filter_by(trace_id=trace_id))
+        trace = result.scalars().first()
         if not trace:
             logger.warning(f"Trace {trace_id} not found")
             return
@@ -291,10 +293,10 @@ class ObservabilityService:
         if attributes:
             trace.attributes = {**(trace.attributes or {}), **attributes}
 
-        db.commit()
+        await db.commit()
         logger.debug(f"Ended trace {trace_id}: {status} ({duration_ms:.2f}ms)")
 
-    def get_trace(self, db: Session, trace_id: str, include_spans: bool = False) -> Optional[ObservabilityTrace]:
+    async def get_trace(self, db: AsyncSession, trace_id: str, include_spans: bool = False) -> Optional[ObservabilityTrace]:
         """Get a trace by ID.
 
         Args:
@@ -306,22 +308,23 @@ class ObservabilityService:
             Trace object or None if not found
 
         Examples:
-            >>> trace = service.get_trace(db, trace_id, include_spans=True)  # doctest: +SKIP
+            >>> trace = await service.get_trace(db, trace_id, include_spans=True)  # doctest: +SKIP
             >>> if trace:  # doctest: +SKIP
             ...     print(f"Trace: {trace.name}, Spans: {len(trace.spans)}")  # doctest: +SKIP
         """
-        query = db.query(ObservabilityTrace).filter_by(trace_id=trace_id)
+        stmt = select(ObservabilityTrace).filter_by(trace_id=trace_id)
         if include_spans:
-            query = query.options(joinedload(ObservabilityTrace.spans))
-        return query.first()
+            stmt = stmt.options(selectinload(ObservabilityTrace.spans))
+        result = await db.execute(stmt)
+        return result.scalars().first()
 
     # ==============================
     # Span Management
     # ==============================
 
-    def start_span(
+    async def start_span(
         self,
-        db: Session,
+        db: AsyncSession,
         trace_id: str,
         name: str,
         parent_span_id: Optional[str] = None,
@@ -348,7 +351,7 @@ class ObservabilityService:
             Span ID (UUID string)
 
         Examples:
-            >>> span_id = service.start_span(  # doctest: +SKIP
+            >>> span_id = await service.start_span(  # doctest: +SKIP
             ...     db,
             ...     trace_id,
             ...     "tool_invocation",
@@ -372,13 +375,13 @@ class ObservabilityService:
             created_at=utc_now(),
         )
         db.add(span)
-        db.commit()
+        await db.commit()
         logger.debug(f"Started span {span_id}: {name} (trace={trace_id})")
         return span_id
 
-    def end_span(
+    async def end_span(
         self,
-        db: Session,
+        db: AsyncSession,
         span_id: str,
         status: str = "ok",
         status_message: Optional[str] = None,
@@ -394,9 +397,10 @@ class ObservabilityService:
             attributes: Additional attributes to merge
 
         Examples:
-            >>> service.end_span(db, span_id, status="ok")  # doctest: +SKIP
+            >>> await service.end_span(db, span_id, status="ok")  # doctest: +SKIP
         """
-        span = db.query(ObservabilitySpan).filter_by(span_id=span_id).first()
+        result = await db.execute(select(ObservabilitySpan).filter_by(span_id=span_id))
+        span = result.scalars().first()
         if not span:
             logger.warning(f"Span {span_id} not found")
             return
@@ -411,13 +415,13 @@ class ObservabilityService:
         if attributes:
             span.attributes = {**(span.attributes or {}), **attributes}
 
-        db.commit()
+        await db.commit()
         logger.debug(f"Ended span {span_id}: {status} ({duration_ms:.2f}ms)")
 
     @contextmanager
     def trace_span(
         self,
-        db: Session,
+        db: AsyncSession,
         trace_id: str,
         name: str,
         parent_span_id: Optional[str] = None,
@@ -426,6 +430,9 @@ class ObservabilityService:
         attributes: Optional[Dict[str, Any]] = None,
     ):
         """Context manager for automatic span lifecycle management.
+
+        Note: This is a sync context manager that wraps async operations.
+        For async code, use the async methods directly.
 
         Args:
             db: Database session
@@ -444,26 +451,37 @@ class ObservabilityService:
 
         Examples:
             >>> with service.trace_span(db, trace_id, "database_query") as span_id:  # doctest: +SKIP
-            ...     results = db.query(Tool).all()  # doctest: +SKIP
+            ...     results = await db.execute(select(Tool))  # doctest: +SKIP
         """
-        span_id = self.start_span(db, trace_id, name, parent_span_id, resource_type=resource_type, resource_name=resource_name, attributes=attributes)
+        # Note: This context manager is kept for backwards compatibility
+        # but the underlying operations are now async
+        # Standard
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        span_id = loop.run_until_complete(self.start_span(db, trace_id, name, parent_span_id, resource_type=resource_type, resource_name=resource_name, attributes=attributes))
         try:
             yield span_id
-            self.end_span(db, span_id, status="ok")
+            loop.run_until_complete(self.end_span(db, span_id, status="ok"))
         except Exception as e:
-            self.end_span(db, span_id, status="error", status_message=str(e))
-            self.add_event(db, span_id, "exception", severity="error", message=str(e), exception_type=type(e).__name__, exception_message=str(e), exception_stacktrace=traceback.format_exc())
+            loop.run_until_complete(self.end_span(db, span_id, status="error", status_message=str(e)))
+            loop.run_until_complete(
+                self.add_event(db, span_id, "exception", severity="error", message=str(e), exception_type=type(e).__name__, exception_message=str(e), exception_stacktrace=traceback.format_exc())
+            )
             raise
 
     @contextmanager
     def trace_tool_invocation(
         self,
-        db: Session,
+        db: AsyncSession,
         tool_name: str,
         arguments: Dict[str, Any],
         integration_type: Optional[str] = None,
     ):
         """Context manager for tracing MCP tool invocations.
+
+        Note: This is a sync context manager that wraps async operations.
+        For async code, use the async methods directly.
 
         This automatically creates a span for tool execution, capturing timing,
         arguments, results, and errors.
@@ -496,20 +514,29 @@ class ObservabilityService:
         # Sanitize arguments (remove sensitive data)
         safe_args = {k: ("***REDACTED***" if any(sensitive in k.lower() for sensitive in ["password", "token", "key", "secret"]) else v) for k, v in arguments.items()}
 
+        # Note: This context manager is kept for backwards compatibility
+        # but the underlying operations are now async
+        # Standard
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+
         # Start tool invocation span
-        span_id = self.start_span(
-            db=db,
-            trace_id=trace_id,
-            name=f"tool.invoke.{tool_name}",
-            kind="client",
-            resource_type="tool",
-            resource_name=tool_name,
-            attributes={
-                "tool.name": tool_name,
-                "tool.integration_type": integration_type,
-                "tool.argument_count": len(arguments),
-                "tool.arguments": safe_args,
-            },
+        span_id = loop.run_until_complete(
+            self.start_span(
+                db=db,
+                trace_id=trace_id,
+                name=f"tool.invoke.{tool_name}",
+                kind="client",
+                resource_type="tool",
+                resource_name=tool_name,
+                attributes={
+                    "tool.name": tool_name,
+                    "tool.integration_type": integration_type,
+                    "tool.argument_count": len(arguments),
+                    "tool.arguments": safe_args,
+                },
+            )
         )
 
         result_dict = {}
@@ -517,27 +544,31 @@ class ObservabilityService:
             yield (span_id, result_dict)
 
             # End span with results
-            self.end_span(
-                db=db,
-                span_id=span_id,
-                status="ok",
-                attributes={
-                    "tool.result": result_dict,
-                },
+            loop.run_until_complete(
+                self.end_span(
+                    db=db,
+                    span_id=span_id,
+                    status="ok",
+                    attributes={
+                        "tool.result": result_dict,
+                    },
+                )
             )
         except Exception as e:
             # Log error in span
-            self.end_span(db=db, span_id=span_id, status="error", status_message=str(e))
+            loop.run_until_complete(self.end_span(db=db, span_id=span_id, status="error", status_message=str(e)))
 
-            self.add_event(
-                db=db,
-                span_id=span_id,
-                name="tool.error",
-                severity="error",
-                message=str(e),
-                exception_type=type(e).__name__,
-                exception_message=str(e),
-                exception_stacktrace=traceback.format_exc(),
+            loop.run_until_complete(
+                self.add_event(
+                    db=db,
+                    span_id=span_id,
+                    name="tool.error",
+                    severity="error",
+                    message=str(e),
+                    exception_type=type(e).__name__,
+                    exception_message=str(e),
+                    exception_stacktrace=traceback.format_exc(),
+                )
             )
             raise
 
@@ -545,9 +576,9 @@ class ObservabilityService:
     # Event Management
     # ==============================
 
-    def add_event(
+    async def add_event(
         self,
-        db: Session,
+        db: AsyncSession,
         span_id: str,
         name: str,
         severity: Optional[str] = None,
@@ -574,7 +605,7 @@ class ObservabilityService:
             Event ID
 
         Examples:
-            >>> event_id = service.add_event(  # doctest: +SKIP
+            >>> event_id = await service.add_event(  # doctest: +SKIP
             ...     db,  # doctest: +SKIP
             ...     span_id,  # doctest: +SKIP
             ...     "database_connection_error",  # doctest: +SKIP
@@ -595,8 +626,8 @@ class ObservabilityService:
             created_at=utc_now(),
         )
         db.add(event)
-        db.commit()
-        db.refresh(event)
+        await db.commit()
+        await db.refresh(event)
         logger.debug(f"Added event to span {span_id}: {name}")
         return event.id
 
@@ -604,9 +635,9 @@ class ObservabilityService:
     # Token Usage Tracking
     # ==============================
 
-    def record_token_usage(
+    async def record_token_usage(
         self,
-        db: Session,
+        db: AsyncSession,
         span_id: Optional[str] = None,
         trace_id: Optional[str] = None,
         model: Optional[str] = None,
@@ -630,7 +661,7 @@ class ObservabilityService:
             provider: LLM provider (openai, anthropic, etc.)
 
         Examples:
-            >>> service.record_token_usage(  # doctest: +SKIP
+            >>> await service.record_token_usage(  # doctest: +SKIP
             ...     db, span_id="abc123",
             ...     model="gpt-4",
             ...     input_tokens=100,
@@ -655,7 +686,8 @@ class ObservabilityService:
 
         # Store in span attributes if span_id provided
         if span_id:
-            span = db.query(ObservabilitySpan).filter_by(span_id=span_id).first()
+            result = await db.execute(select(ObservabilitySpan).filter_by(span_id=span_id))
+            span = result.scalars().first()
             if span:
                 attrs = span.attributes or {}
                 attrs.update(
@@ -669,11 +701,11 @@ class ObservabilityService:
                     }
                 )
                 span.attributes = attrs
-                db.commit()
+                await db.commit()
 
         # Also record as metrics for aggregation
         if input_tokens > 0:
-            self.record_metric(
+            await self.record_metric(
                 db=db,
                 name="llm.tokens.input",
                 value=float(input_tokens),
@@ -684,7 +716,7 @@ class ObservabilityService:
             )
 
         if output_tokens > 0:
-            self.record_metric(
+            await self.record_metric(
                 db=db,
                 name="llm.tokens.output",
                 value=float(output_tokens),
@@ -695,7 +727,7 @@ class ObservabilityService:
             )
 
         if estimated_cost_usd:
-            self.record_metric(
+            await self.record_metric(
                 db=db,
                 name="llm.cost",
                 value=estimated_cost_usd,
@@ -760,13 +792,16 @@ class ObservabilityService:
     @contextmanager
     def trace_a2a_request(
         self,
-        db: Session,
+        db: AsyncSession,
         agent_id: str,
         agent_name: Optional[str] = None,
         operation: Optional[str] = None,
         request_data: Optional[Dict[str, Any]] = None,
     ):
         """Context manager for tracing Agent-to-Agent requests.
+
+        Note: This is a sync context manager that wraps async operations.
+        For async code, use the async methods directly.
 
         This automatically creates a span for A2A communication, capturing timing,
         request/response data, and errors.
@@ -802,20 +837,29 @@ class ObservabilityService:
         if request_data:
             safe_data = {k: ("***REDACTED***" if any(sensitive in k.lower() for sensitive in ["password", "token", "key", "secret", "auth"]) else v) for k, v in request_data.items()}
 
+        # Note: This context manager is kept for backwards compatibility
+        # but the underlying operations are now async
+        # Standard
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+
         # Start A2A span
-        span_id = self.start_span(
-            db=db,
-            trace_id=trace_id,
-            name=f"a2a.call.{agent_name or agent_id}",
-            kind="client",
-            resource_type="agent",
-            resource_name=agent_name or agent_id,
-            attributes={
-                "a2a.agent_id": agent_id,
-                "a2a.agent_name": agent_name,
-                "a2a.operation": operation,
-                "a2a.request_data": safe_data,
-            },
+        span_id = loop.run_until_complete(
+            self.start_span(
+                db=db,
+                trace_id=trace_id,
+                name=f"a2a.call.{agent_name or agent_id}",
+                kind="client",
+                resource_type="agent",
+                resource_name=agent_name or agent_id,
+                attributes={
+                    "a2a.agent_id": agent_id,
+                    "a2a.agent_name": agent_name,
+                    "a2a.operation": operation,
+                    "a2a.request_data": safe_data,
+                },
+            )
         )
 
         result_dict = {}
@@ -823,27 +867,31 @@ class ObservabilityService:
             yield (span_id, result_dict)
 
             # End span with results
-            self.end_span(
-                db=db,
-                span_id=span_id,
-                status="ok",
-                attributes={
-                    "a2a.result": result_dict,
-                },
+            loop.run_until_complete(
+                self.end_span(
+                    db=db,
+                    span_id=span_id,
+                    status="ok",
+                    attributes={
+                        "a2a.result": result_dict,
+                    },
+                )
             )
         except Exception as e:
             # Log error in span
-            self.end_span(db=db, span_id=span_id, status="error", status_message=str(e))
+            loop.run_until_complete(self.end_span(db=db, span_id=span_id, status="error", status_message=str(e)))
 
-            self.add_event(
-                db=db,
-                span_id=span_id,
-                name="a2a.error",
-                severity="error",
-                message=str(e),
-                exception_type=type(e).__name__,
-                exception_message=str(e),
-                exception_stacktrace=traceback.format_exc(),
+            loop.run_until_complete(
+                self.add_event(
+                    db=db,
+                    span_id=span_id,
+                    name="a2a.error",
+                    severity="error",
+                    message=str(e),
+                    exception_type=type(e).__name__,
+                    exception_message=str(e),
+                    exception_stacktrace=traceback.format_exc(),
+                )
             )
             raise
 
@@ -851,9 +899,9 @@ class ObservabilityService:
     # Transport Metrics
     # ==============================
 
-    def record_transport_activity(
+    async def record_transport_activity(
         self,
-        db: Session,
+        db: AsyncSession,
         transport_type: str,
         operation: str,
         message_count: int = 1,
@@ -875,7 +923,7 @@ class ObservabilityService:
             error: Error message if operation failed
 
         Examples:
-            >>> service.record_transport_activity(  # doctest: +SKIP
+            >>> await service.record_transport_activity(  # doctest: +SKIP
             ...     db, transport_type="sse",
             ...     operation="send",
             ...     message_count=1,
@@ -886,7 +934,7 @@ class ObservabilityService:
 
         # Record message count
         if message_count > 0:
-            self.record_metric(
+            await self.record_metric(
                 db=db,
                 name=f"transport.{transport_type}.messages",
                 value=float(message_count),
@@ -902,7 +950,7 @@ class ObservabilityService:
 
         # Record bytes sent
         if bytes_sent:
-            self.record_metric(
+            await self.record_metric(
                 db=db,
                 name=f"transport.{transport_type}.bytes_sent",
                 value=float(bytes_sent),
@@ -918,7 +966,7 @@ class ObservabilityService:
 
         # Record bytes received
         if bytes_received:
-            self.record_metric(
+            await self.record_metric(
                 db=db,
                 name=f"transport.{transport_type}.bytes_received",
                 value=float(bytes_received),
@@ -934,7 +982,7 @@ class ObservabilityService:
 
         # Record errors
         if error:
-            self.record_metric(
+            await self.record_metric(
                 db=db,
                 name=f"transport.{transport_type}.errors",
                 value=1.0,
@@ -955,9 +1003,9 @@ class ObservabilityService:
     # Metric Management
     # ==============================
 
-    def record_metric(
+    async def record_metric(
         self,
-        db: Session,
+        db: AsyncSession,
         name: str,
         value: float,
         metric_type: str = "gauge",
@@ -984,7 +1032,7 @@ class ObservabilityService:
             Metric ID
 
         Examples:
-            >>> metric_id = service.record_metric(  # doctest: +SKIP
+            >>> metric_id = await service.record_metric(  # doctest: +SKIP
             ...     db,  # doctest: +SKIP
             ...     "http.request.duration",  # doctest: +SKIP
             ...     123.45,  # doctest: +SKIP
@@ -1006,8 +1054,8 @@ class ObservabilityService:
             created_at=utc_now(),
         )
         db.add(metric)
-        db.commit()
-        db.refresh(metric)
+        await db.commit()
+        await db.refresh(metric)
         logger.debug(f"Recorded metric: {name} = {value} {unit or ''}")
         return metric.id
 
@@ -1016,9 +1064,9 @@ class ObservabilityService:
     # ==============================
 
     # pylint: disable=too-many-positional-arguments,too-many-arguments,too-many-locals
-    def query_traces(
+    async def query_traces(
         self,
-        db: Session,
+        db: AsyncSession,
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
         min_duration_ms: Optional[float] = None,
@@ -1076,7 +1124,7 @@ class ObservabilityService:
 
         Examples:
             >>> # Find slow errors from multiple endpoints
-            >>> traces = service.query_traces(  # doctest: +SKIP
+            >>> traces = await service.query_traces(  # doctest: +SKIP
             ...     db,
             ...     status="error",
             ...     min_duration_ms=100.0,
@@ -1085,7 +1133,7 @@ class ObservabilityService:
             ...     limit=50
             ... )
             >>> # Exclude health checks and find slow requests
-            >>> traces = service.query_traces(  # doctest: +SKIP
+            >>> traces = await service.query_traces(  # doctest: +SKIP
             ...     db,
             ...     min_duration_ms=1000.0,
             ...     name_contains="api",
@@ -1107,56 +1155,56 @@ class ObservabilityService:
         if order_by not in valid_orders:
             raise ValueError(f"order_by must be one of: {', '.join(valid_orders)}")
 
-        query = db.query(ObservabilityTrace)
+        stmt = select(ObservabilityTrace)
 
         # Time range filters
         if start_time:
-            query = query.filter(ObservabilityTrace.start_time >= start_time)
+            stmt = stmt.filter(ObservabilityTrace.start_time >= start_time)
         if end_time:
-            query = query.filter(ObservabilityTrace.start_time <= end_time)
+            stmt = stmt.filter(ObservabilityTrace.start_time <= end_time)
 
         # Duration filters
         if min_duration_ms is not None:
-            query = query.filter(ObservabilityTrace.duration_ms >= min_duration_ms)
+            stmt = stmt.filter(ObservabilityTrace.duration_ms >= min_duration_ms)
         if max_duration_ms is not None:
-            query = query.filter(ObservabilityTrace.duration_ms <= max_duration_ms)
+            stmt = stmt.filter(ObservabilityTrace.duration_ms <= max_duration_ms)
 
         # Status filters (with OR and NOT support)
         if status:
-            query = query.filter(ObservabilityTrace.status == status)
+            stmt = stmt.filter(ObservabilityTrace.status == status)
         if status_in:
-            query = query.filter(ObservabilityTrace.status.in_(status_in))
+            stmt = stmt.filter(ObservabilityTrace.status.in_(status_in))
         if status_not_in:
-            query = query.filter(~ObservabilityTrace.status.in_(status_not_in))
+            stmt = stmt.filter(~ObservabilityTrace.status.in_(status_not_in))
 
         # HTTP status code filters (with OR support)
         if http_status_code:
-            query = query.filter(ObservabilityTrace.http_status_code == http_status_code)
+            stmt = stmt.filter(ObservabilityTrace.http_status_code == http_status_code)
         if http_status_code_in:
-            query = query.filter(ObservabilityTrace.http_status_code.in_(http_status_code_in))
+            stmt = stmt.filter(ObservabilityTrace.http_status_code.in_(http_status_code_in))
 
         # HTTP method filters (with OR support)
         if http_method:
-            query = query.filter(ObservabilityTrace.http_method == http_method)
+            stmt = stmt.filter(ObservabilityTrace.http_method == http_method)
         if http_method_in:
-            query = query.filter(ObservabilityTrace.http_method.in_(http_method_in))
+            stmt = stmt.filter(ObservabilityTrace.http_method.in_(http_method_in))
 
         # User email filters (with OR support)
         if user_email:
-            query = query.filter(ObservabilityTrace.user_email == user_email)
+            stmt = stmt.filter(ObservabilityTrace.user_email == user_email)
         if user_email_in:
-            query = query.filter(ObservabilityTrace.user_email.in_(user_email_in))
+            stmt = stmt.filter(ObservabilityTrace.user_email.in_(user_email_in))
 
         # Name substring filter
         if name_contains:
-            query = query.filter(ObservabilityTrace.name.ilike(f"%{name_contains}%"))
+            stmt = stmt.filter(ObservabilityTrace.name.ilike(f"%{name_contains}%"))
 
         # Attribute-based filtering with AND logic (all filters must match)
         if attribute_filters:
             for key, value in attribute_filters.items():
                 # Use JSON path access for filtering
                 # Supports both SQLite (via json_extract) and PostgreSQL (via ->>)
-                query = query.filter(ObservabilityTrace.attributes[key].astext == str(value))
+                stmt = stmt.filter(ObservabilityTrace.attributes[key].astext == str(value))
 
         # Attribute-based filtering with OR logic (any filter must match)
         if attribute_filters_or:
@@ -1164,7 +1212,7 @@ class ObservabilityService:
             for key, value in attribute_filters_or.items():
                 or_conditions.append(ObservabilityTrace.attributes[key].astext == str(value))
             if or_conditions:
-                query = query.filter(or_(*or_conditions))
+                stmt = stmt.filter(or_(*or_conditions))
 
         # Free-text search across all attribute values
         if attribute_search:
@@ -1172,27 +1220,28 @@ class ObservabilityService:
             # Works with both SQLite and PostgreSQL
             # Escape special characters to prevent SQL injection
             safe_search = attribute_search.replace("%", "\\%").replace("_", "\\_")
-            query = query.filter(cast(ObservabilityTrace.attributes, String).ilike(f"%{safe_search}%"))
+            stmt = stmt.filter(cast(ObservabilityTrace.attributes, String).ilike(f"%{safe_search}%"))
 
         # Apply ordering
         if order_by == "start_time_desc":
-            query = query.order_by(desc(ObservabilityTrace.start_time))
+            stmt = stmt.order_by(desc(ObservabilityTrace.start_time))
         elif order_by == "start_time_asc":
-            query = query.order_by(ObservabilityTrace.start_time)
+            stmt = stmt.order_by(ObservabilityTrace.start_time)
         elif order_by == "duration_desc":
-            query = query.order_by(desc(ObservabilityTrace.duration_ms))
+            stmt = stmt.order_by(desc(ObservabilityTrace.duration_ms))
         elif order_by == "duration_asc":
-            query = query.order_by(ObservabilityTrace.duration_ms)
+            stmt = stmt.order_by(ObservabilityTrace.duration_ms)
 
         # Apply pagination
-        query = query.limit(limit).offset(offset)
+        stmt = stmt.limit(limit).offset(offset)
 
-        return query.all()
+        result = await db.execute(stmt)
+        return list(result.scalars().all())
 
     # pylint: disable=too-many-positional-arguments,too-many-arguments,too-many-locals
-    def query_spans(
+    async def query_spans(
         self,
-        db: Session,
+        db: AsyncSession,
         trace_id: Optional[str] = None,
         trace_id_in: Optional[List[str]] = None,
         resource_type: Optional[str] = None,
@@ -1252,7 +1301,7 @@ class ObservabilityService:
 
         Examples:
             >>> # Find slow database queries
-            >>> spans = service.query_spans(  # doctest: +SKIP
+            >>> spans = await service.query_spans(  # doctest: +SKIP
             ...     db,
             ...     resource_type="database",
             ...     min_duration_ms=100.0,
@@ -1260,7 +1309,7 @@ class ObservabilityService:
             ...     limit=50
             ... )
             >>> # Find tool invocation errors
-            >>> spans = service.query_spans(  # doctest: +SKIP
+            >>> spans = await service.query_spans(  # doctest: +SKIP
             ...     db,
             ...     resource_type="tool",
             ...     status="error",
@@ -1281,82 +1330,83 @@ class ObservabilityService:
         if order_by not in valid_orders:
             raise ValueError(f"order_by must be one of: {', '.join(valid_orders)}")
 
-        query = db.query(ObservabilitySpan)
+        stmt = select(ObservabilitySpan)
 
         # Trace ID filters (with OR support)
         if trace_id:
-            query = query.filter(ObservabilitySpan.trace_id == trace_id)
+            stmt = stmt.filter(ObservabilitySpan.trace_id == trace_id)
         if trace_id_in:
-            query = query.filter(ObservabilitySpan.trace_id.in_(trace_id_in))
+            stmt = stmt.filter(ObservabilitySpan.trace_id.in_(trace_id_in))
 
         # Resource type filters (with OR support)
         if resource_type:
-            query = query.filter(ObservabilitySpan.resource_type == resource_type)
+            stmt = stmt.filter(ObservabilitySpan.resource_type == resource_type)
         if resource_type_in:
-            query = query.filter(ObservabilitySpan.resource_type.in_(resource_type_in))
+            stmt = stmt.filter(ObservabilitySpan.resource_type.in_(resource_type_in))
 
         # Resource name filters (with OR support)
         if resource_name:
-            query = query.filter(ObservabilitySpan.resource_name == resource_name)
+            stmt = stmt.filter(ObservabilitySpan.resource_name == resource_name)
         if resource_name_in:
-            query = query.filter(ObservabilitySpan.resource_name.in_(resource_name_in))
+            stmt = stmt.filter(ObservabilitySpan.resource_name.in_(resource_name_in))
 
         # Name substring filter
         if name_contains:
-            query = query.filter(ObservabilitySpan.name.ilike(f"%{name_contains}%"))
+            stmt = stmt.filter(ObservabilitySpan.name.ilike(f"%{name_contains}%"))
 
         # Kind filters (with OR support)
         if kind:
-            query = query.filter(ObservabilitySpan.kind == kind)
+            stmt = stmt.filter(ObservabilitySpan.kind == kind)
         if kind_in:
-            query = query.filter(ObservabilitySpan.kind.in_(kind_in))
+            stmt = stmt.filter(ObservabilitySpan.kind.in_(kind_in))
 
         # Status filters (with OR and NOT support)
         if status:
-            query = query.filter(ObservabilitySpan.status == status)
+            stmt = stmt.filter(ObservabilitySpan.status == status)
         if status_in:
-            query = query.filter(ObservabilitySpan.status.in_(status_in))
+            stmt = stmt.filter(ObservabilitySpan.status.in_(status_in))
         if status_not_in:
-            query = query.filter(~ObservabilitySpan.status.in_(status_not_in))
+            stmt = stmt.filter(~ObservabilitySpan.status.in_(status_not_in))
 
         # Time range filters
         if start_time:
-            query = query.filter(ObservabilitySpan.start_time >= start_time)
+            stmt = stmt.filter(ObservabilitySpan.start_time >= start_time)
         if end_time:
-            query = query.filter(ObservabilitySpan.start_time <= end_time)
+            stmt = stmt.filter(ObservabilitySpan.start_time <= end_time)
 
         # Duration filters
         if min_duration_ms is not None:
-            query = query.filter(ObservabilitySpan.duration_ms >= min_duration_ms)
+            stmt = stmt.filter(ObservabilitySpan.duration_ms >= min_duration_ms)
         if max_duration_ms is not None:
-            query = query.filter(ObservabilitySpan.duration_ms <= max_duration_ms)
+            stmt = stmt.filter(ObservabilitySpan.duration_ms <= max_duration_ms)
 
         # Attribute-based filtering with AND logic
         if attribute_filters:
             for key, value in attribute_filters.items():
-                query = query.filter(ObservabilitySpan.attributes[key].astext == str(value))
+                stmt = stmt.filter(ObservabilitySpan.attributes[key].astext == str(value))
 
         # Free-text search across all attribute values
         if attribute_search:
             safe_search = attribute_search.replace("%", "\\%").replace("_", "\\_")
-            query = query.filter(cast(ObservabilitySpan.attributes, String).ilike(f"%{safe_search}%"))
+            stmt = stmt.filter(cast(ObservabilitySpan.attributes, String).ilike(f"%{safe_search}%"))
 
         # Apply ordering
         if order_by == "start_time_desc":
-            query = query.order_by(desc(ObservabilitySpan.start_time))
+            stmt = stmt.order_by(desc(ObservabilitySpan.start_time))
         elif order_by == "start_time_asc":
-            query = query.order_by(ObservabilitySpan.start_time)
+            stmt = stmt.order_by(ObservabilitySpan.start_time)
         elif order_by == "duration_desc":
-            query = query.order_by(desc(ObservabilitySpan.duration_ms))
+            stmt = stmt.order_by(desc(ObservabilitySpan.duration_ms))
         elif order_by == "duration_asc":
-            query = query.order_by(ObservabilitySpan.duration_ms)
+            stmt = stmt.order_by(ObservabilitySpan.duration_ms)
 
         # Apply pagination
-        query = query.limit(limit).offset(offset)
+        stmt = stmt.limit(limit).offset(offset)
 
-        return query.all()
+        result = await db.execute(stmt)
+        return list(result.scalars().all())
 
-    def get_trace_with_spans(self, db: Session, trace_id: str) -> Optional[ObservabilityTrace]:
+    async def get_trace_with_spans(self, db: AsyncSession, trace_id: str) -> Optional[ObservabilityTrace]:
         """Get a complete trace with all spans and events.
 
         Args:
@@ -1367,14 +1417,16 @@ class ObservabilityService:
             Trace with spans and events loaded
 
         Examples:
-            >>> trace = service.get_trace_with_spans(db, trace_id)  # doctest: +SKIP
+            >>> trace = await service.get_trace_with_spans(db, trace_id)  # doctest: +SKIP
             >>> if trace:  # doctest: +SKIP
             ...     for span in trace.spans:  # doctest: +SKIP
             ...         print(f"Span: {span.name}, Events: {len(span.events)}")  # doctest: +SKIP
         """
-        return db.query(ObservabilityTrace).filter_by(trace_id=trace_id).options(joinedload(ObservabilityTrace.spans).joinedload(ObservabilitySpan.events)).first()
+        stmt = select(ObservabilityTrace).filter_by(trace_id=trace_id).options(selectinload(ObservabilityTrace.spans).selectinload(ObservabilitySpan.events))
+        result = await db.execute(stmt)
+        return result.scalars().first()
 
-    def delete_old_traces(self, db: Session, before_time: datetime) -> int:
+    async def delete_old_traces(self, db: AsyncSession, before_time: datetime) -> int:
         """Delete traces older than a given time.
 
         Args:
@@ -1387,10 +1439,15 @@ class ObservabilityService:
         Examples:
             >>> from datetime import timedelta  # doctest: +SKIP
             >>> cutoff = utc_now() - timedelta(days=30)  # doctest: +SKIP
-            >>> deleted = service.delete_old_traces(db, cutoff)  # doctest: +SKIP
+            >>> deleted = await service.delete_old_traces(db, cutoff)  # doctest: +SKIP
             >>> print(f"Deleted {deleted} old traces")  # doctest: +SKIP
         """
-        deleted = db.query(ObservabilityTrace).filter(ObservabilityTrace.start_time < before_time).delete()
-        db.commit()
+        # Third-Party
+        from sqlalchemy import delete as sql_delete  # pylint: disable=import-outside-toplevel
+
+        stmt = sql_delete(ObservabilityTrace).where(ObservabilityTrace.start_time < before_time)
+        result = await db.execute(stmt)
+        await db.commit()
+        deleted = result.rowcount
         logger.info(f"Deleted {deleted} traces older than {before_time}")
         return deleted

@@ -22,7 +22,8 @@ import secrets
 from typing import List, Optional
 
 # Third-Party
-from sqlalchemy.orm import Session
+from sqlalchemy import func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # First-Party
 from mcpgateway.config import settings
@@ -41,7 +42,7 @@ class TeamInvitationService:
     and cleanup for team membership management.
 
     Attributes:
-        db (Session): SQLAlchemy database session
+        db (AsyncSession): SQLAlchemy async database session
 
     Examples:
         >>> from mcpgateway.services.team_invitation_service import TeamInvitationService
@@ -52,11 +53,11 @@ class TeamInvitationService:
         True
     """
 
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         """Initialize the team invitation service.
 
         Args:
-            db: SQLAlchemy database session
+            db: SQLAlchemy async database session
 
         Examples:
             Basic initialization:
@@ -139,7 +140,8 @@ class TeamInvitationService:
                 raise ValueError(f"Invalid role. Must be one of: {', '.join(valid_roles)}")
 
             # Check if team exists
-            team = self.db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
+            result = await self.db.execute(select(EmailTeam).where(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)))
+            team = result.scalar_one_or_none()
 
             if not team:
                 logger.warning(f"Team {team_id} not found")
@@ -151,13 +153,15 @@ class TeamInvitationService:
                 raise ValueError("Cannot send invitations to personal teams")
 
             # Check if inviter exists and is a team member
-            inviter = self.db.query(EmailUser).filter(EmailUser.email == invited_by).first()
+            result = await self.db.execute(select(EmailUser).where(EmailUser.email == invited_by))
+            inviter = result.scalar_one_or_none()
             if not inviter:
                 logger.warning(f"Inviter {invited_by} not found")
                 return None
 
             # Check if inviter is a member of the team with appropriate permissions
-            inviter_membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == invited_by, EmailTeamMember.is_active.is_(True)).first()
+            result = await self.db.execute(select(EmailTeamMember).where(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == invited_by, EmailTeamMember.is_active.is_(True)))
+            inviter_membership = result.scalar_one_or_none()
 
             if not inviter_membership:
                 logger.warning(f"Inviter {invited_by} is not a member of team {team_id}")
@@ -169,14 +173,16 @@ class TeamInvitationService:
                 raise ValueError("Only team owners can send invitations")
 
             # Check if user is already a team member
-            existing_member = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == email, EmailTeamMember.is_active.is_(True)).first()
+            result = await self.db.execute(select(EmailTeamMember).where(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == email, EmailTeamMember.is_active.is_(True)))
+            existing_member = result.scalar_one_or_none()
 
             if existing_member:
                 logger.warning(f"User {email} is already a member of team {team_id}")
                 raise ValueError(f"User {email} is already a member of this team")
 
             # Check for existing active invitations
-            existing_invitation = self.db.query(EmailTeamInvitation).filter(EmailTeamInvitation.team_id == team_id, EmailTeamInvitation.email == email, EmailTeamInvitation.is_active.is_(True)).first()
+            result = await self.db.execute(select(EmailTeamInvitation).where(EmailTeamInvitation.team_id == team_id, EmailTeamInvitation.email == email, EmailTeamInvitation.is_active.is_(True)))
+            existing_invitation = result.scalar_one_or_none()
 
             if existing_invitation and not existing_invitation.is_expired():
                 logger.warning(f"Active invitation already exists for {email} to team {team_id}")
@@ -184,9 +190,11 @@ class TeamInvitationService:
 
             # Check team member limit
             if team.max_members:
-                current_member_count = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)).count()
+                result = await self.db.execute(select(func.count()).select_from(EmailTeamMember).where(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)))
+                current_member_count = result.scalar()
 
-                pending_invitation_count = self.db.query(EmailTeamInvitation).filter(EmailTeamInvitation.team_id == team_id, EmailTeamInvitation.is_active.is_(True)).count()
+                result = await self.db.execute(select(func.count()).select_from(EmailTeamInvitation).where(EmailTeamInvitation.team_id == team_id, EmailTeamInvitation.is_active.is_(True)))
+                pending_invitation_count = result.scalar()
 
                 if (current_member_count + pending_invitation_count) >= team.max_members:
                     logger.warning(f"Team {team_id} has reached maximum member limit")
@@ -207,13 +215,13 @@ class TeamInvitationService:
             )
 
             self.db.add(invitation)
-            self.db.commit()
+            await self.db.commit()
 
             logger.info(f"Created invitation for {email} to team {team_id} by {invited_by}")
             return invitation
 
         except Exception as e:
-            self.db.rollback()
+            await self.db.rollback()
             logger.error(f"Failed to create invitation for {email} to team {team_id}: {e}")
             raise
 
@@ -230,7 +238,8 @@ class TeamInvitationService:
             Used for invitation acceptance and validation.
         """
         try:
-            invitation = self.db.query(EmailTeamInvitation).filter(EmailTeamInvitation.token == token).first()
+            result = await self.db.execute(select(EmailTeamInvitation).where(EmailTeamInvitation.token == token))
+            invitation = result.scalar_one_or_none()
 
             return invitation
 
@@ -274,33 +283,37 @@ class TeamInvitationService:
 
             # Check if user exists (if email provided, they must exist)
             if accepting_user_email:
-                user = self.db.query(EmailUser).filter(EmailUser.email == accepting_user_email).first()
+                result = await self.db.execute(select(EmailUser).where(EmailUser.email == accepting_user_email))
+                user = result.scalar_one_or_none()
                 if not user:
                     logger.warning(f"User {accepting_user_email} not found")
                     raise ValueError("User account not found")
 
             # Check if team still exists
-            team = self.db.query(EmailTeam).filter(EmailTeam.id == invitation.team_id, EmailTeam.is_active.is_(True)).first()
+            result = await self.db.execute(select(EmailTeam).where(EmailTeam.id == invitation.team_id, EmailTeam.is_active.is_(True)))
+            team = result.scalar_one_or_none()
 
             if not team:
                 logger.warning(f"Team {invitation.team_id} not found or inactive")
                 raise ValueError("Team not found or inactive")
 
             # Check if user is already a member
-            existing_member = (
-                self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == invitation.team_id, EmailTeamMember.user_email == invitation.email, EmailTeamMember.is_active.is_(True)).first()
+            result = await self.db.execute(
+                select(EmailTeamMember).where(EmailTeamMember.team_id == invitation.team_id, EmailTeamMember.user_email == invitation.email, EmailTeamMember.is_active.is_(True))
             )
+            existing_member = result.scalar_one_or_none()
 
             if existing_member:
                 logger.warning(f"User {invitation.email} is already a member of team {invitation.team_id}")
                 # Deactivate the invitation since they're already a member
                 invitation.is_active = False
-                self.db.commit()
+                await self.db.commit()
                 raise ValueError("User is already a member of this team")
 
             # Check team member limit
             if team.max_members:
-                current_member_count = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == invitation.team_id, EmailTeamMember.is_active.is_(True)).count()
+                result = await self.db.execute(select(func.count()).select_from(EmailTeamMember).where(EmailTeamMember.team_id == invitation.team_id, EmailTeamMember.is_active.is_(True)))
+                current_member_count = result.scalar()
                 if current_member_count >= team.max_members:
                     logger.warning(f"Team {invitation.team_id} has reached maximum member limit")
                     raise ValueError(f"Team has reached maximum member limit of {team.max_members}")
@@ -313,13 +326,13 @@ class TeamInvitationService:
             # Deactivate the invitation
             invitation.is_active = False
 
-            self.db.commit()
+            await self.db.commit()
 
             logger.info(f"User {invitation.email} accepted invitation to team {invitation.team_id}")
             return True
 
         except Exception as e:
-            self.db.rollback()
+            await self.db.rollback()
             logger.error(f"Failed to accept invitation: {e}")
             raise
 
@@ -350,13 +363,13 @@ class TeamInvitationService:
 
             # Deactivate the invitation
             invitation.is_active = False
-            self.db.commit()
+            await self.db.commit()
 
             logger.info(f"User {invitation.email} declined invitation to team {invitation.team_id}")
             return True
 
         except Exception as e:
-            self.db.rollback()
+            await self.db.rollback()
             logger.error(f"Failed to decline invitation: {e}")
             return False
 
@@ -375,16 +388,16 @@ class TeamInvitationService:
         """
         try:
             # Get the invitation
-            invitation = self.db.query(EmailTeamInvitation).filter(EmailTeamInvitation.id == invitation_id, EmailTeamInvitation.is_active.is_(True)).first()
+            result = await self.db.execute(select(EmailTeamInvitation).where(EmailTeamInvitation.id == invitation_id, EmailTeamInvitation.is_active.is_(True)))
+            invitation = result.scalar_one_or_none()
 
             if not invitation:
                 logger.warning(f"Active invitation {invitation_id} not found")
                 return False
 
             # Check if revoker has permission
-            revoker_membership = (
-                self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == invitation.team_id, EmailTeamMember.user_email == revoked_by, EmailTeamMember.is_active.is_(True)).first()
-            )
+            result = await self.db.execute(select(EmailTeamMember).where(EmailTeamMember.team_id == invitation.team_id, EmailTeamMember.user_email == revoked_by, EmailTeamMember.is_active.is_(True)))
+            revoker_membership = result.scalar_one_or_none()
 
             if not revoker_membership or revoker_membership.role != "owner":
                 logger.warning(f"User {revoked_by} does not have permission to revoke invitation {invitation_id}")
@@ -392,13 +405,13 @@ class TeamInvitationService:
 
             # Revoke the invitation
             invitation.is_active = False
-            self.db.commit()
+            await self.db.commit()
 
             logger.info(f"Invitation {invitation_id} revoked by {revoked_by}")
             return True
 
         except Exception as e:
-            self.db.rollback()
+            await self.db.rollback()
             logger.error(f"Failed to revoke invitation {invitation_id}: {e}")
             return False
 
@@ -416,13 +429,14 @@ class TeamInvitationService:
             Team management interface showing pending invitations.
         """
         try:
-            query = self.db.query(EmailTeamInvitation).filter(EmailTeamInvitation.team_id == team_id)
+            filters = [EmailTeamInvitation.team_id == team_id]
 
             if active_only:
-                query = query.filter(EmailTeamInvitation.is_active.is_(True))
+                filters.append(EmailTeamInvitation.is_active.is_(True))
 
-            invitations = query.order_by(EmailTeamInvitation.invited_at.desc()).all()
-            return invitations
+            stmt = select(EmailTeamInvitation).where(*filters).order_by(EmailTeamInvitation.invited_at.desc())
+            result = await self.db.execute(stmt)
+            return list(result.scalars().all())
 
         except Exception as e:
             logger.error(f"Failed to get invitations for team {team_id}: {e}")
@@ -442,13 +456,14 @@ class TeamInvitationService:
             User dashboard showing pending team invitations.
         """
         try:
-            query = self.db.query(EmailTeamInvitation).filter(EmailTeamInvitation.email == email)
+            filters = [EmailTeamInvitation.email == email]
 
             if active_only:
-                query = query.filter(EmailTeamInvitation.is_active.is_(True))
+                filters.append(EmailTeamInvitation.is_active.is_(True))
 
-            invitations = query.order_by(EmailTeamInvitation.invited_at.desc()).all()
-            return invitations
+            stmt = select(EmailTeamInvitation).where(*filters).order_by(EmailTeamInvitation.invited_at.desc())
+            result = await self.db.execute(stmt)
+            return list(result.scalars().all())
 
         except Exception as e:
             logger.error(f"Failed to get invitations for user {email}: {e}")
@@ -465,9 +480,11 @@ class TeamInvitationService:
         """
         try:
             now = utc_now()
-            expired_count = self.db.query(EmailTeamInvitation).filter(EmailTeamInvitation.expires_at < now, EmailTeamInvitation.is_active.is_(True)).update({"is_active": False})
+            stmt = update(EmailTeamInvitation).where(EmailTeamInvitation.expires_at < now, EmailTeamInvitation.is_active.is_(True)).values(is_active=False)
+            result = await self.db.execute(stmt)
+            expired_count = result.rowcount
 
-            self.db.commit()
+            await self.db.commit()
 
             if expired_count > 0:
                 logger.info(f"Cleaned up {expired_count} expired invitations")
@@ -475,6 +492,6 @@ class TeamInvitationService:
             return expired_count
 
         except Exception as e:
-            self.db.rollback()
+            await self.db.rollback()
             logger.error(f"Failed to cleanup expired invitations: {e}")
             return 0

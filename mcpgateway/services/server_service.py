@@ -20,7 +20,8 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 import httpx
 from sqlalchemy import and_, case, delete, desc, Float, func, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 # First-Party
 from mcpgateway.config import settings
@@ -147,7 +148,7 @@ class ServerService:
         logger.info("Server service shutdown complete")
 
     # get_top_server
-    async def get_top_servers(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
+    async def get_top_servers(self, db: AsyncSession, limit: Optional[int] = 5) -> List[TopPerformer]:
         """Retrieve the top-performing servers based on execution count.
 
         Queries the database to get servers with their metrics, ordered by the number of executions
@@ -155,7 +156,7 @@ class ServerService:
         performance metrics. Results are cached for performance.
 
         Args:
-            db (Session): Database session for querying server metrics.
+            db (AsyncSession): Database session for querying server metrics.
             limit (Optional[int]): Maximum number of servers to return. Defaults to 5.
 
         Returns:
@@ -180,7 +181,7 @@ class ServerService:
                 return cached
 
         query = (
-            db.query(
+            select(
                 DbServer.id,
                 DbServer.name,
                 func.count(ServerMetric.id).label("execution_count"),  # pylint: disable=not-callable
@@ -197,11 +198,11 @@ class ServerService:
             .outerjoin(ServerMetric)
             .group_by(DbServer.id, DbServer.name)
             .order_by(desc("execution_count"))
+            .limit(effective_limit)
         )
 
-        query = query.limit(effective_limit)
-
-        results = query.all()
+        result = await db.execute(query)
+        results = result.all()
         top_performers = build_top_performers(results)
 
         # Cache the result (if enabled)
@@ -359,11 +360,11 @@ class ServerService:
             "gateways": gateways or [],
         }
 
-    def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
+    async def _get_team_name(self, db: AsyncSession, team_id: Optional[str]) -> Optional[str]:
         """Retrieve the team name given a team ID.
 
         Args:
-            db (Session): Database session for querying teams.
+            db (AsyncSession): Database session for querying teams.
             team_id (Optional[str]): The ID of the team.
 
         Returns:
@@ -371,12 +372,13 @@ class ServerService:
         """
         if not team_id:
             return None
-        team = db.query(DbEmailTeam).filter(DbEmailTeam.id == team_id, DbEmailTeam.is_active.is_(True)).first()
+        result = await db.execute(select(DbEmailTeam).where(DbEmailTeam.id == team_id, DbEmailTeam.is_active.is_(True)))
+        team = result.scalar_one_or_none()
         return team.name if team else None
 
     async def register_server(
         self,
-        db: Session,
+        db: AsyncSession,
         server_in: ServerCreate,
         created_by: Optional[str] = None,
         created_from_ip: Optional[str] = None,
@@ -463,12 +465,14 @@ class ServerService:
             # Check for existing server with the same name
             if visibility.lower() == "public":
                 # Check for existing public server with the same name
-                existing_server = db.execute(select(DbServer).where(DbServer.name == server_in.name, DbServer.visibility == "public")).scalar_one_or_none()
+                result = await db.execute(select(DbServer).where(DbServer.name == server_in.name, DbServer.visibility == "public"))
+                existing_server = result.scalar_one_or_none()
                 if existing_server:
                     raise ServerNameConflictError(server_in.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
             elif visibility.lower() == "team" and team_id:
                 # Check for existing team server with the same name
-                existing_server = db.execute(select(DbServer).where(DbServer.name == server_in.name, DbServer.visibility == "team", DbServer.team_id == team_id)).scalar_one_or_none()
+                result = await db.execute(select(DbServer).where(DbServer.name == server_in.name, DbServer.visibility == "team", DbServer.team_id == team_id))
+                existing_server = result.scalar_one_or_none()
                 if existing_server:
                     raise ServerNameConflictError(server_in.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
             # Set custom UUID if provided
@@ -483,7 +487,8 @@ class ServerService:
                 tool_ids = [tool_id.strip() for tool_id in server_in.associated_tools if tool_id.strip()]
                 if len(tool_ids) > 1:
                     # Use bulk query for multiple items
-                    tools = db.execute(select(DbTool).where(DbTool.id.in_(tool_ids))).scalars().all()
+                    result = await db.execute(select(DbTool).where(DbTool.id.in_(tool_ids)))
+                    tools = result.scalars().all()
                     found_tool_ids = {tool.id for tool in tools}
                     missing_tool_ids = set(tool_ids) - found_tool_ids
                     if missing_tool_ids:
@@ -491,7 +496,7 @@ class ServerService:
                     db_server.tools.extend(tools)
                 elif tool_ids:
                     # Use single query for single item (maintains test compatibility)
-                    tool_obj = db.get(DbTool, tool_ids[0])
+                    tool_obj = await db.get(DbTool, tool_ids[0])
                     if not tool_obj:
                         raise ServerError(f"Tool with id {tool_ids[0]} does not exist.")
                     db_server.tools.append(tool_obj)
@@ -501,7 +506,8 @@ class ServerService:
                 resource_ids = [resource_id.strip() for resource_id in server_in.associated_resources if resource_id.strip()]
                 if len(resource_ids) > 1:
                     # Use bulk query for multiple items
-                    resources = db.execute(select(DbResource).where(DbResource.id.in_(resource_ids))).scalars().all()
+                    result = await db.execute(select(DbResource).where(DbResource.id.in_(resource_ids)))
+                    resources = result.scalars().all()
                     found_resource_ids = {resource.id for resource in resources}
                     missing_resource_ids = set(resource_ids) - found_resource_ids
                     if missing_resource_ids:
@@ -509,7 +515,7 @@ class ServerService:
                     db_server.resources.extend(resources)
                 elif resource_ids:
                     # Use single query for single item (maintains test compatibility)
-                    resource_obj = db.get(DbResource, resource_ids[0])
+                    resource_obj = await db.get(DbResource, resource_ids[0])
                     if not resource_obj:
                         raise ServerError(f"Resource with id {resource_ids[0]} does not exist.")
                     db_server.resources.append(resource_obj)
@@ -519,7 +525,8 @@ class ServerService:
                 prompt_ids = [prompt_id.strip() for prompt_id in server_in.associated_prompts if prompt_id.strip()]
                 if len(prompt_ids) > 1:
                     # Use bulk query for multiple items
-                    prompts = db.execute(select(DbPrompt).where(DbPrompt.id.in_(prompt_ids))).scalars().all()
+                    result = await db.execute(select(DbPrompt).where(DbPrompt.id.in_(prompt_ids)))
+                    prompts = result.scalars().all()
                     found_prompt_ids = {prompt.id for prompt in prompts}
                     missing_prompt_ids = set(prompt_ids) - found_prompt_ids
                     if missing_prompt_ids:
@@ -527,7 +534,7 @@ class ServerService:
                     db_server.prompts.extend(prompts)
                 elif prompt_ids:
                     # Use single query for single item (maintains test compatibility)
-                    prompt_obj = db.get(DbPrompt, prompt_ids[0])
+                    prompt_obj = await db.get(DbPrompt, prompt_ids[0])
                     if not prompt_obj:
                         raise ServerError(f"Prompt with id {prompt_ids[0]} does not exist.")
                     db_server.prompts.append(prompt_obj)
@@ -537,7 +544,8 @@ class ServerService:
                 agent_ids = [agent_id.strip() for agent_id in server_in.associated_a2a_agents if agent_id.strip()]
                 if len(agent_ids) > 1:
                     # Use bulk query for multiple items
-                    agents = db.execute(select(DbA2AAgent).where(DbA2AAgent.id.in_(agent_ids))).scalars().all()
+                    result = await db.execute(select(DbA2AAgent).where(DbA2AAgent.id.in_(agent_ids)))
+                    agents = result.scalars().all()
                     found_agent_ids = {agent.id for agent in agents}
                     missing_agent_ids = set(agent_ids) - found_agent_ids
                     if missing_agent_ids:
@@ -550,17 +558,15 @@ class ServerService:
                         logger.info(f"A2A agent {agent.name} associated with server {db_server.name}")
                 elif agent_ids:
                     # Use single query for single item (maintains test compatibility)
-                    agent_obj = db.get(DbA2AAgent, agent_ids[0])
+                    agent_obj = await db.get(DbA2AAgent, agent_ids[0])
                     if not agent_obj:
                         raise ServerError(f"A2A Agent with id {agent_ids[0]} does not exist.")
                     db_server.a2a_agents.append(agent_obj)
                     logger.info(f"A2A agent {agent_obj.name} associated with server {db_server.name}")
 
             # Commit the new record and refresh.
-            db.commit()
-            db.refresh(db_server)
-            # Force load the relationship attributes.
-            _ = db_server.tools, db_server.resources, db_server.prompts, db_server.a2a_agents
+            await db.commit()
+            await db.refresh(db_server, attribute_names=["tools", "resources", "prompts", "a2a_agents"])
 
             # Assemble response data with associated item IDs.
             server_data = {
@@ -614,10 +620,10 @@ class ServerService:
                 user_email=created_by,
             )
 
-            db_server.team = self._get_team_name(db, db_server.team_id)
+            db_server.team = await self._get_team_name(db, db_server.team_id)
             return self._convert_server_to_read(db_server)
         except IntegrityError as ie:
-            db.rollback()
+            await db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
 
             # Structured logging: Log database integrity error
@@ -634,7 +640,7 @@ class ServerService:
             )
             raise ie
         except ServerNameConflictError as se:
-            db.rollback()
+            await db.rollback()
 
             # Structured logging: Log name conflict error
             self._structured_logger.log(
@@ -649,7 +655,7 @@ class ServerService:
             )
             raise se
         except Exception as ex:
-            db.rollback()
+            await db.rollback()
 
             # Structured logging: Log generic server creation failure
             self._structured_logger.log(
@@ -665,7 +671,7 @@ class ServerService:
             )
             raise ServerError(f"Failed to register server: {str(ex)}")
 
-    async def list_servers(self, db: Session, include_inactive: bool = False, tags: Optional[List[str]] = None) -> List[ServerRead]:
+    async def list_servers(self, db: AsyncSession, include_inactive: bool = False, tags: Optional[List[str]] = None) -> List[ServerRead]:
         """List all registered servers.
 
         Args:
@@ -689,7 +695,12 @@ class ServerService:
             >>> isinstance(result, list)
             True
         """
-        query = select(DbServer)
+        query = select(DbServer).options(
+            selectinload(DbServer.tools),
+            selectinload(DbServer.resources),
+            selectinload(DbServer.prompts),
+            selectinload(DbServer.a2a_agents),
+        )
         if not include_inactive:
             query = query.where(DbServer.enabled)
 
@@ -697,25 +708,27 @@ class ServerService:
         if tags:
             query = query.where(json_contains_expr(db, DbServer.tags, tags, match_any=True))
 
-        servers = db.execute(query).scalars().all()
+        result = await db.execute(query)
+        servers = result.scalars().all()
 
         # Fetch all team names
         team_ids = [s.team_id for s in servers if s.team_id]
         team_map = {}
         if team_ids:
-            teams = db.execute(select(DbEmailTeam.id, DbEmailTeam.name).where(DbEmailTeam.id.in_(team_ids), DbEmailTeam.is_active.is_(True))).all()
+            teams_result = await db.execute(select(DbEmailTeam.id, DbEmailTeam.name).where(DbEmailTeam.id.in_(team_ids), DbEmailTeam.is_active.is_(True)))
+            teams = teams_result.all()
             team_map = {team.id: team.name for team in teams}
 
         # Skip metrics to avoid N+1 queries in list operations
-        result = []
+        output = []
         for s in servers:
             s.team = team_map.get(s.team_id) if s.team_id else None
-            result.append(self._convert_server_to_read(s, include_metrics=False))
+            output.append(self._convert_server_to_read(s, include_metrics=False))
 
-        return result
+        return output
 
     async def list_servers_for_user(
-        self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
+        self, db: AsyncSession, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
     ) -> List[ServerRead]:
         """
         List servers user has access to with team filtering.
@@ -735,16 +748,21 @@ class ServerService:
         # Build query following existing patterns from list_servers()
         team_service = TeamManagementService(db)
         user_teams = await team_service.get_user_teams(user_email)
-        team_ids = [team.id for team in user_teams]
+        team_ids_list = [team.id for team in user_teams]
 
-        query = select(DbServer)
+        query = select(DbServer).options(
+            selectinload(DbServer.tools),
+            selectinload(DbServer.resources),
+            selectinload(DbServer.prompts),
+            selectinload(DbServer.a2a_agents),
+        )
 
         # Apply active/inactive filter
         if not include_inactive:
             query = query.where(DbServer.enabled)
 
         if team_id:
-            if team_id not in team_ids:
+            if team_id not in team_ids_list:
                 return []  # No access to team
 
             access_conditions = []
@@ -763,8 +781,8 @@ class ServerService:
             access_conditions.append(DbServer.owner_email == user_email)
 
             # 2. Team resources where user is member
-            if team_ids:
-                access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
+            if team_ids_list:
+                access_conditions.append(and_(DbServer.team_id.in_(team_ids_list), DbServer.visibility.in_(["team", "public"])))
 
             # 3. Public resources (if visibility allows)
             access_conditions.append(DbServer.visibility == "public")
@@ -778,23 +796,25 @@ class ServerService:
         # Apply pagination following existing patterns
         query = query.offset(skip).limit(limit)
 
-        servers = db.execute(query).scalars().all()
+        result = await db.execute(query)
+        servers = result.scalars().all()
 
         # Fetch all team names
         server_team_ids = [s.team_id for s in servers if s.team_id]
         team_map = {}
         if server_team_ids:
-            teams = db.execute(select(DbEmailTeam.id, DbEmailTeam.name).where(DbEmailTeam.id.in_(server_team_ids), DbEmailTeam.is_active.is_(True))).all()
+            teams_result = await db.execute(select(DbEmailTeam.id, DbEmailTeam.name).where(DbEmailTeam.id.in_(server_team_ids), DbEmailTeam.is_active.is_(True)))
+            teams = teams_result.all()
             team_map = {team.id: team.name for team in teams}
 
         # Skip metrics to avoid N+1 queries in list operations
-        result = []
+        output = []
         for s in servers:
             s.team = team_map.get(s.team_id) if s.team_id else None
-            result.append(self._convert_server_to_read(s, include_metrics=False))
-        return result
+            output.append(self._convert_server_to_read(s, include_metrics=False))
+        return output
 
-    async def get_server(self, db: Session, server_id: str) -> ServerRead:
+    async def get_server(self, db: AsyncSession, server_id: str) -> ServerRead:
         """Retrieve server details by ID.
 
         Args:
@@ -819,7 +839,17 @@ class ServerService:
             >>> asyncio.run(service.get_server(db, 'server_id'))
             'server_read'
         """
-        server = db.get(DbServer, server_id)
+        result = await db.execute(
+            select(DbServer)
+            .options(
+                selectinload(DbServer.tools),
+                selectinload(DbServer.resources),
+                selectinload(DbServer.prompts),
+                selectinload(DbServer.a2a_agents),
+            )
+            .where(DbServer.id == server_id)
+        )
+        server = result.scalar_one_or_none()
         if not server:
             raise ServerNotFoundError(f"Server not found: {server_id}")
         server_data = {
@@ -835,7 +865,7 @@ class ServerService:
             "associated_prompts": [prompt.id for prompt in server.prompts],
         }
         logger.debug(f"Server Data: {server_data}")
-        server.team = self._get_team_name(db, server.team_id) if server else None
+        server.team = await self._get_team_name(db, server.team_id) if server else None
         server_read = self._convert_server_to_read(server)
 
         self._structured_logger.log(
@@ -872,7 +902,7 @@ class ServerService:
 
     async def update_server(
         self,
-        db: Session,
+        db: AsyncSession,
         server_id: str,
         server_update: ServerUpdate,
         user_email: str,
@@ -930,7 +960,17 @@ class ServerService:
             'server_read'
         """
         try:
-            server = db.get(DbServer, server_id)
+            result = await db.execute(
+                select(DbServer)
+                .options(
+                    selectinload(DbServer.tools),
+                    selectinload(DbServer.resources),
+                    selectinload(DbServer.prompts),
+                    selectinload(DbServer.a2a_agents),
+                )
+                .where(DbServer.id == server_id)
+            )
+            server = result.scalar_one_or_none()
             if not server:
                 raise ServerNotFoundError(f"Server not found: {server_id}")
 
@@ -946,22 +986,24 @@ class ServerService:
             # Check for name conflict if name is being changed and visibility is public
             if server_update.name and server_update.name != server.name:
                 visibility = server_update.visibility or server.visibility
-                team_id = server_update.team_id or server.team_id
+                upd_team_id = server_update.team_id or server.team_id
                 if visibility.lower() == "public":
                     # Check for existing public server with the same name
-                    existing_server = db.execute(select(DbServer).where(DbServer.name == server_update.name, DbServer.visibility == "public")).scalar_one_or_none()
+                    existing_result = await db.execute(select(DbServer).where(DbServer.name == server_update.name, DbServer.visibility == "public"))
+                    existing_server = existing_result.scalar_one_or_none()
                     if existing_server:
                         raise ServerNameConflictError(server_update.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
-                elif visibility.lower() == "team" and team_id:
+                elif visibility.lower() == "team" and upd_team_id:
                     # Check for existing team server with the same name
-                    existing_server = db.execute(select(DbServer).where(DbServer.name == server_update.name, DbServer.visibility == "team", DbServer.team_id == team_id)).scalar_one_or_none()
+                    existing_result = await db.execute(select(DbServer).where(DbServer.name == server_update.name, DbServer.visibility == "team", DbServer.team_id == upd_team_id))
+                    existing_server = existing_result.scalar_one_or_none()
                     if existing_server:
                         raise ServerNameConflictError(server_update.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
 
             # Update simple fields
             if server_update.id is not None and server_update.id != server.id:
                 # Check if the new UUID is already in use
-                existing = db.get(DbServer, server_update.id)
+                existing = await db.get(DbServer, server_update.id)
                 if existing:
                     raise ServerError(f"Server with ID {server_update.id} already exists")
                 server.id = server_update.id
@@ -982,20 +1024,25 @@ class ServerService:
 
                     # Verify team exists and user is a member
                     if server.team_id:
-                        team_id = server.team_id
+                        vis_team_id = server.team_id
                     else:
-                        team_id = server_update.team_id
+                        vis_team_id = server_update.team_id
 
-                    team = db.query(DbEmailTeam).filter(DbEmailTeam.id == team_id).first()
+                    team_result = await db.execute(select(DbEmailTeam).where(DbEmailTeam.id == vis_team_id))
+                    team = team_result.scalar_one_or_none()
                     if not team:
-                        raise ValueError(f"Team {team_id} not found")
+                        raise ValueError(f"Team {vis_team_id} not found")
 
                     # Verify user is a member of the team
-                    membership = (
-                        db.query(DbEmailTeamMember)
-                        .filter(DbEmailTeamMember.team_id == team_id, DbEmailTeamMember.user_email == user_email, DbEmailTeamMember.is_active, DbEmailTeamMember.role == "owner")
-                        .first()
+                    membership_result = await db.execute(
+                        select(DbEmailTeamMember).where(
+                            DbEmailTeamMember.team_id == vis_team_id,
+                            DbEmailTeamMember.user_email == user_email,
+                            DbEmailTeamMember.is_active,
+                            DbEmailTeamMember.role == "owner",
+                        )
                     )
+                    membership = membership_result.scalar_one_or_none()
                     if not membership:
                         raise ValueError("User membership in team not sufficient for this update.")
 
@@ -1018,7 +1065,8 @@ class ServerService:
                 if server_update.associated_tools:
                     tool_ids = [tool_id for tool_id in server_update.associated_tools if tool_id]
                     if tool_ids:
-                        tools = db.execute(select(DbTool).where(DbTool.id.in_(tool_ids))).scalars().all()
+                        tools_result = await db.execute(select(DbTool).where(DbTool.id.in_(tool_ids)))
+                        tools = tools_result.scalars().all()
                         server.tools = list(tools)
 
             # Update associated resources if provided using bulk query
@@ -1027,7 +1075,8 @@ class ServerService:
                 if server_update.associated_resources:
                     resource_ids = [resource_id for resource_id in server_update.associated_resources if resource_id]
                     if resource_ids:
-                        resources = db.execute(select(DbResource).where(DbResource.id.in_(resource_ids))).scalars().all()
+                        resources_result = await db.execute(select(DbResource).where(DbResource.id.in_(resource_ids)))
+                        resources = resources_result.scalars().all()
                         server.resources = list(resources)
 
             # Update associated prompts if provided using bulk query
@@ -1036,7 +1085,8 @@ class ServerService:
                 if server_update.associated_prompts:
                     prompt_ids = [prompt_id for prompt_id in server_update.associated_prompts if prompt_id]
                     if prompt_ids:
-                        prompts = db.execute(select(DbPrompt).where(DbPrompt.id.in_(prompt_ids))).scalars().all()
+                        prompts_result = await db.execute(select(DbPrompt).where(DbPrompt.id.in_(prompt_ids)))
+                        prompts = prompts_result.scalars().all()
                         server.prompts = list(prompts)
 
             # Update tags if provided
@@ -1058,10 +1108,8 @@ class ServerService:
             else:
                 server.version = 1
 
-            db.commit()
-            db.refresh(server)
-            # Force loading relationships
-            _ = server.tools, server.resources, server.prompts
+            await db.commit()
+            await db.refresh(server, attribute_names=["tools", "resources", "prompts", "a2a_agents"])
 
             await self._notify_server_updated(server)
             logger.info(f"Updated server: {server.name}")
@@ -1110,7 +1158,7 @@ class ServerService:
                 "name": server.name,
                 "description": server.description,
                 "icon": server.icon,
-                "team": self._get_team_name(db, server.team_id),
+                "team": await self._get_team_name(db, server.team_id),
                 "created_at": server.created_at,
                 "updated_at": server.updated_at,
                 "enabled": server.enabled,
@@ -1121,7 +1169,7 @@ class ServerService:
             logger.debug(f"Server Data: {server_data}")
             return self._convert_server_to_read(server)
         except IntegrityError as ie:
-            db.rollback()
+            await db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
 
             # Structured logging: Log database integrity error
@@ -1138,7 +1186,7 @@ class ServerService:
             )
             raise ie
         except ServerNameConflictError as snce:
-            db.rollback()
+            await db.rollback()
             logger.error(f"Server name conflict: {snce}")
 
             # Structured logging: Log name conflict error
@@ -1153,7 +1201,7 @@ class ServerService:
             )
             raise snce
         except Exception as e:
-            db.rollback()
+            await db.rollback()
 
             # Structured logging: Log generic server update failure
             self._structured_logger.log(
@@ -1169,7 +1217,7 @@ class ServerService:
             )
             raise ServerError(f"Failed to update server: {str(e)}")
 
-    async def toggle_server_status(self, db: Session, server_id: str, activate: bool, user_email: Optional[str] = None) -> ServerRead:
+    async def toggle_server_status(self, db: AsyncSession, server_id: str, activate: bool, user_email: Optional[str] = None) -> ServerRead:
         """Toggle the activation status of a server.
 
         Args:
@@ -1207,7 +1255,17 @@ class ServerService:
             'server_read'
         """
         try:
-            server = db.get(DbServer, server_id)
+            result = await db.execute(
+                select(DbServer)
+                .options(
+                    selectinload(DbServer.tools),
+                    selectinload(DbServer.resources),
+                    selectinload(DbServer.prompts),
+                    selectinload(DbServer.a2a_agents),
+                )
+                .where(DbServer.id == server_id)
+            )
+            server = result.scalar_one_or_none()
             if not server:
                 raise ServerNotFoundError(f"Server not found: {server_id}")
 
@@ -1222,8 +1280,8 @@ class ServerService:
             if server.enabled != activate:
                 server.enabled = activate
                 server.updated_at = datetime.now(timezone.utc)
-                db.commit()
-                db.refresh(server)
+                await db.commit()
+                await db.refresh(server)
                 if activate:
                     await self._notify_server_activated(server)
                 else:
@@ -1260,7 +1318,7 @@ class ServerService:
                 "name": server.name,
                 "description": server.description,
                 "icon": server.icon,
-                "team": self._get_team_name(db, server.team_id),
+                "team": await self._get_team_name(db, server.team_id),
                 "created_at": server.created_at,
                 "updated_at": server.updated_at,
                 "enabled": server.enabled,
@@ -1282,7 +1340,7 @@ class ServerService:
             )
             raise e
         except Exception as e:
-            db.rollback()
+            await db.rollback()
 
             # Structured logging: Log generic server status toggle failure
             self._structured_logger.log(
@@ -1297,7 +1355,7 @@ class ServerService:
             )
             raise ServerError(f"Failed to toggle server status: {str(e)}")
 
-    async def delete_server(self, db: Session, server_id: str, user_email: Optional[str] = None) -> None:
+    async def delete_server(self, db: AsyncSession, server_id: str, user_email: Optional[str] = None) -> None:
         """Permanently delete a server.
 
         Args:
@@ -1326,7 +1384,7 @@ class ServerService:
             >>> asyncio.run(service.delete_server(db, 'server_id', 'user@example.com'))
         """
         try:
-            server = db.get(DbServer, server_id)
+            server = await db.get(DbServer, server_id)
             if not server:
                 raise ServerNotFoundError(f"Server not found: {server_id}")
 
@@ -1340,8 +1398,8 @@ class ServerService:
                     raise PermissionError("Only the owner can delete this server")
 
             server_info = {"id": server.id, "name": server.name}
-            db.delete(server)
-            db.commit()
+            await db.delete(server)
+            await db.commit()
 
             await self._notify_server_deleted(server_info)
             logger.info(f"Deleted server: {server_info['name']}")
@@ -1369,7 +1427,7 @@ class ServerService:
                 user_email=user_email,
             )
         except PermissionError as pe:
-            db.rollback()
+            await db.rollback()
 
             # Structured logging: Log permission error
             self._structured_logger.log(
@@ -1382,7 +1440,7 @@ class ServerService:
             )
             raise pe
         except Exception as e:
-            db.rollback()
+            await db.rollback()
 
             # Structured logging: Log generic server deletion failure
             self._structured_logger.log(
@@ -1525,7 +1583,7 @@ class ServerService:
         await self._publish_event(event)
 
     # --- Metrics ---
-    async def aggregate_metrics(self, db: Session) -> ServerMetrics:
+    async def aggregate_metrics(self, db: AsyncSession) -> ServerMetrics:
         """
         Aggregate metrics for all server invocations across all servers.
 
@@ -1568,7 +1626,7 @@ class ServerService:
                 return ServerMetrics(**cached)
 
         # Execute a single query to get all metrics at once
-        result = db.execute(
+        query_result = await db.execute(
             select(
                 func.count().label("total_executions"),  # pylint: disable=not-callable
                 func.sum(case((ServerMetric.is_success.is_(True), 1), else_=0)).label("successful_executions"),  # pylint: disable=not-callable
@@ -1578,7 +1636,8 @@ class ServerService:
                 func.avg(ServerMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
                 func.max(ServerMetric.timestamp).label("last_execution_time"),  # pylint: disable=not-callable
             ).select_from(ServerMetric)
-        ).one()
+        )
+        result = query_result.one()
 
         total_executions = result.total_executions or 0
         successful_executions = result.successful_executions or 0
@@ -1601,7 +1660,7 @@ class ServerService:
 
         return metrics
 
-    async def reset_metrics(self, db: Session) -> None:
+    async def reset_metrics(self, db: AsyncSession) -> None:
         """
         Reset all server metrics by deleting all records from the server metrics table.
 
@@ -1618,8 +1677,8 @@ class ServerService:
             >>> import asyncio
             >>> asyncio.run(service.reset_metrics(db))
         """
-        db.execute(delete(ServerMetric))
-        db.commit()
+        await db.execute(delete(ServerMetric))
+        await db.commit()
 
         # Invalidate metrics cache
         # First-Party

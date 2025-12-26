@@ -113,7 +113,7 @@ class A2AStatsCache:
         self._hit_count = 0
         self._miss_count = 0
 
-    def get_counts(self, db) -> Dict[str, int]:
+    async def get_counts(self, db) -> Dict[str, int]:
         """
         Get A2A agent counts from cache or database.
 
@@ -124,20 +124,21 @@ class A2AStatsCache:
         a single query with conditional aggregation.
 
         Args:
-            db: SQLAlchemy database session
+            db: SQLAlchemy async database session
 
         Returns:
             Dict with 'total' and 'active' agent counts
 
         Examples:
-            >>> from unittest.mock import Mock
+            >>> from unittest.mock import Mock, AsyncMock
+            >>> import asyncio
             >>> cache = A2AStatsCache(ttl_seconds=30)
-            >>> mock_db = Mock()
+            >>> mock_db = AsyncMock()
             >>> mock_result = Mock()
             >>> mock_result.total = 10
             >>> mock_result.active = 7
             >>> mock_db.execute.return_value.one.return_value = mock_result
-            >>> cache.get_counts(mock_db)
+            >>> asyncio.run(cache.get_counts(mock_db))
             {'total': 10, 'active': 7}
         """
         now = time.time()
@@ -163,10 +164,12 @@ class A2AStatsCache:
             from mcpgateway.db import A2AAgent  # pylint: disable=import-outside-toplevel
 
             # Single query with conditional aggregation (replaces 2 separate queries)
-            result = db.execute(
-                select(
-                    func.count(A2AAgent.id).label("total"),  # pylint: disable=not-callable
-                    func.sum(case((A2AAgent.enabled.is_(True), 1), else_=0)).label("active"),
+            result = (
+                await db.execute(
+                    select(
+                        func.count(A2AAgent.id).label("total"),  # pylint: disable=not-callable
+                        func.sum(case((A2AAgent.enabled.is_(True), 1), else_=0)).label("active"),
+                    )
                 )
             ).one()
 

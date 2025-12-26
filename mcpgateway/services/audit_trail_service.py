@@ -17,6 +17,7 @@ from typing import Any, Dict, Optional
 
 # Third-Party
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -93,7 +94,7 @@ class AuditTrailService:
         metadata: Optional[Dict[str, Any]] = None,
         db: Optional[Session] = None,
     ) -> Optional[AuditTrail]:
-        """Log an audit trail entry.
+        """Log an audit trail entry (sync version for background tasks).
 
         Args:
             action: Action performed (CREATE, READ, UPDATE, DELETE, etc.)
@@ -125,8 +126,10 @@ class AuditTrailService:
         correlation_id = get_or_generate_correlation_id()
 
         # Use provided session or create new one
+        # Always use our own sync session for audit logging to avoid async/sync issues
         close_db = False
-        if db is None:
+        if db is None or isinstance(db, AsyncSession):
+            # Create a fresh sync session for audit logging
             db = SessionLocal()
             close_db = True
 
@@ -190,6 +193,117 @@ class AuditTrailService:
             if close_db:
                 db.close()
 
+    async def log_action_async(  # pylint: disable=too-many-positional-arguments
+        self,
+        db: AsyncSession,
+        action: str,
+        resource_type: str,
+        resource_id: str,
+        user_id: str,
+        user_email: Optional[str] = None,
+        team_id: Optional[str] = None,
+        resource_name: Optional[str] = None,
+        client_ip: Optional[str] = None,
+        user_agent: Optional[str] = None,
+        request_path: Optional[str] = None,
+        request_method: Optional[str] = None,
+        old_values: Optional[Dict[str, Any]] = None,
+        new_values: Optional[Dict[str, Any]] = None,
+        changes: Optional[Dict[str, Any]] = None,
+        data_classification: Optional[str] = None,
+        requires_review: Optional[bool] = None,
+        success: bool = True,
+        error_message: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
+        details: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[AuditTrail]:
+        """Log an audit trail entry (async version).
+
+        Args:
+            db: Async database session
+            action: Action performed (CREATE, READ, UPDATE, DELETE, etc.)
+            resource_type: Type of resource (tool, server, prompt, etc.)
+            resource_id: ID of the resource
+            user_id: User who performed the action
+            user_email: User's email address
+            team_id: Team ID if applicable
+            resource_name: Name of the resource
+            client_ip: Client IP address
+            user_agent: Client user agent
+            request_path: HTTP request path
+            request_method: HTTP request method
+            old_values: Previous values before change
+            new_values: New values after change
+            changes: Specific changes made
+            data_classification: Data classification level
+            requires_review: Whether this action requires review (None = auto)
+            success: Whether the action succeeded
+            error_message: Error message if failed
+            context: Additional context
+            details: Extra key/value payload (stored under context.details)
+            metadata: Extra metadata payload (stored under context.metadata)
+
+        Returns:
+            Created AuditTrail entry or None if logging disabled
+        """
+        correlation_id = get_or_generate_correlation_id()
+
+        try:
+            context_payload: Dict[str, Any] = dict(context) if context else {}
+            if details:
+                context_payload["details"] = details
+            if metadata:
+                context_payload["metadata"] = metadata
+            context_value = context_payload if context_payload else None
+
+            requires_review_flag = self._determine_requires_review(
+                action=action,
+                data_classification=data_classification,
+                requires_review_param=requires_review,
+            )
+
+            # Create audit trail entry
+            audit_entry = AuditTrail(
+                timestamp=datetime.now(timezone.utc),
+                correlation_id=correlation_id,
+                action=action,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                resource_name=resource_name,
+                user_id=user_id,
+                user_email=user_email,
+                team_id=team_id,
+                client_ip=client_ip,
+                user_agent=user_agent,
+                request_path=request_path,
+                request_method=request_method,
+                old_values=old_values,
+                new_values=new_values,
+                changes=changes,
+                data_classification=data_classification,
+                requires_review=requires_review_flag,
+                success=success,
+                error_message=error_message,
+                context=context_value,
+            )
+
+            db.add(audit_entry)
+            await db.commit()
+            await db.refresh(audit_entry)
+
+            logger.debug(
+                f"Audit trail logged: {action} {resource_type}/{resource_id} by {user_id}",
+                extra={"correlation_id": correlation_id, "action": action, "resource_type": resource_type, "resource_id": resource_id, "user_id": user_id, "success": success},
+            )
+
+            return audit_entry
+
+        except Exception as e:
+            logger.error(f"Failed to log audit trail: {e}", exc_info=True, extra={"correlation_id": correlation_id, "action": action, "resource_type": resource_type, "resource_id": resource_id})
+            await db.rollback()
+            return None
+
     def _determine_requires_review(
         self,
         action: Optional[str],
@@ -234,7 +348,7 @@ class AuditTrailService:
         db: Optional[Session] = None,
         **kwargs,
     ) -> Optional[AuditTrail]:
-        """Log a CRUD operation with change tracking.
+        """Log a CRUD operation with change tracking (sync version for background tasks).
 
         Args:
             operation: CRUD operation (CREATE, READ, UPDATE, DELETE)
@@ -297,6 +411,85 @@ class AuditTrailService:
             **kwargs,
         )
 
+    async def log_crud_operation_async(
+        self,
+        db: AsyncSession,
+        operation: str,
+        resource_type: str,
+        resource_id: str,
+        user_id: str,
+        user_email: Optional[str] = None,
+        team_id: Optional[str] = None,
+        resource_name: Optional[str] = None,
+        old_values: Optional[Dict[str, Any]] = None,
+        new_values: Optional[Dict[str, Any]] = None,
+        success: bool = True,
+        error_message: Optional[str] = None,
+        **kwargs,
+    ) -> Optional[AuditTrail]:
+        """Log a CRUD operation with change tracking (async version).
+
+        Args:
+            db: Async database session
+            operation: CRUD operation (CREATE, READ, UPDATE, DELETE)
+            resource_type: Type of resource
+            resource_id: ID of the resource
+            user_id: User who performed the operation
+            user_email: User's email
+            team_id: Team ID if applicable
+            resource_name: Name of the resource
+            old_values: Previous values (for UPDATE/DELETE)
+            new_values: New values (for CREATE/UPDATE)
+            success: Whether the operation succeeded
+            error_message: Error message if failed
+            **kwargs: Additional arguments passed to log_action_async
+
+        Returns:
+            Created AuditTrail entry
+        """
+        # Calculate changes for UPDATE operations
+        changes = None
+        if operation == "UPDATE" and old_values and new_values:
+            changes = {}
+            for key in set(old_values.keys()) | set(new_values.keys()):
+                old_val = old_values.get(key)
+                new_val = new_values.get(key)
+                if old_val != new_val:
+                    changes[key] = {"old": old_val, "new": new_val}
+
+        # Determine data classification based on resource type
+        data_classification = None
+        if resource_type in ["user", "team", "token", "credential"]:
+            data_classification = DataClassification.CONFIDENTIAL.value
+        elif resource_type in ["tool", "server", "prompt", "resource"]:
+            data_classification = DataClassification.INTERNAL.value
+
+        # Determine if review is required
+        requires_review = False
+        if data_classification == DataClassification.CONFIDENTIAL.value:
+            requires_review = True
+        if operation == "DELETE" and resource_type in ["tool", "server", "gateway"]:
+            requires_review = True
+
+        return await self.log_action_async(
+            db=db,
+            action=operation,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            user_id=user_id,
+            user_email=user_email,
+            team_id=team_id,
+            resource_name=resource_name,
+            old_values=old_values,
+            new_values=new_values,
+            changes=changes,
+            data_classification=data_classification,
+            requires_review=requires_review,
+            success=success,
+            error_message=error_message,
+            **kwargs,
+        )
+
     def log_data_access(
         self,
         resource_type: str,
@@ -310,7 +503,7 @@ class AuditTrailService:
         db: Optional[Session] = None,
         **kwargs,
     ) -> Optional[AuditTrail]:
-        """Log data access for compliance tracking.
+        """Log data access for compliance tracking (sync version for background tasks).
 
         Args:
             resource_type: Type of resource accessed
@@ -344,10 +537,57 @@ class AuditTrailService:
             **kwargs,
         )
 
+    async def log_data_access_async(
+        self,
+        db: AsyncSession,
+        resource_type: str,
+        resource_id: str,
+        user_id: str,
+        access_type: str = "READ",
+        user_email: Optional[str] = None,
+        team_id: Optional[str] = None,
+        resource_name: Optional[str] = None,
+        data_classification: Optional[str] = None,
+        **kwargs,
+    ) -> Optional[AuditTrail]:
+        """Log data access for compliance tracking (async version).
+
+        Args:
+            db: Async database session
+            resource_type: Type of resource accessed
+            resource_id: ID of the resource
+            user_id: User who accessed the data
+            access_type: Type of access (READ, EXPORT, etc.)
+            user_email: User's email
+            team_id: Team ID if applicable
+            resource_name: Name of the resource
+            data_classification: Data classification level
+            **kwargs: Additional arguments passed to log_action_async
+
+        Returns:
+            Created AuditTrail entry
+        """
+        requires_review = data_classification in [DataClassification.CONFIDENTIAL.value, DataClassification.RESTRICTED.value]
+
+        return await self.log_action_async(
+            db=db,
+            action=access_type,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            user_id=user_id,
+            user_email=user_email,
+            team_id=team_id,
+            resource_name=resource_name,
+            data_classification=data_classification,
+            requires_review=requires_review,
+            success=True,
+            **kwargs,
+        )
+
     def log_audit(
         self, user_id: str, resource_type: str, resource_id: str, action: str, user_email: Optional[str] = None, description: Optional[str] = None, db: Optional[Session] = None, **kwargs
     ) -> Optional[AuditTrail]:
-        """Convenience method for simple audit logging.
+        """Convenience method for simple audit logging (sync version for background tasks).
 
         Args:
             user_id: User who performed the action
@@ -369,6 +609,33 @@ class AuditTrailService:
 
         return self.log_action(action=action, resource_type=resource_type, resource_id=resource_id, user_id=user_id, user_email=user_email, context=context if context else None, db=db, **kwargs)
 
+    async def log_audit_async(
+        self, db: AsyncSession, user_id: str, resource_type: str, resource_id: str, action: str, user_email: Optional[str] = None, description: Optional[str] = None, **kwargs
+    ) -> Optional[AuditTrail]:
+        """Convenience method for simple audit logging (async version).
+
+        Args:
+            db: Async database session
+            user_id: User who performed the action
+            resource_type: Type of resource
+            resource_id: ID of the resource
+            action: Action performed
+            user_email: User's email
+            description: Description of the action
+            **kwargs: Additional arguments passed to log_action_async
+
+        Returns:
+            Created AuditTrail entry
+        """
+        # Build context if description provided
+        context = kwargs.pop("context", {})
+        if description:
+            context["description"] = description
+
+        return await self.log_action_async(
+            db=db, action=action, resource_type=resource_type, resource_id=resource_id, user_id=user_id, user_email=user_email, context=context if context else None, **kwargs
+        )
+
     def get_audit_trail(
         self,
         resource_type: Optional[str] = None,
@@ -381,7 +648,7 @@ class AuditTrailService:
         offset: int = 0,
         db: Optional[Session] = None,
     ) -> list[AuditTrail]:
-        """Query audit trail entries.
+        """Query audit trail entries (sync version for background tasks).
 
         Args:
             resource_type: Filter by resource type
@@ -427,6 +694,55 @@ class AuditTrailService:
         finally:
             if close_db:
                 db.close()
+
+    async def get_audit_trail_async(
+        self,
+        db: AsyncSession,
+        resource_type: Optional[str] = None,
+        resource_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        action: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[AuditTrail]:
+        """Query audit trail entries (async version).
+
+        Args:
+            db: Async database session
+            resource_type: Filter by resource type
+            resource_id: Filter by resource ID
+            user_id: Filter by user ID
+            action: Filter by action
+            start_time: Filter by start time
+            end_time: Filter by end time
+            limit: Maximum number of results
+            offset: Offset for pagination
+
+        Returns:
+            List of AuditTrail entries
+        """
+        query = select(AuditTrail)
+
+        if resource_type:
+            query = query.where(AuditTrail.resource_type == resource_type)
+        if resource_id:
+            query = query.where(AuditTrail.resource_id == resource_id)
+        if user_id:
+            query = query.where(AuditTrail.user_id == user_id)
+        if action:
+            query = query.where(AuditTrail.action == action)
+        if start_time:
+            query = query.where(AuditTrail.timestamp >= start_time)
+        if end_time:
+            query = query.where(AuditTrail.timestamp <= end_time)
+
+        query = query.order_by(AuditTrail.timestamp.desc())
+        query = query.limit(limit).offset(offset)
+
+        result = await db.execute(query)
+        return list(result.scalars().all())
 
 
 # Singleton instance

@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.11, <3.14"
 resolution-markers = [
     "python_full_version >= '3.13' and platform_machine == 'x86_64' and sys_platform == 'darwin'",
@@ -3341,6 +3341,7 @@ playwright = [
     { name = "pytest-timeout" },
 ]
 postgres = [
+    { name = "asyncpg" },
     { name = "psycopg", extra = ["binary", "c"] },
 ]
 redis = [
@@ -3364,6 +3365,7 @@ toolops = [
 [package.dev-dependencies]
 dev = [
     { name = "aiohttp" },
+    { name = "aiosqlite" },
     { name = "argparse-manpage" },
     { name = "autoflake" },
     { name = "bandit" },
@@ -3442,6 +3444,7 @@ requires-dist = [
     { name = "alembic", marker = "extra == 'alembic'", specifier = ">=1.17.2" },
     { name = "argon2-cffi", specifier = ">=25.1.0" },
     { name = "asyncpg", marker = "extra == 'asyncpg'", specifier = ">=0.31.0" },
+    { name = "asyncpg", marker = "extra == 'postgres'", specifier = ">=0.31.0" },
     { name = "atheris", marker = "extra == 'fuzz-atheris'", specifier = ">=3.0.0" },
     { name = "copier", marker = "extra == 'templating'", specifier = ">=9.11.0" },
     { name = "cryptography", specifier = ">=46.0.3" },
@@ -3513,6 +3516,7 @@ provides-extras = ["redis", "redis-pure", "postgres", "mysql", "mariadb", "llmch
 [package.metadata.requires-dev]
 dev = [
     { name = "aiohttp", specifier = ">=3.12.15" },
+    { name = "aiosqlite", specifier = ">=0.22.1" },
     { name = "argparse-manpage", specifier = ">=4.7" },
     { name = "autoflake", specifier = ">=2.3.1" },
     { name = "bandit", specifier = ">=1.8.6" },

@@ -21,7 +21,7 @@ from fastapi import HTTPException, Request, status
 from fastapi.security import HTTPBearer
 
 # First-Party
-from mcpgateway.db import Permissions
+from mcpgateway.db import _use_async, AsyncSessionLocal, Permissions
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.verify_credentials import verify_jwt_token
@@ -336,7 +336,7 @@ class TokenScopingMiddleware:
         # Default allow for unmatched paths
         return True
 
-    def _check_team_membership(self, payload: dict) -> bool:
+    async def _check_team_membership(self, payload: dict) -> bool:
         """
         Check if user still belongs to teams in the token.
 
@@ -366,28 +366,41 @@ class TokenScopingMiddleware:
         from sqlalchemy import and_, select  # pylint: disable=import-outside-toplevel
 
         # First-Party
-        from mcpgateway.db import EmailTeamMember, get_db  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import EmailTeamMember, SessionLocal  # pylint: disable=import-outside-toplevel
 
-        db = next(get_db())
-        try:
-            for team in teams:
-                # Extract team ID from dict or use string directly (backward compatibility)
-                team_id = team["id"] if isinstance(team, dict) else team
+        # Use async session when available, otherwise fall back to sync
+        if _use_async and AsyncSessionLocal is not None:
+            async with AsyncSessionLocal() as db:
+                try:
+                    for team in teams:
+                        team_id = team["id"] if isinstance(team, dict) else team
+                        result = await db.execute(select(EmailTeamMember).where(and_(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active)))
+                        membership = result.scalar_one_or_none()
+                        if not membership:
+                            logger.warning(f"Token invalid: User {user_email} no longer member of team {team_id}")
+                            return False
+                    await db.commit()
+                    return True
+                except Exception:
+                    await db.rollback()
+                    raise
+        else:
+            db = SessionLocal()
+            try:
+                for team in teams:
+                    team_id = team["id"] if isinstance(team, dict) else team
+                    membership = await db.execute(
+                        select(EmailTeamMember).where(and_(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active))
+                    ).scalar_one_or_none()
+                    if not membership:
+                        logger.warning(f"Token invalid: User {user_email} no longer member of team {team_id}")
+                        return False
+                return True
+            finally:
+                await db.commit()
+                db.close()
 
-                membership = db.execute(
-                    select(EmailTeamMember).where(and_(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active))
-                ).scalar_one_or_none()
-
-                if not membership:
-                    logger.warning(f"Token invalid: User {user_email} no longer member of team {team_id}")
-                    return False
-
-            return True
-        finally:
-            db.commit()  # Commit read-only transaction to avoid implicit rollback
-            db.close()
-
-    def _check_resource_team_ownership(self, request_path: str, token_teams: list) -> bool:  # pylint: disable=too-many-return-statements
+    async def _check_resource_team_ownership(self, request_path: str, token_teams: list) -> bool:  # pylint: disable=too-many-return-statements
         """
         Check if the requested resource is accessible by the token.
 
@@ -457,204 +470,160 @@ class TokenScopingMiddleware:
             logger.debug(f"No resource ID found in path {request_path}, allowing access")
             return True
 
-        # Import database models
+        # Use async or sync based on configuration
+        if _use_async and AsyncSessionLocal is not None:
+            return await self._check_resource_team_ownership_async(resource_id, resource_type, token_team_ids, is_public_token, request_path)
+        else:
+            return self._check_resource_team_ownership_sync(resource_id, resource_type, token_team_ids, is_public_token, request_path)
+
+    def _check_resource_team_ownership_sync(
+        self, resource_id: str, resource_type: str, token_team_ids: list, is_public_token: bool, request_path: str
+    ) -> bool:  # pylint: disable=too-many-return-statements
+        """Sync implementation of resource team ownership check."""
         # Third-Party
         from sqlalchemy import select  # pylint: disable=import-outside-toplevel
 
         # First-Party
-        from mcpgateway.db import get_db, Prompt, Resource, Server, Tool  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import Prompt, Resource, Server, SessionLocal, Tool  # pylint: disable=import-outside-toplevel
 
-        db = next(get_db())
+        db = SessionLocal()
         try:
-            # Check Virtual Servers
-            if resource_type == "server":
-                server = db.execute(select(Server).where(Server.id == resource_id)).scalar_one_or_none()
-
-                if not server:
-                    logger.warning(f"Server {resource_id} not found in database")
-                    return True
-
-                # Get server visibility (default to 'team' if field doesn't exist)
-                server_visibility = getattr(server, "visibility", "team")
-
-                # PUBLIC SERVERS: Accessible by everyone (including public-only tokens)
-                if server_visibility == "public":
-                    logger.debug(f"Access granted: Server {resource_id} is PUBLIC")
-                    return True
-
-                # PUBLIC-ONLY TOKEN: Can ONLY access public servers
-                if is_public_token:
-                    logger.warning(f"Access denied: Public-only token cannot access {server_visibility} server {resource_id}")
-                    return False
-
-                # TEAM-SCOPED SERVERS: Check if server belongs to token's teams
-                if server_visibility == "team":
-                    if server.team_id in token_team_ids:
-                        logger.debug(f"Access granted: Team server {resource_id} belongs to token's team {server.team_id}")
-                        return True
-
-                    logger.warning(f"Access denied: Server {resource_id} is team-scoped to '{server.team_id}', token is scoped to teams {token_team_ids}")
-                    return False
-
-                # PRIVATE SERVERS: Check if server belongs to token's teams
-                if server_visibility == "private":
-                    if server.team_id in token_team_ids:
-                        logger.debug(f"Access granted: Private server {resource_id} in token's team {server.team_id}")
-                        return True
-
-                    logger.warning(f"Access denied: Server {resource_id} is private to team '{server.team_id}'")
-                    return False
-
-                # Unknown visibility - deny by default
-                logger.warning(f"Access denied: Server {resource_id} has unknown visibility: {server_visibility}")
-                return False
-
-            # CHECK TOOLS
-            if resource_type == "tool":
-                tool = db.execute(select(Tool).where(Tool.id == resource_id)).scalar_one_or_none()
-
-                if not tool:
-                    logger.warning(f"Tool {resource_id} not found in database")
-                    return True
-
-                # Get tool visibility (default to 'team' if field doesn't exist)
-                tool_visibility = getattr(tool, "visibility", "team")
-
-                # PUBLIC TOOLS: Accessible by everyone (including public-only tokens)
-                if tool_visibility == "public":
-                    logger.debug(f"Access granted: Tool {resource_id} is PUBLIC")
-                    return True
-
-                # PUBLIC-ONLY TOKEN: Can ONLY access public tools
-                if is_public_token:
-                    logger.warning(f"Access denied: Public-only token cannot access {tool_visibility} tool {resource_id}")
-                    return False
-
-                # TEAM TOOLS: Check if tool's team matches token's teams
-                if tool_visibility == "team":
-                    tool_team_id = getattr(tool, "team_id", None)
-                    if tool_team_id and tool_team_id in token_team_ids:
-                        logger.debug(f"Access granted: Team tool {resource_id} belongs to token's team {tool_team_id}")
-                        return True
-
-                    logger.warning(f"Access denied: Tool {resource_id} is team-scoped to '{tool_team_id}', token is scoped to teams {token_team_ids}")
-                    return False
-
-                # PRIVATE TOOLS: Check if tool is in token's team context
-                if tool_visibility in ["private", "user"]:
-                    tool_team_id = getattr(tool, "team_id", None)
-                    if tool_team_id and tool_team_id in token_team_ids:
-                        logger.debug(f"Access granted: Private tool {resource_id} in token's team {tool_team_id}")
-                        return True
-
-                    logger.warning(f"Access denied: Tool {resource_id} is {tool_visibility} and not in token's teams")
-                    return False
-
-                # Unknown visibility - deny by default
-                logger.warning(f"Access denied: Tool {resource_id} has unknown visibility: {tool_visibility}")
-                return False
-
-            # CHECK RESOURCES
-            if resource_type == "resource":
-                resource = db.execute(select(Resource).where(Resource.id == resource_id)).scalar_one_or_none()
-
-                if not resource:
-                    logger.warning(f"Resource {resource_id} not found in database")
-                    return True
-
-                # Get resource visibility (default to 'team' if field doesn't exist)
-                resource_visibility = getattr(resource, "visibility", "team")
-
-                # PUBLIC RESOURCES: Accessible by everyone (including public-only tokens)
-                if resource_visibility == "public":
-                    logger.debug(f"Access granted: Resource {resource_id} is PUBLIC")
-                    return True
-
-                # PUBLIC-ONLY TOKEN: Can ONLY access public resources
-                if is_public_token:
-                    logger.warning(f"Access denied: Public-only token cannot access {resource_visibility} resource {resource_id}")
-                    return False
-
-                # TEAM RESOURCES: Check if resource's team matches token's teams
-                if resource_visibility == "team":
-                    resource_team_id = getattr(resource, "team_id", None)
-                    if resource_team_id and resource_team_id in token_team_ids:
-                        logger.debug(f"Access granted: Team resource {resource_id} belongs to token's team {resource_team_id}")
-                        return True
-
-                    logger.warning(f"Access denied: Resource {resource_id} is team-scoped to '{resource_team_id}', token is scoped to teams {token_team_ids}")
-                    return False
-
-                # PRIVATE RESOURCES: Check if resource is in token's team context
-                if resource_visibility in ["private", "user"]:
-                    resource_team_id = getattr(resource, "team_id", None)
-                    if resource_team_id and resource_team_id in token_team_ids:
-                        logger.debug(f"Access granted: Private resource {resource_id} in token's team {resource_team_id}")
-                        return True
-
-                    logger.warning(f"Access denied: Resource {resource_id} is {resource_visibility} and not in token's teams")
-                    return False
-
-                # Unknown visibility - deny by default
-                logger.warning(f"Access denied: Resource {resource_id} has unknown visibility: {resource_visibility}")
-                return False
-
-            # CHECK PROMPTS
-            if resource_type == "prompt":
-                prompt = db.execute(select(Prompt).where(Prompt.id == resource_id)).scalar_one_or_none()
-
-                if not prompt:
-                    logger.warning(f"Prompt {resource_id} not found in database")
-                    return True
-
-                # Get prompt visibility (default to 'team' if field doesn't exist)
-                prompt_visibility = getattr(prompt, "visibility", "team")
-
-                # PUBLIC PROMPTS: Accessible by everyone (including public-only tokens)
-                if prompt_visibility == "public":
-                    logger.debug(f"Access granted: Prompt {resource_id} is PUBLIC")
-                    return True
-
-                # PUBLIC-ONLY TOKEN: Can ONLY access public prompts
-                if is_public_token:
-                    logger.warning(f"Access denied: Public-only token cannot access {prompt_visibility} prompt {resource_id}")
-                    return False
-
-                # TEAM PROMPTS: Check if prompt's team matches token's teams
-                if prompt_visibility == "team":
-                    prompt_team_id = getattr(prompt, "team_id", None)
-                    if prompt_team_id and prompt_team_id in token_team_ids:
-                        logger.debug(f"Access granted: Team prompt {resource_id} belongs to token's team {prompt_team_id}")
-                        return True
-
-                    logger.warning(f"Access denied: Prompt {resource_id} is team-scoped to '{prompt_team_id}', token is scoped to teams {token_team_ids}")
-                    return False
-
-                # PRIVATE PROMPTS: Check if prompt is in token's team context
-                if prompt_visibility in ["private", "user"]:
-                    prompt_team_id = getattr(prompt, "team_id", None)
-                    if prompt_team_id and prompt_team_id in token_team_ids:
-                        logger.debug(f"Access granted: Private prompt {resource_id} in token's team {prompt_team_id}")
-                        return True
-
-                    logger.warning(f"Access denied: Prompt {resource_id} is {prompt_visibility} and not in token's teams")
-                    return False
-
-                # Unknown visibility - deny by default
-                logger.warning(f"Access denied: Prompt {resource_id} has unknown visibility: {prompt_visibility}")
-                return False
-
-            # UNKNOWN RESOURCE TYPE
-            logger.warning(f"Unknown resource type '{resource_type}' for path: {request_path}")
-            return False
-
+            return self._do_resource_check(db, resource_id, resource_type, token_team_ids, is_public_token, request_path, is_async=False)
         except Exception as e:
             logger.error(f"Error checking resource team ownership for {request_path}: {e}", exc_info=True)
-            # Fail securely - deny access on error
             return False
         finally:
-            db.commit()  # Commit read-only transaction to avoid implicit rollback
+            db.commit()
             db.close()
+
+    async def _check_resource_team_ownership_async(
+        self, resource_id: str, resource_type: str, token_team_ids: list, is_public_token: bool, request_path: str
+    ) -> bool:  # pylint: disable=too-many-return-statements
+        """Async implementation of resource team ownership check."""
+        # Third-Party
+        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+        # First-Party
+        from mcpgateway.db import Prompt, Resource, Server, Tool  # pylint: disable=import-outside-toplevel
+
+        async with AsyncSessionLocal() as db:
+            try:
+                return await self._do_resource_check_async(db, resource_id, resource_type, token_team_ids, is_public_token, request_path)
+            except Exception as e:
+                logger.error(f"Error checking resource team ownership for {request_path}: {e}", exc_info=True)
+                return False
+
+    def _do_resource_check(
+        self, db, resource_id: str, resource_type: str, token_team_ids: list, is_public_token: bool, request_path: str, is_async: bool = False
+    ) -> bool:  # pylint: disable=too-many-return-statements,too-many-branches
+        """Shared resource check logic for sync mode."""
+        # Third-Party
+        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+        # First-Party
+        from mcpgateway.db import Prompt, Resource, Server, Tool  # pylint: disable=import-outside-toplevel
+
+        # Check Virtual Servers
+        if resource_type == "server":
+            server = db.execute(select(Server).where(Server.id == resource_id)).scalar_one_or_none()
+            return self._check_entity_access(server, "Server", resource_id, token_team_ids, is_public_token)
+
+        # CHECK TOOLS
+        if resource_type == "tool":
+            tool = db.execute(select(Tool).where(Tool.id == resource_id)).scalar_one_or_none()
+            return self._check_entity_access(tool, "Tool", resource_id, token_team_ids, is_public_token)
+
+        # CHECK RESOURCES
+        if resource_type == "resource":
+            resource = db.execute(select(Resource).where(Resource.id == resource_id)).scalar_one_or_none()
+            return self._check_entity_access(resource, "Resource", resource_id, token_team_ids, is_public_token)
+
+        # CHECK PROMPTS
+        if resource_type == "prompt":
+            prompt = db.execute(select(Prompt).where(Prompt.id == resource_id)).scalar_one_or_none()
+            return self._check_entity_access(prompt, "Prompt", resource_id, token_team_ids, is_public_token)
+
+        # UNKNOWN RESOURCE TYPE
+        logger.warning(f"Unknown resource type '{resource_type}' for path: {request_path}")
+        return False
+
+    async def _do_resource_check_async(
+        self, db, resource_id: str, resource_type: str, token_team_ids: list, is_public_token: bool, request_path: str
+    ) -> bool:  # pylint: disable=too-many-return-statements,too-many-branches
+        """Shared resource check logic for async mode."""
+        # Third-Party
+        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+        # First-Party
+        from mcpgateway.db import Prompt, Resource, Server, Tool  # pylint: disable=import-outside-toplevel
+
+        # Check Virtual Servers
+        if resource_type == "server":
+            result = await db.execute(select(Server).where(Server.id == resource_id))
+            server = result.scalar_one_or_none()
+            return self._check_entity_access(server, "Server", resource_id, token_team_ids, is_public_token)
+
+        # CHECK TOOLS
+        if resource_type == "tool":
+            result = await db.execute(select(Tool).where(Tool.id == resource_id))
+            tool = result.scalar_one_or_none()
+            return self._check_entity_access(tool, "Tool", resource_id, token_team_ids, is_public_token)
+
+        # CHECK RESOURCES
+        if resource_type == "resource":
+            result = await db.execute(select(Resource).where(Resource.id == resource_id))
+            resource = result.scalar_one_or_none()
+            return self._check_entity_access(resource, "Resource", resource_id, token_team_ids, is_public_token)
+
+        # CHECK PROMPTS
+        if resource_type == "prompt":
+            result = await db.execute(select(Prompt).where(Prompt.id == resource_id))
+            prompt = result.scalar_one_or_none()
+            return self._check_entity_access(prompt, "Prompt", resource_id, token_team_ids, is_public_token)
+
+        # UNKNOWN RESOURCE TYPE
+        logger.warning(f"Unknown resource type '{resource_type}' for path: {request_path}")
+        return False
+
+    def _check_entity_access(self, entity, entity_name: str, resource_id: str, token_team_ids: list, is_public_token: bool) -> bool:  # pylint: disable=too-many-return-statements
+        """Check access to a specific entity based on visibility and team ownership."""
+        if not entity:
+            logger.warning(f"{entity_name} {resource_id} not found in database")
+            return True
+
+        visibility = getattr(entity, "visibility", "team")
+
+        # PUBLIC: Accessible by everyone
+        if visibility == "public":
+            logger.debug(f"Access granted: {entity_name} {resource_id} is PUBLIC")
+            return True
+
+        # PUBLIC-ONLY TOKEN: Can ONLY access public entities
+        if is_public_token:
+            logger.warning(f"Access denied: Public-only token cannot access {visibility} {entity_name.lower()} {resource_id}")
+            return False
+
+        team_id = getattr(entity, "team_id", None)
+
+        # TEAM: Check if entity belongs to token's teams
+        if visibility == "team":
+            if team_id and team_id in token_team_ids:
+                logger.debug(f"Access granted: Team {entity_name.lower()} {resource_id} belongs to token's team {team_id}")
+                return True
+            logger.warning(f"Access denied: {entity_name} {resource_id} is team-scoped to '{team_id}', token is scoped to teams {token_team_ids}")
+            return False
+
+        # PRIVATE: Check if entity is in token's team context
+        if visibility in ["private", "user"]:
+            if team_id and team_id in token_team_ids:
+                logger.debug(f"Access granted: Private {entity_name.lower()} {resource_id} in token's team {team_id}")
+                return True
+            logger.warning(f"Access denied: {entity_name} {resource_id} is {visibility} and not in token's teams")
+            return False
+
+        # Unknown visibility - deny by default
+        logger.warning(f"Access denied: {entity_name} {resource_id} has unknown visibility: {visibility}")
+        return False
 
     async def __call__(self, request: Request, call_next):
         """Middleware function to check token scoping including team-level validation.
@@ -697,13 +666,13 @@ class TokenScopingMiddleware:
                 return await call_next(request)
 
             # TEAM VALIDATION: Check team membership
-            if not self._check_team_membership(payload):
+            if not await self._check_team_membership(payload):
                 logger.warning("Token rejected: User no longer member of associated team(s)")
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User is no longer a member of the associated team")
 
             # TEAM VALIDATION: Check resource team ownership
             token_teams = payload.get("teams", [])
-            if not self._check_resource_team_ownership(request.url.path, token_teams):
+            if not await self._check_resource_team_ownership(request.url.path, token_teams):
                 logger.warning(f"Access denied: Resource does not belong to token's teams {token_teams}")
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: You do not have permission to access this resource using the current token")
 

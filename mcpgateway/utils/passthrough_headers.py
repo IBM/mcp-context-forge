@@ -249,7 +249,8 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
 
     # Get global passthrough headers from in-memory cache (Issue #1715)
     # This eliminates redundant DB queries for static configuration
-    allowed_headers = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
+    # Use sync version since this function is synchronous
+    allowed_headers = global_config_cache.get_passthrough_headers_sync(db, settings.default_passthrough_headers)
 
     # Gateway specific headers override global config
     if gateway:

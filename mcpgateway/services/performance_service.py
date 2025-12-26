@@ -26,8 +26,8 @@ import time
 from typing import Dict, List, Optional
 
 # Third-Party
-from sqlalchemy import delete, desc
-from sqlalchemy.orm import Session
+from sqlalchemy import delete, desc, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # First-Party
 from mcpgateway.config import settings
@@ -93,7 +93,7 @@ class PerformanceService:
     - Worker process discovery and monitoring
     """
 
-    def __init__(self, db: Optional[Session] = None):
+    def __init__(self, db: Optional[AsyncSession] = None):
         """Initialize the performance service.
 
         Args:
@@ -364,7 +364,7 @@ class PerformanceService:
 
         return metrics
 
-    def get_database_metrics(self, _db: Optional[Session] = None) -> DatabaseMetricsSchema:
+    def get_database_metrics(self, _db: Optional[AsyncSession] = None) -> DatabaseMetricsSchema:
         """Collect database connection pool metrics.
 
         Args:
@@ -466,7 +466,7 @@ class PerformanceService:
             is_distributed=settings.mcpgateway_performance_distributed,
         )
 
-    def save_snapshot(self, db: Session) -> Optional[PerformanceSnapshot]:
+    async def save_snapshot(self, db: AsyncSession) -> Optional[PerformanceSnapshot]:
         """Save current metrics as a snapshot.
 
         Args:
@@ -505,16 +505,16 @@ class PerformanceService:
                 metrics_json=metrics_json,
             )
             db.add(snapshot)
-            db.commit()
-            db.refresh(snapshot)
+            await db.commit()
+            await db.refresh(snapshot)
 
             return snapshot
         except Exception as e:
             logger.error(f"Error saving performance snapshot: {e}")
-            db.rollback()
+            await db.rollback()
             return None
 
-    def cleanup_old_snapshots(self, db: Session) -> int:
+    async def cleanup_old_snapshots(self, db: AsyncSession) -> int:
         """Delete snapshots older than retention period.
 
         Args:
@@ -526,9 +526,9 @@ class PerformanceService:
         try:
             cutoff = datetime.now(timezone.utc) - timedelta(hours=settings.mcpgateway_performance_retention_hours)
 
-            result = db.execute(delete(PerformanceSnapshot).where(PerformanceSnapshot.timestamp < cutoff))
+            result = await db.execute(delete(PerformanceSnapshot).where(PerformanceSnapshot.timestamp < cutoff))
             deleted = result.rowcount
-            db.commit()
+            await db.commit()
 
             if deleted > 0:
                 logger.info(f"Cleaned up {deleted} old performance snapshots")
@@ -536,12 +536,12 @@ class PerformanceService:
             return deleted
         except Exception as e:
             logger.error(f"Error cleaning up snapshots: {e}")
-            db.rollback()
+            await db.rollback()
             return 0
 
-    def get_history(
+    async def get_history(
         self,
-        db: Session,
+        db: AsyncSession,
         period_type: str = "hourly",
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
@@ -561,17 +561,24 @@ class PerformanceService:
         Returns:
             PerformanceHistoryResponse: Historical aggregates.
         """
-        query = db.query(PerformanceAggregate).filter(PerformanceAggregate.period_type == period_type)
+        stmt = select(PerformanceAggregate).filter(PerformanceAggregate.period_type == period_type)
 
         if start_time:
-            query = query.filter(PerformanceAggregate.period_start >= start_time)
+            stmt = stmt.filter(PerformanceAggregate.period_start >= start_time)
         if end_time:
-            query = query.filter(PerformanceAggregate.period_end <= end_time)
+            stmt = stmt.filter(PerformanceAggregate.period_end <= end_time)
         if host:
-            query = query.filter(PerformanceAggregate.host == host)
+            stmt = stmt.filter(PerformanceAggregate.host == host)
 
-        total_count = query.count()
-        aggregates = query.order_by(desc(PerformanceAggregate.period_start)).limit(limit).all()
+        # Get count
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        count_result = await db.execute(count_stmt)
+        total_count = count_result.scalar() or 0
+
+        # Get aggregates
+        stmt = stmt.order_by(desc(PerformanceAggregate.period_start)).limit(limit)
+        result = await db.execute(stmt)
+        aggregates = list(result.scalars().all())
 
         return PerformanceHistoryResponse(
             aggregates=[PerformanceAggregateRead.model_validate(a) for a in aggregates],
@@ -579,7 +586,7 @@ class PerformanceService:
             total_count=total_count,
         )
 
-    def create_hourly_aggregate(self, db: Session, hour_start: datetime) -> Optional[PerformanceAggregate]:
+    async def create_hourly_aggregate(self, db: AsyncSession, hour_start: datetime) -> Optional[PerformanceAggregate]:
         """Create an hourly aggregate from snapshots.
 
         Args:
@@ -593,7 +600,9 @@ class PerformanceService:
 
         try:
             # Get snapshots for this hour
-            snapshots = db.query(PerformanceSnapshot).filter(PerformanceSnapshot.timestamp >= hour_start, PerformanceSnapshot.timestamp < hour_end).all()
+            stmt = select(PerformanceSnapshot).filter(PerformanceSnapshot.timestamp >= hour_start, PerformanceSnapshot.timestamp < hour_end)
+            result = await db.execute(stmt)
+            snapshots = list(result.scalars().all())
 
             if not snapshots:
                 return None
@@ -655,13 +664,13 @@ class PerformanceService:
             )
 
             db.add(aggregate)
-            db.commit()
-            db.refresh(aggregate)
+            await db.commit()
+            await db.refresh(aggregate)
 
             return aggregate
         except Exception as e:
             logger.error(f"Error creating hourly aggregate: {e}")
-            db.rollback()
+            await db.rollback()
             return None
 
 
@@ -669,7 +678,7 @@ class PerformanceService:
 _performance_service: Optional[PerformanceService] = None
 
 
-def get_performance_service(db: Optional[Session] = None) -> PerformanceService:
+def get_performance_service(db: Optional[AsyncSession] = None) -> PerformanceService:
     """Get or create the performance service singleton.
 
     Args:

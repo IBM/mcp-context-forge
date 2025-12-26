@@ -17,7 +17,8 @@ from typing import Dict, List, Optional, Set
 
 # Third-Party
 from sqlalchemy import and_, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 # First-Party
 from mcpgateway.db import PermissionAuditLog, Permissions, Role, UserRole, utc_now
@@ -49,11 +50,11 @@ class PermissionService:
         True
     """
 
-    def __init__(self, db: Session, audit_enabled: bool = True):
+    def __init__(self, db: AsyncSession, audit_enabled: bool = True):
         """Initialize permission service.
 
         Args:
-            db: Database session
+            db: Async database session
             audit_enabled: Whether to enable permission auditing
         """
         self.db = db
@@ -206,7 +207,7 @@ class PermissionService:
             >>> asyncio.iscoroutinefunction(service.get_user_roles)
             True
         """
-        query = select(UserRole).join(Role).where(and_(UserRole.user_email == user_email, UserRole.is_active.is_(True), Role.is_active.is_(True)))
+        query = select(UserRole).join(Role).options(selectinload(UserRole.role)).where(and_(UserRole.user_email == user_email, UserRole.is_active.is_(True), Role.is_active.is_(True)))
 
         if scope:
             query = query.where(UserRole.scope == scope)
@@ -218,8 +219,8 @@ class PermissionService:
             now = utc_now()
             query = query.where((UserRole.expires_at.is_(None)) | (UserRole.expires_at > now))
 
-        result = self.db.execute(query)
-        return result.scalars().all()
+        result = await self.db.execute(query)
+        return list(result.scalars().all())
 
     async def has_permission_on_resource(self, user_email: str, permission: str, resource_type: str, resource_id: str, team_id: Optional[str] = None) -> bool:
         """Check if user has permission on a specific resource.
@@ -383,7 +384,7 @@ class PermissionService:
         Returns:
             List[UserRole]: List of active roles for the user
         """
-        query = select(UserRole).join(Role).where(and_(UserRole.user_email == user_email, UserRole.is_active.is_(True), Role.is_active.is_(True)))
+        query = select(UserRole).join(Role).options(selectinload(UserRole.role)).where(and_(UserRole.user_email == user_email, UserRole.is_active.is_(True), Role.is_active.is_(True)))
 
         # Include global roles and team-specific roles
         scope_conditions = [UserRole.scope == "global", UserRole.scope == "personal"]
@@ -397,8 +398,8 @@ class PermissionService:
         now = utc_now()
         query = query.where((UserRole.expires_at.is_(None)) | (UserRole.expires_at > now))
 
-        result = self.db.execute(query)
-        return result.scalars().all()
+        result = await self.db.execute(query)
+        return list(result.scalars().all())
 
     async def _log_permission_check(
         self,
@@ -438,7 +439,7 @@ class PermissionService:
         )
 
         self.db.add(audit_log)
-        self.db.commit()
+        await self.db.commit()
 
     async def _get_roles_for_audit(self, user_email: str, team_id: Optional[str]) -> Dict:
         """Get role information for audit logging.
@@ -488,7 +489,8 @@ class PermissionService:
         if user_email == getattr(settings, "platform_admin_email", ""):
             return True
 
-        user = self.db.execute(select(EmailUser).where(EmailUser.email == user_email)).scalar_one_or_none()
+        result = await self.db.execute(select(EmailUser).where(EmailUser.email == user_email))
+        user = result.scalar_one_or_none()
         return bool(user and user.is_admin)
 
     async def _check_team_fallback_permissions(self, user_email: str, permission: str, team_id: Optional[str]) -> bool:
@@ -540,7 +542,8 @@ class PermissionService:
         # First-Party
         from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
 
-        member = self.db.execute(select(EmailTeamMember).where(and_(EmailTeamMember.user_email == user_email, EmailTeamMember.team_id == team_id, EmailTeamMember.is_active))).scalar_one_or_none()
+        result = await self.db.execute(select(EmailTeamMember).where(and_(EmailTeamMember.user_email == user_email, EmailTeamMember.team_id == team_id, EmailTeamMember.is_active)))
+        member = result.scalar_one_or_none()
 
         return member is not None
 
@@ -557,6 +560,7 @@ class PermissionService:
         # First-Party
         from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
 
-        member = self.db.execute(select(EmailTeamMember).where(and_(EmailTeamMember.user_email == user_email, EmailTeamMember.team_id == team_id, EmailTeamMember.is_active))).scalar_one_or_none()
+        result = await self.db.execute(select(EmailTeamMember).where(and_(EmailTeamMember.user_email == user_email, EmailTeamMember.team_id == team_id, EmailTeamMember.is_active)))
+        member = result.scalar_one_or_none()
 
         return member.role if member else None

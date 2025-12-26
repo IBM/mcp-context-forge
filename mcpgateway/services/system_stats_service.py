@@ -32,7 +32,7 @@ from typing import Any, Dict
 
 # Third-Party
 from sqlalchemy import case, func, literal, select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # First-Party
 from mcpgateway.db import (
@@ -85,7 +85,7 @@ class SystemStatsService:
         >>> # print(f"Total tools: {stats['mcp_resources']['breakdown']['tools']}")
     """
 
-    def get_comprehensive_stats(self, db: Session) -> Dict[str, Any]:
+    async def get_comprehensive_stats(self, db: AsyncSession) -> Dict[str, Any]:
         """Get comprehensive system metrics across all categories.
 
         Args:
@@ -99,7 +99,7 @@ class SystemStatsService:
 
         Examples:
             >>> service = SystemStatsService()
-            >>> # stats = service.get_comprehensive_stats(db)
+            >>> # stats = await service.get_comprehensive_stats(db)
             >>> # assert "users" in stats
             >>> # assert "mcp_resources" in stats
             >>> # assert "total" in stats["users"]
@@ -109,14 +109,14 @@ class SystemStatsService:
 
         try:
             stats = {
-                "users": self._get_user_stats(db),
-                "teams": self._get_team_stats(db),
-                "mcp_resources": self._get_mcp_resource_stats(db),
-                "tokens": self._get_token_stats(db),
-                "sessions": self._get_session_stats(db),
-                "metrics": self._get_metrics_stats(db),
-                "security": self._get_security_stats(db),
-                "workflow": self._get_workflow_stats(db),
+                "users": await self._get_user_stats(db),
+                "teams": await self._get_team_stats(db),
+                "mcp_resources": await self._get_mcp_resource_stats(db),
+                "tokens": await self._get_token_stats(db),
+                "sessions": await self._get_session_stats(db),
+                "metrics": await self._get_metrics_stats(db),
+                "security": await self._get_security_stats(db),
+                "workflow": await self._get_workflow_stats(db),
             }
 
             logger.info("Successfully collected system metrics")
@@ -126,7 +126,7 @@ class SystemStatsService:
             logger.error(f"Error collecting system metrics: {str(e)}")
             raise
 
-    def _get_user_stats(self, db: Session) -> Dict[str, Any]:
+    async def _get_user_stats(self, db: AsyncSession) -> Dict[str, Any]:
         """Get user-related metrics.
 
         Args:
@@ -137,17 +137,19 @@ class SystemStatsService:
 
         Examples:
             >>> service = SystemStatsService()
-            >>> # stats = service._get_user_stats(db)
+            >>> # stats = await service._get_user_stats(db)
             >>> # assert stats["total"] >= 0
             >>> # assert "breakdown" in stats
             >>> # assert "active" in stats["breakdown"]
         """
         # Optimized from 3 queries to 1 using aggregated SELECT
-        result = db.execute(
-            select(
-                func.count(EmailUser.email).label("total"),
-                func.sum(case((EmailUser.is_active.is_(True), 1), else_=0)).label("active"),
-                func.sum(case((EmailUser.is_admin.is_(True), 1), else_=0)).label("admins"),
+        result = (
+            await db.execute(
+                select(
+                    func.count(EmailUser.email).label("total"),
+                    func.sum(case((EmailUser.is_active.is_(True), 1), else_=0)).label("active"),
+                    func.sum(case((EmailUser.is_admin.is_(True), 1), else_=0)).label("admins"),
+                )
             )
         ).one()
 
@@ -157,7 +159,7 @@ class SystemStatsService:
 
         return {"total": total, "breakdown": {"active": active, "inactive": total - active, "admins": admins}}
 
-    def _get_team_stats(self, db: Session) -> Dict[str, Any]:
+    async def _get_team_stats(self, db: AsyncSession) -> Dict[str, Any]:
         """Get team-related metrics.
 
         Args:
@@ -168,26 +170,28 @@ class SystemStatsService:
 
         Examples:
             >>> service = SystemStatsService()
-            >>> # stats = service._get_team_stats(db)
+            >>> # stats = await service._get_team_stats(db)
             >>> # assert stats["total"] >= 0
             >>> # assert "personal" in stats["breakdown"]
             >>> # assert "organizational" in stats["breakdown"]
         """
         # Optimized from 3 queries to 2 using aggregated SELECT (separate tables need separate queries)
-        team_result = db.execute(
-            select(
-                func.count(EmailTeam.id).label("total_teams"),
-                func.sum(case((EmailTeam.is_personal.is_(True), 1), else_=0)).label("personal_teams"),
-            ).select_from(EmailTeam)
+        team_result = (
+            await db.execute(
+                select(
+                    func.count(EmailTeam.id).label("total_teams"),
+                    func.sum(case((EmailTeam.is_personal.is_(True), 1), else_=0)).label("personal_teams"),
+                ).select_from(EmailTeam)
+            )
         ).one()
-        team_members = db.execute(select(func.count(EmailTeamMember.id))).scalar() or 0
+        team_members = (await db.execute(select(func.count(EmailTeamMember.id)))).scalar() or 0
 
         total_teams = team_result.total_teams or 0
         personal_teams = team_result.personal_teams or 0
 
         return {"total": total_teams, "breakdown": {"personal": personal_teams, "organizational": total_teams - personal_teams, "members": team_members}}
 
-    def _get_mcp_resource_stats(self, db: Session) -> Dict[str, Any]:
+    async def _get_mcp_resource_stats(self, db: AsyncSession) -> Dict[str, Any]:
         """Get MCP resource metrics in a SINGLE query using UNION ALL.
 
         Optimized from 6 queries to 1.
@@ -212,7 +216,7 @@ class SystemStatsService:
         )
 
         # Execute once - this is now a single database query instead of 6 separate queries
-        results = db.execute(stmt).all()
+        results = (await db.execute(stmt)).all()
 
         # Convert list of rows to a dictionary
         counts = {row.type: row.cnt for row in results}
@@ -229,7 +233,7 @@ class SystemStatsService:
 
         return {"total": total, "breakdown": {"servers": servers, "gateways": gateways, "tools": tools, "resources": resources, "prompts": prompts, "a2a_agents": agents}}
 
-    def _get_token_stats(self, db: Session) -> Dict[str, Any]:
+    async def _get_token_stats(self, db: AsyncSession) -> Dict[str, Any]:
         """Get API token metrics.
 
         Args:
@@ -240,25 +244,27 @@ class SystemStatsService:
 
         Examples:
             >>> service = SystemStatsService()
-            >>> # stats = service._get_token_stats(db)
+            >>> # stats = await service._get_token_stats(db)
             >>> # assert stats["total"] >= 0
             >>> # assert "active" in stats["breakdown"]
         """
         # Optimized from 3 queries to 2 using aggregated SELECT (separate tables need separate queries)
-        token_result = db.execute(
-            select(
-                func.count(EmailApiToken.id).label("total"),
-                func.sum(case((EmailApiToken.is_active.is_(True), 1), else_=0)).label("active"),
-            ).select_from(EmailApiToken)
+        token_result = (
+            await db.execute(
+                select(
+                    func.count(EmailApiToken.id).label("total"),
+                    func.sum(case((EmailApiToken.is_active.is_(True), 1), else_=0)).label("active"),
+                ).select_from(EmailApiToken)
+            )
         ).one()
-        revoked = db.execute(select(func.count(TokenRevocation.jti))).scalar() or 0
+        revoked = (await db.execute(select(func.count(TokenRevocation.jti)))).scalar() or 0
 
         total = token_result.total or 0
         active = token_result.active or 0
 
         return {"total": total, "breakdown": {"active": active, "inactive": total - active, "revoked": revoked}}
 
-    def _get_session_stats(self, db: Session) -> Dict[str, Any]:
+    async def _get_session_stats(self, db: AsyncSession) -> Dict[str, Any]:
         """Get session and activity metrics.
 
         Args:
@@ -269,7 +275,7 @@ class SystemStatsService:
 
         Examples:
             >>> service = SystemStatsService()
-            >>> # stats = service._get_session_stats(db)
+            >>> # stats = await service._get_session_stats(db)
             >>> # assert stats["total"] >= 0
             >>> # assert "mcp_sessions" in stats["breakdown"]
         """
@@ -283,7 +289,7 @@ class SystemStatsService:
                 select(literal("oauth_tokens").label("type"), func.count(OAuthToken.access_token).label("cnt")).select_from(OAuthToken),
             )
         )
-        results = db.execute(stmt).all()
+        results = (await db.execute(stmt)).all()
         counts = {row.type: row.cnt for row in results}
 
         mcp_sessions = counts.get("mcp_sessions", 0)
@@ -294,7 +300,7 @@ class SystemStatsService:
 
         return {"total": total, "breakdown": {"mcp_sessions": mcp_sessions, "mcp_messages": mcp_messages, "subscriptions": subscriptions, "oauth_tokens": oauth_tokens}}
 
-    def _get_metrics_stats(self, db: Session) -> Dict[str, Any]:
+    async def _get_metrics_stats(self, db: AsyncSession) -> Dict[str, Any]:
         """Get metrics and analytics counts.
 
         Args:
@@ -305,7 +311,7 @@ class SystemStatsService:
 
         Examples:
             >>> service = SystemStatsService()
-            >>> # stats = service._get_metrics_stats(db)
+            >>> # stats = await service._get_metrics_stats(db)
             >>> # assert stats["total"] >= 0
             >>> # assert "tool_metrics" in stats["breakdown"]
         """
@@ -321,7 +327,7 @@ class SystemStatsService:
                 select(literal("token_usage_logs").label("type"), func.count(TokenUsageLog.id).label("cnt")).select_from(TokenUsageLog),
             )
         )
-        results = db.execute(stmt).all()
+        results = (await db.execute(stmt)).all()
         counts = {row.type: row.cnt for row in results}
 
         tool_metrics = counts.get("tool_metrics", 0)
@@ -344,7 +350,7 @@ class SystemStatsService:
             },
         }
 
-    def _get_security_stats(self, db: Session) -> Dict[str, Any]:
+    async def _get_security_stats(self, db: AsyncSession) -> Dict[str, Any]:
         """Get security and audit metrics.
 
         Args:
@@ -355,7 +361,7 @@ class SystemStatsService:
 
         Examples:
             >>> service = SystemStatsService()
-            >>> # stats = service._get_security_stats(db)
+            >>> # stats = await service._get_security_stats(db)
             >>> # assert stats["total"] >= 0
             >>> # assert "auth_events" in stats["breakdown"]
         """
@@ -369,7 +375,7 @@ class SystemStatsService:
                 select(literal("sso_providers").label("type"), func.count(SSOProvider.id).label("cnt")).select_from(SSOProvider).where(SSOProvider.is_enabled.is_(True)),
             )
         )
-        results = db.execute(stmt).all()
+        results = (await db.execute(stmt)).all()
         counts = {row.type: row.cnt for row in results}
 
         auth_events = counts.get("auth_events", 0)
@@ -380,7 +386,7 @@ class SystemStatsService:
 
         return {"total": total, "breakdown": {"auth_events": auth_events, "audit_logs": audit_logs, "pending_approvals": pending_approvals, "sso_providers": sso_providers}}
 
-    def _get_workflow_stats(self, db: Session) -> Dict[str, Any]:
+    async def _get_workflow_stats(self, db: AsyncSession) -> Dict[str, Any]:
         """Get workflow state metrics.
 
         Args:
@@ -391,7 +397,7 @@ class SystemStatsService:
 
         Examples:
             >>> service = SystemStatsService()
-            >>> # stats = service._get_workflow_stats(db)
+            >>> # stats = await service._get_workflow_stats(db)
             >>> # assert stats["total"] >= 0
             >>> # assert "team_invitations" in stats["breakdown"]
         """
@@ -404,7 +410,7 @@ class SystemStatsService:
                 select(literal("join_requests").label("type"), func.count(EmailTeamJoinRequest.id).label("cnt")).select_from(EmailTeamJoinRequest).where(EmailTeamJoinRequest.status == "pending"),
             )
         )
-        results = db.execute(stmt).all()
+        results = (await db.execute(stmt)).all()
         counts = {row.type: row.cnt for row in results}
 
         invitations = counts.get("invitations", 0)

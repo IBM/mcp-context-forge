@@ -25,7 +25,8 @@ from typing import Any, Dict, List, Optional
 import uuid
 
 # Third-Party
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # First-Party
 from mcpgateway.config import settings
@@ -286,7 +287,7 @@ class ImportService:
 
     async def import_configuration(
         self,
-        db: Session,
+        db: AsyncSession,
         import_data: Dict[str, Any],
         conflict_strategy: ConflictStrategy = ConflictStrategy.UPDATE,
         dry_run: bool = False,
@@ -335,7 +336,7 @@ class ImportService:
                     await self._process_entities(db, entity_type, entities[entity_type], conflict_strategy, dry_run, rekey_secret, status, selected_entities, imported_by)
                     # Flush after each entity type to make records visible for associations
                     if not dry_run:
-                        db.flush()
+                        await db.flush()
 
             # Assign all imported items to user's team with public visibility (after all entities processed)
             if not dry_run:
@@ -440,7 +441,7 @@ class ImportService:
 
     async def _process_entities(
         self,
-        db: Session,
+        db: AsyncSession,
         entity_type: str,
         entity_list: List[Dict[str, Any]],
         conflict_strategy: ConflictStrategy,
@@ -590,7 +591,7 @@ class ImportService:
             raise ImportError(f"Failed to re-key authentication data: {str(e)}")
 
     async def _process_single_entity(
-        self, db: Session, entity_type: str, entity_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus, imported_by: str
+        self, db: AsyncSession, entity_type: str, entity_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus, imported_by: str
     ) -> None:
         """Process a single entity with conflict resolution.
 
@@ -623,7 +624,7 @@ class ImportService:
         except Exception as e:
             raise ImportError(f"Failed to process {entity_type}: {str(e)}")
 
-    async def _process_tool(self, db: Session, tool_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus) -> None:
+    async def _process_tool(self, db: AsyncSession, tool_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus) -> None:
         """Process a tool entity.
 
         Args:
@@ -690,7 +691,7 @@ class ImportService:
         except Exception as e:
             raise ImportError(f"Failed to process tool {tool_name}: {str(e)}")
 
-    async def _process_gateway(self, db: Session, gateway_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus) -> None:
+    async def _process_gateway(self, db: AsyncSession, gateway_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus) -> None:
         """Process a gateway entity.
 
         Args:
@@ -752,7 +753,7 @@ class ImportService:
         except Exception as e:
             raise ImportError(f"Failed to process gateway {gateway_name}: {str(e)}")
 
-    async def _process_server(self, db: Session, server_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus, imported_by: str) -> None:
+    async def _process_server(self, db: AsyncSession, server_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus, imported_by: str) -> None:
         """Process a server entity.
 
         Args:
@@ -814,7 +815,7 @@ class ImportService:
         except Exception as e:
             raise ImportError(f"Failed to process server {server_name}: {str(e)}")
 
-    async def _process_prompt(self, db: Session, prompt_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus) -> None:
+    async def _process_prompt(self, db: AsyncSession, prompt_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus) -> None:
         """Process a prompt entity.
 
         Args:
@@ -863,7 +864,7 @@ class ImportService:
         except Exception as e:
             raise ImportError(f"Failed to process prompt {prompt_name}: {str(e)}")
 
-    async def _process_resource(self, db: Session, resource_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus) -> None:
+    async def _process_resource(self, db: AsyncSession, resource_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus) -> None:
         """Process a resource entity.
 
         Args:
@@ -912,7 +913,7 @@ class ImportService:
         except Exception as e:
             raise ImportError(f"Failed to process resource {resource_uri}: {str(e)}")
 
-    async def _process_tools_bulk(self, db: Session, tools_data: List[Dict[str, Any]], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus, imported_by: str) -> None:
+    async def _process_tools_bulk(self, db: AsyncSession, tools_data: List[Dict[str, Any]], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus, imported_by: str) -> None:
         """Process multiple tools using bulk operations.
 
         Args:
@@ -971,7 +972,7 @@ class ImportService:
             logger.error(f"Failed to bulk process tools: {str(e)}")
             # Don't raise - allow import to continue with other entities
 
-    async def _process_resources_bulk(self, db: Session, resources_data: List[Dict[str, Any]], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus, imported_by: str) -> None:
+    async def _process_resources_bulk(self, db: AsyncSession, resources_data: List[Dict[str, Any]], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus, imported_by: str) -> None:
         """Process multiple resources using bulk operations.
 
         Args:
@@ -1030,7 +1031,7 @@ class ImportService:
             logger.error(f"Failed to bulk process resources: {str(e)}")
             # Don't raise - allow import to continue with other entities
 
-    async def _process_prompts_bulk(self, db: Session, prompts_data: List[Dict[str, Any]], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus, imported_by: str) -> None:
+    async def _process_prompts_bulk(self, db: AsyncSession, prompts_data: List[Dict[str, Any]], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus, imported_by: str) -> None:
         """Process multiple prompts using bulk operations.
 
         Args:
@@ -1280,7 +1281,7 @@ class ImportService:
             **auth_kwargs,
         )
 
-    async def _convert_to_server_create(self, db: Session, server_data: Dict[str, Any]) -> ServerCreate:
+    async def _convert_to_server_create(self, db: AsyncSession, server_data: Dict[str, Any]) -> ServerCreate:
         """Convert import data to ServerCreate schema, resolving tool references.
 
         Args:
@@ -1321,7 +1322,7 @@ class ImportService:
 
         return ServerCreate(name=server_data["name"], description=server_data.get("description"), associated_tools=resolved_tool_ids, tags=server_data.get("tags", []))
 
-    async def _convert_to_server_update(self, db: Session, server_data: Dict[str, Any]) -> ServerUpdate:
+    async def _convert_to_server_update(self, db: AsyncSession, server_data: Dict[str, Any]) -> ServerUpdate:
         """Convert import data to ServerUpdate schema, resolving tool references.
 
         Args:
@@ -1468,7 +1469,7 @@ class ImportService:
 
         return removed
 
-    async def preview_import(self, db: Session, import_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def preview_import(self, db: AsyncSession, import_data: Dict[str, Any]) -> Dict[str, Any]:
         """Preview import file to show what would be imported with smart categorization.
 
         Args:
@@ -1514,7 +1515,7 @@ class ImportService:
 
         return preview
 
-    async def _analyze_import_item(self, db: Session, entity_type: str, entity: Dict[str, Any]) -> Dict[str, Any]:
+    async def _analyze_import_item(self, db: AsyncSession, entity_type: str, entity: Dict[str, Any]) -> Dict[str, Any]:
         """Analyze a single import item for the preview.
 
         Args:
@@ -1628,7 +1629,7 @@ class ImportService:
 
         return dependencies
 
-    async def _detect_import_conflicts(self, db: Session, entities: Dict[str, List[Dict[str, Any]]]) -> Dict[str, List[Dict[str, Any]]]:
+    async def _detect_import_conflicts(self, db: AsyncSession, entities: Dict[str, List[Dict[str, Any]]]) -> Dict[str, List[Dict[str, Any]]]:
         """Detect conflicts between import items and existing database items.
 
         Args:
@@ -1676,7 +1677,7 @@ class ImportService:
 
         return conflicts
 
-    async def _get_user_context(self, db: Session, imported_by: str) -> Optional[Dict[str, Any]]:
+    async def _get_user_context(self, db: AsyncSession, imported_by: str) -> Optional[Dict[str, Any]]:
         """Get user context for import team assignment.
 
         Args:
@@ -1687,7 +1688,8 @@ class ImportService:
             User context dict or None if not found
         """
         try:
-            user = db.query(EmailUser).filter(EmailUser.email == imported_by).first()
+            result = await db.execute(select(EmailUser).where(EmailUser.email == imported_by))
+            user = result.scalar_one_or_none()
             if not user:
                 logger.warning(f"Could not find importing user: {imported_by}")
                 return None
@@ -1734,7 +1736,7 @@ class ImportService:
         logger.debug(f"Enhanced entity with multitenancy: team_id={enhanced_data['team_id']}, visibility={enhanced_data['visibility']}")
         return enhanced_data
 
-    async def _assign_imported_items_to_team(self, db: Session, imported_by: str) -> None:
+    async def _assign_imported_items_to_team(self, db: AsyncSession, imported_by: str) -> None:
         """Assign imported items without team assignment to the importer's personal team.
 
         Args:
@@ -1743,7 +1745,8 @@ class ImportService:
         """
         try:
             # Find the importing user and their personal team
-            user = db.query(EmailUser).filter(EmailUser.email == imported_by).first()
+            result = await db.execute(select(EmailUser).where(EmailUser.email == imported_by))
+            user = result.scalar_one_or_none()
             if not user:
                 logger.warning(f"Could not find importing user {imported_by} - skipping team assignment")
                 return
@@ -1763,7 +1766,8 @@ class ImportService:
             for resource_name, resource_model in resource_types:
                 try:
                     # Find items without team assignment (recently imported)
-                    unassigned = db.query(resource_model).filter((resource_model.team_id.is_(None)) | (resource_model.owner_email.is_(None))).all()
+                    result = await db.execute(select(resource_model).where((resource_model.team_id.is_(None)) | (resource_model.owner_email.is_(None))))
+                    unassigned = result.scalars().all()
 
                     if unassigned:
                         logger.info(f"Assigning {len(unassigned)} orphaned {resource_name} to user team")
@@ -1783,7 +1787,7 @@ class ImportService:
                     continue
 
             if total_assigned > 0:
-                db.commit()
+                await db.commit()
                 logger.info(f"Assigned {total_assigned} imported items to {personal_team.name} with public visibility")
             else:
                 logger.debug("No orphaned imported items found")

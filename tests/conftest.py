@@ -13,7 +13,9 @@ from unittest.mock import AsyncMock
 # Third-Party
 from _pytest.monkeypatch import MonkeyPatch
 import pytest
+import pytest_asyncio
 from sqlalchemy import create_engine
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -80,6 +82,43 @@ def test_db(test_engine):
         db.close()
 
 
+@pytest_asyncio.fixture
+async def async_test_db():
+    """Create a fresh async database session for a test.
+
+    Uses aiosqlite for async SQLite support in tests.
+    """
+    import tempfile
+    fd, path = tempfile.mkstemp(suffix=".db")
+    async_url = f"sqlite+aiosqlite:///{path}"
+    sync_url = f"sqlite:///{path}"
+
+    # Create sync engine for schema creation
+    sync_engine = create_engine(sync_url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    db_mod.Base.metadata.create_all(bind=sync_engine)
+
+    # Create async engine and session
+    async_engine = create_async_engine(async_url, echo=False)
+    TestAsyncSessionLocal = async_sessionmaker(
+        bind=async_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+
+    async with TestAsyncSessionLocal() as db:
+        try:
+            yield db
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+
+    await async_engine.dispose()
+    sync_engine.dispose()
+    os.close(fd)
+    os.unlink(path)
+
+
 @pytest.fixture
 def test_settings():
     """Create test settings with in-memory database."""
@@ -94,24 +133,46 @@ def test_settings():
 
 @pytest.fixture
 def app():
-    """Create a FastAPI test application with proper database setup."""
-    # Use the existing app_with_temp_db fixture logic which works correctly
+    """Create a FastAPI test application with proper async database setup.
+
+    Uses aiosqlite for async SQLite support so that services using async
+    database operations work correctly in tests.
+    """
+    import asyncio
+
     mp = MonkeyPatch()
 
     # 1) create temp SQLite file
     fd, path = tempfile.mkstemp(suffix=".db")
-    url = f"sqlite:///{path}"
+    sync_url = f"sqlite:///{path}"
+    async_url = f"sqlite+aiosqlite:///{path}"
 
     # 2) patch settings
     # First-Party
     from mcpgateway.config import settings
 
-    mp.setattr(settings, "database_url", url, raising=False)
+    mp.setattr(settings, "database_url", async_url, raising=False)
 
-    engine = create_engine(url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    mp.setattr(db_mod, "engine", engine, raising=False)
+    # Create sync engine for schema creation (metadata.create_all needs sync)
+    sync_engine = create_engine(sync_url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=sync_engine)
+
+    # Create async engine and session factory for actual operations
+    test_async_engine = create_async_engine(async_url, echo=False)
+    TestAsyncSessionLocal = async_sessionmaker(
+        bind=test_async_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autocommit=False,
+        autoflush=False,
+    )
+
+    # Patch db module with async engine and session
+    mp.setattr(db_mod, "engine", sync_engine, raising=False)
+    mp.setattr(db_mod, "async_engine", test_async_engine, raising=False)
     mp.setattr(db_mod, "SessionLocal", TestSessionLocal, raising=False)
+    mp.setattr(db_mod, "AsyncSessionLocal", TestAsyncSessionLocal, raising=False)
+    mp.setattr(db_mod, "_use_async", True, raising=False)
 
     # 4) patch the already‑imported main module **without reloading**
     # First-Party
@@ -133,8 +194,12 @@ def app():
     mp.setattr(audit_trail_mod, "SessionLocal", TestSessionLocal, raising=False)
     mp.setattr(log_aggregator_mod, "SessionLocal", TestSessionLocal, raising=False)
 
-    # 4) create schema
-    db_mod.Base.metadata.create_all(bind=engine)
+    # Enable async mode for services
+    mp.setattr(auth_middleware_mod, "_use_async", True, raising=False)
+    mp.setattr(auth_middleware_mod, "AsyncSessionLocal", TestAsyncSessionLocal, raising=False)
+
+    # 4) create schema using sync engine
+    db_mod.Base.metadata.create_all(bind=sync_engine)
 
     # First-Party
     from mcpgateway.main import app
@@ -143,7 +208,21 @@ def app():
 
     # 6) teardown
     mp.undo()
-    engine.dispose()
+
+    # Dispose async engine properly
+    async def dispose_async():
+        await test_async_engine.dispose()
+
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(dispose_async())
+        else:
+            loop.run_until_complete(dispose_async())
+    except RuntimeError:
+        asyncio.run(dispose_async())
+
+    sync_engine.dispose()
     os.close(fd)
     os.unlink(path)
 
@@ -169,23 +248,46 @@ def mock_websocket():
 
 @pytest.fixture(scope="module")  # one DB per test module is usually fine
 def app_with_temp_db():
-    """Return a FastAPI app wired to a fresh SQLite database."""
+    """Return a FastAPI app wired to a fresh async SQLite database.
+
+    Uses aiosqlite for async SQLite support so that services using async
+    database operations work correctly in tests.
+    """
+    import asyncio
+
     mp = MonkeyPatch()
 
     # 1) create temp SQLite file
     fd, path = tempfile.mkstemp(suffix=".db")
-    url = f"sqlite:///{path}"
+    sync_url = f"sqlite:///{path}"
+    async_url = f"sqlite+aiosqlite:///{path}"
 
     # 2) patch settings
     # First-Party
     from mcpgateway.config import settings
 
-    mp.setattr(settings, "database_url", url, raising=False)
+    mp.setattr(settings, "database_url", async_url, raising=False)
 
-    engine = create_engine(url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    mp.setattr(db_mod, "engine", engine, raising=False)
+    # Create sync engine for schema creation (metadata.create_all needs sync)
+    sync_engine = create_engine(sync_url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=sync_engine)
+
+    # Create async engine and session factory for actual operations
+    test_async_engine = create_async_engine(async_url, echo=False)
+    TestAsyncSessionLocal = async_sessionmaker(
+        bind=test_async_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autocommit=False,
+        autoflush=False,
+    )
+
+    # Patch db module with async engine and session
+    mp.setattr(db_mod, "engine", sync_engine, raising=False)
+    mp.setattr(db_mod, "async_engine", test_async_engine, raising=False)
     mp.setattr(db_mod, "SessionLocal", TestSessionLocal, raising=False)
+    mp.setattr(db_mod, "AsyncSessionLocal", TestAsyncSessionLocal, raising=False)
+    mp.setattr(db_mod, "_use_async", True, raising=False)
 
     # 4) patch the already‑imported main module **without reloading**
     # First-Party
@@ -207,16 +309,12 @@ def app_with_temp_db():
     mp.setattr(audit_trail_mod, "SessionLocal", TestSessionLocal, raising=False)
     mp.setattr(log_aggregator_mod, "SessionLocal", TestSessionLocal, raising=False)
 
-    # 4) create schema
-    db_mod.Base.metadata.create_all(bind=engine)
+    # Enable async mode for services
+    mp.setattr(auth_middleware_mod, "_use_async", True, raising=False)
+    mp.setattr(auth_middleware_mod, "AsyncSessionLocal", TestAsyncSessionLocal, raising=False)
 
-    # 5) reload main so routers, deps pick up new SessionLocal
-    # if "mcpgateway.main" in sys.modules:
-    #     import importlib
-
-    #     importlib.reload(sys.modules["mcpgateway.main"])
-    # else:
-    #     import mcpgateway.main  # noqa: F401
+    # 4) create schema using sync engine
+    db_mod.Base.metadata.create_all(bind=sync_engine)
 
     # First-Party
     from mcpgateway.main import app
@@ -225,7 +323,21 @@ def app_with_temp_db():
 
     # 6) teardown
     mp.undo()
-    engine.dispose()
+
+    # Dispose async engine properly
+    async def dispose_async():
+        await test_async_engine.dispose()
+
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(dispose_async())
+        else:
+            loop.run_until_complete(dispose_async())
+    except RuntimeError:
+        asyncio.run(dispose_async())
+
+    sync_engine.dispose()
     os.close(fd)
     os.unlink(path)
 
