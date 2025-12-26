@@ -32,5 +32,6 @@ This page tracks all significant design decisions made for the MCP Gateway proje
 | 0025  | Adopt **Granian** as Alternative HTTP Server | Accepted | Performance | 2025-12-21 |
 | 0026  | Add **Hiredis** as Default Redis Parser | Accepted | Performance | 2025-12-21 |
 | 0027  | Migrate from **Psycopg2** to **Psycopg3** | Accepted | Database | 2025-01-15 |
+| 0028  | Authentication Data Caching | Accepted | Performance | 2025-01-15 |
 
 > ✳️ Add new decisions chronologically and link to them from this table.

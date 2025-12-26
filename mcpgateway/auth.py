@@ -290,6 +290,101 @@ def _get_user_by_email_sync(email: str) -> Optional[EmailUser]:
         return None
 
 
+def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dict[str, Any]:
+    """Batched auth context lookup in a single DB session.
+
+    Combines what were 3 separate asyncio.to_thread calls into 1:
+    1. _get_user_by_email_sync - user data
+    2. _get_personal_team_sync - personal team ID
+    3. _check_token_revoked_sync - token revocation status
+
+    This reduces thread pool contention and DB connection overhead.
+
+    Args:
+        email: User email address
+        jti: JWT ID for revocation check (optional)
+
+    Returns:
+        Dict with keys: user (dict or None), personal_team_id (str or None),
+        is_token_revoked (bool)
+
+    Examples:
+        >>> # This function runs in a thread pool
+        >>> # result = _get_auth_context_batched_sync("test@example.com", "jti-123")
+        >>> # result["is_token_revoked"]  # False if not revoked
+    """
+    with fresh_db_session() as db:
+        # Third-Party
+        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+        # First-Party
+        from mcpgateway.db import EmailTeam, EmailTeamMember, TokenRevocation  # pylint: disable=import-outside-toplevel
+
+        result = {
+            "user": None,
+            "personal_team_id": None,
+            "is_token_revoked": False,
+        }
+
+        # Query 1: Get user data
+        user_result = db.execute(select(EmailUser).where(EmailUser.email == email))
+        user = user_result.scalar_one_or_none()
+
+        if user:
+            # Detach user data as dict (session will close)
+            result["user"] = {
+                "email": user.email,
+                "password_hash": user.password_hash,
+                "full_name": user.full_name,
+                "is_admin": user.is_admin,
+                "is_active": user.is_active,
+                "email_verified_at": user.email_verified_at,
+                "created_at": user.created_at,
+                "updated_at": user.updated_at,
+            }
+
+            # Query 2: Get personal team (only if user exists)
+            team_result = db.execute(
+                select(EmailTeam)
+                .join(EmailTeamMember)
+                .where(
+                    EmailTeamMember.user_email == email,
+                    EmailTeam.is_personal.is_(True),
+                )
+            )
+            personal_team = team_result.scalar_one_or_none()
+            if personal_team:
+                result["personal_team_id"] = personal_team.id
+
+        # Query 3: Check token revocation (if JTI provided)
+        if jti:
+            revoke_result = db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti))
+            result["is_token_revoked"] = revoke_result.scalar_one_or_none() is not None
+
+        return result
+
+
+def _user_from_cached_dict(user_dict: Dict[str, Any]) -> EmailUser:
+    """Create EmailUser instance from cached dict.
+
+    Args:
+        user_dict: User data dictionary from cache
+
+    Returns:
+        EmailUser instance (detached from any session)
+    """
+    return EmailUser(
+        email=user_dict["email"],
+        password_hash=user_dict.get("password_hash", ""),
+        full_name=user_dict.get("full_name"),
+        is_admin=user_dict.get("is_admin", False),
+        is_active=user_dict.get("is_active", True),
+        email_verified_at=user_dict.get("email_verified_at"),
+        created_at=user_dict.get("created_at", datetime.now(timezone.utc)),
+        updated_at=user_dict.get("updated_at", datetime.now(timezone.utc)),
+    )
+
+
 async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     request: Optional[object] = None,
@@ -456,9 +551,137 @@ async def get_current_user(
 
         logger.debug("JWT authentication successful for email: %s", email)
 
-        # Check for token revocation if JTI is present (new format)
-        # Uses fresh DB session via asyncio.to_thread to avoid blocking event loop
+        # Extract JTI for revocation check
         jti = payload.get("jti")
+
+        # === AUTH CACHING: Check cache before DB queries ===
+        if settings.auth_cache_enabled:
+            try:
+                # First-Party
+                from mcpgateway.cache.auth_cache import auth_cache, CachedAuthContext  # pylint: disable=import-outside-toplevel
+
+                cached_ctx = await auth_cache.get_auth_context(email, jti)
+                if cached_ctx:
+                    logger.debug(f"Auth cache hit for {email}")
+
+                    # Check revocation from cache
+                    if cached_ctx.is_token_revoked:
+                        raise HTTPException(
+                            status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Token has been revoked",
+                            headers={"WWW-Authenticate": "Bearer"},
+                        )
+
+                    # Check user active status from cache
+                    if cached_ctx.user and not cached_ctx.user.get("is_active", True):
+                        raise HTTPException(
+                            status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Account disabled",
+                            headers={"WWW-Authenticate": "Bearer"},
+                        )
+
+                    # Set team_id from cache
+                    if request:
+                        # Prefer team from token, fallback to cached personal team
+                        token_team_id = payload.get("teams", [None])[0] if payload.get("teams") else None
+                        if isinstance(token_team_id, dict):
+                            token_team_id = token_team_id.get("id")
+                        request.state.team_id = token_team_id or cached_ctx.personal_team_id
+
+                    # Return user from cache
+                    if cached_ctx.user:
+                        return _user_from_cached_dict(cached_ctx.user)
+
+                    # User not in cache but context was (shouldn't happen, but handle it)
+                    logger.debug("Auth context cached but user missing, falling through to DB")
+
+            except HTTPException:
+                raise
+            except Exception as cache_error:
+                logger.debug(f"Auth cache check failed, falling through to DB: {cache_error}")
+
+        # === BATCHED QUERIES: Single DB call for user + team + revocation ===
+        if settings.auth_cache_batch_queries:
+            try:
+                auth_ctx = await asyncio.to_thread(_get_auth_context_batched_sync, email, jti)
+
+                # Check revocation
+                if auth_ctx.get("is_token_revoked"):
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Token has been revoked",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+
+                # Set team_id (prefer token team, fallback to personal team from batch)
+                token_team_id = payload.get("teams", [None])[0] if payload.get("teams") else None
+                if isinstance(token_team_id, dict):
+                    token_team_id = token_team_id.get("id")
+                team_id = token_team_id or auth_ctx.get("personal_team_id")
+                if request:
+                    request.state.team_id = team_id
+
+                # Store in cache for future requests
+                if settings.auth_cache_enabled:
+                    try:
+                        # First-Party
+                        from mcpgateway.cache.auth_cache import auth_cache, CachedAuthContext  # noqa: F811 pylint: disable=import-outside-toplevel
+
+                        await auth_cache.set_auth_context(
+                            email,
+                            jti,
+                            CachedAuthContext(
+                                user=auth_ctx.get("user"),
+                                personal_team_id=auth_ctx.get("personal_team_id"),
+                                is_token_revoked=auth_ctx.get("is_token_revoked", False),
+                            ),
+                        )
+                    except Exception as cache_set_error:
+                        logger.debug(f"Failed to cache auth context: {cache_set_error}")
+
+                # Create user from batched result
+                if auth_ctx.get("user"):
+                    user_dict = auth_ctx["user"]
+                    if not user_dict.get("is_active", True):
+                        raise HTTPException(
+                            status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Account disabled",
+                            headers={"WWW-Authenticate": "Bearer"},
+                        )
+                    # Store user for return at end of function
+                    # We'll check platform admin case and return below
+                    _batched_user = _user_from_cached_dict(user_dict)
+                else:
+                    _batched_user = None
+
+                # Handle platform admin case
+                if _batched_user is None:
+                    if email == getattr(settings, "platform_admin_email", "admin@example.com"):
+                        _batched_user = EmailUser(
+                            email=email,
+                            password_hash="",  # nosec B106
+                            full_name=getattr(settings, "platform_admin_full_name", "Platform Administrator"),
+                            is_admin=True,
+                            is_active=True,
+                            email_verified_at=datetime.now(timezone.utc),
+                            created_at=datetime.now(timezone.utc),
+                            updated_at=datetime.now(timezone.utc),
+                        )
+                    else:
+                        raise HTTPException(
+                            status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="User not found",
+                            headers={"WWW-Authenticate": "Bearer"},
+                        )
+
+                return _batched_user
+
+            except HTTPException:
+                raise
+            except Exception as batch_error:
+                logger.warning(f"Batched auth query failed, falling back to individual queries: {batch_error}")
+
+        # === FALLBACK: Original individual queries (if batching disabled or failed) ===
         if jti:
             try:
                 is_revoked = await asyncio.to_thread(_check_token_revoked_sync, jti)
