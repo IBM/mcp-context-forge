@@ -9,13 +9,26 @@ Provides caching components for the MCP Gateway including:
 - Resource content caching
 - Session registry for MCP connections
 - GlobalConfig caching for passthrough headers
+- Auth caching for user, team, and token revocation data
 
 Note: Imports are lazy to avoid circular dependencies with services.
 """
 
 from typing import TYPE_CHECKING
 
-__all__ = ["A2AStatsCache", "a2a_stats_cache", "GlobalConfigCache", "global_config_cache", "MetricsCache", "metrics_cache", "ResourceCache", "SessionRegistry"]
+__all__ = [
+    "A2AStatsCache",
+    "a2a_stats_cache",
+    "AuthCache",
+    "auth_cache",
+    "CachedAuthContext",
+    "GlobalConfigCache",
+    "global_config_cache",
+    "MetricsCache",
+    "metrics_cache",
+    "ResourceCache",
+    "SessionRegistry",
+]
 
 # Lazy imports to avoid circular dependencies
 # When services import cache.global_config_cache, we don't want to
@@ -23,6 +36,7 @@ __all__ = ["A2AStatsCache", "a2a_stats_cache", "GlobalConfigCache", "global_conf
 
 if TYPE_CHECKING:
     from mcpgateway.cache.a2a_stats_cache import A2AStatsCache, a2a_stats_cache
+    from mcpgateway.cache.auth_cache import AuthCache, auth_cache, CachedAuthContext
     from mcpgateway.cache.global_config_cache import GlobalConfigCache, global_config_cache
     from mcpgateway.cache.metrics_cache import MetricsCache, metrics_cache
     from mcpgateway.cache.resource_cache import ResourceCache
@@ -46,6 +60,14 @@ def __getattr__(name: str):
         from mcpgateway.cache.a2a_stats_cache import A2AStatsCache, a2a_stats_cache
 
         return a2a_stats_cache if name == "a2a_stats_cache" else A2AStatsCache
+    if name in ("AuthCache", "auth_cache", "CachedAuthContext"):
+        from mcpgateway.cache.auth_cache import AuthCache, auth_cache, CachedAuthContext
+
+        if name == "auth_cache":
+            return auth_cache
+        if name == "CachedAuthContext":
+            return CachedAuthContext
+        return AuthCache
     if name in ("GlobalConfigCache", "global_config_cache"):
         from mcpgateway.cache.global_config_cache import GlobalConfigCache, global_config_cache
 

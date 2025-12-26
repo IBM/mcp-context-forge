@@ -603,6 +603,18 @@ class TokenCatalogService:
         self.db.add(revocation)
         self.db.commit()
 
+        # Invalidate auth cache for revoked token
+        try:
+            # Standard
+            import asyncio  # pylint: disable=import-outside-toplevel
+
+            # First-Party
+            from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+            asyncio.create_task(auth_cache.invalidate_revocation(token.jti))
+        except Exception as cache_error:
+            logger.debug(f"Failed to invalidate auth cache for revoked token: {cache_error}")
+
         logger.info(f"Revoked token '{token.name}' (JTI: {token.jti}) by {revoked_by}")
 
         return True
