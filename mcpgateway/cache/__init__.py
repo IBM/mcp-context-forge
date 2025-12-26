@@ -65,7 +65,7 @@ def __getattr__(name: str):
 
         if name == "auth_cache":
             return auth_cache
-        elif name == "CachedAuthContext":
+        if name == "CachedAuthContext":
             return CachedAuthContext
         return AuthCache
     if name in ("GlobalConfigCache", "global_config_cache"):
