@@ -1097,6 +1097,9 @@ class Settings(BaseSettings):
     health_check_interval: int = 300
     # Timeout in seconds for each health check request
     health_check_timeout: int = 5
+    # Per-check timeout (seconds) to bound total time of one gateway health check
+    # Env: GATEWAY_HEALTH_CHECK_TIMEOUT
+    gateway_health_check_timeout: float = 5.0
     # Consecutive failures before marking gateway offline
     unhealthy_threshold: int = 3
     # Max concurrent health checks per worker

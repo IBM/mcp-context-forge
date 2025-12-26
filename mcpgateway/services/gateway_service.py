@@ -2768,7 +2768,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 Any exceptions raised during the health check will be propagated to the caller.
             """
             async with semaphore:
-                await self._check_single_gateway_health(gateway, user_email)
+                try:
+                    await asyncio.wait_for(
+                        self._check_single_gateway_health(gateway, user_email),
+                        timeout=settings.gateway_health_check_timeout,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(f"Gateway {getattr(gateway, 'name', 'unknown')} health check timed out after {settings.gateway_health_check_timeout}s")
+                    # Treat timeout as a failed health check
+                    await self._handle_gateway_failure(gateway)
 
         # Create trace span for health check batch
         with create_span("gateway.health_check_batch", {"gateway.count": len(gateways), "check.type": "health"}) as batch_span:
