@@ -50,10 +50,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2'
+          cpus: '4'
           memory: 1G
         reservations:
-          cpus: '1'
+          cpus: '2'
           memory: 512M
 
   # ──────────────────────────────────────────────────────────────────────
@@ -83,7 +83,11 @@ services:
       - PORT=4444
       # Transport: sse, streamablehttp, http, or all (default: all)
       - TRANSPORT_TYPE=streamablehttp
-      - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
+      # Database connection: Via PgBouncer (default) or direct PostgreSQL
+      # PgBouncer provides connection pooling for better performance under high concurrency
+      - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@pgbouncer:6432/mcp
+      # Direct PostgreSQL connection (bypass PgBouncer - increase DB_POOL_SIZE if using):
+      # - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
       # - DATABASE_URL=mysql+pymysql://mysql:${MYSQL_PASSWORD:-changeme}@mariadb:3306/mcp
       # - DATABASE_URL=mysql+pymysql://admin:${MARIADB_PASSWORD:-changeme}@mariadb:3306/mcp
       # - DATABASE_URL=mongodb://admin:${MONGO_PASSWORD:-changeme}@mongodb:27017/mcp
@@ -184,13 +188,16 @@ services:
       - VALIDATION_MIDDLEWARE_ENABLED=true
       - CORRELATION_ID_ENABLED=false
       - OBSERVABILITY_ENABLED=false
-      # Database pool tuning for load testing (1000 users)
-      # Auth now uses fresh short-lived sessions via asyncio.to_thread(),
-      # so connections are released quickly. Smaller pools work better.
-      # Formula: (replicas × workers) × (pool + overflow) < postgres max_connections
-      # With 4 replicas × 16 workers = 64 async contexts, but sessions are short-lived
-      - DB_POOL_SIZE=50
-      - DB_MAX_OVERFLOW=100
+      # Database pool tuning
+      # With PgBouncer (default): smaller pools since PgBouncer handles connection multiplexing
+      # Direct PostgreSQL: larger pools needed, formula: (replicas × workers) × (pool + overflow) < max_connections
+      #
+      # WITH PgBouncer (default):
+      - DB_POOL_SIZE=15
+      - DB_MAX_OVERFLOW=30
+      # DIRECT PostgreSQL connection (uncomment if bypassing PgBouncer):
+      # - DB_POOL_SIZE=50
+      # - DB_MAX_OVERFLOW=100
       - DB_POOL_TIMEOUT=30
       - DB_POOL_RECYCLE=300
       - DB_POOL_PRE_PING=false
@@ -215,11 +222,14 @@ services:
       # - OTEL_METRICS_EXPORTER=${OTEL_METRICS_EXPORTER:-otlp}
       # - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=docker,service.namespace=mcp}
 
-    depends_on:          # Default stack: Postgres + Redis + Alembic migration
-      postgres:
-        condition: service_healthy   # ▶ wait for DB
+    depends_on:          # Default stack: PgBouncer + Redis (PgBouncer depends on Postgres)
+      pgbouncer:
+        condition: service_healthy   # ▶ wait for connection pooler
       redis:
         condition: service_started
+      # Direct PostgreSQL (uncomment if bypassing PgBouncer):
+      # postgres:
+      #   condition: service_healthy
       # migration:
       #   condition: service_completed_successfully
 
@@ -285,11 +295,13 @@ services:
     image: postgres:18
     ports:
       - "5433:5432"      # Expose for baseline load testing (5433 to avoid conflict with local postgres)
-    # Performance tuning for high-load testing (2 replicas × 8 workers × 200 pool = 3200 connections)
+    # Performance tuning for high-load testing
+    # WITH PgBouncer (default): 500 connections sufficient (PgBouncer handles multiplexing)
+    # DIRECT connection mode: increase to 4000 for (2 replicas × 16 workers × 150 pool)
     command:
       - "postgres"
       - "-c"
-      - "max_connections=4000"
+      - "max_connections=500"     # Increase to 4000 if bypassing PgBouncer
       - "-c"
       - "shared_buffers=512MB"
       - "-c"
@@ -376,6 +388,57 @@ services:
         reservations:
           cpus: '2'
           memory: 2G
+
+  # ──────────────────────────────────────────────────────────────────────
+  # PgBouncer - Connection Pooler for PostgreSQL
+  # Reduces connection overhead, improves throughput under high concurrency.
+  # Enable by switching gateway DATABASE_URL to use pgbouncer:6432 instead of postgres:5432
+  # ──────────────────────────────────────────────────────────────────────
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "6432:6432"    # PgBouncer port (optional external access)
+    environment:
+      # Connection to upstream PostgreSQL
+      - DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
+      # PgBouncer listen port (default would be 5432, using 6432 to distinguish from PostgreSQL)
+      - LISTEN_PORT=6432
+      # Pool mode: transaction (recommended), session, or statement
+      # transaction: connection returned after each transaction (best for web apps)
+      - POOL_MODE=transaction
+      # Client-side connection limits
+      - MAX_CLIENT_CONN=3000           # Max connections from application
+      - DEFAULT_POOL_SIZE=120          # Connections per user/database pair
+      - MIN_POOL_SIZE=10               # Minimum connections to keep open
+      - RESERVE_POOL_SIZE=25           # Extra connections for burst traffic
+      - RESERVE_POOL_TIMEOUT=5         # Seconds before using reserve pool
+      # Server-side connection limits (to PostgreSQL)
+      - MAX_DB_CONNECTIONS=200         # Max connections to PostgreSQL per database
+      - MAX_USER_CONNECTIONS=200       # Max connections per user
+      # Connection lifecycle
+      - SERVER_LIFETIME=3600           # Max age of server connection (seconds)
+      - SERVER_IDLE_TIMEOUT=600        # Close idle server connections after (seconds)
+      # Authentication
+      - AUTH_TYPE=scram-sha-256        # Match PostgreSQL auth method
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "localhost", "-p", "6432"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 256M
+        reservations:
+          cpus: '0.5'
+          memory: 128M
 
   # mariadb:
   #   image: mariadb:10.6
