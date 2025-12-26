@@ -6,6 +6,7 @@ A full-stack Helm chart for IBM's **Model Context Protocol (MCP) Gateway
 & Registry - Context-Forge**.  It bundles:
   - MCP Gateway application (HTTP / WebSocket server)
   - PostgreSQL database with persistent storage
+  - Optional PgBouncer connection pooler for high concurrency
   - Redis cache for sessions & completions
   - Optional PgAdmin and Redis-Commander web UIs
 
@@ -522,6 +523,27 @@ Kubernetes: `>=1.21.0-0`
 | postgres.upgrade.backupCompleted | bool | `false` |  |
 | postgres.upgrade.enabled | bool | `false` |  |
 | postgres.upgrade.targetVersion | string | `"18"` |  |
+| pgbouncer.enabled | bool | `false` | Enable PgBouncer connection pooling |
+| pgbouncer.image.repository | string | `"edoburu/pgbouncer"` | PgBouncer image repository |
+| pgbouncer.image.tag | string | `"latest"` | PgBouncer image tag |
+| pgbouncer.image.pullPolicy | string | `"IfNotPresent"` | Image pull policy |
+| pgbouncer.service.type | string | `"ClusterIP"` | Service type |
+| pgbouncer.service.port | int | `6432` | PgBouncer listen port |
+| pgbouncer.pool.mode | string | `"transaction"` | Pool mode (transaction, session, statement) |
+| pgbouncer.pool.maxClientConn | int | `3000` | Max connections from application |
+| pgbouncer.pool.defaultPoolSize | int | `120` | Connections per user/database pair |
+| pgbouncer.pool.minPoolSize | int | `10` | Minimum connections to keep open |
+| pgbouncer.pool.reservePoolSize | int | `25` | Extra connections for burst traffic |
+| pgbouncer.pool.reservePoolTimeout | int | `5` | Seconds before using reserve pool |
+| pgbouncer.pool.maxDbConnections | int | `200` | Max connections to PostgreSQL |
+| pgbouncer.pool.maxUserConnections | int | `200` | Max connections per user |
+| pgbouncer.pool.serverLifetime | int | `3600` | Max server connection age (seconds) |
+| pgbouncer.pool.serverIdleTimeout | int | `600` | Close idle connections after (seconds) |
+| pgbouncer.authType | string | `"scram-sha-256"` | Authentication type |
+| pgbouncer.resources.limits.cpu | string | `"500m"` | CPU limit |
+| pgbouncer.resources.limits.memory | string | `"256Mi"` | Memory limit |
+| pgbouncer.resources.requests.cpu | string | `"100m"` | CPU request |
+| pgbouncer.resources.requests.memory | string | `"128Mi"` | Memory request |
 | redis.enabled | bool | `true` |  |
 | redis.image.pullPolicy | string | `"IfNotPresent"` |  |
 | redis.image.repository | string | `"redis"` |  |

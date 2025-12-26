@@ -148,8 +148,10 @@ mcpContextForge:
     APP_ROOT_PATH: ""                # e.g. "/gateway" when deploying under sub-path
 
     # ─ Connection pooling ─
-    DB_POOL_SIZE: "200"              # size of SQLAlchemy connection pool
-    DB_MAX_OVERFLOW: "10"            # extra connections allowed beyond pool size
+    # With PgBouncer enabled: smaller pools (PgBouncer handles connection multiplexing)
+    # Without PgBouncer: increase to DB_POOL_SIZE=50, DB_MAX_OVERFLOW=100
+    DB_POOL_SIZE: "15"               # size of SQLAlchemy connection pool
+    DB_MAX_OVERFLOW: "30"            # extra connections allowed beyond pool size
     DB_POOL_TIMEOUT: "30"            # seconds to wait for a connection
     DB_POOL_RECYCLE: "3600"          # recycle connections after N seconds
 
@@ -718,6 +720,67 @@ postgres:
     enabled: false              # Set to true to enable the upgrade process
     targetVersion: "18"         # Target PostgreSQL version (e.g., "18")
     backupCompleted: false      # Set to true after successful backup (to prevent re-running backup job)
+
+########################################################################
+# PGBOUNCER - Connection Pooler for PostgreSQL
+# Reduces connection overhead, improves throughput under high concurrency.
+########################################################################
+pgbouncer:
+  enabled: false                     # Set to true to route DB traffic through PgBouncer
+
+  image:
+    repository: edoburu/pgbouncer
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 6432                       # PgBouncer listens on 6432
+
+  # Pool configuration
+  pool:
+    mode: transaction                # transaction (recommended), session, or statement
+    maxClientConn: 3000              # Max connections from application
+    defaultPoolSize: 120             # Connections per user/database pair
+    minPoolSize: 10                  # Minimum connections to keep open
+    reservePoolSize: 25              # Extra connections for burst traffic
+    reservePoolTimeout: 5            # Seconds before using reserve pool
+    maxDbConnections: 200            # Max connections to PostgreSQL per database
+    maxUserConnections: 200          # Max connections per user
+    serverLifetime: 3600             # Max age of server connection (seconds)
+    serverIdleTimeout: 600           # Close idle server connections after (seconds)
+
+  # Authentication
+  authType: scram-sha-256            # Match PostgreSQL auth method
+
+  # Resource limits
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+  # Health probes
+  probes:
+    readiness:
+      type: exec
+      command: ["pg_isready", "-h", "localhost", "-p", "6432"]
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 3
+
+    liveness:
+      type: exec
+      command: ["pg_isready", "-h", "localhost", "-p", "6432"]
+      initialDelaySeconds: 10
+      periodSeconds: 15
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 5
 
 ########################################################################
 # REDIS CACHE
