@@ -14,6 +14,7 @@ It handles:
 """
 
 # Standard
+import logging
 from typing import Dict, List, Optional
 
 # Third-Party
@@ -27,6 +28,26 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import TaggedEntity, TagInfo, TagStats
+
+logger = logging.getLogger(__name__)
+
+# Cache import (lazy to avoid circular dependencies)
+_ADMIN_STATS_CACHE = None
+
+
+def _get_admin_stats_cache():
+    """Get admin stats cache singleton lazily.
+
+    Returns:
+        AdminStatsCache instance.
+    """
+    global _ADMIN_STATS_CACHE  # pylint: disable=global-statement
+    if _ADMIN_STATS_CACHE is None:
+        # First-Party
+        from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+        _ADMIN_STATS_CACHE = admin_stats_cache
+    return _ADMIN_STATS_CACHE
 
 
 class TagService:
@@ -122,6 +143,18 @@ class TagService:
             SQLAlchemyError: If database query fails
             ValidationError: If invalid entity types are processed
         """
+        # Generate cache key from parameters
+        entity_types_key = ":".join(sorted(entity_types)) if entity_types else "all"
+        cache_key = f"{entity_types_key}:{include_entities}"
+
+        # Check cache first (only for non-entity queries as entity data is large)
+        if not include_entities:
+            cache = _get_admin_stats_cache()
+            cached = await cache.get_tags(cache_key)
+            if cached is not None:
+                # Reconstruct TagInfo objects from cached dicts
+                return [TagInfo.model_validate(t) for t in cached]
+
         tag_data: Dict[str, Dict] = {}
 
         # Define entity type mapping
@@ -203,6 +236,11 @@ class TagService:
 
         # Convert to TagInfo list
         tags = [TagInfo(name=tag, stats=data["stats"], entities=data["entities"] if include_entities else []) for tag, data in sorted(tag_data.items())]
+
+        # Store in cache (only for non-entity queries)
+        if not include_entities:
+            cache = _get_admin_stats_cache()
+            await cache.set_tags([t.model_dump() for t in tags], cache_key)
 
         return tags
 

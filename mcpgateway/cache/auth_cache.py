@@ -38,6 +38,10 @@ from typing import Any, Dict, Optional, Set
 
 logger = logging.getLogger(__name__)
 
+# Sentinel value to represent "user is not a member" in Redis cache
+# This allows distinguishing between "not a member" (cached) and "cache miss"
+_NOT_A_MEMBER_SENTINEL = "__NOT_A_MEMBER__"
+
 
 @dataclass
 class CachedAuthContext:
@@ -118,6 +122,7 @@ class AuthCache:
         user_ttl: Optional[int] = None,
         revocation_ttl: Optional[int] = None,
         team_ttl: Optional[int] = None,
+        role_ttl: Optional[int] = None,
         enabled: Optional[bool] = None,
     ):
         """Initialize the auth cache.
@@ -126,6 +131,7 @@ class AuthCache:
             user_ttl: TTL for user data cache in seconds (default: from settings or 60)
             revocation_ttl: TTL for revocation cache in seconds (default: from settings or 30)
             team_ttl: TTL for team cache in seconds (default: from settings or 60)
+            role_ttl: TTL for role cache in seconds (default: from settings or 60)
             enabled: Whether caching is enabled (default: from settings or True)
 
         Examples:
@@ -141,12 +147,14 @@ class AuthCache:
             self._user_ttl = user_ttl or getattr(settings, "auth_cache_user_ttl", 60)
             self._revocation_ttl = revocation_ttl or getattr(settings, "auth_cache_revocation_ttl", 30)
             self._team_ttl = team_ttl or getattr(settings, "auth_cache_team_ttl", 60)
+            self._role_ttl = role_ttl or getattr(settings, "auth_cache_role_ttl", 60)
             self._enabled = enabled if enabled is not None else getattr(settings, "auth_cache_enabled", True)
             self._cache_prefix = getattr(settings, "cache_prefix", "mcpgw:")
         except ImportError:
             self._user_ttl = user_ttl or 60
             self._revocation_ttl = revocation_ttl or 30
             self._team_ttl = team_ttl or 60
+            self._role_ttl = role_ttl or 60
             self._enabled = enabled if enabled is not None else True
             self._cache_prefix = "mcpgw:"
 
@@ -155,6 +163,7 @@ class AuthCache:
         self._team_cache: Dict[str, CacheEntry] = {}
         self._revocation_cache: Dict[str, CacheEntry] = {}
         self._context_cache: Dict[str, CacheEntry] = {}
+        self._role_cache: Dict[str, CacheEntry] = {}
 
         # Known revoked tokens (fast local lookup)
         self._revoked_jtis: Set[str] = set()
@@ -172,7 +181,9 @@ class AuthCache:
         self._redis_hit_count = 0
         self._redis_miss_count = 0
 
-        logger.info(f"AuthCache initialized: enabled={self._enabled}, " f"user_ttl={self._user_ttl}s, revocation_ttl={self._revocation_ttl}s, " f"team_ttl={self._team_ttl}s")
+        logger.info(
+            f"AuthCache initialized: enabled={self._enabled}, " f"user_ttl={self._user_ttl}s, revocation_ttl={self._revocation_ttl}s, " f"team_ttl={self._team_ttl}s, role_ttl={self._role_ttl}s"
+        )
 
     def _get_redis_key(self, key_type: str, identifier: str) -> str:
         """Generate Redis key with proper prefix.
@@ -469,6 +480,160 @@ class AuthCache:
             except Exception as e:
                 logger.warning(f"AuthCache Redis invalidate_team failed: {e}")
 
+    async def get_user_role(self, email: str, team_id: str) -> Optional[str]:
+        """Get cached user role in a team.
+
+        Returns:
+            - None: Cache miss (caller should check DB)
+            - "": User is not a member of the team (cached negative result)
+            - Role string: User's role in the team (cached)
+
+        Args:
+            email: User email
+            team_id: Team ID
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AuthCache()
+            >>> result = asyncio.run(cache.get_user_role("test@example.com", "team-123"))
+            >>> result is None  # Cache miss
+            True
+        """
+        if not self._enabled:
+            return None
+
+        cache_key = f"{email}:{team_id}"
+
+        # Try Redis first
+        redis = await self._get_redis_client()
+        if redis:
+            try:
+                redis_key = self._get_redis_key("role", cache_key)
+                data = await redis.get(redis_key)
+                if data is not None:
+                    self._hit_count += 1
+                    self._redis_hit_count += 1
+                    # Role is stored as plain string, decode it
+                    decoded = data.decode() if isinstance(data, bytes) else data
+                    # Convert sentinel to empty string (user is not a member)
+                    # This distinguishes from None (cache miss)
+                    return "" if decoded == _NOT_A_MEMBER_SENTINEL else decoded
+                self._redis_miss_count += 1
+            except Exception as e:
+                logger.warning(f"AuthCache Redis get_user_role failed: {e}")
+
+        # Fall back to in-memory cache
+        entry = self._role_cache.get(cache_key)
+        if entry and not entry.is_expired():
+            self._hit_count += 1
+            # Return empty string for None (not a member) to distinguish from cache miss
+            return "" if entry.value is None else entry.value
+
+        self._miss_count += 1
+        return None
+
+    async def set_user_role(self, email: str, team_id: str, role: Optional[str]) -> None:
+        """Store user role in cache.
+
+        Args:
+            email: User email
+            team_id: Team ID
+            role: User's role in the team (or None if not a member)
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AuthCache()
+            >>> asyncio.run(cache.set_user_role("test@example.com", "team-123", "admin"))
+        """
+        if not self._enabled:
+            return
+
+        cache_key = f"{email}:{team_id}"
+        # Store None as sentinel value to distinguish "not a member" from cache miss
+        role_value = role if role is not None else _NOT_A_MEMBER_SENTINEL
+
+        # Store in Redis
+        redis = await self._get_redis_client()
+        if redis:
+            try:
+                redis_key = self._get_redis_key("role", cache_key)
+                await redis.setex(redis_key, self._role_ttl, role_value)
+            except Exception as e:
+                logger.warning(f"AuthCache Redis set_user_role failed: {e}")
+
+        # Store in in-memory cache
+        with self._lock:
+            self._role_cache[cache_key] = CacheEntry(
+                value=role,
+                expiry=time.time() + self._role_ttl,
+            )
+
+    async def invalidate_user_role(self, email: str, team_id: str) -> None:
+        """Invalidate cached role for a user in a team.
+
+        Call this when a user's role changes in a team.
+
+        Args:
+            email: User email
+            team_id: Team ID
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AuthCache()
+            >>> asyncio.run(cache.invalidate_user_role("test@example.com", "team-123"))
+        """
+        logger.debug(f"AuthCache: Invalidating role cache for {email} in team {team_id}")
+
+        cache_key = f"{email}:{team_id}"
+
+        # Clear in-memory cache
+        with self._lock:
+            self._role_cache.pop(cache_key, None)
+
+        # Clear Redis
+        redis = await self._get_redis_client()
+        if redis:
+            try:
+                await redis.delete(self._get_redis_key("role", cache_key))
+                # Publish invalidation for other workers
+                await redis.publish("mcpgw:auth:invalidate", f"role:{email}:{team_id}")
+            except Exception as e:
+                logger.warning(f"AuthCache Redis invalidate_user_role failed: {e}")
+
+    async def invalidate_team_roles(self, team_id: str) -> None:
+        """Invalidate all cached roles for a team.
+
+        Call this when team membership changes significantly (e.g., team deletion).
+
+        Args:
+            team_id: Team ID
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AuthCache()
+            >>> asyncio.run(cache.invalidate_team_roles("team-123"))
+        """
+        logger.debug(f"AuthCache: Invalidating all role caches for team {team_id}")
+
+        # Clear in-memory cache entries for this team
+        with self._lock:
+            keys_to_remove = [k for k in self._role_cache if k.endswith(f":{team_id}")]
+            for key in keys_to_remove:
+                self._role_cache.pop(key, None)
+
+        # Clear Redis
+        redis = await self._get_redis_client()
+        if redis:
+            try:
+                # Pattern match all role keys for this team
+                pattern = self._get_redis_key("role", f"*:{team_id}")
+                async for key in redis.scan_iter(match=pattern):
+                    await redis.delete(key)
+                # Publish invalidation
+                await redis.publish("mcpgw:auth:invalidate", f"team_roles:{team_id}")
+            except Exception as e:
+                logger.warning(f"AuthCache Redis invalidate_team_roles failed: {e}")
+
     async def is_token_revoked(self, jti: str) -> Optional[bool]:
         """Check if a token is revoked (cached check only).
 
@@ -578,6 +743,7 @@ class AuthCache:
             self._team_cache.clear()
             self._revocation_cache.clear()
             self._context_cache.clear()
+            self._role_cache.clear()
             # Don't clear _revoked_jtis as those are confirmed revocations
 
         logger.info("AuthCache: All caches invalidated")
@@ -608,9 +774,11 @@ class AuthCache:
             "redis_available": self._redis_available,
             "revoked_tokens_cached": len(self._revoked_jtis),
             "context_cache_size": len(self._context_cache),
+            "role_cache_size": len(self._role_cache),
             "user_ttl": self._user_ttl,
             "revocation_ttl": self._revocation_ttl,
             "team_ttl": self._team_ttl,
+            "role_ttl": self._role_ttl,
         }
 
     def reset_stats(self) -> None:

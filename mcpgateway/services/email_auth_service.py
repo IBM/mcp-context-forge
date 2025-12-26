@@ -577,6 +577,9 @@ class EmailAuthService:
     async def list_users(self, limit: int = 100, offset: int = 0) -> list[EmailUser]:
         """List all users with pagination.
 
+        Note: This method returns ORM objects and cannot be cached since callers
+        depend on ORM attributes and methods (e.g., EmailUserResponse.from_email_user).
+
         Args:
             limit: Maximum number of users to return
             offset: Number of users to skip
@@ -685,6 +688,7 @@ class EmailAuthService:
             user.updated_at = datetime.now(timezone.utc)
 
             self.db.commit()
+
             return user
 
         except Exception as e:
@@ -716,6 +720,7 @@ class EmailAuthService:
             user.updated_at = datetime.now(timezone.utc)
 
             self.db.commit()
+
             logger.info(f"User {email} activated")
             return user
 
@@ -748,6 +753,7 @@ class EmailAuthService:
             user.updated_at = datetime.now(timezone.utc)
 
             self.db.commit()
+
             logger.info(f"User {email} deactivated")
             return user
 

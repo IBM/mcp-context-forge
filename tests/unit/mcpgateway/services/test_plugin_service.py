@@ -79,15 +79,17 @@ def test_get_plugin_by_name_no_manager():
     assert service.get_plugin_by_name("something") is None
 
 
-def test_plugin_statistics_no_manager():
+@pytest.mark.asyncio
+async def test_plugin_statistics_no_manager():
     service = PluginService()
-    stats = service.get_plugin_statistics()
+    stats = await service.get_plugin_statistics()
     assert stats["total_plugins"] == 0
 
 
-def test_plugin_statistics_with_data(mock_manager):
+@pytest.mark.asyncio
+async def test_plugin_statistics_with_data(mock_manager):
     service = PluginService(mock_manager)
-    stats = service.get_plugin_statistics()
+    stats = await service.get_plugin_statistics()
     assert stats["enabled_plugins"] > 0
     assert "plugins_by_hook" in stats
     assert "plugins_by_mode" in stats

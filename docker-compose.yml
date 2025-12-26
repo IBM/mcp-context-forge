@@ -101,7 +101,24 @@ services:
       - AUTH_CACHE_USER_TTL=60
       - AUTH_CACHE_REVOCATION_TTL=30
       - AUTH_CACHE_TEAM_TTL=60
+      - AUTH_CACHE_ROLE_TTL=60
       - AUTH_CACHE_BATCH_QUERIES=true
+      # Registry Cache Configuration (reduces DB queries for list endpoints)
+      - REGISTRY_CACHE_ENABLED=true
+      - REGISTRY_CACHE_TOOLS_TTL=20
+      - REGISTRY_CACHE_PROMPTS_TTL=15
+      - REGISTRY_CACHE_RESOURCES_TTL=15
+      - REGISTRY_CACHE_AGENTS_TTL=20
+      - REGISTRY_CACHE_SERVERS_TTL=20
+      - REGISTRY_CACHE_GATEWAYS_TTL=20
+      - REGISTRY_CACHE_CATALOG_TTL=300
+      # Admin Stats Cache Configuration (reduces aggregate queries for dashboard)
+      - ADMIN_STATS_CACHE_ENABLED=true
+      - ADMIN_STATS_CACHE_SYSTEM_TTL=60
+      - ADMIN_STATS_CACHE_OBSERVABILITY_TTL=30
+      - ADMIN_STATS_CACHE_TAGS_TTL=120
+      - ADMIN_STATS_CACHE_PLUGINS_TTL=120
+      - ADMIN_STATS_CACHE_PERFORMANCE_TTL=60
       # MCP Server Health Check
       # Interval in seconds between health checks (default: 300)
       - HEALTH_CHECK_INTERVAL=300
