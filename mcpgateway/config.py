@@ -878,6 +878,12 @@ class Settings(BaseSettings):
     performance_threshold_http_request_ms: float = Field(default=500.0, description="Alert threshold for HTTP requests (ms)")
     performance_degradation_multiplier: float = Field(default=1.5, description="Alert if performance degrades by this multiplier vs baseline")
 
+    # Audit Trail Configuration
+    # Audit trail logging is disabled by default for performance.
+    # When enabled, it logs all CRUD operations (create, read, update, delete) on resources.
+    # WARNING: This causes a database write on every API request and can cause significant load.
+    audit_trail_enabled: bool = Field(default=False, description="Enable audit trail logging to database for compliance")
+
     # Security Logging Configuration
     # Security event logging is disabled by default for performance.
     # When enabled, it logs authentication attempts, authorization failures, and security events.

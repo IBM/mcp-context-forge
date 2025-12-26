@@ -145,6 +145,9 @@ services:
       - LOG_LEVEL=ERROR  # Default to ERROR for production performance
       - DISABLE_ACCESS_LOG=true  # Disable uvicorn access logs for performance (massive I/O overhead)
       - STRUCTURED_LOGGING_DATABASE_ENABLED=false  # Disable DB logging for performance (use true only for debugging)
+      # Audit trail logging - disabled by default for performance
+      # WARNING: Causes a DB write on EVERY API request - can generate millions of rows during load testing!
+      - AUDIT_TRAIL_ENABLED=false  # Set to true for compliance requirements (SOC2, HIPAA, etc.)
       # Security event logging - disabled by default for performance
       # WARNING: "all" level logs every request and causes massive DB write load
       - SECURITY_LOGGING_ENABLED=false  # Set to true to enable security event logging

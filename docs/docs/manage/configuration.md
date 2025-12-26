@@ -440,10 +440,24 @@ LOG_FORMAT=json                     # json, plain
 # Database Log Persistence (disabled by default for performance)
 STRUCTURED_LOGGING_DATABASE_ENABLED=false
 
+# Audit Trail Logging (disabled by default for performance)
+AUDIT_TRAIL_ENABLED=false
+
 # Security Event Logging (disabled by default for performance)
 SECURITY_LOGGING_ENABLED=false
 SECURITY_LOGGING_LEVEL=failures_only  # all, failures_only, high_severity
 ```
+
+#### Audit Trail Logging
+
+When `AUDIT_TRAIL_ENABLED=true`, all CRUD operations (create, read, update, delete) on resources are logged to the `audit_trails` database table. This provides:
+
+- **Compliance logging** for SOC2, HIPAA, and other regulatory requirements
+- **Data access tracking** - who accessed what resources and when
+- **Change history** - before/after values for updates and deletes
+- **Admin UI Audit Log Viewer** - browse and filter audit entries
+
+**Warning:** Enabling audit trails causes a database write on **every API request**, which can significantly impact performance. During load testing, this can generate millions of rows. Only enable for production compliance requirements.
 
 #### Structured Log Database Persistence
 

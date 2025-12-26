@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import AuditTrail, SessionLocal
 from mcpgateway.utils.correlation_id import get_or_generate_correlation_id
 
@@ -122,6 +123,10 @@ class AuditTrailService:
         Returns:
             Created AuditTrail entry or None if logging disabled
         """
+        # Check if audit trail logging is enabled
+        if not settings.audit_trail_enabled:
+            return None
+
         correlation_id = get_or_generate_correlation_id()
 
         # Use provided session or create new one

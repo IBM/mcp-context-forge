@@ -54,6 +54,7 @@ MCP Gateway provides flexible logging with **stdout/stderr by default** and **op
 | `LOG_MAX_SIZE_MB`       | Max file size before rotation (MB) | `1`               | `10`, `50`, `100`           |
 | `LOG_BACKUP_COUNT`      | Number of backup files to keep     | `5`               | `3`, `10`, `0` (no backups) |
 | `STRUCTURED_LOGGING_DATABASE_ENABLED` | **Persist logs to database** | **`false`** | **`true`, `false`** |
+| `AUDIT_TRAIL_ENABLED` | **Enable audit trail logging for compliance** | **`false`** | **`true`, `false`** |
 | `SECURITY_LOGGING_ENABLED` | **Enable security event logging** | **`false`** | **`true`, `false`** |
 | `SECURITY_LOGGING_LEVEL` | Security logging verbosity level | `failures_only` | `all`, `failures_only`, `high_severity` |
 
@@ -97,6 +98,43 @@ LOG_FOLDER=./logs
 LOG_FILE=debug.log
 LOG_FORMAT=text
 ```
+
+---
+
+## 📋 Audit Trail Logging
+
+Audit trail logging records all CRUD operations (create, read, update, delete) on resources for compliance purposes. **This is disabled by default for performance**.
+
+### Configuration
+
+```bash
+# Audit trail logging - disabled by default for performance
+AUDIT_TRAIL_ENABLED=false
+```
+
+### What Gets Logged
+
+When enabled, all API operations are recorded in the `audit_trails` table:
+
+- **Create** - New tools, servers, gateways, resources, prompts
+- **Read** - View operations on any resource
+- **Update** - Modifications with before/after values
+- **Delete** - Deletions with snapshot of deleted data
+
+### Use Cases
+
+| Scenario | Recommendation |
+|----------|----------------|
+| Production compliance (SOC2, HIPAA, GDPR) | `AUDIT_TRAIL_ENABLED=true` |
+| Load testing / benchmarking | `AUDIT_TRAIL_ENABLED=false` |
+| Development / debugging | `AUDIT_TRAIL_ENABLED=false` |
+
+!!! warning "Performance Impact"
+    Enabling audit trails causes a **database write on every API request**. During load testing with 2000 concurrent users, this can generate ~1 million rows in a few hours, consuming 788+ MB of database space and causing PostgreSQL memory pressure. **Always disable for load testing.**
+
+### Audit Trails Table
+
+Query audit trails via the API: `GET /api/logs/audit-trails`
 
 ---
 
