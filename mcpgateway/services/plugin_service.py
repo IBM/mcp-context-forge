@@ -20,6 +20,24 @@ from mcpgateway.plugins.framework.models import PluginMode
 
 logger = logging.getLogger(__name__)
 
+# Cache import (lazy to avoid circular dependencies)
+_ADMIN_STATS_CACHE = None
+
+
+def _get_admin_stats_cache():
+    """Get admin stats cache singleton lazily.
+
+    Returns:
+        AdminStatsCache instance.
+    """
+    global _ADMIN_STATS_CACHE  # pylint: disable=global-statement
+    if _ADMIN_STATS_CACHE is None:
+        # First-Party
+        from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+        _ADMIN_STATS_CACHE = admin_stats_cache
+    return _ADMIN_STATS_CACHE
+
 
 class PluginService:
     """Service for managing plugin information and statistics."""
@@ -168,7 +186,7 @@ class PluginService:
 
         return plugin_dict
 
-    def get_plugin_statistics(self) -> Dict[str, Any]:
+    async def get_plugin_statistics(self) -> Dict[str, Any]:
         """Get statistics about all plugins.
 
         Returns:
@@ -184,6 +202,12 @@ class PluginService:
                 "plugins_by_tag": {},
                 "plugins_by_author": {},
             }
+
+        # Check cache first
+        cache = _get_admin_stats_cache()
+        cached = await cache.get_plugin_stats()
+        if cached is not None:
+            return cached
 
         all_plugins = self.get_all_plugins()
 
@@ -214,7 +238,7 @@ class PluginService:
             author = plugin.get("author", "Unknown")
             author_count[author] += 1
 
-        return {
+        stats = {
             "total_plugins": len(all_plugins),
             "enabled_plugins": enabled_count,
             "disabled_plugins": disabled_count,
@@ -223,6 +247,11 @@ class PluginService:
             "plugins_by_tag": dict(sorted(tag_count.items(), key=lambda x: x[1], reverse=True)[:10]),  # Top 10 tags
             "plugins_by_author": dict(sorted(author_count.items(), key=lambda x: x[1], reverse=True)),  # All authors sorted by count
         }
+
+        # Store in cache
+        await cache.set_plugin_stats(stats)
+
+        return stats
 
     def search_plugins(self, query: Optional[str] = None, mode: Optional[str] = None, hook: Optional[str] = None, tag: Optional[str] = None) -> List[Dict[str, Any]]:
         """Search and filter plugins based on criteria.

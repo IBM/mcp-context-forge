@@ -46,6 +46,25 @@ from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 
+# Cache import (lazy to avoid circular dependencies)
+_REGISTRY_CACHE = None
+
+
+def _get_registry_cache():
+    """Get registry cache singleton lazily.
+
+    Returns:
+        RegistryCache instance.
+    """
+    global _REGISTRY_CACHE  # pylint: disable=global-statement
+    if _REGISTRY_CACHE is None:
+        # First-Party
+        from mcpgateway.cache.registry_cache import registry_cache  # pylint: disable=import-outside-toplevel
+
+        _REGISTRY_CACHE = registry_cache
+    return _REGISTRY_CACHE
+
+
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -477,6 +496,16 @@ class PromptService:
 
             db_prompt.team = self._get_team_name(db, db_prompt.team_id)
             prompt_dict = self._convert_db_prompt(db_prompt)
+
+            # Invalidate cache after successful creation
+            cache = _get_registry_cache()
+            await cache.invalidate_prompts()
+            # Also invalidate tags cache since prompt tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
+
             return PromptRead.model_validate(prompt_dict)
 
         except IntegrityError as ie:
@@ -823,6 +852,16 @@ class PromptService:
             >>> prompts == ['prompt_read']
             True
         """
+        # Check cache for first page only (cursor=None)
+        cache = _get_registry_cache()
+        if cursor is None:
+            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
+            cached = await cache.get("prompts", filters_hash)
+            if cached is not None:
+                # Reconstruct PromptRead objects from cached dicts
+                cached_prompts = [PromptRead.model_validate(p) for p in cached["prompts"]]
+                return (cached_prompts, cached.get("next_cursor"))
+
         page_size = settings.pagination_default_page_size
         query = select(DbPrompt).order_by(DbPrompt.id)  # Consistent ordering for cursor pagination
 
@@ -856,11 +895,17 @@ class PromptService:
         if has_more:
             prompts = prompts[:page_size]  # Trim to page_size
 
+        # Batch fetch team names to avoid N+1 queries
+        team_ids = {p.team_id for p in prompts if p.team_id}
+        team_map = {}
+        if team_ids:
+            teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids), EmailTeam.is_active.is_(True))).all()
+            team_map = {str(team.id): team.name for team in teams}
+
         # Convert to PromptRead objects (skip metrics to avoid N+1 queries)
         result = []
         for t in prompts:
-            team_name = self._get_team_name(db, getattr(t, "team_id", None))
-            t.team = team_name
+            t.team = team_map.get(str(t.team_id)) if t.team_id else None
             result.append(PromptRead.model_validate(self._convert_db_prompt(t, include_metrics=False)))
 
         # Generate next_cursor if there are more results
@@ -869,6 +914,14 @@ class PromptService:
             last_prompt = prompts[-1]  # Get last DB object
             next_cursor = encode_cursor({"id": last_prompt.id})
             logger.debug(f"Generated next_cursor for id={last_prompt.id}")
+
+        # Cache first page results
+        if cursor is None:
+            try:
+                cache_data = {"prompts": [p.model_dump(mode="json") for p in result], "next_cursor": next_cursor}
+                await cache.set("prompts", cache_data, filters_hash)
+            except AttributeError:
+                pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)
 
         return (result, next_cursor)
 
@@ -938,10 +991,17 @@ class PromptService:
         query = query.offset(skip).limit(limit)
 
         prompts = db.execute(query).scalars().all()
+
+        # Batch fetch team names to avoid N+1 queries
+        prompt_team_ids = {p.team_id for p in prompts if p.team_id}
+        team_map = {}
+        if prompt_team_ids:
+            teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(prompt_team_ids), EmailTeam.is_active.is_(True))).all()
+            team_map = {str(team.id): team.name for team in teams}
+
         result = []
         for t in prompts:
-            team_name = self._get_team_name(db, getattr(t, "team_id", None))
-            t.team = team_name
+            t.team = team_map.get(str(t.team_id)) if t.team_id else None
             result.append(PromptRead.model_validate(self._convert_db_prompt(t, include_metrics=False)))
         return result
 
@@ -986,10 +1046,17 @@ class PromptService:
         # Cursor-based pagination logic can be implemented here in the future.
         logger.debug(cursor)
         prompts = db.execute(query).scalars().all()
+
+        # Batch fetch team names to avoid N+1 queries
+        prompt_team_ids = {p.team_id for p in prompts if p.team_id}
+        team_map = {}
+        if prompt_team_ids:
+            teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(prompt_team_ids), EmailTeam.is_active.is_(True))).all()
+            team_map = {str(team.id): team.name for team in teams}
+
         result = []
         for t in prompts:
-            team_name = self._get_team_name(db, getattr(t, "team_id", None))
-            t.team = team_name
+            t.team = team_map.get(str(t.team_id)) if t.team_id else None
             result.append(PromptRead.model_validate(self._convert_db_prompt(t, include_metrics=False)))
         return result
 
@@ -1440,6 +1507,16 @@ class PromptService:
             )
 
             prompt.team = self._get_team_name(db, prompt.team_id)
+
+            # Invalidate cache after successful update
+            cache = _get_registry_cache()
+            await cache.invalidate_prompts()
+            # Also invalidate tags cache since prompt tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
+
             return PromptRead.model_validate(self._convert_db_prompt(prompt))
 
         except PermissionError as pe:
@@ -1575,6 +1652,11 @@ class PromptService:
                 prompt.updated_at = datetime.now(timezone.utc)
                 db.commit()
                 db.refresh(prompt)
+
+                # Invalidate cache after status change
+                cache = _get_registry_cache()
+                await cache.invalidate_prompts()
+
                 if activate:
                     await self._notify_prompt_activated(prompt)
                 else:
@@ -1783,6 +1865,15 @@ class PromptService:
                 custom_fields={"prompt_name": prompt_name},
                 db=db,
             )
+
+            # Invalidate cache after successful deletion
+            cache = _get_registry_cache()
+            await cache.invalidate_prompts()
+            # Also invalidate tags cache since prompt tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
         except PermissionError as pe:
             db.rollback()
 

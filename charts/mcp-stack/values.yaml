@@ -183,7 +183,26 @@ mcpContextForge:
     AUTH_CACHE_USER_TTL: "60"        # User data cache TTL (seconds)
     AUTH_CACHE_REVOCATION_TTL: "30"  # Token revocation cache TTL (seconds, security-critical)
     AUTH_CACHE_TEAM_TTL: "60"        # Team membership cache TTL (seconds)
+    AUTH_CACHE_ROLE_TTL: "60"        # User role in team cache TTL (seconds)
     AUTH_CACHE_BATCH_QUERIES: "true" # Batch auth DB queries into single call
+
+    # ─ Registry Cache (reduces DB queries for list endpoints) ─
+    REGISTRY_CACHE_ENABLED: "true"     # Enable registry list caching
+    REGISTRY_CACHE_TOOLS_TTL: "20"     # Tools list cache TTL (seconds)
+    REGISTRY_CACHE_PROMPTS_TTL: "15"   # Prompts list cache TTL (seconds)
+    REGISTRY_CACHE_RESOURCES_TTL: "15" # Resources list cache TTL (seconds)
+    REGISTRY_CACHE_AGENTS_TTL: "20"    # A2A agents list cache TTL (seconds)
+    REGISTRY_CACHE_SERVERS_TTL: "20"   # Servers list cache TTL (seconds)
+    REGISTRY_CACHE_GATEWAYS_TTL: "20"  # Gateways list cache TTL (seconds)
+    REGISTRY_CACHE_CATALOG_TTL: "300" # Catalog servers cache TTL (seconds, longer since external)
+
+    # ─ Admin Stats Cache (reduces aggregate queries for dashboard) ─
+    ADMIN_STATS_CACHE_ENABLED: "true"  # Enable admin stats caching
+    ADMIN_STATS_CACHE_SYSTEM_TTL: "60" # System stats cache TTL (seconds)
+    ADMIN_STATS_CACHE_OBSERVABILITY_TTL: "30" # Observability stats cache TTL (seconds)
+    ADMIN_STATS_CACHE_TAGS_TTL: "120"  # Tags listing cache TTL (seconds)
+    ADMIN_STATS_CACHE_PLUGINS_TTL: "120"  # Plugin stats cache TTL (seconds)
+    ADMIN_STATS_CACHE_PERFORMANCE_TTL: "60"  # Performance aggregates cache TTL (seconds)
 
     # ─ Protocol & feature toggles ─
     PROTOCOL_VERSION: 2025-03-26

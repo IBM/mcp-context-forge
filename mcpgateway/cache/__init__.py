@@ -10,6 +10,8 @@ Provides caching components for the MCP Gateway including:
 - Session registry for MCP connections
 - GlobalConfig caching for passthrough headers
 - Auth caching for user, team, and token revocation data
+- Registry caching for tools, prompts, resources, agents, servers, gateways
+- Admin stats caching for dashboard statistics
 
 Note: Imports are lazy to avoid circular dependencies with services.
 """
@@ -19,6 +21,8 @@ from typing import TYPE_CHECKING
 __all__ = [
     "A2AStatsCache",
     "a2a_stats_cache",
+    "AdminStatsCache",
+    "admin_stats_cache",
     "AuthCache",
     "auth_cache",
     "CachedAuthContext",
@@ -26,6 +30,8 @@ __all__ = [
     "global_config_cache",
     "MetricsCache",
     "metrics_cache",
+    "RegistryCache",
+    "registry_cache",
     "ResourceCache",
     "SessionRegistry",
 ]
@@ -36,9 +42,11 @@ __all__ = [
 
 if TYPE_CHECKING:
     from mcpgateway.cache.a2a_stats_cache import A2AStatsCache, a2a_stats_cache
+    from mcpgateway.cache.admin_stats_cache import AdminStatsCache, admin_stats_cache
     from mcpgateway.cache.auth_cache import AuthCache, auth_cache, CachedAuthContext
     from mcpgateway.cache.global_config_cache import GlobalConfigCache, global_config_cache
     from mcpgateway.cache.metrics_cache import MetricsCache, metrics_cache
+    from mcpgateway.cache.registry_cache import RegistryCache, registry_cache
     from mcpgateway.cache.resource_cache import ResourceCache
     from mcpgateway.cache.session_registry import SessionRegistry
 
@@ -60,6 +68,10 @@ def __getattr__(name: str):
         from mcpgateway.cache.a2a_stats_cache import A2AStatsCache, a2a_stats_cache
 
         return a2a_stats_cache if name == "a2a_stats_cache" else A2AStatsCache
+    if name in ("AdminStatsCache", "admin_stats_cache"):
+        from mcpgateway.cache.admin_stats_cache import AdminStatsCache, admin_stats_cache
+
+        return admin_stats_cache if name == "admin_stats_cache" else AdminStatsCache
     if name in ("AuthCache", "auth_cache", "CachedAuthContext"):
         from mcpgateway.cache.auth_cache import AuthCache, auth_cache, CachedAuthContext
 
@@ -76,6 +88,10 @@ def __getattr__(name: str):
         from mcpgateway.cache.metrics_cache import MetricsCache, metrics_cache
 
         return metrics_cache if name == "metrics_cache" else MetricsCache
+    if name in ("RegistryCache", "registry_cache"):
+        from mcpgateway.cache.registry_cache import RegistryCache, registry_cache
+
+        return registry_cache if name == "registry_cache" else RegistryCache
     if name == "ResourceCache":
         from mcpgateway.cache.resource_cache import ResourceCache
 

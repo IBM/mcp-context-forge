@@ -34,6 +34,25 @@ from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.services_auth import encode_auth  # ,decode_auth
 
+# Cache import (lazy to avoid circular dependencies)
+_REGISTRY_CACHE = None
+
+
+def _get_registry_cache():
+    """Get registry cache singleton lazily.
+
+    Returns:
+        RegistryCache instance.
+    """
+    global _REGISTRY_CACHE  # pylint: disable=global-statement
+    if _REGISTRY_CACHE is None:
+        # First-Party
+        from mcpgateway.cache.registry_cache import registry_cache  # pylint: disable=import-outside-toplevel
+
+        _REGISTRY_CACHE = registry_cache
+    return _REGISTRY_CACHE
+
+
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -294,8 +313,15 @@ class A2AAgentService:
             db.commit()
             db.refresh(new_agent)
 
-            # Invalidate cache since agent count changed
+            # Invalidate caches since agent count changed
             a2a_stats_cache.invalidate()
+            cache = _get_registry_cache()
+            await cache.invalidate_agents()
+            # Also invalidate tags cache since agent tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
 
             # Automatically create a tool for the A2A agent if not already present
             tool_service = ToolService()
@@ -390,6 +416,15 @@ class A2AAgentService:
             []
 
         """
+        # Check cache (cursor not implemented yet, so always cache)
+        cache = _get_registry_cache()
+        if cursor is None:
+            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
+            cached = await cache.get("agents", filters_hash)
+            if cached is not None:
+                # Reconstruct A2AAgentRead objects from cached dicts
+                return [A2AAgentRead.model_validate(a) for a in cached]
+
         query = select(DbA2AAgent)
 
         if not include_inactive:
@@ -413,7 +448,17 @@ class A2AAgentService:
         team_map = self._batch_get_team_names(db, team_ids)
 
         # Skip metrics to avoid N+1 queries in list operations
-        return [self._db_to_schema(db=db, db_agent=agent, include_metrics=False, team_map=team_map) for agent in agents]
+        result = [self._db_to_schema(db=db, db_agent=agent, include_metrics=False, team_map=team_map) for agent in agents]
+
+        # Cache results
+        if cursor is None:
+            try:
+                cache_data = [a.model_dump(mode="json") for a in result]
+                await cache.set("agents", cache_data, filters_hash)
+            except AttributeError:
+                pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)
+
+        return result
 
     async def list_agents_for_user(
         self, db: Session, user_info: Dict[str, Any], team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
@@ -716,6 +761,15 @@ class A2AAgentService:
             db.commit()
             db.refresh(agent)
 
+            # Invalidate cache after successful update
+            cache = _get_registry_cache()
+            await cache.invalidate_agents()
+            # Also invalidate tags cache since agent tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
+
             logger.info(f"Updated A2A agent: {agent.name} (ID: {agent.id})")
             return self._db_to_schema(db=db, db_agent=agent)
         except PermissionError:
@@ -773,8 +827,10 @@ class A2AAgentService:
         db.commit()
         db.refresh(agent)
 
-        # Invalidate cache since active agent count changed
+        # Invalidate caches since agent status changed
         a2a_stats_cache.invalidate()
+        cache = _get_registry_cache()
+        await cache.invalidate_agents()
 
         status = "activated" if activate else "deactivated"
         logger.info(f"A2A agent {status}: {agent.name} (ID: {agent.id})")
@@ -828,8 +884,15 @@ class A2AAgentService:
             db.delete(agent)
             db.commit()
 
-            # Invalidate cache since agent count changed
+            # Invalidate caches since agent count changed
             a2a_stats_cache.invalidate()
+            cache = _get_registry_cache()
+            await cache.invalidate_agents()
+            # Also invalidate tags cache since agent tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
 
             logger.info(f"Deleted A2A agent: {agent_name} (ID: {agent_id})")
 

@@ -435,15 +435,60 @@ When `AUTH_CACHE_ENABLED=true` (default), authentication data is cached to reduc
 
 - **User data**: Cached for `AUTH_CACHE_USER_TTL` seconds (default: 60)
 - **Team memberships**: Cached for `AUTH_CACHE_TEAM_TTL` seconds (default: 60)
+- **User roles in teams**: Cached for `AUTH_CACHE_ROLE_TTL` seconds (default: 60)
 - **Token revocations**: Cached for `AUTH_CACHE_REVOCATION_TTL` seconds (default: 30)
 
 The cache uses Redis when available (`CACHE_TYPE=redis`) and falls back to in-memory caching.
 
 When `AUTH_CACHE_BATCH_QUERIES=true` (default), the 3 separate authentication database queries are batched into a single query, reducing thread pool contention and connection overhead.
 
+**Performance Note**: The role cache (`AUTH_CACHE_ROLE_TTL`) caches `get_user_role_in_team()` which is called 11+ times per team operation, saving 100+ queries per user session.
+
 **Security Note**: Keep `AUTH_CACHE_REVOCATION_TTL` short (30s default) to limit the window where revoked tokens may still work.
 
 See [ADR-028](../architecture/adr/028-auth-caching.md) for implementation details.
+
+#### Registry Cache
+
+```bash
+# Registry Cache (ADR-029 - caches list endpoints for tools, prompts, resources, etc.)
+REGISTRY_CACHE_ENABLED=true         # Enable registry list caching
+REGISTRY_CACHE_TOOLS_TTL=20         # Tools list cache TTL in seconds (5-300)
+REGISTRY_CACHE_PROMPTS_TTL=15       # Prompts list cache TTL in seconds (5-300)
+REGISTRY_CACHE_RESOURCES_TTL=15     # Resources list cache TTL in seconds (5-300)
+REGISTRY_CACHE_AGENTS_TTL=20        # Agents list cache TTL in seconds (5-300)
+REGISTRY_CACHE_SERVERS_TTL=20       # Servers list cache TTL in seconds (5-300)
+REGISTRY_CACHE_GATEWAYS_TTL=20      # Gateways list cache TTL in seconds (5-300)
+REGISTRY_CACHE_CATALOG_TTL=300      # Catalog servers cache TTL in seconds (60-600)
+```
+
+When `REGISTRY_CACHE_ENABLED=true` (default), the first page of registry list results is cached:
+
+- **Tools**: Cached for `REGISTRY_CACHE_TOOLS_TTL` seconds (default: 20)
+- **Prompts**: Cached for `REGISTRY_CACHE_PROMPTS_TTL` seconds (default: 15)
+- **Resources**: Cached for `REGISTRY_CACHE_RESOURCES_TTL` seconds (default: 15)
+- **Agents**: Cached for `REGISTRY_CACHE_AGENTS_TTL` seconds (default: 20)
+- **Servers**: Cached for `REGISTRY_CACHE_SERVERS_TTL` seconds (default: 20)
+- **Gateways**: Cached for `REGISTRY_CACHE_GATEWAYS_TTL` seconds (default: 20)
+- **Catalog**: Cached for `REGISTRY_CACHE_CATALOG_TTL` seconds (default: 300, longer since external catalog changes infrequently)
+
+Cache is automatically invalidated when items are created, updated, or deleted.
+
+#### Admin Stats Cache
+
+```bash
+# Admin Stats Cache (ADR-029 - caches admin dashboard statistics)
+ADMIN_STATS_CACHE_ENABLED=true      # Enable admin stats caching
+ADMIN_STATS_CACHE_SYSTEM_TTL=60     # System stats cache TTL in seconds (10-300)
+ADMIN_STATS_CACHE_OBSERVABILITY_TTL=30  # Observability stats TTL (10-120)
+```
+
+When `ADMIN_STATS_CACHE_ENABLED=true` (default), admin dashboard statistics are cached:
+
+- **System stats**: Cached for `ADMIN_STATS_CACHE_SYSTEM_TTL` seconds (default: 60)
+- **Observability**: Cached for `ADMIN_STATS_CACHE_OBSERVABILITY_TTL` seconds (default: 30)
+
+See [ADR-029](../architecture/adr/029-registry-admin-stats-caching.md) for implementation details.
 
 ### Logging Settings
 

@@ -88,6 +88,20 @@ class CatalogService:
             logger.error(f"Failed to load catalog: {e}")
             return {"catalog_servers": [], "categories": [], "auth_types": []}
 
+    def _get_registry_cache(self):
+        """Get registry cache instance lazily.
+
+        Returns:
+            RegistryCache instance or None if unavailable.
+        """
+        try:
+            # First-Party
+            from mcpgateway.cache.registry_cache import get_registry_cache  # pylint: disable=import-outside-toplevel
+
+            return get_registry_cache()
+        except ImportError:
+            return None
+
     async def get_catalog_servers(self, request: CatalogListRequest, db) -> CatalogListResponse:
         """Get filtered list of catalog servers.
 
@@ -98,6 +112,24 @@ class CatalogService:
         Returns:
             Filtered catalog servers response
         """
+        # Check cache first
+        cache = self._get_registry_cache()
+        if cache:
+            filters_hash = cache.hash_filters(
+                category=request.category,
+                auth_type=request.auth_type,
+                provider=request.provider,
+                search=request.search,
+                tags=sorted(request.tags) if request.tags else None,
+                show_registered_only=request.show_registered_only,
+                show_available_only=request.show_available_only,
+                offset=request.offset,
+                limit=request.limit,
+            )
+            cached = await cache.get("catalog", filters_hash)
+            if cached is not None:
+                return CatalogListResponse.model_validate(cached)
+
         catalog_data = await self.load_catalog()
         servers = catalog_data.get("catalog_servers", [])
 
@@ -164,7 +196,17 @@ class CatalogService:
         all_providers = sorted(set(s.provider for s in catalog_servers))
         all_tags = sorted(set(tag for s in catalog_servers for tag in s.tags))
 
-        return CatalogListResponse(servers=paginated, total=total, categories=all_categories, auth_types=all_auth_types, providers=all_providers, all_tags=all_tags)
+        response = CatalogListResponse(servers=paginated, total=total, categories=all_categories, auth_types=all_auth_types, providers=all_providers, all_tags=all_tags)
+
+        # Store in cache
+        if cache:
+            try:
+                cache_data = response.model_dump(mode="json")
+                await cache.set("catalog", cache_data, filters_hash)
+            except Exception as e:
+                logger.debug(f"Failed to cache catalog response: {e}")
+
+        return response
 
     async def register_catalog_server(self, catalog_id: str, request: Optional[CatalogServerRegisterRequest], db: Session) -> CatalogServerRegisterResponse:
         """Register a catalog server as a gateway.
@@ -324,6 +366,11 @@ class CatalogService:
 
                 gateway_read = GatewayRead.model_validate(gateway_dict)
 
+                # Invalidate catalog cache since registration status changed
+                cache = self._get_registry_cache()
+                if cache:
+                    await cache.invalidate_catalog()
+
                 return CatalogServerRegisterResponse(
                     success=True,
                     server_id=str(gateway_read.id),
@@ -357,6 +404,11 @@ class CatalogService:
             message = f"Successfully registered {gateway_read.name}"
             if tool_count > 0:
                 message += f" with {tool_count} tools discovered"
+
+            # Invalidate catalog cache since registration status changed
+            cache = self._get_registry_cache()
+            if cache:
+                await cache.invalidate_catalog()
 
             return CatalogServerRegisterResponse(success=True, server_id=str(gateway_read.id), message=message, error=None)
 

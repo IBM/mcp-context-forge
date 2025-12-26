@@ -80,6 +80,25 @@ from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 from mcpgateway.utils.validate_signature import validate_signature
 
+# Cache import (lazy to avoid circular dependencies)
+_REGISTRY_CACHE = None
+
+
+def _get_registry_cache():
+    """Get registry cache singleton lazily.
+
+    Returns:
+        RegistryCache instance.
+    """
+    global _REGISTRY_CACHE  # pylint: disable=global-statement
+    if _REGISTRY_CACHE is None:
+        # First-Party
+        from mcpgateway.cache.registry_cache import registry_cache  # pylint: disable=import-outside-toplevel
+
+        _REGISTRY_CACHE = registry_cache
+    return _REGISTRY_CACHE
+
+
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -848,6 +867,16 @@ class ToolService:
 
             # Refresh db_tool after logging commits (they expire the session objects)
             db.refresh(db_tool)
+
+            # Invalidate cache after successful creation
+            cache = _get_registry_cache()
+            await cache.invalidate_tools()
+            # Also invalidate tags cache since tool tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
+
             return self._convert_tool_to_read(db_tool)
         except IntegrityError as ie:
             db.rollback()
@@ -1369,6 +1398,16 @@ class ToolService:
             >>> isinstance(tools, list)
             True
         """
+        # Check cache for first page only (cursor=None)
+        cache = _get_registry_cache()
+        if cursor is None:
+            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, gateway_id=gateway_id, limit=limit)
+            cached = await cache.get("tools", filters_hash)
+            if cached is not None:
+                # Reconstruct ToolRead objects from cached dicts
+                cached_tools = [ToolRead.model_validate(t) for t in cached["tools"]]
+                return (cached_tools, cached.get("next_cursor"))
+
         # Determine page size based on limit parameter
         # limit=None: use default, limit=0: no limit (all), limit>0: use specified (capped)
         if limit is None:
@@ -1442,6 +1481,14 @@ class ToolService:
             last_tool = tools[-1]  # Get last DB object (not ToolRead)
             next_cursor = encode_cursor({"id": last_tool.id})
             logger.debug(f"Generated next_cursor for id={last_tool.id}")
+
+        # Cache first page results
+        if cursor is None:
+            try:
+                cache_data = {"tools": [t.model_dump(mode="json") for t in result], "next_cursor": next_cursor}
+                await cache.set("tools", cache_data, filters_hash)
+            except AttributeError:
+                pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)
 
         return (result, next_cursor)
 
@@ -1776,6 +1823,15 @@ class ToolService:
                 },
                 db=db,
             )
+
+            # Invalidate cache after successful deletion
+            cache = _get_registry_cache()
+            await cache.invalidate_tools()
+            # Also invalidate tags cache since tool tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
         except PermissionError as pe:
             db.rollback()
 
@@ -1809,7 +1865,7 @@ class ToolService:
             )
             raise ToolError(f"Failed to delete tool: {str(e)}")
 
-    async def toggle_tool_status(self, db: Session, tool_id: str, activate: bool, reachable: bool, user_email: Optional[str] = None) -> ToolRead:
+    async def toggle_tool_status(self, db: Session, tool_id: str, activate: bool, reachable: bool, user_email: Optional[str] = None, skip_cache_invalidation: bool = False) -> ToolRead:
         """
         Toggle the activation status of a tool.
 
@@ -1819,6 +1875,7 @@ class ToolService:
             activate (bool): True to activate, False to deactivate.
             reachable (bool): True if the tool is reachable.
             user_email: Optional[str] The email of the user to check if the user has permission to modify.
+            skip_cache_invalidation: If True, skip cache invalidation (used for batch operations).
 
         Returns:
             ToolRead: The updated tool object.
@@ -1873,6 +1930,11 @@ class ToolService:
 
                 db.commit()
                 db.refresh(tool)
+
+                # Invalidate cache after status change (skip for batch operations)
+                if not skip_cache_invalidation:
+                    cache = _get_registry_cache()
+                    await cache.invalidate_tools()
 
                 if not tool.enabled:
                     # Inactive
@@ -2771,6 +2833,15 @@ class ToolService:
                 },
                 db=db,
             )
+
+            # Invalidate cache after successful update
+            cache = _get_registry_cache()
+            await cache.invalidate_tools()
+            # Also invalidate tags cache since tool tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
 
             return self._convert_tool_to_read(tool)
         except PermissionError as pe:
