@@ -35,18 +35,22 @@ from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.services_auth import encode_auth  # ,decode_auth
 
 # Cache import (lazy to avoid circular dependencies)
-_registry_cache = None
+_REGISTRY_CACHE = None
 
 
 def _get_registry_cache():
-    """Get registry cache singleton lazily."""
-    global _registry_cache  # pylint: disable=global-statement
-    if _registry_cache is None:
+    """Get registry cache singleton lazily.
+
+    Returns:
+        RegistryCache instance.
+    """
+    global _REGISTRY_CACHE  # pylint: disable=global-statement
+    if _REGISTRY_CACHE is None:
         # First-Party
         from mcpgateway.cache.registry_cache import registry_cache  # pylint: disable=import-outside-toplevel
 
-        _registry_cache = registry_cache
-    return _registry_cache
+        _REGISTRY_CACHE = registry_cache
+    return _REGISTRY_CACHE
 
 
 # Initialize logging service first
@@ -408,7 +412,7 @@ class A2AAgentService:
         # Check cache (cursor not implemented yet, so always cache)
         cache = _get_registry_cache()
         if cursor is None:
-            filters_hash = cache._hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
+            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
             cached = await cache.get("agents", filters_hash)
             if cached is not None:
                 # Reconstruct A2AAgentRead objects from cached dicts

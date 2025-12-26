@@ -89,7 +89,11 @@ class CatalogService:
             return {"catalog_servers": [], "categories": [], "auth_types": []}
 
     def _get_registry_cache(self):
-        """Get registry cache instance lazily."""
+        """Get registry cache instance lazily.
+
+        Returns:
+            RegistryCache instance or None if unavailable.
+        """
         try:
             # First-Party
             from mcpgateway.cache.registry_cache import get_registry_cache  # pylint: disable=import-outside-toplevel
@@ -111,7 +115,7 @@ class CatalogService:
         # Check cache first
         cache = self._get_registry_cache()
         if cache:
-            filters_hash = cache._hash_filters(
+            filters_hash = cache.hash_filters(
                 category=request.category,
                 auth_type=request.auth_type,
                 provider=request.provider,

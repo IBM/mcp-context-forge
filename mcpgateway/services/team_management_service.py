@@ -394,9 +394,11 @@ class TeamManagementService:
                 import asyncio  # pylint: disable=import-outside-toplevel
 
                 # First-Party
+                from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
                 from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
                 asyncio.create_task(auth_cache.invalidate_team_roles(team_id))
+                asyncio.create_task(admin_stats_cache.invalidate_teams())
                 # Also invalidate team cache for each member
                 for membership in memberships:
                     asyncio.create_task(auth_cache.invalidate_team(membership.user_email))
@@ -488,12 +490,14 @@ class TeamManagementService:
                 import asyncio  # pylint: disable=import-outside-toplevel
 
                 # First-Party
+                from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
                 from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
                 asyncio.create_task(auth_cache.invalidate_team(user_email))
                 asyncio.create_task(auth_cache.invalidate_user_role(user_email, team_id))
+                asyncio.create_task(admin_stats_cache.invalidate_teams())
             except Exception as cache_error:
-                logger.debug(f"Failed to invalidate auth cache on team add: {cache_error}")
+                logger.debug(f"Failed to invalidate cache on team add: {cache_error}")
 
             logger.info(f"Added {user_email} to team {team_id} with role {role}")
             return True
@@ -563,7 +567,7 @@ class TeamManagementService:
                 asyncio.create_task(auth_cache.invalidate_team(user_email))
                 asyncio.create_task(auth_cache.invalidate_user_role(user_email, team_id))
             except Exception as cache_error:
-                logger.debug(f"Failed to invalidate auth cache on team remove: {cache_error}")
+                logger.debug(f"Failed to invalidate cache on team remove: {cache_error}")
 
             logger.info(f"Removed {user_email} from team {team_id} by {removed_by}")
             return True
@@ -638,7 +642,7 @@ class TeamManagementService:
 
                 asyncio.create_task(auth_cache.invalidate_user_role(user_email, team_id))
             except Exception as cache_error:
-                logger.debug(f"Failed to invalidate role cache on role update: {cache_error}")
+                logger.debug(f"Failed to invalidate cache on role update: {cache_error}")
 
             logger.info(f"Updated role of {user_email} in team {team_id} to {new_role} by {updated_by}")
             return True
@@ -728,6 +732,9 @@ class TeamManagementService:
     async def get_team_members(self, team_id: str) -> List[Tuple[EmailUser, EmailTeamMember]]:
         """Get all members of a team.
 
+        Note: This method returns ORM objects and cannot be cached since callers
+        depend on ORM attributes and methods.
+
         Args:
             team_id: ID of the team
 
@@ -744,7 +751,6 @@ class TeamManagementService:
                 .filter(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True))
                 .all()
             )
-
             return members
 
         except Exception as e:
@@ -752,12 +758,30 @@ class TeamManagementService:
             return []
 
     def _get_auth_cache(self):
-        """Get auth cache instance lazily."""
+        """Get auth cache instance lazily.
+
+        Returns:
+            AuthCache instance or None if unavailable.
+        """
         try:
             # First-Party
             from mcpgateway.cache.auth_cache import get_auth_cache  # pylint: disable=import-outside-toplevel
 
             return get_auth_cache()
+        except ImportError:
+            return None
+
+    def _get_admin_stats_cache(self):
+        """Get admin stats cache instance lazily.
+
+        Returns:
+            AdminStatsCache instance or None if unavailable.
+        """
+        try:
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import get_admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            return get_admin_stats_cache()
         except ImportError:
             return None
 
@@ -802,6 +826,8 @@ class TeamManagementService:
     async def list_teams(self, limit: int = 100, offset: int = 0, visibility_filter: Optional[str] = None) -> Tuple[List[EmailTeam], int]:
         """List teams with pagination.
 
+        Uses caching to reduce database queries for frequently accessed team listings.
+
         Args:
             limit: Maximum number of teams to return
             offset: Number of teams to skip
@@ -813,6 +839,14 @@ class TeamManagementService:
         Examples:
             Team discovery and administration.
         """
+        # Check cache first (only for first page without filters for simplicity)
+        cache = self._get_admin_stats_cache()
+        if cache and offset == 0 and not visibility_filter:
+            cached = await cache.get_teams_list(limit, offset)
+            if cached is not None:
+                # Convert cached dicts back to EmailTeam-like objects for compatibility
+                return cached.get("teams", []), cached.get("total", 0)
+
         try:
             query = self.db.query(EmailTeam).filter(EmailTeam.is_active.is_(True), EmailTeam.is_personal.is_(False))  # Exclude personal teams from listings
 
@@ -821,6 +855,28 @@ class TeamManagementService:
 
             total_count = query.count()
             teams = query.offset(offset).limit(limit).all()
+
+            # Store in cache (only first page without filters)
+            if cache and offset == 0 and not visibility_filter:
+                try:
+                    # Serialize teams for caching
+                    teams_data = [
+                        {
+                            "id": t.id,
+                            "name": t.name,
+                            "slug": t.slug,
+                            "description": t.description,
+                            "visibility": t.visibility,
+                            "is_personal": t.is_personal,
+                            "is_active": t.is_active,
+                            "created_by": t.created_by,
+                            "max_members": t.max_members,
+                        }
+                        for t in teams
+                    ]
+                    await cache.set_teams_list({"teams": teams_data, "total": total_count}, limit, offset)
+                except Exception as e:
+                    logger.debug(f"Failed to cache teams list: {e}")
 
             return teams, total_count
 
@@ -978,12 +1034,14 @@ class TeamManagementService:
                 import asyncio  # pylint: disable=import-outside-toplevel
 
                 # First-Party
+                from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
                 from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
                 asyncio.create_task(auth_cache.invalidate_team(join_request.user_email))
                 asyncio.create_task(auth_cache.invalidate_user_role(join_request.user_email, join_request.team_id))
+                asyncio.create_task(admin_stats_cache.invalidate_teams())
             except Exception as cache_error:
-                logger.debug(f"Failed to invalidate auth cache on join approval: {cache_error}")
+                logger.debug(f"Failed to invalidate caches on join approval: {cache_error}")
 
             logger.info(f"Approved join request {request_id}: user {join_request.user_email} joined team {join_request.team_id}")
             return member

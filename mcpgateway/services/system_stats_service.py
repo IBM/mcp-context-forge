@@ -34,21 +34,6 @@ from typing import Any, Dict
 from sqlalchemy import case, func, literal, select
 from sqlalchemy.orm import Session
 
-# Cache import (lazy to avoid circular dependencies)
-_admin_stats_cache = None
-
-
-def _get_admin_stats_cache():
-    """Get admin stats cache singleton lazily."""
-    global _admin_stats_cache  # pylint: disable=global-statement
-    if _admin_stats_cache is None:
-        # First-Party
-        from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
-
-        _admin_stats_cache = admin_stats_cache
-    return _admin_stats_cache
-
-
 # First-Party
 from mcpgateway.db import (
     A2AAgent,
@@ -81,6 +66,24 @@ from mcpgateway.db import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Cache import (lazy to avoid circular dependencies)
+_ADMIN_STATS_CACHE = None
+
+
+def _get_admin_stats_cache():
+    """Get admin stats cache singleton lazily.
+
+    Returns:
+        AdminStatsCache instance.
+    """
+    global _ADMIN_STATS_CACHE  # pylint: disable=global-statement
+    if _ADMIN_STATS_CACHE is None:
+        # First-Party
+        from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+        _ADMIN_STATS_CACHE = admin_stats_cache
+    return _ADMIN_STATS_CACHE
 
 
 # pylint: disable=not-callable

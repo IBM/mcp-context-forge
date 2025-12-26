@@ -186,7 +186,7 @@ class RegistryCache:
             return f"{self._cache_prefix}registry:{cache_type}:{filters_hash}"
         return f"{self._cache_prefix}registry:{cache_type}"
 
-    def _hash_filters(self, **kwargs) -> str:
+    def hash_filters(self, **kwargs) -> str:
         """Generate a hash from filter parameters.
 
         Args:
@@ -197,14 +197,14 @@ class RegistryCache:
 
         Examples:
             >>> cache = RegistryCache()
-            >>> h = cache._hash_filters(include_inactive=False, tags=["api"])
+            >>> h = cache.hash_filters(include_inactive=False, tags=["api"])
             >>> len(h)
             32
         """
         # Sort keys for consistent hashing
         sorted_items = sorted(kwargs.items())
         filter_str = str(sorted_items)
-        return hashlib.md5(filter_str.encode()).hexdigest()  # nosec B324
+        return hashlib.md5(filter_str.encode()).hexdigest()  # nosec B324 # noqa: DUO130
 
     async def _get_redis_client(self):
         """Get Redis client if available.
