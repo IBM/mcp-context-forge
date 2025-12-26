@@ -358,7 +358,7 @@ class TestHealthChecks:
         required_fields = [
             "jwt_cache_enabled", "jwt_cache_size", "jwt_cache_max_size",
             "user_cache_size", "user_cache_max_size",
-            "cache_hits", "cache_misses", "cache_invalidations", "hit_rate"
+            "cache_hits", "cache_misses", "cache_invalidations", "revocation_removals", "hit_rate"
         ]
         for field in required_fields:
             assert field in cache_stats, f"Missing required field: {field}"

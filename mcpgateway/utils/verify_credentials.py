@@ -44,9 +44,11 @@ Examples:
 """
 
 # Standard
+import asyncio
 from base64 import b64decode
 import binascii
 import hashlib
+import threading
 from typing import Optional
 
 # Third-Party
@@ -68,12 +70,17 @@ security = HTTPBearer(auto_error=False)
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
-# JWT verification cache using TTLCache (thread-safe with automatic expiration)
+# JWT verification cache using TTLCache with RLock for thread-safe maxsize enforcement
 _jwt_verification_cache: TTLCache = TTLCache(maxsize=settings.jwt_cache_max_size, ttl=settings.jwt_cache_ttl)
-# User cache using TTLCache (thread-safe with automatic expiration)
+_jwt_cache_lock = threading.RLock()
+
+# User cache using TTLCache with RLock for thread-safe access
 _user_cache: TTLCache = TTLCache(maxsize=settings.user_cache_max_size, ttl=settings.user_cache_ttl)
-# Cache statistics
-_cache_stats = {"hits": 0, "misses": 0, "invalidations": 0}
+_user_cache_lock = threading.RLock()
+
+# Cache statistics (protected by lock for thread safety)
+_cache_stats = {"hits": 0, "misses": 0, "invalidations": 0, "revocation_removals": 0}
+_cache_stats_lock = threading.Lock()
 
 
 def invalidate_user_cache(email: str) -> None:
@@ -86,29 +93,35 @@ def invalidate_user_cache(email: str) -> None:
     """
     count = 0
 
-    # Remove user from user cache
-    if email in _user_cache:
-        del _user_cache[email]
-        count += 1
-
-    # Find and remove all JWT tokens for this user
-    # Create a list of keys first to avoid modifying cache during iteration
-    keys_to_remove = []
-    try:
-        for token_hash, payload in list(_jwt_verification_cache.items()):
-            if payload.get("sub") == email or payload.get("email") == email:
-                keys_to_remove.append(token_hash)
-    except Exception:
-        pass  # Handle race condition if cache changes during iteration
-
-    for key in keys_to_remove:
-        try:
-            del _jwt_verification_cache[key]
+    # Remove user from user cache (thread-safe with RLock)
+    with _user_cache_lock:
+        if email in _user_cache:
+            del _user_cache[email]
             count += 1
-        except KeyError:
-            pass  # Key may have expired naturally
 
-    _cache_stats["invalidations"] += count
+    # Find and remove all JWT tokens for this user (thread-safe with RLock)
+    # RLock prevents modifications during iteration
+    with _jwt_cache_lock:
+        keys_to_remove = []
+        try:
+            for token_hash, payload in _jwt_verification_cache.items():
+                if payload.get("sub") == email or payload.get("email") == email:
+                    keys_to_remove.append(token_hash)
+        except Exception:
+            pass  # Handle any iteration errors gracefully
+
+        for key in keys_to_remove:
+            try:
+                del _jwt_verification_cache[key]
+                count += 1
+            except KeyError:
+                pass  # Key may have expired naturally
+
+    # Update invalidation counter (thread-safe)
+    if count > 0:
+        with _cache_stats_lock:
+            _cache_stats["invalidations"] += count
+    
     logger.info(f"Invalidated {count} cache entries for user: {email}")
 
 
@@ -116,18 +129,32 @@ def get_cache_stats() -> dict:
     """Get JWT verification cache statistics for monitoring.
 
     Returns:
-        dict: Cache statistics including hits, misses, size, and invalidations
+        dict: Cache statistics including hits, misses, size, invalidations, and revocation removals
     """
+    # Take a consistent snapshot of stats with lock
+    with _cache_stats_lock:
+        hits = _cache_stats["hits"]
+        misses = _cache_stats["misses"]
+        invalidations = _cache_stats["invalidations"]
+        revocation_removals = _cache_stats["revocation_removals"]
+    
+    # Get cache sizes with locks for accuracy
+    with _jwt_cache_lock:
+        jwt_cache_size = len(_jwt_verification_cache)
+    with _user_cache_lock:
+        user_cache_size = len(_user_cache)
+    
     return {
         "jwt_cache_enabled": settings.jwt_cache_enabled,
-        "jwt_cache_size": len(_jwt_verification_cache),
+        "jwt_cache_size": jwt_cache_size,
         "jwt_cache_max_size": settings.jwt_cache_max_size,
-        "user_cache_size": len(_user_cache),
+        "user_cache_size": user_cache_size,
         "user_cache_max_size": settings.user_cache_max_size,
-        "cache_hits": _cache_stats["hits"],
-        "cache_misses": _cache_stats["misses"],
-        "cache_invalidations": _cache_stats["invalidations"],
-        "hit_rate": _cache_stats["hits"] / max(_cache_stats["hits"] + _cache_stats["misses"], 1),
+        "cache_hits": hits,
+        "cache_misses": misses,
+        "cache_invalidations": invalidations,
+        "revocation_removals": revocation_removals,
+        "hit_rate": hits / max(hits + misses, 1),
     }
 
 
@@ -140,9 +167,11 @@ def get_cached_user(email: str) -> Optional[dict]:
     Returns:
         User dict if cached, None otherwise
     """
-    if settings.jwt_cache_enabled and email in _user_cache:
-        logger.debug(f"User cache hit for: {email}")
-        return _user_cache[email]
+    if settings.jwt_cache_enabled:
+        with _user_cache_lock:
+            if email in _user_cache:
+                logger.debug(f"User cache hit for {email}")
+                return _user_cache[email]
     return None
 
 
@@ -154,7 +183,8 @@ def cache_user(email: str, user_dict: dict) -> None:
         user_dict: User data to cache
     """
     if settings.jwt_cache_enabled:
-        _user_cache[email] = user_dict
+        with _user_cache_lock:
+            _user_cache[email] = user_dict
         logger.debug(f"User cached: {email} (TTL: {settings.user_cache_ttl}s)")
 
 
@@ -179,14 +209,52 @@ async def verify_jwt_token(token: str) -> dict:
     if settings.jwt_cache_enabled:
         token_hash = hashlib.sha256(token.encode()).hexdigest()
 
-        # Check if token is in cache (TTLCache handles expiration automatically)
-        if token_hash in _jwt_verification_cache:
-            _cache_stats["hits"] += 1
-            logger.debug(f"JWT verification cache hit for token: {token_hash[:16]}...")
-            return _jwt_verification_cache[token_hash]
+        # Check if token is in cache (thread-safe with RLock)
+        with _jwt_cache_lock:
+            if token_hash in _jwt_verification_cache:
+                cached_payload = _jwt_verification_cache[token_hash]
+                
+                with _cache_stats_lock:
+                    _cache_stats["hits"] += 1
+                
+                # SECURITY: Check token revocation even for cached results
+                # This prevents revoked tokens from being used during cache TTL
+                jti = cached_payload.get("jti")
+                if jti:
+                    try:
+                        # Import here to avoid circular dependency
+                        # First-Party
+                        from mcpgateway.auth import _check_token_revoked_sync
+                        
+                        # Check revocation in thread pool to avoid blocking
+                        is_revoked = await asyncio.to_thread(_check_token_revoked_sync, jti)
+                        if is_revoked:
+                            # Remove revoked token from cache
+                            with _jwt_cache_lock:
+                                if token_hash in _jwt_verification_cache:
+                                    del _jwt_verification_cache[token_hash]
+                            
+                            with _cache_stats_lock:
+                                _cache_stats["revocation_removals"] += 1
+                            
+                            logger.warning(f"Cached token {token_hash[:16]}... was revoked, removed from cache")
+                            raise HTTPException(
+                                status_code=status.HTTP_401_UNAUTHORIZED,
+                                detail="Token has been revoked",
+                                headers={"WWW-Authenticate": "Bearer"},
+                            )
+                    except HTTPException:
+                        raise
+                    except Exception as e:
+                        # Log but don't fail on revocation check errors
+                        logger.warning(f"Revocation check failed for cached token: {e}")
+                
+                logger.debug(f"JWT verification cache hit for token: {token_hash[:16]}...")
+                return cached_payload
 
         # Cache miss
-        _cache_stats["misses"] += 1
+        with _cache_stats_lock:
+            _cache_stats["misses"] += 1
 
     try:
         validate_jwt_algo_and_keys()
@@ -224,7 +292,8 @@ async def verify_jwt_token(token: str) -> dict:
         # Cache the successful verification result if enabled (TTLCache handles expiry)
         if settings.jwt_cache_enabled:
             token_hash = hashlib.sha256(token.encode()).hexdigest()
-            _jwt_verification_cache[token_hash] = payload
+            with _jwt_cache_lock:
+                _jwt_verification_cache[token_hash] = payload
             logger.debug(f"JWT verification cached for token: {token_hash[:16]}... (TTL: {settings.jwt_cache_ttl}s)")
 
         return payload

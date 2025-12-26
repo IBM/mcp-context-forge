@@ -280,6 +280,217 @@ async def test_require_auth_override_basic_auth_disabled(monkeypatch):
     assert exc.value.detail == "Not authenticated"
 
 
+# ---------------------------------------------------------------------------
+# JWT Caching Tests
+# ---------------------------------------------------------------------------
+class TestJWTCaching:
+    """Test JWT verification caching functionality."""
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_on_repeated_token(self, monkeypatch):
+        """Verify that verifying the same token twice results in a cache hit."""
+        monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+        monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+        monkeypatch.setattr(vc.settings, "jwt_cache_enabled", True, raising=False)
+        monkeypatch.setattr(vc.settings, "require_token_expiration", False, raising=False)
+
+        # Clear cache and stats
+        vc._jwt_verification_cache.clear()
+        with vc._cache_stats_lock:
+            vc._cache_stats["hits"] = 0
+            vc._cache_stats["misses"] = 0
+            vc._cache_stats["invalidations"] = 0
+
+        token = _token({"sub": "alice", "email": "alice@example.com"})
+
+        # First call should miss
+        initial_stats = vc.get_cache_stats()
+        initial_misses = initial_stats["cache_misses"]
+
+        payload1 = await vc.verify_jwt_token(token)
+        assert payload1["sub"] == "alice"
+
+        stats_after_first = vc.get_cache_stats()
+        assert stats_after_first["cache_misses"] == initial_misses + 1
+
+        # Second call should hit
+        payload2 = await vc.verify_jwt_token(token)
+        assert payload2["sub"] == "alice"
+
+        stats_after_second = vc.get_cache_stats()
+        assert stats_after_second["cache_hits"] > initial_stats["cache_hits"]
+        assert stats_after_second["cache_misses"] == stats_after_first["cache_misses"]
+
+    @pytest.mark.asyncio
+    async def test_cache_disabled(self, monkeypatch):
+        """Verify caching is bypassed when jwt_cache_enabled=False."""
+        monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+        monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+        monkeypatch.setattr(vc.settings, "jwt_cache_enabled", False, raising=False)
+        monkeypatch.setattr(vc.settings, "require_token_expiration", False, raising=False)
+
+        token = _token({"sub": "bob"})
+
+        # Both calls should result in full verification (no caching)
+        payload1 = await vc.verify_jwt_token(token)
+        payload2 = await vc.verify_jwt_token(token)
+
+        assert payload1["sub"] == "bob"
+        assert payload2["sub"] == "bob"
+
+    @pytest.mark.asyncio
+    async def test_invalidate_user_cache_removes_tokens(self, monkeypatch):
+        """Verify that invalidate_user_cache removes all tokens for a user."""
+        monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+        monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+        monkeypatch.setattr(vc.settings, "jwt_cache_enabled", True, raising=False)
+        monkeypatch.setattr(vc.settings, "require_token_expiration", False, raising=False)
+
+        # Clear cache
+        vc._jwt_verification_cache.clear()
+        vc._user_cache.clear()
+        with vc._cache_stats_lock:
+            vc._cache_stats["invalidations"] = 0
+
+        # Create and verify tokens for the same user
+        token1 = _token({"sub": "charlie@example.com"})
+        token2 = _token({"sub": "charlie@example.com", "extra": "data"})
+
+        await vc.verify_jwt_token(token1)
+        await vc.verify_jwt_token(token2)
+
+        initial_size = vc.get_cache_stats()["jwt_cache_size"]
+        assert initial_size >= 2
+
+        # Invalidate user cache
+        initial_invalidations = vc.get_cache_stats()["cache_invalidations"]
+        vc.invalidate_user_cache("charlie@example.com")
+
+        # Check that tokens were removed
+        stats = vc.get_cache_stats()
+        assert stats["cache_invalidations"] > initial_invalidations
+        assert stats["jwt_cache_size"] < initial_size
+
+    @pytest.mark.asyncio
+    async def test_cache_stats_accurate(self, monkeypatch):
+        """Verify cache statistics are accurately tracked."""
+        monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+        monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+        monkeypatch.setattr(vc.settings, "jwt_cache_enabled", True, raising=False)
+        monkeypatch.setattr(vc.settings, "require_token_expiration", False, raising=False)
+
+        # Clear cache
+        vc._jwt_verification_cache.clear()
+        with vc._cache_stats_lock:
+            vc._cache_stats["hits"] = 0
+            vc._cache_stats["misses"] = 0
+
+        token = _token({"sub": "diana"})
+
+        # First call: miss
+        await vc.verify_jwt_token(token)
+        stats1 = vc.get_cache_stats()
+        assert stats1["cache_misses"] == 1
+        assert stats1["cache_hits"] == 0
+
+        # Second call: hit
+        await vc.verify_jwt_token(token)
+        stats2 = vc.get_cache_stats()
+        assert stats2["cache_misses"] == 1
+        assert stats2["cache_hits"] == 1
+
+        # Hit rate calculation
+        assert stats2["hit_rate"] == 0.5  # 1 hit / 2 total
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_rate_calculation(self, monkeypatch):
+        """Verify hit rate is calculated correctly."""
+        monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+        monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+        monkeypatch.setattr(vc.settings, "jwt_cache_enabled", True, raising=False)
+        monkeypatch.setattr(vc.settings, "require_token_expiration", False, raising=False)
+
+        # Clear cache
+        vc._jwt_verification_cache.clear()
+        with vc._cache_stats_lock:
+            vc._cache_stats["hits"] = 0
+            vc._cache_stats["misses"] = 0
+
+        token1 = _token({"sub": "user1"})
+        token2 = _token({"sub": "user2"})
+
+        # 2 misses
+        await vc.verify_jwt_token(token1)
+        await vc.verify_jwt_token(token2)
+
+        # 2 hits
+        await vc.verify_jwt_token(token1)
+        await vc.verify_jwt_token(token2)
+
+        stats = vc.get_cache_stats()
+        assert stats["cache_hits"] == 2
+        assert stats["cache_misses"] == 2
+        assert stats["hit_rate"] == 0.5  # 2/4
+
+    @pytest.mark.asyncio
+    async def test_thread_safety_of_cache_stats(self, monkeypatch):
+        """Verify cache stats are thread-safe under concurrent access."""
+        monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+        monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+        monkeypatch.setattr(vc.settings, "jwt_cache_enabled", True, raising=False)
+        monkeypatch.setattr(vc.settings, "require_token_expiration", False, raising=False)
+
+        # Clear cache
+        vc._jwt_verification_cache.clear()
+        with vc._cache_stats_lock:
+            vc._cache_stats["hits"] = 0
+            vc._cache_stats["misses"] = 0
+
+        token = _token({"sub": "concurrent_user"})
+
+        # Warm up cache
+        await vc.verify_jwt_token(token)
+
+        # Simulate concurrent cache hits
+        async def verify_token():
+            for _ in range(10):
+                await vc.verify_jwt_token(token)
+
+        import asyncio
+
+        # Run 5 concurrent tasks, each doing 10 verifications = 50 hits
+        await asyncio.gather(*[verify_token() for _ in range(5)])
+
+        stats = vc.get_cache_stats()
+        # Should have 1 miss (initial) + 50 hits
+        assert stats["cache_hits"] == 50
+        assert stats["cache_misses"] == 1
+
+
+class TestUserCaching:
+    """Test user object caching functionality."""
+
+    @pytest.mark.asyncio
+    async def test_invalidate_clears_user_cache(self, monkeypatch):
+        """Verify invalidate_user_cache removes user from user cache."""
+        # Clear caches
+        vc._user_cache.clear()
+        vc._jwt_verification_cache.clear()
+
+        # Manually add user to cache
+        vc._user_cache["test@example.com"] = {"email": "test@example.com", "name": "Test User"}
+
+        assert "test@example.com" in vc._user_cache
+
+        # Invalidate
+        vc.invalidate_user_cache("test@example.com")
+
+        assert "test@example.com" not in vc._user_cache
+
+
+# ---------------------------------------------------------------------------
+# Integration tests
+# ---------------------------------------------------------------------------
 @pytest.fixture
 def test_client(app, monkeypatch):
     """Create a test client with the properly configured app fixture from conftest."""

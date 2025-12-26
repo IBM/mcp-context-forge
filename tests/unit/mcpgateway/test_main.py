@@ -334,6 +334,7 @@ class TestHealthAndInfrastructure:
         assert "cache_hits" in cache_stats
         assert "cache_misses" in cache_stats
         assert "cache_invalidations" in cache_stats
+        assert "revocation_removals" in cache_stats
         assert "hit_rate" in cache_stats
         
         # Verify data types
@@ -345,6 +346,7 @@ class TestHealthAndInfrastructure:
         assert isinstance(cache_stats["cache_hits"], int)
         assert isinstance(cache_stats["cache_misses"], int)
         assert isinstance(cache_stats["cache_invalidations"], int)
+        assert isinstance(cache_stats["revocation_removals"], int)
         assert isinstance(cache_stats["hit_rate"], (int, float))
 
     def test_ready_check(self, test_client):
