@@ -101,6 +101,7 @@ services:
       - AUTH_CACHE_USER_TTL=60
       - AUTH_CACHE_REVOCATION_TTL=30
       - AUTH_CACHE_TEAM_TTL=60
+      - AUTH_CACHE_ROLE_TTL=60
       - AUTH_CACHE_BATCH_QUERIES=true
       # Registry Cache Configuration (reduces DB queries for list endpoints)
       - REGISTRY_CACHE_ENABLED=true

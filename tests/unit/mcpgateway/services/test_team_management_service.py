@@ -22,6 +22,28 @@ from mcpgateway.services.team_management_service import TeamManagementService
 class TestTeamManagementService:
     """Comprehensive test suite for Team Management Service."""
 
+    @pytest.fixture(autouse=True)
+    def clear_auth_cache(self):
+        """Clear auth cache before each test to avoid cross-test contamination."""
+        try:
+            # First-Party
+            from mcpgateway.cache.auth_cache import get_auth_cache
+
+            cache = get_auth_cache()
+            cache.invalidate_all()
+        except ImportError:
+            pass
+        yield
+        # Also clear after test
+        try:
+            # First-Party
+            from mcpgateway.cache.auth_cache import get_auth_cache
+
+            cache = get_auth_cache()
+            cache.invalidate_all()
+        except ImportError:
+            pass
+
     @pytest.fixture
     def mock_db(self):
         """Create mock database session."""
