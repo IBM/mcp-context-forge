@@ -4741,12 +4741,11 @@ pyupgrade:                          ## ⬆️  Upgrade Python syntax
 		find $(TARGET) -name '*.py' -exec $(VENV_DIR)/bin/pyupgrade --py312-plus --diff {} + || true"
 	@echo "💡  To apply changes, run: find $(TARGET) -name '*.py' -exec $(VENV_DIR)/bin/pyupgrade --py312-plus {} +"
 
-interrogate:                        ## 📝 Docstring coverage
+interrogate: uv                     ## 📝 Docstring coverage
 	@echo "📝  interrogate - checking docstring coverage..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q interrogate && \
-		$(VENV_DIR)/bin/interrogate -vv mcpgateway || true"
+		uv run --active interrogate -vv mcpgateway || true"
 
 prospector:                         ## 🔬 Comprehensive code analysis
 	@echo "🔬  prospector - running comprehensive analysis..."
