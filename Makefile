@@ -91,12 +91,12 @@ os-deps: $(OS_DEPS_SCRIPT)
 # -----------------------------------------------------------------------------
 # 🔧 HELPER SCRIPTS
 # -----------------------------------------------------------------------------
-# Helper to ensure a Python package is installed in venv
+# Helper to ensure a Python package is installed in venv (uses uv to avoid pip corruption)
 define ensure_pip_package
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip show $(1) >/dev/null 2>&1 || \
-		python3 -m pip install -q $(1)"
+		uv pip show $(1) >/dev/null 2>&1 || \
+		uv pip install -q $(1)"
 endef
 
 # =============================================================================
@@ -574,7 +574,7 @@ pytest-examples:
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@test -f test_readme.py || { echo "⚠️  test_readme.py not found - skipping"; exit 0; }
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q pytest pytest-examples && \
+		uv pip install -q pytest pytest-examples && \
 		pytest -v test_readme.py"
 
 test-curl:
@@ -1098,7 +1098,7 @@ mutmut-install:
 	@echo "📥 Installing mutmut..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q mutmut==3.3.1"
+		uv pip install -q mutmut==3.3.1"
 
 mutmut-run: mutmut-install
 	@echo "🧬 Running mutation testing (sample mode - 20 mutants)..."
@@ -1165,7 +1165,7 @@ mutmut-clean:
 .PHONY: pip-licenses scc scc-report
 
 pip-licenses:
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install pip-licenses"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install -q pip-licenses"
 	@mkdir -p $(dir $(LICENSES_MD))
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		pip-licenses --format=markdown --with-authors --with-urls > $(LICENSES_MD)"
@@ -1216,7 +1216,7 @@ docs: images sbom
 	@echo "📚  Generating documentation with handsdown..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q handsdown && \
+		uv pip install -q handsdown && \
 		python3 -m handsdown --external https://github.com/IBM/mcp-context-forge/ \
 		         -o $(DOCS_DIR)/docs \
 		         -n app --name '$(PROJECT_NAME)' --cleanup"
@@ -1230,7 +1230,7 @@ images:
 	@mkdir -p $(DOCS_DIR)/docs/design/images
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q code2flow && \
+		uv pip install -q code2flow && \
 		$(VENV_DIR)/bin/code2flow mcpgateway/ --output $(DOCS_DIR)/docs/design/images/code2flow.dot || true"
 	@command -v dot >/dev/null 2>&1 || { \
 		echo "⚠️  Graphviz (dot) not installed - skipping diagram generation"; \
@@ -1238,12 +1238,12 @@ images:
 	} && \
 	dot -Tsvg -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=14 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=14 -Efontcolor=black $(DOCS_DIR)/docs/design/images/code2flow.dot -o $(DOCS_DIR)/docs/design/images/code2flow.svg || true
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q snakefood3 && \
+		uv pip install -q snakefood3 && \
 		python3 -m snakefood3 . mcpgateway > snakefood.dot"
 	@command -v dot >/dev/null 2>&1 && \
 	dot -Tpng -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=12 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=10 -Efontcolor=black snakefood.dot -o $(DOCS_DIR)/docs/design/images/snakefood.png || true
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q pylint && \
+		uv pip install -q pylint && \
 		$(VENV_DIR)/bin/pyreverse --colorized mcpgateway || true"
 	@command -v dot >/dev/null 2>&1 && \
 	dot -Tsvg -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=14 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=14 -Efontcolor=black packages.dot -o $(DOCS_DIR)/docs/design/images/packages.svg || true && \
@@ -1582,7 +1582,7 @@ wily:                               ## 📈  Maintainability report
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@git stash --quiet
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q wily && \
+		uv pip install -q wily && \
 		python3 -m wily build -n 10 . > /dev/null || true && \
 		python3 -m wily report . || true"
 	@git stash pop --quiet
@@ -1597,14 +1597,14 @@ depend:                             ## 📦  List dependencies
 	@echo "📦  List dependencies"
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q pdm && \
+		uv pip install -q pdm && \
 		python3 -m pdm list --freeze"
 
 snakeviz:                           ## 🐍  Interactive profile visualiser
 	@echo "🐍  Interactive profile visualiser..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q snakeviz && \
+		uv pip install -q snakeviz && \
 		python3 -m cProfile -o mcp.prof mcpgateway/main.py && \
 		python3 -m snakeviz mcp.prof --server"
 
@@ -1612,7 +1612,7 @@ pstats:                             ## 📊  Static call-graph image
 	@echo "📊  Static call-graph image"
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q gprof2dot && \
+		uv pip install -q gprof2dot && \
 		python3 -m cProfile -o mcp.pstats mcpgateway/main.py && \
 		$(VENV_DIR)/bin/gprof2dot -w -e 3 -n 3 -s -f pstats mcp.pstats | \
 		dot -Tpng -o $(DOCS_DIR)/pstats.png"
@@ -1624,7 +1624,7 @@ tox:                                ## 🧪  Multi-Python tox matrix (uv)
 	@echo "🧪  Running tox with uv across Python 3.11, 3.12, 3.13..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q tox tox-uv && \
+		uv pip install -q tox tox-uv && \
 		python3 -m tox -p auto $(TOXARGS)"
 
 sbom:								## 🛡️  Generate SBOM & security report
@@ -1632,7 +1632,7 @@ sbom:								## 🛡️  Generate SBOM & security report
 	@rm -Rf "$(VENV_DIR).sbom"
 	@python3 -m venv "$(VENV_DIR).sbom"
 	@/bin/bash -c "source $(VENV_DIR).sbom/bin/activate && python3 -m pip install --upgrade pip setuptools pdm uv && python3 -m uv pip install .[dev]"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install cyclonedx-bom sbom2doc"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install -q cyclonedx-bom sbom2doc"
 	@echo "🔍  Generating SBOM from environment..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python3 -m cyclonedx_py environment \
@@ -1772,7 +1772,7 @@ install-watchdog:						## 📦 Install watchdog for file watching
 	@echo "📦 Installing watchdog for file watching..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q watchdog"
+		uv pip install -q watchdog"
 
 # Watch mode - lint on file changes
 lint-watch: install-watchdog			## 👁️ Watch for changes and auto-lint
@@ -1999,7 +1999,7 @@ lint-parallel:							## 🚀 Run linters in parallel
 	@echo "🚀 Running linters in parallel on $(TARGET)..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q pytest-xdist"
+		uv pip install -q pytest-xdist"
 	@# Run fast linters in parallel
 	@$(MAKE) --no-print-directory ruff-check TARGET="$(TARGET)" & \
 	$(MAKE) --no-print-directory black-check TARGET="$(TARGET)" & \
@@ -2044,7 +2044,7 @@ lint-complexity:						## 📈 Analyze code complexity
 	@echo "📈 Analyzing code complexity for $(TARGET)..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q radon && \
+		uv pip install -q radon && \
 		echo '📊 Cyclomatic Complexity:' && \
 		$(VENV_DIR)/bin/radon cc $(TARGET) -s && \
 		echo '' && \
@@ -2107,7 +2107,7 @@ yamllint:                         ## 📑 YAML linting
 	$(call ensure_pip_package,yamllint)
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q yamllint 2>/dev/null || true"
+		uv pip install -q yamllint 2>/dev/null || true"
 	@$(VENV_DIR)/bin/yamllint -c .yamllint .
 
 jsonlint:                         ## 📑 JSON validation (jq)
@@ -2127,7 +2127,7 @@ tomllint:                         ## 📑 TOML validation (tomlcheck)
 	@echo '📑  tomllint (tomlcheck) ...'
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q tomlcheck 2>/dev/null || true"
+		uv pip install -q tomlcheck 2>/dev/null || true"
 	@find . -type f -name '*.toml' -print0 \
 	  | xargs -0 -I{} $(VENV_DIR)/bin/tomlcheck "{}"
 
@@ -2163,8 +2163,7 @@ install-web-linters:
 
 nodejsscan:
 	@echo "🔒 Running nodejsscan for JavaScript security vulnerabilities..."
-	$(call ensure_pip_package,nodejsscan)
-	@$(VENV_DIR)/bin/nodejsscan --directory ./mcpgateway/static --directory ./mcpgateway/templates || true
+	@uvx nodejsscan --directory ./mcpgateway/static --directory ./mcpgateway/templates || true
 
 lint-web: install-web-linters nodejsscan
 	@echo "🔍 Linting HTML files..."
@@ -4354,7 +4353,7 @@ shell-linters-install:     ## 🔧  Install shellcheck, shfmt, bashate
 	if ! $(VENV_DIR)/bin/bashate -h >/dev/null 2>&1 ; then \
 	  echo "🛠  Installing bashate (into venv)..." ; \
 	  test -d "$(VENV_DIR)" || $(MAKE) venv ; \
-	  /bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m pip install --quiet bashate" ; \
+	  /bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install -q bashate" ; \
 	fi
 	@echo "✅  Shell linters ready."
 
@@ -4723,21 +4722,21 @@ dodgy:                              ## 🔐 Suspicious code patterns
 	@echo "🔐  dodgy - scanning for hardcoded secrets..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q dodgy && \
+		uv pip install -q dodgy && \
 		$(VENV_DIR)/bin/dodgy $(TARGET) || true"
 
 dlint:                              ## 📏 Python best practices
 	@echo "📏  dlint - checking Python best practices..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q dlint && \
+		uv pip install -q dlint && \
 		$(VENV_DIR)/bin/python -m flake8 --select=DUO mcpgateway"
 
 pyupgrade:                          ## ⬆️  Upgrade Python syntax
 	@echo "⬆️  pyupgrade - checking for syntax upgrade opportunities..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q pyupgrade && \
+		uv pip install -q pyupgrade && \
 		find $(TARGET) -name '*.py' -exec $(VENV_DIR)/bin/pyupgrade --py312-plus --diff {} + || true"
 	@echo "💡  To apply changes, run: find $(TARGET) -name '*.py' -exec $(VENV_DIR)/bin/pyupgrade --py312-plus {} +"
 
@@ -4751,14 +4750,14 @@ prospector:                         ## 🔬 Comprehensive code analysis
 	@echo "🔬  prospector - running comprehensive analysis..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q prospector[with_everything] && \
+		uv pip install -q prospector[with_everything] && \
 		$(VENV_DIR)/bin/prospector mcpgateway || true"
 
 pip-audit:                          ## 🔒 Audit Python dependencies for CVEs
 	@echo "🔒  pip-audit vulnerability scan..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install --quiet --upgrade pip-audit && \
+		uv pip install -q pip-audit && \
 		pip-audit --strict || true"
 
 
@@ -4962,12 +4961,12 @@ security-report:                    ## 📊 Generate comprehensive security repo
 	@echo "" >> $(DOCS_DIR)/docs/security/report.md
 	@echo "## Code Security Patterns (semgrep)" >> $(DOCS_DIR)/docs/security/report.md
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q semgrep && \
+		uv pip install -q semgrep && \
 		$(VENV_DIR)/bin/semgrep --config=auto $(TARGET) --quiet || true" >> $(DOCS_DIR)/docs/security/report.md 2>&1
 	@echo "" >> $(DOCS_DIR)/docs/security/report.md
 	@echo "## Suspicious Code Patterns (dodgy)" >> $(DOCS_DIR)/docs/security/report.md
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q dodgy && \
+		uv pip install -q dodgy && \
 		$(VENV_DIR)/bin/dodgy $(TARGET) || true" >> $(DOCS_DIR)/docs/security/report.md 2>&1
 	@echo "" >> $(DOCS_DIR)/docs/security/report.md
 	@echo "## DevSkim Security Anti-patterns" >> $(DOCS_DIR)/docs/security/report.md
@@ -4983,7 +4982,7 @@ security-fix:                       ## 🔧 Auto-fix security issues where possi
 	@echo "🔧 Attempting to auto-fix security issues..."
 	@echo "➤ Upgrading Python syntax with pyupgrade..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q pyupgrade && \
+		uv pip install -q pyupgrade && \
 		find $(TARGET) -name '*.py' -exec $(VENV_DIR)/bin/pyupgrade --py312-plus {} +"
 	@echo "➤ Updating dependencies to latest secure versions..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
