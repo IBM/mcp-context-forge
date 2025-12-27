@@ -1,0 +1,16 @@
+{{- if .Values.pgbouncer.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-pgbouncer
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.pgbouncer.service.type }}
+  ports:
+    - name: pgbouncer
+      port: {{ .Values.pgbouncer.service.port }}
+      targetPort: {{ .Values.pgbouncer.service.port }}
+  selector:
+    app: {{ include "mcp-stack.fullname" . }}-pgbouncer
+{{- end }}

@@ -1,0 +1,110 @@
+{{/* -------------------------------------------------------------------
+     DEPLOYMENT - PgBouncer
+     -------------------------------------------------------------------
+     - Connection pooler for PostgreSQL
+     - Reduces connection overhead, improves throughput under high concurrency
+     - Routes traffic between gateway and PostgreSQL
+     ------------------------------------------------------------------- */}}
+
+{{- if .Values.pgbouncer.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-pgbouncer
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ include "mcp-stack.fullname" . }}-pgbouncer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ include "mcp-stack.fullname" . }}-pgbouncer
+  template:
+    metadata:
+      labels:
+        app: {{ include "mcp-stack.fullname" . }}-pgbouncer
+    spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: pgbouncer
+          image: "{{ .Values.pgbouncer.image.repository }}:{{ .Values.pgbouncer.image.tag }}"
+          imagePullPolicy: {{ .Values.pgbouncer.image.pullPolicy }}
+
+          ports:
+            - containerPort: {{ .Values.pgbouncer.service.port }}
+              name: pgbouncer
+
+          env:
+            # PostgreSQL credentials (from secret) - MUST be first for variable substitution
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: POSTGRES_PASSWORD
+
+            # Connection to upstream PostgreSQL (uses variables defined above)
+            - name: DATABASE_URL
+              value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@{{ include "mcp-stack.fullname" . }}-postgres:{{ .Values.postgres.service.port }}/{{ .Values.mcpContextForge.env.postgres.db }}"
+
+            # PgBouncer listen port
+            - name: LISTEN_PORT
+              value: "{{ .Values.pgbouncer.service.port }}"
+
+            # Pool mode
+            - name: POOL_MODE
+              value: "{{ .Values.pgbouncer.pool.mode }}"
+
+            # Client-side connection limits
+            - name: MAX_CLIENT_CONN
+              value: "{{ .Values.pgbouncer.pool.maxClientConn }}"
+            - name: DEFAULT_POOL_SIZE
+              value: "{{ .Values.pgbouncer.pool.defaultPoolSize }}"
+            - name: MIN_POOL_SIZE
+              value: "{{ .Values.pgbouncer.pool.minPoolSize }}"
+            - name: RESERVE_POOL_SIZE
+              value: "{{ .Values.pgbouncer.pool.reservePoolSize }}"
+            - name: RESERVE_POOL_TIMEOUT
+              value: "{{ .Values.pgbouncer.pool.reservePoolTimeout }}"
+
+            # Server-side connection limits
+            - name: MAX_DB_CONNECTIONS
+              value: "{{ .Values.pgbouncer.pool.maxDbConnections }}"
+            - name: MAX_USER_CONNECTIONS
+              value: "{{ .Values.pgbouncer.pool.maxUserConnections }}"
+
+            # Connection lifecycle
+            - name: SERVER_LIFETIME
+              value: "{{ .Values.pgbouncer.pool.serverLifetime }}"
+            - name: SERVER_IDLE_TIMEOUT
+              value: "{{ .Values.pgbouncer.pool.serverIdleTimeout }}"
+
+            # Authentication
+            - name: AUTH_TYPE
+              value: "{{ .Values.pgbouncer.authType }}"
+
+          # Readiness probe
+          {{- with .Values.pgbouncer.probes.readiness }}
+          readinessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          # Liveness probe
+          {{- with .Values.pgbouncer.probes.liveness }}
+          livenessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          # Resource limits
+          resources:
+{{- toYaml .Values.pgbouncer.resources | nindent 12 }}
+{{- end }}
