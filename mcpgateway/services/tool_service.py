@@ -2214,7 +2214,7 @@ class ToolService:
                             request_headers, headers, passthrough_allowed, gateway_auth_type=None, gateway_passthrough_headers=None  # REST tools don't use gateway auth here
                         )
 
-                    if self._plugin_manager:
+                    if self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE):
                         # Use pre-created Pydantic model from Phase 2 (no ORM access)
                         if tool_metadata:
                             global_context.metadata[TOOL_METADATA] = tool_metadata
@@ -2520,7 +2520,7 @@ class ToolService:
                     # REMOVED: Redundant gateway query - gateway already eager-loaded via joinedload
                     # tool_gateway = db.execute(select(DbGateway).where(DbGateway.id == tool_gateway_id)...)
 
-                    if self._plugin_manager:
+                    if self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE):
                         # Use pre-created Pydantic models from Phase 2 (no ORM access)
                         if tool_metadata:
                             global_context.metadata[TOOL_METADATA] = tool_metadata
@@ -2562,7 +2562,7 @@ class ToolService:
                     tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")], is_error=True)
 
                 # Plugin hook: tool post-invoke
-                if self._plugin_manager:
+                if self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
                     post_result, _ = await self._plugin_manager.invoke_hook(
                         ToolHookType.TOOL_POST_INVOKE,
                         payload=ToolPostInvokePayload(name=name, result=tool_result.model_dump(by_alias=True)),

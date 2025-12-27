@@ -1697,7 +1697,7 @@ class ResourceService:
                 contexts = None
                 # Call pre-fetch hooks if plugin manager is available
                 plugin_eligible = bool(self._plugin_manager and PLUGINS_AVAILABLE and uri and ("://" in uri))
-                if plugin_eligible:
+                if plugin_eligible and self._plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_PRE_FETCH):
                     # Initialize plugin manager if needed
                     # pylint: disable=protected-access
                     if not self._plugin_manager._initialized:
@@ -1805,7 +1805,7 @@ class ResourceService:
                         raise ResourceNotFoundError(f"Resource not found for the resource id: {resource_id}")
 
                 # Call post-fetch hooks if plugin manager is available
-                if plugin_eligible:
+                if plugin_eligible and self._plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_POST_FETCH):
                     # Create post-fetch payload
                     post_payload = ResourcePostFetchPayload(uri=original_uri, content=content)
                     # Execute post-fetch hooks

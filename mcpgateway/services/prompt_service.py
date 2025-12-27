@@ -1184,7 +1184,7 @@ class PromptService:
                 # Determine how to look up the prompt
                 prompt_name = None
 
-                if self._plugin_manager:
+                if self._plugin_manager and self._plugin_manager.has_hooks_for(PromptHookType.PROMPT_PRE_FETCH):
                     # Use existing context_table from previous hooks if available
                     context_table = plugin_context_table
 
@@ -1261,7 +1261,7 @@ class PromptService:
                             span.set_attribute("error.message", str(e))
                         raise PromptError(f"Failed to process prompt: {str(e)}")
 
-                if self._plugin_manager:
+                if self._plugin_manager and self._plugin_manager.has_hooks_for(PromptHookType.PROMPT_POST_FETCH):
                     post_result, _ = await self._plugin_manager.invoke_hook(
                         PromptHookType.PROMPT_POST_FETCH,
                         payload=PromptPosthookPayload(prompt_id=str(prompt.id), result=result),
