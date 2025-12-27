@@ -16,7 +16,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 # Third-Party
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -386,6 +386,10 @@ class TokenStorageService:
     async def cleanup_expired_tokens(self, max_age_days: int = 30) -> int:
         """Clean up expired OAuth tokens older than specified days.
 
+        Uses a single SQL DELETE statement instead of loading tokens into memory
+        and deleting them one by one. This is more efficient and avoids memory
+        issues when many tokens expire at once.
+
         Args:
             max_age_days: Maximum age of tokens to keep
 
@@ -393,11 +397,9 @@ class TokenStorageService:
             Number of tokens cleaned up
 
         Examples:
-            >>> from types import SimpleNamespace
             >>> from unittest.mock import MagicMock
             >>> svc = TokenStorageService(MagicMock())
-            >>> svc.db.execute.return_value.scalars.return_value.all.return_value = [SimpleNamespace(), SimpleNamespace()]
-            >>> svc.db.delete = lambda obj: None
+            >>> svc.db.execute.return_value.rowcount = 2
             >>> svc.db.commit = lambda: None
             >>> import asyncio
             >>> asyncio.run(svc.cleanup_expired_tokens(1))
@@ -406,14 +408,14 @@ class TokenStorageService:
         try:
             cutoff_date = datetime.now(tz=timezone.utc) - timedelta(days=max_age_days)
 
-            expired_tokens = self.db.execute(select(OAuthToken).where(OAuthToken.expires_at < cutoff_date)).scalars().all()
-
-            count = len(expired_tokens)
-            for token in expired_tokens:
-                self.db.delete(token)
+            result = self.db.execute(delete(OAuthToken).where(OAuthToken.expires_at < cutoff_date))
+            count = result.rowcount
 
             self.db.commit()
-            logger.info(f"Cleaned up {count} expired OAuth tokens")
+
+            if count > 0:
+                logger.info(f"Cleaned up {count} expired OAuth tokens")
+
             return count
 
         except Exception as e:

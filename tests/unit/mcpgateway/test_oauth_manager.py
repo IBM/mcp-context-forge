@@ -2381,38 +2381,30 @@ class TestTokenStorageService:
 
     @pytest.mark.asyncio
     async def test_cleanup_expired_tokens_success(self):
-        """Test successfully cleaning up expired tokens."""
+        """Test successfully cleaning up expired tokens using bulk DELETE."""
         mock_db = Mock()
 
-        # Create list of expired tokens
-        expired_token1 = OAuthToken(gateway_id="gateway1", user_id="user1")
-        expired_token2 = OAuthToken(gateway_id="gateway2", user_id="user2")
-        expired_tokens = [expired_token1, expired_token2]
-
-        mock_db.execute.return_value.scalars.return_value.all.return_value = expired_tokens
+        # Mock bulk DELETE returning rowcount of 2
+        mock_db.execute.return_value.rowcount = 2
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
             mock_get_settings.side_effect = ImportError("No encryption")
 
             service = TokenStorageService(mock_db)
 
-            with patch("mcpgateway.services.token_storage_service.datetime") as mock_dt:
-                mock_dt.now.return_value = datetime(2025, 1, 1, 12, 0, 0)
-                mock_dt.now.return_value = datetime(2025, 1, 1, 12, 0, 0)
+            result = await service.cleanup_expired_tokens(max_age_days=30)
 
-                result = await service.cleanup_expired_tokens(max_age_days=30)
-
-                assert result == 2
-                assert mock_db.delete.call_count == 2
-                mock_db.delete.assert_any_call(expired_token1)
-                mock_db.delete.assert_any_call(expired_token2)
-                mock_db.commit.assert_called_once()
+            assert result == 2
+            mock_db.execute.assert_called_once()
+            mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_cleanup_expired_tokens_none_found(self):
         """Test cleanup when no expired tokens exist."""
         mock_db = Mock()
-        mock_db.execute.return_value.scalars.return_value.all.return_value = []
+
+        # Mock bulk DELETE returning rowcount of 0
+        mock_db.execute.return_value.rowcount = 0
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
             mock_get_settings.side_effect = ImportError("No encryption")
@@ -2422,7 +2414,7 @@ class TestTokenStorageService:
             result = await service.cleanup_expired_tokens(max_age_days=30)
 
             assert result == 0
-            mock_db.delete.assert_not_called()
+            mock_db.execute.assert_called_once()
             mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
