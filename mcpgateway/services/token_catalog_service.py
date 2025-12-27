@@ -761,7 +761,11 @@ class TokenCatalogService:
         return result.scalar_one_or_none()
 
     async def cleanup_expired_tokens(self) -> int:
-        """Clean up expired tokens.
+        """Clean up expired tokens using bulk UPDATE.
+
+        Uses a single SQL UPDATE statement instead of loading tokens into memory
+        and updating them one by one. This is more efficient and avoids memory
+        issues when many tokens expire at once.
 
         Returns:
             int: Number of tokens cleaned up
@@ -770,13 +774,18 @@ class TokenCatalogService:
             >>> service = TokenCatalogService(None)  # Would use real DB session
             >>> # Returns int: Number of tokens cleaned up
         """
-        expired_tokens = self.db.execute(select(EmailApiToken).where(and_(EmailApiToken.expires_at < utc_now(), EmailApiToken.is_active.is_(True)))).scalars().all()
+        try:
+            now = utc_now()
+            count = self.db.query(EmailApiToken).filter(EmailApiToken.expires_at < now, EmailApiToken.is_active.is_(True)).update({"is_active": False}, synchronize_session=False)
 
-        for token in expired_tokens:
-            token.is_active = False
+            self.db.commit()
 
-        self.db.commit()
+            if count > 0:
+                logger.info(f"Cleaned up {count} expired tokens")
 
-        logger.info(f"Cleaned up {len(expired_tokens)} expired tokens")
+            return count
 
-        return len(expired_tokens)
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Failed to cleanup expired tokens: {e}")
+            return 0

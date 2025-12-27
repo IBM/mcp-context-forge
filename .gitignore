@@ -1,3 +1,4 @@
+paper/
 .env.*
 .env.postgres
 .pylint-cache/
