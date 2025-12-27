@@ -747,44 +747,47 @@ class TestTokenCatalogService:
     @pytest.mark.asyncio
     async def test_cleanup_expired_tokens_multiple(self, token_service, mock_db):
         """Test cleanup_expired_tokens method with multiple expired tokens."""
-        # Create mock expired tokens
-        expired_tokens = []
-        for i in range(5):
-            token = MagicMock(spec=EmailApiToken)
-            token.id = f"token-{i}"
-            token.is_active = True
-            expired_tokens.append(token)
-
-        mock_db.execute.return_value.scalars.return_value.all.return_value = expired_tokens
+        # Mock bulk UPDATE returning count of 5 updated rows
+        mock_db.query.return_value.filter.return_value.update.return_value = 5
 
         count = await token_service.cleanup_expired_tokens()
 
         assert count == 5
-        # Verify all tokens were marked inactive
-        for token in expired_tokens:
-            assert token.is_active is False
-        mock_db.commit.assert_called()
+        mock_db.query.assert_called_once_with(EmailApiToken)
+        mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_cleanup_expired_tokens_none(self, token_service, mock_db):
         """Test cleanup_expired_tokens method with no expired tokens."""
-        mock_db.execute.return_value.scalars.return_value.all.return_value = []
+        # Mock bulk UPDATE returning 0 updated rows
+        mock_db.query.return_value.filter.return_value.update.return_value = 0
 
         count = await token_service.cleanup_expired_tokens()
 
         assert count == 0
-        mock_db.commit.assert_called()
+        mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_cleanup_expired_tokens_partial(self, token_service, mock_db):
         """Test cleanup_expired_tokens method with some expired tokens."""
-        expired_tokens = [MagicMock(spec=EmailApiToken, is_active=True), MagicMock(spec=EmailApiToken, is_active=True)]
-        mock_db.execute.return_value.scalars.return_value.all.return_value = expired_tokens
+        # Mock bulk UPDATE returning count of 2 updated rows
+        mock_db.query.return_value.filter.return_value.update.return_value = 2
 
         count = await token_service.cleanup_expired_tokens()
 
         assert count == 2
-        assert all(not token.is_active for token in expired_tokens)
+        mock_db.query.assert_called_once_with(EmailApiToken)
+
+    @pytest.mark.asyncio
+    async def test_cleanup_expired_tokens_db_error(self, token_service, mock_db):
+        """Test cleanup_expired_tokens handles database errors gracefully."""
+        # Mock database error
+        mock_db.query.return_value.filter.return_value.update.side_effect = Exception("Database error")
+
+        count = await token_service.cleanup_expired_tokens()
+
+        assert count == 0
+        mock_db.rollback.assert_called_once()
 
 
 # --------------------------------------------------------------------------- #
