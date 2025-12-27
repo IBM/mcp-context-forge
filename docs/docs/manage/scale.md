@@ -8,9 +8,9 @@ MCP Gateway is designed to scale from single-container development environments 
 
 - **Vertical Scaling**: Optimizing single-instance performance with Gunicorn workers
 - **Horizontal Scaling**: Multi-container deployments with shared state
-- **Database Optimization**: PostgreSQL connection pooling and settings
-- **Cache Architecture**: Redis for distributed caching
-- **Performance Tuning**: Configuration and benchmarking
+- **Database Optimization**: PostgreSQL connection pooling, PgBouncer, and indexing
+- **Cache Architecture**: Redis with hiredis, multi-level application caching
+- **Performance Tuning**: orjson, compression, and configuration
 - **Kubernetes Deployment**: HPA, resource limits, and best practices
 
 ---
@@ -19,7 +19,7 @@ MCP Gateway is designed to scale from single-container development environments 
 
 1. [Understanding the GIL and Worker Architecture](#1-understanding-the-gil-and-worker-architecture)
 2. [Vertical Scaling with Gunicorn](#2-vertical-scaling-with-gunicorn)
-3. [Future: Python 3.14 and PostgreSQL 18](#3-future-python-314-and-postgresql-18)
+3. [Python 3.14 Free-Threading and PostgreSQL 18](#3-python-314-free-threading-and-postgresql-18)
 4. [Horizontal Scaling with Kubernetes](#4-horizontal-scaling-with-kubernetes)
 5. [Database Connection Pooling](#5-database-connection-pooling)
 6. [Redis for Distributed Caching](#6-redis-for-distributed-caching)
@@ -158,7 +158,61 @@ resources:
 
 ---
 
-## 3. Future: Python 3.14 and PostgreSQL 18
+## 3. Python 3.14 Free-Threading and PostgreSQL 18
+
+### PostgreSQL 18 (Current)
+
+**Status**: Production-ready - MCP Gateway's default Docker Compose configuration uses PostgreSQL 18.
+
+PostgreSQL 18 provides significant performance improvements:
+
+- **Improved async I/O**: Better non-blocking query performance
+- **Reduced latency**: Optimized connection handling
+- **Enhanced parallelism**: Better parallel query execution
+- **Connection multiplexing**: More efficient connection reuse
+
+**Docker Compose Configuration** (default):
+
+```yaml
+postgres:
+  image: postgres:18
+  command:
+    - "postgres"
+    - "-c"
+    - "max_connections=500"       # With PgBouncer (4000 without)
+    - "-c"
+    - "shared_buffers=512MB"      # 25% of available RAM
+    - "-c"
+    - "work_mem=16MB"             # Per-operation memory
+    - "-c"
+    - "effective_cache_size=1536MB"  # 75% of RAM
+    - "-c"
+    - "maintenance_work_mem=128MB"
+    - "-c"
+    - "checkpoint_completion_target=0.9"
+    - "-c"
+    - "wal_buffers=16MB"
+    - "-c"
+    - "random_page_cost=1.1"      # SSD optimization
+    - "-c"
+    - "effective_io_concurrency=200"  # SSD parallel I/O
+    - "-c"
+    - "max_worker_processes=4"
+    - "-c"
+    - "max_parallel_workers_per_gather=2"
+    - "-c"
+    - "max_parallel_workers=4"
+```
+
+**Connection URL** (psycopg3 required):
+
+```bash
+# Via PgBouncer (recommended for high concurrency)
+DATABASE_URL=postgresql+psycopg://postgres:password@pgbouncer:6432/mcp
+
+# Direct connection (for development or low concurrency)
+DATABASE_URL=postgresql+psycopg://postgres:password@postgres:5432/mcp
+```
 
 ### Python 3.14 (Free-Threaded Mode)
 
@@ -250,23 +304,6 @@ MCP Gateway's architecture already benefits from components that will perform ev
 - [Python 3.14 Release Schedule](https://peps.python.org/pep-0745/)
 - [Pydantic v2 Performance](https://docs.pydantic.dev/latest/blog/pydantic-v2/)
 
-### PostgreSQL 18 (Async I/O)
-
-**Status**: Development (expected 2025)
-
-PostgreSQL 18 introduces native async I/O:
-
-- **Improved connection handling**: Better async query performance
-- **Reduced latency**: Non-blocking I/O operations
-- **Better scalability**: Efficient connection multiplexing
-
-**Current recommendation**: PostgreSQL 16+ (stable async support via asyncpg)
-
-```bash
-# Production-ready now
-DATABASE_URL=postgresql+asyncpg://user:pass@postgres:5432/mcp
-```
-
 ---
 
 ## 4. Horizontal Scaling with Kubernetes
@@ -274,38 +311,73 @@ DATABASE_URL=postgresql+asyncpg://user:pass@postgres:5432/mcp
 ### Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      Load Balancer                          │
-│                    (Kubernetes Service)                     │
-└────────────┬────────────────────────────────┬───────────────┘
-             │                                │
-    ┌────────▼─────────┐            ┌────────▼─────────┐
-    │  Nginx Cache 1   │            │  Nginx Cache 2   │
-    │  (proxy layer)   │            │  (proxy layer)   │
-    └────────┬─────────┘            └────────┬─────────┘
-             │                                │
-    ┌────────▼─────────┐            ┌────────▼─────────┐
-    │  Gateway Pod 1   │            │  Gateway Pod 2   │
-    │  (8 workers)     │            │  (8 workers)     │
-    └────────┬─────────┘            └────────┬─────────┘
-             │                                │
-             └────────────┬───────────────────┘
-                          │
-          ┌───────────────▼───────────────────────┐
-          │                                       │
-    ┌─────▼──────┐                    ┌──────────▼─────┐
-    │ PostgreSQL │                    │     Redis      │
-    │  (shared)  │                    │   (shared)     │
-    └────────────┘                    └────────────────┘
++------------------------------------------------------------------------------+
+|                              Load Balancer                                    |
+|                        (Kubernetes Ingress / Service)                         |
++----------------------------------+-------------------------------------------+
+                                   |
++----------------------------------v-------------------------------------------+
+|                           Nginx Caching Layer                                 |
+|   +---------------------+                  +---------------------+            |
+|   |   Nginx Cache 1     |                  |   Nginx Cache 2     |            |
+|   | - Brotli/Gzip/Zstd  |                  | - Brotli/Gzip/Zstd  |            |
+|   | - Static caching    |                  | - Static caching    |            |
+|   | - Rate limiting     |                  | - Rate limiting     |            |
+|   +----------+----------+                  +----------+----------+            |
++--------------|-----------------------------------------|---------------------+
+               |                                         |
++--------------v-----------------------------------------v---------------------+
+|                         Gateway Application Layer                             |
+|  +------------------+  +------------------+  +------------------+             |
+|  |  Gateway Pod 1   |  |  Gateway Pod 2   |  |  Gateway Pod N   |             |
+|  |  (16 workers)    |  |  (16 workers)    |  |  (16 workers)    |             |
+|  | Gunicorn/Granian |  | Gunicorn/Granian |  | Gunicorn/Granian |             |
+|  | orjson, psycopg3 |  | orjson, psycopg3 |  | orjson, psycopg3 |             |
+|  +--------+---------+  +--------+---------+  +--------+---------+             |
++-----------|-----------------------|----------------------|-------------------+
+            |                       |                      |
+            +-----------+-----------+-----------+----------+
+                        |                       |
++-------------------------------------------------------------------+
+|                           Data Layer                               |
+|                                                                    |
+|  +---------------------------+    +---------------------------+   |
+|  |        PgBouncer          |    |          Redis            |   |
+|  | - Connection multiplexing |    | - Distributed cache       |   |
+|  | - Transaction pooling     |    | - Session storage         |   |
+|  | - 3000 client connections |    | - hiredis parser (83x)    |   |
+|  | - 200 server connections  |    | - Leader election         |   |
+|  +-------------+-------------+    +---------------------------+   |
+|                |                                                   |
+|  +-------------v-------------+                                    |
+|  |      PostgreSQL 18        |                                    |
+|  | - Async I/O               |                                    |
+|  | - Auto-prepared stmts     |                                    |
+|  | - 500 max_connections     |                                    |
+|  | - Parallel query exec     |                                    |
+|  +---------------------------+                                    |
++-------------------------------------------------------------------+
 ```
+
+**Layer Summary:**
+
+| Layer | Component | Purpose | Key Performance Features |
+|-------|-----------|---------|--------------------------|
+| Edge | Load Balancer | Traffic distribution | SSL termination, health checks |
+| Proxy | Nginx | Caching, compression | Brotli/Gzip/Zstd (30-70% bandwidth reduction) |
+| App | Gateway Pods | Request processing | Gunicorn/Granian, orjson, multi-level caching |
+| Pool | PgBouncer | Connection multiplexing | 3000 client → 200 server connections |
+| Cache | Redis | Distributed state | hiredis parser (up to 83x faster) |
+| DB | PostgreSQL 18 | Persistent storage | psycopg3 COPY/pipeline, async I/O |
 
 ### Shared State Requirements
 
 For multi-pod deployments:
 
-1. **Shared PostgreSQL**: All data (servers, tools, users, teams)
-2. **Shared Redis**: Distributed caching and session management
-3. **Stateless pods**: No local state, can be killed/restarted anytime
+1. **Shared PostgreSQL 18**: All persistent data (servers, tools, users, teams)
+2. **PgBouncer**: Connection pooling and multiplexing between gateway pods and PostgreSQL
+3. **Shared Redis**: Distributed caching, session storage, and leader election
+4. **Stateless pods**: No local state, can be killed/restarted anytime
 
 ### Kubernetes Deployment
 
@@ -395,19 +467,166 @@ kubectl get hpa -n mcp-gateway
 - Add 20% overhead = **600 connections**
 - Set `max_connections=1000` (buffer for maintenance)
 
+### Docker Compose Reference Architecture
+
+The `docker-compose.yml` provides a production-ready reference architecture with all performance optimizations pre-configured:
+
+```yaml
+services:
+  # Nginx caching proxy (port 8080)
+  nginx:
+    image: mcpgateway/nginx-cache:latest
+    ports: ["8080:80"]
+    volumes:
+      - nginx_cache:/var/cache/nginx
+    # Brotli/Gzip compression, static caching, rate limiting
+
+  # Gateway application (replicas: 2)
+  gateway:
+    image: mcpgateway/mcpgateway:latest
+    environment:
+      # HTTP Server: gunicorn (stable) or granian (faster)
+      - HTTP_SERVER=gunicorn
+      - GUNICORN_WORKERS=16
+
+      # Database: via PgBouncer
+      - DATABASE_URL=postgresql+psycopg://postgres:password@pgbouncer:6432/mcp
+      - DB_POOL_SIZE=15              # Smaller with PgBouncer
+      - DB_MAX_OVERFLOW=30
+
+      # Redis with hiredis
+      - CACHE_TYPE=redis
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_PARSER=hiredis
+      - REDIS_MAX_CONNECTIONS=150
+
+      # Multi-level caching
+      - AUTH_CACHE_ENABLED=true
+      - REGISTRY_CACHE_ENABLED=true
+      - ADMIN_STATS_CACHE_ENABLED=true
+
+      # Performance: disable overhead
+      - LOG_LEVEL=ERROR
+      - DISABLE_ACCESS_LOG=true
+      - AUDIT_TRAIL_ENABLED=false
+      - COMPRESSION_ENABLED=false    # Nginx handles this
+    deploy:
+      replicas: 2
+      resources:
+        limits: { cpus: '8', memory: 8G }
+
+  # PgBouncer connection pooler
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    environment:
+      - DATABASE_URL=postgres://postgres:password@postgres:5432/mcp
+      - POOL_MODE=transaction
+      - MAX_CLIENT_CONN=3000
+      - DEFAULT_POOL_SIZE=120
+      - MAX_DB_CONNECTIONS=200
+
+  # PostgreSQL 18
+  postgres:
+    image: postgres:18
+    command:
+      - "postgres"
+      - "-c" - "max_connections=500"
+      - "-c" - "shared_buffers=512MB"
+      - "-c" - "effective_cache_size=1536MB"
+      - "-c" - "random_page_cost=1.1"
+      - "-c" - "effective_io_concurrency=200"
+
+  # Redis with performance tuning
+  redis:
+    image: redis:latest
+    command:
+      - "redis-server"
+      - "--maxmemory" - "1gb"
+      - "--maxmemory-policy" - "allkeys-lru"
+      - "--tcp-backlog" - "2048"
+      - "--maxclients" - "10000"
+```
+
+**Access Points:**
+
+| Port | Service | Use |
+|------|---------|-----|
+| 8080 | Nginx | Production access (caching, compression) |
+| 4444 | Gateway | Direct access (debugging, internal) |
+| 6432 | PgBouncer | Database connection pooling |
+| 5433 | PostgreSQL | Direct DB access (admin) |
+| 6379 | Redis | Cache access |
+
+**Quick Start:**
+
+```bash
+# Start full stack
+docker-compose up -d
+
+# Access via caching proxy
+curl http://localhost:8080/health
+
+# View logs
+docker-compose logs -f gateway
+```
+
 ---
 
 ## 5. Database Connection Pooling
 
 ### Connection Pool Architecture
 
-SQLAlchemy manages a connection pool per process:
+MCP Gateway uses a two-tier connection pooling architecture:
 
+**Without PgBouncer** (direct connection):
 ```
-Pod 1 (8 workers) → 8 connection pools → PostgreSQL
-Pod 2 (8 workers) → 8 connection pools → PostgreSQL
-Pod N (8 workers) → 8 connection pools → PostgreSQL
++-------------------+     +-------------------+     +-------------------+
+| Pod 1 (16 workers)|     | Pod 2 (16 workers)|     | Pod N (16 workers)|
+| 16 SQLAlchemy     |     | 16 SQLAlchemy     |     | 16 SQLAlchemy     |
+| pools × 50 conns  |     | pools × 50 conns  |     | pools × 50 conns  |
++--------+----------+     +--------+----------+     +--------+----------+
+         |                         |                         |
+         +------------+------------+------------+------------+
+                      |
+         +------------v------------+
+         |      PostgreSQL 18      |
+         | max_connections = 4000  |
+         +-------------------------+
 ```
+
+**With PgBouncer** (recommended for high concurrency):
+```
++-------------------+     +-------------------+     +-------------------+
+| Pod 1 (16 workers)|     | Pod 2 (16 workers)|     | Pod N (16 workers)|
+| 16 SQLAlchemy     |     | 16 SQLAlchemy     |     | 16 SQLAlchemy     |
+| pools × 15 conns  |     | pools × 15 conns  |     | pools × 15 conns  |
++--------+----------+     +--------+----------+     +--------+----------+
+         |                         |                         |
+         +------------+------------+------------+------------+
+                      |
+         +------------v------------+
+         |       PgBouncer         |
+         | MAX_CLIENT_CONN = 3000  |  <-- Application connections
+         | DEFAULT_POOL_SIZE = 120 |
+         | MAX_DB_CONNECTIONS = 200|  <-- PostgreSQL connections
+         +------------+------------+
+                      |
+         +------------v------------+
+         |      PostgreSQL 18      |
+         | max_connections = 500   |  <-- Much lower requirement
+         +-------------------------+
+```
+
+**Connection Multiplexing Benefits**:
+
+| Metric | Without PgBouncer | With PgBouncer | Improvement |
+|--------|-------------------|----------------|-------------|
+| App connections | 2 pods × 16 × 50 = 1,600 | 2 pods × 16 × 15 = 480 | App-level reduction |
+| PostgreSQL connections | 1,600+ | 200 | **8x reduction** |
+| `max_connections` needed | 4,000 | 500 | **8x lower** |
+| Memory per connection | ~10MB | ~10MB | Same |
+| PostgreSQL memory | ~40GB | ~5GB | **8x reduction** |
+| Connection setup time | Per request | Reused | Near-zero |
 
 ### Pool Configuration
 
@@ -428,7 +647,25 @@ DB_PREPARE_THRESHOLD=5       # Auto-prepare queries after N executions (0=disabl
 
 #### psycopg3 Performance Features
 
-MCP Gateway uses psycopg3 (the modern PostgreSQL adapter) with several performance optimizations:
+MCP Gateway uses **psycopg3** (`psycopg[c,binary]`) instead of psycopg2, providing significant performance improvements and modern features.
+
+**Why psycopg3:**
+
+| Feature | psycopg2 | psycopg3 |
+|---------|----------|----------|
+| Parameter binding | Client-side | Server-side (more secure) |
+| Prepared statements | Manual | Automatic after N executions |
+| Binary protocol | Optional | Native support |
+| Async support | Wrapper | First-class built-in |
+| Maintenance | Maintenance mode | Active development |
+
+**Performance Benchmarks:**
+
+| Operation | psycopg2 | psycopg3 | Improvement |
+|-----------|----------|----------|-------------|
+| Bulk INSERT (1000+ rows) | Standard | COPY protocol | 5-10x |
+| Repeated queries | Parsed each time | Auto-prepared | 2-3x |
+| Batch queries | Sequential | Pipelined | 2-5x |
 
 **Automatic Prepared Statements:**
 
@@ -444,14 +681,37 @@ After N executions of the same query pattern, psycopg3 creates a server-side pre
 - Network round-trips for query plans
 - PostgreSQL CPU usage for repeated queries
 
-**COPY Protocol for Large Bulk Imports:**
+**COPY Protocol for Bulk Inserts:**
 
-A utility module (`mcpgateway/utils/psycopg3_optimizations.py`) provides COPY protocol support for very large bulk inserts (1000+ rows). Note: COPY is only faster for large batches; for small batches (<100 rows), SQLAlchemy's `bulk_insert_mappings()` is actually faster due to lower protocol overhead.
+The utility module `mcpgateway/utils/psycopg3_optimizations.py` provides COPY protocol support:
+
+```python
+from mcpgateway.utils.psycopg3_optimizations import bulk_insert_with_copy
+
+# 5-10x faster for 1000+ rows
+bulk_insert_with_copy(db, "tool_metrics", columns, rows)
+```
+
+Note: COPY is only faster for large batches (1000+ rows); for small batches (<100 rows), SQLAlchemy's `bulk_insert_mappings()` is actually faster due to lower protocol overhead.
+
+**Pipeline Mode for Batch Queries:**
+
+Execute multiple queries with reduced round-trips:
+
+```python
+from mcpgateway.utils.psycopg3_optimizations import execute_pipelined
+
+# Send multiple queries without waiting for individual responses
+results = execute_pipelined(db, [
+    ("SELECT * FROM tools WHERE id = %s", {"id": tool_id}),
+    ("SELECT * FROM gateways WHERE id = %s", {"id": gateway_id}),
+])
+```
 
 **Connection URL Format:**
 
 ```bash
-# Required format for psycopg3 (NOT postgresql://)
+# IMPORTANT: Required format for psycopg3 (NOT postgresql://)
 DATABASE_URL=postgresql+psycopg://user:pass@host:5432/db
 ```
 
@@ -516,6 +776,99 @@ max_connections = {DBInstanceClassMemory/9531392}
 # 8 vCPU = 800 connections
 ```
 
+### PgBouncer Connection Pooling
+
+For high-concurrency deployments, PgBouncer provides connection multiplexing between the gateway and PostgreSQL, dramatically reducing connection overhead.
+
+**Architecture:**
+
+```
+Without PgBouncer:
+  Gateway (2 replicas × 16 workers) → PostgreSQL (max_connections=4000)
+  Each worker maintains its own pool → High connection churn
+
+With PgBouncer:
+  Gateway (2 replicas × 16 workers) → PgBouncer → PostgreSQL (max_connections=500)
+  Connections multiplexed → Efficient reuse, lower PostgreSQL overhead
+```
+
+**Benefits:**
+
+- **Connection multiplexing**: Many app connections share fewer database connections
+- **Reduced PostgreSQL overhead**: Lower `max_connections` reduces memory per connection
+- **Connection reuse**: PgBouncer maintains persistent connections to PostgreSQL
+- **Graceful handling of connection storms**: Queues requests instead of rejecting
+
+**Docker Compose Setup:**
+
+```yaml
+pgbouncer:
+  image: edoburu/pgbouncer:latest
+  restart: unless-stopped
+  ports:
+    - "6432:6432"
+  environment:
+    - DATABASE_URL=postgres://postgres:password@postgres:5432/mcp
+    - POOL_MODE=transaction
+    - MAX_CLIENT_CONN=2000
+    - DEFAULT_POOL_SIZE=100
+    - MIN_POOL_SIZE=10
+    - RESERVE_POOL_SIZE=25
+    - MAX_DB_CONNECTIONS=200
+    - SERVER_LIFETIME=3600
+    - SERVER_IDLE_TIMEOUT=600
+    - AUTH_TYPE=scram-sha-256
+  depends_on:
+    postgres:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "pg_isready", "-h", "localhost", "-p", "6432"]
+    interval: 10s
+    timeout: 5s
+    retries: 3
+```
+
+**Gateway Configuration with PgBouncer:**
+
+```bash
+# Connect via PgBouncer instead of direct PostgreSQL
+DATABASE_URL=postgresql+psycopg://postgres:password@pgbouncer:6432/mcp
+
+# Smaller pool since PgBouncer handles pooling
+DB_POOL_SIZE=10
+DB_MAX_OVERFLOW=20
+```
+
+**Pool Modes:**
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| `transaction` | Connection returned after transaction commit | **Recommended** for most workloads |
+| `session` | Connection held for entire session | Legacy apps requiring session state |
+| `statement` | Connection returned after each statement | Limited use cases |
+
+**Key Tuning Parameters:**
+
+| Parameter | Description | Suggested Value |
+|-----------|-------------|-----------------|
+| `MAX_CLIENT_CONN` | Max app connections | 2000-5000 |
+| `DEFAULT_POOL_SIZE` | Connections per user/db pair | 100 |
+| `MAX_DB_CONNECTIONS` | Max connections to PostgreSQL | 200-500 |
+| `POOL_MODE` | When to return connections | `transaction` |
+
+**Monitoring PgBouncer:**
+
+```bash
+# Connect to PgBouncer admin console
+psql -h localhost -p 6432 -U pgbouncer pgbouncer
+
+# Show connection pool statistics
+SHOW STATS;
+SHOW POOLS;
+SHOW CLIENTS;
+SHOW SERVERS;
+```
+
 ### Connection Pool Monitoring
 
 ```python
@@ -534,6 +887,21 @@ async def healthcheck(db: Session = Depends(get_db)):
 kubectl exec -it postgres-pod -- psql -U admin -d postgresdb \
   -c "SELECT count(*) FROM pg_stat_activity;"
 ```
+
+### Database Session Management
+
+To prevent connection pool exhaustion under high load, MCP Gateway releases database sessions before making upstream HTTP calls:
+
+**Problem:** Database sessions held during slow upstream calls (100ms - 4+ minutes) exhaust the connection pool even when the database is lightly loaded.
+
+**Solution:** "Fetch-Then-Release" pattern:
+
+1. **Eager load** required data with `joinedload()` in single query
+2. **Extract data** to local variables before network I/O
+3. **Release session** with `db.expunge()` + `db.close()` before HTTP calls
+4. **Fresh session** for metrics recording after the call
+
+This reduces connection hold time from minutes to <50ms and enables 10x+ higher concurrency.
 
 ---
 
@@ -561,7 +929,7 @@ MESSAGE_TTL=600
 REDIS_MAX_RETRIES=3
 REDIS_RETRY_INTERVAL_MS=2000
 
-# Connection pool (performance-tuned)
+# Connection pool (standard)
 REDIS_MAX_CONNECTIONS=50
 REDIS_SOCKET_TIMEOUT=2.0
 REDIS_SOCKET_CONNECT_TIMEOUT=2.0
@@ -571,6 +939,37 @@ REDIS_HEALTH_CHECK_INTERVAL=30
 # Leader election (multi-node)
 REDIS_LEADER_TTL=15
 REDIS_LEADER_HEARTBEAT_INTERVAL=5
+```
+
+#### High-Concurrency Redis Tuning
+
+For 1000+ concurrent users:
+
+```bash
+# Connection pool - Formula: (concurrent_requests / workers) * 1.5
+# Example: 32 workers × 150 = 4800 < Redis maxclients (10000)
+REDIS_MAX_CONNECTIONS=150
+
+# Timeouts - keep low for fast failure detection
+REDIS_SOCKET_TIMEOUT=5.0
+REDIS_SOCKET_CONNECT_TIMEOUT=5.0
+REDIS_HEALTH_CHECK_INTERVAL=30
+```
+
+**Redis Server Tuning** (docker-compose.yml):
+
+```yaml
+redis:
+  command:
+    - "redis-server"
+    - "--maxmemory"
+    - "1gb"
+    - "--maxmemory-policy"
+    - "allkeys-lru"
+    - "--tcp-backlog"
+    - "2048"                    # Higher for pending connections
+    - "--maxclients"
+    - "10000"                   # Max client connections
 ```
 
 #### Kubernetes Deployment
@@ -622,6 +1021,41 @@ REDIS_HEALTH_CHECK_INTERVAL=15
 REDIS_LEADER_TTL=10
 REDIS_LEADER_HEARTBEAT_INTERVAL=3
 ```
+
+### Hiredis High-Performance Parser
+
+MCP Gateway uses `redis[hiredis]` for significantly faster Redis protocol parsing, especially beneficial for large responses.
+
+**Performance Impact:**
+
+| Operation | Pure Python | With Hiredis | Improvement |
+|-----------|-------------|--------------|-------------|
+| Simple SET/GET | Baseline | +10% | 1.1x |
+| LRANGE (10 items) | Baseline | +170% | 2.7x |
+| LRANGE (100 items) | Baseline | +1000% | ~10x |
+| LRANGE (999 items) | Baseline | +8220% | **83x** |
+
+The larger the response, the greater the improvement. This is critical for:
+- Tool registry queries returning many tools
+- Bulk operations and federation
+- Cached response retrieval
+- Metrics aggregation
+
+**Configuration:**
+
+```bash
+# Redis parser selection (hiredis is default for performance)
+# Options: auto (default - uses hiredis if available), hiredis, python
+# Use "python" to force pure-Python parser (useful for debugging)
+REDIS_PARSER=auto
+```
+
+**When to use each parser:**
+
+| Parser | Use Case |
+|--------|----------|
+| `hiredis` (default) | Production, high throughput |
+| `python` | Debugging Redis protocol issues, restricted environments |
 
 ### High Availability
 
@@ -693,33 +1127,78 @@ sysctl -p
 ulimit -n
 ```
 
-### Gunicorn Tuning
+### HTTP Server Selection
 
-#### Optimal Settings
+MCP Gateway supports two production HTTP servers:
 
-```python
-# gunicorn.config.py
-workers = (CPU_cores × 2) + 1
-timeout = 600                    # Long enough for LLM calls
-max_requests = 100000            # Prevent memory leaks
-max_requests_jitter = 100        # Randomize restart
-preload_app = True              # Reduce memory
-reuse_port = True               # Load balance across workers
-```
+| Server | Description | Best For |
+|--------|-------------|----------|
+| **Gunicorn** (default) | Python-based with Uvicorn workers | Stable, well-tested |
+| **Granian** | Rust-based HTTP server | Maximum performance (+20-50%) |
 
-#### Worker Class Selection
-
-**UvicornWorker** (default - best for async):
-```python
-worker_class = "uvicorn.workers.UvicornWorker"
-```
-
-**Gevent** (alternative for I/O-heavy):
 ```bash
-pip install gunicorn[gevent]
-worker_class = "gevent"
-worker_connections = 1000
+# Select HTTP server (in containers)
+HTTP_SERVER=gunicorn    # Default, stable
+HTTP_SERVER=granian     # Alternative, Rust-based
 ```
+
+### Gunicorn Configuration
+
+```bash
+# Number of worker processes
+# Options: "auto" (default, 2*CPU+1 capped at 16), or positive integer
+GUNICORN_WORKERS=auto
+
+# Worker timeout in seconds (increase for long-running LLM requests)
+GUNICORN_TIMEOUT=600
+
+# Maximum requests per worker before automatic restart (prevents memory leaks)
+GUNICORN_MAX_REQUESTS=100000
+
+# Random jitter added to max requests (prevents thundering herd)
+GUNICORN_MAX_REQUESTS_JITTER=100
+
+# Preload application before forking workers
+# true: Saves memory (shared code), runs migrations once before forking
+# false: Each worker loads app independently (more memory, better isolation)
+GUNICORN_PRELOAD_APP=true
+
+# Development mode with hot reload (NOT for production)
+GUNICORN_DEV_MODE=false
+```
+
+**Worker Class**: UvicornWorker (default) for async support.
+
+### Granian Configuration (Alternative)
+
+Granian is a Rust-based HTTP server providing 20-50% higher throughput:
+
+```bash
+# HTTP server selection
+HTTP_SERVER=granian
+
+# Worker count (auto = CPU count)
+GRANIAN_WORKERS=16
+
+# TCP backlog for pending connections (increase for high concurrency)
+GRANIAN_BACKLOG=8192
+
+# Backpressure threshold (concurrent requests before queueing)
+GRANIAN_BACKPRESSURE=2048
+
+# HTTP/1.1 buffer size (bytes)
+GRANIAN_HTTP1_BUFFER_SIZE=524288
+```
+
+**When to use Granian:**
+- Maximum throughput requirements
+- High-concurrency deployments (1000+ concurrent users)
+- CPU-bound workloads
+
+**When to use Gunicorn:**
+- Maximum stability and compatibility
+- Standard deployments
+- Debugging and development
 
 ### Application Tuning
 
@@ -739,7 +1218,196 @@ RETRY_MAX_DELAY=60
 HEALTH_CHECK_INTERVAL=60
 HEALTH_CHECK_TIMEOUT=10
 UNHEALTHY_THRESHOLD=3
+
+# Gateway health check timeout (seconds)
+GATEWAY_HEALTH_CHECK_TIMEOUT=5.0
 ```
+
+### Logging for Performance
+
+Logging can significantly impact performance under high load:
+
+```bash
+# Log level - ERROR recommended for production
+# DEBUG/INFO create massive I/O overhead
+LOG_LEVEL=ERROR
+
+# Disable access logging (massive I/O overhead under high concurrency)
+DISABLE_ACCESS_LOG=true
+
+# Disable database logging for performance
+STRUCTURED_LOGGING_DATABASE_ENABLED=false
+```
+
+**Impact of logging settings:**
+
+| Setting | I/O Overhead | Use Case |
+|---------|--------------|----------|
+| `LOG_LEVEL=DEBUG` | Very High | Development only |
+| `LOG_LEVEL=INFO` | High | Light load, debugging |
+| `LOG_LEVEL=ERROR` | Low | Production (recommended) |
+| `DISABLE_ACCESS_LOG=true` | None | Production (recommended) |
+| `STRUCTURED_LOGGING_DATABASE_ENABLED=true` | Very High | Compliance (use external aggregator) |
+
+### Metrics Buffer Configuration
+
+Batch metric writes to reduce database pressure:
+
+```bash
+# Enable buffered metrics writes (default: true)
+METRICS_BUFFER_ENABLED=true
+
+# Flush interval in seconds (default: 60, range: 5-300)
+METRICS_BUFFER_FLUSH_INTERVAL=60
+
+# Max buffered metrics before forced flush (default: 1000)
+METRICS_BUFFER_MAX_SIZE=1000
+```
+
+### Metrics Cache Configuration
+
+Cache aggregate metrics queries:
+
+```bash
+# Enable metrics query caching (default: true)
+METRICS_CACHE_ENABLED=true
+
+# TTL for cached metrics in seconds (default: 10)
+METRICS_CACHE_TTL_SECONDS=10
+```
+
+### Application-Level Caching
+
+MCP Gateway implements multi-level caching to reduce database load by 80-95%:
+
+#### JWT Token Cache
+
+Cache JWT token verification results to reduce auth overhead per request:
+
+```bash
+# JWT caching (default: enabled)
+JWT_CACHE_ENABLED=true
+JWT_CACHE_TTL=30              # Seconds (short TTL for security)
+JWT_CACHE_MAX_SIZE=10000      # Max cached tokens
+```
+
+**Impact:**
+- Auth overhead: 5-12ms → <1ms (with cache hit)
+- Cache hit rate: >80% under normal load
+
+#### Authentication Cache
+
+Cache user lookups, token revocation checks, team membership, and role assignments:
+
+```bash
+# Auth Cache Configuration (reduces DB queries per auth from 3-4 to 0-1)
+AUTH_CACHE_ENABLED=true
+AUTH_CACHE_USER_TTL=60        # User lookup cache (seconds)
+AUTH_CACHE_REVOCATION_TTL=30  # Token revocation check cache
+AUTH_CACHE_TEAM_TTL=60        # Team membership cache
+AUTH_CACHE_ROLE_TTL=60        # Role assignment cache
+AUTH_CACHE_BATCH_QUERIES=true # Batch related queries together
+```
+
+**Impact:**
+- Auth database queries: 3-4 per request → 0-1 per request
+- Auth latency: 8-15ms → 1-3ms
+- Database load: 75% reduction for auth operations
+
+#### GlobalConfig Cache
+
+In-memory cache for GlobalConfig lookups (passthrough headers configuration):
+
+```bash
+# GlobalConfig cache TTL (default: 60 seconds)
+GLOBAL_CONFIG_CACHE_TTL=60
+```
+
+**Impact:**
+- Eliminates 42,000+ database queries per load test
+- Query latency: ~1ms → ~0.00001ms
+
+#### Registry & Admin Stats Cache
+
+Distributed caching for registry listings and admin dashboard:
+
+```bash
+# Registry Cache Configuration
+REGISTRY_CACHE_ENABLED=true
+REGISTRY_CACHE_TOOLS_TTL=20
+REGISTRY_CACHE_PROMPTS_TTL=15
+REGISTRY_CACHE_RESOURCES_TTL=15
+REGISTRY_CACHE_AGENTS_TTL=20
+REGISTRY_CACHE_SERVERS_TTL=20
+REGISTRY_CACHE_GATEWAYS_TTL=20
+
+# Admin Stats Cache Configuration
+ADMIN_STATS_CACHE_ENABLED=true
+ADMIN_STATS_CACHE_SYSTEM_TTL=60
+ADMIN_STATS_CACHE_OBSERVABILITY_TTL=30
+
+# Team Cache Configuration
+TEAM_CACHE_ENABLED=true
+TEAM_CACHE_MEMBERS_TTL=60
+TEAM_CACHE_ROLE_TTL=60
+```
+
+**Impact:**
+- Dashboard load: 15-20 queries → 0-2 queries (95%+ cache hit)
+- List endpoints: 50-200 queries → 0-1 queries per request
+- Database load reduction: 80-95%
+
+### High-Performance JSON Serialization
+
+MCP Gateway uses **orjson** for JSON operations, providing 2-3x faster serialization:
+
+```bash
+# orjson is used by default via ORJSONResponse
+# No configuration needed
+```
+
+**Performance comparison:**
+
+| Operation | stdlib json | orjson | Improvement |
+|-----------|-------------|--------|-------------|
+| `json.dumps()` | ~15μs | ~5μs | 3x faster |
+| `json.loads()` | ~12μs | ~4μs | 3x faster |
+
+All SSE streaming, WebSocket messages, Redis pub/sub, and message parsing use orjson for maximum throughput.
+
+### Database Indexing
+
+Comprehensive database indexing provides 10-100x query performance improvement:
+
+**Key indexed patterns:**
+- Foreign key columns for efficient JOINs
+- Composite indexes for common filter patterns (e.g., `team_id, enabled`)
+- Boolean filter columns (`is_active`, `enabled`, `status`)
+- Timestamp columns for ORDER BY (pagination)
+- Unique lookups (`email`, `slug`, `token`)
+
+**Impact:**
+- Query time: seconds → milliseconds for filtered queries
+- Database CPU: 30-60% reduction
+- Scalability: Support 10x more concurrent users
+
+### Audit Trail Toggle
+
+For load testing or development, disable audit trail logging to prevent database growth:
+
+```bash
+# Disabled for load testing / development (default)
+AUDIT_TRAIL_ENABLED=false
+
+# Enabled for production compliance (SOC2, HIPAA, GDPR)
+AUDIT_TRAIL_ENABLED=true
+```
+
+**Impact (under load with 2000 concurrent users):**
+- Disabled: 0 rows/hour, 0 writes/request
+- Enabled: ~140,000+ rows/hour, 1 write/request
+
+**Note:** Audit trail is separate from `SECURITY_LOGGING_ENABLED` (which controls `security_events` table).
 
 ### Nginx Caching Proxy (CDN-like Performance)
 
@@ -858,7 +1526,45 @@ docker-compose exec nginx cat /var/log/nginx/access.log | \
 
 **Bandwidth Optimization**: Reduce data transfer by 30-70% with automatic response compression.
 
-MCP Gateway includes built-in response compression middleware that automatically compresses JSON, HTML, CSS, and JavaScript responses:
+MCP Gateway includes built-in response compression middleware that automatically compresses JSON, HTML, CSS, and JavaScript responses.
+
+#### Compression Algorithms Comparison
+
+| Algorithm | Speed | Ratio | Browser Support | Best For |
+|-----------|-------|-------|-----------------|----------|
+| **Brotli** | Medium | Best (15-25% smaller than Gzip) | Modern browsers | Production, CDNs |
+| **Zstd** | Fastest | Very good | Growing support | High-throughput APIs |
+| **GZip** | Fast | Good | Universal | Legacy compatibility |
+
+**Algorithm Negotiation**: Client sends `Accept-Encoding` header, server responds with best supported algorithm.
+
+```
+Client: Accept-Encoding: br, gzip, deflate, zstd
+Server: Content-Encoding: br  (uses Brotli if available)
+```
+
+#### Gateway vs Nginx Compression
+
+| Aspect | Gateway Compression | Nginx Compression |
+|--------|---------------------|-------------------|
+| When to use | Single container, no proxy | Multi-tier with nginx |
+| CPU location | Application pods | Proxy pods |
+| Caching | After compression | Stores compressed |
+| Configuration | Environment variables | nginx.conf |
+
+**Recommendation**:
+- **With Nginx proxy**: Disable gateway compression, let Nginx handle it
+- **Direct access**: Enable gateway compression
+
+```bash
+# With Nginx proxy (compression at proxy layer)
+COMPRESSION_ENABLED=false
+
+# Direct access (compression at application layer)
+COMPRESSION_ENABLED=true
+```
+
+#### Configuration
 
 ```bash
 # Enable compression (default: true)
@@ -1669,6 +2375,9 @@ MCP Gateway is built on a high-performance foundation:
 ✅ **Uvicorn [standard]** - ASGI server with uvloop + httptools (15-30% faster)
 ✅ **Granian (optional)** - Rust-based HTTP server with native HTTP/2 (+20-50% faster)
 ✅ **SQLAlchemy 2.0** - Async database operations
+✅ **psycopg3 [c,binary]** - Modern PostgreSQL adapter (auto-prepared statements, COPY protocol, pipeline mode)
+✅ **orjson** - High-performance JSON serialization (3x faster)
+✅ **hiredis** - C-based Redis parser (up to 83x faster for large responses)
 ✅ **Python 3.11+** - Current stable with excellent performance
 🔮 **Python 3.14** - Future free-threading support (beta)
 
@@ -1688,16 +2397,37 @@ MCP Gateway is built on a high-performance foundation:
   - [ ] Calculate `max_connections`: `(pods × workers × pool) × 1.2`
   - [ ] Set `DB_POOL_SIZE` per worker (recommended: 50)
   - [ ] Configure `DB_POOL_RECYCLE=3600` to prevent stale connections
+  - [ ] Use psycopg3 URL format: `postgresql+psycopg://`
+  - [ ] Tune `DB_PREPARE_THRESHOLD` for auto-prepared statements
+  - [ ] Consider PgBouncer for connection multiplexing (high concurrency)
+  - [ ] Verify database indexes are applied (10-100x query improvement)
 
 - [ ] **Caching**
   - [ ] Enable Redis: `CACHE_TYPE=redis`
   - [ ] Set `REDIS_URL` to shared Redis instance
   - [ ] Configure TTLs: `SESSION_TTL=3600`, `MESSAGE_TTL=600`
+  - [ ] Tune Redis pool: `REDIS_MAX_CONNECTIONS=150` (high concurrency)
+  - [ ] Use hiredis parser: `REDIS_PARSER=hiredis` (up to 83x faster)
+  - [ ] Enable JWT caching: `JWT_CACHE_ENABLED=true`
+  - [ ] Enable auth caching: `AUTH_CACHE_ENABLED=true`
+  - [ ] Enable registry caching: `REGISTRY_CACHE_ENABLED=true`
+  - [ ] Enable admin stats caching: `ADMIN_STATS_CACHE_ENABLED=true`
 
 - [ ] **Performance**
-  - [ ] Tune Gunicorn: `GUNICORN_PRELOAD_APP=true`
+  - [ ] Select HTTP server: `HTTP_SERVER=gunicorn` (stable) or `granian` (faster)
+  - [ ] Tune Gunicorn: `GUNICORN_PRELOAD_APP=true`, `GUNICORN_WORKERS=auto`
+  - [ ] Or tune Granian: `GRANIAN_BACKLOG=8192`, `GRANIAN_BACKPRESSURE=2048`
   - [ ] Set timeouts: `GUNICORN_TIMEOUT=600`
   - [ ] Configure retries: `RETRY_MAX_ATTEMPTS=3`
+  - [ ] Enable compression: `COMPRESSION_ENABLED=true`
+  - [ ] Disable audit trail for load testing: `AUDIT_TRAIL_ENABLED=false`
+
+- [ ] **Logging & Metrics**
+  - [ ] Set log level: `LOG_LEVEL=ERROR` (production)
+  - [ ] Disable access logs: `DISABLE_ACCESS_LOG=true`
+  - [ ] Disable DB logging: `STRUCTURED_LOGGING_DATABASE_ENABLED=false`
+  - [ ] Enable metrics buffer: `METRICS_BUFFER_ENABLED=true`
+  - [ ] Enable metrics cache: `METRICS_CACHE_ENABLED=true`
 
 - [ ] **Health Checks**
   - [ ] Configure `/health` liveness probe
@@ -1737,7 +2467,13 @@ MCP Gateway is built on a high-performance foundation:
 - [httptools GitHub](https://github.com/MagicStack/httptools)
 - [Kubernetes HPA](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/)
 - [PostgreSQL Connection Pooling](https://www.postgresql.org/docs/current/runtime-config-connection.html)
+- [PgBouncer Documentation](https://www.pgbouncer.org/config.html)
+- [psycopg3 Documentation](https://www.psycopg.org/psycopg3/docs/)
+- [psycopg3 COPY Protocol](https://www.psycopg.org/psycopg3/docs/basic/copy.html)
+- [psycopg3 Pipeline Mode](https://www.psycopg.org/psycopg3/docs/advanced/pipeline.html)
 - [Redis Cluster](https://redis.io/docs/reference/cluster-spec/)
+- [hiredis GitHub](https://github.com/redis/hiredis)
+- [orjson GitHub](https://github.com/ijl/orjson)
 - [OpenTelemetry Python](https://opentelemetry.io/docs/instrumentation/python/)
 
 ### Community
@@ -1747,4 +2483,4 @@ MCP Gateway is built on a high-performance foundation:
 
 ---
 
-*Last updated: 2025-10-02*
+*Last updated: 2025-12-27*
