@@ -50,11 +50,19 @@ spec:
           #   placeholders in the derived URL variables declared below.
           ################################################################
           env:
-            # ---------- POSTGRES ----------
+            # ---------- POSTGRES (via PgBouncer if enabled) ----------
             - name: POSTGRES_HOST
+              {{- if .Values.pgbouncer.enabled }}
+              value: {{ printf "%s-pgbouncer" (include "mcp-stack.fullname" .) }}
+              {{- else }}
               value: {{ printf "%s-postgres" (include "mcp-stack.fullname" .) }}
+              {{- end }}
             - name: POSTGRES_PORT
+              {{- if .Values.pgbouncer.enabled }}
+              value: "{{ .Values.pgbouncer.service.port }}"
+              {{- else }}
               value: "{{ .Values.mcpContextForge.env.postgres.port }}"
+              {{- end }}
             - name: POSTGRES_DB
               value: "{{ .Values.mcpContextForge.env.postgres.db }}"
             - name: POSTGRES_USER
