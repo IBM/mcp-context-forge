@@ -156,7 +156,6 @@ class PersonalTeamService:
         """
         try:
             team = self.db.query(EmailTeam).filter(EmailTeam.created_by == user_email, EmailTeam.is_personal.is_(True), EmailTeam.is_active.is_(True)).first()
-
             return team
 
         except Exception as e:
@@ -217,7 +216,6 @@ class PersonalTeamService:
         """
         try:
             team = self.db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
-
             return team is not None and team.is_personal
 
         except Exception as e:
@@ -263,7 +261,6 @@ class PersonalTeamService:
         """
         try:
             team = self.db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_personal.is_(True), EmailTeam.is_active.is_(True)).first()
-
             return team.created_by if team else None
 
         except Exception as e:

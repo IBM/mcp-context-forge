@@ -350,7 +350,7 @@ class PluginExecutor:
                     )
                     return result
                 finally:
-                    db.close()
+                    db.close()  # Observability service handles its own commits
             else:
                 # No active trace, execute without instrumentation
                 return await asyncio.wait_for(hook_ref.hook(payload, context), timeout=self.timeout)

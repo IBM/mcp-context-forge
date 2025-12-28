@@ -431,6 +431,7 @@ class AuditTrailService:
 
         finally:
             if close_db:
+                db.commit()  # End read-only transaction cleanly
                 db.close()
 
 

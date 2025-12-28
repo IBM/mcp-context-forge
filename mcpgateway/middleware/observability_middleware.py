@@ -146,6 +146,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             # Close db if it was created
             if db:
                 try:
+                    db.rollback()  # Error path - rollback any partial transaction
                     db.close()
                 except Exception as close_error:
                     logger.debug(f"Failed to close database session during cleanup: {close_error}")
@@ -201,9 +202,10 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             raise
 
         finally:
-            # Always close database session
+            # Always close database session - observability service handles its own commits
             if db:
                 try:
+                    db.commit()  # End transaction cleanly
                     db.close()
                 except Exception as close_error:
                     logger.warning(f"Failed to close database session: {close_error}")

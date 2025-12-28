@@ -313,7 +313,7 @@ class LogRouter:
 
         finally:
             if should_close:
-                db.close()
+                db.close()  # Commit/rollback already handled above
 
     def _send_to_external(self, entry: Dict[str, Any]) -> None:
         """Send log entry to external systems.
