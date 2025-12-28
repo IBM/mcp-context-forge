@@ -55,7 +55,13 @@ def get_db():
         yield db
         db.commit()
     except Exception:
-        db.rollback()
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass
         raise
     finally:
         db.close()
