@@ -1416,7 +1416,7 @@ def get_db():
             try:
                 db.invalidate()
             except Exception:
-                pass  # Best effort - connection will be closed anyway
+                pass  # nosec B110 - Best effort cleanup on connection failure
         raise
     finally:
         db.close()

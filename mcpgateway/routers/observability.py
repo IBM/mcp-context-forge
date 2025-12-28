@@ -49,7 +49,7 @@ def get_db():
             try:
                 db.invalidate()
             except Exception:
-                pass
+                pass  # nosec B110 - Best effort cleanup on connection failure
         raise
     finally:
         db.close()

@@ -315,7 +315,7 @@ class ResilientSession(Session):
             try:
                 self.invalidate()
             except Exception:
-                pass  # Best effort
+                pass  # nosec B110 - Best effort cleanup on connection failure
 
     def execute(self, statement, params=None, **kw):
         """Execute a statement with automatic rollback on connection errors.
@@ -4333,7 +4333,7 @@ def get_db() -> Generator[Session, Any, None]:
             try:
                 db.invalidate()
             except Exception:
-                pass
+                pass  # nosec B110 - Best effort cleanup on connection failure
         raise
     finally:
         db.close()
@@ -4378,7 +4378,7 @@ def fresh_db_session() -> Generator[Session, Any, None]:
             try:
                 db.invalidate()  # Connection broken, discard from pool
             except Exception:
-                pass
+                pass  # nosec B110 - Best effort cleanup on connection failure
         raise
     finally:
         db.close()
