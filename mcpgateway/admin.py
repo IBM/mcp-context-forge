@@ -47,7 +47,7 @@ import httpx
 import orjson
 from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
-from sqlalchemy import and_, case, cast, desc, func, or_, select, String
+from sqlalchemy import and_, case, cast, desc, func, or_, select, String, text
 from sqlalchemy.exc import IntegrityError, InvalidRequestError, OperationalError
 from sqlalchemy.orm import joinedload, Session
 from sqlalchemy.sql.functions import coalesce
@@ -4439,10 +4439,9 @@ async def admin_leave_team(
         if team.is_personal:
             return HTMLResponse(content='<div class="text-red-500">Cannot leave your personal team</div>', status_code=400)
 
-        # Check if user is the last owner
+        # Check if user is the last owner (use SQL COUNT instead of loading all members)
         if user_role == "owner":
-            members = await team_service.get_team_members(team_id)
-            owner_count = sum(1 for _, membership in members if membership.role == "owner")
+            owner_count = team_service.count_team_owners(team_id)
             if owner_count <= 1:
                 return HTMLResponse(content='<div class="text-red-500">Cannot leave team as the last owner. Transfer ownership or delete the team instead.</div>', status_code=400)
 
@@ -14004,56 +14003,142 @@ async def get_latency_percentiles(
     try:
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
 
-        # Query all traces with duration in time range
-        traces = (
-            db.query(ObservabilityTrace.start_time, ObservabilityTrace.duration_ms)
-            .filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.duration_ms.isnot(None))
-            .order_by(ObservabilityTrace.start_time)
-            .all()
-        )
-
-        if not traces:
-            return {"timestamps": [], "p50": [], "p90": [], "p95": [], "p99": []}
-
-        # Group traces into time buckets
-        buckets: Dict[datetime, List[float]] = defaultdict(list)
-        for trace in traces:
-            # Round down to nearest interval
-            bucket_time = trace.start_time.replace(second=0, microsecond=0)
-            bucket_time = bucket_time - timedelta(minutes=bucket_time.minute % interval_minutes, seconds=bucket_time.second, microseconds=bucket_time.microsecond)
-            buckets[bucket_time].append(trace.duration_ms)
-
-        # Calculate percentiles for each bucket
-        timestamps = []
-        p50_values = []
-        p90_values = []
-        p95_values = []
-        p99_values = []
-
-        for bucket_time in sorted(buckets.keys()):
-            durations = sorted(buckets[bucket_time])
-            n = len(durations)
-
-            if n > 0:
-                # Calculate percentile indices
-                p50_idx = max(0, int(n * 0.50) - 1)
-                p90_idx = max(0, int(n * 0.90) - 1)
-                p95_idx = max(0, int(n * 0.95) - 1)
-                p99_idx = max(0, int(n * 0.99) - 1)
-
-                timestamps.append(bucket_time.isoformat())
-                p50_values.append(round(durations[p50_idx], 2))
-                p90_values.append(round(durations[p90_idx], 2))
-                p95_values.append(round(durations[p95_idx], 2))
-                p99_values.append(round(durations[p99_idx], 2))
-
-        return {"timestamps": timestamps, "p50": p50_values, "p90": p90_values, "p95": p95_values, "p99": p99_values}
+        # Use SQL aggregation for PostgreSQL, Python fallback for SQLite
+        dialect_name = db.get_bind().dialect.name
+        if dialect_name == "postgresql":
+            return _get_latency_percentiles_postgresql(db, cutoff_time, interval_minutes)
+        return _get_latency_percentiles_python(db, cutoff_time, interval_minutes)
     except Exception as e:
         LOGGER.error(f"Failed to calculate latency percentiles: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         db.commit()  # Commit read-only transaction to avoid implicit rollback
         db.close()
+
+
+def _get_latency_percentiles_postgresql(db: Session, cutoff_time: datetime, interval_minutes: int) -> dict:
+    """Compute time-bucketed latency percentiles using PostgreSQL.
+
+    Args:
+        db: Database session
+        cutoff_time: Start time for analysis
+        interval_minutes: Bucket size in minutes
+
+    Returns:
+        dict: Time-series percentile data
+    """
+    # PostgreSQL query with epoch-based bucketing (works for any interval including > 60 min)
+    stats_sql = text(
+        """
+        SELECT
+            TO_TIMESTAMP(FLOOR(EXTRACT(EPOCH FROM start_time) / :interval_seconds) * :interval_seconds) as bucket,
+            percentile_cont(0.50) WITHIN GROUP (ORDER BY duration_ms) as p50,
+            percentile_cont(0.90) WITHIN GROUP (ORDER BY duration_ms) as p90,
+            percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) as p95,
+            percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms) as p99
+        FROM observability_traces
+        WHERE start_time >= :cutoff_time AND duration_ms IS NOT NULL
+        GROUP BY bucket
+        ORDER BY bucket
+        """
+    )
+
+    interval_seconds = interval_minutes * 60
+    results = db.execute(stats_sql, {"cutoff_time": cutoff_time, "interval_seconds": interval_seconds}).fetchall()
+
+    if not results:
+        return {"timestamps": [], "p50": [], "p90": [], "p95": [], "p99": []}
+
+    timestamps = []
+    p50_values = []
+    p90_values = []
+    p95_values = []
+    p99_values = []
+
+    for row in results:
+        timestamps.append(row.bucket.isoformat() if row.bucket else "")
+        p50_values.append(round(float(row.p50), 2) if row.p50 else 0)
+        p90_values.append(round(float(row.p90), 2) if row.p90 else 0)
+        p95_values.append(round(float(row.p95), 2) if row.p95 else 0)
+        p99_values.append(round(float(row.p99), 2) if row.p99 else 0)
+
+    return {"timestamps": timestamps, "p50": p50_values, "p90": p90_values, "p95": p95_values, "p99": p99_values}
+
+
+def _get_latency_percentiles_python(db: Session, cutoff_time: datetime, interval_minutes: int) -> dict:
+    """Compute time-bucketed latency percentiles using Python (fallback for SQLite).
+
+    Args:
+        db: Database session
+        cutoff_time: Start time for analysis
+        interval_minutes: Bucket size in minutes
+
+    Returns:
+        dict: Time-series percentile data
+    """
+    # Query all traces with duration in time range
+    traces = (
+        db.query(ObservabilityTrace.start_time, ObservabilityTrace.duration_ms)
+        .filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.duration_ms.isnot(None))
+        .order_by(ObservabilityTrace.start_time)
+        .all()
+    )
+
+    if not traces:
+        return {"timestamps": [], "p50": [], "p90": [], "p95": [], "p99": []}
+
+    # Group traces into time buckets using epoch-based bucketing (works for any interval)
+    interval_seconds = interval_minutes * 60
+    buckets: Dict[datetime, List[float]] = defaultdict(list)
+    for trace in traces:
+        trace_time = trace.start_time
+        if trace_time.tzinfo is None:
+            trace_time = trace_time.replace(tzinfo=timezone.utc)
+        epoch = trace_time.timestamp()
+        bucket_epoch = (epoch // interval_seconds) * interval_seconds
+        bucket_time = datetime.fromtimestamp(bucket_epoch, tz=timezone.utc)
+        buckets[bucket_time].append(trace.duration_ms)
+
+    # Calculate percentiles for each bucket
+    timestamps = []
+    p50_values = []
+    p90_values = []
+    p95_values = []
+    p99_values = []
+
+    def percentile_cont(data: List[float], p: float) -> float:
+        """Linear interpolation percentile matching PostgreSQL percentile_cont.
+
+        Args:
+            data: Sorted list of float values.
+            p: Percentile value between 0 and 1.
+
+        Returns:
+            float: Interpolated percentile value.
+        """
+        n = len(data)
+        if n == 0:
+            return 0.0
+        if n == 1:
+            return data[0]
+        k = p * (n - 1)
+        f = int(k)
+        c = k - f
+        if f + 1 < n:
+            return data[f] + c * (data[f + 1] - data[f])
+        return data[f]
+
+    for bucket_time in sorted(buckets.keys()):
+        durations = sorted(buckets[bucket_time])
+
+        if durations:
+            timestamps.append(bucket_time.isoformat())
+            p50_values.append(round(percentile_cont(durations, 0.50), 2))
+            p90_values.append(round(percentile_cont(durations, 0.90), 2))
+            p95_values.append(round(percentile_cont(durations, 0.95), 2))
+            p99_values.append(round(percentile_cont(durations, 0.99), 2))
+
+    return {"timestamps": timestamps, "p50": p50_values, "p90": p90_values, "p95": p95_values, "p99": p99_values}
 
 
 @admin_router.get("/observability/metrics/timeseries", response_model=dict)
@@ -14081,55 +14166,301 @@ async def get_timeseries_metrics(
     try:
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
 
-        # Query traces grouped by time bucket
-        traces = db.query(ObservabilityTrace.start_time, ObservabilityTrace.status).filter(ObservabilityTrace.start_time >= cutoff_time).order_by(ObservabilityTrace.start_time).all()
-
-        if not traces:
-            return {"timestamps": [], "request_count": [], "success_count": [], "error_count": [], "error_rate": []}
-
-        # Group traces into time buckets
-        buckets: Dict[datetime, Dict[str, int]] = defaultdict(lambda: {"total": 0, "success": 0, "error": 0})
-        for trace in traces:
-            # Round down to nearest interval
-            bucket_time = trace.start_time.replace(second=0, microsecond=0)
-            bucket_time = bucket_time - timedelta(minutes=bucket_time.minute % interval_minutes, seconds=bucket_time.second, microseconds=bucket_time.microsecond)
-
-            buckets[bucket_time]["total"] += 1
-            if trace.status == "ok":
-                buckets[bucket_time]["success"] += 1
-            elif trace.status == "error":
-                buckets[bucket_time]["error"] += 1
-
-        # Build time-series arrays
-        timestamps = []
-        request_counts = []
-        success_counts = []
-        error_counts = []
-        error_rates = []
-
-        for bucket_time in sorted(buckets.keys()):
-            bucket = buckets[bucket_time]
-            error_rate = (bucket["error"] / bucket["total"] * 100) if bucket["total"] > 0 else 0
-
-            timestamps.append(bucket_time.isoformat())
-            request_counts.append(bucket["total"])
-            success_counts.append(bucket["success"])
-            error_counts.append(bucket["error"])
-            error_rates.append(round(error_rate, 2))
-
-        return {
-            "timestamps": timestamps,
-            "request_count": request_counts,
-            "success_count": success_counts,
-            "error_count": error_counts,
-            "error_rate": error_rates,
-        }
+        # Use SQL aggregation for PostgreSQL, Python fallback for SQLite
+        dialect_name = db.get_bind().dialect.name
+        if dialect_name == "postgresql":
+            return _get_timeseries_metrics_postgresql(db, cutoff_time, interval_minutes)
+        return _get_timeseries_metrics_python(db, cutoff_time, interval_minutes)
     except Exception as e:
         LOGGER.error(f"Failed to calculate timeseries metrics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         db.commit()  # Commit read-only transaction to avoid implicit rollback
         db.close()
+
+
+def _get_timeseries_metrics_postgresql(db: Session, cutoff_time: datetime, interval_minutes: int) -> dict:
+    """Compute time-series metrics using PostgreSQL.
+
+    Args:
+        db: Database session
+        cutoff_time: Start time for analysis
+        interval_minutes: Bucket size in minutes
+
+    Returns:
+        dict: Time-series metrics data
+    """
+    # Use epoch-based bucketing (works for any interval including > 60 min)
+    stats_sql = text(
+        """
+        SELECT
+            TO_TIMESTAMP(FLOOR(EXTRACT(EPOCH FROM start_time) / :interval_seconds) * :interval_seconds) as bucket,
+            COUNT(*) as total,
+            SUM(CASE WHEN status = 'ok' THEN 1 ELSE 0 END) as success,
+            SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error
+        FROM observability_traces
+        WHERE start_time >= :cutoff_time
+        GROUP BY bucket
+        ORDER BY bucket
+        """
+    )
+
+    interval_seconds = interval_minutes * 60
+    results = db.execute(stats_sql, {"cutoff_time": cutoff_time, "interval_seconds": interval_seconds}).fetchall()
+
+    if not results:
+        return {"timestamps": [], "request_count": [], "success_count": [], "error_count": [], "error_rate": []}
+
+    timestamps = []
+    request_counts = []
+    success_counts = []
+    error_counts = []
+    error_rates = []
+
+    for row in results:
+        total = row.total or 0
+        error = row.error or 0
+        error_rate = (error / total * 100) if total > 0 else 0
+
+        timestamps.append(row.bucket.isoformat() if row.bucket else "")
+        request_counts.append(total)
+        success_counts.append(row.success or 0)
+        error_counts.append(error)
+        error_rates.append(round(error_rate, 2))
+
+    return {
+        "timestamps": timestamps,
+        "request_count": request_counts,
+        "success_count": success_counts,
+        "error_count": error_counts,
+        "error_rate": error_rates,
+    }
+
+
+def _get_timeseries_metrics_python(db: Session, cutoff_time: datetime, interval_minutes: int) -> dict:
+    """Compute time-series metrics using Python (fallback for SQLite).
+
+    Args:
+        db: Database session
+        cutoff_time: Start time for analysis
+        interval_minutes: Bucket size in minutes
+
+    Returns:
+        dict: Time-series metrics data
+    """
+    # Query traces grouped by time bucket
+    traces = db.query(ObservabilityTrace.start_time, ObservabilityTrace.status).filter(ObservabilityTrace.start_time >= cutoff_time).order_by(ObservabilityTrace.start_time).all()
+
+    if not traces:
+        return {"timestamps": [], "request_count": [], "success_count": [], "error_count": [], "error_rate": []}
+
+    # Group traces into time buckets using epoch-based bucketing (works for any interval)
+    interval_seconds = interval_minutes * 60
+    buckets: Dict[datetime, Dict[str, int]] = defaultdict(lambda: {"total": 0, "success": 0, "error": 0})
+    for trace in traces:
+        trace_time = trace.start_time
+        if trace_time.tzinfo is None:
+            trace_time = trace_time.replace(tzinfo=timezone.utc)
+        epoch = trace_time.timestamp()
+        bucket_epoch = (epoch // interval_seconds) * interval_seconds
+        bucket_time = datetime.fromtimestamp(bucket_epoch, tz=timezone.utc)
+
+        buckets[bucket_time]["total"] += 1
+        if trace.status == "ok":
+            buckets[bucket_time]["success"] += 1
+        elif trace.status == "error":
+            buckets[bucket_time]["error"] += 1
+
+    # Build time-series arrays
+    timestamps = []
+    request_counts = []
+    success_counts = []
+    error_counts = []
+    error_rates = []
+
+    for bucket_time in sorted(buckets.keys()):
+        bucket = buckets[bucket_time]
+        error_rate = (bucket["error"] / bucket["total"] * 100) if bucket["total"] > 0 else 0
+
+        timestamps.append(bucket_time.isoformat())
+        request_counts.append(bucket["total"])
+        success_counts.append(bucket["success"])
+        error_counts.append(bucket["error"])
+        error_rates.append(round(error_rate, 2))
+
+    return {
+        "timestamps": timestamps,
+        "request_count": request_counts,
+        "success_count": success_counts,
+        "error_count": error_counts,
+        "error_rate": error_rates,
+    }
+
+
+def _get_latency_heatmap_postgresql(db: Session, cutoff_time: datetime, hours: int, time_buckets: int, latency_buckets: int) -> dict:
+    """Compute latency heatmap using PostgreSQL (optimized path).
+
+    Uses SQL arithmetic for efficient 2D histogram computation.
+
+    Args:
+        db: Database session
+        cutoff_time: Start time for analysis
+        hours: Time range in hours
+        time_buckets: Number of time buckets
+        latency_buckets: Number of latency buckets
+
+    Returns:
+        dict: Heatmap data with time and latency dimensions
+    """
+    # First, get min/max durations
+    stats_query = text(
+        """
+        SELECT MIN(duration_ms) as min_d, MAX(duration_ms) as max_d
+        FROM observability_traces
+        WHERE start_time >= :cutoff_time AND duration_ms IS NOT NULL
+    """
+    )
+    stats_row = db.execute(stats_query, {"cutoff_time": cutoff_time}).fetchone()
+
+    if not stats_row or stats_row.min_d is None:
+        return {"time_labels": [], "latency_labels": [], "data": []}
+
+    min_duration = float(stats_row.min_d)
+    max_duration = float(stats_row.max_d)
+    latency_range = max_duration - min_duration
+
+    # Handle case where all durations are the same
+    if latency_range == 0:
+        latency_range = 1.0
+        max_duration = min_duration + 1.0
+
+    time_range_minutes = hours * 60
+    latency_bucket_size = latency_range / latency_buckets
+    time_bucket_minutes = time_range_minutes / time_buckets
+
+    # Use SQL arithmetic for 2D histogram bucketing
+    heatmap_query = text(
+        """
+        SELECT
+            LEAST(GREATEST(
+                (EXTRACT(EPOCH FROM (start_time - :cutoff_time)) / 60.0 / :time_bucket_minutes)::int,
+                0
+            ), :time_buckets - 1) as time_idx,
+            LEAST(GREATEST(
+                ((duration_ms - :min_duration) / :latency_bucket_size)::int,
+                0
+            ), :latency_buckets - 1) as latency_idx,
+            COUNT(*) as cnt
+        FROM observability_traces
+        WHERE start_time >= :cutoff_time AND duration_ms IS NOT NULL
+        GROUP BY time_idx, latency_idx
+    """
+    )
+
+    rows = db.execute(
+        heatmap_query,
+        {
+            "cutoff_time": cutoff_time,
+            "time_bucket_minutes": time_bucket_minutes,
+            "time_buckets": time_buckets,
+            "min_duration": min_duration,
+            "latency_bucket_size": latency_bucket_size,
+            "latency_buckets": latency_buckets,
+        },
+    ).fetchall()
+
+    # Initialize heatmap matrix
+    heatmap = [[0 for _ in range(time_buckets)] for _ in range(latency_buckets)]
+
+    # Populate from SQL results
+    for row in rows:
+        time_idx = int(row.time_idx)
+        latency_idx = int(row.latency_idx)
+        if 0 <= time_idx < time_buckets and 0 <= latency_idx < latency_buckets:
+            heatmap[latency_idx][time_idx] = int(row.cnt)
+
+    # Generate labels
+    time_labels = []
+    for i in range(time_buckets):
+        bucket_time = cutoff_time + timedelta(minutes=i * time_bucket_minutes)
+        time_labels.append(bucket_time.strftime("%H:%M"))
+
+    latency_labels = []
+    for i in range(latency_buckets):
+        bucket_min = min_duration + i * latency_bucket_size
+        bucket_max = bucket_min + latency_bucket_size
+        latency_labels.append(f"{bucket_min:.0f}-{bucket_max:.0f}ms")
+
+    return {"time_labels": time_labels, "latency_labels": latency_labels, "data": heatmap}
+
+
+def _get_latency_heatmap_python(db: Session, cutoff_time: datetime, hours: int, time_buckets: int, latency_buckets: int) -> dict:
+    """Compute latency heatmap using Python (fallback for SQLite).
+
+    Args:
+        db: Database session
+        cutoff_time: Start time for analysis
+        hours: Time range in hours
+        time_buckets: Number of time buckets
+        latency_buckets: Number of latency buckets
+
+    Returns:
+        dict: Heatmap data with time and latency dimensions
+    """
+    # Query all traces with duration
+    traces = (
+        db.query(ObservabilityTrace.start_time, ObservabilityTrace.duration_ms)
+        .filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.duration_ms.isnot(None))
+        .order_by(ObservabilityTrace.start_time)
+        .all()
+    )
+
+    if not traces:
+        return {"time_labels": [], "latency_labels": [], "data": []}
+
+    # Calculate time bucket size
+    time_range = hours * 60  # minutes
+    time_bucket_minutes = time_range / time_buckets
+
+    # Find latency range and create buckets
+    durations = [t.duration_ms for t in traces]
+    min_duration = min(durations)
+    max_duration = max(durations)
+    latency_range = max_duration - min_duration
+    latency_bucket_size = latency_range / latency_buckets if latency_range > 0 else 1
+
+    # Initialize heatmap matrix
+    heatmap = [[0 for _ in range(time_buckets)] for _ in range(latency_buckets)]
+
+    # Populate heatmap
+    for trace in traces:
+        trace_time = trace.start_time
+        # Convert naive SQLite datetime to UTC aware
+        if trace_time.tzinfo is None:
+            trace_time = trace_time.replace(tzinfo=timezone.utc)
+
+        # Calculate time bucket index
+        time_diff = (trace_time - cutoff_time).total_seconds() / 60  # minutes
+        time_idx = min(int(time_diff / time_bucket_minutes), time_buckets - 1)
+
+        # Calculate latency bucket index
+        latency_idx = min(int((trace.duration_ms - min_duration) / latency_bucket_size), latency_buckets - 1)
+
+        heatmap[latency_idx][time_idx] += 1
+
+    # Generate labels
+    time_labels = []
+    for i in range(time_buckets):
+        bucket_time = cutoff_time + timedelta(minutes=i * time_bucket_minutes)
+        time_labels.append(bucket_time.strftime("%H:%M"))
+
+    latency_labels = []
+    for i in range(latency_buckets):
+        bucket_min = min_duration + i * latency_bucket_size
+        bucket_max = bucket_min + latency_bucket_size
+        latency_labels.append(f"{bucket_min:.0f}-{bucket_max:.0f}ms")
+
+    return {"time_labels": time_labels, "latency_labels": latency_labels, "data": heatmap}
 
 
 @admin_router.get("/observability/metrics/top-slow", response_model=dict)
@@ -14330,6 +14661,9 @@ async def get_latency_heatmap(
 ):
     """Get latency distribution heatmap data.
 
+    Uses PostgreSQL SQL aggregation for efficient computation when available,
+    falls back to Python for SQLite.
+
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
@@ -14345,63 +14679,13 @@ async def get_latency_heatmap(
     """
     db = next(get_db())
     try:
-        # Make cutoff_time UTC aware
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
 
-        # Query all traces with duration
-        traces = (
-            db.query(ObservabilityTrace.start_time, ObservabilityTrace.duration_ms)
-            .filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.duration_ms.isnot(None))
-            .order_by(ObservabilityTrace.start_time)
-            .all()
-        )
-
-        if not traces:
-            return {"time_labels": [], "latency_labels": [], "data": []}
-
-        # Calculate time bucket size
-        time_range = hours * 60  # minutes
-        time_bucket_minutes = time_range / time_buckets
-
-        # Find latency range and create buckets
-        durations = [t.duration_ms for t in traces]
-        min_duration = min(durations)
-        max_duration = max(durations)
-        latency_range = max_duration - min_duration
-        latency_bucket_size = latency_range / latency_buckets if latency_range > 0 else 1
-
-        # Initialize heatmap matrix
-        heatmap = [[0 for _ in range(time_buckets)] for _ in range(latency_buckets)]
-
-        # Populate heatmap
-        for trace in traces:
-            trace_time = trace.start_time
-            # Convert naive SQLite datetime to UTC aware
-            if trace_time.tzinfo is None:
-                trace_time = trace_time.replace(tzinfo=timezone.utc)
-
-            # Calculate time bucket index
-            time_diff = (trace_time - cutoff_time).total_seconds() / 60  # minutes
-            time_idx = min(int(time_diff / time_bucket_minutes), time_buckets - 1)
-
-            # Calculate latency bucket index
-            latency_idx = min(int((trace.duration_ms - min_duration) / latency_bucket_size), latency_buckets - 1)
-
-            heatmap[latency_idx][time_idx] += 1
-
-        # Generate labels
-        time_labels = []
-        for i in range(time_buckets):
-            bucket_time = cutoff_time + timedelta(minutes=i * time_bucket_minutes)
-            time_labels.append(bucket_time.strftime("%H:%M"))
-
-        latency_labels = []
-        for i in range(latency_buckets):
-            bucket_min = min_duration + i * latency_bucket_size
-            bucket_max = bucket_min + latency_bucket_size
-            latency_labels.append(f"{bucket_min:.0f}-{bucket_max:.0f}ms")
-
-        return {"time_labels": time_labels, "latency_labels": latency_labels, "data": heatmap}
+        # Route to appropriate implementation based on database dialect
+        dialect_name = db.get_bind().dialect.name
+        if dialect_name == "postgresql":
+            return _get_latency_heatmap_postgresql(db, cutoff_time, hours, time_buckets, latency_buckets)
+        return _get_latency_heatmap_python(db, cutoff_time, hours, time_buckets, latency_buckets)
     except Exception as e:
         LOGGER.error(f"Failed to generate latency heatmap: {e}")
         raise HTTPException(status_code=500, detail=str(e))

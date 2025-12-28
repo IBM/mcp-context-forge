@@ -21,7 +21,7 @@ from typing import List, Optional
 import uuid
 
 # Third-Party
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -707,13 +707,110 @@ class TokenCatalogService:
         """
         start_date = utc_now() - timedelta(days=days)
 
-        query = select(TokenUsageLog).where(and_(TokenUsageLog.user_email == user_email, TokenUsageLog.timestamp >= start_date))
-
+        # Get token JTI if specific token requested
+        token_jti = None
         if token_id:
-            # Get JTI for the token
             token = await self.get_token(token_id, user_email)
             if token:
-                query = query.where(TokenUsageLog.token_jti == token.jti)
+                token_jti = token.jti
+
+        # Use SQL aggregation for PostgreSQL, Python fallback for SQLite
+        dialect_name = self.db.get_bind().dialect.name
+        if dialect_name == "postgresql":
+            return await self._get_usage_stats_postgresql(user_email, start_date, token_jti, days)
+        return await self._get_usage_stats_python(user_email, start_date, token_jti, days)
+
+    async def _get_usage_stats_postgresql(self, user_email: str, start_date: datetime, token_jti: Optional[str], days: int) -> dict:
+        """Compute usage stats using PostgreSQL SQL aggregation.
+
+        Args:
+            user_email: User's email address
+            start_date: Start date for analysis
+            token_jti: Optional token JTI filter
+            days: Number of days being analyzed
+
+        Returns:
+            dict: Usage statistics computed via SQL
+        """
+        # Build filter conditions
+        conditions = [TokenUsageLog.user_email == user_email, TokenUsageLog.timestamp >= start_date]
+        if token_jti:
+            conditions.append(TokenUsageLog.token_jti == token_jti)
+
+        base_filter = and_(*conditions)
+
+        # Main stats query using SQL aggregation
+        # Match Python behavior:
+        # - status_code must be non-null AND non-zero AND < 400 for success count
+        # - response_time_ms must be non-null AND non-zero for average (Python: if log.response_time_ms)
+        stats_query = (
+            select(
+                func.count().label("total"),  # pylint: disable=not-callable
+                func.sum(
+                    case(
+                        (and_(TokenUsageLog.status_code.isnot(None), TokenUsageLog.status_code > 0, TokenUsageLog.status_code < 400), 1),
+                        else_=0,
+                    )
+                ).label("successful"),
+                func.sum(case((TokenUsageLog.blocked.is_(True), 1), else_=0)).label("blocked"),
+                # Only average non-null and non-zero response times (NULL values are ignored by AVG)
+                func.avg(
+                    case(
+                        (and_(TokenUsageLog.response_time_ms.isnot(None), TokenUsageLog.response_time_ms > 0), TokenUsageLog.response_time_ms),
+                        else_=None,
+                    )
+                ).label("avg_response"),
+            )
+            .select_from(TokenUsageLog)
+            .where(base_filter)
+        )
+
+        result = self.db.execute(stats_query).fetchone()
+
+        total_requests = result.total or 0
+        successful_requests = result.successful or 0
+        blocked_requests = result.blocked or 0
+        avg_response_time = float(result.avg_response) if result.avg_response else 0.0
+
+        # Top endpoints query using SQL GROUP BY
+        # Match Python behavior: exclude None AND empty string endpoints (Python: if log.endpoint)
+        endpoints_query = (
+            select(TokenUsageLog.endpoint, func.count().label("count"))  # pylint: disable=not-callable
+            .where(and_(base_filter, TokenUsageLog.endpoint.isnot(None), TokenUsageLog.endpoint != ""))
+            .group_by(TokenUsageLog.endpoint)
+            .order_by(func.count().desc())  # pylint: disable=not-callable
+            .limit(5)
+        )
+
+        endpoints_result = self.db.execute(endpoints_query).fetchall()
+        top_endpoints = [(row.endpoint, row.count) for row in endpoints_result]
+
+        return {
+            "period_days": days,
+            "total_requests": total_requests,
+            "successful_requests": successful_requests,
+            "blocked_requests": blocked_requests,
+            "success_rate": successful_requests / total_requests if total_requests > 0 else 0,
+            "average_response_time_ms": round(avg_response_time, 2),
+            "top_endpoints": top_endpoints,
+        }
+
+    async def _get_usage_stats_python(self, user_email: str, start_date: datetime, token_jti: Optional[str], days: int) -> dict:
+        """Compute usage stats using Python (fallback for SQLite).
+
+        Args:
+            user_email: User's email address
+            start_date: Start date for analysis
+            token_jti: Optional token JTI filter
+            days: Number of days being analyzed
+
+        Returns:
+            dict: Usage statistics computed in Python
+        """
+        query = select(TokenUsageLog).where(and_(TokenUsageLog.user_email == user_email, TokenUsageLog.timestamp >= start_date))
+
+        if token_jti:
+            query = query.where(TokenUsageLog.token_jti == token_jti)
 
         usage_logs = self.db.execute(query).scalars().all()
 
@@ -727,7 +824,7 @@ class TokenCatalogService:
         avg_response_time = sum(response_times) / len(response_times) if response_times else 0
 
         # Most accessed endpoints
-        endpoint_counts = {}
+        endpoint_counts: dict = {}
         for log in usage_logs:
             if log.endpoint:
                 endpoint_counts[log.endpoint] = endpoint_counts.get(log.endpoint, 0) + 1
