@@ -350,6 +350,7 @@ class PluginExecutor:
                     )
                     return result
                 finally:
+                    db.rollback()  # End transaction to avoid "idle in transaction" state
                     db.close()
             else:
                 # No active trace, execute without instrumentation

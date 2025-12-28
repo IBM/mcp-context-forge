@@ -313,6 +313,7 @@ class LogRouter:
 
         finally:
             if should_close:
+                db.rollback()  # End transaction to avoid "idle in transaction" state
                 db.close()
 
     def _send_to_external(self, entry: Dict[str, Any]) -> None:

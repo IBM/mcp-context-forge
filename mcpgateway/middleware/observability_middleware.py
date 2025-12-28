@@ -146,6 +146,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             # Close db if it was created
             if db:
                 try:
+                    db.rollback()  # End transaction to avoid "idle in transaction" state
                     db.close()
                 except Exception as close_error:
                     logger.debug(f"Failed to close database session during cleanup: {close_error}")
@@ -204,6 +205,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             # Always close database session
             if db:
                 try:
+                    db.rollback()  # End transaction to avoid "idle in transaction" state
                     db.close()
                 except Exception as close_error:
                     logger.warning(f"Failed to close database session: {close_error}")

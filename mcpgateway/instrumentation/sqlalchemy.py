@@ -85,6 +85,7 @@ def _write_span_to_db(span_data: dict) -> None:
             logger.debug(f"Created span for {span_data['resource_name']} query: " f"{span_data['duration_ms']:.2f}ms, {span_data.get('row_count')} rows")
 
         finally:
+            db.rollback()  # End transaction to avoid "idle in transaction" state
             db.close()
 
     except Exception as e:  # pylint: disable=broad-except

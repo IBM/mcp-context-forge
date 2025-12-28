@@ -334,6 +334,18 @@ services:
       - "max_parallel_workers_per_gather=2"
       - "-c"
       - "max_parallel_workers=4"
+      # === HIGH-CONCURRENCY TUNING (3000 users) ===
+      # CRITICAL: idle_in_transaction_session_timeout prevents connection starvation
+      # Application code now properly closes transactions (db.rollback() before db.close())
+      # so this is a safety net for any edge cases
+      - "-c"
+      - "idle_in_transaction_session_timeout=30s"  # Kill stuck transactions after 30s
+      - "-c"
+      - "statement_timeout=60s"            # Kill runaway queries after 60s
+      - "-c"
+      - "synchronous_commit=off"           # Async WAL writes (2-10x faster commits)
+      - "-c"
+      - "commit_delay=100"                 # Batch commits within 100μs window
       # === PG_STAT_STATEMENTS - Query performance tracking ===
       # Uncomment to enable query statistics (slight overhead, ~2-5%)
       # After enabling, run in psql:
@@ -425,11 +437,15 @@ services:
       - RESERVE_POOL_SIZE=25           # Extra connections for burst traffic
       - RESERVE_POOL_TIMEOUT=5         # Seconds before using reserve pool
       # Server-side connection limits (to PostgreSQL)
-      - MAX_DB_CONNECTIONS=200         # Max connections to PostgreSQL per database
-      - MAX_USER_CONNECTIONS=200       # Max connections per user
+      - MAX_DB_CONNECTIONS=250         # Max connections to PostgreSQL per database
+      - MAX_USER_CONNECTIONS=250       # Max connections per user
       # Connection lifecycle
       - SERVER_LIFETIME=3600           # Max age of server connection (seconds)
       - SERVER_IDLE_TIMEOUT=600        # Close idle server connections after (seconds)
+      # Timeout settings for high-concurrency (3000 users)
+      - QUERY_WAIT_TIMEOUT=30          # Fail fast if no connection available in 30s
+      - CLIENT_IDLE_TIMEOUT=300        # Close idle client connections after 5 min
+      - SERVER_CONNECT_TIMEOUT=5       # Timeout for connecting to PostgreSQL
       # Authentication
       - AUTH_TYPE=scram-sha-256        # Match PostgreSQL auth method
     depends_on:

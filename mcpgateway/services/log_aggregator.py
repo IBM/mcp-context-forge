@@ -125,6 +125,7 @@ class LogAggregator:
 
         finally:
             if should_close:
+                db.commit()  # Commit read-only transaction to avoid implicit rollback
                 db.close()
 
     def aggregate_all_components(self, window_start: Optional[datetime] = None, window_end: Optional[datetime] = None, db: Optional[Session] = None) -> List[PerformanceMetric]:
@@ -175,6 +176,7 @@ class LogAggregator:
 
         finally:
             if should_close:
+                db.commit()  # Commit read-only transaction to avoid implicit rollback
                 db.close()
 
     def get_recent_metrics(self, component: Optional[str] = None, operation: Optional[str] = None, hours: int = 24, db: Optional[Session] = None) -> List[PerformanceMetric]:
@@ -210,6 +212,7 @@ class LogAggregator:
 
         finally:
             if should_close:
+                db.commit()  # Commit read-only transaction to avoid implicit rollback
                 db.close()
 
     def get_degradation_alerts(self, threshold_multiplier: float = 1.5, hours: int = 24, db: Optional[Session] = None) -> List[Dict[str, Any]]:
@@ -279,6 +282,7 @@ class LogAggregator:
 
         finally:
             if should_close:
+                db.commit()  # Commit read-only transaction to avoid implicit rollback
                 db.close()
 
     def backfill(self, hours: float, db: Optional[Session] = None) -> int:
@@ -323,6 +327,7 @@ class LogAggregator:
 
         finally:
             if should_close:
+                db.commit()  # Commit transaction to avoid implicit rollback
                 db.close()
 
     @staticmethod

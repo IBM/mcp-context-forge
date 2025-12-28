@@ -150,6 +150,7 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
             # Always close database session
             if db:
                 try:
+                    db.rollback()  # End transaction to avoid "idle in transaction" state
                     db.close()
                 except Exception as close_error:
                     logger.debug(f"Failed to close database session: {close_error}")
