@@ -401,7 +401,7 @@ class LogAggregator:
 
         # First, check if there are any rows and get error count
         # (error count requires examining level/error_details which can't be done purely in SQL aggregate)
-        count_stmt = select(func.count()).select_from(StructuredLogEntry).where(base_conditions)
+        count_stmt = select(func.count()).select_from(StructuredLogEntry).where(base_conditions)  # pylint: disable=not-callable
         count_result = db.execute(count_stmt).scalar()
 
         if not count_result or count_result == 0:
@@ -443,7 +443,7 @@ class LogAggregator:
 
         # Get error count separately (requires level/error_details examination)
         error_stmt = (
-            select(func.count())
+            select(func.count())  # pylint: disable=not-callable
             .select_from(StructuredLogEntry)
             .where(
                 and_(

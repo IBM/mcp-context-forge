@@ -1015,3 +1015,93 @@ class TestTokenCatalogServiceIntegration:
 
             # Both updates should succeed
             assert mock_db.commit.call_count >= 2
+
+
+# --------------------------------------------------------------------------- #
+# SQL Optimization Tests (PostgreSQL vs Python fallback)                       #
+# --------------------------------------------------------------------------- #
+class TestTokenCatalogServiceSqlOptimization:
+    """Tests for SQL-optimized usage stats computation."""
+
+    @pytest.mark.asyncio
+    async def test_get_usage_stats_postgresql_path(self, mock_db):
+        """Test that PostgreSQL path is used when available."""
+        # Mock the session's bind dialect instead of global engine
+        mock_bind = MagicMock()
+        mock_bind.dialect.name = "postgresql"
+        mock_db.get_bind.return_value = mock_bind
+        service = TokenCatalogService(mock_db)
+
+        # Mock the PostgreSQL queries - attribute names match SQL query labels
+        mock_stats_row = MagicMock()
+        mock_stats_row.total = 100
+        mock_stats_row.successful = 90
+        mock_stats_row.blocked = 5
+        mock_stats_row.avg_response = 45.5
+
+        mock_endpoint_row = MagicMock()
+        mock_endpoint_row.endpoint = "/api/tools"
+        mock_endpoint_row.count = 50
+
+        # Configure execute to return different results for different queries
+        mock_db.execute.return_value.fetchone.return_value = mock_stats_row
+        mock_db.execute.return_value.fetchall.return_value = [mock_endpoint_row]
+
+        stats = await service.get_token_usage_stats("test@example.com", days=7)
+
+        assert stats["total_requests"] == 100
+        assert stats["successful_requests"] == 90
+        assert stats["blocked_requests"] == 5
+        assert stats["average_response_time_ms"] == 45.5
+
+    @pytest.mark.asyncio
+    async def test_get_usage_stats_sqlite_fallback(self, mock_db):
+        """Test that Python fallback is used for SQLite."""
+        # Mock the session's bind dialect instead of global engine
+        mock_bind = MagicMock()
+        mock_bind.dialect.name = "sqlite"
+        mock_db.get_bind.return_value = mock_bind
+        service = TokenCatalogService(mock_db)
+
+        # Mock the Python path query
+        mock_logs = []
+        for i in range(10):
+            log = MagicMock()
+            log.status_code = 200
+            log.blocked = False
+            log.response_time_ms = 50.0
+            log.endpoint = "/api/test"
+            mock_logs.append(log)
+
+        mock_db.execute.return_value.scalars.return_value.all.return_value = mock_logs
+
+        stats = await service.get_token_usage_stats("test@example.com", days=7)
+
+        assert stats["total_requests"] == 10
+        assert stats["successful_requests"] == 10
+        assert stats["blocked_requests"] == 0
+
+    @pytest.mark.asyncio
+    async def test_get_usage_stats_postgresql_no_data(self, mock_db):
+        """Test PostgreSQL path with no usage data."""
+        # Mock the session's bind dialect instead of global engine
+        mock_bind = MagicMock()
+        mock_bind.dialect.name = "postgresql"
+        mock_db.get_bind.return_value = mock_bind
+        service = TokenCatalogService(mock_db)
+
+        # Mock empty result - attribute names match SQL query labels
+        mock_stats_row = MagicMock()
+        mock_stats_row.total = None
+        mock_stats_row.successful = None
+        mock_stats_row.blocked = None
+        mock_stats_row.avg_response = None
+
+        mock_db.execute.return_value.fetchone.return_value = mock_stats_row
+        mock_db.execute.return_value.fetchall.return_value = []
+
+        stats = await service.get_token_usage_stats("test@example.com", days=7)
+
+        assert stats["total_requests"] == 0
+        assert stats["successful_requests"] == 0
+        assert stats["success_rate"] == 0
