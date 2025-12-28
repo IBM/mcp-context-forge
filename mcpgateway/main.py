@@ -1371,6 +1371,12 @@ def get_db():
     Commits the transaction on successful completion to avoid implicit rollbacks
     for read-only operations. Rolls back explicitly on exception.
 
+    This function handles connection failures gracefully by invalidating broken
+    connections. When a connection is broken (e.g., due to PgBouncer timeout or
+    network issues), the rollback will fail. In this case, we invalidate the
+    session to ensure the broken connection is discarded from the pool rather
+    than being returned in a bad state.
+
     Yields:
         Session: A SQLAlchemy session object for interacting with the database.
 
@@ -1394,14 +1400,23 @@ def get_db():
         ...         next(db_gen)
         ...     except StopIteration:
         ...         pass  # Expected - generator cleanup
-        'Session'
+        'ResilientSession'
     """
     db = SessionLocal()
     try:
         yield db
         db.commit()
     except Exception:
-        db.rollback()
+        try:
+            db.rollback()
+        except Exception:
+            # Connection is broken - invalidate to remove from pool
+            # This handles cases like PgBouncer query_wait_timeout where
+            # the connection is dead and rollback itself fails
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
         raise
     finally:
         db.close()
