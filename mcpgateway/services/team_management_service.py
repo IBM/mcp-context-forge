@@ -757,6 +757,19 @@ class TeamManagementService:
             logger.error(f"Failed to get members for team {team_id}: {e}")
             return []
 
+    def count_team_owners(self, team_id: str) -> int:
+        """Count the number of owners in a team using SQL COUNT.
+
+        This is more efficient than loading all members and counting in Python.
+
+        Args:
+            team_id: ID of the team
+
+        Returns:
+            int: Number of active owners in the team
+        """
+        return self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.role == "owner", EmailTeamMember.is_active.is_(True)).count()
+
     def _get_auth_cache(self):
         """Get auth cache instance lazily.
 
