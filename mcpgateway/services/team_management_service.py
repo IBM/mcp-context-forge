@@ -244,7 +244,6 @@ class TeamManagementService:
         """
         try:
             team = self.db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
-
             return team
 
         except Exception as e:
@@ -269,7 +268,6 @@ class TeamManagementService:
         """
         try:
             team = self.db.query(EmailTeam).filter(EmailTeam.slug == slug, EmailTeam.is_active.is_(True)).first()
-
             return team
 
         except Exception as e:
@@ -768,7 +766,8 @@ class TeamManagementService:
         Returns:
             int: Number of active owners in the team
         """
-        return self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.role == "owner", EmailTeamMember.is_active.is_(True)).count()
+        count = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.role == "owner", EmailTeamMember.is_active.is_(True)).count()
+        return count
 
     def _get_auth_cache(self):
         """Get auth cache instance lazily.
@@ -889,7 +888,8 @@ class TeamManagementService:
 
             query = self.db.query(EmailTeam).filter(EmailTeam.visibility == "public", EmailTeam.is_active.is_(True), EmailTeam.is_personal.is_(False), ~EmailTeam.id.in_(user_team_subquery))
 
-            return query.offset(skip).limit(limit).all()
+            teams = query.offset(skip).limit(limit).all()
+            return teams
 
         except Exception as e:
             logger.error(f"Failed to discover public teams for {user_email}: {e}")
@@ -966,9 +966,10 @@ class TeamManagementService:
             List[EmailTeamJoinRequest]: List of pending join requests
         """
         try:
-            return (
+            requests = (
                 self.db.query(EmailTeamJoinRequest).filter(EmailTeamJoinRequest.team_id == team_id, EmailTeamJoinRequest.status == "pending").order_by(EmailTeamJoinRequest.requested_at.desc()).all()
             )
+            return requests
 
         except Exception as e:
             logger.error(f"Failed to list join requests for team {team_id}: {e}")

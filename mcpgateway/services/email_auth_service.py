@@ -268,7 +268,8 @@ class EmailAuthService:
         try:
             stmt = select(EmailUser).where(EmailUser.email == email.lower())
             result = self.db.execute(stmt)
-            return result.scalar_one_or_none()
+            user = result.scalar_one_or_none()
+            return user
         except Exception as e:
             logger.error(f"Error getting user by email {email}: {e}")
             return None
@@ -594,7 +595,8 @@ class EmailAuthService:
         try:
             stmt = select(EmailUser).offset(offset).limit(limit)
             result = self.db.execute(stmt)
-            return list(result.scalars().all())
+            users = list(result.scalars().all())
+            return users
         except Exception as e:
             logger.error(f"Error listing users: {e}")
             return []
@@ -620,7 +622,8 @@ class EmailAuthService:
         try:
             stmt = select(EmailUser)
             result = self.db.execute(stmt)
-            return len(list(result.scalars().all()))
+            count = len(list(result.scalars().all()))
+            return count
         except Exception as e:
             logger.error(f"Error counting users: {e}")
             return 0
@@ -643,7 +646,8 @@ class EmailAuthService:
             stmt = stmt.order_by(EmailAuthEvent.timestamp.desc()).offset(offset).limit(limit)
 
             result = self.db.execute(stmt)
-            return list(result.scalars().all())
+            events = list(result.scalars().all())
+            return events
         except Exception as e:
             logger.error(f"Error getting auth events: {e}")
             return []

@@ -431,7 +431,7 @@ class AuditTrailService:
 
         finally:
             if close_db:
-                db.rollback()  # End read-only transaction to avoid "idle in transaction" state
+                db.commit()  # End read-only transaction cleanly
                 db.close()
 
 

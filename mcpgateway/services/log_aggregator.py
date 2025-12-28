@@ -115,17 +115,18 @@ class LogAggregator:
 
             logger.info(f"Aggregated performance metrics for {component}.{operation_type}: " f"{count} requests, {avg_duration:.2f}ms avg, {error_rate:.2%} error rate")
 
+            if should_close:
+                db.commit()  # Commit transaction on success
             return metric
 
         except Exception as e:
             logger.error(f"Failed to aggregate performance metrics: {e}")
-            if db:
+            if should_close and db:
                 db.rollback()
             return None
 
         finally:
             if should_close:
-                db.commit()  # Commit read-only transaction to avoid implicit rollback
                 db.close()
 
     def aggregate_all_components(self, window_start: Optional[datetime] = None, window_end: Optional[datetime] = None, db: Optional[Session] = None) -> List[PerformanceMetric]:
@@ -172,11 +173,17 @@ class LogAggregator:
                     if metric:
                         metrics.append(metric)
 
+            if should_close:
+                db.commit()  # Commit on success
             return metrics
+
+        except Exception:
+            if should_close:
+                db.rollback()
+            raise
 
         finally:
             if should_close:
-                db.commit()  # Commit read-only transaction to avoid implicit rollback
                 db.close()
 
     def get_recent_metrics(self, component: Optional[str] = None, operation: Optional[str] = None, hours: int = 24, db: Optional[Session] = None) -> List[PerformanceMetric]:
@@ -208,11 +215,18 @@ class LogAggregator:
 
             stmt = stmt.order_by(PerformanceMetric.window_start.desc())
 
-            return db.execute(stmt).scalars().all()
+            result = db.execute(stmt).scalars().all()
+            if should_close:
+                db.commit()  # Commit on success
+            return result
+
+        except Exception:
+            if should_close:
+                db.rollback()
+            raise
 
         finally:
             if should_close:
-                db.commit()  # Commit read-only transaction to avoid implicit rollback
                 db.close()
 
     def get_degradation_alerts(self, threshold_multiplier: float = 1.5, hours: int = 24, db: Optional[Session] = None) -> List[Dict[str, Any]]:
@@ -278,11 +292,17 @@ class LogAggregator:
                         }
                     )
 
+            if should_close:
+                db.commit()  # Commit on success
             return alerts
+
+        except Exception:
+            if should_close:
+                db.rollback()
+            raise
 
         finally:
             if should_close:
-                db.commit()  # Commit read-only transaction to avoid implicit rollback
                 db.close()
 
     def backfill(self, hours: float, db: Optional[Session] = None) -> int:
@@ -323,11 +343,17 @@ class LogAggregator:
                     processed += 1
                 current_start = current_end
 
+            if should_close:
+                db.commit()  # Commit on success
             return processed
+
+        except Exception:
+            if should_close:
+                db.rollback()
+            raise
 
         finally:
             if should_close:
-                db.commit()  # Commit transaction to avoid implicit rollback
                 db.close()
 
     @staticmethod

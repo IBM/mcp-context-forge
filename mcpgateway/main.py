@@ -639,7 +639,7 @@ async def setup_passthrough_headers():
     try:
         await set_global_passthrough_headers(db)
     finally:
-        db.rollback()  # End transaction to avoid "idle in transaction" state
+        db.commit()  # End transaction cleanly
         db.close()
 
 

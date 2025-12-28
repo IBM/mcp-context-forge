@@ -219,7 +219,8 @@ class PermissionService:
             query = query.where((UserRole.expires_at.is_(None)) | (UserRole.expires_at > now))
 
         result = self.db.execute(query)
-        return result.scalars().all()
+        user_roles = result.scalars().all()
+        return user_roles
 
     async def has_permission_on_resource(self, user_email: str, permission: str, resource_type: str, resource_id: str, team_id: Optional[str] = None) -> bool:
         """Check if user has permission on a specific resource.
@@ -398,7 +399,8 @@ class PermissionService:
         query = query.where((UserRole.expires_at.is_(None)) | (UserRole.expires_at > now))
 
         result = self.db.execute(query)
-        return result.scalars().all()
+        user_roles = result.scalars().all()
+        return user_roles
 
     async def _log_permission_check(
         self,

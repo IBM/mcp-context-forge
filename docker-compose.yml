@@ -336,8 +336,8 @@ services:
       - "max_parallel_workers=4"
       # === HIGH-CONCURRENCY TUNING (3000 users) ===
       # CRITICAL: idle_in_transaction_session_timeout prevents connection starvation
-      # Application code now properly closes transactions (db.rollback() before db.close())
-      # so this is a safety net for any edge cases
+      # Application code now properly closes transactions via get_db() commit-on-success pattern
+      # This timeout is a safety net for any edge cases
       - "-c"
       - "idle_in_transaction_session_timeout=30s"  # Kill stuck transactions after 30s
       - "-c"
