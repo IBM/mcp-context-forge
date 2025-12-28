@@ -60,7 +60,13 @@ def get_db() -> Generator[Session, None, None]:
         yield db
         db.commit()
     except Exception:
-        db.rollback()
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
         raise
     finally:
         db.close()

@@ -256,8 +256,237 @@ if backend == "sqlite":
         cursor.close()
 
 
-# Session factory
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# ---------------------------------------------------------------------------
+# Resilient Session class for graceful error recovery
+# ---------------------------------------------------------------------------
+class ResilientSession(Session):
+    """A Session subclass that auto-rollbacks on connection errors.
+
+    When a database operation fails due to a connection error (e.g., PgBouncer
+    query_wait_timeout), this session automatically rolls back to clear the
+    invalid transaction state. This prevents cascading PendingRollbackError
+    failures when multiple queries run within the same request.
+
+    Without this, the first failed query leaves the session in a "needs rollback"
+    state, and all subsequent queries fail with PendingRollbackError before
+    even attempting to use the database.
+    """
+
+    # Error types that indicate connection issues requiring rollback
+    _connection_error_patterns = (
+        "query_wait_timeout",
+        "server closed the connection unexpectedly",
+        "connection reset by peer",
+        "connection timed out",
+        "could not receive data from server",
+        "could not send data to server",
+        "terminating connection",
+        "no connection to the server",
+    )
+
+    def _is_connection_error(self, exception: Exception) -> bool:
+        """Check if an exception indicates a broken database connection.
+
+        Args:
+            exception: The exception to check.
+
+        Returns:
+            True if the exception indicates a connection error, False otherwise.
+        """
+        exc_name = type(exception).__name__
+        exc_msg = str(exception).lower()
+
+        # Check for known connection error types
+        if exc_name in ("ProtocolViolation", "OperationalError", "InterfaceError"):
+            return True
+
+        # Check for connection error patterns in message
+        for pattern in self._connection_error_patterns:
+            if pattern in exc_msg:
+                return True
+
+        return False
+
+    def _safe_rollback(self) -> None:
+        """Attempt to rollback, invalidating the session if rollback fails."""
+        try:
+            self.rollback()
+        except Exception:
+            try:
+                self.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
+
+    def execute(self, statement, params=None, **kw):
+        """Execute a statement with automatic rollback on connection errors.
+
+        Wraps the parent execute method to catch connection errors and
+        automatically rollback the session to prevent PendingRollbackError cascade.
+
+        Args:
+            statement: The SQL statement to execute.
+            params: Optional parameters for the statement.
+            **kw: Additional keyword arguments passed to Session.execute().
+
+        Returns:
+            The result of the execute operation.
+
+        Raises:
+            Exception: Re-raises any exception after rolling back on connection errors.
+        """
+        try:
+            return super().execute(statement, params, **kw)
+        except Exception as e:
+            if self._is_connection_error(e):
+                logger.warning(
+                    "Connection error during execute, auto-rolling back session: %s",
+                    type(e).__name__,
+                )
+                self._safe_rollback()
+            raise
+
+    def scalar(self, statement, params=None, **kw):
+        """Execute and return a scalar with automatic rollback on connection errors.
+
+        Wraps the parent scalar method to catch connection errors and
+        automatically rollback the session to prevent PendingRollbackError cascade.
+
+        Args:
+            statement: The SQL statement to execute.
+            params: Optional parameters for the statement.
+            **kw: Additional keyword arguments passed to Session.scalar().
+
+        Returns:
+            The scalar result of the query.
+
+        Raises:
+            Exception: Re-raises any exception after rolling back on connection errors.
+        """
+        try:
+            return super().scalar(statement, params, **kw)
+        except Exception as e:
+            if self._is_connection_error(e):
+                logger.warning(
+                    "Connection error during scalar, auto-rolling back session: %s",
+                    type(e).__name__,
+                )
+                self._safe_rollback()
+            raise
+
+    def scalars(self, statement, params=None, **kw):
+        """Execute and return scalars with automatic rollback on connection errors.
+
+        Wraps the parent scalars method to catch connection errors and
+        automatically rollback the session to prevent PendingRollbackError cascade.
+
+        Args:
+            statement: The SQL statement to execute.
+            params: Optional parameters for the statement.
+            **kw: Additional keyword arguments passed to Session.scalars().
+
+        Returns:
+            The scalars result of the query.
+
+        Raises:
+            Exception: Re-raises any exception after rolling back on connection errors.
+        """
+        try:
+            return super().scalars(statement, params, **kw)
+        except Exception as e:
+            if self._is_connection_error(e):
+                logger.warning(
+                    "Connection error during scalars, auto-rolling back session: %s",
+                    type(e).__name__,
+                )
+                self._safe_rollback()
+            raise
+
+
+# Session factory using ResilientSession
+SessionLocal = sessionmaker(class_=ResilientSession, autocommit=False, autoflush=False, bind=engine)
+
+
+# ---------------------------------------------------------------------------
+# Pool event listeners for connection resilience
+# These handlers ensure broken connections are properly invalidated and
+# discarded from the pool, preventing "poisoned" connections from causing
+# cascading failures (e.g., PendingRollbackError after PgBouncer timeout).
+#
+# Key issue: PgBouncer returns ProtocolViolation (SQL error 08P01) for
+# query_wait_timeout, but SQLAlchemy doesn't recognize this as a disconnect
+# by default. We must explicitly mark these errors as disconnects so the
+# connection pool properly invalidates these connections.
+#
+# References:
+# - https://github.com/zodb/relstorage/issues/412
+# - https://docs.sqlalchemy.org/en/20/core/pooling.html#custom-legacy-pessimistic-ping
+# ---------------------------------------------------------------------------
+@event.listens_for(engine, "handle_error")
+def handle_pool_error(exception_context):
+    """Mark PgBouncer and connection errors as disconnects for proper pool invalidation.
+
+    This event fires when an error occurs during query execution. By marking
+    certain errors as disconnects (is_disconnect=True), SQLAlchemy will:
+    1. Invalidate the current connection (discard from pool)
+    2. Invalidate all other pooled connections older than current time
+
+    Without this, PgBouncer errors like query_wait_timeout result in
+    ProtocolViolation which is classified as DatabaseError, not a disconnect.
+    The connection stays in the pool and causes PendingRollbackError on reuse.
+
+    Args:
+        exception_context: SQLAlchemy ExceptionContext with error details.
+    """
+    original = exception_context.original_exception
+    if original is None:
+        return
+
+    # Get the exception class name and message for pattern matching
+    exc_class = type(original).__name__
+    exc_msg = str(original).lower()
+
+    # List of error patterns that indicate the connection is broken
+    # and should be treated as a disconnect for pool invalidation
+    disconnect_patterns = [
+        # PgBouncer errors
+        "query_wait_timeout",
+        "server_login_retry",
+        "client_login_timeout",
+        "server closed the connection unexpectedly",
+        "connection reset by peer",
+        "connection timed out",
+        "no connection to the server",
+        "terminating connection",
+        "connection has been closed unexpectedly",
+        # PostgreSQL errors indicating dead connection
+        "could not receive data from server",
+        "could not send data to server",
+        "ssl connection has been closed unexpectedly",
+        "canceling statement due to conflict with recovery",
+    ]
+
+    # Check for ProtocolViolation or OperationalError with disconnect patterns
+    is_connection_error = exc_class in ("ProtocolViolation", "OperationalError", "InterfaceError", "DatabaseError")
+
+    if is_connection_error:
+        for pattern in disconnect_patterns:
+            if pattern in exc_msg:
+                exception_context.is_disconnect = True
+                logger.warning(
+                    "Connection error detected, marking as disconnect for pool invalidation: %s: %s",
+                    exc_class,
+                    pattern,
+                )
+                return
+
+    # Also treat ProtocolViolation from PgBouncer as disconnect even without message match
+    # PgBouncer sends 08P01 PROTOCOL_VIOLATION for various connection issues
+    if exc_class == "ProtocolViolation":
+        exception_context.is_disconnect = True
+        logger.warning(
+            "ProtocolViolation detected (likely PgBouncer), marking as disconnect: %s",
+            exc_msg[:200],
+        )
 
 
 def _refresh_gateway_slugs_batched(session: Session, batch_size: int) -> None:
@@ -4098,7 +4327,13 @@ def get_db() -> Generator[Session, Any, None]:
         yield db
         db.commit()
     except Exception:
-        db.rollback()
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
         raise
     finally:
         db.close()
@@ -4137,7 +4372,13 @@ def fresh_db_session() -> Generator[Session, Any, None]:
         yield db
         db.commit()  # Commit on successful exit (even for read-only operations)
     except Exception:
-        db.rollback()  # Explicit rollback on exception
+        try:
+            db.rollback()  # Explicit rollback on exception
+        except Exception:
+            try:
+                db.invalidate()  # Connection broken, discard from pool
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
         raise
     finally:
         db.close()
