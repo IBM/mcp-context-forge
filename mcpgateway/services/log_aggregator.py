@@ -139,6 +139,9 @@ class LogAggregator:
 
         Returns:
             List of created PerformanceMetric records
+
+        Raises:
+            Exception: If database operation fails
         """
         if not self.enabled:
             return []
@@ -197,6 +200,9 @@ class LogAggregator:
 
         Returns:
             List of PerformanceMetric records
+
+        Raises:
+            Exception: If database operation fails
         """
         should_close = False
         if db is None:
@@ -239,6 +245,9 @@ class LogAggregator:
 
         Returns:
             List of degradation alerts with details
+
+        Raises:
+            Exception: If database operation fails
         """
         should_close = False
         if db is None:
@@ -314,6 +323,9 @@ class LogAggregator:
 
         Returns:
             Count of performance metric windows processed
+
+        Raises:
+            Exception: If database operation fails
         """
         if not self.enabled or hours <= 0:
             return 0
