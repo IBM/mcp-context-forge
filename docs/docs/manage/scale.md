@@ -1495,6 +1495,47 @@ Nginx automatically bypasses cache for:
 - Server-Sent Events (`/servers/*/sse`)
 - JSON-RPC endpoint (`/`)
 
+**Rate Limiting** (tuned for 3000 concurrent users):
+
+```nginx
+# Zone: 10MB shared memory (~160,000 unique IPs)
+limit_req_zone $binary_remote_addr zone=api_limit:10m rate=3000r/s;
+limit_conn_zone $binary_remote_addr zone=conn_limit:10m;
+
+# Applied to API endpoints
+limit_req zone=api_limit burst=3000 nodelay;
+limit_conn conn_limit 3000;
+```
+
+| Parameter | Value | Effect |
+|-----------|-------|--------|
+| `rate=3000r/s` | 3000 tokens/sec | Sustained request rate |
+| `burst=3000` | Bucket size | Instant burst capacity |
+| `limit_conn 3000` | Per IP | Max concurrent connections |
+
+Tune for production by lowering limits (e.g., `rate=100r/s`, `burst=50`).
+
+**High-Concurrency Worker Tuning**:
+
+```nginx
+worker_processes auto;
+worker_rlimit_nofile 65535;
+worker_connections 8192;
+
+# Listen with performance optimizations
+listen 80 backlog=4096 reuseport;
+
+# Upstream keepalive pool
+upstream gateway_backend {
+    least_conn;
+    server gateway:4444 max_fails=0;
+    keepalive 512;
+    keepalive_requests 100000;
+}
+```
+
+**Access Logging**: Disabled by default (`access_log off`) for load testing performance. Enable for debugging only.
+
 **Monitoring**:
 
 ```bash
