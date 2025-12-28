@@ -150,6 +150,7 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
             # Always close database session
             if db:
                 try:
+                    db.commit()  # End transaction cleanly (security_logger handles its own commits)
                     db.close()
                 except Exception as close_error:
                     logger.debug(f"Failed to close database session: {close_error}")

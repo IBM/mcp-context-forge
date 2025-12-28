@@ -962,7 +962,7 @@ class A2AAgentService:
         # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls
         # This prevents connection pool exhaustion during slow upstream requests.
         # ═══════════════════════════════════════════════════════════════════════════
-        db.rollback()  # End the transaction so connection returns to "idle" not "idle in transaction"
+        db.commit()  # End read-only transaction cleanly (commit not rollback to avoid inflating rollback stats)
         db.close()
 
         start_time = datetime.now(timezone.utc)

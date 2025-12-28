@@ -639,6 +639,7 @@ async def setup_passthrough_headers():
     try:
         await set_global_passthrough_headers(db)
     finally:
+        db.commit()  # End transaction cleanly
         db.close()
 
 

@@ -2143,7 +2143,7 @@ class ToolService:
         # All needed data has been extracted to local variables above.
         # The session will be closed again by FastAPI's get_db() finally block (safe no-op).
         # ═══════════════════════════════════════════════════════════════════════════
-        db.rollback()  # End the transaction so connection returns to "idle" not "idle in transaction"
+        db.commit()  # End read-only transaction cleanly (commit not rollback to avoid inflating rollback stats)
         db.close()
 
         # Plugin hook: tool pre-invoke

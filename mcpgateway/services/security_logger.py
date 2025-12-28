@@ -356,6 +356,7 @@ class SecurityLogger:
 
         finally:
             if should_close:
+                db.commit()  # End read-only transaction cleanly
                 db.close()
 
     def _calculate_auth_threat_score(self, success: bool, failed_attempts: int, auth_method: str) -> float:  # pylint: disable=unused-argument

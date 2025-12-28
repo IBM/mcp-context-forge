@@ -115,11 +115,13 @@ class LogAggregator:
 
             logger.info(f"Aggregated performance metrics for {component}.{operation_type}: " f"{count} requests, {avg_duration:.2f}ms avg, {error_rate:.2%} error rate")
 
+            if should_close:
+                db.commit()  # Commit transaction on success
             return metric
 
         except Exception as e:
             logger.error(f"Failed to aggregate performance metrics: {e}")
-            if db:
+            if should_close and db:
                 db.rollback()
             return None
 
@@ -137,6 +139,9 @@ class LogAggregator:
 
         Returns:
             List of created PerformanceMetric records
+
+        Raises:
+            Exception: If database operation fails
         """
         if not self.enabled:
             return []
@@ -171,7 +176,14 @@ class LogAggregator:
                     if metric:
                         metrics.append(metric)
 
+            if should_close:
+                db.commit()  # Commit on success
             return metrics
+
+        except Exception:
+            if should_close:
+                db.rollback()
+            raise
 
         finally:
             if should_close:
@@ -188,6 +200,9 @@ class LogAggregator:
 
         Returns:
             List of PerformanceMetric records
+
+        Raises:
+            Exception: If database operation fails
         """
         should_close = False
         if db is None:
@@ -206,7 +221,15 @@ class LogAggregator:
 
             stmt = stmt.order_by(PerformanceMetric.window_start.desc())
 
-            return db.execute(stmt).scalars().all()
+            result = db.execute(stmt).scalars().all()
+            if should_close:
+                db.commit()  # Commit on success
+            return result
+
+        except Exception:
+            if should_close:
+                db.rollback()
+            raise
 
         finally:
             if should_close:
@@ -222,6 +245,9 @@ class LogAggregator:
 
         Returns:
             List of degradation alerts with details
+
+        Raises:
+            Exception: If database operation fails
         """
         should_close = False
         if db is None:
@@ -275,7 +301,14 @@ class LogAggregator:
                         }
                     )
 
+            if should_close:
+                db.commit()  # Commit on success
             return alerts
+
+        except Exception:
+            if should_close:
+                db.rollback()
+            raise
 
         finally:
             if should_close:
@@ -290,6 +323,9 @@ class LogAggregator:
 
         Returns:
             Count of performance metric windows processed
+
+        Raises:
+            Exception: If database operation fails
         """
         if not self.enabled or hours <= 0:
             return 0
@@ -319,7 +355,14 @@ class LogAggregator:
                     processed += 1
                 current_start = current_end
 
+            if should_close:
+                db.commit()  # Commit on success
             return processed
+
+        except Exception:
+            if should_close:
+                db.rollback()
+            raise
 
         finally:
             if should_close:

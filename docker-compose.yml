@@ -334,6 +334,18 @@ services:
       - "max_parallel_workers_per_gather=2"
       - "-c"
       - "max_parallel_workers=4"
+      # === HIGH-CONCURRENCY TUNING (3000 users) ===
+      # CRITICAL: idle_in_transaction_session_timeout prevents connection starvation
+      # Application code now properly closes transactions via get_db() commit-on-success pattern
+      # This timeout is a safety net for any edge cases
+      - "-c"
+      - "idle_in_transaction_session_timeout=30s"  # Kill stuck transactions after 30s
+      - "-c"
+      - "statement_timeout=60s"            # Kill runaway queries after 60s
+      - "-c"
+      - "synchronous_commit=off"           # Async WAL writes (2-10x faster commits)
+      - "-c"
+      - "commit_delay=100"                 # Batch commits within 100μs window
       # === PG_STAT_STATEMENTS - Query performance tracking ===
       # Uncomment to enable query statistics (slight overhead, ~2-5%)
       # After enabling, run in psql:
@@ -418,18 +430,23 @@ services:
       # Pool mode: transaction (recommended), session, or statement
       # transaction: connection returned after each transaction (best for web apps)
       - POOL_MODE=transaction
-      # Client-side connection limits
-      - MAX_CLIENT_CONN=3000           # Max connections from application
-      - DEFAULT_POOL_SIZE=120          # Connections per user/database pair
-      - MIN_POOL_SIZE=10               # Minimum connections to keep open
-      - RESERVE_POOL_SIZE=25           # Extra connections for burst traffic
-      - RESERVE_POOL_TIMEOUT=5         # Seconds before using reserve pool
+      # Client-side connection limits (from SQLAlchemy via gateway)
+      # Tuned for 4000 capacity (nginx caps at 3000 for protection)
+      - MAX_CLIENT_CONN=4000           # Max connections from application
+      - DEFAULT_POOL_SIZE=150          # Connections per user/database pair
+      - MIN_POOL_SIZE=20               # Minimum connections to keep open
+      - RESERVE_POOL_SIZE=50           # Extra connections for burst traffic
+      - RESERVE_POOL_TIMEOUT=3         # Seconds before using reserve pool (faster)
       # Server-side connection limits (to PostgreSQL)
-      - MAX_DB_CONNECTIONS=200         # Max connections to PostgreSQL per database
-      - MAX_USER_CONNECTIONS=200       # Max connections per user
+      - MAX_DB_CONNECTIONS=350         # Max connections to PostgreSQL per database
+      - MAX_USER_CONNECTIONS=350       # Max connections per user
       # Connection lifecycle
       - SERVER_LIFETIME=3600           # Max age of server connection (seconds)
       - SERVER_IDLE_TIMEOUT=600        # Close idle server connections after (seconds)
+      # Timeout settings for high-concurrency (4000 capacity, 3000 nginx cap)
+      - QUERY_WAIT_TIMEOUT=30          # Fail fast if no connection available in 30s
+      - CLIENT_IDLE_TIMEOUT=300        # Close idle client connections after 5 min
+      - SERVER_CONNECT_TIMEOUT=5       # Timeout for connecting to PostgreSQL
       # Authentication
       - AUTH_TYPE=scram-sha-256        # Match PostgreSQL auth method
     depends_on:
