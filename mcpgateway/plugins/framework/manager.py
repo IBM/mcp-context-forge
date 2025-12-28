@@ -485,7 +485,14 @@ class PluginManager:
         return plugin_ref.plugin if plugin_ref else None
 
     def has_hooks_for(self, hook_type: str) -> bool:
-        """Check if there are any hooks registered for a specific hook type."""
+        """Check if there are any hooks registered for a specific hook type.
+
+        Args:
+            hook_type: The type of hook to check for.
+
+        Returns:
+            True if there are hooks registered for the specified type, False otherwise.
+        """
         return self._registry.has_hooks_for(hook_type)
 
     async def initialize(self) -> None:

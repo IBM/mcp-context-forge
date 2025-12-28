@@ -175,7 +175,13 @@ class PluginInstanceRegistry:
         return list(self._plugins.values())
 
     def has_hooks_for(self, hook_type: str) -> bool:
-        """Check if there are any hooks registered for a specific hook type."""
+        """Check if there are any hooks registered for a specific hook type.
+
+        Args:
+            hook_type: The type of hook to check for.
+        Returns:
+            True if there are hooks registered for the specified type, False otherwise.
+        """
         return bool(self._hooks.get(hook_type))
 
     @property
