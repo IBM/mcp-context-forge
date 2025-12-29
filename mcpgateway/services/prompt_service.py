@@ -336,6 +336,7 @@ class PromptService:
         if not team_id:
             return None
         team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
+        db.commit()  # Release transaction to avoid idle-in-transaction
         return team.name if team else None
 
     async def register_prompt(
@@ -902,6 +903,8 @@ class PromptService:
             teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids), EmailTeam.is_active.is_(True))).all()
             team_map = {str(team.id): team.name for team in teams}
 
+        db.commit()  # Release transaction to avoid idle-in-transaction
+
         # Convert to PromptRead objects (skip metrics to avoid N+1 queries)
         result = []
         for t in prompts:
@@ -999,6 +1002,8 @@ class PromptService:
             teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(prompt_team_ids), EmailTeam.is_active.is_(True))).all()
             team_map = {str(team.id): team.name for team in teams}
 
+        db.commit()  # Release transaction to avoid idle-in-transaction
+
         result = []
         for t in prompts:
             t.team = team_map.get(str(t.team_id)) if t.team_id else None
@@ -1053,6 +1058,8 @@ class PromptService:
         if prompt_team_ids:
             teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(prompt_team_ids), EmailTeam.is_active.is_(True))).all()
             team_map = {str(team.id): team.name for team in teams}
+
+        db.commit()  # Release transaction to avoid idle-in-transaction
 
         result = []
         for t in prompts:

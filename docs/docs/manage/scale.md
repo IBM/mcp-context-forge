@@ -1306,6 +1306,8 @@ AUTH_CACHE_USER_TTL=60        # User lookup cache (seconds)
 AUTH_CACHE_REVOCATION_TTL=30  # Token revocation check cache
 AUTH_CACHE_TEAM_TTL=60        # Team membership cache
 AUTH_CACHE_ROLE_TTL=60        # Role assignment cache
+AUTH_CACHE_TEAMS_ENABLED=true # User teams list cache (get_user_teams, called 20+ times per request)
+AUTH_CACHE_TEAMS_TTL=60       # Teams list cache TTL
 AUTH_CACHE_BATCH_QUERIES=true # Batch related queries together
 ```
 
@@ -1313,6 +1315,7 @@ AUTH_CACHE_BATCH_QUERIES=true # Batch related queries together
 - Auth database queries: 3-4 per request → 0-1 per request
 - Auth latency: 8-15ms → 1-3ms
 - Database load: 75% reduction for auth operations
+- "Idle in transaction" connections: 50-70% reduction under high load (3000+ users)
 
 #### GlobalConfig Cache
 

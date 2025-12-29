@@ -1282,6 +1282,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             teams = db.query(EmailTeam).filter(EmailTeam.id.in_(team_ids), EmailTeam.is_active.is_(True)).all()
             team_names = {team.id: team.name for team in teams}
 
+        db.commit()  # Release transaction to avoid idle-in-transaction
+
         result = []
         for g in gateways:
             g.team = team_names.get(g.team_id) if g.team_id else None
@@ -1370,6 +1372,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         if gateway_team_ids:
             teams = db.query(EmailTeam).filter(EmailTeam.id.in_(gateway_team_ids), EmailTeam.is_active.is_(True)).all()
             team_names = {team.id: team.name for team in teams}
+
+        db.commit()  # Release transaction to avoid idle-in-transaction
 
         result = []
         for g in gateways:

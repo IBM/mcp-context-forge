@@ -391,6 +391,7 @@ class ServerService:
         if not team_id:
             return None
         team = db.query(DbEmailTeam).filter(DbEmailTeam.id == team_id, DbEmailTeam.is_active.is_(True)).first()
+        db.commit()  # Release transaction to avoid idle-in-transaction
         return team.name if team else None
 
     async def register_server(
@@ -733,6 +734,8 @@ class ServerService:
             teams = db.execute(select(DbEmailTeam.id, DbEmailTeam.name).where(DbEmailTeam.id.in_(team_ids), DbEmailTeam.is_active.is_(True))).all()
             team_map = {team.id: team.name for team in teams}
 
+        db.commit()  # Release transaction to avoid idle-in-transaction
+
         # Skip metrics to avoid N+1 queries in list operations
         result = []
         for s in servers:
@@ -820,6 +823,8 @@ class ServerService:
         if server_team_ids:
             teams = db.execute(select(DbEmailTeam.id, DbEmailTeam.name).where(DbEmailTeam.id.in_(server_team_ids), DbEmailTeam.is_active.is_(True))).all()
             team_map = {team.id: team.name for team in teams}
+
+        db.commit()  # Release transaction to avoid idle-in-transaction
 
         # Skip metrics to avoid N+1 queries in list operations
         result = []

@@ -346,6 +346,7 @@ class ResourceService:
         if not team_id:
             return None
         team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
+        db.commit()  # Release transaction to avoid idle-in-transaction
         return team.name if team else None
 
     async def register_resource(
@@ -909,6 +910,8 @@ class ResourceService:
             teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids), EmailTeam.is_active.is_(True))).all()
             team_map = {str(team.id): team.name for team in teams}
 
+        db.commit()  # Release transaction to avoid idle-in-transaction
+
         # Convert to ResourceRead objects (skip metrics to avoid N+1 queries)
         result = []
         for t in resources:
@@ -1037,6 +1040,8 @@ class ResourceService:
             teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(resource_team_ids), EmailTeam.is_active.is_(True))).all()
             team_map = {str(team.id): team.name for team in teams}
 
+        db.commit()  # Release transaction to avoid idle-in-transaction
+
         result = []
         for t in resources:
             t.team = team_map.get(str(t.team_id)) if t.team_id else None
@@ -1096,6 +1101,8 @@ class ResourceService:
         if resource_team_ids:
             teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(resource_team_ids), EmailTeam.is_active.is_(True))).all()
             team_map = {str(team.id): team.name for team in teams}
+
+        db.commit()  # Release transaction to avoid idle-in-transaction
 
         result = []
         for t in resources:

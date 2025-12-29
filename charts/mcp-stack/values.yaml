@@ -186,6 +186,8 @@ mcpContextForge:
     AUTH_CACHE_REVOCATION_TTL: "30"  # Token revocation cache TTL (seconds, security-critical)
     AUTH_CACHE_TEAM_TTL: "60"        # Team membership cache TTL (seconds)
     AUTH_CACHE_ROLE_TTL: "60"        # User role in team cache TTL (seconds)
+    AUTH_CACHE_TEAMS_ENABLED: "true" # Enable user teams list caching (reduces get_user_teams queries)
+    AUTH_CACHE_TEAMS_TTL: "60"       # User teams list cache TTL (seconds)
     AUTH_CACHE_BATCH_QUERIES: "true" # Batch auth DB queries into single call
 
     # ─ Registry Cache (reduces DB queries for list endpoints) ─

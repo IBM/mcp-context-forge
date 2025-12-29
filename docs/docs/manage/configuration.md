@@ -436,13 +436,14 @@ When `AUTH_CACHE_ENABLED=true` (default), authentication data is cached to reduc
 - **User data**: Cached for `AUTH_CACHE_USER_TTL` seconds (default: 60)
 - **Team memberships**: Cached for `AUTH_CACHE_TEAM_TTL` seconds (default: 60)
 - **User roles in teams**: Cached for `AUTH_CACHE_ROLE_TTL` seconds (default: 60)
+- **User teams list**: Cached for `AUTH_CACHE_TEAMS_TTL` seconds (default: 60) when `AUTH_CACHE_TEAMS_ENABLED=true`
 - **Token revocations**: Cached for `AUTH_CACHE_REVOCATION_TTL` seconds (default: 30)
 
 The cache uses Redis when available (`CACHE_TYPE=redis`) and falls back to in-memory caching.
 
 When `AUTH_CACHE_BATCH_QUERIES=true` (default), the 3 separate authentication database queries are batched into a single query, reducing thread pool contention and connection overhead.
 
-**Performance Note**: The role cache (`AUTH_CACHE_ROLE_TTL`) caches `get_user_role_in_team()` which is called 11+ times per team operation, saving 100+ queries per user session.
+**Performance Note**: The role cache (`AUTH_CACHE_ROLE_TTL`) caches `get_user_role_in_team()` which is called 11+ times per team operation. The teams list cache (`AUTH_CACHE_TEAMS_TTL`) caches `get_user_teams()` which is called 20+ times per request for authorization checks. Together, these can reduce "idle in transaction" connections by 50-70% under high load.
 
 **Security Note**: Keep `AUTH_CACHE_REVOCATION_TTL` short (30s default) to limit the window where revoked tokens may still work.
 
