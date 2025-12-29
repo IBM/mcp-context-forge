@@ -408,7 +408,7 @@
             "CACHE_TYPE": {
               "type": "string",
               "description": "Cache backend type",
-              "enum": ["redis", "memory", "database"],
+              "enum": ["redis", "memory", "none", "database"],
               "default": "redis"
             },
             "CACHE_PREFIX": {
