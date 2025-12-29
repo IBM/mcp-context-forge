@@ -306,11 +306,13 @@ def get_top_entities_combined(
     )
 
     # Subquery for rollup metrics aggregated by entity (includes preserved name for deleted entities)
+    # Group by BOTH entity_id AND preserved_name to keep deleted entities separate
+    # (when entity is deleted, entity_id becomes NULL, but preserved_name keeps them distinct)
     # Use weighted average: sum(avg * count) / sum(count)
     rollup_subq = (
         select(
             getattr(hourly_model, id_col).label("entity_id"),
-            func.max(getattr(hourly_model, preserved_name_col)).label("preserved_name"),
+            getattr(hourly_model, preserved_name_col).label("preserved_name"),
             func.sum(hourly_model.total_count).label("total"),
             func.sum(hourly_model.success_count).label("successful"),
             func.sum(hourly_model.failure_count).label("failed"),
@@ -319,7 +321,7 @@ def get_top_entities_combined(
             func.max(hourly_model.hour_start).label("last_time"),
         )
         .where(hourly_model.hour_start < cutoff)
-        .group_by(getattr(hourly_model, id_col))
+        .group_by(getattr(hourly_model, id_col), getattr(hourly_model, preserved_name_col))
         .subquery()
     )
 
@@ -351,7 +353,8 @@ def get_top_entities_combined(
     )
 
     # Query 2: Deleted entities (exist in rollup but not in entity table)
-    # Uses preserved name from rollup, no raw data (deleted entities have no recent activity)
+    # Handle NULL properly: entity_id IS NULL (deleted via SET NULL) OR entity_id not in existing entities
+    # Note: NOT IN with NULL never returns true, so we need explicit IS NULL check
     existing_ids_subq = select(entity_model.id).subquery()
     deleted_entities_query = (
         select(
@@ -364,7 +367,10 @@ def get_top_entities_combined(
             rollup_subq.c.last_time.label("last_execution"),
             literal(True).label("is_deleted"),
         )
-        .where(rollup_subq.c.entity_id.notin_(existing_ids_subq))
+        .where(
+            # Include entities with NULL id (deleted via SET NULL) OR entities not in entity table
+            (rollup_subq.c.entity_id.is_(None)) | (rollup_subq.c.entity_id.notin_(existing_ids_subq))
+        )
     )
 
     # Combine existing and deleted entities

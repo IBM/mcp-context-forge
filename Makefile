@@ -2481,12 +2481,8 @@ containerfile-update:
 .PHONY: dist wheel sdist verify publish publish-testpypi
 
 dist: clean                  ## Build wheel + sdist into ./dist (optionally includes Rust plugins)
-	@test -d "$(VENV_DIR)" || $(MAKE) --no-print-directory venv
 	@echo "📦 Building Python package..."
-	@/bin/bash -eu -c "\
-	    source $(VENV_DIR)/bin/activate && \
-	    uv pip install -q build && \
-	    uv run --active python -m build"
+	@uv build
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust plugins..."; \
 		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
@@ -2501,12 +2497,8 @@ dist: clean                  ## Build wheel + sdist into ./dist (optionally incl
 	@echo '   make rust-publish    # Publish Rust wheels (if configured)'
 
 wheel:                       ## Build wheel only (Python + optionally Rust)
-	@test -d "$(VENV_DIR)" || $(MAKE) --no-print-directory venv
 	@echo "📦 Building Python wheel..."
-	@/bin/bash -eu -c "\
-	    source $(VENV_DIR)/bin/activate && \
-	    uv pip install -q build && \
-	    uv run --active python -m build -w"
+	@uv build --wheel
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust wheels..."; \
 		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
@@ -2517,27 +2509,22 @@ wheel:                       ## Build wheel only (Python + optionally Rust)
 	@echo '🛠  Python wheel written to ./dist'
 
 sdist:                       ## Build source distribution only
-	@test -d "$(VENV_DIR)" || $(MAKE) --no-print-directory venv
-	@/bin/bash -eu -c "\
-	    source $(VENV_DIR)/bin/activate && \
-	    uv pip install -q build && \
-	    uv run --active python -m build -s"
+	@echo "📦 Building source distribution..."
+	@uv build --sdist
 	@echo '🛠  Source distribution written to ./dist'
 
 verify: dist               ## Build, run metadata & manifest checks
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-	uv pip install -q twine check-manifest pyroma && \
-	uv run --active twine check dist/* && \
-	uv run --active check-manifest && \
-	uv run --active pyroma -d ."
+	@uvx twine check dist/*
+	@uvx check-manifest
+	@uvx pyroma -d .
 	@echo "✅  Package verified - ready to publish."
 
 publish: verify            ## Verify, then upload to PyPI
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv run --active twine upload dist/*"
+	@uvx twine upload dist/*
 	@echo "🚀  Upload finished - check https://pypi.org/project/$(PROJECT_NAME)/"
 
 publish-testpypi: verify   ## Verify, then upload to TestPyPI
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv run --active twine upload --repository testpypi dist/*"
+	@uvx twine upload --repository testpypi dist/*
 	@echo "🚀  Upload finished - check https://test.pypi.org/project/$(PROJECT_NAME)/"
 
 # Allow override via environment
