@@ -964,7 +964,12 @@
               "type": "string",
               "description": "Full PostgreSQL connection string (e.g., postgresql://user:pass@host:5432/db)",
               "default": ""
-            }
+            },
+            "secretName": {
+              "type": "string",
+              "description": "k8s secret name containing the full PostgreSQL connection string )",
+              "default": ""
+            }              
           },
           "additionalProperties": false
         },
