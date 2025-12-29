@@ -36,13 +36,15 @@ from mcpgateway.plugins.framework import (
     ToolPreInvokePayload,
 )
 from mcpgateway.plugins.framework.constants import TOOL_METADATA
+from plugins.sparc_static_validator.sparc_static_validator import (
+    SPARCStaticValidatorPlugin,
+)
 
 # Check if ALTK is available
 have_altk = True
 try:
     import altk
     from plugins.sparc_static_validator.sparc_static_validator import (
-        SPARCStaticValidatorPlugin,
         ALTK_AVAILABLE,
     )
 except ModuleNotFoundError:
