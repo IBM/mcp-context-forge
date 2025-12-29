@@ -223,7 +223,8 @@ class MetricsCleanupService:
 
         # Use provided retention_days if set (including 0), otherwise use default
         retention = retention_days if retention_days is not None else self.retention_days
-        cutoff = datetime.now(timezone.utc) - timedelta(days=retention)
+        # Hour-align cutoff to match query service's get_retention_cutoff() and prevent gaps
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=retention)).replace(minute=0, second=0, microsecond=0)
 
         results: Dict[str, CleanupResult] = {}
         total_deleted = 0
@@ -372,7 +373,8 @@ class MetricsCleanupService:
         table_name, model_class = table_map[table_type]
         # Use provided retention_days if set (including 0), otherwise use default
         retention = retention_days if retention_days is not None else self.retention_days
-        cutoff = datetime.now(timezone.utc) - timedelta(days=retention)
+        # Hour-align cutoff to match query service's get_retention_cutoff() and prevent gaps
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=retention)).replace(minute=0, second=0, microsecond=0)
 
         return await asyncio.to_thread(
             self._cleanup_table,

@@ -15,7 +15,7 @@ import logging
 from typing import Any, Dict, List, Optional, Type
 
 # Third-Party
-from sqlalchemy import and_, case, func, select
+from sqlalchemy import and_, case, func, literal, select, union_all
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -70,30 +70,63 @@ class AggregatedMetrics:
         }
 
 
+@dataclass
+class TopPerformerResult:
+    """Result object for top performer queries, compatible with build_top_performers."""
+
+    id: str
+    name: str
+    execution_count: int
+    avg_response_time: Optional[float]
+    success_rate: Optional[float]
+    last_execution: Optional[datetime]
+
+
 # Mapping of metric types to their raw and hourly models
+# Format: (RawModel, HourlyModel, entity_id_column, preserved_name_column)
 METRIC_MODELS = {
-    "tool": (ToolMetric, ToolMetricsHourly, "tool_id"),
-    "resource": (ResourceMetric, ResourceMetricsHourly, "resource_id"),
-    "prompt": (PromptMetric, PromptMetricsHourly, "prompt_id"),
-    "server": (ServerMetric, ServerMetricsHourly, "server_id"),
-    "a2a_agent": (A2AAgentMetric, A2AAgentMetricsHourly, "a2a_agent_id"),
+    "tool": (ToolMetric, ToolMetricsHourly, "tool_id", "tool_name"),
+    "resource": (ResourceMetric, ResourceMetricsHourly, "resource_id", "resource_name"),
+    "prompt": (PromptMetric, PromptMetricsHourly, "prompt_id", "prompt_name"),
+    "server": (ServerMetric, ServerMetricsHourly, "server_id", "server_name"),
+    "a2a_agent": (A2AAgentMetric, A2AAgentMetricsHourly, "a2a_agent_id", "agent_name"),
 }
 
 
 def get_retention_cutoff() -> datetime:
-    """Get the cutoff datetime for raw metrics retention.
+    """Get the cutoff datetime for raw metrics retention, aligned to hour boundary.
+
+    This considers both the configured retention period AND the delete_raw_after_rollup
+    setting to ensure we query rollups for any period where raw data may have been deleted.
+
+    The cutoff is aligned to the start of the hour to prevent double-counting:
+    - Raw data uses: timestamp >= cutoff (data from cutoff hour onward)
+    - Rollups use: hour_start < cutoff (rollups before cutoff hour)
 
     Returns:
-        datetime: The cutoff point - data older than this should come from rollups.
+        datetime: The cutoff point (hour-aligned) - data older than this comes from rollups.
     """
     retention_days = getattr(settings, "metrics_retention_days", 30)
-    return datetime.now(timezone.utc) - timedelta(days=retention_days)
+
+    # If raw data is deleted after rollup, use the earlier of the two cutoffs
+    # to ensure we don't miss data in the gap
+    delete_raw_enabled = getattr(settings, "metrics_delete_raw_after_rollup", False)
+    if delete_raw_enabled:
+        delete_raw_days = getattr(settings, "metrics_delete_raw_after_rollup_days", 7)
+        # Use the smaller value to ensure rollups cover any deleted raw data
+        retention_days = min(retention_days, delete_raw_days)
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+
+    # Align to hour boundary (round down) to prevent double-counting at the boundary
+    # Raw query uses >= cutoff, rollup query uses < cutoff, so no overlap
+    return cutoff.replace(minute=0, second=0, microsecond=0)
 
 
 def aggregate_metrics_combined(
     db: Session,
     metric_type: str,
-    entity_id: Optional[int] = None,
+    entity_id: Optional[str] = None,
 ) -> AggregatedMetrics:
     """Aggregate metrics combining raw recent data with historical rollups.
 
@@ -115,7 +148,7 @@ def aggregate_metrics_combined(
     if metric_type not in METRIC_MODELS:
         raise ValueError(f"Unknown metric type: {metric_type}")
 
-    raw_model, hourly_model, id_col = METRIC_MODELS[metric_type]
+    raw_model, hourly_model, id_col, _ = METRIC_MODELS[metric_type]
     cutoff = get_retention_cutoff()
 
     # Query 1: Recent raw metrics (within retention period)
@@ -149,6 +182,8 @@ def aggregate_metrics_combined(
     if entity_id is not None:
         rollup_filters.append(getattr(hourly_model, id_col) == entity_id)
 
+    # Compute weighted average: sum(avg * count) / sum(count)
+    # This ensures each hour's average is weighted by how many executions occurred
     rollup_result = db.execute(
         select(
             func.sum(hourly_model.total_count).label("total"),
@@ -156,9 +191,8 @@ def aggregate_metrics_combined(
             func.sum(hourly_model.failure_count).label("failed"),
             func.min(hourly_model.min_response_time).label("min_rt"),
             func.max(hourly_model.max_response_time).label("max_rt"),
-            # For avg, we need weighted average: sum(avg * count) / sum(count)
-            # Simplified: just use the overall average from rollups
-            func.avg(hourly_model.avg_response_time).label("avg_rt"),
+            # Weighted average: sum(avg * count) / sum(count)
+            (func.sum(hourly_model.avg_response_time * hourly_model.total_count) / func.nullif(func.sum(hourly_model.total_count), 0)).label("avg_rt"),
             func.max(hourly_model.hour_start).label("last_time"),
         ).where(and_(*rollup_filters))
     ).one()
@@ -228,6 +262,7 @@ def get_top_entities_combined(
     entity_model: Type,
     limit: int = 10,
     order_by: str = "execution_count",
+    name_column: str = "name",
 ) -> List[Dict[str, Any]]:
     """Get top entities by metric counts, combining raw and rollup data.
 
@@ -237,6 +272,7 @@ def get_top_entities_combined(
         entity_model: SQLAlchemy model for the entity (Tool, Resource, etc.)
         limit: Maximum number of results
         order_by: Field to order by ('execution_count', 'avg_response_time', 'failure_rate')
+        name_column: Name of the column to use as entity name (default: 'name')
 
     Returns:
         List of entity metrics dictionaries
@@ -247,11 +283,11 @@ def get_top_entities_combined(
     if metric_type not in METRIC_MODELS:
         raise ValueError(f"Unknown metric type: {metric_type}")
 
-    raw_model, hourly_model, id_col = METRIC_MODELS[metric_type]
+    raw_model, hourly_model, id_col, preserved_name_col = METRIC_MODELS[metric_type]
     cutoff = get_retention_cutoff()
 
     # Get all entity IDs with their combined metrics
-    # This is a more complex query that unions raw + rollup data
+    # This query includes both existing entities and deleted entities (via rollup name preservation)
 
     # Subquery for raw metrics aggregated by entity
     # pylint: disable=not-callable
@@ -269,14 +305,17 @@ def get_top_entities_combined(
         .subquery()
     )
 
-    # Subquery for rollup metrics aggregated by entity
+    # Subquery for rollup metrics aggregated by entity (includes preserved name for deleted entities)
+    # Use weighted average: sum(avg * count) / sum(count)
     rollup_subq = (
         select(
             getattr(hourly_model, id_col).label("entity_id"),
+            func.max(getattr(hourly_model, preserved_name_col)).label("preserved_name"),
             func.sum(hourly_model.total_count).label("total"),
             func.sum(hourly_model.success_count).label("successful"),
             func.sum(hourly_model.failure_count).label("failed"),
-            func.avg(hourly_model.avg_response_time).label("avg_rt"),
+            # Weighted average for rollups
+            (func.sum(hourly_model.avg_response_time * hourly_model.total_count) / func.nullif(func.sum(hourly_model.total_count), 0)).label("avg_rt"),
             func.max(hourly_model.hour_start).label("last_time"),
         )
         .where(hourly_model.hour_start < cutoff)
@@ -284,55 +323,130 @@ def get_top_entities_combined(
         .subquery()
     )
 
-    # Join entity with both subqueries and combine
-    # Using COALESCE to handle cases where only one source has data
-    query = (
+    # Get the name column from entity model
+    entity_name_col = getattr(entity_model, name_column)
+
+    # Query 1: Existing entities with combined metrics
+    # Uses entity table name, falls back to rollup preserved name if entity has no name (shouldn't happen)
+    existing_entities_query = (
         select(
-            entity_model.id,
-            entity_model.name,
+            entity_model.id.label("id"),
+            func.coalesce(entity_name_col, rollup_subq.c.preserved_name).label("name"),
             (func.coalesce(raw_subq.c.total, 0) + func.coalesce(rollup_subq.c.total, 0)).label("execution_count"),
             (func.coalesce(raw_subq.c.successful, 0) + func.coalesce(rollup_subq.c.successful, 0)).label("successful"),
             (func.coalesce(raw_subq.c.failed, 0) + func.coalesce(rollup_subq.c.failed, 0)).label("failed"),
-            func.coalesce(raw_subq.c.avg_rt, rollup_subq.c.avg_rt).label("avg_response_time"),
+            (
+                (func.coalesce(raw_subq.c.avg_rt * func.coalesce(raw_subq.c.total, 0), 0) + func.coalesce(rollup_subq.c.avg_rt * func.coalesce(rollup_subq.c.total, 0), 0))
+                / func.nullif(func.coalesce(raw_subq.c.total, 0) + func.coalesce(rollup_subq.c.total, 0), 0)
+            ).label("avg_response_time"),
             func.coalesce(raw_subq.c.last_time, rollup_subq.c.last_time).label("last_execution"),
+            literal(False).label("is_deleted"),
         )
         .outerjoin(raw_subq, entity_model.id == raw_subq.c.entity_id)
         .outerjoin(rollup_subq, entity_model.id == rollup_subq.c.entity_id)
         .where(
             # Only include entities that have metrics in either source
-            (raw_subq.c.total.isnot(None))
-            | (rollup_subq.c.total.isnot(None))
+            (raw_subq.c.total.isnot(None)) | (rollup_subq.c.total.isnot(None))
         )
     )
 
-    # Order by the specified field
+    # Query 2: Deleted entities (exist in rollup but not in entity table)
+    # Uses preserved name from rollup, no raw data (deleted entities have no recent activity)
+    existing_ids_subq = select(entity_model.id).subquery()
+    deleted_entities_query = (
+        select(
+            rollup_subq.c.entity_id.label("id"),
+            rollup_subq.c.preserved_name.label("name"),
+            rollup_subq.c.total.label("execution_count"),
+            rollup_subq.c.successful.label("successful"),
+            rollup_subq.c.failed.label("failed"),
+            rollup_subq.c.avg_rt.label("avg_response_time"),
+            rollup_subq.c.last_time.label("last_execution"),
+            literal(True).label("is_deleted"),
+        )
+        .where(rollup_subq.c.entity_id.notin_(existing_ids_subq))
+    )
+
+    # Combine existing and deleted entities
+    combined_query = union_all(existing_entities_query, deleted_entities_query).subquery()
+
+    # Apply ordering and limit to the combined results
     if order_by == "avg_response_time":
-        query = query.order_by(func.coalesce(raw_subq.c.avg_rt, rollup_subq.c.avg_rt).desc())
+        final_query = select(combined_query).order_by(combined_query.c.avg_response_time.desc().nullslast())
     elif order_by == "failure_rate":
         # Order by failure rate (failed / total)
-        total_expr = func.coalesce(raw_subq.c.total, 0) + func.coalesce(rollup_subq.c.total, 0)
-        failed_expr = func.coalesce(raw_subq.c.failed, 0) + func.coalesce(rollup_subq.c.failed, 0)
-        query = query.order_by((failed_expr * 1.0 / func.nullif(total_expr, 0)).desc().nullslast())
+        final_query = select(combined_query).order_by(
+            (combined_query.c.failed * 1.0 / func.nullif(combined_query.c.execution_count, 0)).desc().nullslast()
+        )
     else:  # default: execution_count
-        query = query.order_by((func.coalesce(raw_subq.c.total, 0) + func.coalesce(rollup_subq.c.total, 0)).desc())
+        final_query = select(combined_query).order_by(combined_query.c.execution_count.desc())
 
-    query = query.limit(limit)
+    final_query = final_query.limit(limit)
 
     results = []
-    for row in db.execute(query).fetchall():
+    for row in db.execute(final_query).fetchall():
         total = row.execution_count or 0
+        successful = row.successful or 0
         failed = row.failed or 0
-        results.append(
-            {
-                "id": row.id,
-                "name": row.name,
-                "execution_count": total,
-                "successful_executions": row.successful or 0,
-                "failed_executions": failed,
-                "failure_rate": failed / total if total > 0 else 0.0,
-                "avg_response_time": row.avg_response_time,
-                "last_execution": row.last_execution,
-            }
-        )
+        success_rate = (successful / total * 100) if total > 0 else None
+        result_dict = {
+            "id": row.id,
+            "name": row.name,
+            "execution_count": total,
+            "successful_executions": successful,
+            "failed_executions": failed,
+            "failure_rate": failed / total if total > 0 else 0.0,
+            "success_rate": success_rate,
+            "avg_response_time": row.avg_response_time,
+            "last_execution": row.last_execution,
+        }
+        # Mark deleted entities so UI can optionally style them differently
+        if row.is_deleted:
+            result_dict["is_deleted"] = True
+        results.append(result_dict)
 
     return results
+
+
+def get_top_performers_combined(
+    db: Session,
+    metric_type: str,
+    entity_model: Type,
+    limit: int = 10,
+    name_column: str = "name",
+) -> List[TopPerformerResult]:
+    """Get top performers combining raw and rollup data.
+
+    This function wraps get_top_entities_combined and returns TopPerformerResult
+    objects that are compatible with build_top_performers().
+
+    Args:
+        db: Database session
+        metric_type: Type of metric ('tool', 'resource', 'prompt', 'server', 'a2a_agent')
+        entity_model: SQLAlchemy model for the entity (Tool, Resource, etc.)
+        limit: Maximum number of results
+        name_column: Name of the column to use as entity name (default: 'name')
+
+    Returns:
+        List[TopPerformerResult]: List of top performer results
+    """
+    raw_results = get_top_entities_combined(
+        db=db,
+        metric_type=metric_type,
+        entity_model=entity_model,
+        limit=limit,
+        order_by="execution_count",
+        name_column=name_column,
+    )
+
+    return [
+        TopPerformerResult(
+            id=r["id"],
+            name=r["name"],
+            execution_count=r["execution_count"],
+            avg_response_time=r["avg_response_time"],
+            success_rate=r["success_rate"],
+            last_execution=r["last_execution"],
+        )
+        for r in raw_results
+    ]

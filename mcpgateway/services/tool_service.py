@@ -33,7 +33,7 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 import orjson
-from sqlalchemy import and_, case, delete, desc, Float, func, not_, or_, select
+from sqlalchemy import and_, delete, not_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload, selectinload, Session
 
@@ -65,6 +65,7 @@ from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.metrics_query_service import get_top_performers_combined
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
@@ -347,26 +348,13 @@ class ToolService:
             if cached is not None:
                 return cached
 
-        success_rate = case(
-            (func.count(ToolMetric.id) > 0, func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)).cast(Float) * 100 / func.count(ToolMetric.id)), else_=None  # pylint: disable=not-callable
+        # Use combined query that includes both raw metrics and rollup data
+        results = get_top_performers_combined(
+            db=db,
+            metric_type="tool",
+            entity_model=DbTool,
+            limit=effective_limit,
         )
-
-        query = (
-            select(
-                DbTool.id,
-                DbTool.name,
-                func.count(ToolMetric.id).label("execution_count"),  # pylint: disable=not-callable
-                func.avg(ToolMetric.response_time).label("avg_response_time"),
-                success_rate.label("success_rate"),
-                func.max(ToolMetric.timestamp).label("last_execution"),
-            )
-            .outerjoin(ToolMetric, ToolMetric.tool_id == DbTool.id)
-            .group_by(DbTool.id, DbTool.name)
-            .order_by(desc("execution_count"))
-            .limit(effective_limit)
-        )
-
-        results = db.execute(query).all()
         top_performers = build_top_performers(results)
 
         # Cache the result (if enabled)

@@ -223,11 +223,18 @@ class MetricsRollupService:
                         # Normal timeout, proceed to rollup
                         pass
 
-                # Detect backfill gap and determine hours_back
-                hours_back = await asyncio.to_thread(self._detect_backfill_hours)
-                if first_run and hours_back > 24:
-                    logger.info(f"Backfill detected: rolling up {hours_back} hours of unprocessed metrics")
-                first_run = False
+                # Determine hours_back based on whether this is first run or normal run
+                if first_run:
+                    # On first run, detect backfill gap (may scan entire retention period)
+                    hours_back = await asyncio.to_thread(self._detect_backfill_hours)
+                    if hours_back > 24:
+                        logger.info(f"Backfill detected: rolling up {hours_back} hours of unprocessed metrics")
+                    first_run = False
+                else:
+                    # Normal runs: only process recent hours to catch late-arriving data
+                    # Configurable via METRICS_ROLLUP_LATE_DATA_HOURS (default: 4 hours)
+                    # This avoids walking through entire retention period every interval
+                    hours_back = getattr(settings, "metrics_rollup_late_data_hours", 4)
 
                 # Run rollup for the calculated time range
                 summary = await self.rollup_all(hours_back=hours_back)
@@ -362,9 +369,13 @@ class MetricsRollupService:
         entity_name_col: str,
         start_hour: datetime,
         end_hour: datetime,
-        force_reprocess: bool,
+        force_reprocess: bool,  # pylint: disable=unused-argument
     ) -> RollupResult:
         """Roll up metrics for a single table.
+
+        Note: As of the late-data fix, rollup always re-aggregates when raw data exists,
+        regardless of whether a rollup already exists. This ensures late-arriving metrics
+        are properly included. The force_reprocess parameter is kept for API compatibility.
 
         Args:
             table_name: Name of the table being processed
@@ -375,7 +386,7 @@ class MetricsRollupService:
             entity_name_col: Name of the entity name column in entity model
             start_hour: Start of time range
             end_hour: End of time range (exclusive)
-            force_reprocess: Reprocess even if rollup already exists
+            force_reprocess: Kept for API compatibility (behavior now always re-processes)
 
         Returns:
             RollupResult: Result of the rollup operation
@@ -414,13 +425,10 @@ class MetricsRollupService:
                     )
 
                     if raw_count > 0:
-                        # Check if rollup already exists for this hour (skip if not force_reprocess)
-                        if not force_reprocess:
-                            existing_rollup_count = db.execute(select(func.count()).select_from(hourly_model).where(hourly_model.hour_start == current)).scalar() or 0  # pylint: disable=not-callable
-                            if existing_rollup_count > 0:
-                                # Skip this hour, rollup already exists
-                                current = hour_end
-                                continue
+                        # Always re-aggregate when there's raw data, even if rollup exists.
+                        # This ensures late-arriving metrics (buffer flush, ingestion lag) are included.
+                        # The _aggregate_hour queries ALL raw data for the hour, and _upsert_rollup
+                        # handles updating existing rollups correctly.
 
                         # Aggregate metrics for this hour
                         aggregations = self._aggregate_hour(

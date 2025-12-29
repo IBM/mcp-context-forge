@@ -18,7 +18,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 # Third-Party
 import httpx
-from sqlalchemy import and_, case, delete, desc, Float, func, or_, select
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -170,7 +170,8 @@ class ServerService:
         """Retrieve the top-performing servers based on execution count.
 
         Queries the database to get servers with their metrics, ordered by the number of executions
-        in descending order. Returns a list of TopPerformer objects containing server details and
+        in descending order. Combines recent raw metrics with historical hourly rollups for complete
+        historical coverage. Returns a list of TopPerformer objects containing server details and
         performance metrics. Results are cached for performance.
 
         Args:
@@ -198,29 +199,16 @@ class ServerService:
             if cached is not None:
                 return cached
 
-        query = (
-            db.query(
-                DbServer.id,
-                DbServer.name,
-                func.count(ServerMetric.id).label("execution_count"),  # pylint: disable=not-callable
-                func.avg(ServerMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
-                case(
-                    (
-                        func.count(ServerMetric.id) > 0,  # pylint: disable=not-callable
-                        func.sum(case((ServerMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(ServerMetric.id) * 100,  # pylint: disable=not-callable
-                    ),
-                    else_=None,
-                ).label("success_rate"),
-                func.max(ServerMetric.timestamp).label("last_execution"),  # pylint: disable=not-callable
-            )
-            .outerjoin(ServerMetric)
-            .group_by(DbServer.id, DbServer.name)
-            .order_by(desc("execution_count"))
+        # Use combined query that includes both raw metrics and rollup data
+        # First-Party
+        from mcpgateway.services.metrics_query_service import get_top_performers_combined  # pylint: disable=import-outside-toplevel
+
+        results = get_top_performers_combined(
+            db=db,
+            metric_type="server",
+            entity_model=DbServer,
+            limit=effective_limit,
         )
-
-        query = query.limit(effective_limit)
-
-        results = query.all()
         top_performers = build_top_performers(results)
 
         # Cache the result (if enabled)

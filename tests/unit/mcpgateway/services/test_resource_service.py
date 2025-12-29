@@ -1639,43 +1639,45 @@ class TestResourceServiceMetricsExtended:
     @pytest.mark.asyncio
     async def test_get_top_resources(self, resource_service, mock_db):
         """Test getting top performing resources."""
-        # Mock query results
-        mock_result1 = MagicMock()
-        mock_result1.id = "39334ce0ed2644d79ede8913a66930c9"
-        mock_result1.name = "resource1"
-        mock_result1.execution_count = 10
-        mock_result1.avg_response_time = 1.5
-        mock_result1.success_rate = 100.0
-        mock_result1.last_execution = "2025-01-10T12:00:00"
+        # Mock the combined query results (TopPerformerResult objects)
+        mock_performer1 = MagicMock()
+        mock_performer1.id = "39334ce0ed2644d79ede8913a66930c9"
+        mock_performer1.name = "resource1"
+        mock_performer1.execution_count = 10
+        mock_performer1.avg_response_time = 1.5
+        mock_performer1.success_rate = 100.0
+        mock_performer1.last_execution = "2025-01-10T12:00:00"
 
-        mock_result2 = MagicMock()
-        mock_result2.id = "2"
-        mock_result2.name = "resource2"
-        mock_result2.execution_count = 7
-        mock_result2.avg_response_time = 2.3
-        mock_result2.success_rate = 71.43
-        mock_result2.last_execution = "2025-01-10T11:00:00"
+        mock_performer2 = MagicMock()
+        mock_performer2.id = "2"
+        mock_performer2.name = "resource2"
+        mock_performer2.execution_count = 7
+        mock_performer2.avg_response_time = 2.3
+        mock_performer2.success_rate = 71.43
+        mock_performer2.last_execution = "2025-01-10T11:00:00"
 
-        # Mock the query chain
-        mock_query = MagicMock()
-        mock_query.outerjoin.return_value = mock_query
-        mock_query.group_by.return_value = mock_query
-        mock_query.order_by.return_value = mock_query
-        mock_query.limit.return_value = mock_query
-        mock_query.all.return_value = [mock_result1, mock_result2]
+        mock_combined_results = [mock_performer1, mock_performer2]
 
-        mock_db.query.return_value = mock_query
+        with patch("mcpgateway.services.metrics_query_service.get_top_performers_combined") as mock_combined:
+            mock_combined.return_value = mock_combined_results
 
-        result = await resource_service.get_top_resources(mock_db, limit=2)
+            result = await resource_service.get_top_resources(mock_db, limit=2)
 
-        assert len(result) == 2
-        assert result[0].name == "resource1"
-        assert result[0].execution_count == 10
-        assert result[0].success_rate == 100.0
+            # Assert get_top_performers_combined was called with correct params
+            mock_combined.assert_called_once()
+            call_kwargs = mock_combined.call_args[1]
+            assert call_kwargs["metric_type"] == "resource"
+            assert call_kwargs["limit"] == 2
+            assert call_kwargs["name_column"] == "uri"  # Resources use URI as display name
 
-        assert result[1].name == "resource2"
-        assert result[1].execution_count == 7
-        assert result[1].success_rate == pytest.approx(71.43, rel=0.01)
+            assert len(result) == 2
+            assert result[0].name == "resource1"
+            assert result[0].execution_count == 10
+            assert result[0].success_rate == 100.0
+
+            assert result[1].name == "resource2"
+            assert result[1].execution_count == 7
+            assert result[1].success_rate == pytest.approx(71.43, rel=0.01)
 
 
 if __name__ == "__main__":

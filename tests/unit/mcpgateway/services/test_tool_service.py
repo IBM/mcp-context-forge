@@ -2130,30 +2130,46 @@ class TestToolService:
     @pytest.mark.asyncio
     async def test_get_top_tools(self, tool_service, test_db):
         """Test get_top_tools method."""
-        # Mock database query result
-        mock_results = [
-            (1, "tool1", 10, 1.5, 90.0, "2024-01-01T12:00:00"),
-            (2, "tool2", 5, 2.0, 80.0, "2024-01-02T12:00:00"),
-        ]
+        # Mock the combined query results (TopPerformerResult objects)
+        mock_performer1 = MagicMock()
+        mock_performer1.id = "1"
+        mock_performer1.name = "tool1"
+        mock_performer1.execution_count = 10
+        mock_performer1.avg_response_time = 1.5
+        mock_performer1.success_rate = 90.0
+        mock_performer1.last_execution = "2024-01-01T12:00:00"
 
-        # Mock the execute method on the test_db (which is likely a MagicMock)
-        test_db.execute = MagicMock()
-        test_db.execute.return_value.all.return_value = mock_results
+        mock_performer2 = MagicMock()
+        mock_performer2.id = "2"
+        mock_performer2.name = "tool2"
+        mock_performer2.execution_count = 5
+        mock_performer2.avg_response_time = 2.0
+        mock_performer2.success_rate = 80.0
+        mock_performer2.last_execution = "2024-01-02T12:00:00"
 
-        with patch("mcpgateway.services.tool_service.build_top_performers") as mock_build:
-            mock_build.return_value = ["top_performer1", "top_performer2"]
+        mock_combined_results = [mock_performer1, mock_performer2]
 
-            # Run the method
-            result = await tool_service.get_top_tools(test_db, limit=5)
+        # tool_service imports at top-level, so patch where it's used
+        with patch("mcpgateway.services.tool_service.get_top_performers_combined") as mock_combined:
+            mock_combined.return_value = mock_combined_results
 
-            # Assert the result is as expected
-            assert result == ["top_performer1", "top_performer2"]
+            with patch("mcpgateway.services.tool_service.build_top_performers") as mock_build:
+                mock_build.return_value = ["top_performer1", "top_performer2"]
 
-            # Assert build_top_performers was called with the mock results
-            mock_build.assert_called_once_with(mock_results)
+                # Run the method
+                result = await tool_service.get_top_tools(test_db, limit=5)
 
-            # Verify that the execute method was called once
-            test_db.execute.assert_called_once()
+                # Assert the result is as expected
+                assert result == ["top_performer1", "top_performer2"]
+
+                # Assert get_top_performers_combined was called with correct params
+                mock_combined.assert_called_once()
+                call_kwargs = mock_combined.call_args[1]
+                assert call_kwargs["metric_type"] == "tool"
+                assert call_kwargs["limit"] == 5
+
+                # Assert build_top_performers was called with the combined results
+                mock_build.assert_called_once_with(mock_combined_results)
 
     @pytest.mark.asyncio
     async def test_list_tools_with_tags(self, tool_service, mock_tool):

@@ -40,7 +40,10 @@ class RollupRequest(BaseModel):
     """Request model for manual rollup."""
 
     hours_back: int = Field(24, ge=1, le=8760, description="How many hours back to process (max 365 days)")
-    force_reprocess: bool = Field(False, description="Reprocess even if rollup already exists")
+    force_reprocess: bool = Field(
+        False,
+        description="Deprecated: rollup now always re-aggregates hours with raw data to include late-arriving metrics. This parameter is kept for API compatibility but has no effect.",
+    )
 
 
 class CleanupResultResponse(BaseModel):
@@ -129,10 +132,13 @@ async def trigger_cleanup(request: CleanupRequest = CleanupRequest()):
         from datetime import datetime, timezone
 
         started_at = datetime.now(timezone.utc)
-        result = await service.cleanup_table(
-            table_type=request.table_type,
-            retention_days=request.retention_days,
-        )
+        try:
+            result = await service.cleanup_table(
+                table_type=request.table_type,
+                retention_days=request.retention_days,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         completed_at = datetime.now(timezone.utc)
         return CleanupSummaryResponse(
             total_deleted=result.deleted_count,
@@ -282,6 +288,7 @@ async def get_metrics_config():
             "enabled": settings.metrics_rollup_enabled,
             "interval_hours": settings.metrics_rollup_interval_hours,
             "retention_days": settings.metrics_rollup_retention_days,
+            "late_data_hours": settings.metrics_rollup_late_data_hours,
             "delete_raw_after_rollup": settings.metrics_delete_raw_after_rollup,
             "delete_raw_after_rollup_days": settings.metrics_delete_raw_after_rollup_days,
         },

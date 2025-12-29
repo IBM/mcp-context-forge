@@ -2035,7 +2035,9 @@ Automatic management of metrics data to prevent unbounded table growth and maint
 | `METRICS_ROLLUP_ENABLED`             | Enable hourly metrics rollup                     | `true`   | bool        |
 | `METRICS_ROLLUP_INTERVAL_HOURS`      | Hours between rollup runs                        | `1`      | 1-24        |
 | `METRICS_ROLLUP_RETENTION_DAYS`      | Days to retain hourly rollup data                | `365`    | 30-3650     |
+| `METRICS_ROLLUP_LATE_DATA_HOURS`     | Hours to re-process for late-arriving data       | `4`      | 1-48        |
 | `METRICS_DELETE_RAW_AFTER_ROLLUP`    | Delete raw metrics after rollup (aggressive)     | `false`  | bool        |
+| `METRICS_DELETE_RAW_AFTER_ROLLUP_DAYS` | Days before raw deletion if rollup exists      | `7`      | 1-30        |
 
 **Key Features:**
 - 📊 **Hourly rollup**: Pre-aggregated summaries with p50/p95/p99 percentiles

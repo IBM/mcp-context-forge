@@ -2485,8 +2485,8 @@ dist: clean                  ## Build wheel + sdist into ./dist (optionally incl
 	@echo "📦 Building Python package..."
 	@/bin/bash -eu -c "\
 	    source $(VENV_DIR)/bin/activate && \
-	    python3 -m pip install --quiet --upgrade pip build && \
-	    python3 -m build"
+	    uv pip install -q build && \
+	    uv run --active python -m build"
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust plugins..."; \
 		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
@@ -2505,8 +2505,8 @@ wheel:                       ## Build wheel only (Python + optionally Rust)
 	@echo "📦 Building Python wheel..."
 	@/bin/bash -eu -c "\
 	    source $(VENV_DIR)/bin/activate && \
-	    python3 -m pip install --quiet --upgrade pip build && \
-	    python3 -m build -w"
+	    uv pip install -q build && \
+	    uv run --active python -m build -w"
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust wheels..."; \
 		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
@@ -2520,23 +2520,24 @@ sdist:                       ## Build source distribution only
 	@test -d "$(VENV_DIR)" || $(MAKE) --no-print-directory venv
 	@/bin/bash -eu -c "\
 	    source $(VENV_DIR)/bin/activate && \
-	    python3 -m pip install --quiet --upgrade pip build && \
-	    python3 -m build -s"
+	    uv pip install -q build && \
+	    uv run --active python -m build -s"
 	@echo '🛠  Source distribution written to ./dist'
 
 verify: dist               ## Build, run metadata & manifest checks
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-	twine check dist/* && \
-	check-manifest && \
-	pyroma -d ."
+	uv pip install -q twine check-manifest pyroma && \
+	uv run --active twine check dist/* && \
+	uv run --active check-manifest && \
+	uv run --active pyroma -d ."
 	@echo "✅  Package verified - ready to publish."
 
 publish: verify            ## Verify, then upload to PyPI
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && twine upload dist/*"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv run --active twine upload dist/*"
 	@echo "🚀  Upload finished - check https://pypi.org/project/$(PROJECT_NAME)/"
 
 publish-testpypi: verify   ## Verify, then upload to TestPyPI
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && twine upload --repository testpypi dist/*"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv run --active twine upload --repository testpypi dist/*"
 	@echo "🚀  Upload finished - check https://test.pypi.org/project/$(PROJECT_NAME)/"
 
 # Allow override via environment

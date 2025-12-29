@@ -36,7 +36,7 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 import parse
-from sqlalchemy import and_, case, delete, desc, Float, func, not_, or_, select
+from sqlalchemy import and_, delete, not_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -191,7 +191,8 @@ class ResourceService:
         """Retrieve the top-performing resources based on execution count.
 
         Queries the database to get resources with their metrics, ordered by the number of executions
-        in descending order. Uses the resource URI as the name field for TopPerformer objects.
+        in descending order. Combines recent raw metrics with historical hourly rollups for complete
+        historical coverage. Uses the resource URI as the name field for TopPerformer objects.
         Returns a list of TopPerformer objects containing resource details and performance metrics.
         Results are cached for performance.
 
@@ -220,29 +221,18 @@ class ResourceService:
             if cached is not None:
                 return cached
 
-        query = (
-            db.query(
-                DbResource.id,
-                DbResource.uri.label("name"),  # Using URI as the name field for TopPerformer
-                func.count(ResourceMetric.id).label("execution_count"),  # pylint: disable=not-callable
-                func.avg(ResourceMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
-                case(
-                    (
-                        func.count(ResourceMetric.id) > 0,  # pylint: disable=not-callable
-                        func.sum(case((ResourceMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(ResourceMetric.id) * 100,  # pylint: disable=not-callable
-                    ),
-                    else_=None,
-                ).label("success_rate"),
-                func.max(ResourceMetric.timestamp).label("last_execution"),  # pylint: disable=not-callable
-            )
-            .outerjoin(ResourceMetric)
-            .group_by(DbResource.id, DbResource.uri)
-            .order_by(desc("execution_count"))
+        # Use combined query that includes both raw metrics and rollup data
+        # Use name_column="uri" to maintain backward compatibility (resources show URI as name)
+        # First-Party
+        from mcpgateway.services.metrics_query_service import get_top_performers_combined  # pylint: disable=import-outside-toplevel
+
+        results = get_top_performers_combined(
+            db=db,
+            metric_type="resource",
+            entity_model=DbResource,
+            limit=effective_limit,
+            name_column="uri",  # Resources use URI as display name
         )
-
-        query = query.limit(effective_limit)
-
-        results = query.all()
         top_performers = build_top_performers(results)
 
         # Cache the result (if enabled)

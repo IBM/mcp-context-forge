@@ -82,6 +82,7 @@ Each table includes:
 - `METRICS_ROLLUP_ENABLED` (default: true)
 - `METRICS_ROLLUP_INTERVAL_HOURS` (default: 1, range: 1-24)
 - `METRICS_ROLLUP_RETENTION_DAYS` (default: 365, range: 30-3650)
+- `METRICS_ROLLUP_LATE_DATA_HOURS` (default: 4, range: 1-48) - hours to re-process each run for late-arriving data
 - `METRICS_DELETE_RAW_AFTER_ROLLUP` (default: false)
 - `METRICS_DELETE_RAW_AFTER_ROLLUP_DAYS` (default: 7, range: 1-30)
 
@@ -149,9 +150,9 @@ The background rollup service includes automatic backfill detection:
 1. On startup, checks for earliest unprocessed raw metrics
 2. Calculates hours since earliest data (capped at retention period)
 3. Processes all unprocessed hours on first run
-4. Subsequent runs process only the last 24 hours
+4. Subsequent runs process only the last N hours (configurable via `METRICS_ROLLUP_LATE_DATA_HOURS`, default: 4)
 
-This handles scenarios where the service was down for extended periods.
+This handles scenarios where the service was down for extended periods and ensures late-arriving metrics (from buffer flushes or ingestion lag) are included in rollups.
 
 ### Optimized Rollup Aggregation
 
