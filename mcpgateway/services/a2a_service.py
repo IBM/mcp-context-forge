@@ -34,6 +34,7 @@ from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.services_auth import encode_auth  # ,decode_auth
+from mcpgateway.config import settings
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None

@@ -2332,7 +2332,7 @@ async def admin_list_gateways(
     for g in gateways_db:
         team_name = gateway_service._get_team_name(db, getattr(g, "team_id", None))  # pylint: disable=protected-access
         g.team = team_name
-        result.append(gateway_service._convert_gateway_to_read(g))  # pylint: disable=protected-access
+        result.append(gateway_service._prepare_gateway_for_read(g))  # pylint: disable=protected-access
 
     # Return standardized paginated response
     return {
