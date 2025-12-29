@@ -273,7 +273,7 @@ class TokenCatalogService:
 
         # Generate JWT token using the centralized token creation utility
         # The create_jwt_token will handle expiration and other standard claims
-        return await create_jwt_token(payload)
+        return await create_jwt_token(payload, expires_in_minutes=0)
 
     def _hash_token(self, token: str) -> str:
         """Create secure hash of token for storage.
