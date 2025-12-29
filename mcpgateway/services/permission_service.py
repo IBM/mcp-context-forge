@@ -543,6 +543,7 @@ class PermissionService:
         from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
 
         member = self.db.execute(select(EmailTeamMember).where(and_(EmailTeamMember.user_email == user_email, EmailTeamMember.team_id == team_id, EmailTeamMember.is_active))).scalar_one_or_none()
+        self.db.commit()  # Release transaction to avoid idle-in-transaction
 
         return member is not None
 
@@ -560,5 +561,6 @@ class PermissionService:
         from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
 
         member = self.db.execute(select(EmailTeamMember).where(and_(EmailTeamMember.user_email == user_email, EmailTeamMember.team_id == team_id, EmailTeamMember.is_active))).scalar_one_or_none()
+        self.db.commit()  # Release transaction to avoid idle-in-transaction
 
         return member.role if member else None

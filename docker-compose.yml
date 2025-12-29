@@ -447,6 +447,10 @@ services:
       - QUERY_WAIT_TIMEOUT=30          # Fail fast if no connection available in 30s
       - CLIENT_IDLE_TIMEOUT=300        # Close idle client connections after 5 min
       - SERVER_CONNECT_TIMEOUT=5       # Timeout for connecting to PostgreSQL
+      # Transaction cleanup - critical for avoiding idle-in-transaction buildup
+      - SERVER_RESET_QUERY=DISCARD ALL # Reset connection state when returned to pool
+      - SERVER_RESET_QUERY_ALWAYS=1    # Always run reset query even after clean transactions
+      - IDLE_TRANSACTION_TIMEOUT=30    # Kill connections idle in transaction > 30s
       # Authentication
       - AUTH_TYPE=scram-sha-256        # Match PostgreSQL auth method
     depends_on:
