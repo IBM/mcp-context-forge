@@ -1696,20 +1696,22 @@ class ResourceService:
                 original_uri = uri
                 contexts = None
 
-                # Check if any resource hooks are registered to avoid unnecessary context creation
+                # Check if plugin manager is available and eligible for this request
                 plugin_eligible = bool(self._plugin_manager and PLUGINS_AVAILABLE and uri and ("://" in uri))
+
+                # Initialize plugin manager if needed (lazy init must happen before has_hooks_for check)
+                # pylint: disable=protected-access
+                if plugin_eligible and not self._plugin_manager._initialized:
+                    await self._plugin_manager.initialize()
+                # pylint: enable=protected-access
+
+                # Check if any resource hooks are registered to avoid unnecessary context creation
                 has_pre_fetch = plugin_eligible and self._plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_PRE_FETCH)
                 has_post_fetch = plugin_eligible and self._plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_POST_FETCH)
 
                 # Initialize plugin context variables only if hooks are registered
                 global_context = None
                 if has_pre_fetch or has_post_fetch:
-                    # Initialize plugin manager if needed
-                    # pylint: disable=protected-access
-                    if not self._plugin_manager._initialized:
-                        await self._plugin_manager.initialize()
-                    # pylint: enable=protected-access
-
                     # Create plugin context
                     # Normalize user to an identifier string if provided
                     user_id = None
