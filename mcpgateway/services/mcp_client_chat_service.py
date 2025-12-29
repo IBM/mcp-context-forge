@@ -550,7 +550,7 @@ class GatewayConfig(BaseModel):
 
     model: str = Field(..., description="Gateway model ID to use")
     base_url: Optional[str] = Field(None, description="Gateway internal API URL (optional, defaults to self)")
-    temperature: float = Field(default=0.7, ge=0.0, le=2.0, description="Sampling temperature")
+    temperature: Optional[float] = Field(default=0.7, ge=0.0, le=2.0, description="Sampling temperature")
     max_tokens: Optional[int] = Field(None, gt=0, description="Maximum tokens to generate")
     timeout: Optional[float] = Field(None, gt=0, description="Request timeout in seconds")
 
@@ -1459,15 +1459,18 @@ class GatewayProvider:
         self._underlying_provider = None
         logger.info(f"Initializing Gateway provider with model: {config.model}")
 
-    def get_llm(self) -> BaseChatModel:
+    def get_llm(self, model_type: str = "chat") -> Union[BaseChatModel, Any]:
         """
         Get LLM instance by looking up model from gateway's LLM Settings.
 
         Fetches the model configuration from the database, decrypts API keys,
         and creates the appropriate LangChain LLM instance based on provider type.
 
+        Args:
+            model_type: Type of model to return ('chat' or 'completion'). Defaults to 'chat'.
+
         Returns:
-            BaseChatModel: Configured LangChain chat model instance.
+            Union[BaseChatModel, Any]: Configured LangChain chat or completion model instance.
 
         Raises:
             ValueError: If model not found or provider not enabled.
@@ -1479,7 +1482,7 @@ class GatewayProvider:
             >>> llm = provider.get_llm()  # doctest: +SKIP
 
         Note:
-            The LLM instance is lazily initialized and cached.
+            The LLM instance is lazily initialized and cached by model_type.
         """
         if self.llm is not None:
             return self.llm
@@ -1500,7 +1503,7 @@ class GatewayProvider:
             if not model:
                 raise ValueError(f"Model '{model_id}' not found in LLM Settings. Configure it via Admin UI -> Settings -> LLM Settings.")
 
-            if not model.is_enabled:
+            if not model.enabled:
                 raise ValueError(f"Model '{model.model_id}' is disabled. Enable it in LLM Settings.")
 
             # Get the provider
@@ -1508,161 +1511,215 @@ class GatewayProvider:
             if not provider:
                 raise ValueError(f"Provider not found for model '{model.model_id}'")
 
-            if not provider.is_enabled:
+            if not provider.enabled:
                 raise ValueError(f"Provider '{provider.name}' is disabled. Enable it in LLM Settings.")
 
             # Get decrypted API key
             api_key = None
-            if provider.api_key_encrypted:
-                api_key = decode_auth(provider.api_key_encrypted)
+            if provider.api_key:
+                auth_data = decode_auth(provider.api_key)
+                if isinstance(auth_data, dict):
+                    api_key = auth_data.get("api_key")
+                else:
+                    api_key = auth_data
 
             # Store model name for get_model_name()
             self._model_name = model.model_id
 
-            # Get temperature - use config override or model default
-            temperature = self.config.temperature if self.config.temperature is not None else (model.temperature or 0.7)
-            max_tokens = self.config.max_tokens or model.max_tokens
+            # Get temperature - use config override or provider default
+            temperature = self.config.temperature if self.config.temperature is not None else (provider.default_temperature or 0.7)
+            max_tokens = self.config.max_tokens or model.max_output_tokens
 
             # Create appropriate LLM based on provider type
             provider_type = provider.provider_type.lower()
+            config = provider.config or {}
+
+            # Common kwargs
+            kwargs: Dict[str, Any] = {
+                "temperature": temperature,
+                "timeout": self.config.timeout,
+            }
 
             if provider_type == "openai":
-                kwargs = {
-                    "api_key": api_key,
-                    "model": model.model_id,
-                    "temperature": temperature,
-                }
-                if max_tokens:
-                    kwargs["max_tokens"] = max_tokens
-                if provider.base_url:
-                    kwargs["base_url"] = provider.base_url
-                if self.config.timeout:
-                    kwargs["timeout"] = self.config.timeout
+                kwargs.update(
+                    {
+                        "api_key": api_key,
+                        "model": model.model_id,
+                        "max_tokens": max_tokens,
+                    }
+                )
+                if provider.api_base:
+                    kwargs["base_url"] = provider.api_base
 
-                self.llm = ChatOpenAI(**kwargs)
+                # Handle default headers
+                if config.get("default_headers"):
+                    kwargs["default_headers"] = config["default_headers"]
+                elif hasattr(self.config, "default_headers") and self.config.default_headers:  # type: ignore
+                    kwargs["default_headers"] = self.config.default_headers
+
+                if model_type == "chat":
+                    self.llm = ChatOpenAI(**kwargs)
+                else:
+                    self.llm = OpenAI(**kwargs)
 
             elif provider_type == "azure_openai":
-                if not provider.base_url:
+                if not provider.api_base:
                     raise ValueError("Azure OpenAI requires base_url (azure_endpoint) to be configured")
 
-                # Parse azure_deployment from additional_config or use model_id
-                additional_config = provider.additional_config or {}
-                azure_deployment = additional_config.get("azure_deployment", model.model_id)
-                api_version = additional_config.get("api_version", "2024-05-01-preview")
+                azure_deployment = config.get("azure_deployment", model.model_id)
+                api_version = config.get("api_version", "2024-05-01-preview")
+                max_retries = config.get("max_retries", 2)
 
-                kwargs = {
-                    "api_key": api_key,
-                    "azure_endpoint": provider.base_url,
-                    "azure_deployment": azure_deployment,
-                    "api_version": api_version,
-                    "model": model.model_id,
-                    "temperature": temperature,
-                }
-                if max_tokens:
-                    kwargs["max_tokens"] = max_tokens
-                if self.config.timeout:
-                    kwargs["timeout"] = self.config.timeout
+                kwargs.update(
+                    {
+                        "api_key": api_key,
+                        "azure_endpoint": provider.api_base,
+                        "azure_deployment": azure_deployment,
+                        "api_version": api_version,
+                        "model": model.model_id,
+                        "max_tokens": int(max_tokens) if max_tokens is not None else None,
+                        "max_retries": max_retries,
+                    }
+                )
 
-                self.llm = AzureChatOpenAI(**kwargs)
+                if model_type == "chat":
+                    self.llm = AzureChatOpenAI(**kwargs)
+                else:
+                    self.llm = AzureOpenAI(**kwargs)
 
             elif provider_type == "anthropic":
                 if not _ANTHROPIC_AVAILABLE:
                     raise ImportError("Anthropic provider requires langchain-anthropic. Install with: pip install langchain-anthropic")
 
-                kwargs = {
+                # Anthropic uses 'model_name' instead of 'model'
+                anthropic_kwargs = {
                     "api_key": api_key,
-                    "model": model.model_id,
-                    "temperature": temperature,
+                    "model_name": model.model_id,
                     "max_tokens": max_tokens or 4096,
+                    "temperature": temperature,
+                    "timeout": self.config.timeout,
+                    "default_request_timeout": self.config.timeout,
                 }
-                if self.config.timeout:
-                    kwargs["timeout"] = self.config.timeout
 
-                self.llm = ChatAnthropic(**kwargs)
+                if model_type == "chat":
+                    self.llm = ChatAnthropic(**anthropic_kwargs)
+                else:
+                    # Generic Anthropic completion model if needed, though mostly chat used now
+                    if AnthropicLLM:
+                        llm_kwargs = anthropic_kwargs.copy()
+                        llm_kwargs["model"] = llm_kwargs.pop("model_name")
+                        self.llm = AnthropicLLM(**llm_kwargs)
+                    else:
+                        raise ImportError("Anthropic completion model (AnthropicLLM) not available")
 
             elif provider_type == "bedrock":
                 if not _BEDROCK_AVAILABLE:
                     raise ImportError("AWS Bedrock provider requires langchain-aws. Install with: pip install langchain-aws boto3")
 
-                additional_config = provider.additional_config or {}
-                region_name = additional_config.get("region_name", "us-east-1")
-
+                region_name = config.get("region_name", "us-east-1")
                 credentials_kwargs = {}
-                if additional_config.get("aws_access_key_id"):
-                    credentials_kwargs["aws_access_key_id"] = additional_config["aws_access_key_id"]
-                if additional_config.get("aws_secret_access_key"):
-                    credentials_kwargs["aws_secret_access_key"] = additional_config["aws_secret_access_key"]
-                if additional_config.get("aws_session_token"):
-                    credentials_kwargs["aws_session_token"] = additional_config["aws_session_token"]
+                if config.get("aws_access_key_id"):
+                    credentials_kwargs["aws_access_key_id"] = config["aws_access_key_id"]
+                if config.get("aws_secret_access_key"):
+                    credentials_kwargs["aws_secret_access_key"] = config["aws_secret_access_key"]
+                if config.get("aws_session_token"):
+                    credentials_kwargs["aws_session_token"] = config["aws_session_token"]
 
-                self.llm = ChatBedrock(
-                    model_id=model.model_id,
-                    region_name=region_name,
-                    model_kwargs={
-                        "temperature": temperature,
-                        "max_tokens": max_tokens or 4096,
-                    },
-                    **credentials_kwargs,
-                )
+                model_kwargs = {
+                    "temperature": temperature,
+                    "max_tokens": max_tokens or 4096,
+                }
+
+                if model_type == "chat":
+                    self.llm = ChatBedrock(
+                        model_id=model.model_id,
+                        region_name=region_name,
+                        model_kwargs=model_kwargs,
+                        **credentials_kwargs,
+                    )
+                else:
+                    self.llm = BedrockLLM(
+                        model_id=model.model_id,
+                        region_name=region_name,
+                        model_kwargs=model_kwargs,
+                        **credentials_kwargs,
+                    )
 
             elif provider_type == "ollama":
-                base_url = provider.base_url or "http://localhost:11434"
+                base_url = provider.api_base or "http://localhost:11434"
+                num_ctx = config.get("num_ctx")
 
-                kwargs = {
+                # Explicitly construct kwargs to avoid generic unpacking issues with Pydantic models
+                ollama_kwargs = {
                     "base_url": base_url,
                     "model": model.model_id,
                     "temperature": temperature,
+                    "timeout": self.config.timeout,
                 }
-                if self.config.timeout:
-                    kwargs["timeout"] = self.config.timeout
+                if num_ctx:
+                    ollama_kwargs["num_ctx"] = num_ctx
 
-                self.llm = ChatOllama(**kwargs)
+                if model_type == "chat":
+                    self.llm = ChatOllama(**ollama_kwargs)
+                else:
+                    self.llm = OllamaLLM(**ollama_kwargs)
 
             elif provider_type == "watsonx":
                 if not _WATSONX_AVAILABLE:
                     raise ImportError("IBM watsonx.ai provider requires langchain-ibm. Install with: pip install langchain-ibm")
 
-                additional_config = provider.additional_config or {}
-                project_id = additional_config.get("project_id")
+                project_id = config.get("project_id")
                 if not project_id:
-                    raise ValueError("IBM watsonx.ai requires project_id in additional_config")
+                    raise ValueError("IBM watsonx.ai requires project_id in config")
 
-                url = provider.base_url or "https://us-south.ml.cloud.ibm.com"
+                url = provider.api_base or "https://us-south.ml.cloud.ibm.com"
 
                 params = {
                     "temperature": temperature,
                     "max_new_tokens": max_tokens or 1024,
+                    "min_new_tokens": config.get("min_new_tokens", 1),
+                    "decoding_method": config.get("decoding_method", "sample"),
+                    "top_k": config.get("top_k", 50),
+                    "top_p": config.get("top_p", 1.0),
                 }
 
-                self.llm = ChatWatsonx(
-                    apikey=api_key,
-                    url=url,
-                    project_id=project_id,
-                    model_id=model.model_id,
-                    params=params,
-                )
+                if model_type == "chat":
+                    self.llm = ChatWatsonx(
+                        apikey=api_key,
+                        url=url,
+                        project_id=project_id,
+                        model_id=model.model_id,
+                        params=params,
+                    )
+                else:
+                    self.llm = WatsonxLLM(
+                        apikey=api_key,
+                        url=url,
+                        project_id=project_id,
+                        model_id=model.model_id,
+                        params=params,
+                    )
 
             elif provider_type == "openai_compatible":
-                # Generic OpenAI-compatible provider (e.g., vLLM, LocalAI, etc.)
-                if not provider.base_url:
+                if not provider.api_base:
                     raise ValueError("OpenAI-compatible provider requires base_url to be configured")
 
-                kwargs = {
-                    "model": model.model_id,
-                    "temperature": temperature,
-                    "base_url": provider.base_url,
-                }
-                if api_key:
-                    kwargs["api_key"] = api_key
-                if max_tokens:
-                    kwargs["max_tokens"] = max_tokens
-                if self.config.timeout:
-                    kwargs["timeout"] = self.config.timeout
+                kwargs.update(
+                    {
+                        "api_key": api_key or "no-key-required",
+                        "model": model.model_id,
+                        "base_url": provider.api_base,
+                        "max_tokens": max_tokens,
+                    }
+                )
 
-                self.llm = ChatOpenAI(**kwargs)
+                if model_type == "chat":
+                    self.llm = ChatOpenAI(**kwargs)
+                else:
+                    self.llm = OpenAI(**kwargs)
 
             else:
-                raise ValueError(f"Unsupported provider type: {provider_type}")
+                raise ValueError(f"Unsupported LLM provider: {provider_type}")
 
             logger.info(f"Gateway provider created LLM instance for model: {model.model_id} via {provider_type}")
             return self.llm
@@ -1713,7 +1770,7 @@ class LLMProviderFactory:
             llm_config: LLM configuration specifying provider type and settings.
 
         Returns:
-            Union[AzureOpenAIProvider, OpenAIProvider, AnthropicProvider, AWSBedrockProvider, OllamaProvider, GatewayProvider]: Instantiated provider.
+            Union[AzureOpenAIProvider, OpenAIProvider, AnthropicProvider, AWSBedrockProvider, OllamaProvider, WatsonxProvider, GatewayProvider]: Instantiated provider.
 
         Raises:
             ValueError: If provider type is not supported.
@@ -2653,6 +2710,10 @@ class MCPChatService:
                         run_id = str(event.get("run_id") or uuid4())
                         name = event.get("name") or event.get("data", {}).get("name") or event.get("data", {}).get("tool")
                         input_data = event.get("data", {}).get("input")
+
+                        # Filter out common metadata keys injected by LangChain/LangGraph
+                        if isinstance(input_data, dict):
+                            input_data = {k: v for k, v in input_data.items() if k not in ["runtime", "config", "run_manager", "callbacks"]}
 
                         tool_runs[run_id] = {"name": name, "start": now_iso, "input": input_data}
 

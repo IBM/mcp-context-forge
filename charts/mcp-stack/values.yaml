@@ -148,8 +148,10 @@ mcpContextForge:
     APP_ROOT_PATH: ""                # e.g. "/gateway" when deploying under sub-path
 
     # ─ Connection pooling ─
-    DB_POOL_SIZE: "200"              # size of SQLAlchemy connection pool
-    DB_MAX_OVERFLOW: "10"            # extra connections allowed beyond pool size
+    # With PgBouncer enabled: smaller pools (PgBouncer handles connection multiplexing)
+    # Without PgBouncer: increase to DB_POOL_SIZE=50, DB_MAX_OVERFLOW=100
+    DB_POOL_SIZE: "15"               # size of SQLAlchemy connection pool
+    DB_MAX_OVERFLOW: "30"            # extra connections allowed beyond pool size
     DB_POOL_TIMEOUT: "30"            # seconds to wait for a connection
     DB_POOL_RECYCLE: "3600"          # recycle connections after N seconds
 
@@ -177,6 +179,34 @@ mcpContextForge:
     REDIS_LEADER_TTL: "15"           # Leader TTL (seconds)
     REDIS_LEADER_KEY: "gateway_service_leader"  # Leader key name
     REDIS_LEADER_HEARTBEAT_INTERVAL: "5"  # Heartbeat interval (seconds)
+
+    # ─ Auth Cache (reduces DB queries per auth from 3-4 to 0-1) ─
+    AUTH_CACHE_ENABLED: "true"       # Enable auth data caching (user, team, revocation)
+    AUTH_CACHE_USER_TTL: "60"        # User data cache TTL (seconds)
+    AUTH_CACHE_REVOCATION_TTL: "30"  # Token revocation cache TTL (seconds, security-critical)
+    AUTH_CACHE_TEAM_TTL: "60"        # Team membership cache TTL (seconds)
+    AUTH_CACHE_ROLE_TTL: "60"        # User role in team cache TTL (seconds)
+    AUTH_CACHE_TEAMS_ENABLED: "true" # Enable user teams list caching (reduces get_user_teams queries)
+    AUTH_CACHE_TEAMS_TTL: "60"       # User teams list cache TTL (seconds)
+    AUTH_CACHE_BATCH_QUERIES: "true" # Batch auth DB queries into single call
+
+    # ─ Registry Cache (reduces DB queries for list endpoints) ─
+    REGISTRY_CACHE_ENABLED: "true"     # Enable registry list caching
+    REGISTRY_CACHE_TOOLS_TTL: "20"     # Tools list cache TTL (seconds)
+    REGISTRY_CACHE_PROMPTS_TTL: "15"   # Prompts list cache TTL (seconds)
+    REGISTRY_CACHE_RESOURCES_TTL: "15" # Resources list cache TTL (seconds)
+    REGISTRY_CACHE_AGENTS_TTL: "20"    # A2A agents list cache TTL (seconds)
+    REGISTRY_CACHE_SERVERS_TTL: "20"   # Servers list cache TTL (seconds)
+    REGISTRY_CACHE_GATEWAYS_TTL: "20"  # Gateways list cache TTL (seconds)
+    REGISTRY_CACHE_CATALOG_TTL: "300" # Catalog servers cache TTL (seconds, longer since external)
+
+    # ─ Admin Stats Cache (reduces aggregate queries for dashboard) ─
+    ADMIN_STATS_CACHE_ENABLED: "true"  # Enable admin stats caching
+    ADMIN_STATS_CACHE_SYSTEM_TTL: "60" # System stats cache TTL (seconds)
+    ADMIN_STATS_CACHE_OBSERVABILITY_TTL: "30" # Observability stats cache TTL (seconds)
+    ADMIN_STATS_CACHE_TAGS_TTL: "120"  # Tags listing cache TTL (seconds)
+    ADMIN_STATS_CACHE_PLUGINS_TTL: "120"  # Plugin stats cache TTL (seconds)
+    ADMIN_STATS_CACHE_PERFORMANCE_TTL: "60"  # Performance aggregates cache TTL (seconds)
 
     # ─ Protocol & feature toggles ─
     PROTOCOL_VERSION: 2025-03-26
@@ -261,6 +291,11 @@ mcpContextForge:
     LOG_BACKUP_COUNT: "5"            # number of backup files to keep
     LOG_BUFFER_SIZE_MB: "1.0"        # size of in-memory log buffer (MB)
 
+    # ─ Audit Trail ─
+    # Logs all CRUD operations on resources for compliance (SOC2, HIPAA, etc.)
+    # WARNING: Causes a DB write on EVERY API request - disable for load testing!
+    AUDIT_TRAIL_ENABLED: "false"     # enable audit trail logging (default: false for performance)
+
     # ─ Metrics Buffer ─
     # Batches metric writes to reduce DB pressure under high load
     METRICS_BUFFER_ENABLED: "true"   # enable buffered metrics writes
@@ -305,6 +340,7 @@ mcpContextForge:
     # ─ Health checks ─
     HEALTH_CHECK_INTERVAL: "60"      # seconds between peer health checks
     HEALTH_CHECK_TIMEOUT: "10"       # request timeout per health check
+    GATEWAY_HEALTH_CHECK_TIMEOUT: "5.0" # per-check timeout to bound total time of one gateway health check
     UNHEALTHY_THRESHOLD: "3"         # failed checks before peer marked unhealthy
     GATEWAY_VALIDATION_TIMEOUT: "5"  # gateway URL validation timeout (seconds)
     FILELOCK_NAME: gateway_healthcheck_init.lock # lock file used at start-up
@@ -568,7 +604,7 @@ mcpContextForge:
     # (derived URLs are defined in deployment-mcp.yaml)
 
     # ─ Optional database / redis overrides ─
-    # DATABASE_URL: "postgresql://admin:s3cr3t@db.acme.com:5432/prod" # override the auto-generated URL
+    # DATABASE_URL: "postgresql+psycopg://admin:s3cr3t@db.acme.com:5432/prod" # override the auto-generated URL
     # REDIS_URL:    "redis://cache.acme.com:6379/0"                   # override the auto-generated URL
 
   ####################################################################
@@ -695,6 +731,67 @@ postgres:
     enabled: false              # Set to true to enable the upgrade process
     targetVersion: "18"         # Target PostgreSQL version (e.g., "18")
     backupCompleted: false      # Set to true after successful backup (to prevent re-running backup job)
+
+########################################################################
+# PGBOUNCER - Connection Pooler for PostgreSQL
+# Reduces connection overhead, improves throughput under high concurrency.
+########################################################################
+pgbouncer:
+  enabled: false                     # Set to true to route DB traffic through PgBouncer
+
+  image:
+    repository: edoburu/pgbouncer
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 6432                       # PgBouncer listens on 6432
+
+  # Pool configuration
+  pool:
+    mode: transaction                # transaction (recommended), session, or statement
+    maxClientConn: 3000              # Max connections from application
+    defaultPoolSize: 120             # Connections per user/database pair
+    minPoolSize: 10                  # Minimum connections to keep open
+    reservePoolSize: 25              # Extra connections for burst traffic
+    reservePoolTimeout: 5            # Seconds before using reserve pool
+    maxDbConnections: 200            # Max connections to PostgreSQL per database
+    maxUserConnections: 200          # Max connections per user
+    serverLifetime: 3600             # Max age of server connection (seconds)
+    serverIdleTimeout: 600           # Close idle server connections after (seconds)
+
+  # Authentication
+  authType: scram-sha-256            # Match PostgreSQL auth method
+
+  # Resource limits
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+  # Health probes
+  probes:
+    readiness:
+      type: exec
+      command: ["pg_isready", "-h", "localhost", "-p", "6432"]
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 3
+
+    liveness:
+      type: exec
+      command: ["pg_isready", "-h", "localhost", "-p", "6432"]
+      initialDelaySeconds: 10
+      periodSeconds: 15
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 5
 
 ########################################################################
 # REDIS CACHE

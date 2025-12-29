@@ -21,7 +21,7 @@ from typing import List, Optional
 import uuid
 
 # Third-Party
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -273,7 +273,7 @@ class TokenCatalogService:
 
         # Generate JWT token using the centralized token creation utility
         # The create_jwt_token will handle expiration and other standard claims
-        return await create_jwt_token(payload)
+        return await create_jwt_token(payload, expires_in_minutes=0)
 
     def _hash_token(self, token: str) -> str:
         """Create secure hash of token for storage.
@@ -603,6 +603,18 @@ class TokenCatalogService:
         self.db.add(revocation)
         self.db.commit()
 
+        # Invalidate auth cache for revoked token
+        try:
+            # Standard
+            import asyncio  # pylint: disable=import-outside-toplevel
+
+            # First-Party
+            from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+            asyncio.create_task(auth_cache.invalidate_revocation(token.jti))
+        except Exception as cache_error:
+            logger.debug(f"Failed to invalidate auth cache for revoked token: {cache_error}")
+
         logger.info(f"Revoked token '{token.name}' (JTI: {token.jti}) by {revoked_by}")
 
         return True
@@ -695,13 +707,110 @@ class TokenCatalogService:
         """
         start_date = utc_now() - timedelta(days=days)
 
-        query = select(TokenUsageLog).where(and_(TokenUsageLog.user_email == user_email, TokenUsageLog.timestamp >= start_date))
-
+        # Get token JTI if specific token requested
+        token_jti = None
         if token_id:
-            # Get JTI for the token
             token = await self.get_token(token_id, user_email)
             if token:
-                query = query.where(TokenUsageLog.token_jti == token.jti)
+                token_jti = token.jti
+
+        # Use SQL aggregation for PostgreSQL, Python fallback for SQLite
+        dialect_name = self.db.get_bind().dialect.name
+        if dialect_name == "postgresql":
+            return await self._get_usage_stats_postgresql(user_email, start_date, token_jti, days)
+        return await self._get_usage_stats_python(user_email, start_date, token_jti, days)
+
+    async def _get_usage_stats_postgresql(self, user_email: str, start_date: datetime, token_jti: Optional[str], days: int) -> dict:
+        """Compute usage stats using PostgreSQL SQL aggregation.
+
+        Args:
+            user_email: User's email address
+            start_date: Start date for analysis
+            token_jti: Optional token JTI filter
+            days: Number of days being analyzed
+
+        Returns:
+            dict: Usage statistics computed via SQL
+        """
+        # Build filter conditions
+        conditions = [TokenUsageLog.user_email == user_email, TokenUsageLog.timestamp >= start_date]
+        if token_jti:
+            conditions.append(TokenUsageLog.token_jti == token_jti)
+
+        base_filter = and_(*conditions)
+
+        # Main stats query using SQL aggregation
+        # Match Python behavior:
+        # - status_code must be non-null AND non-zero AND < 400 for success count
+        # - response_time_ms must be non-null AND non-zero for average (Python: if log.response_time_ms)
+        stats_query = (
+            select(
+                func.count().label("total"),  # pylint: disable=not-callable
+                func.sum(
+                    case(
+                        (and_(TokenUsageLog.status_code.isnot(None), TokenUsageLog.status_code > 0, TokenUsageLog.status_code < 400), 1),
+                        else_=0,
+                    )
+                ).label("successful"),
+                func.sum(case((TokenUsageLog.blocked.is_(True), 1), else_=0)).label("blocked"),
+                # Only average non-null and non-zero response times (NULL values are ignored by AVG)
+                func.avg(
+                    case(
+                        (and_(TokenUsageLog.response_time_ms.isnot(None), TokenUsageLog.response_time_ms > 0), TokenUsageLog.response_time_ms),
+                        else_=None,
+                    )
+                ).label("avg_response"),
+            )
+            .select_from(TokenUsageLog)
+            .where(base_filter)
+        )
+
+        result = self.db.execute(stats_query).fetchone()
+
+        total_requests = result.total or 0
+        successful_requests = result.successful or 0
+        blocked_requests = result.blocked or 0
+        avg_response_time = float(result.avg_response) if result.avg_response else 0.0
+
+        # Top endpoints query using SQL GROUP BY
+        # Match Python behavior: exclude None AND empty string endpoints (Python: if log.endpoint)
+        endpoints_query = (
+            select(TokenUsageLog.endpoint, func.count().label("count"))  # pylint: disable=not-callable
+            .where(and_(base_filter, TokenUsageLog.endpoint.isnot(None), TokenUsageLog.endpoint != ""))
+            .group_by(TokenUsageLog.endpoint)
+            .order_by(func.count().desc())  # pylint: disable=not-callable
+            .limit(5)
+        )
+
+        endpoints_result = self.db.execute(endpoints_query).fetchall()
+        top_endpoints = [(row.endpoint, row.count) for row in endpoints_result]
+
+        return {
+            "period_days": days,
+            "total_requests": total_requests,
+            "successful_requests": successful_requests,
+            "blocked_requests": blocked_requests,
+            "success_rate": successful_requests / total_requests if total_requests > 0 else 0,
+            "average_response_time_ms": round(avg_response_time, 2),
+            "top_endpoints": top_endpoints,
+        }
+
+    async def _get_usage_stats_python(self, user_email: str, start_date: datetime, token_jti: Optional[str], days: int) -> dict:
+        """Compute usage stats using Python (fallback for SQLite).
+
+        Args:
+            user_email: User's email address
+            start_date: Start date for analysis
+            token_jti: Optional token JTI filter
+            days: Number of days being analyzed
+
+        Returns:
+            dict: Usage statistics computed in Python
+        """
+        query = select(TokenUsageLog).where(and_(TokenUsageLog.user_email == user_email, TokenUsageLog.timestamp >= start_date))
+
+        if token_jti:
+            query = query.where(TokenUsageLog.token_jti == token_jti)
 
         usage_logs = self.db.execute(query).scalars().all()
 
@@ -715,7 +824,7 @@ class TokenCatalogService:
         avg_response_time = sum(response_times) / len(response_times) if response_times else 0
 
         # Most accessed endpoints
-        endpoint_counts = {}
+        endpoint_counts: dict = {}
         for log in usage_logs:
             if log.endpoint:
                 endpoint_counts[log.endpoint] = endpoint_counts.get(log.endpoint, 0) + 1
@@ -749,7 +858,11 @@ class TokenCatalogService:
         return result.scalar_one_or_none()
 
     async def cleanup_expired_tokens(self) -> int:
-        """Clean up expired tokens.
+        """Clean up expired tokens using bulk UPDATE.
+
+        Uses a single SQL UPDATE statement instead of loading tokens into memory
+        and updating them one by one. This is more efficient and avoids memory
+        issues when many tokens expire at once.
 
         Returns:
             int: Number of tokens cleaned up
@@ -758,13 +871,18 @@ class TokenCatalogService:
             >>> service = TokenCatalogService(None)  # Would use real DB session
             >>> # Returns int: Number of tokens cleaned up
         """
-        expired_tokens = self.db.execute(select(EmailApiToken).where(and_(EmailApiToken.expires_at < utc_now(), EmailApiToken.is_active.is_(True)))).scalars().all()
+        try:
+            now = utc_now()
+            count = self.db.query(EmailApiToken).filter(EmailApiToken.expires_at < now, EmailApiToken.is_active.is_(True)).update({"is_active": False}, synchronize_session=False)
 
-        for token in expired_tokens:
-            token.is_active = False
+            self.db.commit()
 
-        self.db.commit()
+            if count > 0:
+                logger.info(f"Cleaned up {count} expired tokens")
 
-        logger.info(f"Cleaned up {len(expired_tokens)} expired tokens")
+            return count
 
-        return len(expired_tokens)
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Failed to cleanup expired tokens: {e}")
+            return 0

@@ -73,7 +73,7 @@ class PromptGenerator(BaseGenerator):
                         "required": ["input"]
                     },
                     created_by=user_email,
-                    is_active=True,
+                    enabled=True,
                     tags=[],
                     version=1,
                     visibility=random.choice(["public", "private", "team"]),

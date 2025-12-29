@@ -328,8 +328,10 @@ def bootstrap_sso_providers() -> None:
                     print(f"ℹ️  SSO provider unchanged: {existing_provider.display_name} (ID: {existing_provider.id})")
 
     except Exception as e:
+        db.rollback()  # Rollback on error
         print(f"❌ Failed to bootstrap SSO providers: {e}")
     finally:
+        db.commit()  # Commit transaction to avoid implicit rollback
         db.close()
 
 

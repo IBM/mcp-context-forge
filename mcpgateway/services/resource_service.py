@@ -44,7 +44,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.common.models import ResourceContent, ResourceTemplate, TextContent
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.db import EmailTeam
+from mcpgateway.db import EmailTeam, fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import ResourceMetric
@@ -72,6 +72,25 @@ try:
     PLUGINS_AVAILABLE = True
 except ImportError:
     PLUGINS_AVAILABLE = False
+
+# Cache import (lazy to avoid circular dependencies)
+_REGISTRY_CACHE = None
+
+
+def _get_registry_cache():
+    """Get registry cache singleton lazily.
+
+    Returns:
+        RegistryCache instance.
+    """
+    global _REGISTRY_CACHE  # pylint: disable=global-statement
+    if _REGISTRY_CACHE is None:
+        # First-Party
+        from mcpgateway.cache.registry_cache import registry_cache  # pylint: disable=import-outside-toplevel
+
+        _REGISTRY_CACHE = registry_cache
+    return _REGISTRY_CACHE
+
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -174,10 +193,11 @@ class ResourceService:
         Queries the database to get resources with their metrics, ordered by the number of executions
         in descending order. Uses the resource URI as the name field for TopPerformer objects.
         Returns a list of TopPerformer objects containing resource details and performance metrics.
+        Results are cached for performance.
 
         Args:
             db (Session): Database session for querying resource metrics.
-            limit (Optional[int]): Maximum number of resources to return. Defaults to 5. If None, returns all resources.
+            limit (Optional[int]): Maximum number of resources to return. Defaults to 5.
 
         Returns:
             List[TopPerformer]: A list of TopPerformer objects, each containing:
@@ -188,6 +208,18 @@ class ResourceService:
                 - success_rate: Success rate percentage, or None if no metrics.
                 - last_execution: Timestamp of the last execution, or None if no metrics.
         """
+        # Check cache first (if enabled)
+        # First-Party
+        from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
+
+        effective_limit = limit or 5
+        cache_key = f"top_resources:{effective_limit}"
+
+        if is_cache_enabled():
+            cached = metrics_cache.get(cache_key)
+            if cached is not None:
+                return cached
+
         query = (
             db.query(
                 DbResource.id,
@@ -208,20 +240,24 @@ class ResourceService:
             .order_by(desc("execution_count"))
         )
 
-        if limit is not None:
-            query = query.limit(limit)
+        query = query.limit(effective_limit)
 
         results = query.all()
+        top_performers = build_top_performers(results)
 
-        return build_top_performers(results)
+        # Cache the result (if enabled)
+        if is_cache_enabled():
+            metrics_cache.set(cache_key, top_performers)
 
-    def _convert_resource_to_read(self, resource: DbResource, include_metrics: bool = True) -> ResourceRead:
+        return top_performers
+
+    def _convert_resource_to_read(self, resource: DbResource, include_metrics: bool = False) -> ResourceRead:
         """
         Converts a DbResource instance into a ResourceRead model, optionally including aggregated metrics.
 
         Args:
             resource (DbResource): The ORM instance of the resource.
-            include_metrics (bool): Whether to include metrics in the result. Defaults to True.
+            include_metrics (bool): Whether to include metrics in the result. Defaults to False.
                 Set to False for list operations to avoid N+1 query issues.
 
         Returns:
@@ -239,7 +275,7 @@ class ResourceService:
             ...     id="ca627760127d409080fdefc309147e08", uri='res://x', name='R', description=None, mime_type='text/plain', size=123,
             ...     created_at=now, updated_at=now, enabled=True, tags=[{"id": "t", "label": "T"}], metrics=[m1, m2]
             ... )
-            >>> out = svc._convert_resource_to_read(r)
+            >>> out = svc._convert_resource_to_read(r, include_metrics=True)
             >>> out.metrics.total_executions
             2
             >>> out.metrics.successful_executions
@@ -310,6 +346,7 @@ class ResourceService:
         if not team_id:
             return None
         team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
+        db.commit()  # Release transaction to avoid idle-in-transaction
         return team.name if team else None
 
     async def register_resource(
@@ -525,6 +562,259 @@ class ResourceService:
             )
             raise ResourceError(f"Failed to register resource: {str(e)}")
 
+    async def register_resources_bulk(
+        self,
+        db: Session,
+        resources: List[ResourceCreate],
+        created_by: Optional[str] = None,
+        created_from_ip: Optional[str] = None,
+        created_via: Optional[str] = None,
+        created_user_agent: Optional[str] = None,
+        import_batch_id: Optional[str] = None,
+        federation_source: Optional[str] = None,
+        team_id: Optional[str] = None,
+        owner_email: Optional[str] = None,
+        visibility: Optional[str] = "public",
+        conflict_strategy: str = "skip",
+    ) -> Dict[str, Any]:
+        """Register multiple resources in bulk with a single commit.
+
+        This method provides significant performance improvements over individual
+        resource registration by:
+        - Using db.add_all() instead of individual db.add() calls
+        - Performing a single commit for all resources
+        - Batch conflict detection
+        - Chunking for very large imports (>500 items)
+
+        Args:
+            db: Database session
+            resources: List of resource creation schemas
+            created_by: Username who created these resources
+            created_from_ip: IP address of creator
+            created_via: Creation method (ui, api, import, federation)
+            created_user_agent: User agent of creation request
+            import_batch_id: UUID for bulk import operations
+            federation_source: Source gateway for federated resources
+            team_id: Team ID to assign the resources to
+            owner_email: Email of the user who owns these resources
+            visibility: Resource visibility level (private, team, public)
+            conflict_strategy: How to handle conflicts (skip, update, rename, fail)
+
+        Returns:
+            Dict with statistics:
+                - created: Number of resources created
+                - updated: Number of resources updated
+                - skipped: Number of resources skipped
+                - failed: Number of resources that failed
+                - errors: List of error messages
+
+        Raises:
+            ResourceError: If bulk registration fails critically
+
+        Examples:
+            >>> from mcpgateway.services.resource_service import ResourceService
+            >>> from unittest.mock import MagicMock
+            >>> service = ResourceService()
+            >>> db = MagicMock()
+            >>> resources = [MagicMock(), MagicMock()]
+            >>> import asyncio
+            >>> try:
+            ...     result = asyncio.run(service.register_resources_bulk(db, resources))
+            ... except Exception:
+            ...     pass
+        """
+        if not resources:
+            return {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
+
+        stats = {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
+
+        # Process in chunks to avoid memory issues and SQLite parameter limits
+        chunk_size = 500
+
+        for chunk_start in range(0, len(resources), chunk_size):
+            chunk = resources[chunk_start : chunk_start + chunk_size]
+
+            try:
+                # Batch check for existing resources to detect conflicts
+                resource_uris = [resource.uri for resource in chunk]
+
+                if visibility.lower() == "public":
+                    existing_resources_query = select(DbResource).where(DbResource.uri.in_(resource_uris), DbResource.visibility == "public")
+                elif visibility.lower() == "team" and team_id:
+                    existing_resources_query = select(DbResource).where(DbResource.uri.in_(resource_uris), DbResource.visibility == "team", DbResource.team_id == team_id)
+                else:
+                    # Private resources - check by owner
+                    existing_resources_query = select(DbResource).where(DbResource.uri.in_(resource_uris), DbResource.visibility == "private", DbResource.owner_email == (owner_email or created_by))
+
+                existing_resources = db.execute(existing_resources_query).scalars().all()
+                existing_resources_map = {resource.uri: resource for resource in existing_resources}
+
+                resources_to_add = []
+                resources_to_update = []
+
+                for resource in chunk:
+                    try:
+                        # Use provided parameters or schema values
+                        resource_team_id = team_id if team_id is not None else getattr(resource, "team_id", None)
+                        resource_owner_email = owner_email or getattr(resource, "owner_email", None) or created_by
+                        resource_visibility = visibility if visibility is not None else getattr(resource, "visibility", "public")
+
+                        existing_resource = existing_resources_map.get(resource.uri)
+
+                        if existing_resource:
+                            # Handle conflict based on strategy
+                            if conflict_strategy == "skip":
+                                stats["skipped"] += 1
+                                continue
+                            if conflict_strategy == "update":
+                                # Update existing resource
+                                existing_resource.name = resource.name
+                                existing_resource.description = resource.description
+                                existing_resource.mime_type = resource.mime_type
+                                existing_resource.size = getattr(resource, "size", None)
+                                existing_resource.uri_template = resource.uri_template
+                                existing_resource.tags = resource.tags or []
+                                existing_resource.modified_by = created_by
+                                existing_resource.modified_from_ip = created_from_ip
+                                existing_resource.modified_via = created_via
+                                existing_resource.modified_user_agent = created_user_agent
+                                existing_resource.updated_at = datetime.now(timezone.utc)
+                                existing_resource.version = (existing_resource.version or 1) + 1
+
+                                resources_to_update.append(existing_resource)
+                                stats["updated"] += 1
+                            elif conflict_strategy == "rename":
+                                # Create with renamed resource
+                                new_uri = f"{resource.uri}_imported_{int(datetime.now().timestamp())}"
+                                db_resource = DbResource(
+                                    uri=new_uri,
+                                    name=resource.name,
+                                    description=resource.description,
+                                    mime_type=resource.mime_type,
+                                    size=getattr(resource, "size", None),
+                                    uri_template=resource.uri_template,
+                                    gateway_id=getattr(resource, "gateway_id", None),
+                                    tags=resource.tags or [],
+                                    created_by=created_by,
+                                    created_from_ip=created_from_ip,
+                                    created_via=created_via,
+                                    created_user_agent=created_user_agent,
+                                    import_batch_id=import_batch_id,
+                                    federation_source=federation_source,
+                                    version=1,
+                                    team_id=resource_team_id,
+                                    owner_email=resource_owner_email,
+                                    visibility=resource_visibility,
+                                )
+                                resources_to_add.append(db_resource)
+                                stats["created"] += 1
+                            elif conflict_strategy == "fail":
+                                stats["failed"] += 1
+                                stats["errors"].append(f"Resource URI conflict: {resource.uri}")
+                                continue
+                        else:
+                            # Create new resource
+                            db_resource = DbResource(
+                                uri=resource.uri,
+                                name=resource.name,
+                                description=resource.description,
+                                mime_type=resource.mime_type,
+                                size=getattr(resource, "size", None),
+                                uri_template=resource.uri_template,
+                                gateway_id=getattr(resource, "gateway_id", None),
+                                tags=resource.tags or [],
+                                created_by=created_by,
+                                created_from_ip=created_from_ip,
+                                created_via=created_via,
+                                created_user_agent=created_user_agent,
+                                import_batch_id=import_batch_id,
+                                federation_source=federation_source,
+                                version=1,
+                                team_id=resource_team_id,
+                                owner_email=resource_owner_email,
+                                visibility=resource_visibility,
+                            )
+                            resources_to_add.append(db_resource)
+                            stats["created"] += 1
+
+                    except Exception as e:
+                        stats["failed"] += 1
+                        stats["errors"].append(f"Failed to process resource {resource.uri}: {str(e)}")
+                        logger.warning(f"Failed to process resource {resource.uri} in bulk operation: {str(e)}")
+                        continue
+
+                # Bulk add new resources
+                if resources_to_add:
+                    db.add_all(resources_to_add)
+
+                # Commit the chunk
+                db.commit()
+
+                # Refresh resources for notifications and audit trail
+                for db_resource in resources_to_add:
+                    db.refresh(db_resource)
+                    # Notify subscribers
+                    await self._notify_resource_added(db_resource)
+
+                # Log bulk audit trail entry
+                if resources_to_add or resources_to_update:
+                    audit_trail.log_action(
+                        user_id=created_by or "system",
+                        action="bulk_create_resources" if resources_to_add else "bulk_update_resources",
+                        resource_type="resource",
+                        resource_id=import_batch_id or "bulk_operation",
+                        resource_name=f"Bulk operation: {len(resources_to_add)} created, {len(resources_to_update)} updated",
+                        user_email=owner_email,
+                        team_id=team_id,
+                        client_ip=created_from_ip,
+                        user_agent=created_user_agent,
+                        new_values={
+                            "resources_created": len(resources_to_add),
+                            "resources_updated": len(resources_to_update),
+                            "visibility": visibility,
+                        },
+                        context={
+                            "created_via": created_via,
+                            "import_batch_id": import_batch_id,
+                            "federation_source": federation_source,
+                            "conflict_strategy": conflict_strategy,
+                        },
+                        db=db,
+                    )
+
+                logger.info(f"Bulk registered {len(resources_to_add)} resources, updated {len(resources_to_update)} resources in chunk")
+
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Failed to process chunk in bulk resource registration: {str(e)}")
+                stats["failed"] += len(chunk)
+                stats["errors"].append(f"Chunk processing failed: {str(e)}")
+                continue
+
+        # Final structured logging
+        structured_logger.log(
+            level="INFO",
+            message="Bulk resource registration completed",
+            event_type="resources_bulk_created",
+            component="resource_service",
+            user_id=created_by,
+            user_email=owner_email,
+            team_id=team_id,
+            resource_type="resource",
+            custom_fields={
+                "resources_created": stats["created"],
+                "resources_updated": stats["updated"],
+                "resources_skipped": stats["skipped"],
+                "resources_failed": stats["failed"],
+                "total_resources": len(resources),
+                "visibility": visibility,
+                "conflict_strategy": conflict_strategy,
+            },
+            db=db,
+        )
+
+        return stats
+
     async def list_resources(self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None) -> tuple[List[ResourceRead], Optional[str]]:
         """
         Retrieve a list of registered resources from the database with pagination support.
@@ -570,6 +860,16 @@ class ResourceService:
             >>> isinstance(result2, list)
             True
         """
+        # Check cache for first page only (cursor=None)
+        cache = _get_registry_cache()
+        if cursor is None:
+            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
+            cached = await cache.get("resources", filters_hash)
+            if cached is not None:
+                # Reconstruct ResourceRead objects from cached dicts
+                cached_resources = [ResourceRead.model_validate(r) for r in cached["resources"]]
+                return (cached_resources, cached.get("next_cursor"))
+
         page_size = settings.pagination_default_page_size
         query = select(DbResource).where(DbResource.uri_template.is_(None)).order_by(DbResource.id)  # Consistent ordering for cursor pagination
 
@@ -603,11 +903,19 @@ class ResourceService:
         if has_more:
             resources = resources[:page_size]  # Trim to page_size
 
+        # Batch fetch team names to avoid N+1 queries
+        team_ids = {r.team_id for r in resources if r.team_id}
+        team_map = {}
+        if team_ids:
+            teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids), EmailTeam.is_active.is_(True))).all()
+            team_map = {str(team.id): team.name for team in teams}
+
+        db.commit()  # Release transaction to avoid idle-in-transaction
+
         # Convert to ResourceRead objects (skip metrics to avoid N+1 queries)
         result = []
         for t in resources:
-            team_name = self._get_team_name(db, getattr(t, "team_id", None))
-            t.team = team_name
+            t.team = team_map.get(str(t.team_id)) if t.team_id else None
             result.append(self._convert_resource_to_read(t, include_metrics=False))
 
         # Generate next_cursor if there are more results
@@ -616,6 +924,14 @@ class ResourceService:
             last_resource = resources[-1]  # Get last DB object
             next_cursor = encode_cursor({"id": last_resource.id})
             logger.debug(f"Generated next_cursor for id={last_resource.id}")
+
+        # Cache first page results
+        if cursor is None:
+            try:
+                cache_data = {"resources": [r.model_dump(mode="json") for r in result], "next_cursor": next_cursor}
+                await cache.set("resources", cache_data, filters_hash)
+            except AttributeError:
+                pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)
 
         return (result, next_cursor)
 
@@ -650,7 +966,7 @@ class ResourceService:
             >>> _rs.TeamManagementService = FakeTeamService
             >>> # Force DB to return one fake row with a 'team' attribute
             >>> class FakeResource:
-            ...     pass
+            ...     team_id = None
             >>> fake_resource = FakeResource()
             >>> db.execute.return_value.scalars.return_value.all.return_value = [fake_resource]
             >>> service._convert_resource_to_read = MagicMock(return_value="converted")
@@ -660,7 +976,7 @@ class ResourceService:
             Without team_id (default/public access):
             >>> db2 = MagicMock()
             >>> class FakeResource2:
-            ...     pass
+            ...     team_id = None
             >>> fake_resource2 = FakeResource2()
             >>> db2.execute.return_value.scalars.return_value.all.return_value = [fake_resource2]
             >>> service._convert_resource_to_read = MagicMock(return_value="converted2")
@@ -716,10 +1032,19 @@ class ResourceService:
         query = query.offset(skip).limit(limit)
 
         resources = db.execute(query).scalars().all()
+
+        # Batch fetch team names to avoid N+1 queries
+        resource_team_ids = {r.team_id for r in resources if r.team_id}
+        team_map = {}
+        if resource_team_ids:
+            teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(resource_team_ids), EmailTeam.is_active.is_(True))).all()
+            team_map = {str(team.id): team.name for team in teams}
+
+        db.commit()  # Release transaction to avoid idle-in-transaction
+
         result = []
         for t in resources:
-            team_name = self._get_team_name(db, getattr(t, "team_id", None))
-            t.team = team_name
+            t.team = team_map.get(str(t.team_id)) if t.team_id else None
             result.append(self._convert_resource_to_read(t, include_metrics=False))
         return result
 
@@ -769,10 +1094,19 @@ class ResourceService:
             query = query.where(DbResource.enabled)
         # Cursor-based pagination logic can be implemented here in the future.
         resources = db.execute(query).scalars().all()
+
+        # Batch fetch team names to avoid N+1 queries
+        resource_team_ids = {r.team_id for r in resources if r.team_id}
+        team_map = {}
+        if resource_team_ids:
+            teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(resource_team_ids), EmailTeam.is_active.is_(True))).all()
+            team_map = {str(team.id): team.name for team in teams}
+
+        db.commit()  # Release transaction to avoid idle-in-transaction
+
         result = []
         for t in resources:
-            team_name = self._get_team_name(db, getattr(t, "team_id", None))
-            t.team = team_name
+            t.team = team_map.get(str(t.team_id)) if t.team_id else None
             result.append(self._convert_resource_to_read(t, include_metrics=False))
         return result
 
@@ -1079,6 +1413,21 @@ class ResourceService:
                             else:
                                 headers = {}
 
+                        # ═══════════════════════════════════════════════════════════════════════════
+                        # Extract gateway data to local variables BEFORE releasing DB connection
+                        # ═══════════════════════════════════════════════════════════════════════════
+                        gateway_url = gateway.url
+                        gateway_transport = gateway.transport
+
+                        # ═══════════════════════════════════════════════════════════════════════════
+                        # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls
+                        # This prevents connection pool exhaustion during slow upstream requests.
+                        # All needed data has been extracted to local variables above.
+                        # The session will be closed again by FastAPI's get_db() finally block (safe no-op).
+                        # ═══════════════════════════════════════════════════════════════════════════
+                        db.commit()  # End read-only transaction cleanly (commit not rollback to avoid inflating rollback stats)
+                        db.close()
+
                         async def connect_to_sse_session(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | None:
                             """
                             Connect to an SSE-based gateway and retrieve the text content of a resource.
@@ -1185,10 +1534,10 @@ class ResourceService:
                             span.set_attribute("duration.ms", (time.monotonic() - start_time) * 1000)
 
                         resource_text = ""
-                        if (gateway.transport).lower() == "sse":
-                            resource_text = await connect_to_sse_session(server_url=gateway.url, authentication=headers, uri=uri)
+                        if (gateway_transport).lower() == "sse":
+                            resource_text = await connect_to_sse_session(server_url=gateway_url, authentication=headers, uri=uri)
                         else:
-                            resource_text = await connect_to_streamablehttp_server(server_url=gateway.url, authentication=headers, uri=uri)
+                            resource_text = await connect_to_streamablehttp_server(server_url=gateway_url, authentication=headers, uri=uri)
                         success = True  # Mark as successful before returning
                         return resource_text
                     except Exception as e:
@@ -1212,14 +1561,17 @@ class ResourceService:
                                 logger.warning(f"Failed to invoke resource metric: {metrics_error}")
 
                             # End Invoke resource span for Observability dashboard
+                            # NOTE: Use fresh_db_session() since the original db was released
+                            # before making HTTP calls to prevent connection pool exhaustion
                             if db_span_id and observability_service and not db_span_ended:
                                 try:
-                                    observability_service.end_span(
-                                        db=db,
-                                        span_id=db_span_id,
-                                        status="ok" if success else "error",
-                                        status_message=error_message if error_message else None,
-                                    )
+                                    with fresh_db_session() as fresh_db:
+                                        observability_service.end_span(
+                                            db=fresh_db,
+                                            span_id=db_span_id,
+                                            status="ok" if success else "error",
+                                            status_message=error_message if error_message else None,
+                                        )
                                     db_span_ended = True
                                     logger.debug(f"✓ Ended invoke.resource span: {db_span_id}")
                                 except Exception as e:
@@ -1343,15 +1695,23 @@ class ResourceService:
 
                 original_uri = uri
                 contexts = None
-                # Call pre-fetch hooks if plugin manager is available
-                plugin_eligible = bool(self._plugin_manager and PLUGINS_AVAILABLE and uri and ("://" in uri))
-                if plugin_eligible:
-                    # Initialize plugin manager if needed
-                    # pylint: disable=protected-access
-                    if not self._plugin_manager._initialized:
-                        await self._plugin_manager.initialize()
-                    # pylint: enable=protected-access
 
+                # Check if plugin manager is available and eligible for this request
+                plugin_eligible = bool(self._plugin_manager and PLUGINS_AVAILABLE and uri and ("://" in uri))
+
+                # Initialize plugin manager if needed (lazy init must happen before has_hooks_for check)
+                # pylint: disable=protected-access
+                if plugin_eligible and not self._plugin_manager._initialized:
+                    await self._plugin_manager.initialize()
+                # pylint: enable=protected-access
+
+                # Check if any resource hooks are registered to avoid unnecessary context creation
+                has_pre_fetch = plugin_eligible and self._plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_PRE_FETCH)
+                has_post_fetch = plugin_eligible and self._plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_POST_FETCH)
+
+                # Initialize plugin context variables only if hooks are registered
+                global_context = None
+                if has_pre_fetch or has_post_fetch:
                     # Create plugin context
                     # Normalize user to an identifier string if provided
                     user_id = None
@@ -1376,6 +1736,8 @@ class ResourceService:
                         # Create new context (fallback when middleware didn't run)
                         global_context = GlobalContext(request_id=request_id, user=user_id, server_id=server_id)
 
+                # Call pre-fetch hooks if registered
+                if has_pre_fetch:
                     # Create pre-fetch payload
                     pre_payload = ResourcePreFetchPayload(uri=uri, metadata={})
 
@@ -1452,8 +1814,8 @@ class ResourceService:
                             raise ResourceNotFoundError(f"Resource '{resource_id}' exists but is inactive")
                         raise ResourceNotFoundError(f"Resource not found for the resource id: {resource_id}")
 
-                # Call post-fetch hooks if plugin manager is available
-                if plugin_eligible:
+                # Call post-fetch hooks if registered
+                if has_post_fetch:
                     # Create post-fetch payload
                     post_payload = ResourcePostFetchPayload(uri=original_uri, content=content)
                     # Execute post-fetch hooks
@@ -1596,6 +1958,10 @@ class ResourceService:
                 resource.updated_at = datetime.now(timezone.utc)
                 db.commit()
                 db.refresh(resource)
+
+                # Invalidate cache after status change
+                cache = _get_registry_cache()
+                await cache.invalidate_resources()
 
                 # Notify subscribers
                 if activate:
@@ -1882,6 +2248,15 @@ class ResourceService:
             db.commit()
             db.refresh(resource)
 
+            # Invalidate cache after successful update
+            cache = _get_registry_cache()
+            await cache.invalidate_resources()
+            # Also invalidate tags cache since resource tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
+
             # Notify subscribers
             await self._notify_resource_updated(resource)
 
@@ -2082,6 +2457,15 @@ class ResourceService:
 
             db.delete(resource)
             db.commit()
+
+            # Invalidate cache after successful deletion
+            cache = _get_registry_cache()
+            await cache.invalidate_resources()
+            # Also invalidate tags cache since resource tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
 
             # Notify subscribers.
             await self._notify_resource_deleted(resource_info)
@@ -2549,6 +2933,9 @@ class ResourceService:
         """
         Aggregate metrics for all resource invocations across all resources.
 
+        Uses in-memory caching (10s TTL) to reduce database load under high
+        request rates. Cache is invalidated when metrics are reset.
+
         Args:
             db: Database session
 
@@ -2566,6 +2953,15 @@ class ResourceService:
             >>> hasattr(result, 'total_executions')
             True
         """
+        # Check cache first (if enabled)
+        # First-Party
+        from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
+
+        if is_cache_enabled():
+            cached = metrics_cache.get("resources")
+            if cached is not None:
+                return ResourceMetrics(**cached)
+
         # Execute a single query to get all metrics at once
         result = db.execute(
             select(
@@ -2583,7 +2979,7 @@ class ResourceService:
         successful_executions = result.successful_executions or 0
         failed_executions = result.failed_executions or 0
 
-        return ResourceMetrics(
+        metrics = ResourceMetrics(
             total_executions=total_executions,
             successful_executions=successful_executions,
             failed_executions=failed_executions,
@@ -2593,6 +2989,12 @@ class ResourceService:
             avg_response_time=result.avg_response_time,
             last_execution_time=result.last_execution_time,
         )
+
+        # Cache the result as dict for serialization compatibility (if enabled)
+        if is_cache_enabled():
+            metrics_cache.set("resources", metrics.model_dump())
+
+        return metrics
 
     async def reset_metrics(self, db: Session) -> None:
         """
@@ -2613,3 +3015,10 @@ class ResourceService:
         """
         db.execute(delete(ResourceMetric))
         db.commit()
+
+        # Invalidate metrics cache
+        # First-Party
+        from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
+
+        metrics_cache.invalidate("resources")
+        metrics_cache.invalidate_prefix("top_resources:")

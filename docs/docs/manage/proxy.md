@@ -136,7 +136,7 @@ services:
       AUTH_REQUIRED: "true"
       BASIC_AUTH_USER: ${ADMIN_USER}
       BASIC_AUTH_PASSWORD: ${ADMIN_PASSWORD}
-      DATABASE_URL: postgresql://postgres:password@db:5432/mcp
+      DATABASE_URL: postgresql+psycopg://postgres:password@db:5432/mcp
     depends_on:
 
       - db

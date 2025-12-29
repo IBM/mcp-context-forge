@@ -67,7 +67,7 @@ PORT=4444
 ## - Use the service credentials to build the URL.
 ## - sslmode=require is mandatory for IBM Cloud databases.
 CACHE_TYPE=database
-DATABASE_URL=postgresql://pguser:pgpass@my-pg-host.databases.appdomain.cloud:32727/mcpgwdb?sslmode=require
+DATABASE_URL=postgresql+psycopg://pguser:pgpass@my-pg-host.databases.appdomain.cloud:32727/mcpgwdb?sslmode=require
 #            │ │      │                                   │           │
 #            │ │      │                                   │           └─ database name
 #            │ │      │                                   └─ hostname:port
@@ -277,7 +277,7 @@ user=$(echo "$creds_json" | jq -r '.[0].credentials.connection.postgres.authenti
 pass=$(echo "$creds_json" | jq -r '.[0].credentials.connection.postgres.authentication.password')
 db=$(echo "$creds_json"   | jq -r '.[0].credentials.connection.postgres.database')
 
-DATABASE_URL="postgresql://${user}:${pass}@${host}:${port}/${db}?sslmode=require"
+DATABASE_URL="postgresql+psycopg://${user}:${pass}@${host}:${port}/${db}?sslmode=require"
 
 ###############################################################################
 # 4 - Store DATABASE_URL as a Code Engine secret

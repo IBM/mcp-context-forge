@@ -17,14 +17,23 @@ import statistics
 from typing import Any, Dict, List, Optional, Tuple
 
 # Third-Party
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select, text
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import PerformanceMetric, SessionLocal, StructuredLogEntry
+from mcpgateway.db import engine, PerformanceMetric, SessionLocal, StructuredLogEntry
 
 logger = logging.getLogger(__name__)
+
+
+def _is_postgresql() -> bool:
+    """Check if the database backend is PostgreSQL.
+
+    Returns:
+        True if using PostgreSQL, False otherwise.
+    """
+    return engine.dialect.name == "postgresql"
 
 
 class LogAggregator:
@@ -34,6 +43,7 @@ class LogAggregator:
         """Initialize log aggregator."""
         self.aggregation_window_minutes = getattr(settings, "metrics_aggregation_window_minutes", 5)
         self.enabled = getattr(settings, "metrics_aggregation_enabled", True)
+        self._use_sql_percentiles = _is_postgresql()
 
     def aggregate_performance_metrics(
         self, component: Optional[str], operation_type: Optional[str], window_start: Optional[datetime] = None, window_end: Optional[datetime] = None, db: Optional[Session] = None
@@ -63,41 +73,23 @@ class LogAggregator:
             should_close = True
 
         try:
-            # Query structured logs for this component/operation in time window
-            stmt = select(StructuredLogEntry).where(
-                and_(
-                    StructuredLogEntry.component == component,
-                    StructuredLogEntry.operation_type == operation_type,
-                    StructuredLogEntry.timestamp >= window_start,
-                    StructuredLogEntry.timestamp < window_end,
-                    StructuredLogEntry.duration_ms.isnot(None),
-                )
-            )
+            # Use SQL-based aggregation for PostgreSQL, Python fallback for SQLite
+            if self._use_sql_percentiles:
+                stats = self._compute_stats_postgresql(db, component, operation_type, window_start, window_end)
+            else:
+                stats = self._compute_stats_python(db, component, operation_type, window_start, window_end)
 
-            results = db.execute(stmt).scalars().all()
-
-            if not results:
+            if stats is None:
                 return None
 
-            # Extract durations
-            durations = sorted(r.duration_ms for r in results if r.duration_ms is not None)
-
-            if not durations:
-                return None
-
-            # Calculate statistics
-            count = len(durations)
-            avg_duration = statistics.fmean(durations) if hasattr(statistics, "fmean") else statistics.mean(durations)
-            min_duration = durations[0]
-            max_duration = durations[-1]
-
-            # Calculate percentiles
-            p50 = self._percentile(durations, 0.50)
-            p95 = self._percentile(durations, 0.95)
-            p99 = self._percentile(durations, 0.99)
-
-            # Count errors
-            error_count = self._calculate_error_count(results)
+            count = stats["count"]
+            avg_duration = stats["avg_duration"]
+            min_duration = stats["min_duration"]
+            max_duration = stats["max_duration"]
+            p50 = stats["p50"]
+            p95 = stats["p95"]
+            p99 = stats["p99"]
+            error_count = stats["error_count"]
             error_rate = error_count / count if count > 0 else 0.0
 
             metric = self._upsert_metric(
@@ -123,11 +115,13 @@ class LogAggregator:
 
             logger.info(f"Aggregated performance metrics for {component}.{operation_type}: " f"{count} requests, {avg_duration:.2f}ms avg, {error_rate:.2%} error rate")
 
+            if should_close:
+                db.commit()  # Commit transaction on success
             return metric
 
         except Exception as e:
             logger.error(f"Failed to aggregate performance metrics: {e}")
-            if db:
+            if should_close and db:
                 db.rollback()
             return None
 
@@ -145,6 +139,9 @@ class LogAggregator:
 
         Returns:
             List of created PerformanceMetric records
+
+        Raises:
+            Exception: If database operation fails
         """
         if not self.enabled:
             return []
@@ -179,7 +176,14 @@ class LogAggregator:
                     if metric:
                         metrics.append(metric)
 
+            if should_close:
+                db.commit()  # Commit on success
             return metrics
+
+        except Exception:
+            if should_close:
+                db.rollback()
+            raise
 
         finally:
             if should_close:
@@ -196,6 +200,9 @@ class LogAggregator:
 
         Returns:
             List of PerformanceMetric records
+
+        Raises:
+            Exception: If database operation fails
         """
         should_close = False
         if db is None:
@@ -214,7 +221,15 @@ class LogAggregator:
 
             stmt = stmt.order_by(PerformanceMetric.window_start.desc())
 
-            return db.execute(stmt).scalars().all()
+            result = db.execute(stmt).scalars().all()
+            if should_close:
+                db.commit()  # Commit on success
+            return result
+
+        except Exception:
+            if should_close:
+                db.rollback()
+            raise
 
         finally:
             if should_close:
@@ -230,6 +245,9 @@ class LogAggregator:
 
         Returns:
             List of degradation alerts with details
+
+        Raises:
+            Exception: If database operation fails
         """
         should_close = False
         if db is None:
@@ -283,7 +301,14 @@ class LogAggregator:
                         }
                     )
 
+            if should_close:
+                db.commit()  # Commit on success
             return alerts
+
+        except Exception:
+            if should_close:
+                db.rollback()
+            raise
 
         finally:
             if should_close:
@@ -298,6 +323,9 @@ class LogAggregator:
 
         Returns:
             Count of performance metric windows processed
+
+        Raises:
+            Exception: If database operation fails
         """
         if not self.enabled or hours <= 0:
             return 0
@@ -327,7 +355,14 @@ class LogAggregator:
                     processed += 1
                 current_start = current_end
 
+            if should_close:
+                db.commit()  # Commit on success
             return processed
+
+        except Exception:
+            if should_close:
+                db.rollback()
+            raise
 
         finally:
             if should_close:
@@ -373,6 +408,176 @@ class LogAggregator:
         """
         error_levels = {"ERROR", "CRITICAL"}
         return sum(1 for entry in entries if (entry.level and entry.level.upper() in error_levels) or entry.error_details)
+
+    def _compute_stats_postgresql(
+        self,
+        db: Session,
+        component: str,
+        operation_type: str,
+        window_start: datetime,
+        window_end: datetime,
+    ) -> Optional[Dict[str, Any]]:
+        """Compute aggregation statistics using PostgreSQL SQL functions.
+
+        Uses PostgreSQL's percentile_cont for efficient in-database percentile
+        computation, avoiding loading all rows into Python memory.
+
+        Args:
+            db: Database session
+            component: Component name to filter by
+            operation_type: Operation type to filter by
+            window_start: Start of the aggregation window
+            window_end: End of the aggregation window
+
+        Returns:
+            Dictionary with count, avg_duration, min_duration, max_duration,
+            p50, p95, p99, and error_count, or None if no data.
+        """
+        # Build base filter conditions
+        base_conditions = and_(
+            StructuredLogEntry.component == component,
+            StructuredLogEntry.operation_type == operation_type,
+            StructuredLogEntry.timestamp >= window_start,
+            StructuredLogEntry.timestamp < window_end,
+            StructuredLogEntry.duration_ms.isnot(None),
+        )
+
+        # First, check if there are any rows and get error count
+        # (error count requires examining level/error_details which can't be done purely in SQL aggregate)
+        count_stmt = select(func.count()).select_from(StructuredLogEntry).where(base_conditions)  # pylint: disable=not-callable
+        count_result = db.execute(count_stmt).scalar()
+
+        if not count_result or count_result == 0:
+            return None
+
+        # PostgreSQL percentile_cont query using ordered-set aggregate functions
+        # This computes all statistics in a single query
+        stats_sql = text(
+            """
+            SELECT
+                COUNT(duration_ms) as cnt,
+                AVG(duration_ms) as avg_duration,
+                MIN(duration_ms) as min_duration,
+                MAX(duration_ms) as max_duration,
+                percentile_cont(0.50) WITHIN GROUP (ORDER BY duration_ms) as p50,
+                percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) as p95,
+                percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms) as p99
+            FROM structured_log_entries
+            WHERE component = :component
+              AND operation_type = :operation_type
+              AND timestamp >= :window_start
+              AND timestamp < :window_end
+              AND duration_ms IS NOT NULL
+            """
+        )
+
+        result = db.execute(
+            stats_sql,
+            {
+                "component": component,
+                "operation_type": operation_type,
+                "window_start": window_start,
+                "window_end": window_end,
+            },
+        ).fetchone()
+
+        if not result or result.cnt == 0:
+            return None
+
+        # Get error count separately (requires level/error_details examination)
+        error_stmt = (
+            select(func.count())  # pylint: disable=not-callable
+            .select_from(StructuredLogEntry)
+            .where(
+                and_(
+                    base_conditions,
+                    ((func.upper(StructuredLogEntry.level).in_(["ERROR", "CRITICAL"])) | (StructuredLogEntry.error_details.isnot(None))),
+                )
+            )
+        )
+        error_count = db.execute(error_stmt).scalar() or 0
+
+        return {
+            "count": result.cnt,
+            "avg_duration": float(result.avg_duration) if result.avg_duration else 0.0,
+            "min_duration": float(result.min_duration) if result.min_duration else 0.0,
+            "max_duration": float(result.max_duration) if result.max_duration else 0.0,
+            "p50": float(result.p50) if result.p50 else 0.0,
+            "p95": float(result.p95) if result.p95 else 0.0,
+            "p99": float(result.p99) if result.p99 else 0.0,
+            "error_count": error_count,
+        }
+
+    def _compute_stats_python(
+        self,
+        db: Session,
+        component: str,
+        operation_type: str,
+        window_start: datetime,
+        window_end: datetime,
+    ) -> Optional[Dict[str, Any]]:
+        """Compute aggregation statistics using Python (fallback for SQLite).
+
+        Loads duration values into memory and computes statistics in Python.
+        Used when database doesn't support native percentile functions.
+
+        Args:
+            db: Database session
+            component: Component name to filter by
+            operation_type: Operation type to filter by
+            window_start: Start of the aggregation window
+            window_end: End of the aggregation window
+
+        Returns:
+            Dictionary with count, avg_duration, min_duration, max_duration,
+            p50, p95, p99, and error_count, or None if no data.
+        """
+        # Query structured logs for this component/operation in time window
+        stmt = select(StructuredLogEntry).where(
+            and_(
+                StructuredLogEntry.component == component,
+                StructuredLogEntry.operation_type == operation_type,
+                StructuredLogEntry.timestamp >= window_start,
+                StructuredLogEntry.timestamp < window_end,
+                StructuredLogEntry.duration_ms.isnot(None),
+            )
+        )
+
+        results = db.execute(stmt).scalars().all()
+
+        if not results:
+            return None
+
+        # Extract durations
+        durations = sorted(r.duration_ms for r in results if r.duration_ms is not None)
+
+        if not durations:
+            return None
+
+        # Calculate statistics
+        count = len(durations)
+        avg_duration = statistics.fmean(durations) if hasattr(statistics, "fmean") else statistics.mean(durations)
+        min_duration = durations[0]
+        max_duration = durations[-1]
+
+        # Calculate percentiles
+        p50 = self._percentile(durations, 0.50)
+        p95 = self._percentile(durations, 0.95)
+        p99 = self._percentile(durations, 0.99)
+
+        # Count errors
+        error_count = self._calculate_error_count(results)
+
+        return {
+            "count": count,
+            "avg_duration": avg_duration,
+            "min_duration": min_duration,
+            "max_duration": max_duration,
+            "p50": p50,
+            "p95": p95,
+            "p99": p99,
+            "error_count": error_count,
+        }
 
     def _resolve_window_bounds(
         self,

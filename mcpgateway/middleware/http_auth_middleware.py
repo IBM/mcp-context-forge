@@ -60,6 +60,13 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
         if not self.plugin_manager:
             return await call_next(request)
 
+        # Skip payload creation if no HTTP hooks registered
+        has_pre = self.plugin_manager.has_hooks_for(HttpHookType.HTTP_PRE_REQUEST)
+        has_post = self.plugin_manager.has_hooks_for(HttpHookType.HTTP_POST_REQUEST)
+
+        if not has_pre and not has_post:
+            return await call_next(request)
+
         # Use correlation ID from CorrelationIDMiddleware if available
         # This ensures all hooks and downstream code see the same unified request ID
         request_id = get_correlation_id()

@@ -31,12 +31,14 @@ import uuid
 
 # Third-Party
 import jsonschema
-from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index, Integer, JSON, make_url, MetaData, select, String, Table, Text, UniqueConstraint, VARCHAR
+from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, Text, UniqueConstraint, VARCHAR
 from sqlalchemy.engine import Engine
 from sqlalchemy.event import listen
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
 from sqlalchemy.ext.hybrid import hybrid_property
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, Session, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, joinedload, Mapped, mapped_column, relationship, Session, sessionmaker
 from sqlalchemy.orm.attributes import get_history
 from sqlalchemy.pool import QueuePool
 
@@ -57,7 +59,7 @@ if TYPE_CHECKING:
 
 # ---------------------------------------------------------------------------
 # 1. Parse the URL so we can inspect backend ("postgresql", "sqlite", ...)
-#    and the specific driver ("psycopg2", "asyncpg", empty string = default).
+#    and the specific driver ("psycopg", "asyncpg", empty string = default).
 # ---------------------------------------------------------------------------
 url = make_url(settings.database_url)
 backend = url.get_backend_name()  # e.g. 'postgresql', 'sqlite'
@@ -68,20 +70,26 @@ driver = url.get_driver_name() or "default"
 connect_args: dict[str, object] = {}
 
 # ---------------------------------------------------------------------------
-# 2. PostgreSQL (synchronous psycopg2 only)
-#    The keep-alive parameters below are recognised exclusively by libpq /
-#    psycopg2 and let the kernel detect broken network links quickly.
+# 2. PostgreSQL (synchronous psycopg3)
+#    The keep-alive parameters below are recognised by libpq and let the
+#    kernel detect broken network links quickly.
 #
 #    Additionally, support PostgreSQL-specific options like search_path
 #    via the 'options' query parameter in DATABASE_URL.
-#    Example: postgresql://user:pass@host/db?options=-c%20search_path=mcp_gateway
+#    Example: postgresql+psycopg://user:pass@host/db?options=-c%20search_path=mcp_gateway
+#
+#    IMPORTANT: Use postgresql+psycopg:// (not postgresql://) for psycopg3.
 # ---------------------------------------------------------------------------
-if backend == "postgresql" and driver in ("psycopg2", "default", ""):
+if backend == "postgresql" and driver in ("psycopg", "default", ""):
     connect_args.update(
         keepalives=1,  # enable TCP keep-alive probes
         keepalives_idle=30,  # seconds of idleness before first probe
         keepalives_interval=5,  # seconds between probes
         keepalives_count=5,  # drop the link after N failed probes
+        # psycopg3: prepare_threshold controls automatic server-side prepared statements
+        # After N executions of the same query, psycopg3 prepares it server-side
+        # This significantly improves performance for frequently-executed queries
+        prepare_threshold=settings.db_prepare_threshold,
     )
 
     # Extract and apply PostgreSQL options from URL query parameters
@@ -90,6 +98,8 @@ if backend == "postgresql" and driver in ("psycopg2", "default", ""):
     if url_options:
         connect_args["options"] = url_options
         logger.info(f"PostgreSQL connection options applied: {url_options}")
+
+    logger.info(f"psycopg3 prepare_threshold set to {settings.db_prepare_threshold}")
 
 # ---------------------------------------------------------------------------
 # 3. SQLite (optional) - only one extra flag and it is *SQLite-specific*.
@@ -167,9 +177,15 @@ def build_engine() -> Engine:
         )
 
     # Other databases support full pooling configuration
+    # Disable pool_pre_ping when using PgBouncer - it handles connection health
+    # and pre_ping contributes to idle-in-transaction issues in transaction mode
+    use_pre_ping = "pgbouncer" not in settings.database_url.lower()
+    if not use_pre_ping:
+        logger.info("PgBouncer detected - disabling pool_pre_ping (PgBouncer handles connection health)")
+
     return create_engine(
         settings.database_url,
-        pool_pre_ping=True,  # quick liveness check per checkout
+        pool_pre_ping=use_pre_ping,
         pool_size=settings.db_pool_size,
         max_overflow=settings.db_max_overflow,
         pool_timeout=settings.db_pool_timeout,
@@ -246,51 +262,434 @@ if backend == "sqlite":
         cursor.close()
 
 
-# Session factory
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# ---------------------------------------------------------------------------
+# Resilient Session class for graceful error recovery
+# ---------------------------------------------------------------------------
+class ResilientSession(Session):
+    """A Session subclass that auto-rollbacks on connection errors.
+
+    When a database operation fails due to a connection error (e.g., PgBouncer
+    query_wait_timeout), this session automatically rolls back to clear the
+    invalid transaction state. This prevents cascading PendingRollbackError
+    failures when multiple queries run within the same request.
+
+    Without this, the first failed query leaves the session in a "needs rollback"
+    state, and all subsequent queries fail with PendingRollbackError before
+    even attempting to use the database.
+    """
+
+    # Error types that indicate connection issues requiring rollback
+    _connection_error_patterns = (
+        "query_wait_timeout",
+        "server closed the connection unexpectedly",
+        "connection reset by peer",
+        "connection timed out",
+        "could not receive data from server",
+        "could not send data to server",
+        "terminating connection",
+        "no connection to the server",
+    )
+
+    def _is_connection_error(self, exception: Exception) -> bool:
+        """Check if an exception indicates a broken database connection.
+
+        Args:
+            exception: The exception to check.
+
+        Returns:
+            True if the exception indicates a connection error, False otherwise.
+        """
+        exc_name = type(exception).__name__
+        exc_msg = str(exception).lower()
+
+        # Check for known connection error types
+        if exc_name in ("ProtocolViolation", "OperationalError", "InterfaceError"):
+            return True
+
+        # Check for connection error patterns in message
+        for pattern in self._connection_error_patterns:
+            if pattern in exc_msg:
+                return True
+
+        return False
+
+    def _safe_rollback(self) -> None:
+        """Attempt to rollback, invalidating the session if rollback fails."""
+        try:
+            self.rollback()
+        except Exception:
+            try:
+                self.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
+
+    def execute(self, statement, params=None, **kw):
+        """Execute a statement with automatic rollback on connection errors.
+
+        Wraps the parent execute method to catch connection errors and
+        automatically rollback the session to prevent PendingRollbackError cascade.
+
+        Args:
+            statement: The SQL statement to execute.
+            params: Optional parameters for the statement.
+            **kw: Additional keyword arguments passed to Session.execute().
+
+        Returns:
+            The result of the execute operation.
+
+        Raises:
+            Exception: Re-raises any exception after rolling back on connection errors.
+        """
+        try:
+            return super().execute(statement, params, **kw)
+        except Exception as e:
+            if self._is_connection_error(e):
+                logger.warning(
+                    "Connection error during execute, auto-rolling back session: %s",
+                    type(e).__name__,
+                )
+                self._safe_rollback()
+            raise
+
+    def scalar(self, statement, params=None, **kw):
+        """Execute and return a scalar with automatic rollback on connection errors.
+
+        Wraps the parent scalar method to catch connection errors and
+        automatically rollback the session to prevent PendingRollbackError cascade.
+
+        Args:
+            statement: The SQL statement to execute.
+            params: Optional parameters for the statement.
+            **kw: Additional keyword arguments passed to Session.scalar().
+
+        Returns:
+            The scalar result of the query.
+
+        Raises:
+            Exception: Re-raises any exception after rolling back on connection errors.
+        """
+        try:
+            return super().scalar(statement, params, **kw)
+        except Exception as e:
+            if self._is_connection_error(e):
+                logger.warning(
+                    "Connection error during scalar, auto-rolling back session: %s",
+                    type(e).__name__,
+                )
+                self._safe_rollback()
+            raise
+
+    def scalars(self, statement, params=None, **kw):
+        """Execute and return scalars with automatic rollback on connection errors.
+
+        Wraps the parent scalars method to catch connection errors and
+        automatically rollback the session to prevent PendingRollbackError cascade.
+
+        Args:
+            statement: The SQL statement to execute.
+            params: Optional parameters for the statement.
+            **kw: Additional keyword arguments passed to Session.scalars().
+
+        Returns:
+            The scalars result of the query.
+
+        Raises:
+            Exception: Re-raises any exception after rolling back on connection errors.
+        """
+        try:
+            return super().scalars(statement, params, **kw)
+        except Exception as e:
+            if self._is_connection_error(e):
+                logger.warning(
+                    "Connection error during scalars, auto-rolling back session: %s",
+                    type(e).__name__,
+                )
+                self._safe_rollback()
+            raise
 
 
-def refresh_slugs_on_startup():
-    """Refresh slugs for all gateways and names of tools on startup."""
+# Session factory using ResilientSession
+# expire_on_commit=False prevents SQLAlchemy from expiring ORM objects after commit,
+# allowing continued access to attributes without re-querying the database.
+# This is essential when commits happen during read operations (e.g., to release transactions).
+SessionLocal = sessionmaker(class_=ResilientSession, autocommit=False, autoflush=False, expire_on_commit=False, bind=engine)
+
+
+@event.listens_for(ResilientSession, "after_transaction_end")
+def end_transaction_cleanup(_session, _transaction):
+    """Ensure connection is properly released after transaction ends.
+
+    This event fires after COMMIT or ROLLBACK, ensuring the connection
+    is returned to PgBouncer cleanly with no open transaction.
+
+    Args:
+        _session: The SQLAlchemy session that ended the transaction.
+        _transaction: The transaction that was ended.
+    """
+    # The transaction has already ended - nothing to do here
+    # This is just for monitoring/logging if needed
+
+
+@event.listens_for(ResilientSession, "before_commit")
+def before_commit_handler(session):
+    """Handler before commit to ensure transaction is in good state.
+
+    This is called before COMMIT, ensuring any pending work is flushed.
+
+    Args:
+        session: The SQLAlchemy session about to commit.
+    """
+    try:
+        session.flush()
+    except Exception:  # nosec B110
+        # If flush fails, the commit will also fail and trigger rollback
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Pool event listeners for connection resilience
+# These handlers ensure broken connections are properly invalidated and
+# discarded from the pool, preventing "poisoned" connections from causing
+# cascading failures (e.g., PendingRollbackError after PgBouncer timeout).
+#
+# Key issue: PgBouncer returns ProtocolViolation (SQL error 08P01) for
+# query_wait_timeout, but SQLAlchemy doesn't recognize this as a disconnect
+# by default. We must explicitly mark these errors as disconnects so the
+# connection pool properly invalidates these connections.
+#
+# References:
+# - https://github.com/zodb/relstorage/issues/412
+# - https://docs.sqlalchemy.org/en/20/core/pooling.html#custom-legacy-pessimistic-ping
+# ---------------------------------------------------------------------------
+@event.listens_for(engine, "handle_error")
+def handle_pool_error(exception_context):
+    """Mark PgBouncer and connection errors as disconnects for proper pool invalidation.
+
+    This event fires when an error occurs during query execution. By marking
+    certain errors as disconnects (is_disconnect=True), SQLAlchemy will:
+    1. Invalidate the current connection (discard from pool)
+    2. Invalidate all other pooled connections older than current time
+
+    Without this, PgBouncer errors like query_wait_timeout result in
+    ProtocolViolation which is classified as DatabaseError, not a disconnect.
+    The connection stays in the pool and causes PendingRollbackError on reuse.
+
+    Args:
+        exception_context: SQLAlchemy ExceptionContext with error details.
+    """
+    original = exception_context.original_exception
+    if original is None:
+        return
+
+    # Get the exception class name and message for pattern matching
+    exc_class = type(original).__name__
+    exc_msg = str(original).lower()
+
+    # List of error patterns that indicate the connection is broken
+    # and should be treated as a disconnect for pool invalidation
+    disconnect_patterns = [
+        # PgBouncer errors
+        "query_wait_timeout",
+        "server_login_retry",
+        "client_login_timeout",
+        "server closed the connection unexpectedly",
+        "connection reset by peer",
+        "connection timed out",
+        "no connection to the server",
+        "terminating connection",
+        "connection has been closed unexpectedly",
+        # PostgreSQL errors indicating dead connection
+        "could not receive data from server",
+        "could not send data to server",
+        "ssl connection has been closed unexpectedly",
+        "canceling statement due to conflict with recovery",
+    ]
+
+    # Check for ProtocolViolation or OperationalError with disconnect patterns
+    is_connection_error = exc_class in ("ProtocolViolation", "OperationalError", "InterfaceError", "DatabaseError")
+
+    if is_connection_error:
+        for pattern in disconnect_patterns:
+            if pattern in exc_msg:
+                exception_context.is_disconnect = True
+                logger.warning(
+                    "Connection error detected, marking as disconnect for pool invalidation: %s: %s",
+                    exc_class,
+                    pattern,
+                )
+                return
+
+    # Also treat ProtocolViolation from PgBouncer as disconnect even without message match
+    # PgBouncer sends 08P01 PROTOCOL_VIOLATION for various connection issues
+    if exc_class == "ProtocolViolation":
+        exception_context.is_disconnect = True
+        logger.warning(
+            "ProtocolViolation detected (likely PgBouncer), marking as disconnect: %s",
+            exc_msg[:200],
+        )
+
+
+@event.listens_for(engine, "checkin")
+def reset_connection_on_checkin(dbapi_connection, _connection_record):
+    """Reset connection state when returned to pool.
+
+    This ensures transactions are properly closed before the connection
+    is returned to PgBouncer, preventing 'idle in transaction' buildup.
+    With PgBouncer in transaction mode, connections stays reserved until
+    the transaction ends - this rollback releases them immediately.
+
+    Args:
+        dbapi_connection: The raw DBAPI connection being checked in.
+        _connection_record: The connection record tracking this connection.
+    """
+    try:
+        # Issue a rollback to close any open transaction
+        # This is safe for both read and write operations:
+        # - For reads: rollback has no effect but closes the transaction
+        # - For writes: they should already be committed by the application
+        dbapi_connection.rollback()
+    except Exception as e:
+        # Connection may be invalid - log and try to force close
+        logger.debug("Connection checkin rollback failed: %s", e)
+        try:
+            # Try to close the raw connection to release it from PgBouncer
+            dbapi_connection.close()
+        except Exception:  # nosec B110
+            pass  # Nothing more we can do
+
+
+@event.listens_for(engine, "reset")
+def reset_connection_on_reset(dbapi_connection, _connection_record):
+    """Reset connection state when the pool resets a connection.
+
+    This handles the case where a connection is being reset before reuse.
+
+    Args:
+        dbapi_connection: The raw DBAPI connection being reset.
+        _connection_record: The connection record tracking this connection.
+    """
+    try:
+        dbapi_connection.rollback()
+    except Exception:  # nosec B110
+        pass  # Connection may be invalid
+
+
+def _refresh_gateway_slugs_batched(session: Session, batch_size: int) -> None:
+    """Refresh gateway slugs in small batches to reduce memory usage.
+
+    Args:
+        session: Active SQLAlchemy session.
+        batch_size: Maximum number of rows to process per batch.
+    """
+
+    last_id: Optional[str] = None
+
+    while True:
+        query = session.query(Gateway).order_by(Gateway.id)
+        if last_id is not None:
+            query = query.filter(Gateway.id > last_id)
+
+        gateways = query.limit(batch_size).all()
+        if not gateways:
+            break
+
+        updated = False
+        for gateway in gateways:
+            new_slug = slugify(gateway.name)
+            if gateway.slug != new_slug:
+                gateway.slug = new_slug
+                updated = True
+
+        if updated:
+            session.commit()
+
+        # Free ORM state from memory between batches
+        session.expire_all()
+        last_id = gateways[-1].id
+
+
+def _refresh_tool_names_batched(session: Session, batch_size: int) -> None:
+    """Refresh tool names in batches with eager-loaded gateways.
+
+    Uses joinedload(Tool.gateway) to avoid N+1 queries when accessing the
+    gateway relationship while regenerating tool names.
+
+    Args:
+        session: Active SQLAlchemy session.
+        batch_size: Maximum number of rows to process per batch.
+    """
+
+    last_id: Optional[str] = None
+    separator = settings.gateway_tool_name_separator
+
+    while True:
+        stmt = select(Tool).options(joinedload(Tool.gateway)).order_by(Tool.id).limit(batch_size)
+        if last_id is not None:
+            stmt = stmt.where(Tool.id > last_id)
+
+        tools = session.execute(stmt).scalars().all()
+        if not tools:
+            break
+
+        updated = False
+        for tool in tools:
+            # Prefer custom_name_slug when available; fall back to original_name
+            name_slug_source = getattr(tool, "custom_name_slug", None) or tool.original_name
+            name_slug = slugify(name_slug_source)
+
+            if tool.gateway:
+                gateway_slug = slugify(tool.gateway.name)
+                new_name = f"{gateway_slug}{separator}{name_slug}"
+            else:
+                new_name = name_slug
+
+            if tool.name != new_name:
+                tool.name = new_name
+                updated = True
+
+        if updated:
+            session.commit()
+
+        # Free ORM state from memory between batches
+        session.expire_all()
+        last_id = tools[-1].id
+
+
+def refresh_slugs_on_startup(batch_size: Optional[int] = None) -> None:
+    """Refresh slugs for all gateways and tool names on startup.
+
+    This implementation avoids loading all rows into memory at once by
+    streaming through the tables in batches and eager-loading tool.gateway
+    relationships to prevent N+1 query patterns.
+
+    Args:
+        batch_size: Optional maximum number of rows to process per batch. If
+            not provided, the value is taken from
+            ``settings.slug_refresh_batch_size`` with a default of ``1000``.
+    """
+
+    effective_batch_size = batch_size or getattr(settings, "slug_refresh_batch_size", 1000)
+
     try:
         with cast(Any, SessionLocal)() as session:
             # Skip if tables don't exist yet (fresh database)
             try:
-                gateways = session.query(Gateway).all()
-            except Exception:
-                logger.info("Gateway table not found, skipping slug refresh")
+                _refresh_gateway_slugs_batched(session, effective_batch_size)
+            except (OperationalError, ProgrammingError) as e:
+                # Table doesn't exist yet - expected on fresh database
+                logger.info("Gateway table not found, skipping slug refresh: %s", e)
                 return
 
-            updated = False
-            for gateway in gateways:
-                new_slug = slugify(gateway.name)
-                if gateway.slug != new_slug:
-                    gateway.slug = new_slug
-                    updated = True
-            if updated:
-                session.commit()
-
             try:
-                tools = session.query(Tool).all()
-                for tool in tools:
-                    session.expire(tool, ["gateway"])
+                _refresh_tool_names_batched(session, effective_batch_size)
+            except (OperationalError, ProgrammingError) as e:
+                # Table doesn't exist yet - expected on fresh database
+                logger.info("Tool table not found, skipping tool name refresh: %s", e)
 
-                updated = False
-                for tool in tools:
-                    if tool.gateway:
-                        new_name = f"{tool.gateway.slug}{settings.gateway_tool_name_separator}{slugify(tool.original_name)}"
-                    else:
-                        new_name = slugify(tool.original_name)
-                    if tool.name != new_name:
-                        tool.name = new_name
-                        updated = True
-                if updated:
-                    session.commit()
-            except Exception:
-                logger.info("Tool table not found, skipping tool name refresh")
-
+    except SQLAlchemyError as e:
+        logger.warning("Failed to refresh slugs on startup (database error): %s", e)
     except Exception as e:
-        logger.warning("Failed to refresh slugs on startup: %s", e)
+        logger.warning("Failed to refresh slugs on startup (unexpected error): %s", e)
 
 
 class Base(DeclarativeBase):
@@ -2213,15 +2612,26 @@ class Tool(Base):
         """
         return select(func.count(ToolMetric.id)).where(ToolMetric.tool_id == cls.id).label("execution_count")  # pylint: disable=not-callable
 
+    def _metrics_loaded(self) -> bool:
+        """Check if metrics relationship is loaded without triggering lazy load.
+
+        Returns:
+            bool: True if metrics are loaded, False otherwise.
+        """
+        return "metrics" in sa_inspect(self).dict
+
     @property
     def successful_executions(self) -> int:
         """
         Returns the count of successful tool executions,
         computed from the associated ToolMetric records.
+        Returns 0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             int: The count of successful tool executions.
         """
+        if not self._metrics_loaded():
+            return 0
         return sum(1 for m in self.metrics if m.is_success)
 
     @property
@@ -2229,10 +2639,13 @@ class Tool(Base):
         """
         Returns the count of failed tool executions,
         computed from the associated ToolMetric records.
+        Returns 0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             int: The count of failed tool executions.
         """
+        if not self._metrics_loaded():
+            return 0
         return sum(1 for m in self.metrics if not m.is_success)
 
     @property
@@ -2240,11 +2653,13 @@ class Tool(Base):
         """
         Returns the failure rate (as a float between 0 and 1) computed as:
             (failed executions) / (total executions).
-        Returns 0.0 if there are no executions.
+        Returns 0.0 if there are no executions or metrics are not loaded.
 
         Returns:
             float: The failure rate as a value between 0 and 1.
         """
+        if not self._metrics_loaded():
+            return 0.0
         total: int = self.execution_count
         # execution_count is a @hybrid_property, not a callable here
         if total == 0:  # pylint: disable=comparison-with-callable
@@ -2255,11 +2670,13 @@ class Tool(Base):
     def min_response_time(self) -> Optional[float]:
         """
         Returns the minimum response time among all tool executions.
-        Returns None if no executions exist.
+        Returns None if no executions exist or metrics are not loaded.
 
         Returns:
             Optional[float]: The minimum response time, or None if no executions exist.
         """
+        if not self._metrics_loaded():
+            return None
         times: List[float] = [m.response_time for m in self.metrics]
         return min(times) if times else None
 
@@ -2267,11 +2684,13 @@ class Tool(Base):
     def max_response_time(self) -> Optional[float]:
         """
         Returns the maximum response time among all tool executions.
-        Returns None if no executions exist.
+        Returns None if no executions exist or metrics are not loaded.
 
         Returns:
             Optional[float]: The maximum response time, or None if no executions exist.
         """
+        if not self._metrics_loaded():
+            return None
         times: List[float] = [m.response_time for m in self.metrics]
         return max(times) if times else None
 
@@ -2279,11 +2698,13 @@ class Tool(Base):
     def avg_response_time(self) -> Optional[float]:
         """
         Returns the average response time among all tool executions.
-        Returns None if no executions exist.
+        Returns None if no executions exist or metrics are not loaded.
 
         Returns:
             Optional[float]: The average response time, or None if no executions exist.
         """
+        if not self._metrics_loaded():
+            return None
         times: List[float] = [m.response_time for m in self.metrics]
         return sum(times) / len(times) if times else None
 
@@ -2291,11 +2712,13 @@ class Tool(Base):
     def last_execution_time(self) -> Optional[datetime]:
         """
         Returns the timestamp of the most recent tool execution.
-        Returns None if no executions exist.
+        Returns None if no executions exist or metrics are not loaded.
 
         Returns:
             Optional[datetime]: The timestamp of the most recent execution, or None if no executions exist.
         """
+        if not self._metrics_loaded():
+            return None
         if not self.metrics:
             return None
         return max(m.timestamp for m in self.metrics)
@@ -2445,15 +2868,26 @@ class Resource(Base):
             )
         raise ValueError("Resource has no content")
 
+    def _metrics_loaded(self) -> bool:
+        """Check if metrics relationship is loaded without triggering lazy load.
+
+        Returns:
+            bool: True if metrics are loaded, False otherwise.
+        """
+        return "metrics" in sa_inspect(self).dict
+
     @property
     def execution_count(self) -> int:
         """
         Returns the number of times the resource has been invoked,
         calculated from the associated ResourceMetric records.
+        Returns 0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             int: The total count of resource invocations.
         """
+        if not self._metrics_loaded():
+            return 0
         return len(self.metrics)
 
     @property
@@ -2461,10 +2895,13 @@ class Resource(Base):
         """
         Returns the count of successful resource invocations,
         computed from the associated ResourceMetric records.
+        Returns 0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             int: The count of successful resource invocations.
         """
+        if not self._metrics_loaded():
+            return 0
         return sum(1 for m in self.metrics if m.is_success)
 
     @property
@@ -2472,10 +2909,13 @@ class Resource(Base):
         """
         Returns the count of failed resource invocations,
         computed from the associated ResourceMetric records.
+        Returns 0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             int: The count of failed resource invocations.
         """
+        if not self._metrics_loaded():
+            return 0
         return sum(1 for m in self.metrics if not m.is_success)
 
     @property
@@ -2483,11 +2923,13 @@ class Resource(Base):
         """
         Returns the failure rate (as a float between 0 and 1) computed as:
             (failed invocations) / (total invocations).
-        Returns 0.0 if there are no invocations.
+        Returns 0.0 if there are no invocations or metrics are not loaded.
 
         Returns:
             float: The failure rate as a value between 0 and 1.
         """
+        if not self._metrics_loaded():
+            return 0.0
         total: int = self.execution_count
         if total == 0:
             return 0.0
@@ -2497,11 +2939,13 @@ class Resource(Base):
     def min_response_time(self) -> Optional[float]:
         """
         Returns the minimum response time among all resource invocations.
-        Returns None if no invocations exist.
+        Returns None if no invocations exist or metrics are not loaded.
 
         Returns:
             Optional[float]: The minimum response time, or None if no invocations exist.
         """
+        if not self._metrics_loaded():
+            return None
         times: List[float] = [m.response_time for m in self.metrics]
         return min(times) if times else None
 
@@ -2509,11 +2953,13 @@ class Resource(Base):
     def max_response_time(self) -> Optional[float]:
         """
         Returns the maximum response time among all resource invocations.
-        Returns None if no invocations exist.
+        Returns None if no invocations exist or metrics are not loaded.
 
         Returns:
             Optional[float]: The maximum response time, or None if no invocations exist.
         """
+        if not self._metrics_loaded():
+            return None
         times: List[float] = [m.response_time for m in self.metrics]
         return max(times) if times else None
 
@@ -2521,11 +2967,13 @@ class Resource(Base):
     def avg_response_time(self) -> Optional[float]:
         """
         Returns the average response time among all resource invocations.
-        Returns None if no invocations exist.
+        Returns None if no invocations exist or metrics are not loaded.
 
         Returns:
             Optional[float]: The average response time, or None if no invocations exist.
         """
+        if not self._metrics_loaded():
+            return None
         times: List[float] = [m.response_time for m in self.metrics]
         return sum(times) / len(times) if times else None
 
@@ -2533,11 +2981,13 @@ class Resource(Base):
     def last_execution_time(self) -> Optional[datetime]:
         """
         Returns the timestamp of the most recent resource invocation.
-        Returns None if no invocations exist.
+        Returns None if no invocations exist or metrics are not loaded.
 
         Returns:
             Optional[datetime]: The timestamp of the most recent invocation, or None if no invocations exist.
         """
+        if not self._metrics_loaded():
+            return None
         if not self.metrics:
             return None
         return max(m.timestamp for m in self.metrics)
@@ -2676,15 +3126,26 @@ class Prompt(Base):
         except jsonschema.exceptions.ValidationError as e:
             raise ValueError(f"Invalid prompt arguments: {str(e)}") from e
 
+    def _metrics_loaded(self) -> bool:
+        """Check if metrics relationship is loaded without triggering lazy load.
+
+        Returns:
+            bool: True if metrics are loaded, False otherwise.
+        """
+        return "metrics" in sa_inspect(self).dict
+
     @property
     def execution_count(self) -> int:
         """
         Returns the number of times the prompt has been invoked,
         calculated from the associated PromptMetric records.
+        Returns 0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             int: The total count of prompt invocations.
         """
+        if not self._metrics_loaded():
+            return 0
         return len(self.metrics)
 
     @property
@@ -2692,10 +3153,13 @@ class Prompt(Base):
         """
         Returns the count of successful prompt invocations,
         computed from the associated PromptMetric records.
+        Returns 0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             int: The count of successful prompt invocations.
         """
+        if not self._metrics_loaded():
+            return 0
         return sum(1 for m in self.metrics if m.is_success)
 
     @property
@@ -2703,10 +3167,13 @@ class Prompt(Base):
         """
         Returns the count of failed prompt invocations,
         computed from the associated PromptMetric records.
+        Returns 0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             int: The count of failed prompt invocations.
         """
+        if not self._metrics_loaded():
+            return 0
         return sum(1 for m in self.metrics if not m.is_success)
 
     @property
@@ -2714,11 +3181,13 @@ class Prompt(Base):
         """
         Returns the failure rate (as a float between 0 and 1) computed as:
             (failed invocations) / (total invocations).
-        Returns 0.0 if there are no invocations.
+        Returns 0.0 if there are no invocations or metrics are not loaded.
 
         Returns:
             float: The failure rate as a value between 0 and 1.
         """
+        if not self._metrics_loaded():
+            return 0.0
         total: int = self.execution_count
         if total == 0:
             return 0.0
@@ -2728,11 +3197,13 @@ class Prompt(Base):
     def min_response_time(self) -> Optional[float]:
         """
         Returns the minimum response time among all prompt invocations.
-        Returns None if no invocations exist.
+        Returns None if no invocations exist or metrics are not loaded.
 
         Returns:
             Optional[float]: The minimum response time, or None if no invocations exist.
         """
+        if not self._metrics_loaded():
+            return None
         times: List[float] = [m.response_time for m in self.metrics]
         return min(times) if times else None
 
@@ -2740,11 +3211,13 @@ class Prompt(Base):
     def max_response_time(self) -> Optional[float]:
         """
         Returns the maximum response time among all prompt invocations.
-        Returns None if no invocations exist.
+        Returns None if no invocations exist or metrics are not loaded.
 
         Returns:
             Optional[float]: The maximum response time, or None if no invocations exist.
         """
+        if not self._metrics_loaded():
+            return None
         times: List[float] = [m.response_time for m in self.metrics]
         return max(times) if times else None
 
@@ -2752,11 +3225,13 @@ class Prompt(Base):
     def avg_response_time(self) -> Optional[float]:
         """
         Returns the average response time among all prompt invocations.
-        Returns None if no invocations exist.
+        Returns None if no invocations exist or metrics are not loaded.
 
         Returns:
             Optional[float]: The average response time, or None if no invocations exist.
         """
+        if not self._metrics_loaded():
+            return None
         times: List[float] = [m.response_time for m in self.metrics]
         return sum(times) / len(times) if times else None
 
@@ -2764,11 +3239,13 @@ class Prompt(Base):
     def last_execution_time(self) -> Optional[datetime]:
         """
         Returns the timestamp of the most recent prompt invocation.
-        Returns None if no invocations exist.
+        Returns None if no invocations exist or metrics are not loaded.
 
         Returns:
             Optional[datetime]: The timestamp of the most recent invocation, or None if no invocations exist.
         """
+        if not self._metrics_loaded():
+            return None
         if not self.metrics:
             return None
         return max(m.timestamp for m in self.metrics)
@@ -2829,15 +3306,26 @@ class Server(Base):
     # API token relationships
     scoped_tokens: Mapped[List["EmailApiToken"]] = relationship("EmailApiToken", back_populates="server")
 
+    def _metrics_loaded(self) -> bool:
+        """Check if metrics relationship is loaded without triggering lazy load.
+
+        Returns:
+            bool: True if metrics are loaded, False otherwise.
+        """
+        return "metrics" in sa_inspect(self).dict
+
     @property
     def execution_count(self) -> int:
         """
         Returns the number of times the server has been invoked,
         calculated from the associated ServerMetric records.
+        Returns 0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             int: The total count of server invocations.
         """
+        if not self._metrics_loaded():
+            return 0
         return len(self.metrics)
 
     @property
@@ -2845,10 +3333,13 @@ class Server(Base):
         """
         Returns the count of successful server invocations,
         computed from the associated ServerMetric records.
+        Returns 0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             int: The count of successful server invocations.
         """
+        if not self._metrics_loaded():
+            return 0
         return sum(1 for m in self.metrics if m.is_success)
 
     @property
@@ -2856,10 +3347,13 @@ class Server(Base):
         """
         Returns the count of failed server invocations,
         computed from the associated ServerMetric records.
+        Returns 0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             int: The count of failed server invocations.
         """
+        if not self._metrics_loaded():
+            return 0
         return sum(1 for m in self.metrics if not m.is_success)
 
     @property
@@ -2867,23 +3361,13 @@ class Server(Base):
         """
         Returns the failure rate (as a float between 0 and 1) computed as:
             (failed invocations) / (total invocations).
-        Returns 0.0 if there are no invocations.
+        Returns 0.0 if there are no invocations or metrics are not loaded.
 
         Returns:
             float: The failure rate as a value between 0 and 1.
-
-        Examples:
-            >>> tool = Tool(custom_name="test_tool", custom_name_slug="test-tool", input_schema={})
-            >>> tool.failure_rate  # No metrics yet
-            0.0
-            >>> tool.metrics = [
-            ...     ToolMetric(tool_id=tool.id, response_time=1.0, is_success=True),
-            ...     ToolMetric(tool_id=tool.id, response_time=2.0, is_success=False),
-            ...     ToolMetric(tool_id=tool.id, response_time=1.5, is_success=True),
-            ... ]
-            >>> tool.failure_rate
-            0.3333333333333333
         """
+        if not self._metrics_loaded():
+            return 0.0
         total: int = self.execution_count
         if total == 0:
             return 0.0
@@ -2893,11 +3377,13 @@ class Server(Base):
     def min_response_time(self) -> Optional[float]:
         """
         Returns the minimum response time among all server invocations.
-        Returns None if no invocations exist.
+        Returns None if no invocations exist or metrics are not loaded.
 
         Returns:
             Optional[float]: The minimum response time, or None if no invocations exist.
         """
+        if not self._metrics_loaded():
+            return None
         times: List[float] = [m.response_time for m in self.metrics]
         return min(times) if times else None
 
@@ -2905,11 +3391,13 @@ class Server(Base):
     def max_response_time(self) -> Optional[float]:
         """
         Returns the maximum response time among all server invocations.
-        Returns None if no invocations exist.
+        Returns None if no invocations exist or metrics are not loaded.
 
         Returns:
             Optional[float]: The maximum response time, or None if no invocations exist.
         """
+        if not self._metrics_loaded():
+            return None
         times: List[float] = [m.response_time for m in self.metrics]
         return max(times) if times else None
 
@@ -2917,11 +3405,13 @@ class Server(Base):
     def avg_response_time(self) -> Optional[float]:
         """
         Returns the average response time among all server invocations.
-        Returns None if no invocations exist.
+        Returns None if no invocations exist or metrics are not loaded.
 
         Returns:
             Optional[float]: The average response time, or None if no invocations exist.
         """
+        if not self._metrics_loaded():
+            return None
         times: List[float] = [m.response_time for m in self.metrics]
         return sum(times) / len(times) if times else None
 
@@ -2929,11 +3419,13 @@ class Server(Base):
     def last_execution_time(self) -> Optional[datetime]:
         """
         Returns the timestamp of the most recent server invocation.
-        Returns None if no invocations exist.
+        Returns None if no invocations exist or metrics are not loaded.
 
         Returns:
             Optional[datetime]: The timestamp of the most recent invocation, or None if no invocations exist.
         """
+        if not self._metrics_loaded():
+            return None
         if not self.metrics:
             return None
         return max(m.timestamp for m in self.metrics)
@@ -3139,40 +3631,60 @@ class A2AAgent(Base):
     # Relationship with registered OAuth clients (DCR)
     # registered_oauth_clients: Mapped[List["RegisteredOAuthClient"]] = relationship("RegisteredOAuthClient", back_populates="gateway", cascade="all, delete-orphan")
 
+    def _metrics_loaded(self) -> bool:
+        """Check if metrics relationship is loaded without triggering lazy load.
+
+        Returns:
+            bool: True if metrics are loaded, False otherwise.
+        """
+        return "metrics" in sa_inspect(self).dict
+
     @property
     def execution_count(self) -> int:
         """Total number of interactions with this agent.
+        Returns 0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             int: The total count of interactions.
         """
+        if not self._metrics_loaded():
+            return 0
         return len(self.metrics)
 
     @property
     def successful_executions(self) -> int:
         """Number of successful interactions.
+        Returns 0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             int: The count of successful interactions.
         """
+        if not self._metrics_loaded():
+            return 0
         return sum(1 for m in self.metrics if m.is_success)
 
     @property
     def failed_executions(self) -> int:
         """Number of failed interactions.
+        Returns 0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             int: The count of failed interactions.
         """
+        if not self._metrics_loaded():
+            return 0
         return sum(1 for m in self.metrics if not m.is_success)
 
     @property
     def failure_rate(self) -> float:
         """Failure rate as a percentage.
+        Returns 0.0 if metrics are not loaded (avoids lazy loading).
 
         Returns:
             float: The failure rate percentage.
         """
+        if not self._metrics_loaded():
+            return 0.0
         if not self.metrics:
             return 0.0
         return (self.failed_executions / len(self.metrics)) * 100
@@ -3180,10 +3692,13 @@ class A2AAgent(Base):
     @property
     def avg_response_time(self) -> Optional[float]:
         """Average response time in seconds.
+        Returns None if metrics are not loaded (avoids lazy loading).
 
         Returns:
             Optional[float]: The average response time, or None if no metrics.
         """
+        if not self._metrics_loaded():
+            return None
         if not self.metrics:
             return None
         return sum(m.response_time for m in self.metrics) / len(self.metrics)
@@ -3191,10 +3706,13 @@ class A2AAgent(Base):
     @property
     def last_execution_time(self) -> Optional[datetime]:
         """Timestamp of the most recent interaction.
+        Returns None if metrics are not loaded (avoids lazy loading).
 
         Returns:
             Optional[datetime]: The timestamp of the last interaction, or None if no metrics.
         """
+        if not self._metrics_loaded():
+            return None
         if not self.metrics:
             return None
         return max(m.timestamp for m in self.metrics)
@@ -3870,8 +4388,14 @@ def get_db() -> Generator[Session, Any, None]:
     """
     Dependency to get database session.
 
+    Commits the transaction on successful completion to avoid implicit rollbacks
+    for read-only operations. Rolls back explicitly on exception.
+
     Yields:
         SessionLocal: A SQLAlchemy database session.
+
+    Raises:
+        Exception: Re-raises any exception after rolling back the transaction.
 
     Examples:
         >>> from mcpgateway.db import get_db
@@ -3886,6 +4410,16 @@ def get_db() -> Generator[Session, Any, None]:
     db = SessionLocal()
     try:
         yield db
+        db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
+        raise
     finally:
         db.close()
 
@@ -3909,7 +4443,8 @@ def fresh_db_session() -> Generator[Session, Any, None]:
         Session: A fresh SQLAlchemy database session.
 
     Raises:
-        Exception: Re-raises any exception after rolling back the transaction.
+        Exception: Any exception raised during database operations is re-raised
+            after rolling back the transaction.
 
     Examples:
         >>> from mcpgateway.db import fresh_db_session
@@ -3922,7 +4457,13 @@ def fresh_db_session() -> Generator[Session, Any, None]:
         yield db
         db.commit()  # Commit on successful exit (even for read-only operations)
     except Exception:
-        db.rollback()  # Explicit rollback on exception
+        try:
+            db.rollback()  # Explicit rollback on exception
+        except Exception:
+            try:
+                db.invalidate()  # Connection broken, discard from pool
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
         raise
     finally:
         db.close()

@@ -9,13 +9,32 @@ Provides caching components for the MCP Gateway including:
 - Resource content caching
 - Session registry for MCP connections
 - GlobalConfig caching for passthrough headers
+- Auth caching for user, team, and token revocation data
+- Registry caching for tools, prompts, resources, agents, servers, gateways
+- Admin stats caching for dashboard statistics
 
 Note: Imports are lazy to avoid circular dependencies with services.
 """
 
 from typing import TYPE_CHECKING
 
-__all__ = ["A2AStatsCache", "a2a_stats_cache", "GlobalConfigCache", "global_config_cache", "ResourceCache", "SessionRegistry"]
+__all__ = [
+    "A2AStatsCache",
+    "a2a_stats_cache",
+    "AdminStatsCache",
+    "admin_stats_cache",
+    "AuthCache",
+    "auth_cache",
+    "CachedAuthContext",
+    "GlobalConfigCache",
+    "global_config_cache",
+    "MetricsCache",
+    "metrics_cache",
+    "RegistryCache",
+    "registry_cache",
+    "ResourceCache",
+    "SessionRegistry",
+]
 
 # Lazy imports to avoid circular dependencies
 # When services import cache.global_config_cache, we don't want to
@@ -23,7 +42,11 @@ __all__ = ["A2AStatsCache", "a2a_stats_cache", "GlobalConfigCache", "global_conf
 
 if TYPE_CHECKING:
     from mcpgateway.cache.a2a_stats_cache import A2AStatsCache, a2a_stats_cache
+    from mcpgateway.cache.admin_stats_cache import AdminStatsCache, admin_stats_cache
+    from mcpgateway.cache.auth_cache import AuthCache, auth_cache, CachedAuthContext
     from mcpgateway.cache.global_config_cache import GlobalConfigCache, global_config_cache
+    from mcpgateway.cache.metrics_cache import MetricsCache, metrics_cache
+    from mcpgateway.cache.registry_cache import RegistryCache, registry_cache
     from mcpgateway.cache.resource_cache import ResourceCache
     from mcpgateway.cache.session_registry import SessionRegistry
 
@@ -45,10 +68,30 @@ def __getattr__(name: str):
         from mcpgateway.cache.a2a_stats_cache import A2AStatsCache, a2a_stats_cache
 
         return a2a_stats_cache if name == "a2a_stats_cache" else A2AStatsCache
+    if name in ("AdminStatsCache", "admin_stats_cache"):
+        from mcpgateway.cache.admin_stats_cache import AdminStatsCache, admin_stats_cache
+
+        return admin_stats_cache if name == "admin_stats_cache" else AdminStatsCache
+    if name in ("AuthCache", "auth_cache", "CachedAuthContext"):
+        from mcpgateway.cache.auth_cache import AuthCache, auth_cache, CachedAuthContext
+
+        if name == "auth_cache":
+            return auth_cache
+        if name == "CachedAuthContext":
+            return CachedAuthContext
+        return AuthCache
     if name in ("GlobalConfigCache", "global_config_cache"):
         from mcpgateway.cache.global_config_cache import GlobalConfigCache, global_config_cache
 
         return global_config_cache if name == "global_config_cache" else GlobalConfigCache
+    if name in ("MetricsCache", "metrics_cache"):
+        from mcpgateway.cache.metrics_cache import MetricsCache, metrics_cache
+
+        return metrics_cache if name == "metrics_cache" else MetricsCache
+    if name in ("RegistryCache", "registry_cache"):
+        from mcpgateway.cache.registry_cache import RegistryCache, registry_cache
+
+        return registry_cache if name == "registry_cache" else RegistryCache
     if name == "ResourceCache":
         from mcpgateway.cache.resource_cache import ResourceCache
 

@@ -13,9 +13,34 @@ MCP Gateway supports multiple database backends with full feature parity across 
 | Database    | Support Level | Connection String Example                                    | Notes                          |
 |-------------|---------------|--------------------------------------------------------------|--------------------------------|
 | SQLite      | ✅ Full       | `sqlite:///./mcp.db`                                        | Default, file-based            |
-| PostgreSQL  | ✅ Full       | `postgresql://postgres:changeme@localhost:5432/mcp`         | Recommended for production     |
+| PostgreSQL  | ✅ Full       | `postgresql+psycopg://postgres:changeme@localhost:5432/mcp` | Recommended for production     |
 | MariaDB     | ✅ Full       | `mysql+pymysql://mysql:changeme@localhost:3306/mcp`         | **36+ tables**, MariaDB 10.6+ |
 | MySQL       | ✅ Full       | `mysql+pymysql://admin:changeme@localhost:3306/mcp`         | Alternative MySQL variant      |
+
+### PostgreSQL System Dependencies
+
+!!! warning "Required: libpq Development Headers"
+    The PostgreSQL adapter (`psycopg[c]`) requires the `libpq` development headers to compile. Install them before running `pip install .[postgres]`:
+
+    === "Debian/Ubuntu"
+        ```bash
+        sudo apt-get install libpq-dev
+        ```
+
+    === "RHEL/CentOS/Fedora"
+        ```bash
+        sudo dnf install postgresql-devel
+        ```
+
+    === "macOS (Homebrew)"
+        ```bash
+        brew install libpq
+        ```
+
+    After installing the system dependencies, install the Python package:
+    ```bash
+    pip install .[postgres]
+    ```
 
 ### MariaDB/MySQL Setup Details
 
@@ -154,7 +179,7 @@ DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
 # Database connection (choose one)
 DATABASE_URL=sqlite:///./mcp.db                                        # SQLite (default)
 DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp          # MariaDB/MySQL
-DATABASE_URL=postgresql://postgres:changeme@localhost:5432/mcp          # PostgreSQL
+DATABASE_URL=postgresql+psycopg://postgres:changeme@localhost:5432/mcp  # PostgreSQL
 
 # Connection pool settings (optional)
 DB_POOL_SIZE=200
@@ -163,6 +188,10 @@ DB_POOL_TIMEOUT=60
 DB_POOL_RECYCLE=3600
 DB_MAX_RETRIES=5
 DB_RETRY_INTERVAL_MS=2000
+
+# psycopg3 auto-prepared statements (PostgreSQL only)
+# Queries executed N+ times are prepared server-side for performance
+DB_PREPARE_THRESHOLD=5
 ```
 
 ### Server Configuration
@@ -391,7 +420,76 @@ REDIS_PARSER=auto                   # auto, hiredis, python (auto uses hiredis i
 REDIS_LEADER_TTL=15                 # Leader TTL (seconds)
 REDIS_LEADER_KEY=gateway_service_leader
 REDIS_LEADER_HEARTBEAT_INTERVAL=5   # Heartbeat interval (seconds)
+
+# Authentication Cache (ADR-028 - reduces DB queries per auth from 3-4 to 0-1)
+AUTH_CACHE_ENABLED=true             # Enable auth data caching (user, team, revocation)
+AUTH_CACHE_USER_TTL=60              # User data cache TTL in seconds (10-300)
+AUTH_CACHE_REVOCATION_TTL=30        # Token revocation cache TTL (5-120, security-critical)
+AUTH_CACHE_TEAM_TTL=60              # Team membership cache TTL in seconds (10-300)
+AUTH_CACHE_BATCH_QUERIES=true       # Batch auth DB queries into single call
 ```
+
+#### Authentication Cache
+
+When `AUTH_CACHE_ENABLED=true` (default), authentication data is cached to reduce database queries:
+
+- **User data**: Cached for `AUTH_CACHE_USER_TTL` seconds (default: 60)
+- **Team memberships**: Cached for `AUTH_CACHE_TEAM_TTL` seconds (default: 60)
+- **User roles in teams**: Cached for `AUTH_CACHE_ROLE_TTL` seconds (default: 60)
+- **User teams list**: Cached for `AUTH_CACHE_TEAMS_TTL` seconds (default: 60) when `AUTH_CACHE_TEAMS_ENABLED=true`
+- **Token revocations**: Cached for `AUTH_CACHE_REVOCATION_TTL` seconds (default: 30)
+
+The cache uses Redis when available (`CACHE_TYPE=redis`) and falls back to in-memory caching.
+
+When `AUTH_CACHE_BATCH_QUERIES=true` (default), the 3 separate authentication database queries are batched into a single query, reducing thread pool contention and connection overhead.
+
+**Performance Note**: The role cache (`AUTH_CACHE_ROLE_TTL`) caches `get_user_role_in_team()` which is called 11+ times per team operation. The teams list cache (`AUTH_CACHE_TEAMS_TTL`) caches `get_user_teams()` which is called 20+ times per request for authorization checks. Together, these can reduce "idle in transaction" connections by 50-70% under high load.
+
+**Security Note**: Keep `AUTH_CACHE_REVOCATION_TTL` short (30s default) to limit the window where revoked tokens may still work.
+
+See [ADR-028](../architecture/adr/028-auth-caching.md) for implementation details.
+
+#### Registry Cache
+
+```bash
+# Registry Cache (ADR-029 - caches list endpoints for tools, prompts, resources, etc.)
+REGISTRY_CACHE_ENABLED=true         # Enable registry list caching
+REGISTRY_CACHE_TOOLS_TTL=20         # Tools list cache TTL in seconds (5-300)
+REGISTRY_CACHE_PROMPTS_TTL=15       # Prompts list cache TTL in seconds (5-300)
+REGISTRY_CACHE_RESOURCES_TTL=15     # Resources list cache TTL in seconds (5-300)
+REGISTRY_CACHE_AGENTS_TTL=20        # Agents list cache TTL in seconds (5-300)
+REGISTRY_CACHE_SERVERS_TTL=20       # Servers list cache TTL in seconds (5-300)
+REGISTRY_CACHE_GATEWAYS_TTL=20      # Gateways list cache TTL in seconds (5-300)
+REGISTRY_CACHE_CATALOG_TTL=300      # Catalog servers cache TTL in seconds (60-600)
+```
+
+When `REGISTRY_CACHE_ENABLED=true` (default), the first page of registry list results is cached:
+
+- **Tools**: Cached for `REGISTRY_CACHE_TOOLS_TTL` seconds (default: 20)
+- **Prompts**: Cached for `REGISTRY_CACHE_PROMPTS_TTL` seconds (default: 15)
+- **Resources**: Cached for `REGISTRY_CACHE_RESOURCES_TTL` seconds (default: 15)
+- **Agents**: Cached for `REGISTRY_CACHE_AGENTS_TTL` seconds (default: 20)
+- **Servers**: Cached for `REGISTRY_CACHE_SERVERS_TTL` seconds (default: 20)
+- **Gateways**: Cached for `REGISTRY_CACHE_GATEWAYS_TTL` seconds (default: 20)
+- **Catalog**: Cached for `REGISTRY_CACHE_CATALOG_TTL` seconds (default: 300, longer since external catalog changes infrequently)
+
+Cache is automatically invalidated when items are created, updated, or deleted.
+
+#### Admin Stats Cache
+
+```bash
+# Admin Stats Cache (ADR-029 - caches admin dashboard statistics)
+ADMIN_STATS_CACHE_ENABLED=true      # Enable admin stats caching
+ADMIN_STATS_CACHE_SYSTEM_TTL=60     # System stats cache TTL in seconds (10-300)
+ADMIN_STATS_CACHE_OBSERVABILITY_TTL=30  # Observability stats TTL (10-120)
+```
+
+When `ADMIN_STATS_CACHE_ENABLED=true` (default), admin dashboard statistics are cached:
+
+- **System stats**: Cached for `ADMIN_STATS_CACHE_SYSTEM_TTL` seconds (default: 60)
+- **Observability**: Cached for `ADMIN_STATS_CACHE_OBSERVABILITY_TTL` seconds (default: 30)
+
+See [ADR-029](../architecture/adr/029-registry-admin-stats-caching.md) for implementation details.
 
 ### Logging Settings
 
@@ -411,10 +509,24 @@ LOG_FORMAT=json                     # json, plain
 # Database Log Persistence (disabled by default for performance)
 STRUCTURED_LOGGING_DATABASE_ENABLED=false
 
+# Audit Trail Logging (disabled by default for performance)
+AUDIT_TRAIL_ENABLED=false
+
 # Security Event Logging (disabled by default for performance)
 SECURITY_LOGGING_ENABLED=false
 SECURITY_LOGGING_LEVEL=failures_only  # all, failures_only, high_severity
 ```
+
+#### Audit Trail Logging
+
+When `AUDIT_TRAIL_ENABLED=true`, all CRUD operations (create, read, update, delete) on resources are logged to the `audit_trails` database table. This provides:
+
+- **Compliance logging** for SOC2, HIPAA, and other regulatory requirements
+- **Data access tracking** - who accessed what resources and when
+- **Change history** - before/after values for updates and deletes
+- **Admin UI Audit Log Viewer** - browse and filter audit entries
+
+**Warning:** Enabling audit trails causes a database write on **every API request**, which can significantly impact performance. During load testing, this can generate millions of rows. Only enable for production compliance requirements.
 
 #### Structured Log Database Persistence
 

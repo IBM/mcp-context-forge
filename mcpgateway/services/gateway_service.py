@@ -103,6 +103,25 @@ from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 from mcpgateway.utils.validate_signature import validate_signature
 from mcpgateway.validation.tags import validate_tags_field
 
+# Cache import (lazy to avoid circular dependencies)
+_REGISTRY_CACHE = None
+
+
+def _get_registry_cache():
+    """Get registry cache singleton lazily.
+
+    Returns:
+        RegistryCache instance.
+    """
+    global _REGISTRY_CACHE  # pylint: disable=global-statement
+    if _REGISTRY_CACHE is None:
+        # First-Party
+        from mcpgateway.cache.registry_cache import registry_cache  # pylint: disable=import-outside-toplevel
+
+        _REGISTRY_CACHE = registry_cache
+    return _REGISTRY_CACHE
+
+
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -1238,6 +1257,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             >>> empty_result
             []
         """
+        # Check cache
+        cache = _get_registry_cache()
+        filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
+        cached = await cache.get("gateways", filters_hash)
+        if cached is not None:
+            # Reconstruct GatewayRead objects from cached dicts
+            return [GatewayRead.model_validate(g) for g in cached]
+
         query = select(DbGateway)
 
         if not include_inactive:
@@ -1255,10 +1282,20 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             teams = db.query(EmailTeam).filter(EmailTeam.id.in_(team_ids), EmailTeam.is_active.is_(True)).all()
             team_names = {team.id: team.name for team in teams}
 
+        db.commit()  # Release transaction to avoid idle-in-transaction
+
         result = []
         for g in gateways:
             g.team = team_names.get(g.team_id) if g.team_id else None
             result.append(GatewayRead.model_validate(self._prepare_gateway_for_read(g)).masked())
+
+        # Cache results
+        try:
+            cache_data = [g.model_dump(mode="json") for g in result]
+            await cache.set("gateways", cache_data, filters_hash)
+        except AttributeError:
+            pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)
+
         return result
 
     async def list_gateways_for_user(
@@ -1335,6 +1372,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         if gateway_team_ids:
             teams = db.query(EmailTeam).filter(EmailTeam.id.in_(gateway_team_ids), EmailTeam.is_active.is_(True)).all()
             team_names = {team.id: team.name for team in teams}
+
+        db.commit()  # Release transaction to avoid idle-in-transaction
 
         result = []
         for g in gateways:
@@ -1700,6 +1739,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 db.commit()
                 db.refresh(gateway)
 
+                # Invalidate cache after successful update
+                cache = _get_registry_cache()
+                await cache.invalidate_gateways()
+                # Also invalidate tags cache since gateway tags may have changed
+                # First-Party
+                from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+                await admin_stats_cache.invalidate_tags()
+
                 # Notify subscribers
                 await self._notify_gateway_updated(gateway)
 
@@ -2062,6 +2110,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 db.commit()
                 db.refresh(gateway)
 
+                # Invalidate cache after status change
+                cache = _get_registry_cache()
+                await cache.invalidate_gateways()
+
                 # Notify Subscribers
                 if not gateway.enabled:
                     # Inactive
@@ -2075,12 +2127,17 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 tools = db.query(DbTool).filter(DbTool.gateway_id == gateway_id).all()
 
+                # Toggle tools with skip_cache_invalidation=True to avoid N invalidations
                 if only_update_reachable:
                     for tool in tools:
-                        await self.tool_service.toggle_tool_status(db, tool.id, tool.enabled, reachable)
+                        await self.tool_service.toggle_tool_status(db, tool.id, tool.enabled, reachable, skip_cache_invalidation=True)
                 else:
                     for tool in tools:
-                        await self.tool_service.toggle_tool_status(db, tool.id, activate, reachable)
+                        await self.tool_service.toggle_tool_status(db, tool.id, activate, reachable, skip_cache_invalidation=True)
+
+                # Invalidate tools cache once after all tool status changes
+                if tools:
+                    await cache.invalidate_tools()
 
                 logger.info(f"Gateway status: {gateway.name} - {'enabled' if activate else 'disabled'} and {'accessible' if reachable else 'inaccessible'}")
 
@@ -2265,6 +2322,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             db.delete(gateway)
             db.commit()
 
+            # Invalidate cache after successful deletion
+            cache = _get_registry_cache()
+            await cache.invalidate_gateways()
+            # Also invalidate tags cache since gateway tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
+
             # Update tracking
             self._active_gateways.discard(gateway.url)
 
@@ -2444,7 +2510,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 else:
                                     raise GatewayConnectionError(f"No valid OAuth token for user {app_user_email} and gateway {gateway.name}")
                             finally:
-                                db.rollback()  # End transaction before returning to pool
+                                db.commit()  # End read-only transaction cleanly before returning to pool
                                 db.close()
                     except Exception as oauth_error:
                         raise GatewayConnectionError(f"Failed to obtain OAuth token for gateway {gateway.name}: {oauth_error}")
@@ -2550,7 +2616,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls
         # This prevents connection pool exhaustion during slow upstream requests.
         # ═══════════════════════════════════════════════════════════════════════════
-        db.rollback()  # End the transaction so connection returns to "idle" not "idle in transaction"
+        db.commit()  # End read-only transaction cleanly (commit not rollback to avoid inflating rollback stats)
         db.close()
 
         errors: List[str] = []
@@ -2768,7 +2834,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 Any exceptions raised during the health check will be propagated to the caller.
             """
             async with semaphore:
-                await self._check_single_gateway_health(gateway, user_email)
+                try:
+                    await asyncio.wait_for(
+                        self._check_single_gateway_health(gateway, user_email),
+                        timeout=settings.gateway_health_check_timeout,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(f"Gateway {getattr(gateway, 'name', 'unknown')} health check timed out after {settings.gateway_health_check_timeout}s")
+                    # Treat timeout as a failed health check
+                    await self._handle_gateway_failure(gateway)
 
         # Create trace span for health check batch
         with create_span("gateway.health_check_batch", {"gateway.count": len(gateways), "check.type": "health"}) as batch_span:

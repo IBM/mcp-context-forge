@@ -878,6 +878,12 @@ class Settings(BaseSettings):
     performance_threshold_http_request_ms: float = Field(default=500.0, description="Alert threshold for HTTP requests (ms)")
     performance_degradation_multiplier: float = Field(default=1.5, description="Alert if performance degrades by this multiplier vs baseline")
 
+    # Audit Trail Configuration
+    # Audit trail logging is disabled by default for performance.
+    # When enabled, it logs all CRUD operations (create, read, update, delete) on resources.
+    # WARNING: This causes a database write on every API request and can cause significant load.
+    audit_trail_enabled: bool = Field(default=False, description="Enable audit trail logging to database for compliance")
+
     # Security Logging Configuration
     # Security event logging is disabled by default for performance.
     # When enabled, it logs authentication attempts, authorization failures, and security events.
@@ -906,6 +912,38 @@ class Settings(BaseSettings):
     metrics_buffer_enabled: bool = Field(default=True, description="Enable buffered metrics writes (reduces DB pressure under load)")
     metrics_buffer_flush_interval: int = Field(default=60, ge=5, le=300, description="Seconds between automatic metrics buffer flushes")
     metrics_buffer_max_size: int = Field(default=1000, ge=100, le=10000, description="Maximum buffered metrics before forced flush")
+
+    # Metrics Cache Configuration (for caching aggregate metrics queries)
+    metrics_cache_enabled: bool = Field(default=True, description="Enable in-memory caching for aggregate metrics queries")
+    metrics_cache_ttl_seconds: int = Field(default=10, ge=1, le=300, description="TTL for cached aggregate metrics in seconds")
+
+    # Auth Cache Configuration (reduces DB queries during authentication)
+    auth_cache_enabled: bool = Field(default=True, description="Enable Redis/in-memory caching for authentication data (user, team, revocation)")
+    auth_cache_user_ttl: int = Field(default=60, ge=10, le=300, description="TTL in seconds for cached user data")
+    auth_cache_revocation_ttl: int = Field(default=30, ge=5, le=120, description="TTL in seconds for token revocation cache (security-critical, keep short)")
+    auth_cache_team_ttl: int = Field(default=60, ge=10, le=300, description="TTL in seconds for team membership cache")
+    auth_cache_role_ttl: int = Field(default=60, ge=10, le=300, description="TTL in seconds for user role in team cache")
+    auth_cache_teams_enabled: bool = Field(default=True, description="Enable caching for get_user_teams() (default: true)")
+    auth_cache_teams_ttl: int = Field(default=60, ge=10, le=300, description="TTL in seconds for user teams list cache")
+    auth_cache_batch_queries: bool = Field(default=True, description="Batch auth DB queries into single call (reduces 3 queries to 1)")
+
+    # Registry Cache Configuration (reduces DB queries for list endpoints)
+    registry_cache_enabled: bool = Field(default=True, description="Enable caching for registry list endpoints (tools, prompts, resources, etc.)")
+    registry_cache_tools_ttl: int = Field(default=20, ge=5, le=300, description="TTL in seconds for tools list cache")
+    registry_cache_prompts_ttl: int = Field(default=15, ge=5, le=300, description="TTL in seconds for prompts list cache")
+    registry_cache_resources_ttl: int = Field(default=15, ge=5, le=300, description="TTL in seconds for resources list cache")
+    registry_cache_agents_ttl: int = Field(default=20, ge=5, le=300, description="TTL in seconds for agents list cache")
+    registry_cache_servers_ttl: int = Field(default=20, ge=5, le=300, description="TTL in seconds for servers list cache")
+    registry_cache_gateways_ttl: int = Field(default=20, ge=5, le=300, description="TTL in seconds for gateways list cache")
+    registry_cache_catalog_ttl: int = Field(default=300, ge=60, le=600, description="TTL in seconds for catalog servers list cache (external catalog, changes infrequently)")
+
+    # Admin Stats Cache Configuration (reduces dashboard query overhead)
+    admin_stats_cache_enabled: bool = Field(default=True, description="Enable caching for admin dashboard statistics")
+    admin_stats_cache_system_ttl: int = Field(default=60, ge=10, le=300, description="TTL in seconds for system stats cache")
+    admin_stats_cache_observability_ttl: int = Field(default=30, ge=10, le=120, description="TTL in seconds for observability stats cache")
+    admin_stats_cache_tags_ttl: int = Field(default=120, ge=30, le=600, description="TTL in seconds for tags listing cache")
+    admin_stats_cache_plugins_ttl: int = Field(default=120, ge=30, le=600, description="TTL in seconds for plugin stats cache")
+    admin_stats_cache_performance_ttl: int = Field(default=60, ge=15, le=300, description="TTL in seconds for performance aggregates cache")
 
     # Log Search Configuration
     log_search_max_results: int = Field(default=1000, description="Maximum results per log search query")
@@ -1087,6 +1125,9 @@ class Settings(BaseSettings):
     health_check_interval: int = 300
     # Timeout in seconds for each health check request
     health_check_timeout: int = 5
+    # Per-check timeout (seconds) to bound total time of one gateway health check
+    # Env: GATEWAY_HEALTH_CHECK_TIMEOUT
+    gateway_health_check_timeout: float = 5.0
     # Consecutive failures before marking gateway offline
     unhealthy_threshold: int = 3
     # Max concurrent health checks per worker
@@ -1109,6 +1150,11 @@ class Settings(BaseSettings):
     db_pool_recycle: int = 3600
     db_max_retries: int = 3
     db_retry_interval_ms: int = 2000
+
+    # psycopg3-specific: Number of times a query must be executed before it's
+    # prepared server-side. Set to 0 to disable, 1 to prepare immediately.
+    # Default of 5 balances memory usage with query performance.
+    db_prepare_threshold: int = Field(default=5, ge=0, le=100, description="psycopg3 prepare_threshold for auto-prepared statements")
 
     # Cache
     cache_type: Literal["redis", "memory", "none", "database"] = "database"  # memory or redis or database
@@ -1216,6 +1262,12 @@ Disallow: /
 
     # Cache control for well-known files (seconds)
     well_known_cache_max_age: int = 3600  # 1 hour default
+
+    # ===================================
+    # Performance / Startup Tuning
+    # ===================================
+
+    slug_refresh_batch_size: int = Field(default=1000, description="Batch size for gateway/tool slug refresh at startup")
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore")
 
     gateway_tool_name_separator: str = "-"

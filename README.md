@@ -1142,12 +1142,32 @@ pip install -e ".[dev]"
 
 You can configure the gateway with SQLite, PostgreSQL (or any other compatible database) in .env.
 
-When using PostgreSQL, you need to install `psycopg2` driver.
+When using PostgreSQL, you need to install the `psycopg` (psycopg3) driver.
+
+**System Dependencies**: The PostgreSQL adapter requires the `libpq` development headers to compile:
 
 ```bash
-uv pip install psycopg2-binary   # dev convenience
+# Debian/Ubuntu
+sudo apt-get install libpq-dev
+
+# RHEL/CentOS/Fedora
+sudo dnf install postgresql-devel
+
+# macOS (Homebrew)
+brew install libpq
+```
+
+Then install the Python package:
+
+```bash
+uv pip install 'psycopg[binary]'   # dev convenience (pre-built wheels)
 # or
-uv pip install psycopg2          # production build
+uv pip install 'psycopg[c]'        # production build (requires compiler)
+```
+
+Connection URL format (must use `+psycopg` for psycopg3):
+```bash
+DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/mcp
 ```
 
 #### Quick Postgres container
@@ -2059,6 +2079,7 @@ ENABLE_METRICS=false
 | ----------------------- | ----------------------------------------- | ------- | ------- |
 | `HEALTH_CHECK_INTERVAL` | Health poll interval (secs)               | `60`    | int > 0 |
 | `HEALTH_CHECK_TIMEOUT`  | Health request timeout (secs)             | `10`    | int > 0 |
+| `GATEWAY_HEALTH_CHECK_TIMEOUT` | Per-check timeout for gateway health check (secs) | `5.0` | float > 0 |
 | `UNHEALTHY_THRESHOLD`   | Fail-count before peer deactivation,      | `3`     | int > 0 |
 |                         | Set to -1 if deactivation is not needed.  |         |         |
 | `GATEWAY_VALIDATION_TIMEOUT` | Gateway URL validation timeout (secs) | `5`     | int > 0 |
@@ -2423,8 +2444,16 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
          }' \
      http://localhost:4444/tools
 
-# List tools
+# List tools (returns first 50 by default)
 curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools
+
+# List tools with filtering and pagination
+curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     "http://localhost:4444/tools?gateway_id=<id>&limit=100&include_pagination=true"
+
+# Get ALL tools (no pagination limit)
+curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     "http://localhost:4444/tools?limit=0"
 
 # Get tool by ID
 curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools/1

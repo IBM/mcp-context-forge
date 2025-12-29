@@ -178,7 +178,7 @@ You can load your `.env` as a ConfigMap:
     cat > .env << EOF
     HOST=0.0.0.0
     PORT=4444
-    DATABASE_URL=postgresql://postgres:changeme@postgres-service:5432/mcp
+    DATABASE_URL=postgresql+psycopg://postgres:changeme@postgres-service:5432/mcp
     JWT_SECRET_KEY=your-secret-key
     BASIC_AUTH_USER=admin
     BASIC_AUTH_PASSWORD=changeme

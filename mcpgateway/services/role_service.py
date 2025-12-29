@@ -245,7 +245,8 @@ class RoleService:
             True
         """
         result = self.db.execute(select(Role).where(Role.id == role_id))
-        return result.scalar_one_or_none()
+        role = result.scalar_one_or_none()
+        return role
 
     async def get_role_by_name(self, name: str, scope: str) -> Optional[Role]:
         """Get role by name and scope.
@@ -266,7 +267,8 @@ class RoleService:
             True
         """
         result = self.db.execute(select(Role).where(and_(Role.name == name, Role.scope == scope, Role.is_active.is_(True))))
-        return result.scalar_one_or_none()
+        role = result.scalar_one_or_none()
+        return role
 
     async def list_roles(self, scope: Optional[str] = None, include_system: bool = True, include_inactive: bool = False) -> List[Role]:
         """List roles with optional filtering.
@@ -316,7 +318,8 @@ class RoleService:
         query = query.order_by(Role.scope, Role.name)
 
         result = self.db.execute(query)
-        return result.scalars().all()
+        roles = result.scalars().all()
+        return roles
 
     async def update_role(
         self,
@@ -696,7 +699,8 @@ class RoleService:
             conditions.append(UserRole.scope_id.is_(None))
 
         result = self.db.execute(select(UserRole).where(and_(*conditions)))
-        return result.scalar_one_or_none()
+        user_role = result.scalar_one_or_none()
+        return user_role
 
     async def list_user_roles(self, user_email: str, scope: Optional[str] = None, include_expired: bool = False) -> List[UserRole]:
         """List all role assignments for a user.
@@ -740,7 +744,8 @@ class RoleService:
         query = query.order_by(UserRole.scope, Role.name)
 
         result = self.db.execute(query)
-        return result.scalars().all()
+        user_roles = result.scalars().all()
+        return user_roles
 
     async def list_role_assignments(self, role_id: str, scope: Optional[str] = None, include_expired: bool = False) -> List[UserRole]:
         """List all user assignments for a role.
@@ -783,7 +788,8 @@ class RoleService:
         query = query.order_by(UserRole.user_email)
 
         result = self.db.execute(query)
-        return result.scalars().all()
+        assignments = result.scalars().all()
+        return assignments
 
     async def _would_create_cycle(self, parent_id: str, child_id: Optional[str]) -> bool:
         """Check if setting parent_id as parent of child_id would create a cycle.

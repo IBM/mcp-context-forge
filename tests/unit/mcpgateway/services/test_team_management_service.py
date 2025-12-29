@@ -22,6 +22,50 @@ from mcpgateway.services.team_management_service import TeamManagementService
 class TestTeamManagementService:
     """Comprehensive test suite for Team Management Service."""
 
+    @pytest.fixture(autouse=True)
+    def clear_caches(self):
+        """Clear caches before each test to avoid cross-test contamination."""
+        # Clear auth cache
+        try:
+            # First-Party
+            from mcpgateway.cache.auth_cache import get_auth_cache
+
+            cache = get_auth_cache()
+            cache.invalidate_all()
+        except ImportError:
+            pass
+
+        # Clear admin stats cache
+        try:
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import get_admin_stats_cache
+
+            cache = get_admin_stats_cache()
+            cache.invalidate_all()
+        except ImportError:
+            pass
+
+        yield
+
+        # Also clear after test
+        try:
+            # First-Party
+            from mcpgateway.cache.auth_cache import get_auth_cache
+
+            cache = get_auth_cache()
+            cache.invalidate_all()
+        except ImportError:
+            pass
+
+        try:
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import get_admin_stats_cache
+
+            cache = get_admin_stats_cache()
+            cache.invalidate_all()
+        except ImportError:
+            pass
+
     @pytest.fixture
     def mock_db(self):
         """Create mock database session."""
@@ -748,3 +792,40 @@ class TestTeamManagementService:
             # Should not raise an exception during validation
             # This is tested implicitly in add_member and update_role tests
             assert role in valid_roles
+
+    # ---------------------------------------------------------------------------
+    # count_team_owners Tests
+    # ---------------------------------------------------------------------------
+    def test_count_team_owners_no_owners(self, service, mock_db):
+        """Test count_team_owners returns 0 when no owners."""
+        mock_db.query.return_value.filter.return_value.count.return_value = 0
+
+        result = service.count_team_owners("team-123")
+
+        assert result == 0
+        mock_db.query.assert_called_once()
+
+    def test_count_team_owners_one_owner(self, service, mock_db):
+        """Test count_team_owners returns 1 for single owner."""
+        mock_db.query.return_value.filter.return_value.count.return_value = 1
+
+        result = service.count_team_owners("team-123")
+
+        assert result == 1
+
+    def test_count_team_owners_multiple_owners(self, service, mock_db):
+        """Test count_team_owners returns correct count for multiple owners."""
+        mock_db.query.return_value.filter.return_value.count.return_value = 5
+
+        result = service.count_team_owners("team-abc")
+
+        assert result == 5
+
+    def test_count_team_owners_filters_by_team_id(self, service, mock_db):
+        """Test count_team_owners filters by correct team_id."""
+        mock_db.query.return_value.filter.return_value.count.return_value = 2
+
+        service.count_team_owners("specific-team-id")
+
+        # Verify the filter chain was called
+        mock_db.query.return_value.filter.assert_called()

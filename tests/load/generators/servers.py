@@ -65,7 +65,7 @@ class ServerGenerator(BaseGenerator):
                     name=name,
                     description=self.faker.sentence(),
                     created_by=user_email,
-                    is_active=random.choice([True, True, True, False]),  # 75% active
+                    enabled=random.choice([True, True, True, False]),  # 75% active
                     tags=[],
                     version=1,
                     visibility=random.choice(["public", "private", "team"]),

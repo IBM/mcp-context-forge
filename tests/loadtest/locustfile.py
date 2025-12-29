@@ -41,7 +41,8 @@ from typing import Any
 import uuid
 
 # Third-Party
-from locust import between, events, HttpUser, tag, task
+from locust import between, events, tag, task
+from locust.contrib.fasthttp import FastHttpUser
 from locust.runners import MasterRunner, WorkerRunner
 
 # Configure logging
@@ -158,6 +159,13 @@ TOOL_NAMES: list[str] = []
 RESOURCE_URIS: list[str] = []
 PROMPT_NAMES: list[str] = []
 
+# Tools that require arguments and are tested with proper arguments in specific user classes
+# These should be excluded from generic rpc_call_tool to avoid false failures
+TOOLS_WITH_REQUIRED_ARGS: set[str] = {
+    "fast-time-convert-time",  # Requires: time, source_timezone, target_timezone
+    "fast-time-get-system-time",  # Requires: timezone
+}
+
 
 # =============================================================================
 # Event Handlers
@@ -202,7 +210,7 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
             if resp.status_code == 200:
                 data = resp.json()
                 items = data if isinstance(data, list) else data.get("items", [])
-                SERVER_IDS.extend([str(s.get("id") or s.get("name")) for s in items[:50]])
+                SERVER_IDS.extend([str(s.get("id")) for s in items[:50] if s.get("id")])
                 logger.info(f"Loaded {len(SERVER_IDS)} server IDs")
 
             # Fetch gateways
@@ -210,7 +218,7 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
             if resp.status_code == 200:
                 data = resp.json()
                 items = data if isinstance(data, list) else data.get("items", [])
-                GATEWAY_IDS.extend([str(g.get("id") or g.get("name")) for g in items[:50]])
+                GATEWAY_IDS.extend([str(g.get("id")) for g in items[:50] if g.get("id")])
                 logger.info(f"Loaded {len(GATEWAY_IDS)} gateway IDs")
 
             # Fetch resources
@@ -423,11 +431,14 @@ def _json_rpc_request(method: str, params: dict[str, Any] | None = None) -> dict
 # =============================================================================
 
 
-class BaseUser(HttpUser):
-    """Base user class with common configuration."""
+class BaseUser(FastHttpUser):
+    """Base user class with common configuration.
+
+    Uses FastHttpUser (gevent-based) for maximum throughput.
+    """
 
     abstract = True
-    wait_time = between(0.5, 2.0)
+    wait_time = between(0.1, 0.5)
 
     def __init__(self, *args, **kwargs):
         """Initialize base user with auth headers."""
@@ -935,9 +946,15 @@ class MCPJsonRpcUser(BaseUser):
     @task(5)
     @tag("mcp", "rpc", "tools")
     def rpc_call_tool(self):
-        """JSON-RPC: Call a tool."""
-        if TOOL_NAMES:
-            tool_name = random.choice(TOOL_NAMES)
+        """JSON-RPC: Call a tool with empty arguments.
+
+        Note: Tools that require arguments are excluded here and tested
+        separately in dedicated user classes (e.g., FastTimeUser) with proper arguments.
+        """
+        # Filter out tools that require arguments - they're tested with proper args elsewhere
+        callable_tools = [t for t in TOOL_NAMES if t not in TOOLS_WITH_REQUIRED_ARGS]
+        if callable_tools:
+            tool_name = random.choice(callable_tools)
             payload = _json_rpc_request("tools/call", {"name": tool_name, "arguments": {}})
             self._rpc_request(payload, "/rpc tools/call")
 

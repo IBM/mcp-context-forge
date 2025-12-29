@@ -172,7 +172,7 @@ Pick an install method below, generate an auth token, then walk through a real t
             docker run -d --name mcpgateway \
               -p 4444:4444 \
               --link postgres-db:postgres \
-              -e DATABASE_URL=postgresql://postgres:mysecretpassword@postgres:5432/mcp \
+              -e DATABASE_URL=postgresql+psycopg://postgres:mysecretpassword@postgres:5432/mcp \
               -e JWT_SECRET_KEY=my-test-key \
               -e BASIC_AUTH_USER=admin \
               -e BASIC_AUTH_PASSWORD=changeme \
@@ -237,7 +237,7 @@ Pick an install method below, generate an auth token, then walk through a real t
     !!! tip "Database Support"
         The sample Compose file includes multiple database options:
 
-        - **PostgreSQL** (default): `postgresql://postgres:password@postgres:5432/mcp`
+        - **PostgreSQL** (default): `postgresql+psycopg://postgres:password@postgres:5432/mcp`
         - **MariaDB**: `mysql+pymysql://mysql:changeme@mariadb:3306/mcp` - fully supported with 36+ tables
         - **MySQL**: `mysql+pymysql://admin:changeme@mysql:3306/mcp`
 

@@ -50,12 +50,28 @@ bearer_scheme = HTTPBearer(auto_error=False)
 def get_db():
     """Database dependency.
 
+    Commits the transaction on successful completion to avoid implicit rollbacks
+    for read-only operations. Rolls back explicitly on exception.
+
     Yields:
         Session: SQLAlchemy database session
+
+    Raises:
+        Exception: Re-raises any exception after rolling back the transaction.
     """
     db = SessionLocal()
     try:
         yield db
+        db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
+        raise
     finally:
         db.close()
 

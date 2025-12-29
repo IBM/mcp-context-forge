@@ -1497,7 +1497,7 @@ class TestAdminUIRoute:
 
         # Some services succeed
         mock_servers.return_value = []
-        mock_tools.return_value = []
+        mock_tools.return_value = ([], None)
 
         # Simulate a failure in one service
         mock_resources.side_effect = Exception("Resource service down")
@@ -1530,7 +1530,7 @@ class TestAdminUIRoute:
         """Test admin UI template context is properly populated."""
         # Mock all services to return empty lists
         mock_servers.return_value = []
-        mock_tools.return_value = []
+        mock_tools.return_value = ([], None)
         mock_resources.return_value = []
         mock_prompts.return_value = []
         mock_gateways.return_value = []
@@ -1566,8 +1566,12 @@ class TestAdminUIRoute:
     async def test_admin_ui_cookie_settings(self, mock_roots, mock_gateways, mock_prompts, mock_resources, mock_tools, mock_servers, mock_request, mock_db):
         """Test admin UI JWT cookie settings."""
         # Mock all services
-        for mock in [mock_servers, mock_tools, mock_resources, mock_prompts, mock_gateways, mock_roots]:
-            mock.return_value = []
+        mock_servers.return_value = []
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = []
+        mock_prompts.return_value = []
+        mock_gateways.return_value = []
+        mock_roots.return_value = []
 
         response = await admin_ui(mock_request, None, False, mock_db, "admin")
 
@@ -2540,8 +2544,12 @@ class TestAdminUIMainEndpoint:
     async def test_admin_ui_a2a_disabled(self, mock_roots, mock_gateways, mock_prompts, mock_resources, mock_tools, mock_servers, mock_request, mock_db):
         """Test admin UI when A2A is disabled."""
         # Mock all services to return empty lists
-        for mock in [mock_servers, mock_tools, mock_resources, mock_prompts, mock_gateways, mock_roots]:
-            mock.return_value = []
+        mock_servers.return_value = []
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = []
+        mock_prompts.return_value = []
+        mock_gateways.return_value = []
+        mock_roots.return_value = []
 
         response = await admin_ui(mock_request, False, mock_db, "admin")
 

@@ -60,10 +60,19 @@ spec:
                   key: DATABASE_URL
             {{- else }}
             # In-cluster database: construct DATABASE_URL from components
+            # ---------- POSTGRES (via PgBouncer if enabled) ----------
             - name: POSTGRES_HOST
+              {{- if .Values.pgbouncer.enabled }}
+              value: {{ printf "%s-pgbouncer" (include "mcp-stack.fullname" .) }}
+              {{- else }}
               value: {{ printf "%s-postgres" (include "mcp-stack.fullname" .) }}
+              {{- end }}
             - name: POSTGRES_PORT
+              {{- if .Values.pgbouncer.enabled }}
+              value: "{{ .Values.pgbouncer.service.port }}"
+              {{- else }}
               value: "{{ .Values.mcpContextForge.env.postgres.port }}"
+              {{- end }}
             - name: POSTGRES_DB
               value: "{{ .Values.mcpContextForge.env.postgres.db }}"
             - name: POSTGRES_USER
@@ -76,10 +85,6 @@ spec:
                 secretKeyRef:
                   name: {{ include "mcp-stack.postgresSecretName" . | trim }}
                   key: POSTGRES_PASSWORD
-            - name: DATABASE_URL
-              value: >-
-                postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)
-            {{- end }}
 
             # ---------- REDIS ----------
             - name: REDIS_HOST
@@ -105,8 +110,14 @@ spec:
             {{- end }}
 
             # ---------- DERIVED URLS ----------
+            # These MUST be placed *after* the concrete vars above so the
+            # $(...) placeholders are expanded correctly inside the pod.
+            - name: DATABASE_URL
+              value: >-
+                postgresql+psycopg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)
             - name: REDIS_URL
               value: "redis://$(REDIS_HOST):$(REDIS_PORT)/0"
+            {{- end }}
 
           ################################################################
           # BULK ENV-VARS - pulled from ConfigMap + Secret

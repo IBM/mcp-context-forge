@@ -1,0 +1,889 @@
+#version: "3.9"          # Supported by both podman-compose and Docker Compose v2+
+
+###############################################################################
+#  NETWORKS + VOLUMES - declared first so they can be referenced later
+###############################################################################
+networks:
+  mcpnet:               # Single user-defined bridge network keeps traffic private
+    driver: bridge
+
+volumes:                # Named volumes survive podman-compose down/up
+  pgdata:
+  # pgdata18:  # Enable for postgres 18+
+  mariadbdata:
+  mysqldata:
+  mongodata:
+  pgadmindata:
+  redisinsight_data:
+  nginx_cache:
+
+###############################################################################
+#  CORE SERVICE - MCP Gateway
+###############################################################################
+services:
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Nginx Caching Proxy - High-performance reverse proxy with CDN-like caching
+  # ──────────────────────────────────────────────────────────────────────
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    image: mcpgateway/nginx-cache:latest
+    restart: unless-stopped
+    ports:
+      - "8080:80"                   # HTTP caching proxy (public-facing)
+    networks: [mcpnet]
+    depends_on:
+      gateway:
+        condition: service_healthy
+    volumes:
+      - nginx_cache:/var/cache/nginx    # Persistent cache storage
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro  # Mount config as read-only
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '1'
+          memory: 512M
+
+  # ──────────────────────────────────────────────────────────────────────
+  # MCP Gateway - the main API server for the MCP stack
+  # ──────────────────────────────────────────────────────────────────────
+  gateway:
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest} # Use the local latest image. Run `make docker-prod` to build it.
+    #image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1 # Use the release MCP Context Forge image
+    #image: ghcr.io/ibm/mcp-context-forge:0.7.0 # Testing migration from 0.7.0
+    build:
+      context: .
+      dockerfile: Containerfile.lite     # Same one the Makefile builds
+    restart: unless-stopped
+    # NOTE: When using replicas > 1, access via nginx:8080 instead of direct port 4444
+    # ports:
+    #   - "4444:4444"               # Disabled for multi-replica mode
+    networks: [mcpnet]
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Environment - pick ONE database URL line, comment the rest
+    # ──────────────────────────────────────────────────────────────────────
+    environment:
+      # HTTP Server: granian (default, Rust-based) or gunicorn (Python-based alternative)
+      - HTTP_SERVER=gunicorn
+      # - HTTP_SERVER=gunicorn  # Alternative: use Gunicorn with Uvicorn workers
+      - HOST=0.0.0.0
+      - PORT=4444
+      # Transport: sse, streamablehttp, http, or all (default: all)
+      - TRANSPORT_TYPE=streamablehttp
+      - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
+      # - DATABASE_URL=mysql+pymysql://mysql:${MYSQL_PASSWORD:-changeme}@mariadb:3306/mcp
+      # - DATABASE_URL=mysql+pymysql://admin:${MARIADB_PASSWORD:-changeme}@mariadb:3306/mcp
+      # - DATABASE_URL=mongodb://admin:${MONGO_PASSWORD:-changeme}@mongodb:27017/mcp
+      - CACHE_TYPE=redis # backend for caching (memory, redis, database, or none)
+      - REDIS_URL=redis://redis:6379/0
+      # Redis parser: hiredis (C extension ~83x faster for large responses)
+      - REDIS_PARSER=hiredis
+      # Redis connection pool tuning for load testing (32 workers × 150 = 4800 < 5000 maxclients)
+      - REDIS_MAX_CONNECTIONS=150
+      - REDIS_SOCKET_TIMEOUT=5.0
+      - REDIS_SOCKET_CONNECT_TIMEOUT=5.0
+      - REDIS_HEALTH_CHECK_INTERVAL=30
+      # MCP Server Health Check
+      # Interval in seconds between health checks (default: 300)
+      - HEALTH_CHECK_INTERVAL=300
+      # Timeout in seconds for each health check request (default: 5)
+      - HEALTH_CHECK_TIMEOUT=5
+      # Consecutive failures before marking gateway offline (default: 3)
+      - UNHEALTHY_THRESHOLD=3
+      # Gateway URL validation timeout in seconds (default: 5)
+      - GATEWAY_VALIDATION_TIMEOUT=5
+      # Max concurrent health checks per worker (default: 10)
+      - MAX_CONCURRENT_HEALTH_CHECKS=10
+      # JWT Configuration - Choose ONE approach:
+      # Option 1: HMAC (Default - Simple deployments)
+      - JWT_ALGORITHM=HS256
+      - JWT_SECRET_KEY=my-test-key
+      # Option 2: RSA (Production - Asymmetric, uncomment and generate certs)
+      # - JWT_ALGORITHM=RS256
+      # - JWT_PUBLIC_KEY_PATH=/app/certs/jwt/public.pem
+      # - JWT_PRIVATE_KEY_PATH=/app/certs/jwt/private.pem
+      - JWT_AUDIENCE=mcpgateway-api
+      - JWT_ISSUER=mcpgateway
+      - EMAIL_AUTH_ENABLED=true
+      - PLATFORM_ADMIN_EMAIL=admin@example.com
+      - PLATFORM_ADMIN_PASSWORD=changeme
+      - REQUIRE_TOKEN_EXPIRATION=false
+      - MCPGATEWAY_UI_ENABLED=true
+      - MCPGATEWAY_ADMIN_API_ENABLED=true
+      # Security configuration (using defaults)
+      - ENVIRONMENT=development
+      - SECURITY_HEADERS_ENABLED=true
+      - CORS_ALLOW_CREDENTIALS=true
+      - SECURE_COOKIES=false
+      ## Uncomment to enable HTTPS
+      # - SSL=true
+      # - CERT_FILE=/app/certs/cert.pem
+      # - KEY_FILE=/app/certs/key.pem
+      # - KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD}  # Optional: Set in .env for passphrase-protected keys
+      # Uncomment to enable plugins
+      - PLUGINS_ENABLED=false
+      # Uncomment to enable catalog
+      - MCPGATEWAY_CATALOG_ENABLED=true
+      - MCPGATEWAY_CATALOG_FILE=/app/mcp-catalog.yml
+      # Authentication configuration
+      - AUTH_REQUIRED=true
+      - MCP_CLIENT_AUTH_ENABLED=true
+      - TRUST_PROXY_AUTH=false
+      # Logging configuration
+      - LOG_LEVEL=ERROR  # Default to ERROR for production performance
+      - DISABLE_ACCESS_LOG=true  # Disable uvicorn access logs for performance (massive I/O overhead)
+      - STRUCTURED_LOGGING_DATABASE_ENABLED=false  # Disable DB logging for performance (use true only for debugging)
+      # Audit trail logging - disabled by default for performance
+      # WARNING: Causes a DB write on EVERY API request - can generate millions of rows during load testing!
+      - AUDIT_TRAIL_ENABLED=false  # Set to true for compliance requirements (SOC2, HIPAA, etc.)
+      # Security event logging - disabled by default for performance
+      # WARNING: "all" level logs every request and causes massive DB write load
+      - SECURITY_LOGGING_ENABLED=false  # Set to true to enable security event logging
+      - SECURITY_LOGGING_LEVEL=failures_only  # Options: all, failures_only, high_severity
+      # Performance optimizations - disable CPU-intensive middlewares
+      # NOTE: Keep compression enabled when running without nginx that already has compression
+      # Disabling causes throughput drop due to larger payloads
+      - COMPRESSION_ENABLED=false
+      # Disable optional middlewares for maximum throughput
+      - VALIDATION_MIDDLEWARE_ENABLED=true
+      - CORRELATION_ID_ENABLED=false
+      - OBSERVABILITY_ENABLED=false
+      # Database pool tuning for load testing
+      # Auth uses fresh short-lived sessions, so smaller pools work better
+      # Formula: (replicas × workers) × (pool + overflow) < postgres max_connections
+      # 2 replicas × 16 workers × 30 = 960 connections max
+      - DB_POOL_SIZE=10
+      - DB_MAX_OVERFLOW=20
+      - DB_POOL_TIMEOUT=30
+      - DB_POOL_RECYCLE=300
+      - DB_POOL_PRE_PING=false
+      # Metrics buffer tuning - larger batches, fewer DB writes
+      - METRICS_BUFFER_MAX_SIZE=5000
+      - METRICS_BUFFER_FLUSH_INTERVAL=120
+      # Tool invocation timeout - prevents hung connections
+      - TOOL_TIMEOUT=30
+      - FEDERATION_TIMEOUT=30
+      # Worker and server tuning for high-concurrency load testing
+      # Optimal: 2 * CPU cores + 1 = 25 for 12 CPUs
+      - GUNICORN_WORKERS=25
+      # Granian high-concurrency tuning (for 1000 concurrent users)
+      # Higher backlog allows more pending connections
+      - GRANIAN_BACKLOG=8192
+      - GRANIAN_BACKPRESSURE=2048
+      - GRANIAN_HTTP1_BUFFER_SIZE=524288
+      # Granian workers (auto = CPU count, or set explicit number)
+      - GRANIAN_WORKERS=25
+
+      # Phoenix Observability Integration (uncomment when using Phoenix)
+      # - PHOENIX_ENDPOINT=${PHOENIX_ENDPOINT:-http://phoenix:6006}
+      # - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://phoenix:4317}
+      # - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-mcp-gateway}
+      # - OTEL_TRACES_EXPORTER=${OTEL_TRACES_EXPORTER:-otlp}
+      # - OTEL_METRICS_EXPORTER=${OTEL_METRICS_EXPORTER:-otlp}
+      # - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=docker,service.namespace=mcp}
+
+    depends_on:          # Default stack: Postgres + Redis + Alembic migration
+      postgres:
+        condition: service_healthy   # ▶ wait for DB
+      redis:
+        condition: service_started
+      # migration:
+      #   condition: service_completed_successfully
+
+    healthcheck:
+      ## Uncomment for HTTP healthcheck
+      test: ["CMD", "python3", "-c", "import urllib.request; import json; resp = urllib.request.urlopen('http://localhost:4444/health', timeout=5); data = json.loads(resp.read()); exit(0 if data.get('status') == 'healthy' else 1)"]
+      ## Uncomment for HTTPS healthcheck
+      # test: ["CMD", "curl", "-f", "https://localhost:4444/health"]
+      ## Uncomment to skip SSL validation (self-signed certs)
+      # test: ["CMD", "curl", "-fk", "https://localhost:4444/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+    # Scaling options:
+    # - Single instance: use port 4444 directly, replicas: 1
+    # - Multi-instance: comment out ports, set replicas: 2+, access via nginx:8080
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Server Engine Selection (Default: Granian - Rust-based HTTP server)
+    # ──────────────────────────────────────────────────────────────────────
+    # Default is Granian. For Gunicorn with Uvicorn workers:
+    # command: ["./run-gunicorn.sh"]
+
+    deploy:
+      mode: replicated
+      replicas: 2
+      resources:
+        limits:
+          cpus: '12'
+          memory: 8G
+        reservations:
+          cpus: '6'
+          memory: 4G
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Volume Mounts
+    # ──────────────────────────────────────────────────────────────────────
+    # Uncomment to mount catalog configuration and SSL certificates
+    # volumes:
+    #   - ./mcp-catalog.yml:/app/mcp-catalog.yml:ro # mount catalog configuration
+    #   - ./certs:/app/mcpgateway/certs:ro   # mount certs folder read-only (includes both SSL and JWT keys)
+    #
+    # SSL/TLS Certificate Setup:
+    # 1. Generate certificates:
+    #    - Without passphrase: make certs
+    #    - With passphrase: make certs-passphrase
+    # 2. Uncomment the volumes mount above
+    # 3. Set SSL environment variables
+    # 4. If using passphrase-protected key, set KEY_FILE_PASSWORD in .env file
+    #
+    # For JWT asymmetric keys:
+    # 1. Generate keys: make certs-jwt
+    # 2. Uncomment volumes mount above
+    # 3. Switch JWT_ALGORITHM to RS256 and uncomment JWT_*_KEY_PATH variables
+
+###############################################################################
+#  DATABASES - enable ONE of these blocks and adjust DATABASE_URL
+###############################################################################
+
+  postgres:
+    image: postgres:17
+    ports:
+      - "5433:5432"      # Expose for baseline load testing (5433 to avoid conflict with local postgres)
+    # Performance tuning for high-load testing (2 replicas × 8 workers × 200 pool = 3200 connections)
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=4000"
+      - "-c"
+      - "shared_buffers=512MB"
+      - "-c"
+      - "work_mem=16MB"
+      - "-c"
+      - "effective_cache_size=1536MB"
+      - "-c"
+      - "maintenance_work_mem=128MB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "wal_buffers=16MB"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "effective_io_concurrency=200"
+      - "-c"
+      - "max_worker_processes=4"
+      - "-c"
+      - "max_parallel_workers_per_gather=2"
+      - "-c"
+      - "max_parallel_workers=4"
+      # === ROLLBACK DEBUGGING ===
+      - "-c"
+      - "log_min_error_statement=error"
+      - "-c"
+      - "log_min_messages=warning"
+      - "-c"
+      - "log_error_verbosity=verbose"
+      - "-c"
+      - "log_line_prefix=%t [%p]: user=%u,db=%d,app=%a,client=%h "
+      - "-c"
+      - "log_lock_waits=on"
+      - "-c"
+      - "deadlock_timeout=1s"
+      - "-c"
+      - "log_temp_files=0"
+      - "-c"
+      - "log_checkpoints=on"
+      - "-c"
+      - "log_connections=on"
+      - "-c"
+      - "log_disconnections=on"
+      - "-c"
+      - "idle_in_transaction_session_timeout=10s"
+      # === PERFORMANCE OPTIMIZATIONS ===
+      - "-c"
+      - "synchronous_commit=off"
+      - "-c"
+      - "commit_delay=100"
+      # === AGGRESSIVE AUTOVACUUM FOR METRICS ===
+      - "-c"
+      - "autovacuum_vacuum_scale_factor=0.02"
+      - "-c"
+      - "autovacuum_naptime=15"
+      # === QUERY MONITORING ===
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements"
+      - "-c"
+      - "pg_stat_statements.track=all"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=mysecretpassword
+      - POSTGRES_DB=mcp
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # - pgdata18:/var/lib/postgresql  # Enable for postgres 18+
+    networks: [mcpnet]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: '6'
+          memory: 4G
+        reservations:
+          cpus: '3'
+          memory: 2G
+
+  # mariadb:
+  #   image: mariadb:10.6
+  #   environment:
+  #     MARIADB_ROOT_PASSWORD: mysecretpassword
+  #     MARIADB_DATABASE: mcp
+  #     MARIADB_USER: mariadb
+  #     MARIADB_PASSWORD: mysecretpassword
+  #   volumes:
+  #     - mariadbdata:/var/lib/mysql
+  #   networks: [mcpnet]
+  #   ports:
+  #     - "3306:3306"
+  #   healthcheck:
+  #     test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+  #     interval: 30s
+  #     timeout: 5s
+  #     retries: 5
+  #     start_period: 20s
+
+  # mariadb:
+  #   image: mariadb:11
+  #   environment:
+  #     - MARIADB_ROOT_PASSWORD=mysecretpassword
+  #     - MARIADB_DATABASE=mcp
+  #     - MARIADB_USER=admin
+  #     - MARIADB_PASSWORD=changeme
+  #   volumes: [mariadbdata:/var/lib/mysql]
+  #   networks: [mcpnet]
+
+  # mariadb:
+  #   image: registry.redhat.io/rhel9/mariadb-106:12.0.2-ubi10
+  #   environment:
+  #     - MYSQL_ROOT_PASSWORD=mysecretpassword
+  #     - MYSQL_DATABASE=mcp
+  #     - MYSQL_USER=mysql
+  #     - MYSQL_PASSWORD=changeme
+  #   volumes: ["mariadbdata:/var/lib/mysql"]
+  #   networks: [mcpnet]
+  #   ports:
+  #     - "3306:3306"
+  #   healthcheck:
+  #     test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pmysecretpassword"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 30s
+
+  # mongodb:
+  #   image: mongo:7
+  #   environment:
+  #     - MONGO_INITDB_ROOT_USERNAME=admin
+  #     - MONGO_INITDB_ROOT_PASSWORD=changeme
+  #     - MONGO_INITDB_DATABASE=mcp
+  #   volumes: [mongodata:/data/db]
+  #   networks: [mcpnet]
+
+  # migration:
+  #   #image: ghcr.io/ibm/mcp-context-forge:0.7.0 # Testing migration from 0.7.0
+  #   image: mcpgateway/mcpgateway:latest # Use the local latest image. Run `make docker-prod` to build it.
+  #   build:
+  #     context: .
+  #     dockerfile: Containerfile
+  #   environment:
+  #     - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
+  #   command: alembic -c mcpgateway/alembic.ini upgrade head
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   networks: [mcpnet]
+
+###############################################################################
+#  CACHE
+###############################################################################
+  redis:
+    image: redis:latest
+    # Performance tuning for 1000+ RPS high-concurrency load testing
+    command:
+      - "redis-server"
+      - "--maxmemory"
+      - "1gb"
+      - "--maxmemory-policy"
+      - "allkeys-lru"
+      - "--tcp-backlog"
+      - "2048"
+      - "--timeout"
+      - "0"
+      - "--tcp-keepalive"
+      - "300"
+      - "--maxclients"
+      - "10000"
+    ports:
+      - "6379:6379"      # expose only if you want host access
+    networks: [mcpnet]
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+
+###############################################################################
+#  OPTIONAL ADMIN TOOLS - handy web UIs for DB & cache (disabled by default)
+###############################################################################
+  # pgadmin:              # 🔧 Postgres admin UI
+  #   image: dpage/pgadmin4:latest
+  #   environment:
+  #     - PGADMIN_DEFAULT_EMAIL=admin@example.com
+  #     - PGADMIN_DEFAULT_PASSWORD=changeme
+  #   ports:
+  #     - "5050:80"      # http://localhost:5050
+  #   volumes:
+  #     - pgadmindata:/var/lib/pgadmin
+  #   networks: [mcpnet]
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+
+  # # ──────────────────────────────────────────────────────────────────────
+  # # Redis Insight - a powerful Redis GUI (recently updated)
+  # # ──────────────────────────────────────────────────────────────────────
+  # redis_insight:                    # 🔧 Redis Insight GUI
+  #   image: redis/redisinsight:latest
+  #   container_name: redisinsight
+  #   restart: unless-stopped
+  #   networks: [mcpnet]
+  #   ports:
+  #     - "5540:5540"                 # Redis Insight UI (default 5540)
+  #   depends_on:          # Default stack: Postgres + Redis
+  #     redis:
+  #       condition: service_started
+
+  #   # ──────────────────────────────────────────────────────────────────────
+  #   # Persist data (config, logs, history) between restarts
+  #   # ──────────────────────────────────────────────────────────────────────
+  #   # volumes:
+  #   #   - ./redisinsight_data:/data
+  #   volumes:
+  #     - redisinsight_data:/data  # <- persist data in named volume
+
+  #   # ──────────────────────────────────────────────────────────────────────
+  #   # Preconfigure Redis connection(s) via env vars
+  #   # ──────────────────────────────────────────────────────────────────────
+  #   environment:
+  #     # Single connection (omit "*" since only one):
+  #     - RI_REDIS_HOST=redis         # <- your Redis hostname
+  #     - RI_REDIS_PORT=6379          # <- your Redis port
+  #     - RI_REDIS_USERNAME=default   # <- ACL/username (Redis 6+)
+  #     #- RI_REDIS_PASSWORD=changeme  # <- Redis AUTH password
+  #     #- RI_REDIS_TLS=true           # <- enable TLS
+
+  #     # Optional: validate self-signed CA instead of trusting all:
+  #     # - RI_REDIS_TLS_CA_PATH=/certs/selfsigned.crt
+  #     # - RI_REDIS_TLS_CERT_PATH=/certs/client.crt
+  #     # - RI_REDIS_TLS_KEY_PATH=/certs/client.key
+  #     # - RI_REDIS_TLS=true           # (already set above)
+
+  #     # ──────────────────────────────────────────────────────────────────
+  #     # Core Redis Insight settings
+  #     # ──────────────────────────────────────────────────────────────────
+  #     - RI_APP_HOST=0.0.0.0          # <- listen on all interfaces
+  #     - RI_APP_PORT=5540             # <- UI port (container-side)
+
+  #     # ──────────────────────────────────────────────────────────────────
+  #     # (Optional) Enable HTTPS for the UI
+  #     # ──────────────────────────────────────────────────────────────────
+  #     # - RI_SERVER_TLS_KEY=/certs/tls.key
+  #     # - RI_SERVER_TLS_CERT=/certs/tls.crt
+
+  # # ──────────────────────────────────────────────────────────────────────
+  # # Redis Commander - a web-based Redis GUI
+  # # ──────────────────────────────────────────────────────────────────────
+  # redis_commander:       # 🔧 Redis key browser
+  #   image: rediscommander/redis-commander:latest
+  #   restart: unless-stopped
+  #   networks: [mcpnet]
+  #   depends_on:
+  #     redis:
+  #       condition: service_started
+  #   ports:
+  #     - "8081:8081"    # <- change if you want a different host port
+
+  #   # ─────────────────────────────────────────────────────────────────────────
+  #   # Mount your local certs directory (only needed if you want real cert validation)
+  #   # ─────────────────────────────────────────────────────────────────────────
+  #   # volumes:
+  #   #   - ./certs:/certs:ro   # <- put your selfsigned.crt (PEM) in ./certs
+
+  #   environment:
+  #     # ──────────────────────────────────────────────────────────────────────
+  #     # LEGACY HOST LIST (for showing in UI - not used for TLS)
+  #     # ──────────────────────────────────────────────────────────────────────
+  #     - REDIS_HOSTS=local:redis:6379
+
+  #     # ──────────────────────────────────────────────────────────────────────
+  #     # CORE REDIS/TLS
+  #     # ──────────────────────────────────────────────────────────────────────
+  #     - REDIS_HOST=redis                # <- your Redis hostname or IP
+  #     - REDIS_PORT=6379                 # <- your Redis port
+  #     - REDIS_USERNAME=admin          # ← REQUIRED when Redis has users/ACLs
+  #     - REDIS_PASSWORD=${REDIS_PASSWORD}# <- if you need a Redis auth password
+  #     # - REDIS_TLS=true                  # <- turn on TLS
+  #     - CLUSTER_NO_TLS_VALIDATION=true  # <- skip SNI/hostname checks in clusters
+
+  #     # ──────────────────────────────────────────────────────────────────────
+  #     # SELF-SIGNED: trust no-CA by default
+  #     # ──────────────────────────────────────────────────────────────────────
+  #     - NODE_TLS_REJECT_UNAUTHORIZED=0  # <- Node.js will accept your self-signed cert
+
+  #     # ──────────────────────────────────────────────────────────────────────
+  #     # HTTP BASIC-AUTH FOR THE WEB UI
+  #     # ──────────────────────────────────────────────────────────────────────
+  #     - HTTP_USER=admin                # <- change your UI username
+  #     - HTTP_PASSWORD=changeme         # <- change your UI password
+
+  #     # ──────────────────────────────────────────────────────────────────────
+  #     # OPTIONAL: ENABLE REAL CERT VALIDATION (instead of skipping checks)
+  #     # ──────────────────────────────────────────────────────────────────────
+  #     # - REDIS_TLS_CA_CERT_FILE=/certs/selfsigned.crt
+  #     # - REDIS_TLS_SERVER_NAME=redis.example.com
+
+
+  # mongo_express:         # 🔧 MongoDB GUI (works if mongodb service is enabled)
+  #   image: mongo-express:1
+  #   environment:
+  #     - ME_CONFIG_MONGODB_ADMINUSERNAME=admin
+  #     - ME_CONFIG_MONGODB_ADMINPASSWORD=changeme
+  #     - ME_CONFIG_MONGODB_SERVER=mongodb
+  #   ports:
+  #     - "8082:8081"    # http://localhost:8082
+  #   networks: [mcpnet]
+  #   depends_on:
+  #     mongodb:
+  #       condition: service_started
+
+  # phpmyadmin:            # 🔧 MySQL / MariaDB GUI
+  #   image: phpmyadmin:latest
+  #   environment:
+  #     - PMA_HOST=mysql   # or mariadb
+  #     - PMA_USER=mysql
+  #     - PMA_PASSWORD=changeme
+  #     - PMA_ARBITRARY=1  # allow login to any host if you switch DBs
+  #   ports:
+  #     - "8083:80"      # http://localhost:8083
+  #   networks: [mcpnet]
+  #   depends_on:
+  #     mysql:
+  #       condition: service_started
+
+
+###############################################################################
+#  OPTIONAL MCP SERVERS - drop-in helpers the Gateway can call
+###############################################################################
+
+  ###############################################################################
+  # Fast Time Server - High-performance time/timezone service for MCP
+  # Note: This is an amd64-only image. On ARM platforms (Apple Silicon),
+  # emulation may not work properly. Use profiles to disable:
+  # docker compose --profile with-fast-time up -d
+  ###############################################################################
+  fast_time_server:
+    image: ghcr.io/ibm/fast-time-server:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "8888:8080"    # Map host port 8888 to container port 8080
+    # Use dual mode for both SSE (/sse) and Streamable HTTP (/http) endpoints
+    command: ["-transport=dual", "-listen=0.0.0.0", "-port=8080", "-log-level=info"]
+    profiles: ["with-fast-time"]  # Optional: enable with --profile with-fast-time
+
+  ###############################################################################
+  # Auto-registration service - registers fast_time_server with gateway
+  ###############################################################################
+  register_fast_time:
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    networks: [mcpnet]
+    depends_on:
+      gateway:
+        condition: service_healthy
+      fast_time_server:
+        condition: service_started
+    environment:
+      - JWT_SECRET_KEY=my-test-key
+    # This is a one-shot container that exits after registration
+    restart: "no"
+    profiles: ["with-fast-time"]  # Optional: enable with --profile with-fast-time
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Using latest gateway image with current JWT utility..."
+
+        echo "Waiting for services to be ready..."
+
+        # Wait for gateway to be ready using Python
+        python3 -c "
+        import time
+        import urllib.request
+        import urllib.error
+
+        for i in range(1, 61):
+            try:
+                with urllib.request.urlopen('http://gateway:4444/health', timeout=2) as response:
+                    if response.status == 200:
+                        print('✅ gateway is healthy')
+                        break
+            except:
+                pass
+            print(f'Waiting for gateway... ({i}/60)')
+            time.sleep(2)
+        else:
+            print('❌ Gateway failed to become healthy')
+            exit(1)
+        "
+
+        # Wait for fast_time_server to be ready using Python
+        python3 -c "
+        import time
+        import urllib.request
+        import urllib.error
+
+        for i in range(1, 31):
+            try:
+                with urllib.request.urlopen('http://fast_time_server:8080/health', timeout=2) as response:
+                    if response.status == 200:
+                        print('✅ fast_time_server is healthy')
+                        break
+            except:
+                pass
+            print(f'Waiting for fast_time_server... ({i}/30)')
+            time.sleep(2)
+        else:
+            print('❌ Fast time server failed to become healthy')
+            exit(1)
+        "
+
+        echo "Generating JWT token..."
+        echo "Environment: JWT_SECRET_KEY=$$JWT_SECRET_KEY"
+        echo "Running: python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256"
+        # Only capture stdout (the token), let warnings go to stderr
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+        echo "Generated token: $$MCPGATEWAY_BEARER_TOKEN"
+
+        # Decode the token to verify it has expiration
+        echo "Decoding token to verify claims..."
+        python3 -m mcpgateway.utils.create_jwt_token --decode "$$MCPGATEWAY_BEARER_TOKEN" 2>/dev/null || echo "Failed to decode token"
+
+        # Test authentication first
+        echo "Testing authentication..."
+
+        # Use Python to make HTTP requests
+        python3 -c "
+        import urllib.request
+        import urllib.error
+        import json
+        import sys
+        import os
+        import time
+
+        token = os.environ.get('MCPGATEWAY_BEARER_TOKEN', '')
+
+        def api_request(method, path, data=None):
+            '''Helper to make authenticated API requests.'''
+            url = f'http://gateway:4444{path}'
+            req = urllib.request.Request(url, method=method)
+            req.add_header('Authorization', f'Bearer {token}')
+            req.add_header('Content-Type', 'application/json')
+            if data:
+                req.data = json.dumps(data).encode('utf-8')
+            with urllib.request.urlopen(req) as response:
+                return json.loads(response.read().decode('utf-8'))
+
+        # Test version endpoint without auth
+        print('Checking gateway config...')
+        try:
+            with urllib.request.urlopen('http://gateway:4444/version') as response:
+                data = response.read().decode('utf-8')
+                print(f'Gateway version response (no auth): {data[:200]}')
+        except Exception as e:
+            print(f'Version check failed: {e}')
+
+        # Test version endpoint with auth
+        print('Testing authentication...')
+        try:
+            req = urllib.request.Request('http://gateway:4444/version')
+            req.add_header('Authorization', f'Bearer {token}')
+            with urllib.request.urlopen(req) as response:
+                data = response.read().decode('utf-8')
+                print(f'Auth test response: SUCCESS')
+                auth_success = True
+        except Exception as e:
+            print(f'Auth test response: FAILED - {e}')
+            auth_success = False
+
+        # Register fast_time_server with gateway using Streamable HTTP transport
+        print('Registering fast_time_server with gateway (Streamable HTTP)...')
+
+        # First check if gateway already exists and delete it
+        gateway_id = None
+        try:
+            gateways = api_request('GET', '/gateways')
+            for gw in gateways:
+                if gw.get('name') == 'fast_time':
+                    print(f'Found existing gateway {gw[\"id\"]}, deleting...')
+                    api_request('DELETE', f'/gateways/{gw[\"id\"]}')
+                    print('Deleted existing gateway')
+        except Exception as e:
+            print(f'Note: Could not check/delete existing gateway: {e}')
+
+        # Delete existing virtual server if present (using fixed ID)
+        VIRTUAL_SERVER_ID = '9779b6698cbd4b4995ee04a4fab38737'
+        try:
+            api_request('DELETE', f'/servers/{VIRTUAL_SERVER_ID}')
+            print(f'Deleted existing virtual server {VIRTUAL_SERVER_ID}')
+        except Exception as e:
+            print(f'Note: No existing virtual server to delete (or error: {e})')
+
+        # Register the gateway
+        try:
+            result = api_request('POST', '/gateways', {
+                'name': 'fast_time',
+                'url': 'http://fast_time_server:8080/http',
+                'transport': 'STREAMABLEHTTP'
+            })
+            print(f'Registration response: {result}')
+            if 'id' in result:
+                gateway_id = result['id']
+                print(f'✅ Successfully registered fast_time_server (gateway_id: {gateway_id})')
+            else:
+                print('❌ Registration failed - no ID in response')
+                sys.exit(1)
+        except Exception as e:
+            print(f'❌ Registration failed: {e}')
+            sys.exit(1)
+
+        # Wait for tools to be synced from the gateway
+        print('Waiting for tools/resources/prompts to sync...')
+        for i in range(30):
+            time.sleep(1)
+            try:
+                tools = api_request('GET', '/tools')
+                # Filter tools from fast_time gateway (note: camelCase gatewayId)
+                fast_time_tools = [t for t in tools if t.get('gatewayId') == gateway_id]
+                if fast_time_tools:
+                    print(f'Found {len(fast_time_tools)} tools from fast_time gateway')
+                    break
+            except Exception as e:
+                pass
+            print(f'Waiting for sync... ({i+1}/30)')
+        else:
+            print('⚠️ No tools synced, continuing anyway...')
+
+        # Fetch all tools, resources, and prompts
+        # Note: Tools use gatewayId (camelCase), resources/prompts from catalog have no gatewayId
+        tool_ids = []
+        resource_ids = []
+        prompt_ids = []
+
+        try:
+            tools = api_request('GET', '/tools')
+            # Get tools from the fast_time gateway
+            tool_ids = [t['id'] for t in tools if t.get('gatewayId') == gateway_id]
+            print(f'Found tools: {[t[\"name\"] for t in tools if t.get(\"gatewayId\") == gateway_id]}')
+        except Exception as e:
+            print(f'Failed to fetch tools: {e}')
+
+        try:
+            resources = api_request('GET', '/resources')
+            # Include all resources (from catalog)
+            resource_ids = [r['id'] for r in resources]
+            print(f'Found resources: {[r[\"name\"] for r in resources]}')
+        except Exception as e:
+            print(f'Failed to fetch resources: {e}')
+
+        try:
+            prompts = api_request('GET', '/prompts')
+            # Include all prompts (from catalog)
+            prompt_ids = [p['id'] for p in prompts]
+            print(f'Found prompts: {[p[\"name\"] for p in prompts]}')
+        except Exception as e:
+            print(f'Failed to fetch prompts: {e}')
+
+        # Create virtual server with all tools, resources, and prompts
+        print('Creating virtual server...')
+        try:
+            # API expects payload wrapped in 'server' key
+            # Use fixed UUID for consistent server ID across restarts
+            server_payload = {
+                'server': {
+                    'id': '9779b6698cbd4b4995ee04a4fab38737',
+                    'name': 'Fast Time Server',
+                    'description': 'Virtual server exposing Fast Time MCP tools, resources, and prompts',
+                    'associated_tools': tool_ids,
+                    'associated_resources': resource_ids,
+                    'associated_prompts': prompt_ids
+                }
+            }
+            result = api_request('POST', '/servers', server_payload)
+            print(f'Virtual server created: {result}')
+            print(f'✅ Successfully created virtual server with {len(tool_ids)} tools, {len(resource_ids)} resources, {len(prompt_ids)} prompts')
+        except Exception as e:
+            print(f'❌ Failed to create virtual server: {e}')
+            sys.exit(1)
+        "
+
+        # Write the bearer token to a file for load testing
+        echo "Writing bearer token to /tmp/gateway-token.txt..."
+        echo "$$MCPGATEWAY_BEARER_TOKEN" > /tmp/gateway-token.txt
+        echo "Token written to /tmp/gateway-token.txt"
+
+        echo "✅ Setup complete!"
+
+  ###############################################################################
+  # Hashicorp Terraform MCP Server
+  # https://hub.docker.com/r/hashicorp/terraform-mcp-server
+  # https://github.com/hashicorp/terraform-mcp-server/blob/main/README.md
+  ###############################################################################
+  # terraform-mcp-server:
+  #   image: docker.io/hashicorp/terraform-mcp-server:dev
+  #   container_name: terraform-mcp-server
+  #   networks: [mcpnet]
+  #   ports:
+  #     - "8001:8080"    # Map host port 8888 to container port 8080
+  #   restart: unless-stopped
+  #   environment:
+  #     - TRANSPORT_MODE=streamable-http
+  #     - TRANSPORT_HOST=0.0.0.0
+  #     - TRANSPORT_PORT=8080
+  #     - MCP_CORS_MODE=disabled
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 20s

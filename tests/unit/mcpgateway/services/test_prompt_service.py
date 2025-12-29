@@ -308,7 +308,8 @@ class TestPromptService:
         upd = PromptUpdate(description="new desc", template="Hi, {{ name }}!")
         res = await prompt_service.update_prompt(test_db, 1, upd)
 
-        test_db.commit.assert_called_once()
+        # commit called twice: once for update, once in _get_team_name to release transaction
+        assert test_db.commit.call_count == 2
         prompt_service._notify_prompt_updated.assert_called_once()
         assert res["description"] == "new desc"
         assert res["template"] == "Hi, {{ name }}!"
@@ -574,8 +575,9 @@ class TestPromptService:
                 assert called_args[0] is session  # session passed through
                 # third positional arg is the tags list (signature: session, col, values, match_any=True)
                 assert called_args[2] == ["test", "production"]
-                # and the fake condition returned must have been passed to where()
-                mock_query.where.assert_called_with(fake_condition)
+                # and the fake condition returned must have been passed to where() at some point
+                # (there may be multiple where() calls for enabled filter and tags filter)
+                mock_query.where.assert_any_call(fake_condition)
                 # finally, your service should return the list produced by mock_db.execute(...)
                 assert isinstance(result, list)
                 assert len(result) == 1

@@ -350,7 +350,7 @@ class PluginExecutor:
                     )
                     return result
                 finally:
-                    db.close()
+                    db.close()  # Observability service handles its own commits
             else:
                 # No active trace, execute without instrumentation
                 return await asyncio.wait_for(hook_ref.hook(payload, context), timeout=self.timeout)
@@ -483,6 +483,17 @@ class PluginManager:
         """
         plugin_ref = self._registry.get_plugin(name)
         return plugin_ref.plugin if plugin_ref else None
+
+    def has_hooks_for(self, hook_type: str) -> bool:
+        """Check if there are any hooks registered for a specific hook type.
+
+        Args:
+            hook_type: The type of hook to check for.
+
+        Returns:
+            True if there are hooks registered for the specified type, False otherwise.
+        """
+        return self._registry.has_hooks_for(hook_type)
 
     async def initialize(self) -> None:
         """Initialize the plugin manager and load all configured plugins.

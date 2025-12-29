@@ -41,6 +41,25 @@ from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 
+# Cache import (lazy to avoid circular dependencies)
+_REGISTRY_CACHE = None
+
+
+def _get_registry_cache():
+    """Get registry cache singleton lazily.
+
+    Returns:
+        RegistryCache instance.
+    """
+    global _REGISTRY_CACHE  # pylint: disable=global-statement
+    if _REGISTRY_CACHE is None:
+        # First-Party
+        from mcpgateway.cache.registry_cache import registry_cache  # pylint: disable=import-outside-toplevel
+
+        _REGISTRY_CACHE = registry_cache
+    return _REGISTRY_CACHE
+
+
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -152,11 +171,11 @@ class ServerService:
 
         Queries the database to get servers with their metrics, ordered by the number of executions
         in descending order. Returns a list of TopPerformer objects containing server details and
-        performance metrics.
+        performance metrics. Results are cached for performance.
 
         Args:
             db (Session): Database session for querying server metrics.
-            limit (Optional[int]): Maximum number of servers to return. Defaults to 5. If None, returns all servers.
+            limit (Optional[int]): Maximum number of servers to return. Defaults to 5.
 
         Returns:
             List[TopPerformer]: A list of TopPerformer objects, each containing:
@@ -167,6 +186,18 @@ class ServerService:
                 - success_rate: Success rate percentage, or None if no metrics.
                 - last_execution: Timestamp of the last execution, or None if no metrics.
         """
+        # Check cache first (if enabled)
+        # First-Party
+        from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
+
+        effective_limit = limit or 5
+        cache_key = f"top_servers:{effective_limit}"
+
+        if is_cache_enabled():
+            cached = metrics_cache.get(cache_key)
+            if cached is not None:
+                return cached
+
         query = (
             db.query(
                 DbServer.id,
@@ -187,20 +218,24 @@ class ServerService:
             .order_by(desc("execution_count"))
         )
 
-        if limit is not None:
-            query = query.limit(limit)
+        query = query.limit(effective_limit)
 
         results = query.all()
+        top_performers = build_top_performers(results)
 
-        return build_top_performers(results)
+        # Cache the result (if enabled)
+        if is_cache_enabled():
+            metrics_cache.set(cache_key, top_performers)
 
-    def _convert_server_to_read(self, server: DbServer, include_metrics: bool = True) -> ServerRead:
+        return top_performers
+
+    def _convert_server_to_read(self, server: DbServer, include_metrics: bool = False) -> ServerRead:
         """
         Converts a DbServer instance into a ServerRead model, optionally including aggregated metrics.
 
         Args:
             server (DbServer): The ORM instance of the server.
-            include_metrics (bool): Whether to include metrics in the result. Defaults to True.
+            include_metrics (bool): Whether to include metrics in the result. Defaults to False.
                 Set to False for list operations to avoid N+1 query issues.
 
         Returns:
@@ -221,7 +256,7 @@ class ServerService:
             ...     tags=[], metrics=[m1, m2],
             ...     tools=[], resources=[], prompts=[], a2a_agents=[]
             ... )
-            >>> result = svc._convert_server_to_read(server)
+            >>> result = svc._convert_server_to_read(server, include_metrics=True)
             >>> result.metrics.total_executions
             2
             >>> result.metrics.successful_executions
@@ -356,6 +391,7 @@ class ServerService:
         if not team_id:
             return None
         team = db.query(DbEmailTeam).filter(DbEmailTeam.id == team_id, DbEmailTeam.is_active.is_(True)).first()
+        db.commit()  # Release transaction to avoid idle-in-transaction
         return team.name if team else None
 
     async def register_server(
@@ -673,6 +709,14 @@ class ServerService:
             >>> isinstance(result, list)
             True
         """
+        # Check cache
+        cache = _get_registry_cache()
+        filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
+        cached = await cache.get("servers", filters_hash)
+        if cached is not None:
+            # Reconstruct ServerRead objects from cached dicts
+            return [ServerRead.model_validate(s) for s in cached]
+
         query = select(DbServer)
         if not include_inactive:
             query = query.where(DbServer.enabled)
@@ -690,11 +734,20 @@ class ServerService:
             teams = db.execute(select(DbEmailTeam.id, DbEmailTeam.name).where(DbEmailTeam.id.in_(team_ids), DbEmailTeam.is_active.is_(True))).all()
             team_map = {team.id: team.name for team in teams}
 
+        db.commit()  # Release transaction to avoid idle-in-transaction
+
         # Skip metrics to avoid N+1 queries in list operations
         result = []
         for s in servers:
             s.team = team_map.get(s.team_id) if s.team_id else None
             result.append(self._convert_server_to_read(s, include_metrics=False))
+
+        # Cache results
+        try:
+            cache_data = [s.model_dump(mode="json") for s in result]
+            await cache.set("servers", cache_data, filters_hash)
+        except AttributeError:
+            pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)
 
         return result
 
@@ -770,6 +823,8 @@ class ServerService:
         if server_team_ids:
             teams = db.execute(select(DbEmailTeam.id, DbEmailTeam.name).where(DbEmailTeam.id.in_(server_team_ids), DbEmailTeam.is_active.is_(True))).all()
             team_map = {team.id: team.name for team in teams}
+
+        db.commit()  # Release transaction to avoid idle-in-transaction
 
         # Skip metrics to avoid N+1 queries in list operations
         result = []
@@ -1047,6 +1102,15 @@ class ServerService:
             # Force loading relationships
             _ = server.tools, server.resources, server.prompts
 
+            # Invalidate cache after successful update
+            cache = _get_registry_cache()
+            await cache.invalidate_servers()
+            # Also invalidate tags cache since server tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
+
             await self._notify_server_updated(server)
             logger.info(f"Updated server: {server.name}")
 
@@ -1208,6 +1272,11 @@ class ServerService:
                 server.updated_at = datetime.now(timezone.utc)
                 db.commit()
                 db.refresh(server)
+
+                # Invalidate cache after status change
+                cache = _get_registry_cache()
+                await cache.invalidate_servers()
+
                 if activate:
                     await self._notify_server_activated(server)
                 else:
@@ -1326,6 +1395,15 @@ class ServerService:
             server_info = {"id": server.id, "name": server.name}
             db.delete(server)
             db.commit()
+
+            # Invalidate cache after successful deletion
+            cache = _get_registry_cache()
+            await cache.invalidate_servers()
+            # Also invalidate tags cache since server tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
 
             await self._notify_server_deleted(server_info)
             logger.info(f"Deleted server: {server_info['name']}")
@@ -1513,6 +1591,9 @@ class ServerService:
         """
         Aggregate metrics for all server invocations across all servers.
 
+        Uses in-memory caching (10s TTL) to reduce database load under high
+        request rates. Cache is invalidated when metrics are reset.
+
         Args:
             db: Database session
 
@@ -1539,6 +1620,15 @@ class ServerService:
             >>> hasattr(result, 'total_executions')
             True
         """
+        # Check cache first (if enabled)
+        # First-Party
+        from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
+
+        if is_cache_enabled():
+            cached = metrics_cache.get("servers")
+            if cached is not None:
+                return ServerMetrics(**cached)
+
         # Execute a single query to get all metrics at once
         result = db.execute(
             select(
@@ -1556,7 +1646,7 @@ class ServerService:
         successful_executions = result.successful_executions or 0
         failed_executions = result.failed_executions or 0
 
-        return ServerMetrics(
+        metrics = ServerMetrics(
             total_executions=total_executions,
             successful_executions=successful_executions,
             failed_executions=failed_executions,
@@ -1566,6 +1656,12 @@ class ServerService:
             avg_response_time=result.avg_response_time,
             last_execution_time=result.last_execution_time,
         )
+
+        # Cache the result as dict for serialization compatibility (if enabled)
+        if is_cache_enabled():
+            metrics_cache.set("servers", metrics.model_dump())
+
+        return metrics
 
     async def reset_metrics(self, db: Session) -> None:
         """
@@ -1586,3 +1682,10 @@ class ServerService:
         """
         db.execute(delete(ServerMetric))
         db.commit()
+
+        # Invalidate metrics cache
+        # First-Party
+        from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
+
+        metrics_cache.invalidate("servers")
+        metrics_cache.invalidate_prefix("top_servers:")

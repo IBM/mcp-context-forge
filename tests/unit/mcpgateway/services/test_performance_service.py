@@ -493,23 +493,25 @@ class TestSnapshotOperations:
 class TestHistoryOperations:
     """Tests for historical data retrieval."""
 
-    def test_get_history_empty(self, test_db):
+    @pytest.mark.asyncio
+    async def test_get_history_empty(self, test_db):
         """Test getting history when no data exists."""
         service = PerformanceService()
-        result = service.get_history(test_db)
+        result = await service.get_history(test_db)
 
         assert isinstance(result, PerformanceHistoryResponse)
         assert result.aggregates == []
         assert result.period_type == "hourly"
 
-    def test_get_history_with_filters(self, test_db):
+    @pytest.mark.asyncio
+    async def test_get_history_with_filters(self, test_db):
         """Test getting history with filters."""
         service = PerformanceService()
 
         start_time = datetime.now(timezone.utc) - timedelta(hours=24)
         end_time = datetime.now(timezone.utc)
 
-        result = service.get_history(
+        result = await service.get_history(
             test_db,
             period_type="hourly",
             start_time=start_time,

@@ -712,9 +712,9 @@ class TestGenerateKubernetesManifests:
 
         string_data = secret["stringData"]
 
-        # Check DATABASE_URL is set
+        # Check DATABASE_URL is set (uses postgresql+psycopg:// for psycopg3)
         assert "DATABASE_URL" in string_data
-        assert "postgresql://" in string_data["DATABASE_URL"]
+        assert "postgresql+psycopg://" in string_data["DATABASE_URL"]
         assert "testuser:testpass" in string_data["DATABASE_URL"]
 
         # Check REDIS_URL is set
@@ -985,10 +985,10 @@ class TestGenerateComposeManifests:
         assert "environment" in gateway
         env = gateway["environment"]
 
-        # Should have DATABASE_URL with default values
+        # Should have DATABASE_URL with default values (uses postgresql+psycopg:// for psycopg3)
         if isinstance(env, list):
             db_url = next((e for e in env if "DATABASE_URL" in str(e)), None)
         else:
             db_url = env.get("DATABASE_URL")
         assert db_url is not None
-        assert "postgresql://" in str(db_url)
+        assert "postgresql+psycopg://" in str(db_url)

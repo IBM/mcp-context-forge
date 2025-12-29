@@ -85,7 +85,7 @@ def _write_span_to_db(span_data: dict) -> None:
             logger.debug(f"Created span for {span_data['resource_name']} query: " f"{span_data['duration_ms']:.2f}ms, {span_data.get('row_count')} rows")
 
         finally:
-            db.close()
+            db.close()  # Commit already done above
 
     except Exception as e:  # pylint: disable=broad-except
         # Don't fail if span creation fails
