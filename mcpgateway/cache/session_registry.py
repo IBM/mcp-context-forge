@@ -1194,10 +1194,7 @@ class SessionRegistry(SessionBackend):
 
         # Parallel refresh of connected sessions
         if connected:
-            refresh_tasks = [
-                asyncio.to_thread(self._refresh_session_db, session_id)
-                for session_id in connected
-            ]
+            refresh_tasks = [asyncio.to_thread(self._refresh_session_db, session_id) for session_id in connected]
             results = await asyncio.gather(*refresh_tasks, return_exceptions=True)
 
             for session_id, result in zip(connected, results):
