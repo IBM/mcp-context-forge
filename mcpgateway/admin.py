@@ -2379,14 +2379,14 @@ async def admin_ui(
         >>>
         >>> # Mock services to return empty lists for simplicity in doctest
         >>> original_list_servers_for_user = server_service.list_servers_for_user
-        >>> original_list_tools_for_user = tool_service.list_tools_for_user
+        >>> original_list_tools = tool_service.list_tools
         >>> original_list_resources_for_user = resource_service.list_resources_for_user
         >>> original_list_prompts_for_user = prompt_service.list_prompts_for_user
         >>> original_list_gateways = gateway_service.list_gateways
         >>> original_list_roots = root_service.list_roots
         >>>
         >>> server_service.list_servers_for_user = AsyncMock(return_value=[])
-        >>> tool_service.list_tools_for_user = AsyncMock(return_value=[])
+        >>> tool_service.list_tools = AsyncMock(return_value=([], None))
         >>> resource_service.list_resources_for_user = AsyncMock(return_value=[])
         >>> prompt_service.list_prompts_for_user = AsyncMock(return_value=[])
         >>> gateway_service.list_gateways = AsyncMock(return_value=[])
@@ -2434,7 +2434,7 @@ async def admin_ui(
         ...     tags=[]
         ... )
         >>> server_service.list_servers_for_user = AsyncMock(return_value=[mock_server])
-        >>> tool_service.list_tools_for_user = AsyncMock(return_value=[mock_tool])
+        >>> tool_service.list_tools = AsyncMock(return_value=([mock_tool], None))
         >>>
         >>> async def test_admin_ui_with_data():
         ...     response = await admin_ui(mock_request, None, False, mock_db, mock_user)
@@ -2472,7 +2472,7 @@ async def admin_ui(
         >>>
         >>> # Restore original methods
         >>> server_service.list_servers_for_user = original_list_servers_for_user
-        >>> tool_service.list_tools_for_user = original_list_tools_for_user
+        >>> tool_service.list_tools = original_list_tools
         >>> resource_service.list_resources_for_user = original_list_resources_for_user
         >>> prompt_service.list_prompts_for_user = original_list_prompts_for_user
         >>> gateway_service.list_gateways = original_list_gateways
@@ -2696,7 +2696,7 @@ async def admin_ui(
     # applying server-side filtering as a fallback if the service didn't accept team_id.
     # --------------------------------------------------------------------------------
     try:
-        raw_tools = await _call_list_with_team_support(tool_service.list_tools_for_user, db, user_email, include_inactive=include_inactive)
+        raw_tools = await _call_list_with_team_support(tool_service.list_tools, db, include_inactive=include_inactive, user_email=user_email)
         if isinstance(raw_tools, tuple):
             raw_tools = raw_tools[0]
     except Exception as e:
@@ -5734,7 +5734,7 @@ async def admin_list_tools(
     if not include_inactive:
         query = query.where(DbTool.enabled.is_(True))
 
-    # Build access conditions (same logic as tool_service.list_tools_for_user)
+    # Build access conditions (same logic as tool_service.list_tools with user_email)
     access_conditions = []
 
     # 1. User's personal tools (owner_email matches)
@@ -5846,7 +5846,7 @@ async def admin_tools_partial_html(
     if not include_inactive:
         query = query.where(DbTool.enabled.is_(True))
 
-    # Build access conditions (same logic as tool_service.list_tools_for_user)
+    # Build access conditions (same logic as tool_service.list_tools with user_email)
     access_conditions = []
 
     # 1. User's personal tools (owner_email matches)

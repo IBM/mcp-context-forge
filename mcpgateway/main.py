@@ -2691,22 +2691,19 @@ async def list_tools(
     # Determine final team ID
     team_id = team_id or token_team_id
 
-    # Use team-filtered tool listing
-    if team_id or visibility:
-        data, next_cursor = await tool_service.list_tools_for_user(
-            db=db,
-            user_email=user_email,
-            team_id=team_id,
-            visibility=visibility,
-            include_inactive=include_inactive,
-            cursor=cursor,
-            gateway_id=gateway_id,
-            tags=tags_list,
-            limit=limit,
-        )
-    else:
-        # Use existing method for backward compatibility when no team filtering
-        data, next_cursor = await tool_service.list_tools(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list, gateway_id=gateway_id, limit=limit)
+    # Use unified list_tools() with optional team filtering
+    # When team_id or visibility is specified, user_email enables team-based access control
+    data, next_cursor = await tool_service.list_tools(
+        db=db,
+        cursor=cursor,
+        include_inactive=include_inactive,
+        tags=tags_list,
+        gateway_id=gateway_id,
+        limit=limit,
+        user_email=user_email if (team_id or visibility) else None,
+        team_id=team_id,
+        visibility=visibility,
+    )
 
     if apijsonpath is None:
         if include_pagination:

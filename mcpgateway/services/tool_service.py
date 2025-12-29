@@ -1354,6 +1354,9 @@ class ToolService:
         tags: Optional[List[str]] = None,
         gateway_id: Optional[str] = None,
         limit: Optional[int] = None,
+        user_email: Optional[str] = None,
+        team_id: Optional[str] = None,
+        visibility: Optional[str] = None,
         _request_headers: Optional[Dict[str, str]] = None,
     ) -> tuple[List[ToolRead], Optional[str]]:
         """
@@ -1369,6 +1372,9 @@ class ToolService:
             gateway_id (Optional[str]): Filter tools by gateway ID. Accepts the literal value 'null' to match NULL gateway_id.
             limit (Optional[int]): Maximum number of tools to return. Use 0 for all tools (no limit).
                 If not specified, uses pagination_default_page_size.
+            user_email (Optional[str]): User email for team-based access control. If None, no access control is applied.
+            team_id (Optional[str]): Filter by specific team ID. Requires user_email for access validation.
+            visibility (Optional[str]): Filter by visibility (private, team, public).
             _request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
                 Currently unused but kept for API consistency. Defaults to None.
 
@@ -1391,8 +1397,9 @@ class ToolService:
             True
         """
         # Check cache for first page only (cursor=None)
+        # Skip caching when user_email is provided (team-filtered results are user-specific)
         cache = _get_registry_cache()
-        if cursor is None:
+        if cursor is None and user_email is None:
             filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, gateway_id=gateway_id, limit=limit)
             cached = await cache.get("tools", filters_hash)
             if cached is not None:
@@ -1431,6 +1438,37 @@ class ToolService:
 
         # Build query with LEFT JOIN for team names in single query instead of batch fetching
         query = select(DbTool, EmailTeam.name.label("team_name")).outerjoin(EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True))).order_by(DbTool.id)
+
+        # Apply team-based access control if user_email is provided
+        if user_email:
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email)
+            team_ids = [team.id for team in user_teams]
+
+            if team_id:
+                # User requesting specific team - verify access
+                if team_id not in team_ids:
+                    return ([], None)  # No access to this team
+
+                access_conditions = [
+                    and_(DbTool.team_id == team_id, DbTool.visibility.in_(["team", "public"])),
+                    and_(DbTool.team_id == team_id, DbTool.owner_email == user_email),
+                ]
+                query = query.where(or_(*access_conditions))
+            else:
+                # General access: user's tools + public tools + team tools
+                access_conditions = [
+                    DbTool.owner_email == user_email,
+                    DbTool.visibility == "public",
+                ]
+                if team_ids:
+                    access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
+
+                query = query.where(or_(*access_conditions))
+
+            # Apply visibility filter if specified
+            if visibility:
+                query = query.where(DbTool.visibility == visibility)
 
         # Apply cursor filter (WHERE id > last_id)
         if last_id and last_created:
@@ -1485,8 +1523,8 @@ class ToolService:
             next_cursor = encode_cursor({"id": last_tool.id})
             logger.debug(f"Generated next_cursor for id={last_tool.id}")
 
-        # Cache first page results
-        if cursor is None:
+        # Cache first page results (only for non-user-specific queries)
+        if cursor is None and user_email is None:
             try:
                 cache_data = {"tools": [t.model_dump(mode="json") for t in result], "next_cursor": next_cursor}
                 await cache.set("tools", cache_data, filters_hash)
@@ -1582,7 +1620,12 @@ class ToolService:
         limit: Optional[int] = None,
     ) -> tuple[List[ToolRead], Optional[str]]:
         """
+        DEPRECATED: Use list_tools() with user_email parameter instead.
+
         List tools user has access to with team filtering and cursor pagination.
+
+        This method is maintained for backward compatibility but is no longer used.
+        New code should call list_tools() with user_email, team_id, and visibility parameters.
 
         Args:
             db: Database session
