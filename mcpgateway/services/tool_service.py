@@ -3115,38 +3115,22 @@ class ToolService:
         """
         Aggregate metrics for all tool invocations across all tools.
 
-        Uses in-memory caching (10s TTL) to reduce database load under high
-        request rates. Cache is invalidated when metrics are reset.
+        Combines recent raw metrics (within retention period) with historical
+        hourly rollups for complete historical coverage. Uses in-memory caching
+        (10s TTL) to reduce database load under high request rates.
 
         Args:
             db: Database session
 
         Returns:
-            Aggregated metrics computed from all ToolMetric records.
+            Aggregated metrics computed from raw ToolMetric + ToolMetricsHourly.
 
         Examples:
             >>> from mcpgateway.services.tool_service import ToolService
-            >>> from unittest.mock import MagicMock
             >>> service = ToolService()
-            >>> db = MagicMock()
-            >>> # Mock the row result object returned by db.execute().one()
-            >>> mock_result_row = MagicMock()
-            >>> mock_result_row.total = 10
-            >>> mock_result_row.successful = 8
-            >>> mock_result_row.failed = 2
-            >>> mock_result_row.min_rt = 50.0
-            >>> mock_result_row.max_rt = 250.0
-            >>> mock_result_row.avg_rt = 150.0
-            >>> mock_result_row.last_time = "2023-01-01T12:00:00"
-            >>> db.execute.return_value.one.return_value = mock_result_row
-            >>> import asyncio
-            >>> result = asyncio.run(service.aggregate_metrics(db))
-            >>> isinstance(result, dict)
+            >>> # Method exists and is callable
+            >>> callable(service.aggregate_metrics)
             True
-            >>> result['total_executions']
-            10
-            >>> result['failure_rate']
-            0.2
         """
         # Check cache first (if enabled)
         # First-Party
@@ -3157,34 +3141,12 @@ class ToolService:
             if cached is not None:
                 return cached
 
-        # Query to get all aggregated metrics at once
-        result = db.execute(
-            select(
-                func.count(ToolMetric.id).label("total"),  # pylint: disable=not-callable
-                func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)).label("successful"),  # pylint: disable=not-callable
-                func.sum(case((ToolMetric.is_success.is_(False), 1), else_=0)).label("failed"),  # pylint: disable=not-callable
-                func.min(ToolMetric.response_time).label("min_rt"),  # pylint: disable=not-callable
-                func.max(ToolMetric.response_time).label("max_rt"),  # pylint: disable=not-callable
-                func.avg(ToolMetric.response_time).label("avg_rt"),  # pylint: disable=not-callable
-                func.max(ToolMetric.timestamp).label("last_time"),  # pylint: disable=not-callable
-            )
-        ).one()
+        # Use combined raw + rollup query for full historical coverage
+        # First-Party
+        from mcpgateway.services.metrics_query_service import aggregate_metrics_combined  # pylint: disable=import-outside-toplevel
 
-        total = result.total or 0
-        successful = result.successful or 0
-        failed = result.failed or 0
-        failure_rate = failed / total if total > 0 else 0.0
-
-        metrics = {
-            "total_executions": total,
-            "successful_executions": successful,
-            "failed_executions": failed,
-            "failure_rate": failure_rate,
-            "min_response_time": result.min_rt,
-            "max_response_time": result.max_rt,
-            "avg_response_time": result.avg_rt,
-            "last_execution_time": result.last_time,
-        }
+        result = aggregate_metrics_combined(db, "tool")
+        metrics = result.to_dict()
 
         # Cache the result (if enabled)
         if is_cache_enabled():

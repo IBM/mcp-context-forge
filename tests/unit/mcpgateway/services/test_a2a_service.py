@@ -401,25 +401,31 @@ class TestA2AAgentService:
 
     async def test_aggregate_metrics(self, service, mock_db):
         """Test metrics aggregation."""
-        # Mock database queries
-        # The cache uses .one() to get both total and active in a single query
+        # Mock aggregate_metrics_combined to return a proper AggregatedMetrics result
+        from mcpgateway.services.metrics_query_service import AggregatedMetrics
+
+        mock_metrics = AggregatedMetrics(
+            total_executions=100,
+            successful_executions=90,
+            failed_executions=10,
+            failure_rate=0.1,
+            min_response_time=0.5,
+            max_response_time=3.0,
+            avg_response_time=1.5,
+            last_execution_time="2025-01-01T00:00:00+00:00",
+            raw_count=60,
+            rollup_count=40,
+        )
+
+        # Mock the cache for agent counts
         mock_counts_result = MagicMock()
         mock_counts_result.total = 5
         mock_counts_result.active = 3
-
-        mock_metrics_result = MagicMock()
-        mock_metrics_result.total_interactions = 100
-        mock_metrics_result.successful_interactions = 90
-        mock_metrics_result.avg_response_time = 1.5
-        mock_metrics_result.min_response_time = 0.5
-        mock_metrics_result.max_response_time = 3.0
-
-        # First call is from cache (get_counts -> .one()), second is metrics query (.first())
         mock_db.execute.return_value.one.return_value = mock_counts_result
-        mock_db.execute.return_value.first.return_value = mock_metrics_result
 
-        # Execute
-        result = await service.aggregate_metrics(mock_db)
+        with patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", return_value=mock_metrics):
+            # Execute
+            result = await service.aggregate_metrics(mock_db)
 
         # Verify
         assert result["total_agents"] == 5

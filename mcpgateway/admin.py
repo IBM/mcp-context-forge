@@ -13503,6 +13503,57 @@ async def admin_generate_support_bundle(
 
 
 # ============================================================================
+# Maintenance Routes (Platform Admin Only)
+# ============================================================================
+
+
+@admin_router.get("/maintenance/partial", response_class=HTMLResponse)
+async def get_maintenance_partial(
+    request: Request,
+    user=Depends(get_current_user_with_permissions),
+):
+    """Render the maintenance dashboard partial (platform admin only).
+
+    This endpoint returns the maintenance UI panel which includes:
+    - Metrics cleanup controls
+    - Metrics rollup controls
+    - System health status
+
+    Only platform administrators can access this endpoint.
+
+    Args:
+        request: FastAPI request object
+        user: Authenticated user with admin permissions
+
+    Returns:
+        HTMLResponse: Rendered maintenance dashboard template
+
+    Raises:
+        HTTPException: 403 if user is not a platform admin
+    """
+    # Check if user is platform admin
+    is_admin = user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False)
+    if not is_admin:
+        raise HTTPException(status_code=403, detail="Platform administrator access required")
+
+    root_path = request.scope.get("root_path", "")
+
+    # Build payload with settings for the template
+    payload = {
+        "settings": {
+            "metrics_cleanup_enabled": getattr(settings, "metrics_cleanup_enabled", False),
+            "metrics_rollup_enabled": getattr(settings, "metrics_rollup_enabled", False),
+            "metrics_retention_days": getattr(settings, "metrics_retention_days", 30),
+        }
+    }
+
+    return request.app.state.templates.TemplateResponse(
+        "maintenance_partial.html",
+        {"request": request, "payload": payload, "root_path": root_path},
+    )
+
+
+# ============================================================================
 # Observability Routes
 # ============================================================================
 

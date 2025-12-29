@@ -17,7 +17,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 # Third-Party
 import httpx
-from sqlalchemy import and_, case, delete, desc, func, or_, select
+from sqlalchemy import and_, delete, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -1101,14 +1101,15 @@ class A2AAgentService:
     async def aggregate_metrics(self, db: Session) -> Dict[str, Any]:
         """Aggregate metrics for all A2A agents.
 
-        Uses in-memory caching (10s TTL) to reduce database load under high
-        request rates. Cache is invalidated when metrics are reset.
+        Combines recent raw metrics (within retention period) with historical
+        hourly rollups for complete historical coverage. Uses in-memory caching
+        (10s TTL) to reduce database load under high request rates.
 
         Args:
             db: Database session.
 
         Returns:
-            Aggregated metrics.
+            Aggregated metrics from raw + hourly rollup tables.
         """
         # Check cache first (if enabled)
         # First-Party
@@ -1124,30 +1125,15 @@ class A2AAgentService:
         total_agents = counts["total"]
         active_agents = counts["active"]
 
-        # Get overall metrics
-        metrics_query = select(
-            func.count(A2AAgentMetric.id).label("total_interactions"),  # pylint: disable=not-callable
-            func.sum(case((A2AAgentMetric.is_success.is_(True), 1), else_=0)).label("successful_interactions"),
-            func.avg(A2AAgentMetric.response_time).label("avg_response_time"),
-            func.min(A2AAgentMetric.response_time).label("min_response_time"),
-            func.max(A2AAgentMetric.response_time).label("max_response_time"),
-        )
+        # Use combined raw + rollup query for full historical coverage
+        # First-Party
+        from mcpgateway.services.metrics_query_service import aggregate_metrics_combined  # pylint: disable=import-outside-toplevel
 
-        metrics_result = db.execute(metrics_query).first()
+        result = aggregate_metrics_combined(db, "a2a_agent")
 
-        if metrics_result:
-            total_interactions = metrics_result.total_interactions or 0
-            successful_interactions = metrics_result.successful_interactions or 0
-            avg_rt = float(metrics_result.avg_response_time or 0.0)
-            min_rt = float(metrics_result.min_response_time or 0.0)
-            max_rt = float(metrics_result.max_response_time or 0.0)
-        else:
-            total_interactions = 0
-            successful_interactions = 0
-            avg_rt = 0.0
-            min_rt = 0.0
-            max_rt = 0.0
-        failed_interactions = total_interactions - successful_interactions
+        total_interactions = result.total_executions
+        successful_interactions = result.successful_executions
+        failed_interactions = result.failed_executions
 
         metrics = {
             "total_agents": total_agents,
@@ -1156,9 +1142,9 @@ class A2AAgentService:
             "successful_interactions": successful_interactions,
             "failed_interactions": failed_interactions,
             "success_rate": (successful_interactions / total_interactions * 100) if total_interactions > 0 else 0.0,
-            "avg_response_time": avg_rt,
-            "min_response_time": min_rt,
-            "max_response_time": max_rt,
+            "avg_response_time": float(result.avg_response_time or 0.0),
+            "min_response_time": float(result.min_response_time or 0.0),
+            "max_response_time": float(result.max_response_time or 0.0),
         }
 
         # Cache the result (if enabled)

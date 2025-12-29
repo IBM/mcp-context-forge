@@ -2933,24 +2933,21 @@ class ResourceService:
         """
         Aggregate metrics for all resource invocations across all resources.
 
-        Uses in-memory caching (10s TTL) to reduce database load under high
-        request rates. Cache is invalidated when metrics are reset.
+        Combines recent raw metrics (within retention period) with historical
+        hourly rollups for complete historical coverage. Uses in-memory caching
+        (10s TTL) to reduce database load under high request rates.
 
         Args:
             db: Database session
 
         Returns:
-            ResourceMetrics: Aggregated metrics computed from all ResourceMetric records.
+            ResourceMetrics: Aggregated metrics from raw + hourly rollup tables.
 
         Examples:
             >>> from mcpgateway.services.resource_service import ResourceService
-            >>> from unittest.mock import MagicMock
             >>> service = ResourceService()
-            >>> db = MagicMock()
-            >>> db.execute.return_value.one.return_value = MagicMock(total_executions=0, successful_executions=0, failed_executions=0, min_response_time=None, max_response_time=None, avg_response_time=None, last_execution_time=None)
-            >>> import asyncio
-            >>> result = asyncio.run(service.aggregate_metrics(db))
-            >>> hasattr(result, 'total_executions')
+            >>> # Method exists and is callable
+            >>> callable(service.aggregate_metrics)
             True
         """
         # Check cache first (if enabled)
@@ -2962,28 +2959,17 @@ class ResourceService:
             if cached is not None:
                 return ResourceMetrics(**cached)
 
-        # Execute a single query to get all metrics at once
-        result = db.execute(
-            select(
-                func.count().label("total_executions"),  # pylint: disable=not-callable
-                func.sum(case((ResourceMetric.is_success.is_(True), 1), else_=0)).label("successful_executions"),  # pylint: disable=not-callable
-                func.sum(case((ResourceMetric.is_success.is_(False), 1), else_=0)).label("failed_executions"),  # pylint: disable=not-callable
-                func.min(ResourceMetric.response_time).label("min_response_time"),  # pylint: disable=not-callable
-                func.max(ResourceMetric.response_time).label("max_response_time"),  # pylint: disable=not-callable
-                func.avg(ResourceMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
-                func.max(ResourceMetric.timestamp).label("last_execution_time"),  # pylint: disable=not-callable
-            ).select_from(ResourceMetric)
-        ).one()
+        # Use combined raw + rollup query for full historical coverage
+        # First-Party
+        from mcpgateway.services.metrics_query_service import aggregate_metrics_combined  # pylint: disable=import-outside-toplevel
 
-        total_executions = result.total_executions or 0
-        successful_executions = result.successful_executions or 0
-        failed_executions = result.failed_executions or 0
+        result = aggregate_metrics_combined(db, "resource")
 
         metrics = ResourceMetrics(
-            total_executions=total_executions,
-            successful_executions=successful_executions,
-            failed_executions=failed_executions,
-            failure_rate=(failed_executions / total_executions) if total_executions > 0 else 0.0,
+            total_executions=result.total_executions,
+            successful_executions=result.successful_executions,
+            failed_executions=result.failed_executions,
+            failure_rate=result.failure_rate,
             min_response_time=result.min_response_time,
             max_response_time=result.max_response_time,
             avg_response_time=result.avg_response_time,

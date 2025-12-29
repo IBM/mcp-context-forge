@@ -1212,27 +1212,31 @@ class TestResourceMetrics:
 
     @pytest.mark.asyncio
     async def test_aggregate_metrics(self, resource_service, mock_db):
-        """Test metrics aggregation."""
-        # Mock a single aggregated query result with .one() call
-        mock_result = MagicMock()
-        mock_result.total_executions = 100
-        mock_result.successful_executions = 80
-        mock_result.failed_executions = 20
-        mock_result.min_response_time = 0.1
-        mock_result.max_response_time = 2.5
-        mock_result.avg_response_time = 1.2
-        mock_result.last_execution_time = datetime.now(timezone.utc)
+        """Test metrics aggregation using combined raw + rollup query."""
+        from unittest.mock import patch
+        from mcpgateway.services.metrics_query_service import AggregatedMetrics
 
-        execute_result = MagicMock()
-        execute_result.one.return_value = mock_result
-        mock_db.execute.return_value = execute_result
+        # Create a mock AggregatedMetrics result
+        mock_result = AggregatedMetrics(
+            total_executions=100,
+            successful_executions=80,
+            failed_executions=20,
+            failure_rate=0.2,
+            min_response_time=0.1,
+            max_response_time=2.5,
+            avg_response_time=1.2,
+            last_execution_time=datetime.now(timezone.utc),
+            raw_count=60,
+            rollup_count=40,
+        )
 
-        result = await resource_service.aggregate_metrics(mock_db)
+        with patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", return_value=mock_result):
+            result = await resource_service.aggregate_metrics(mock_db)
 
         assert result.total_executions == 100
         assert result.successful_executions == 80
         assert result.failed_executions == 20
-        assert result.failure_rate == 0.2  # 20/100
+        assert result.failure_rate == 0.2
         assert result.min_response_time == 0.1
         assert result.max_response_time == 2.5
         assert result.avg_response_time == 1.2
@@ -1240,21 +1244,25 @@ class TestResourceMetrics:
     @pytest.mark.asyncio
     async def test_aggregate_metrics_empty(self, resource_service, mock_db):
         """Test metrics aggregation with no data."""
-        # Mock empty database result
-        mock_result = MagicMock()
-        mock_result.total_executions = 0
-        mock_result.successful_executions = 0
-        mock_result.failed_executions = 0
-        mock_result.min_response_time = None
-        mock_result.max_response_time = None
-        mock_result.avg_response_time = None
-        mock_result.last_execution_time = None
+        from unittest.mock import patch
+        from mcpgateway.services.metrics_query_service import AggregatedMetrics
 
-        execute_result = MagicMock()
-        execute_result.one.return_value = mock_result
-        mock_db.execute.return_value = execute_result
+        # Create a mock AggregatedMetrics result with no data
+        mock_result = AggregatedMetrics(
+            total_executions=0,
+            successful_executions=0,
+            failed_executions=0,
+            failure_rate=0.0,
+            min_response_time=None,
+            max_response_time=None,
+            avg_response_time=None,
+            last_execution_time=None,
+            raw_count=0,
+            rollup_count=0,
+        )
 
-        result = await resource_service.aggregate_metrics(mock_db)
+        with patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", return_value=mock_result):
+            result = await resource_service.aggregate_metrics(mock_db)
 
         assert result.total_executions == 0
         assert result.failure_rate == 0.0

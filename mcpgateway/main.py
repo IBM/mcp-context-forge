@@ -478,6 +478,24 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await metrics_buffer_service.start()
             logger.info("Metrics buffer service initialized")
 
+        # Initialize metrics cleanup service for automatic deletion of old metrics
+        if settings.metrics_cleanup_enabled:
+            # First-Party
+            from mcpgateway.services.metrics_cleanup_service import get_metrics_cleanup_service  # pylint: disable=import-outside-toplevel
+
+            metrics_cleanup_service = get_metrics_cleanup_service()
+            await metrics_cleanup_service.start()
+            logger.info("Metrics cleanup service initialized (retention: %d days)", settings.metrics_retention_days)
+
+        # Initialize metrics rollup service for hourly aggregation
+        if settings.metrics_rollup_enabled:
+            # First-Party
+            from mcpgateway.services.metrics_rollup_service import get_metrics_rollup_service  # pylint: disable=import-outside-toplevel
+
+            metrics_rollup_service = get_metrics_rollup_service()
+            await metrics_rollup_service.start()
+            logger.info("Metrics rollup service initialized (interval: %dh)", settings.metrics_rollup_interval_hours)
+
         refresh_slugs_on_startup()
 
         # Bootstrap SSO providers from environment configuration
@@ -602,6 +620,22 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
             metrics_buffer_service = get_metrics_buffer_service()
             services_to_shutdown.insert(0, metrics_buffer_service)  # Shutdown first to flush metrics
+
+        # Add metrics rollup service if enabled (shutdown before cleanup)
+        if settings.metrics_rollup_enabled:
+            # First-Party
+            from mcpgateway.services.metrics_rollup_service import get_metrics_rollup_service  # pylint: disable=import-outside-toplevel
+
+            metrics_rollup_service = get_metrics_rollup_service()
+            services_to_shutdown.insert(1, metrics_rollup_service)
+
+        # Add metrics cleanup service if enabled
+        if settings.metrics_cleanup_enabled:
+            # First-Party
+            from mcpgateway.services.metrics_cleanup_service import get_metrics_cleanup_service  # pylint: disable=import-outside-toplevel
+
+            metrics_cleanup_service = get_metrics_cleanup_service()
+            services_to_shutdown.insert(2, metrics_cleanup_service)
 
         await shutdown_services(services_to_shutdown)
 
@@ -5202,6 +5236,14 @@ if settings.observability_enabled:
     logger.info("Observability router included - observability API endpoints enabled")
 else:
     logger.info("Observability router not included - observability disabled")
+
+# Conditionally include metrics maintenance router if cleanup or rollup is enabled
+if settings.metrics_cleanup_enabled or settings.metrics_rollup_enabled:
+    # First-Party
+    from mcpgateway.routers.metrics_maintenance import router as metrics_maintenance_router
+
+    app.include_router(metrics_maintenance_router)
+    logger.info("Metrics maintenance router included - cleanup/rollup API endpoints enabled")
 
 # Conditionally include A2A router if A2A features are enabled
 if settings.mcpgateway_a2a_enabled:

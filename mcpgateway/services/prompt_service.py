@@ -2185,33 +2185,21 @@ class PromptService:
         """
         Aggregate metrics for all prompt invocations across all prompts.
 
-        Uses in-memory caching (10s TTL) to reduce database load under high
-        request rates. Cache is invalidated when metrics are reset.
+        Combines recent raw metrics (within retention period) with historical
+        hourly rollups for complete historical coverage. Uses in-memory caching
+        (10s TTL) to reduce database load under high request rates.
 
         Args:
             db: Database session
 
         Returns:
-            Dict[str, Any]: Aggregated prompt metrics with keys:
-                - total_executions
-                - successful_executions
-                - failed_executions
-                - failure_rate
-                - min_response_time
-                - max_response_time
-                - avg_response_time
-                - last_execution_time
-            Aggregated metrics computed from all PromptMetric records.
+            Dict[str, Any]: Aggregated prompt metrics from raw + hourly rollups.
 
         Examples:
             >>> from mcpgateway.services.prompt_service import PromptService
-            >>> from unittest.mock import MagicMock
             >>> service = PromptService()
-            >>> db = MagicMock()
-            >>> db.execute.return_value.one.return_value = MagicMock(total_executions=0, successful_executions=0, failed_executions=0, min_response_time=None, max_response_time=None, avg_response_time=None, last_execution_time=None)
-            >>> import asyncio
-            >>> result = asyncio.run(service.aggregate_metrics(db))
-            >>> isinstance(result, dict)
+            >>> # Method exists and is callable
+            >>> callable(service.aggregate_metrics)
             True
         """
         # Check cache first (if enabled)
@@ -2223,34 +2211,12 @@ class PromptService:
             if cached is not None:
                 return cached
 
-        # Execute a single query to get all metrics at once
-        result = db.execute(
-            select(
-                func.count(PromptMetric.id).label("total_executions"),  # pylint: disable=not-callable
-                func.sum(case((PromptMetric.is_success.is_(True), 1), else_=0)).label("successful_executions"),  # pylint: disable=not-callable
-                func.sum(case((PromptMetric.is_success.is_(False), 1), else_=0)).label("failed_executions"),  # pylint: disable=not-callable
-                func.min(PromptMetric.response_time).label("min_response_time"),  # pylint: disable=not-callable
-                func.max(PromptMetric.response_time).label("max_response_time"),  # pylint: disable=not-callable
-                func.avg(PromptMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
-                func.max(PromptMetric.timestamp).label("last_execution_time"),  # pylint: disable=not-callable
-            )
-        ).one()
+        # Use combined raw + rollup query for full historical coverage
+        # First-Party
+        from mcpgateway.services.metrics_query_service import aggregate_metrics_combined  # pylint: disable=import-outside-toplevel
 
-        total = result.total_executions or 0
-        successful = result.successful_executions or 0
-        failed = result.failed_executions or 0
-        failure_rate = failed / total if total > 0 else 0.0
-
-        metrics = {
-            "total_executions": total,
-            "successful_executions": successful,
-            "failed_executions": failed,
-            "failure_rate": failure_rate,
-            "min_response_time": result.min_response_time,
-            "max_response_time": result.max_response_time,
-            "avg_response_time": result.avg_response_time,
-            "last_execution_time": result.last_execution_time,
-        }
+        result = aggregate_metrics_combined(db, "prompt")
+        metrics = result.to_dict()
 
         # Cache the result (if enabled)
         if is_cache_enabled():

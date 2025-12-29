@@ -1962,59 +1962,66 @@ class TestToolService:
 
     @pytest.mark.asyncio
     async def test_aggregate_metrics(self, tool_service):
-        """Test aggregating metrics across all tools."""
+        """Test aggregating metrics across all tools using combined raw + rollup query."""
+        from unittest.mock import patch
+        from mcpgateway.services.metrics_query_service import AggregatedMetrics
+
         # Mock database
         mock_db = MagicMock()
 
-        # Create a mock object that behaves like the SQLAlchemy Row result
-        # The new implementation calls .one() and accesses attributes .total, .successful, etc.
-        mock_row = MagicMock()
-        mock_row.total = 10
-        mock_row.successful = 8
-        mock_row.failed = 2
-        mock_row.min_rt = 0.5
-        mock_row.max_rt = 5.0
-        mock_row.avg_rt = 2.3
-        mock_row.last_time = "2025-01-10T12:00:00"
+        # Create a mock AggregatedMetrics result
+        mock_result = AggregatedMetrics(
+            total_executions=10,
+            successful_executions=8,
+            failed_executions=2,
+            failure_rate=0.2,
+            min_response_time=0.5,
+            max_response_time=5.0,
+            avg_response_time=2.3,
+            last_execution_time="2025-01-10T12:00:00",
+            raw_count=6,
+            rollup_count=4,
+        )
 
-        # Setup the chain: db.execute(...).one() -> returns the mock_row
-        mock_db.execute.return_value.one.return_value = mock_row
-
-        result = await tool_service.aggregate_metrics(mock_db)
+        with patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", return_value=mock_result):
+            result = await tool_service.aggregate_metrics(mock_db)
 
         assert result == {
             "total_executions": 10,
             "successful_executions": 8,
             "failed_executions": 2,
-            "failure_rate": 0.2,  # 2/10
+            "failure_rate": 0.2,
             "min_response_time": 0.5,
             "max_response_time": 5.0,
             "avg_response_time": 2.3,
             "last_execution_time": "2025-01-10T12:00:00",
         }
 
-        # Verify only 1 query was executed (optimization check)
-        assert mock_db.execute.call_count == 1
-
     @pytest.mark.asyncio
     async def test_aggregate_metrics_no_data(self, tool_service):
         """Test aggregating metrics when no data exists."""
+        from unittest.mock import patch
+        from mcpgateway.services.metrics_query_service import AggregatedMetrics
+
         # Mock database
         mock_db = MagicMock()
 
-        # Create a mock object for empty results (None values)
-        mock_row = MagicMock()
-        mock_row.total = 0
-        mock_row.successful = 0
-        mock_row.failed = 0
-        mock_row.min_rt = None
-        mock_row.max_rt = None
-        mock_row.avg_rt = None
-        mock_row.last_time = None
+        # Create a mock AggregatedMetrics result with no data
+        mock_result = AggregatedMetrics(
+            total_executions=0,
+            successful_executions=0,
+            failed_executions=0,
+            failure_rate=0.0,
+            min_response_time=None,
+            max_response_time=None,
+            avg_response_time=None,
+            last_execution_time=None,
+            raw_count=0,
+            rollup_count=0,
+        )
 
-        mock_db.execute.return_value.one.return_value = mock_row
-
-        result = await tool_service.aggregate_metrics(mock_db)
+        with patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", return_value=mock_result):
+            result = await tool_service.aggregate_metrics(mock_db)
 
         assert result == {
             "total_executions": 0,
@@ -2026,9 +2033,6 @@ class TestToolService:
             "avg_response_time": None,
             "last_execution_time": None,
         }
-
-        # Verify optimization
-        assert mock_db.execute.call_count == 1
 
     async def test_validate_tool_url_success(self, tool_service):
         """Test successful tool URL validation."""

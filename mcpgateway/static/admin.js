@@ -6905,6 +6905,44 @@ function showTab(tabName) {
                     }
                 }
 
+                if (tabName === "maintenance") {
+                    const maintenancePanel = safeGetElement("maintenance-panel");
+                    if (maintenancePanel && maintenancePanel.innerHTML.trim() === "") {
+                        fetchWithTimeout(
+                            `${window.ROOT_PATH}/admin/maintenance/partial`,
+                            {},
+                            window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000,
+                        )
+                            .then((resp) => {
+                                if (!resp.ok) {
+                                    if (resp.status === 403) {
+                                        throw new Error("Platform administrator access required");
+                                    }
+                                    throw new Error(
+                                        `HTTP ${resp.status}: ${resp.statusText}`,
+                                    );
+                                }
+                                return resp.text();
+                            })
+                            .then((html) => {
+                                safeSetInnerHTML(maintenancePanel, html, true);
+                                console.log("✓ Maintenance panel loaded");
+                            })
+                            .catch((err) => {
+                                console.error(
+                                    "Failed to load maintenance panel:",
+                                    err,
+                                );
+                                const errorDiv = document.createElement("div");
+                                errorDiv.className = "text-red-600 p-4";
+                                errorDiv.textContent =
+                                    err.message || "Failed to load maintenance panel. Please try again.";
+                                maintenancePanel.innerHTML = "";
+                                maintenancePanel.appendChild(errorDiv);
+                            });
+                    }
+                }
+
                 if (tabName === "export-import") {
                     // Initialize export/import functionality when tab is shown
                     if (!panel.classList.contains("hidden")) {
@@ -16472,6 +16510,36 @@ function initializeTabState() {
                         const errorDiv = document.createElement("div");
                         errorDiv.className = "text-red-600 p-4";
                         errorDiv.textContent = "Failed to load version info.";
+                        panel.innerHTML = "";
+                        panel.appendChild(errorDiv);
+                    });
+            }
+        }, 100);
+    }
+
+    // Pre-load maintenance panel if that's the initial tab
+    if (window.location.hash === "#maintenance") {
+        setTimeout(() => {
+            const panel = safeGetElement("maintenance-panel");
+            if (panel && panel.innerHTML.trim() === "") {
+                fetchWithTimeout(`${window.ROOT_PATH}/admin/maintenance/partial`)
+                    .then((resp) => {
+                        if (!resp.ok) {
+                            if (resp.status === 403) {
+                                throw new Error("Platform administrator access required");
+                            }
+                            throw new Error("Network response was not ok");
+                        }
+                        return resp.text();
+                    })
+                    .then((html) => {
+                        safeSetInnerHTML(panel, html, true);
+                    })
+                    .catch((err) => {
+                        console.error("Failed to preload maintenance panel:", err);
+                        const errorDiv = document.createElement("div");
+                        errorDiv.className = "text-red-600 p-4";
+                        errorDiv.textContent = err.message || "Failed to load maintenance panel.";
                         panel.innerHTML = "";
                         panel.appendChild(errorDiv);
                     });

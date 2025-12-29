@@ -1591,33 +1591,21 @@ class ServerService:
         """
         Aggregate metrics for all server invocations across all servers.
 
-        Uses in-memory caching (10s TTL) to reduce database load under high
-        request rates. Cache is invalidated when metrics are reset.
+        Combines recent raw metrics (within retention period) with historical
+        hourly rollups for complete historical coverage. Uses in-memory caching
+        (10s TTL) to reduce database load under high request rates.
 
         Args:
             db: Database session
 
         Returns:
-            ServerMetrics: Aggregated metrics computed from all ServerMetric records.
+            ServerMetrics: Aggregated metrics from raw + hourly rollup tables.
 
         Examples:
             >>> from mcpgateway.services.server_service import ServerService
-            >>> from unittest.mock import MagicMock
             >>> service = ServerService()
-            >>> db = MagicMock()
-            >>> # Mocking the result to return values that can be compared with integers
-            >>> db.execute.return_value.one.return_value = MagicMock(
-            ...     total_executions=10,
-            ...     successful_executions=8,
-            ...     failed_executions=2,
-            ...     min_response_time=0.1,
-            ...     max_response_time=0.5,
-            ...     avg_response_time=0.3,
-            ...     last_execution_time="2023-12-01T12:00:00"
-            ... )
-            >>> import asyncio
-            >>> result = asyncio.run(service.aggregate_metrics(db))
-            >>> hasattr(result, 'total_executions')
+            >>> # Method exists and is callable
+            >>> callable(service.aggregate_metrics)
             True
         """
         # Check cache first (if enabled)
@@ -1629,28 +1617,17 @@ class ServerService:
             if cached is not None:
                 return ServerMetrics(**cached)
 
-        # Execute a single query to get all metrics at once
-        result = db.execute(
-            select(
-                func.count().label("total_executions"),  # pylint: disable=not-callable
-                func.sum(case((ServerMetric.is_success.is_(True), 1), else_=0)).label("successful_executions"),  # pylint: disable=not-callable
-                func.sum(case((ServerMetric.is_success.is_(False), 1), else_=0)).label("failed_executions"),  # pylint: disable=not-callable
-                func.min(ServerMetric.response_time).label("min_response_time"),  # pylint: disable=not-callable
-                func.max(ServerMetric.response_time).label("max_response_time"),  # pylint: disable=not-callable
-                func.avg(ServerMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
-                func.max(ServerMetric.timestamp).label("last_execution_time"),  # pylint: disable=not-callable
-            ).select_from(ServerMetric)
-        ).one()
+        # Use combined raw + rollup query for full historical coverage
+        # First-Party
+        from mcpgateway.services.metrics_query_service import aggregate_metrics_combined  # pylint: disable=import-outside-toplevel
 
-        total_executions = result.total_executions or 0
-        successful_executions = result.successful_executions or 0
-        failed_executions = result.failed_executions or 0
+        result = aggregate_metrics_combined(db, "server")
 
         metrics = ServerMetrics(
-            total_executions=total_executions,
-            successful_executions=successful_executions,
-            failed_executions=failed_executions,
-            failure_rate=(failed_executions / total_executions) if total_executions > 0 else 0.0,
+            total_executions=result.total_executions,
+            successful_executions=result.successful_executions,
+            failed_executions=result.failed_executions,
+            failure_rate=result.failure_rate,
             min_response_time=result.min_response_time,
             max_response_time=result.max_response_time,
             avg_response_time=result.avg_response_time,

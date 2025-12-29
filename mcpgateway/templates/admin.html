@@ -439,6 +439,15 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">ℹ️</span>
               <span x-show="!sidebarCollapsed">Version Info</span>
             </a>
+            {% if is_admin %}
+            <a href="#maintenance" id="tab-maintenance"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('maintenance')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔧</span>
+              <span x-show="!sidebarCollapsed">Maintenance</span>
+            </a>
+            {% endif %}
           </div>
         </nav>
 
@@ -1242,6 +1251,9 @@
       </div>
       <!-- Version Info Panel -->
       <div id="version-info-panel" class="tab-panel hidden"></div>
+
+      <!-- Maintenance Panel (admin only) -->
+      <div id="maintenance-panel" class="tab-panel hidden"></div>
 
       <!-- Plugins Panel -->
       <div id="plugins-panel" class="tab-panel hidden"></div>
