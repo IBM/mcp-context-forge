@@ -46,7 +46,7 @@ from urllib.parse import urlencode
 
 # Third-Party
 from fastapi import Request
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import Select
 
@@ -445,10 +445,20 @@ async def cursor_paginate(
 
     # Apply cursor filter if provided
     if cursor_data:
-        # For descending order (newest first): WHERE created_at < cursor_value
-        # This assumes the query is already ordered by cursor_field desc
-        # You'll need to add the where clause based on cursor_data
-        pass  # Placeholder for cursor filtering logic
+        cursor_value = cursor_data.get(cursor_field)
+        cursor_id_value = cursor_data.get(cursor_id_field)
+
+        if cursor_value and cursor_id_value:
+            # Extract model class from query to access columns
+            entities = query.column_descriptions
+            if entities:
+                model = entities[0]["entity"]
+                cursor_col = getattr(model, cursor_field)
+                id_col = getattr(model, cursor_id_field)
+
+                # Keyset pagination for descending order (created_at DESC, id DESC)
+                # Filter: WHERE created_at < cursor_value OR (created_at = cursor_value AND id < cursor_id)
+                query = query.where(or_(cursor_col < cursor_value, and_(cursor_col == cursor_value, id_col < cursor_id_value)))
 
     # Fetch one extra item to determine if there's a next page
     paginated_query = query.limit(per_page + 1)

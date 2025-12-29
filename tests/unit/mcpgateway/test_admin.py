@@ -361,10 +361,16 @@ class TestAdminServerRoutes:
 class TestAdminToolRoutes:
     """Test admin routes for tool management with enhanced coverage."""
 
+    @patch("mcpgateway.admin.TeamManagementService")
     @patch.object(ToolService, "list_tools_for_user")
-    async def test_admin_list_tools_empty_and_exception(self, mock_list_tools, mock_db):
+    async def test_admin_list_tools_empty_and_exception(self, mock_list_tools, mock_team_service_class, mock_db):
         """Test listing tools with empty results and exceptions."""
         # Test empty list
+        # Mock team service to return empty teams
+        mock_team_service = MagicMock()
+        mock_team_service.get_user_teams = AsyncMock(return_value=[])
+        mock_team_service_class.return_value = mock_team_service
+
         # Arrange: make db.execute return an object whose scalar() -> 0 and scalars().all() -> []
         mock_result = MagicMock()
         mock_result.scalar.return_value = 0

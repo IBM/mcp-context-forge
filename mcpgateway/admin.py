@@ -133,7 +133,7 @@ from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
-from mcpgateway.utils.pagination import generate_pagination_links
+from mcpgateway.utils.pagination import generate_pagination_links, paginate_query
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.security_cookies import set_auth_cookie
@@ -5693,6 +5693,7 @@ async def admin_force_password_change(
 async def admin_list_tools(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    cursor: Optional[str] = None,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -5701,12 +5702,15 @@ async def admin_list_tools(
     List tools for the admin UI with pagination support.
 
     This endpoint retrieves a paginated list of tools from the database, optionally
-    including those that are inactive. Supports offset-based pagination with
-    configurable page size.
+    including those that are inactive. Supports both offset-based and cursor-based
+    pagination. Automatically switches to cursor-based pagination for large datasets
+    (>10K records) for better performance.
 
     Args:
         page (int): Page number (1-indexed). Default: 1.
         per_page (int): Items per page (1-500). Default: 50.
+        cursor (Optional[str]): Cursor for cursor-based pagination. When provided,
+            page parameter is ignored.
         include_inactive (bool): Whether to include inactive tools in the results.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -5715,12 +5719,8 @@ async def admin_list_tools(
         Dict with 'data', 'pagination', and 'links' keys containing paginated tools.
 
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested tool list (page={page}, per_page={per_page})")
+    LOGGER.debug(f"User {get_user_email(user)} requested tool list (page={page}, per_page={per_page}, cursor={cursor})")
     user_email = get_user_email(user)
-
-    # Validate and constrain parameters
-    page = max(1, page)
-    per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
 
     # Build base query using tool_service's team filtering logic
     team_service = TeamManagementService(db)
@@ -5749,22 +5749,22 @@ async def admin_list_tools(
 
     query = query.where(or_(*access_conditions))
 
-    # Add sorting for consistent pagination (using new indexes)
+    # Add sorting for consistent pagination (required for cursor-based pagination)
     query = query.order_by(desc(DbTool.created_at), desc(DbTool.id))
 
-    # Get total count (use direct count on model with same access filters)
-    count_query = select(func.count(DbTool.id)).where(or_(*access_conditions))  # pylint: disable=not-callable
-    if not include_inactive:
-        count_query = count_query.where(DbTool.enabled.is_(True))
-    total_items = db.execute(count_query).scalar() or 0
+    # Use unified pagination function (auto-selects offset vs cursor strategy)
+    paginated_result = await paginate_query(
+        db=db,
+        query=query,
+        page=page,
+        per_page=per_page,
+        cursor=cursor,
+        base_url="/admin/tools",
+        query_params={"include_inactive": include_inactive} if include_inactive else {},
+    )
 
-    # Calculate pagination metadata
-    total_pages = math.ceil(total_items / per_page) if total_items > 0 else 0
-    offset = (page - 1) * per_page
-
-    # Execute paginated query
-    paginated_query = query.offset(offset).limit(per_page)
-    tools = db.execute(paginated_query).scalars().all()
+    # Extract paginated tools
+    tools = paginated_result["data"]
 
     # Convert to ToolRead using tool_service
     result = []
@@ -5773,33 +5773,11 @@ async def admin_list_tools(
         t.team = team_name
         result.append(tool_service._convert_tool_to_read(t, include_metrics=False))  # pylint: disable=protected-access
 
-    # Build pagination metadata
-    pagination = PaginationMeta(
-        page=page,
-        per_page=per_page,
-        total_items=total_items,
-        total_pages=total_pages,
-        has_next=page < total_pages,
-        has_prev=page > 1,
-        next_cursor=None,
-        prev_cursor=None,
-    )
-
-    # Build links
-    links = None
-    if settings.pagination_include_links:
-        links = generate_pagination_links(
-            base_url="/admin/tools",
-            page=page,
-            per_page=per_page,
-            total_pages=total_pages,
-            query_params={"include_inactive": include_inactive} if include_inactive else {},
-        )
-
+    # Return with pagination metadata and links from paginate_query
     return {
         "data": [tool.model_dump(by_alias=True) for tool in result],
-        "pagination": pagination.model_dump(),
-        "links": links.model_dump() if links else None,
+        "pagination": paginated_result["pagination"].model_dump(),
+        "links": paginated_result["links"].model_dump() if paginated_result["links"] else None,
     }
 
 
@@ -5835,12 +5813,8 @@ async def admin_tools_partial_html(
     """
     LOGGER.debug(f"User {get_user_email(user)} requested tools HTML partial (page={page}, per_page={per_page}, render={render}, gateway_id={gateway_id})")
 
-    # Get paginated data from the JSON endpoint logic
+    # Get paginated data using unified pagination logic
     user_email = get_user_email(user)
-
-    # Validate and constrain parameters
-    page = max(1, page)
-    per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
 
     # Build base query using tool_service's team filtering logic
     team_service = TeamManagementService(db)
@@ -5887,31 +5861,33 @@ async def admin_tools_partial_html(
 
     query = query.where(or_(*access_conditions))
 
-    # Count total items - must include gateway filter for accurate count
-    count_query = select(func.count(DbTool.id)).where(or_(*access_conditions))  # pylint: disable=not-callable
+    # Apply sorting: alphabetical by URL, then name, then ID (for UI display)
+    # Different from JSON endpoint which uses created_at DESC
+    query = query.order_by(DbTool.url, DbTool.original_name, DbTool.id)
+
+    # Use unified pagination function (offset-based for UI compatibility)
+    base_url = f"{settings.app_root_path}/admin/tools/partial"
+    query_params_dict = {}
+    if include_inactive:
+        query_params_dict["include_inactive"] = "true"
     if gateway_id:
-        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
-        if gateway_ids:
-            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
-            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
-            if non_null_ids and null_requested:
-                count_query = count_query.where(or_(DbTool.gateway_id.in_(non_null_ids), DbTool.gateway_id.is_(None)))
-            elif null_requested:
-                count_query = count_query.where(DbTool.gateway_id.is_(None))
-            else:
-                count_query = count_query.where(DbTool.gateway_id.in_(non_null_ids))
-    if not include_inactive:
-        count_query = count_query.where(DbTool.enabled.is_(True))
+        query_params_dict["gateway_id"] = gateway_id
 
-    total_items = db.scalar(count_query) or 0
+    paginated_result = await paginate_query(
+        db=db,
+        query=query,
+        page=page,
+        per_page=per_page,
+        cursor=None,  # UI uses offset pagination only
+        base_url=base_url,
+        query_params=query_params_dict,
+        use_cursor_threshold=False,  # Disable auto-cursor switching for UI
+    )
 
-    # Apply pagination
-    offset = (page - 1) * per_page
-    # Ensure deterministic pagination even when URL/name fields collide by including primary key
-    query = query.order_by(DbTool.url, DbTool.original_name, DbTool.id).offset(offset).limit(per_page)
-
-    # Execute query
-    tools_db = list(db.scalars(query).all())
+    # Extract paginated tools
+    tools_db = paginated_result["data"]
+    pagination = paginated_result["pagination"]
+    links = paginated_result["links"]
 
     # Convert to Pydantic models
     local_tool_service = ToolService()
@@ -5928,26 +5904,6 @@ async def admin_tools_partial_html(
     # Serialize tools
     data = jsonable_encoder(tools_pydantic)
 
-    # Build pagination metadata
-    pagination = PaginationMeta(
-        page=page,
-        per_page=per_page,
-        total_items=total_items,
-        total_pages=math.ceil(total_items / per_page) if per_page > 0 else 0,
-        has_next=page < math.ceil(total_items / per_page) if per_page > 0 else False,
-        has_prev=page > 1,
-    )
-
-    # Build pagination links using helper function
-    base_url = f"{settings.app_root_path}/admin/tools/partial"
-    links = generate_pagination_links(
-        base_url=base_url,
-        page=page,
-        per_page=per_page,
-        total_pages=pagination.total_pages,
-        query_params={"include_inactive": "true"} if include_inactive else {},
-    )
-
     # If render=controls, return only pagination controls
     if render == "controls":
         return request.app.state.templates.TemplateResponse(
@@ -5958,7 +5914,7 @@ async def admin_tools_partial_html(
                 "base_url": base_url,
                 "hx_target": "#tools-table-body",
                 "hx_indicator": "#tools-loading",
-                "query_params": {"include_inactive": "true"} if include_inactive else {},
+                "query_params": query_params_dict,
                 "root_path": request.scope.get("root_path", ""),
             },
         )

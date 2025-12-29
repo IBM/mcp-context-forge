@@ -1667,10 +1667,6 @@ class ToolService:
         if last_id:
             query = query.where(DbTool.id > last_id)
 
-        # 2. Offset Pagination (Admin UI)
-        elif offset is not None:
-             query = query.offset(offset)
-
         # Execute query with LEFT JOIN for team names in single query
         query_with_join = query.outerjoin(EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True))).add_columns(EmailTeam.name.label("team_name"))
         
@@ -1697,8 +1693,8 @@ class ToolService:
             result.append(self._convert_tool_to_read(tool, include_metrics=False))
 
         next_cursor = None
-        # Only generate cursor if using cursor pagination (or no pagination args)
-        if has_more and tools and offset is None:
+        # Generate cursor if there are more results (cursor-based pagination)
+        if has_more and tools:
             last_tool = tools[-1]
             next_cursor = encode_cursor({
                 "created_at": last_tool.created_at.isoformat(),
