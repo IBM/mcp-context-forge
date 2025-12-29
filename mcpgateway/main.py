@@ -1853,15 +1853,16 @@ async def list_servers(
     # Determine final team ID
     team_id = team_id or token_team_id
 
-    # Use team-filtered server listing
-    if team_id or visibility:
-        data = await server_service.list_servers_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
-        # Apply tag filtering to team-filtered results if needed
-        if tags_list:
-            data = [server for server in data if any(tag in server.tags for tag in tags_list)]
-    else:
-        # Use existing method for backward compatibility when no team filtering
-        data = await server_service.list_servers(db, include_inactive=include_inactive, tags=tags_list)
+    # Use consolidated server listing with optional team filtering
+    logger.debug(f"User: {user_email} requested server list with include_inactive={include_inactive}, tags={tags_list}, team_id={team_id}, visibility={visibility}")
+    data, _ = await server_service.list_servers(
+        db=db,
+        include_inactive=include_inactive,
+        tags=tags_list,
+        user_email=user_email if (team_id or visibility) else None,
+        team_id=team_id,
+        visibility=visibility,
+    )
     return data
 
 
@@ -2298,21 +2299,21 @@ async def list_a2a_agents(
     tags: Optional[str] = None,
     team_id: Optional[str] = Query(None, description="Filter by team ID"),
     visibility: Optional[str] = Query(None, description="Filter by visibility (private, team, public)"),
-    skip: int = Query(0, ge=0, description="Number of agents to skip for pagination"),
-    limit: int = Query(100, ge=1, le=1000, description="Maximum number of agents to return"),
+    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    limit: Optional[int] = Query(None, description="Maximum number of agents to return"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> List[A2AAgentRead]:
     """
-    Lists A2A agents user has access to with team filtering.
+    Lists A2A agents user has access to with cursor pagination and team filtering.
 
     Args:
         include_inactive (bool): Whether to include inactive agents in the response.
         tags (Optional[str]): Comma-separated list of tags to filter by.
         team_id (Optional[str]): Team ID to filter by.
         visibility (Optional[str]): Visibility level to filter by.
-        skip (int): Number of agents to skip for pagination.
-        limit (int): Maximum number of agents to return.
+        cursor (Optional[str]): Cursor for pagination.
+        limit (Optional[int]): Maximum number of agents to return.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
@@ -2322,24 +2323,36 @@ async def list_a2a_agents(
     Raises:
         HTTPException: If A2A service is not available.
     """
-    # Parse tags parameter if provided (keeping for backward compatibility)
+    # Parse tags parameter if provided
     tags_list = None
     if tags:
         tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
 
-    logger.debug(f"User {user} requested A2A agent list with team_id={team_id}, visibility={visibility}, tags={tags_list}")
     user_email: Optional[str] = "Unknown"
-
     if hasattr(user, "email"):
         user_email = getattr(user, "email", "Unknown")
     elif isinstance(user, dict):
         user_email = str(user.get("email", "Unknown"))
     else:
-        user_email = "Uknown"
-    # Use team-aware filtering
+        user_email = "Unknown"
+
+    logger.debug(f"User: {user_email} requested A2A agent list with team_id={team_id}, visibility={visibility}, tags={tags_list}, cursor={cursor}")
+
     if a2a_service is None:
         raise HTTPException(status_code=503, detail="A2A service not available")
-    return await a2a_service.list_agents_for_user(db, user_info=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive, skip=skip, limit=limit)
+
+    # Use consolidated agent listing with optional team filtering
+    data, _ = await a2a_service.list_agents(
+        db=db,
+        cursor=cursor,
+        include_inactive=include_inactive,
+        tags=tags_list,
+        limit=limit,
+        user_email=user_email if (team_id or visibility) else None,
+        team_id=team_id,
+        visibility=visibility,
+    )
+    return data
 
 
 @a2a_router.get("/{agent_id}", response_model=A2AAgentRead)
@@ -3850,10 +3863,16 @@ async def list_gateways(
     # Determine final team ID
     team_id = team_id or token_team_id
 
-    if team_id or visibility:
-        return await gateway_service.list_gateways_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
-
-    return await gateway_service.list_gateways(db, include_inactive=include_inactive)
+    # Use consolidated gateway listing with optional team filtering
+    logger.debug(f"User: {user_email} requested gateway list with include_inactive={include_inactive}, team_id={team_id}, visibility={visibility}")
+    data, _ = await gateway_service.list_gateways(
+        db=db,
+        include_inactive=include_inactive,
+        user_email=user_email if (team_id or visibility) else None,
+        team_id=team_id,
+        visibility=visibility,
+    )
+    return data
 
 
 @gateway_router.post("", response_model=GatewayRead)

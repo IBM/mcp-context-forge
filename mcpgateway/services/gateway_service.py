@@ -57,7 +57,7 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 from pydantic import ValidationError
-from sqlalchemy import and_, delete, or_, select
+from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -1219,16 +1219,31 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             logger.error(f"Failed to fetch tools after OAuth for gateway {gateway_id}: {e}")
             raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(e)}")
 
-    async def list_gateways(self, db: Session, include_inactive: bool = False, tags: Optional[List[str]] = None) -> List[GatewayRead]:
-        """List all registered gateways.
+    async def list_gateways(
+        self,
+        db: Session,
+        include_inactive: bool = False,
+        tags: Optional[List[str]] = None,
+        cursor: Optional[str] = None,
+        limit: Optional[int] = None,
+        user_email: Optional[str] = None,
+        team_id: Optional[str] = None,
+        visibility: Optional[str] = None,
+    ) -> tuple[List[GatewayRead], Optional[str]]:
+        """List all registered gateways with cursor pagination and optional team filtering.
 
         Args:
             db: Database session
             include_inactive: Whether to include inactive gateways
             tags (Optional[List[str]]): Filter resources by tags. If provided, only resources with at least one matching tag will be returned.
+            cursor: Cursor for pagination (encoded last created_at and id).
+            limit: Maximum number of gateways to return. None for default, 0 for unlimited.
+            user_email: Email of user for team-based access control. None for no access control.
+            team_id: Optional team ID to filter by specific team (requires user_email).
+            visibility: Optional visibility filter (private, team, public) (requires user_email).
 
         Returns:
-            List of registered gateways
+            A tuple of (list of GatewayRead objects, next_cursor).
 
         Examples:
             >>> from mcpgateway.services.gateway_service import GatewayService
@@ -1242,38 +1257,115 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             >>> mocked_gateway_read.masked.return_value = 'gateway_read'
             >>> GatewayRead.model_validate = MagicMock(return_value=mocked_gateway_read)
             >>> import asyncio
-            >>> result = asyncio.run(service.list_gateways(db))
-            >>> result == ['gateway_read']
+            >>> gateways, cursor = asyncio.run(service.list_gateways(db))
+            >>> gateways == ['gateway_read'] and cursor is None
             True
 
             >>> # Test include_inactive parameter
-            >>> result_with_inactive = asyncio.run(service.list_gateways(db, include_inactive=True))
-            >>> result_with_inactive == ['gateway_read']
+            >>> gateways_with_inactive, cursor = asyncio.run(service.list_gateways(db, include_inactive=True))
+            >>> gateways_with_inactive == ['gateway_read'] and cursor is None
             True
 
             >>> # Test empty result
             >>> db.execute.return_value.scalars.return_value.all.return_value = []
-            >>> empty_result = asyncio.run(service.list_gateways(db))
-            >>> empty_result
-            []
+            >>> empty_result, cursor = asyncio.run(service.list_gateways(db))
+            >>> empty_result == [] and cursor is None
+            True
         """
-        # Check cache
+        # Check cache for first page only - skip when user_email provided
         cache = _get_registry_cache()
-        filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
-        cached = await cache.get("gateways", filters_hash)
-        if cached is not None:
-            # Reconstruct GatewayRead objects from cached dicts
-            return [GatewayRead.model_validate(g) for g in cached]
+        if cursor is None and user_email is None:
+            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
+            cached = await cache.get("gateways", filters_hash)
+            if cached is not None:
+                # Reconstruct GatewayRead objects from cached dicts
+                cached_gateways = [GatewayRead.model_validate(g) for g in cached["gateways"]]
+                return (cached_gateways, cached.get("next_cursor"))
 
-        query = select(DbGateway)
+        # Determine page size from limit parameter
+        if limit is not None:
+            if limit == 0:
+                page_size = None  # No limit, fetch all
+            else:
+                page_size = min(limit, settings.pagination_max_page_size)
+        else:
+            page_size = settings.pagination_default_page_size
+
+        # Build query with proper ordering for cursor pagination
+        query = select(DbGateway).order_by(desc(DbGateway.created_at), desc(DbGateway.id))
+
+        # Decode cursor to get last values if provided
+        last_id = None
+        last_created = None
+        if cursor:
+            try:
+                from mcpgateway.utils.pagination import decode_cursor
+                cursor_data = decode_cursor(cursor)
+                last_id = cursor_data.get("id")
+                created_str = cursor_data.get("created_at")
+                if created_str:
+                    from datetime import datetime
+                    last_created = datetime.fromisoformat(created_str)
+                logger.debug(f"Decoded cursor: last_created={last_created}, last_id={last_id}")
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Invalid cursor, ignoring: {e}")
+
+        # Apply cursor filter with keyset pagination (created_at DESC, id DESC)
+        if last_id and last_created:
+            query = query.where(
+                or_(
+                    DbGateway.created_at < last_created,
+                    and_(DbGateway.created_at == last_created, DbGateway.id < last_id)
+                )
+            )
 
         if not include_inactive:
             query = query.where(DbGateway.enabled)
 
+        # Apply team-based access control if user_email is provided
+        if user_email:
+            from mcpgateway.services.team_management_service import TeamManagementService
+
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email)
+            team_ids_list = [team.id for team in user_teams]
+
+            if team_id:
+                # User requesting specific team - verify access
+                if team_id not in team_ids_list:
+                    return ([], None)
+                access_conditions = [
+                    and_(DbGateway.team_id == team_id, DbGateway.visibility.in_(["team", "public"])),
+                    and_(DbGateway.team_id == team_id, DbGateway.owner_email == user_email),
+                ]
+                query = query.where(or_(*access_conditions))
+            else:
+                # General access: user's gateways + public gateways + team gateways
+                access_conditions = [
+                    DbGateway.owner_email == user_email,
+                    DbGateway.visibility == "public",
+                ]
+                if team_ids_list:
+                    access_conditions.append(and_(DbGateway.team_id.in_(team_ids_list), DbGateway.visibility.in_(["team", "public"])))
+                query = query.where(or_(*access_conditions))
+
+            if visibility:
+                query = query.where(DbGateway.visibility == visibility)
+
         if tags:
             query = query.where(json_contains_expr(db, DbGateway.tags, tags, match_any=True))
 
+        # Fetch page_size + 1 to determine if there are more results (unless limit=0 for unlimited)
+        if page_size is not None:
+            query = query.limit(page_size + 1)
         gateways = db.execute(query).scalars().all()
+
+        # Check if there are more results (only if we used pagination)
+        has_more = False
+        if page_size is not None:
+            has_more = len(gateways) > page_size
+            if has_more:
+                gateways = gateways[:page_size]  # Trim to page_size
 
         # Batch fetch team names
         team_ids = {g.team_id for g in gateways if g.team_id}
@@ -1289,19 +1381,33 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             g.team = team_names.get(g.team_id) if g.team_id else None
             result.append(GatewayRead.model_validate(self._prepare_gateway_for_read(g)).masked())
 
-        # Cache results
-        try:
-            cache_data = [g.model_dump(mode="json") for g in result]
-            await cache.set("gateways", cache_data, filters_hash)
-        except AttributeError:
-            pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)
+        # Generate next_cursor if there are more results
+        next_cursor = None
+        if has_more and result:
+            last_gateway = gateways[-1]  # Get last DB object
+            from mcpgateway.utils.pagination import encode_cursor
+            next_cursor = encode_cursor({"created_at": last_gateway.created_at.isoformat(), "id": last_gateway.id})
+            logger.debug(f"Generated next_cursor for created_at={last_gateway.created_at}, id={last_gateway.id}")
 
-        return result
+        # Cache first page results - only for non-user-specific queries
+        if cursor is None and user_email is None:
+            try:
+                cache_data = {"gateways": [g.model_dump(mode="json") for g in result], "next_cursor": next_cursor}
+                await cache.set("gateways", cache_data, filters_hash)
+            except AttributeError:
+                pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)
+
+        return (result, next_cursor)
 
     async def list_gateways_for_user(
         self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
     ) -> List[GatewayRead]:
         """
+        DEPRECATED: Use list_gateways() with user_email parameter instead.
+
+        This method is maintained for backward compatibility but is no longer used.
+        New code should call list_gateways() with user_email, team_id, and visibility parameters.
+
         List gateways user has access to with team filtering.
 
         Args:

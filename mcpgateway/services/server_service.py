@@ -40,6 +40,7 @@ from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.metrics_common import build_top_performers
+from mcpgateway.utils.pagination import decode_cursor, encode_cursor
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 
 # Cache import (lazy to avoid circular dependencies)
@@ -676,16 +677,31 @@ class ServerService:
             )
             raise ServerError(f"Failed to register server: {str(ex)}")
 
-    async def list_servers(self, db: Session, include_inactive: bool = False, tags: Optional[List[str]] = None) -> List[ServerRead]:
-        """List all registered servers.
+    async def list_servers(
+        self,
+        db: Session,
+        include_inactive: bool = False,
+        tags: Optional[List[str]] = None,
+        cursor: Optional[str] = None,
+        limit: Optional[int] = None,
+        user_email: Optional[str] = None,
+        team_id: Optional[str] = None,
+        visibility: Optional[str] = None,
+    ) -> tuple[List[ServerRead], Optional[str]]:
+        """List all registered servers with cursor pagination and optional team filtering.
 
         Args:
             db: Database session.
             include_inactive: Whether to include inactive servers.
             tags: Filter servers by tags. If provided, only servers with at least one matching tag will be returned.
+            cursor: Cursor for pagination (encoded last created_at and id).
+            limit: Maximum number of servers to return. None for default, 0 for unlimited.
+            user_email: Email of user for team-based access control. None for no access control.
+            team_id: Optional team ID to filter by specific team (requires user_email).
+            visibility: Optional visibility filter (private, team, public) (requires user_email).
 
         Returns:
-            A list of ServerRead objects.
+            A tuple of (list of ServerRead objects, next_cursor).
 
         Examples:
             >>> from mcpgateway.services.server_service import ServerService
@@ -696,27 +712,103 @@ class ServerService:
             >>> service._convert_server_to_read = MagicMock(return_value=server_read)
             >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
             >>> import asyncio
-            >>> result = asyncio.run(service.list_servers(db))
-            >>> isinstance(result, list)
+            >>> servers, cursor = asyncio.run(service.list_servers(db))
+            >>> isinstance(servers, list) and cursor is None
             True
         """
-        # Check cache
+        # Check cache for first page only - skip when user_email provided
         cache = _get_registry_cache()
-        filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
-        cached = await cache.get("servers", filters_hash)
-        if cached is not None:
-            # Reconstruct ServerRead objects from cached dicts
-            return [ServerRead.model_validate(s) for s in cached]
+        if cursor is None and user_email is None:
+            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
+            cached = await cache.get("servers", filters_hash)
+            if cached is not None:
+                # Reconstruct ServerRead objects from cached dicts
+                cached_servers = [ServerRead.model_validate(s) for s in cached["servers"]]
+                return (cached_servers, cached.get("next_cursor"))
 
-        query = select(DbServer)
+        # Determine page size from limit parameter
+        if limit is not None:
+            if limit == 0:
+                page_size = None  # No limit, fetch all
+            else:
+                page_size = min(limit, settings.pagination_max_page_size)
+        else:
+            page_size = settings.pagination_default_page_size
+
+        # Build query with proper ordering for cursor pagination
+        query = select(DbServer).order_by(desc(DbServer.created_at), desc(DbServer.id))
+
+        # Decode cursor to get last values if provided
+        last_id = None
+        last_created = None
+        if cursor:
+            try:
+                cursor_data = decode_cursor(cursor)
+                last_id = cursor_data.get("id")
+                created_str = cursor_data.get("created_at")
+                if created_str:
+                    last_created = datetime.fromisoformat(created_str)
+                logger.debug(f"Decoded cursor: last_created={last_created}, last_id={last_id}")
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Invalid cursor, ignoring: {e}")
+
+        # Apply cursor filter with keyset pagination (created_at DESC, id DESC)
+        if last_id and last_created:
+            query = query.where(
+                or_(
+                    DbServer.created_at < last_created,
+                    and_(DbServer.created_at == last_created, DbServer.id < last_id)
+                )
+            )
+
         if not include_inactive:
             query = query.where(DbServer.enabled)
+
+        # Apply team-based access control if user_email is provided
+        if user_email:
+            from mcpgateway.services.team_management_service import TeamManagementService
+
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email)
+            team_ids = [team.id for team in user_teams]
+
+            if team_id:
+                # User requesting specific team - verify access
+                if team_id not in team_ids:
+                    return ([], None)
+                access_conditions = [
+                    and_(DbServer.team_id == team_id, DbServer.visibility.in_(["team", "public"])),
+                    and_(DbServer.team_id == team_id, DbServer.owner_email == user_email),
+                ]
+                query = query.where(or_(*access_conditions))
+            else:
+                # General access: user's servers + public servers + team servers
+                access_conditions = [
+                    DbServer.owner_email == user_email,
+                    DbServer.visibility == "public",
+                ]
+                if team_ids:
+                    access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
+                query = query.where(or_(*access_conditions))
+
+            if visibility:
+                query = query.where(DbServer.visibility == visibility)
 
         # Add tag filtering if tags are provided
         if tags:
             query = query.where(json_contains_expr(db, DbServer.tags, tags, match_any=True))
 
+        # Fetch page_size + 1 to determine if there are more results (unless limit=0 for unlimited)
+        if page_size is not None:
+            query = query.limit(page_size + 1)
         servers = db.execute(query).scalars().all()
+
+        # Check if there are more results (only if we used pagination)
+        has_more = False
+        if page_size is not None:
+            has_more = len(servers) > page_size
+            if has_more:
+                servers = servers[:page_size]  # Trim to page_size
 
         # Fetch all team names
         team_ids = [s.team_id for s in servers if s.team_id]
@@ -733,19 +825,32 @@ class ServerService:
             s.team = team_map.get(s.team_id) if s.team_id else None
             result.append(self._convert_server_to_read(s, include_metrics=False))
 
-        # Cache results
-        try:
-            cache_data = [s.model_dump(mode="json") for s in result]
-            await cache.set("servers", cache_data, filters_hash)
-        except AttributeError:
-            pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)
+        # Generate next_cursor if there are more results
+        next_cursor = None
+        if has_more and result:
+            last_server = servers[-1]  # Get last DB object
+            next_cursor = encode_cursor({"created_at": last_server.created_at.isoformat(), "id": last_server.id})
+            logger.debug(f"Generated next_cursor for created_at={last_server.created_at}, id={last_server.id}")
 
-        return result
+        # Cache first page results - only for non-user-specific queries
+        if cursor is None and user_email is None:
+            try:
+                cache_data = {"servers": [s.model_dump(mode="json") for s in result], "next_cursor": next_cursor}
+                await cache.set("servers", cache_data, filters_hash)
+            except AttributeError:
+                pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)
+
+        return (result, next_cursor)
 
     async def list_servers_for_user(
         self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
     ) -> List[ServerRead]:
         """
+        DEPRECATED: Use list_servers() with user_email parameter instead.
+
+        This method is maintained for backward compatibility but is no longer used.
+        New code should call list_servers() with user_email, team_id, and visibility parameters.
+
         List servers user has access to with team filtering.
 
         Args:

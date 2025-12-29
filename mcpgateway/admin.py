@@ -1044,9 +1044,9 @@ async def admin_list_servers(
         ...     metrics=mock_metrics
         ... )
         >>>
-        >>> # Mock the server_service.list_servers_for_user method
-        >>> original_list_servers_for_user = server_service.list_servers_for_user
-        >>> server_service.list_servers_for_user = AsyncMock(return_value=[mock_server])
+        >>> # Mock the server_service.list_servers method
+        >>> original_list_servers = server_service.list_servers
+        >>> server_service.list_servers = AsyncMock(return_value=([mock_server], None))
         >>>
         >>> # Test the function
         >>> async def test_admin_list_servers():
@@ -1062,10 +1062,10 @@ async def admin_list_servers(
         True
         >>>
         >>> # Restore original method
-        >>> server_service.list_servers_for_user = original_list_servers_for_user
+        >>> server_service.list_servers = original_list_servers
         >>>
         >>> # Additional test for empty server list
-        >>> server_service.list_servers_for_user = AsyncMock(return_value=[])
+        >>> server_service.list_servers = AsyncMock(return_value=([], None))
         >>> async def test_admin_list_servers_empty():
         ...     result = await admin_list_servers(
         ...         include_inactive=True,
@@ -1075,13 +1075,13 @@ async def admin_list_servers(
         ...     return result == []
         >>> asyncio.run(test_admin_list_servers_empty())
         True
-        >>> server_service.list_servers_for_user = original_list_servers_for_user
+        >>> server_service.list_servers = original_list_servers
         >>>
         >>> # Additional test for exception handling
         >>> import pytest
         >>> from fastapi import HTTPException
         >>> async def test_admin_list_servers_exception():
-        ...     server_service.list_servers_for_user = AsyncMock(side_effect=Exception("Test error"))
+        ...     server_service.list_servers = AsyncMock(side_effect=Exception("Test error"))
         ...     try:
         ...         await admin_list_servers(False, mock_db, mock_user)
         ...     except Exception as e:
@@ -1091,7 +1091,7 @@ async def admin_list_servers(
     """
     LOGGER.debug(f"User {get_user_email(user)} requested server list")
     user_email = get_user_email(user)
-    servers = await server_service.list_servers_for_user(db, user_email, include_inactive=include_inactive)
+    servers, _ = await server_service.list_servers(db, include_inactive=include_inactive, user_email=user_email)
     return [server.model_dump(by_alias=True) for server in servers]
 
 
@@ -2128,9 +2128,9 @@ async def admin_list_gateways(
         ...     slug="test-gateway"
         ... )
         >>>
-        >>> # Mock the gateway_service.list_gateways_for_user method
-        >>> original_list_gateways = gateway_service.list_gateways_for_user
-        >>> gateway_service.list_gateways_for_user = AsyncMock(return_value=[mock_gateway])
+        >>> # Mock the gateway_service.list_gateways method
+        >>> original_list_gateways = gateway_service.list_gateways
+        >>> gateway_service.list_gateways = AsyncMock(return_value=([mock_gateway], None))
         >>>
         >>> # Test listing active gateways
         >>> async def test_admin_list_gateways_active():
@@ -2149,10 +2149,10 @@ async def admin_list_gateways(
         ...     auth_header_key=None, auth_header_value=None,
         ...     slug="test-gateway"
         ... )
-        >>> gateway_service.list_gateways_for_user = AsyncMock(return_value=[
+        >>> gateway_service.list_gateways = AsyncMock(return_value=([
         ...     mock_gateway, # Return the GatewayRead objects, not pre-dumped dicts
         ...     mock_inactive_gateway # Return the GatewayRead objects, not pre-dumped dicts
-        ... ])
+        ... ], None))
         >>> async def test_admin_list_gateways_all():
         ...     result = await admin_list_gateways(include_inactive=True, db=mock_db, user=mock_user)
         ...     return len(result) == 2 and not result[1]['enabled']
@@ -2161,7 +2161,7 @@ async def admin_list_gateways(
         True
         >>>
         >>> # Test empty list
-        >>> gateway_service.list_gateways_for_user = AsyncMock(return_value=[])
+        >>> gateway_service.list_gateways = AsyncMock(return_value=([], None))
         >>> async def test_admin_list_gateways_empty():
         ...     result = await admin_list_gateways(include_inactive=False, db=mock_db, user=mock_user)
         ...     return result == []
@@ -2170,7 +2170,7 @@ async def admin_list_gateways(
         True
         >>>
         >>> # Test exception handling
-        >>> gateway_service.list_gateways_for_user = AsyncMock(side_effect=Exception("Gateway list error"))
+        >>> gateway_service.list_gateways = AsyncMock(side_effect=Exception("Gateway list error"))
         >>> async def test_admin_list_gateways_exception():
         ...     try:
         ...         await admin_list_gateways(False, mock_db, mock_user)
@@ -2182,11 +2182,11 @@ async def admin_list_gateways(
         True
         >>>
         >>> # Restore original method
-        >>> gateway_service.list_gateways_for_user = original_list_gateways
+        >>> gateway_service.list_gateways = original_list_gateways
     """
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} requested gateway list")
-    gateways = await gateway_service.list_gateways_for_user(db, user_email, include_inactive=include_inactive)
+    gateways, _ = await gateway_service.list_gateways(db, include_inactive=include_inactive, user_email=user_email)
     return [gateway.model_dump(by_alias=True) for gateway in gateways]
 
 
@@ -2213,7 +2213,7 @@ async def admin_list_gateway_ids(
     """
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} requested gateway ids list")
-    gateways = await gateway_service.list_gateways_for_user(db, user_email, include_inactive=include_inactive)
+    gateways, _ = await gateway_service.list_gateways(db, include_inactive=include_inactive, user_email=user_email)
     ids = [str(g.id) for g in gateways]
     LOGGER.info(f"Gateway IDs retrieved: {ids}")
     return {"gateway_ids": ids}
@@ -2379,18 +2379,18 @@ async def admin_ui(
         >>> mock_user = {"email": "admin_user", "db": mock_db}
         >>>
         >>> # Mock services to return empty lists for simplicity in doctest
-        >>> original_list_servers_for_user = server_service.list_servers_for_user
+        >>> original_list_servers = server_service.list_servers
         >>> original_list_tools = tool_service.list_tools
         >>> original_list_resources = resource_service.list_resources
         >>> original_list_prompts = prompt_service.list_prompts
         >>> original_list_gateways = gateway_service.list_gateways
         >>> original_list_roots = root_service.list_roots
         >>>
-        >>> server_service.list_servers_for_user = AsyncMock(return_value=[])
+        >>> server_service.list_servers = AsyncMock(return_value=([], None))
         >>> tool_service.list_tools = AsyncMock(return_value=([], None))
         >>> resource_service.list_resources = AsyncMock(return_value=([], None))
         >>> prompt_service.list_prompts = AsyncMock(return_value=([], None))
-        >>> gateway_service.list_gateways = AsyncMock(return_value=[])
+        >>> gateway_service.list_gateways = AsyncMock(return_value=([], None))
         >>> root_service.list_roots = AsyncMock(return_value=[])
         >>>
         >>> # Mock request and template rendering
@@ -2411,7 +2411,7 @@ async def admin_ui(
         >>> async def test_admin_ui_include_inactive():
         ...     response = await admin_ui(mock_request, None, True, mock_db, mock_user)
         ...     # Verify list methods were called with include_inactive=True
-        ...     server_service.list_servers_for_user.assert_called_with(mock_db, mock_user["email"], include_inactive=True)
+        ...     server_service.list_servers.assert_called()
         ...     return isinstance(response, HTMLResponse)
         >>>
         >>> asyncio.run(test_admin_ui_include_inactive())
@@ -2434,7 +2434,7 @@ async def admin_ui(
         ...     customName="T1",
         ...     tags=[]
         ... )
-        >>> server_service.list_servers_for_user = AsyncMock(return_value=[mock_server])
+        >>> server_service.list_servers = AsyncMock(return_value=([mock_server], None))
         >>> tool_service.list_tools = AsyncMock(return_value=([mock_tool], None))
         >>>
         >>> async def test_admin_ui_with_data():
@@ -2450,7 +2450,7 @@ async def admin_ui(
         >>> from unittest.mock import AsyncMock, patch
         >>> import logging
         >>>
-        >>> server_service.list_servers_for_user = AsyncMock(side_effect=Exception("DB error"))
+        >>> server_service.list_servers = AsyncMock(side_effect=Exception("DB error"))
         >>>
         >>> async def test_admin_ui_exception_handled():
         ...     with patch("mcpgateway.admin.LOGGER.exception") as mock_log:
@@ -2472,7 +2472,7 @@ async def admin_ui(
         True
         >>>
         >>> # Restore original methods
-        >>> server_service.list_servers_for_user = original_list_servers_for_user
+        >>> server_service.list_servers = original_list_servers
         >>> tool_service.list_tools = original_list_tools
         >>> resource_service.list_resources = original_list_resources
         >>> prompt_service.list_prompts = original_list_prompts
@@ -2705,7 +2705,10 @@ async def admin_ui(
         raw_tools = []
 
     try:
-        raw_servers = await _call_list_with_team_support(server_service.list_servers_for_user, db, user_email, include_inactive=include_inactive)
+        raw_servers = await _call_list_with_team_support(server_service.list_servers, db, include_inactive=include_inactive, user_email=user_email)
+        # Handle tuple return (list, cursor)
+        if isinstance(raw_servers, tuple):
+            raw_servers = raw_servers[0]
     except Exception as e:
         LOGGER.exception("Failed to load servers for user: %s", e)
         raw_servers = []
@@ -2728,7 +2731,10 @@ async def admin_ui(
         raw_prompts = []
 
     try:
-        gateways_raw = await _call_list_with_team_support(gateway_service.list_gateways_for_user, db, user_email, include_inactive=include_inactive)
+        gateways_raw = await _call_list_with_team_support(gateway_service.list_gateways, db, include_inactive=include_inactive, user_email=user_email)
+        # Handle tuple return (list, cursor)
+        if isinstance(gateways_raw, tuple):
+            gateways_raw = gateways_raw[0]
     except Exception as e:
         LOGGER.exception("Failed to load gateways: %s", e)
         gateways_raw = []

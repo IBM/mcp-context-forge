@@ -449,7 +449,9 @@ class TestServerService:
 
         # test_db.execute.assert_called_once()
         test_db.execute.call_count = 2
-        assert result == [server_read]
+        servers, cursor = result
+        assert servers == [server_read]
+        assert cursor is None
         server_service._convert_server_to_read.assert_called_once_with(mock_server, include_metrics=False)
 
     @pytest.mark.asyncio
@@ -1129,9 +1131,12 @@ class TestServerService:
         # Mock query chain
         mock_query = MagicMock()
         mock_query.where.return_value = mock_query
+        mock_query.order_by.return_value = mock_query
+        mock_query.limit.return_value = mock_query
 
         session = MagicMock()
         session.execute.return_value.scalars.return_value.all.return_value = [mock_server]
+        session.commit.return_value = None
 
         bind = MagicMock()
         bind.dialect = MagicMock()
@@ -1157,6 +1162,9 @@ class TestServerService:
                 assert called_args[2] == ["test", "production"]
                 # and the fake condition returned must have been passed to where()
                 mock_query.where.assert_called_with(fake_condition)
-                # finally, your service should return the list produced by mock_db.execute(...)
-                assert isinstance(result, list)
-                assert len(result) == 1
+                # finally, your service should return a tuple (list, cursor)
+                assert isinstance(result, tuple)
+                servers, cursor = result
+                assert isinstance(servers, list)
+                assert len(servers) == 1
+                assert cursor is None
