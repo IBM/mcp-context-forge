@@ -4753,6 +4753,7 @@ class EmailRegistrationRequest(BaseModel):
         email: User's email address
         password: User's password
         full_name: Optional full name for display
+        is_admin: Whether user should have admin privileges (default: False)
 
     Examples:
         >>> request = EmailRegistrationRequest(
@@ -4764,6 +4765,8 @@ class EmailRegistrationRequest(BaseModel):
         'new@example.com'
         >>> request.full_name
         'New User'
+        >>> request.is_admin
+        False
     """
 
     model_config = ConfigDict(str_strip_whitespace=True)
@@ -4771,6 +4774,7 @@ class EmailRegistrationRequest(BaseModel):
     email: EmailStr = Field(..., description="User's email address")
     password: str = Field(..., min_length=8, description="User's password")
     full_name: Optional[str] = Field(None, max_length=255, description="User's full name")
+    is_admin: bool = Field(False, description="Grant admin privileges to user")
 
     @field_validator("password")
     @classmethod
