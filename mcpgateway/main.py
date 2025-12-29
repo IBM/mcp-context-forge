@@ -86,6 +86,12 @@ from mcpgateway.schemas import (
     A2AAgentCreate,
     A2AAgentRead,
     A2AAgentUpdate,
+    CursorPaginatedA2AAgentsResponse,
+    CursorPaginatedGatewaysResponse,
+    CursorPaginatedPromptsResponse,
+    CursorPaginatedResourcesResponse,
+    CursorPaginatedServersResponse,
+    CursorPaginatedToolsResponse,
     GatewayCreate,
     GatewayRead,
     GatewayUpdate,
@@ -1806,13 +1812,13 @@ async def handle_sampling(request: Request, db: Session = Depends(get_db), user=
 ###############
 # Server APIs #
 ###############
-@server_router.get("", response_model=List[ServerRead])
-@server_router.get("/", response_model=List[ServerRead])
+@server_router.get("", response_model=Union[List[ServerRead], CursorPaginatedServersResponse])
+@server_router.get("/", response_model=Union[List[ServerRead], CursorPaginatedServersResponse])
 @require_permission("servers.read")
 async def list_servers(
     request: Request,
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
-    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
+    include_pagination: bool = Query(True, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, ge=0, description="Maximum number of servers to return"),
     include_inactive: bool = False,
     tags: Optional[str] = None,
@@ -2305,8 +2311,8 @@ async def server_get_prompts(
 ##################
 # A2A Agent APIs #
 ##################
-@a2a_router.get("", response_model=List[A2AAgentRead])
-@a2a_router.get("/", response_model=List[A2AAgentRead])
+@a2a_router.get("", response_model=Union[List[A2AAgentRead], CursorPaginatedA2AAgentsResponse])
+@a2a_router.get("/", response_model=Union[List[A2AAgentRead], CursorPaginatedA2AAgentsResponse])
 @require_permission("a2a.read")
 async def list_a2a_agents(
     include_inactive: bool = False,
@@ -2314,7 +2320,7 @@ async def list_a2a_agents(
     team_id: Optional[str] = Query(None, description="Filter by team ID"),
     visibility: Optional[str] = Query(None, description="Filter by visibility (private, team, public)"),
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
-    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
+    include_pagination: bool = Query(True, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, description="Maximum number of agents to return"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -2667,13 +2673,13 @@ async def invoke_a2a_agent(
 #############
 # Tool APIs #
 #############
-@tool_router.get("", response_model=Union[List[ToolRead], List[Dict], Dict, List])
-@tool_router.get("/", response_model=Union[List[ToolRead], List[Dict], Dict, List])
+@tool_router.get("", response_model=Union[List[ToolRead], CursorPaginatedToolsResponse])
+@tool_router.get("/", response_model=Union[List[ToolRead], CursorPaginatedToolsResponse])
 @require_permission("tools.read")
 async def list_tools(
     request: Request,
     cursor: Optional[str] = None,
-    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
+    include_pagination: bool = Query(True, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, ge=0, description="Maximum number of tools to return. 0 means all (no limit). Default uses pagination_default_page_size."),
     include_inactive: bool = False,
     tags: Optional[str] = None,
@@ -3074,13 +3080,13 @@ async def toggle_resource_status(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
-@resource_router.get("", response_model=List[ResourceRead])
-@resource_router.get("/", response_model=List[ResourceRead])
+@resource_router.get("", response_model=Union[List[ResourceRead], CursorPaginatedResourcesResponse])
+@resource_router.get("/", response_model=Union[List[ResourceRead], CursorPaginatedResourcesResponse])
 @require_permission("resources.read")
 async def list_resources(
     request: Request,
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
-    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
+    include_pagination: bool = Query(True, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, ge=0, description="Maximum number of resources to return"),
     include_inactive: bool = False,
     tags: Optional[str] = None,
@@ -3451,13 +3457,13 @@ async def toggle_prompt_status(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
-@prompt_router.get("", response_model=List[PromptRead])
-@prompt_router.get("/", response_model=List[PromptRead])
+@prompt_router.get("", response_model=Union[List[PromptRead], CursorPaginatedPromptsResponse])
+@prompt_router.get("/", response_model=Union[List[PromptRead], CursorPaginatedPromptsResponse])
 @require_permission("prompts.read")
 async def list_prompts(
     request: Request,
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
-    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
+    include_pagination: bool = Query(True, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, ge=0, description="Maximum number of prompts to return"),
     include_inactive: bool = False,
     tags: Optional[str] = None,
@@ -3865,13 +3871,13 @@ async def toggle_gateway_status(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
-@gateway_router.get("", response_model=List[GatewayRead])
-@gateway_router.get("/", response_model=List[GatewayRead])
+@gateway_router.get("", response_model=Union[List[GatewayRead], CursorPaginatedGatewaysResponse])
+@gateway_router.get("/", response_model=Union[List[GatewayRead], CursorPaginatedGatewaysResponse])
 @require_permission("gateways.read")
 async def list_gateways(
     request: Request,
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
-    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
+    include_pagination: bool = Query(True, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, ge=0, description="Maximum number of gateways to return"),
     include_inactive: bool = False,
     team_id: Optional[str] = Query(None, description="Filter by team ID"),

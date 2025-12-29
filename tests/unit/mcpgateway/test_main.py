@@ -26,9 +26,11 @@ import pytest
 from mcpgateway.config import settings
 from mcpgateway.common.models import InitializeResult, ResourceContent, ServerCapabilities
 from mcpgateway.schemas import (
+    GatewayRead,
     PromptRead,
     ResourceRead,
     ServerRead,
+    ToolRead,
 )
 
 # --------------------------------------------------------------------------- #
@@ -479,7 +481,10 @@ class TestServerEndpoints:
         response = test_client.get("/servers/", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
-        assert len(data) == 1 and data[0]["name"] == "test_server"
+        # Response is now paginated format: {"servers": [...], "nextCursor": "..."}
+        assert "servers" in data
+        assert len(data["servers"]) == 1 and data["servers"][0]["name"] == "test_server"
+        assert "nextCursor" in data
         mock_list_servers.assert_called_once()
 
     @patch("mcpgateway.main.server_service.get_server")
@@ -608,12 +613,16 @@ class TestToolEndpoints:
     @patch("mcpgateway.main.tool_service.list_tools")
     def test_list_tools_endpoint(self, mock_list_tools, test_client, auth_headers):
         """Test listing all registered tools."""
-        mock_list_tools.return_value = ([MOCK_TOOL_READ], None)
+        tool_read = ToolRead(**MOCK_TOOL_READ_SNAKE)
+        mock_list_tools.return_value = ([tool_read], None)
 
         response = test_client.get("/tools/", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
-        assert len(data) == 1 and data[0]["name"] == "test_tool"
+        # Response is now paginated format: {"tools": [...], "nextCursor": "..."}
+        assert "tools" in data
+        assert len(data["tools"]) == 1 and data["tools"][0]["name"] == "test_tool"
+        assert "nextCursor" in data
         mock_list_tools.assert_called_once()
 
     @patch("mcpgateway.main.tool_service.register_tool")
@@ -692,7 +701,10 @@ class TestResourceEndpoints:
         response = test_client.get("/resources/", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
-        assert len(data) == 1 and data[0]["name"] == "Test Resource"
+        # Response is now paginated format: {"resources": [...], "nextCursor": "..."}
+        assert "resources" in data
+        assert len(data["resources"]) == 1 and data["resources"][0]["name"] == "Test Resource"
+        assert "nextCursor" in data
         mock_list_resources.assert_called_once()
 
     @patch("mcpgateway.main.resource_service.register_resource")
@@ -852,11 +864,15 @@ class TestPromptEndpoints:
     @patch("mcpgateway.main.prompt_service.list_prompts")
     def test_list_prompts_endpoint(self, mock_list_prompts, test_client, auth_headers):
         """Test listing all available prompts."""
-        mock_list_prompts.return_value = ([MOCK_PROMPT_READ], None)
+        prompt_read = PromptRead(**MOCK_PROMPT_READ)
+        mock_list_prompts.return_value = ([prompt_read], None)
         response = test_client.get("/prompts/", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
-        assert len(data) == 1
+        # Response is now paginated format: {"prompts": [...], "nextCursor": "..."}
+        assert "prompts" in data
+        assert len(data["prompts"]) == 1
+        assert "nextCursor" in data
         mock_list_prompts.assert_called_once()
 
     @patch("mcpgateway.main.prompt_service.register_prompt")
@@ -931,11 +947,15 @@ class TestGatewayEndpoints:
     @patch("mcpgateway.main.gateway_service.list_gateways")
     def test_list_gateways_endpoint(self, mock_list, test_client, auth_headers):
         """Test listing all registered gateways."""
-        mock_list.return_value = ([MOCK_GATEWAY_READ], None)
+        gateway_read = GatewayRead(**MOCK_GATEWAY_READ)
+        mock_list.return_value = ([gateway_read], None)
         response = test_client.get("/gateways/", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
-        assert len(data) == 1
+        # Response is now paginated format: {"gateways": [...], "nextCursor": "..."}
+        assert "gateways" in data
+        assert len(data["gateways"]) == 1
+        assert "nextCursor" in data
         mock_list.assert_called_once()
 
     @patch("mcpgateway.main.gateway_service.register_gateway")
@@ -1006,11 +1026,15 @@ class TestGatewayEndpoints:
     @patch("mcpgateway.main.gateway_service.list_gateways")
     def test_list_gateways_endpoint(self, mock_list, test_client, auth_headers):
         """Test listing all registered gateways."""
-        mock_list.return_value = ([MOCK_GATEWAY_READ], None)
+        gateway_read = GatewayRead(**MOCK_GATEWAY_READ)
+        mock_list.return_value = ([gateway_read], None)
         response = test_client.get("/gateways/", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
-        assert len(data) == 1
+        # Response is now paginated format: {"gateways": [...], "nextCursor": "..."}
+        assert "gateways" in data
+        assert len(data["gateways"]) == 1
+        assert "nextCursor" in data
         mock_list.assert_called_once()
 
     @patch("mcpgateway.main.gateway_service.register_gateway")
