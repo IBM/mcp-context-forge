@@ -17,9 +17,11 @@ SPDX-License-Identifier: Apache-2.0
 
 # Standard
 import asyncio
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import logging
+import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple, Type
 
@@ -150,6 +152,10 @@ class MetricsRollupService:
         # Background task
         self._rollup_task: Optional[asyncio.Task] = None
         self._shutdown_event = asyncio.Event()
+        self._pause_event = asyncio.Event()
+        self._pause_lock = threading.Lock()
+        self._pause_count = 0
+        self._pause_reason: Optional[str] = None
 
         # Stats
         self._total_rollups = 0
@@ -161,6 +167,32 @@ class MetricsRollupService:
             f"delete_raw={self.delete_raw_after_rollup}, "
             f"postgresql={self._is_postgresql}"
         )
+
+    def pause(self, reason: str = "maintenance") -> None:
+        """Pause background rollup execution."""
+        with self._pause_lock:
+            self._pause_count += 1
+            self._pause_reason = reason
+            self._pause_event.set()
+
+    def resume(self) -> None:
+        """Resume background rollup execution."""
+        with self._pause_lock:
+            if self._pause_count > 0:
+                self._pause_count -= 1
+            if self._pause_count <= 0:
+                self._pause_count = 0
+                self._pause_reason = None
+                self._pause_event.clear()
+
+    @contextmanager
+    def pause_during(self, reason: str = "maintenance"):
+        """Pause rollups for the duration of the context manager."""
+        self.pause(reason)
+        try:
+            yield
+        finally:
+            self.resume()
 
     async def start(self) -> None:
         """Start the background rollup task."""
@@ -222,6 +254,14 @@ class MetricsRollupService:
                     except asyncio.TimeoutError:
                         # Normal timeout, proceed to rollup
                         pass
+
+                if self._pause_event.is_set():
+                    logger.info(f"Metrics rollup paused ({self._pause_reason or 'maintenance'}), skipping this cycle")
+                    try:
+                        await asyncio.wait_for(self._shutdown_event.wait(), timeout=5)
+                    except asyncio.TimeoutError:
+                        pass
+                    continue
 
                 # Determine hours_back based on whether this is first run or normal run
                 if first_run:
@@ -791,4 +831,9 @@ def get_metrics_rollup_service() -> MetricsRollupService:
     global _metrics_rollup_service  # pylint: disable=global-statement
     if _metrics_rollup_service is None:
         _metrics_rollup_service = MetricsRollupService()
+    return _metrics_rollup_service
+
+
+def get_metrics_rollup_service_if_initialized() -> Optional[MetricsRollupService]:
+    """Return the rollup service instance if it has been created."""
     return _metrics_rollup_service

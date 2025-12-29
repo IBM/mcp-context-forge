@@ -65,6 +65,7 @@ from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.metrics_query_service import get_top_performers_combined
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.performance_tracker import get_performance_tracker
@@ -1787,8 +1788,9 @@ class ToolService:
             tool_team_id = tool.team_id
 
             if purge_metrics:
-                db.execute(delete(ToolMetric).where(ToolMetric.tool_id == tool_id))
-                db.execute(delete(ToolMetricsHourly).where(ToolMetricsHourly.tool_id == tool_id))
+                with pause_rollup_during_purge(reason=f"purge_tool:{tool_id}"):
+                    delete_metrics_in_batches(db, ToolMetric, ToolMetric.tool_id, tool_id)
+                    delete_metrics_in_batches(db, ToolMetricsHourly, ToolMetricsHourly.tool_id, tool_id)
 
             db.delete(tool)
             db.commit()

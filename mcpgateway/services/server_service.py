@@ -35,6 +35,8 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
+from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
@@ -1385,8 +1387,9 @@ class ServerService:
 
             server_info = {"id": server.id, "name": server.name}
             if purge_metrics:
-                db.execute(delete(ServerMetric).where(ServerMetric.server_id == server_id))
-                db.execute(delete(ServerMetricsHourly).where(ServerMetricsHourly.server_id == server_id))
+                with pause_rollup_during_purge(reason=f"purge_server:{server_id}"):
+                    delete_metrics_in_batches(db, ServerMetric, ServerMetric.server_id, server_id)
+                    delete_metrics_in_batches(db, ServerMetricsHourly, ServerMetricsHourly.server_id, server_id)
             db.delete(server)
             db.commit()
 

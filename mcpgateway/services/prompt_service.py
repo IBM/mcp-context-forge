@@ -40,6 +40,7 @@ from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate, TopPerfor
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -1843,8 +1844,9 @@ class PromptService:
             prompt_team_id = prompt.team_id
 
             if purge_metrics:
-                db.execute(delete(PromptMetric).where(PromptMetric.prompt_id == prompt_id))
-                db.execute(delete(PromptMetricsHourly).where(PromptMetricsHourly.prompt_id == prompt_id))
+                with pause_rollup_during_purge(reason=f"purge_prompt:{prompt_id}"):
+                    delete_metrics_in_batches(db, PromptMetric, PromptMetric.prompt_id, prompt_id)
+                    delete_metrics_in_batches(db, PromptMetricsHourly, PromptMetricsHourly.prompt_id, prompt_id)
 
             db.delete(prompt)
             db.commit()

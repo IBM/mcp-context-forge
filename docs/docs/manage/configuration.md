@@ -918,6 +918,7 @@ METRICS_DELETE_RAW_AFTER_ROLLUP_DAYS=7
 **Deletion behavior:**
 - Deleted tools/resources/prompts/servers are removed from Top Performers by default, but historical rollups remain for reporting.
 - To permanently erase metrics for a deleted entity, use the Admin UI delete prompt and choose **Purge metrics**, or call the delete endpoints with `?purge_metrics=true`.
+- Purge deletes use batched deletes sized by `METRICS_CLEANUP_BATCH_SIZE` to reduce long table locks on large datasets.
 
 See [ADR-030: Metrics Cleanup and Rollup](../architecture/adr/030-metrics-cleanup-rollup.md) for architecture details.
 

@@ -17,6 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Standard
 import asyncio
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import logging
@@ -25,6 +26,7 @@ from typing import Dict, Optional
 
 # Third-Party
 from sqlalchemy import delete, func, select
+from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
@@ -41,8 +43,52 @@ from mcpgateway.db import (
     ToolMetric,
     ToolMetricsHourly,
 )
+from mcpgateway.services.metrics_rollup_service import get_metrics_rollup_service_if_initialized
 
 logger = logging.getLogger(__name__)
+
+
+def delete_metrics_in_batches(db: Session, model_class, filter_column, entity_id, batch_size: Optional[int] = None) -> int:
+    """Delete metrics rows for a specific entity in batches within the current transaction.
+
+    Args:
+        db: Database session.
+        model_class: SQLAlchemy model to delete from.
+        filter_column: Column used to filter by entity_id.
+        entity_id: Entity identifier to delete metrics for.
+        batch_size: Optional batch size override.
+
+    Returns:
+        int: Total rows deleted.
+    """
+    effective_batch_size = batch_size or getattr(settings, "metrics_cleanup_batch_size", 10000)
+    total_deleted = 0
+
+    while True:
+        subq = select(model_class.id).where(filter_column == entity_id).limit(effective_batch_size)
+        delete_stmt = delete(model_class).where(model_class.id.in_(subq))
+        result = db.execute(delete_stmt)
+
+        batch_deleted = int(result.rowcount or 0)
+        total_deleted += batch_deleted
+
+        if batch_deleted <= 0 or batch_deleted < effective_batch_size:
+            break
+
+    return total_deleted
+
+
+@contextmanager
+def pause_rollup_during_purge(reason: str = "purge_metrics"):
+    """Pause rollup task while purging metrics to reduce race conditions."""
+    rollup_service = get_metrics_rollup_service_if_initialized()
+    if rollup_service:
+        rollup_service.pause(reason)
+    try:
+        yield
+    finally:
+        if rollup_service:
+            rollup_service.resume()
 
 
 @dataclass

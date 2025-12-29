@@ -55,6 +55,7 @@ from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, Re
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.structured_logger import get_structured_logger
@@ -2449,8 +2450,9 @@ class ResourceService:
             db.execute(delete(DbSubscription).where(DbSubscription.resource_id == resource.id))
 
             if purge_metrics:
-                db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id == resource.id))
-                db.execute(delete(ResourceMetricsHourly).where(ResourceMetricsHourly.resource_id == resource.id))
+                with pause_rollup_during_purge(reason=f"purge_resource:{resource.id}"):
+                    delete_metrics_in_batches(db, ResourceMetric, ResourceMetric.resource_id, resource.id)
+                    delete_metrics_in_batches(db, ResourceMetricsHourly, ResourceMetricsHourly.resource_id, resource.id)
 
             # Hard delete the resource.
             resource_uri = resource.uri
