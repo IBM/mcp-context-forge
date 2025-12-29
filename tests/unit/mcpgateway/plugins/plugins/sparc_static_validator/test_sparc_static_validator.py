@@ -21,7 +21,7 @@ This test module covers:
 
 # Standard
 from typing import Any, Dict
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 # Third-Party
 import pytest

@@ -1,7 +1,7 @@
 # SPARC Static Validator Plugin
 
-> **Author:** Osher Elhadad  
-> **Version:** 0.1.0  
+> **Author:** Osher Elhadad
+> **Version:** 0.1.0
 > **Requires:** `agent-lifecycle-toolkit>=0.10.0`
 
 The SPARC Static Validator plugin provides comprehensive **syntax validation** for tool call arguments before execution. Using the **SPARC (Semantic Pre-execution Analysis for Reliable Calls)** component from the Agent Lifecycle Toolkit (ALTK), it catches common errors like missing required parameters, type mismatches, and invalid values (with correction suggestions when possible) — all without requiring an LLM.
