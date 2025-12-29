@@ -15,6 +15,7 @@ import sys
 from importlib import resources
 
 from fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from pm_mcp_server import __version__
@@ -55,7 +56,10 @@ mcp = FastMCP("pm-mcp-server", version=__version__)
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(description="Generate a work breakdown structure from scope narrative.")
+@mcp.tool(
+    description="Generate a work breakdown structure from scope narrative.",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def generate_work_breakdown(
     scope: str = Field(..., description="Narrative scope statement"),
     phases: list[str] | None = Field(None, description="Optional ordered phase names"),
@@ -66,7 +70,10 @@ async def generate_work_breakdown(
     return planning.generate_work_breakdown(scope=scope, phases=phases, constraints=constraints)
 
 
-@mcp.tool(description="Convert WBS into a simple sequential schedule model.")
+@mcp.tool(
+    description="Convert WBS into a simple sequential schedule model.",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def build_schedule(
     wbs: list[WBSNode] = Field(..., description="WBS nodes to schedule"),
     default_owner: str | None = Field(None, description="Fallback owner for tasks"),
@@ -74,14 +81,20 @@ async def build_schedule(
     return planning.build_schedule(wbs, default_owner)
 
 
-@mcp.tool(description="Run critical path analysis over a schedule.")
+@mcp.tool(
+    description="Run critical path analysis over a schedule.",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def critical_path_analysis(
     schedule: ScheduleModel = Field(..., description="Schedule model to analyse"),
 ) -> CriticalPathResult:
     return planning.critical_path_analysis(schedule)
 
 
-@mcp.tool(description="Generate gantt chart artefacts from schedule")
+@mcp.tool(
+    description="Generate gantt chart artefacts from schedule",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def produce_gantt_diagram(
     schedule: ScheduleModel = Field(..., description="Schedule with CPM fields"),
     project_start: str | None = Field(None, description="Project start ISO date"),
@@ -89,14 +102,20 @@ async def produce_gantt_diagram(
     return planning.gantt_artifacts(schedule, project_start)
 
 
-@mcp.tool(description="Suggest lightweight schedule optimisations")
+@mcp.tool(
+    description="Suggest lightweight schedule optimisations",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def schedule_optimizer(
     schedule: ScheduleModel = Field(..., description="Schedule to optimise"),
 ) -> ScheduleModel:
     return planning.schedule_optimizer(schedule)
 
 
-@mcp.tool(description="Check proposed features against scope guardrails")
+@mcp.tool(
+    description="Check proposed features against scope guardrails",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def scope_guardrails(
     scope_statement: str = Field(..., description="Authorised scope summary"),
     proposed_items: list[str] = Field(..., description="Items or features to evaluate"),
@@ -104,7 +123,10 @@ async def scope_guardrails(
     return planning.scope_guardrails(scope_statement, proposed_items)
 
 
-@mcp.tool(description="Assemble sprint backlog based on capacity and priority")
+@mcp.tool(
+    description="Assemble sprint backlog based on capacity and priority",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def sprint_planning_helper(
     backlog: list[dict[str, object]] = Field(
         ..., description="Backlog items with priority/value/effort"
@@ -119,21 +141,30 @@ async def sprint_planning_helper(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(description="Manage and rank risks by severity")
+@mcp.tool(
+    description="Manage and rank risks by severity",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def risk_register_manager(
     risks: list[RiskEntry] = Field(..., description="Risk register entries"),
 ) -> RiskRegister:
     return governance.risk_register_manager(risks)
 
 
-@mcp.tool(description="Summarise change request impacts")
+@mcp.tool(
+    description="Summarise change request impacts",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def change_request_tracker(
     requests: list[ChangeRequest] = Field(..., description="Change requests"),
 ) -> dict[str, object]:
     return governance.change_request_tracker(requests)
 
 
-@mcp.tool(description="Compare baseline vs actual metrics")
+@mcp.tool(
+    description="Compare baseline vs actual metrics",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def baseline_vs_actual(
     planned: dict[str, float] = Field(..., description="Baseline metrics"),
     actual: dict[str, float] = Field(..., description="Actual metrics"),
@@ -142,7 +173,10 @@ async def baseline_vs_actual(
     return governance.baseline_vs_actual(planned, actual, tolerance_percent)
 
 
-@mcp.tool(description="Compute earned value management metrics")
+@mcp.tool(
+    description="Compute earned value management metrics",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def earned_value_calculator(
     values: list[EarnedValueInput] = Field(..., description="Period EVM entries"),
     budget_at_completion: float = Field(..., gt=0.0, description="Authorised budget"),
@@ -155,21 +189,30 @@ async def earned_value_calculator(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(description="Render status report markdown via template")
+@mcp.tool(
+    description="Render status report markdown via template",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def status_report_generator(
     payload: StatusReportPayload = Field(..., description="Status report payload"),
 ) -> dict[str, str]:
     return reporting.status_report_generator(payload)
 
 
-@mcp.tool(description="Produce project health dashboard summary")
+@mcp.tool(
+    description="Produce project health dashboard summary",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def project_health_dashboard(
     snapshot: HealthDashboard = Field(..., description="Dashboard snapshot"),
 ) -> dict[str, object]:
     return reporting.project_health_dashboard(snapshot)
 
 
-@mcp.tool(description="Generate project brief summary")
+@mcp.tool(
+    description="Generate project brief summary",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def project_brief_generator(
     name: str = Field(..., description="Project name"),
     objectives: list[str] = Field(..., description="Objectives"),
@@ -180,14 +223,20 @@ async def project_brief_generator(
     return reporting.project_brief_generator(name, objectives, success_criteria, budget, timeline)
 
 
-@mcp.tool(description="Aggregate lessons learned entries")
+@mcp.tool(
+    description="Aggregate lessons learned entries",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def lessons_learned_catalog(
     entries: list[dict[str, str]] = Field(..., description="Lessons learned entries"),
 ) -> dict[str, list[str]]:
     return reporting.lessons_learned_catalog(entries)
 
 
-@mcp.tool(description="Expose packaged PM templates")
+@mcp.tool(
+    description="Expose packaged PM templates",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def document_template_library() -> dict[str, str]:
     return reporting.document_template_library()
 
@@ -197,14 +246,20 @@ async def document_template_library() -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(description="Summarise meeting transcript into decisions and actions")
+@mcp.tool(
+    description="Summarise meeting transcript into decisions and actions",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def meeting_minutes_summarizer(
     transcript: str = Field(..., description="Raw meeting notes"),
 ) -> MeetingSummary:
     return collaboration.meeting_minutes_summarizer(transcript)
 
 
-@mcp.tool(description="Merge action item updates")
+@mcp.tool(
+    description="Merge action item updates",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def action_item_tracker(
     current: ActionItemLog = Field(..., description="Current action item backlog"),
     updates: list[ActionItem] = Field(..., description="Updates or new action items"),
@@ -212,7 +267,10 @@ async def action_item_tracker(
     return collaboration.action_item_tracker(current, updates)
 
 
-@mcp.tool(description="Report resource allocation variance")
+@mcp.tool(
+    description="Report resource allocation variance",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def resource_allocator(
     capacity: dict[str, float] = Field(..., description="Capacity per team"),
     assignments: dict[str, float] = Field(..., description="Assigned load per team"),
@@ -220,14 +278,20 @@ async def resource_allocator(
     return collaboration.resource_allocator(capacity, assignments)
 
 
-@mcp.tool(description="Produce stakeholder matrix diagram")
+@mcp.tool(
+    description="Produce stakeholder matrix diagram",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def stakeholder_matrix(
     stakeholders: list[Stakeholder] = Field(..., description="Stakeholder entries"),
 ) -> StakeholderMatrixResult:
     return collaboration.stakeholder_matrix(stakeholders)
 
 
-@mcp.tool(description="Plan communications cadence per stakeholder")
+@mcp.tool(
+    description="Plan communications cadence per stakeholder",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def communications_planner(
     stakeholders: list[Stakeholder] = Field(..., description="Stakeholders"),
     cadence_days: int = Field(7, ge=1, description="Base cadence in days"),
@@ -267,7 +331,10 @@ async def change_impact_prompt() -> str:
     return _load_prompt("change_impact_prompt.md")
 
 
-@mcp.tool(description="Provide glossary definitions for common PM terms")
+@mcp.tool(
+    description="Provide glossary definitions for common PM terms",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def glossary_lookup(
     terms: list[str] = Field(..., description="PM terms to define"),
 ) -> dict[str, str]:
@@ -281,7 +348,10 @@ async def glossary_lookup(
     return {term: glossary.get(term.lower(), "Definition unavailable") for term in terms}
 
 
-@mcp.tool(description="List packaged sample data assets")
+@mcp.tool(
+    description="List packaged sample data assets",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def sample_data_catalog() -> dict[str, str]:
     sample_pkg = resources.files("pm_mcp_server.data.sample_data")
     resource_map: dict[str, str] = {}
