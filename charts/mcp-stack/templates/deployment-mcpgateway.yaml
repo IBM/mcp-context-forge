@@ -56,7 +56,7 @@ spec:
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.postgres.external.secretname }}
+                  name: {{ .Values.postgres.external.secretName }}
                   key: DATABASE_URL
             {{- else }}
             # In-cluster database: construct DATABASE_URL from components
