@@ -33,7 +33,7 @@ from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam
 from mcpgateway.db import Prompt as DbPrompt
-from mcpgateway.db import PromptMetric, server_prompt_association
+from mcpgateway.db import PromptMetric, PromptMetricsHourly, server_prompt_association
 from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework import GlobalContext, PluginContextTable, PluginManager, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate, TopPerformer
@@ -183,7 +183,7 @@ class PromptService:
         await self._event_service.shutdown()
         logger.info("Prompt service shutdown complete")
 
-    async def get_top_prompts(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
+    async def get_top_prompts(self, db: Session, limit: Optional[int] = 5, include_deleted: bool = False) -> List[TopPerformer]:
         """Retrieve the top-performing prompts based on execution count.
 
         Queries the database to get prompts with their metrics, ordered by the number of executions
@@ -194,6 +194,7 @@ class PromptService:
         Args:
             db (Session): Database session for querying prompt metrics.
             limit (Optional[int]): Maximum number of prompts to return. Defaults to 5.
+            include_deleted (bool): Whether to include deleted prompts from rollups.
 
         Returns:
             List[TopPerformer]: A list of TopPerformer objects, each containing:
@@ -209,7 +210,7 @@ class PromptService:
         from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
 
         effective_limit = limit or 5
-        cache_key = f"top_prompts:{effective_limit}"
+        cache_key = f"top_prompts:{effective_limit}:include_deleted={include_deleted}"
 
         if is_cache_enabled():
             cached = metrics_cache.get(cache_key)
@@ -225,6 +226,7 @@ class PromptService:
             metric_type="prompt",
             entity_model=DbPrompt,
             limit=effective_limit,
+            include_deleted=include_deleted,
         )
         top_performers = build_top_performers(results)
 
@@ -494,6 +496,11 @@ class PromptService:
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
             await admin_stats_cache.invalidate_tags()
+            # First-Party
+            from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
+
+            metrics_cache.invalidate_prefix("top_prompts:")
+            metrics_cache.invalidate("prompts")
 
             return PromptRead.model_validate(prompt_dict)
 
@@ -1785,7 +1792,7 @@ class PromptService:
 
         return prompt_data
 
-    async def delete_prompt(self, db: Session, prompt_id: Union[int, str], user_email: Optional[str] = None) -> None:
+    async def delete_prompt(self, db: Session, prompt_id: Union[int, str], user_email: Optional[str] = None, purge_metrics: bool = False) -> None:
         """
         Delete a prompt template by its ID.
 
@@ -1793,6 +1800,7 @@ class PromptService:
             db (Session): Database session.
             prompt_id (str): ID of the prompt to delete.
             user_email (Optional[str]): Email of user performing delete (for ownership check).
+            purge_metrics (bool): If True, delete raw + rollup metrics for this prompt.
 
         Raises:
             PromptNotFoundError: If the prompt is not found.
@@ -1834,6 +1842,10 @@ class PromptService:
             prompt_name = prompt.name
             prompt_team_id = prompt.team_id
 
+            if purge_metrics:
+                db.execute(delete(PromptMetric).where(PromptMetric.prompt_id == prompt_id))
+                db.execute(delete(PromptMetricsHourly).where(PromptMetricsHourly.prompt_id == prompt_id))
+
             db.delete(prompt)
             db.commit()
             await self._notify_prompt_deleted(prompt_info)
@@ -1862,7 +1874,10 @@ class PromptService:
                 team_id=prompt_team_id,
                 resource_type="prompt",
                 resource_id=str(prompt_info["id"]),
-                custom_fields={"prompt_name": prompt_name},
+                custom_fields={
+                    "prompt_name": prompt_name,
+                    "purge_metrics": purge_metrics,
+                },
                 db=db,
             )
 
@@ -2214,7 +2229,7 @@ class PromptService:
 
     async def reset_metrics(self, db: Session) -> None:
         """
-        Reset all prompt metrics by deleting all records from the prompt metrics table.
+        Reset all prompt metrics by deleting raw and hourly rollup records.
 
         Args:
             db: Database session
@@ -2231,6 +2246,7 @@ class PromptService:
         """
 
         db.execute(delete(PromptMetric))
+        db.execute(delete(PromptMetricsHourly))
         db.commit()
 
         # Invalidate metrics cache

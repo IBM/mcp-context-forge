@@ -1903,7 +1903,7 @@ class TestA2AAgentManagement:
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
         assert "#a2a-agents" in result.headers["location"]
-        mock_delete_agent.assert_called_with(mock_db, "agent-1", user_email="test-user")
+        mock_delete_agent.assert_called_with(mock_db, "agent-1", user_email="test-user", purge_metrics=False)
 
     @patch.object(A2AAgentService, "get_agent")
     @patch.object(A2AAgentService, "invoke_agent")

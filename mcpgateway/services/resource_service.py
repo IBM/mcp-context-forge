@@ -47,7 +47,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Resource as DbResource
-from mcpgateway.db import ResourceMetric
+from mcpgateway.db import ResourceMetric, ResourceMetricsHourly
 from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
 from mcpgateway.observability import create_span
@@ -187,7 +187,7 @@ class ResourceService:
         await self._event_service.shutdown()
         logger.info("Resource service shutdown complete")
 
-    async def get_top_resources(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
+    async def get_top_resources(self, db: Session, limit: Optional[int] = 5, include_deleted: bool = False) -> List[TopPerformer]:
         """Retrieve the top-performing resources based on execution count.
 
         Queries the database to get resources with their metrics, ordered by the number of executions
@@ -199,6 +199,7 @@ class ResourceService:
         Args:
             db (Session): Database session for querying resource metrics.
             limit (Optional[int]): Maximum number of resources to return. Defaults to 5.
+            include_deleted (bool): Whether to include deleted resources from rollups.
 
         Returns:
             List[TopPerformer]: A list of TopPerformer objects, each containing:
@@ -214,7 +215,7 @@ class ResourceService:
         from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
 
         effective_limit = limit or 5
-        cache_key = f"top_resources:{effective_limit}"
+        cache_key = f"top_resources:{effective_limit}:include_deleted={include_deleted}"
 
         if is_cache_enabled():
             cached = metrics_cache.get(cache_key)
@@ -232,6 +233,7 @@ class ResourceService:
             entity_model=DbResource,
             limit=effective_limit,
             name_column="uri",  # Resources use URI as display name
+            include_deleted=include_deleted,
         )
         top_performers = build_top_performers(results)
 
@@ -2246,6 +2248,11 @@ class ResourceService:
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
             await admin_stats_cache.invalidate_tags()
+            # First-Party
+            from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
+
+            metrics_cache.invalidate_prefix("top_resources:")
+            metrics_cache.invalidate("resources")
 
             # Notify subscribers
             await self._notify_resource_updated(resource)
@@ -2385,7 +2392,7 @@ class ResourceService:
             )
             raise ResourceError(f"Failed to update resource: {str(e)}")
 
-    async def delete_resource(self, db: Session, resource_id: Union[int, str], user_email: Optional[str] = None) -> None:
+    async def delete_resource(self, db: Session, resource_id: Union[int, str], user_email: Optional[str] = None, purge_metrics: bool = False) -> None:
         """
         Delete a resource.
 
@@ -2393,6 +2400,7 @@ class ResourceService:
             db: Database session
             resource_id: Resource ID
             user_email: Email of user performing delete (for ownership check)
+            purge_metrics: If True, delete raw + rollup metrics for this resource
 
         Raises:
             ResourceNotFoundError: If the resource is not found
@@ -2439,6 +2447,10 @@ class ResourceService:
 
             # Remove subscriptions using SQLAlchemy's delete() expression.
             db.execute(delete(DbSubscription).where(DbSubscription.resource_id == resource.id))
+
+            if purge_metrics:
+                db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id == resource.id))
+                db.execute(delete(ResourceMetricsHourly).where(ResourceMetricsHourly.resource_id == resource.id))
 
             # Hard delete the resource.
             resource_uri = resource.uri
@@ -2490,6 +2502,7 @@ class ResourceService:
                 resource_id=str(resource_info["id"]),
                 custom_fields={
                     "resource_uri": resource_uri,
+                    "purge_metrics": purge_metrics,
                 },
                 db=db,
             )
@@ -2974,7 +2987,7 @@ class ResourceService:
 
     async def reset_metrics(self, db: Session) -> None:
         """
-        Reset all resource metrics by deleting all records from the resource metrics table.
+        Reset all resource metrics by deleting raw and hourly rollup records.
 
         Args:
             db: Database session
@@ -2990,6 +3003,7 @@ class ResourceService:
             >>> asyncio.run(service.reset_metrics(db))
         """
         db.execute(delete(ResourceMetric))
+        db.execute(delete(ResourceMetricsHourly))
         db.commit()
 
         # Invalidate metrics cache

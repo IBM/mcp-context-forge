@@ -876,6 +876,21 @@ class TestToolService:
         tool_service._notify_tool_deleted.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_delete_tool_purge_metrics(self, tool_service, mock_tool, test_db):
+        """Test deleting a tool with metric purge."""
+        test_db.get = Mock(return_value=mock_tool)
+        test_db.delete = Mock()
+        test_db.commit = Mock()
+        test_db.execute = Mock()
+        tool_service._notify_tool_deleted = AsyncMock()
+
+        await tool_service.delete_tool(test_db, 1, purge_metrics=True)
+
+        assert test_db.execute.call_count == 2
+        test_db.delete.assert_called_once_with(mock_tool)
+        test_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_delete_tool_not_found(self, tool_service, test_db):
         """Test deleting a non-existent tool."""
         # Mock DB get to return None
@@ -1892,8 +1907,8 @@ class TestToolService:
         # Reset all metrics
         await tool_service.reset_metrics(test_db)
 
-        # Verify DB operations
-        test_db.execute.assert_called_once()
+        # Verify DB operations (raw + hourly rollups)
+        assert test_db.execute.call_count == 2
         test_db.commit.assert_called_once()
 
         # Reset metrics for specific tool
@@ -1902,8 +1917,8 @@ class TestToolService:
 
         await tool_service.reset_metrics(test_db, tool_id=1)
 
-        # Verify DB operations with tool_id
-        test_db.execute.assert_called_once()
+        # Verify DB operations with tool_id (raw + hourly rollups)
+        assert test_db.execute.call_count == 2
         test_db.commit.assert_called_once()
 
     async def test_record_tool_metric(self, tool_service, mock_tool):
@@ -2167,6 +2182,7 @@ class TestToolService:
                 call_kwargs = mock_combined.call_args[1]
                 assert call_kwargs["metric_type"] == "tool"
                 assert call_kwargs["limit"] == 5
+                assert call_kwargs["include_deleted"] is False
 
                 # Assert build_top_performers was called with the combined results
                 mock_build.assert_called_once_with(mock_combined_results)

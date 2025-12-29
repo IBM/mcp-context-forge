@@ -263,6 +263,7 @@ def get_top_entities_combined(
     limit: int = 10,
     order_by: str = "execution_count",
     name_column: str = "name",
+    include_deleted: bool = False,
 ) -> List[Dict[str, Any]]:
     """Get top entities by metric counts, combining raw and rollup data.
 
@@ -273,6 +274,7 @@ def get_top_entities_combined(
         limit: Maximum number of results
         order_by: Field to order by ('execution_count', 'avg_response_time', 'failure_rate')
         name_column: Name of the column to use as entity name (default: 'name')
+        include_deleted: Whether to include deleted entities from rollups
 
     Returns:
         List of entity metrics dictionaries
@@ -348,16 +350,17 @@ def get_top_entities_combined(
         .outerjoin(rollup_subq, entity_model.id == rollup_subq.c.entity_id)
         .where(
             # Only include entities that have metrics in either source
-            (raw_subq.c.total.isnot(None)) | (rollup_subq.c.total.isnot(None))
+            (raw_subq.c.total.isnot(None))
+            | (rollup_subq.c.total.isnot(None))
         )
     )
 
-    # Query 2: Deleted entities (exist in rollup but not in entity table)
-    # Handle NULL properly: entity_id IS NULL (deleted via SET NULL) OR entity_id not in existing entities
-    # Note: NOT IN with NULL never returns true, so we need explicit IS NULL check
-    existing_ids_subq = select(entity_model.id).subquery()
-    deleted_entities_query = (
-        select(
+    if include_deleted:
+        # Query 2: Deleted entities (exist in rollup but not in entity table)
+        # Handle NULL properly: entity_id IS NULL (deleted via SET NULL) OR entity_id not in existing entities
+        # Note: NOT IN with NULL never returns true, so we need explicit IS NULL check
+        existing_ids_subq = select(entity_model.id).subquery()
+        deleted_entities_query = select(
             rollup_subq.c.entity_id.label("id"),
             rollup_subq.c.preserved_name.label("name"),
             rollup_subq.c.total.label("execution_count"),
@@ -366,24 +369,23 @@ def get_top_entities_combined(
             rollup_subq.c.avg_rt.label("avg_response_time"),
             rollup_subq.c.last_time.label("last_execution"),
             literal(True).label("is_deleted"),
-        )
-        .where(
+        ).where(
             # Include entities with NULL id (deleted via SET NULL) OR entities not in entity table
-            (rollup_subq.c.entity_id.is_(None)) | (rollup_subq.c.entity_id.notin_(existing_ids_subq))
+            (rollup_subq.c.entity_id.is_(None))
+            | (rollup_subq.c.entity_id.notin_(existing_ids_subq))
         )
-    )
 
-    # Combine existing and deleted entities
-    combined_query = union_all(existing_entities_query, deleted_entities_query).subquery()
+        # Combine existing and deleted entities
+        combined_query = union_all(existing_entities_query, deleted_entities_query).subquery()
+    else:
+        combined_query = existing_entities_query.subquery()
 
     # Apply ordering and limit to the combined results
     if order_by == "avg_response_time":
         final_query = select(combined_query).order_by(combined_query.c.avg_response_time.desc().nullslast())
     elif order_by == "failure_rate":
         # Order by failure rate (failed / total)
-        final_query = select(combined_query).order_by(
-            (combined_query.c.failed * 1.0 / func.nullif(combined_query.c.execution_count, 0)).desc().nullslast()
-        )
+        final_query = select(combined_query).order_by((combined_query.c.failed * 1.0 / func.nullif(combined_query.c.execution_count, 0)).desc().nullslast())
     else:  # default: execution_count
         final_query = select(combined_query).order_by(combined_query.c.execution_count.desc())
 
@@ -420,6 +422,7 @@ def get_top_performers_combined(
     entity_model: Type,
     limit: int = 10,
     name_column: str = "name",
+    include_deleted: bool = False,
 ) -> List[TopPerformerResult]:
     """Get top performers combining raw and rollup data.
 
@@ -432,6 +435,7 @@ def get_top_performers_combined(
         entity_model: SQLAlchemy model for the entity (Tool, Resource, etc.)
         limit: Maximum number of results
         name_column: Name of the column to use as entity name (default: 'name')
+        include_deleted: Whether to include deleted entities from rollups
 
     Returns:
         List[TopPerformerResult]: List of top performer results
@@ -443,6 +447,7 @@ def get_top_performers_combined(
         limit=limit,
         order_by="execution_count",
         name_column=name_column,
+        include_deleted=include_deleted,
     )
 
     return [

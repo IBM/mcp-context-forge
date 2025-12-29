@@ -1837,11 +1837,14 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
         >>> # Restore original method
         >>> server_service.delete_server = original_delete_server
     """
+    form = await request.form()
+    is_inactive_checked = str(form.get("is_inactive_checked", "false"))
+    purge_metrics = str(form.get("purge_metrics", "false")).lower() == "true"
     error_message = None
     try:
         user_email = get_user_email(user)
         LOGGER.debug(f"User {user_email} is deleting server ID {server_id}")
-        await server_service.delete_server(db, server_id, user_email=user_email)
+        await server_service.delete_server(db, server_id, user_email=user_email, purge_metrics=purge_metrics)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {get_user_email(user)} deleting server {server_id}: {e}")
         error_message = str(e)
@@ -1849,8 +1852,6 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
         LOGGER.error(f"Error deleting server: {e}")
         error_message = "Failed to delete server. Please try again."
 
-    form = await request.form()
-    is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     root_path = request.scope.get("root_path", "")
 
     # Build redirect URL with error message if present
@@ -7451,11 +7452,14 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
         >>> # Restore original method
         >>> tool_service.delete_tool = original_delete_tool
     """
+    form = await request.form()
+    is_inactive_checked = str(form.get("is_inactive_checked", "false"))
+    purge_metrics = str(form.get("purge_metrics", "false")).lower() == "true"
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} is deleting tool ID {tool_id}")
     error_message = None
     try:
-        await tool_service.delete_tool(db, tool_id, user_email=user_email)
+        await tool_service.delete_tool(db, tool_id, user_email=user_email, purge_metrics=purge_metrics)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} deleting tool {tool_id}: {e}")
         error_message = str(e)
@@ -7463,8 +7467,6 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
         LOGGER.error(f"Error deleting tool: {e}")
         error_message = "Failed to delete tool. Please try again."
 
-    form = await request.form()
-    is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     root_path = request.scope.get("root_path", "")
 
     # Build redirect URL with error message if present
@@ -8914,6 +8916,9 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
         >>> resource_service.delete_resource = original_delete_resource
     """
 
+    form = await request.form()
+    is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
+    purge_metrics = str(form.get("purge_metrics", "false")).lower() == "true"
     user_email = get_user_email(user)
     LOGGER.debug(f"User {get_user_email(user)} is deleting resource ID {resource_id}")
     error_message = None
@@ -8922,6 +8927,7 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
             user["db"] if isinstance(user, dict) else db,
             resource_id,
             user_email=user_email,
+            purge_metrics=purge_metrics,
         )
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} deleting resource {resource_id}: {e}")
@@ -8929,8 +8935,6 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
     except Exception as e:
         LOGGER.error(f"Error deleting resource: {e}")
         error_message = "Failed to delete resource. Please try again."
-    form = await request.form()
-    is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
     root_path = request.scope.get("root_path", "")
 
     # Build redirect URL with error message if present
@@ -9472,19 +9476,20 @@ async def admin_delete_prompt(prompt_id: str, request: Request, db: Session = De
         True
         >>> prompt_service.delete_prompt = original_delete_prompt
     """
+    form = await request.form()
+    is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
+    purge_metrics = str(form.get("purge_metrics", "false")).lower() == "true"
     user_email = get_user_email(user)
     LOGGER.info(f"User {get_user_email(user)} is deleting prompt id {prompt_id}")
     error_message = None
     try:
-        await prompt_service.delete_prompt(db, prompt_id, user_email=user_email)
+        await prompt_service.delete_prompt(db, prompt_id, user_email=user_email, purge_metrics=purge_metrics)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} deleting prompt {prompt_id}: {e}")
         error_message = str(e)
     except Exception as e:
         LOGGER.error(f"Error deleting prompt: {e}")
         error_message = "Failed to delete prompt. Please try again."
-    form = await request.form()
-    is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
     root_path = request.scope.get("root_path", "")
 
     # Build redirect URL with error message if present
@@ -12227,10 +12232,12 @@ async def admin_delete_a2a_agent(
         root_path = request.scope.get("root_path", "")
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
+    form = await request.form()
+    purge_metrics = str(form.get("purge_metrics", "false")).lower() == "true"
     error_message = None
     try:
         user_email = get_user_email(user)
-        await a2a_service.delete_agent(db, agent_id, user_email=user_email)
+        await a2a_service.delete_agent(db, agent_id, user_email=user_email, purge_metrics=purge_metrics)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {get_user_email(user)} deleting A2A agent {agent_id}: {e}")
         error_message = str(e)

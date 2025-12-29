@@ -9967,6 +9967,32 @@ function handleSubmitWithConfirmation(event, type) {
     return handleToggleSubmit(event, type);
 }
 
+function handleDeleteSubmit(event, type, name = "", inactiveType = "") {
+    event.preventDefault();
+
+    const targetName = name ? `${type} "${name}"` : `this ${type}`;
+    const confirmationMessage = `Are you sure you want to permanently delete ${targetName}? (Deactivation is reversible, deletion is permanent)`;
+    const confirmation = confirm(confirmationMessage);
+    if (!confirmation) {
+        return false;
+    }
+
+    const purgeConfirmation = confirm(
+        `Also purge ALL metrics history for ${targetName}? This deletes raw metrics and hourly rollups and cannot be undone.`
+    );
+    if (purgeConfirmation) {
+        const form = event.target;
+        const purgeField = document.createElement("input");
+        purgeField.type = "hidden";
+        purgeField.name = "purge_metrics";
+        purgeField.value = "true";
+        form.appendChild(purgeField);
+    }
+
+    const toggleType = inactiveType || type;
+    return handleToggleSubmit(event, toggleType);
+}
+
 // ===================================================================
 // ENHANCED TOOL TESTING with Safe State Management
 // ===================================================================
@@ -16609,6 +16635,7 @@ window.toggleInactiveItems = toggleInactiveItems;
 window.loadServers = loadServers;
 window.handleToggleSubmit = handleToggleSubmit;
 window.handleSubmitWithConfirmation = handleSubmitWithConfirmation;
+window.handleDeleteSubmit = handleDeleteSubmit;
 window.viewTool = viewTool;
 window.editTool = editTool;
 window.testTool = testTool;

@@ -425,6 +425,21 @@ class TestPromptService:
         test_db.delete.assert_called_once_with(p)
         prompt_service._notify_prompt_deleted.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_delete_prompt_purge_metrics(self, prompt_service, test_db):
+        p = _build_db_prompt()
+        test_db.get = Mock(return_value=p)
+        test_db.delete = Mock()
+        test_db.commit = Mock()
+        test_db.execute = Mock()
+        prompt_service._notify_prompt_deleted = AsyncMock()
+
+        await prompt_service.delete_prompt(test_db, 1, purge_metrics=True)
+
+        assert test_db.execute.call_count == 2
+        test_db.delete.assert_called_once_with(p)
+        test_db.commit.assert_called_once()
+
 
     @pytest.mark.asyncio
     async def test_delete_prompt_not_found(self, prompt_service, test_db):
@@ -542,7 +557,7 @@ class TestPromptService:
         test_db.execute = Mock()
         test_db.commit = Mock()
         await prompt_service.reset_metrics(test_db)
-        test_db.execute.assert_called()
+        assert test_db.execute.call_count == 2
         test_db.commit.assert_called_once()
 
     @pytest.mark.asyncio

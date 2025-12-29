@@ -284,6 +284,18 @@ class TestA2AAgentService:
         mock_db.delete.assert_called_once_with(sample_db_agent)
         mock_db.commit.assert_called_once()
 
+    async def test_delete_agent_purge_metrics(self, service, mock_db, sample_db_agent):
+        """Test agent deletion with metric purge."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent
+        mock_db.delete = MagicMock()
+        mock_db.commit = MagicMock()
+
+        await service.delete_agent(mock_db, sample_db_agent.id, purge_metrics=True)
+
+        assert mock_db.execute.call_count == 3
+        mock_db.delete.assert_called_once_with(sample_db_agent)
+        mock_db.commit.assert_called_once()
+
     async def test_delete_agent_not_found(self, service, mock_db):
         """Test deleting non-existent agent."""
         # Mock database query returning None
@@ -445,7 +457,7 @@ class TestA2AAgentService:
         await service.reset_metrics(mock_db)
 
         # Verify
-        mock_db.execute.assert_called_once()
+        assert mock_db.execute.call_count == 2
         mock_db.commit.assert_called_once()
 
     async def test_reset_metrics_specific_agent(self, service, mock_db):
@@ -458,7 +470,7 @@ class TestA2AAgentService:
         await service.reset_metrics(mock_db, agent_id)
 
         # Verify
-        mock_db.execute.assert_called_once()
+        assert mock_db.execute.call_count == 2
         mock_db.commit.assert_called_once()
 
     def test_db_to_schema_conversion(self, service, sample_db_agent):

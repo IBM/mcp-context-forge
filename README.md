@@ -2045,6 +2045,10 @@ Automatic management of metrics data to prevent unbounded table growth and maint
 - 📈 **Admin API**: Manual triggers at `/api/metrics/cleanup` and `/api/metrics/rollup`
 - ⚙️ **Configurable retention**: Separate retention for raw and rollup data
 
+**Deletion behavior:**
+- Deleted tools/resources/prompts/servers are removed from Top Performers by default, but historical rollups remain for reporting.
+- To permanently erase metrics for a deleted entity, use the Admin UI delete prompt and choose **Purge metrics**, or call the delete endpoints with `?purge_metrics=true`.
+
 > 🚀 **Performance**: Reduces storage by 90%+ and query latency from seconds to milliseconds for historical data
 
 ### Transport

@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import A2AAgentMetric, EmailTeam, fresh_db_session
+from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, EmailTeam, fresh_db_session
 from mcpgateway.schemas import A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.structured_logger import get_structured_logger
@@ -323,6 +323,10 @@ class A2AAgentService:
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
             await admin_stats_cache.invalidate_tags()
+            # First-Party
+            from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
+
+            metrics_cache.invalidate("a2a")
 
             # Automatically create a tool for the A2A agent if not already present
             tool_service = ToolService()
@@ -857,13 +861,14 @@ class A2AAgentService:
 
         return self._db_to_schema(db=db, db_agent=agent)
 
-    async def delete_agent(self, db: Session, agent_id: str, user_email: Optional[str] = None) -> None:
+    async def delete_agent(self, db: Session, agent_id: str, user_email: Optional[str] = None, purge_metrics: bool = False) -> None:
         """Delete an A2A agent.
 
         Args:
             db: Database session.
             agent_id: Agent ID.
             user_email: Email of user performing delete (for ownership check).
+            purge_metrics: If True, delete raw + rollup metrics for this agent.
 
         Raises:
             A2AAgentNotFoundError: If the agent is not found.
@@ -886,6 +891,9 @@ class A2AAgentService:
                     raise PermissionError("Only the owner can delete this agent")
 
             agent_name = agent.name
+            if purge_metrics:
+                db.execute(delete(A2AAgentMetric).where(A2AAgentMetric.a2a_agent_id == agent_id))
+                db.execute(delete(A2AAgentMetricsHourly).where(A2AAgentMetricsHourly.a2a_agent_id == agent_id))
             db.delete(agent)
             db.commit()
 
@@ -909,7 +917,10 @@ class A2AAgentService:
                 user_email=user_email,
                 resource_type="a2a_agent",
                 resource_id=str(agent_id),
-                custom_fields={"agent_name": agent_name},
+                custom_fields={
+                    "agent_name": agent_name,
+                    "purge_metrics": purge_metrics,
+                },
             )
         except PermissionError:
             db.rollback()
@@ -1154,20 +1165,18 @@ class A2AAgentService:
         return metrics
 
     async def reset_metrics(self, db: Session, agent_id: Optional[str] = None) -> None:
-        """Reset metrics for agents.
+        """Reset metrics for agents (raw + hourly rollups).
 
         Args:
             db: Database session.
             agent_id: Optional agent ID to reset metrics for specific agent.
         """
         if agent_id:
-            # Reset metrics for specific agent
-            delete_query = delete(A2AAgentMetric).where(A2AAgentMetric.a2a_agent_id == agent_id)
+            db.execute(delete(A2AAgentMetric).where(A2AAgentMetric.a2a_agent_id == agent_id))
+            db.execute(delete(A2AAgentMetricsHourly).where(A2AAgentMetricsHourly.a2a_agent_id == agent_id))
         else:
-            # Reset all metrics
-            delete_query = delete(A2AAgentMetric)
-
-        db.execute(delete_query)
+            db.execute(delete(A2AAgentMetric))
+            db.execute(delete(A2AAgentMetricsHourly))
         db.commit()
 
         # Invalidate metrics cache

@@ -915,6 +915,10 @@ METRICS_DELETE_RAW_AFTER_ROLLUP_DAYS=7
 | `/api/metrics/stats` | GET | Get cleanup/rollup statistics |
 | `/api/metrics/config` | GET | Get current configuration |
 
+**Deletion behavior:**
+- Deleted tools/resources/prompts/servers are removed from Top Performers by default, but historical rollups remain for reporting.
+- To permanently erase metrics for a deleted entity, use the Admin UI delete prompt and choose **Purge metrics**, or call the delete endpoints with `?purge_metrics=true`.
+
 See [ADR-030: Metrics Cleanup and Rollup](../architecture/adr/030-metrics-cleanup-rollup.md) for architecture details.
 
 ### Security Hardening

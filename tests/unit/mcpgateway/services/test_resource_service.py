@@ -854,6 +854,20 @@ class TestResourceDeletion:
             mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_delete_resource_purge_metrics(self, resource_service, mock_db, mock_resource):
+        """Test resource deletion with metric purge."""
+        mock_scalar = MagicMock()
+        mock_scalar.scalar_one_or_none.return_value = mock_resource
+        mock_db.execute.return_value = mock_scalar
+
+        with patch.object(resource_service, "_notify_resource_deleted", new_callable=AsyncMock):
+            await resource_service.delete_resource(mock_db, "test://resource", purge_metrics=True)
+
+            assert mock_db.execute.call_count == 4
+            mock_db.delete.assert_called_once_with(mock_resource)
+            mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_delete_resource_not_found(self, resource_service, mock_db):
         """Test deleting non-existent resource."""
         mock_scalar = MagicMock()
@@ -1273,7 +1287,7 @@ class TestResourceMetrics:
         """Test metrics reset."""
         await resource_service.reset_metrics(mock_db)
 
-        mock_db.execute.assert_called_once()
+        assert mock_db.execute.call_count == 2
         mock_db.commit.assert_called_once()
 
 
@@ -1669,6 +1683,7 @@ class TestResourceServiceMetricsExtended:
             assert call_kwargs["metric_type"] == "resource"
             assert call_kwargs["limit"] == 2
             assert call_kwargs["name_column"] == "uri"  # Resources use URI as display name
+            assert call_kwargs["include_deleted"] is False
 
             assert len(result) == 2
             assert result[0].name == "resource1"

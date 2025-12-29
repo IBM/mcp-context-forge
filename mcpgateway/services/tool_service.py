@@ -47,7 +47,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import EmailTeam, fresh_db_session, server_tool_association
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.db import ToolMetric
+from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework import (
     GlobalContext,
@@ -316,7 +316,7 @@ class ToolService:
         await self._event_service.shutdown()
         logger.info("Tool service shutdown complete")
 
-    async def get_top_tools(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
+    async def get_top_tools(self, db: Session, limit: Optional[int] = 5, include_deleted: bool = False) -> List[TopPerformer]:
         """Retrieve the top-performing tools based on execution count.
 
         Queries the database to get tools with their metrics, ordered by the number of executions
@@ -326,6 +326,7 @@ class ToolService:
         Args:
             db (Session): Database session for querying tool metrics.
             limit (Optional[int]): Maximum number of tools to return. Defaults to 5.
+            include_deleted (bool): Whether to include deleted tools from rollups.
 
         Returns:
             List[TopPerformer]: A list of TopPerformer objects, each containing:
@@ -341,7 +342,7 @@ class ToolService:
         from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
 
         effective_limit = limit or 5
-        cache_key = f"top_tools:{effective_limit}"
+        cache_key = f"top_tools:{effective_limit}:include_deleted={include_deleted}"
 
         if is_cache_enabled():
             cached = metrics_cache.get(cache_key)
@@ -354,6 +355,7 @@ class ToolService:
             metric_type="tool",
             entity_model=DbTool,
             limit=effective_limit,
+            include_deleted=include_deleted,
         )
         top_performers = build_top_performers(results)
 
@@ -1738,7 +1740,7 @@ class ToolService:
 
         return tool_read
 
-    async def delete_tool(self, db: Session, tool_id: str, user_email: Optional[str] = None) -> None:
+    async def delete_tool(self, db: Session, tool_id: str, user_email: Optional[str] = None, purge_metrics: bool = False) -> None:
         """
         Delete a tool by its ID.
 
@@ -1746,6 +1748,7 @@ class ToolService:
             db (Session): The SQLAlchemy database session.
             tool_id (str): The unique identifier of the tool.
             user_email (Optional[str]): Email of user performing delete (for ownership check).
+            purge_metrics (bool): If True, delete raw + rollup metrics for this tool.
 
         Raises:
             ToolNotFoundError: If the tool is not found.
@@ -1783,6 +1786,10 @@ class ToolService:
             tool_name = tool.name
             tool_team_id = tool.team_id
 
+            if purge_metrics:
+                db.execute(delete(ToolMetric).where(ToolMetric.tool_id == tool_id))
+                db.execute(delete(ToolMetricsHourly).where(ToolMetricsHourly.tool_id == tool_id))
+
             db.delete(tool)
             db.commit()
             await self._notify_tool_deleted(tool_info)
@@ -1815,6 +1822,7 @@ class ToolService:
                 resource_id=tool_info["id"],
                 custom_fields={
                     "tool_name": tool_name,
+                    "purge_metrics": purge_metrics,
                 },
                 db=db,
             )
@@ -1827,6 +1835,12 @@ class ToolService:
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
             await admin_stats_cache.invalidate_tags()
+            # Invalidate top performers cache
+            # First-Party
+            from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
+
+            metrics_cache.invalidate_prefix("top_tools:")
+            metrics_cache.invalidate("tools")
         except PermissionError as pe:
             db.rollback()
 
@@ -3144,7 +3158,7 @@ class ToolService:
 
     async def reset_metrics(self, db: Session, tool_id: Optional[int] = None) -> None:
         """
-        Reset all tool metrics by deleting all records from the tool metrics table.
+        Reset all tool metrics by deleting raw and hourly rollup records.
 
         Args:
             db: Database session
@@ -3163,8 +3177,10 @@ class ToolService:
 
         if tool_id:
             db.execute(delete(ToolMetric).where(ToolMetric.tool_id == tool_id))
+            db.execute(delete(ToolMetricsHourly).where(ToolMetricsHourly.tool_id == tool_id))
         else:
             db.execute(delete(ToolMetric))
+            db.execute(delete(ToolMetricsHourly))
         db.commit()
 
         # Invalidate metrics cache

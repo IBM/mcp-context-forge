@@ -30,7 +30,7 @@ from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
-from mcpgateway.db import ServerMetric
+from mcpgateway.db import ServerMetric, ServerMetricsHourly
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
@@ -166,7 +166,7 @@ class ServerService:
         logger.info("Server service shutdown complete")
 
     # get_top_server
-    async def get_top_servers(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
+    async def get_top_servers(self, db: Session, limit: Optional[int] = 5, include_deleted: bool = False) -> List[TopPerformer]:
         """Retrieve the top-performing servers based on execution count.
 
         Queries the database to get servers with their metrics, ordered by the number of executions
@@ -177,6 +177,7 @@ class ServerService:
         Args:
             db (Session): Database session for querying server metrics.
             limit (Optional[int]): Maximum number of servers to return. Defaults to 5.
+            include_deleted (bool): Whether to include deleted servers from rollups.
 
         Returns:
             List[TopPerformer]: A list of TopPerformer objects, each containing:
@@ -192,7 +193,7 @@ class ServerService:
         from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
 
         effective_limit = limit or 5
-        cache_key = f"top_servers:{effective_limit}"
+        cache_key = f"top_servers:{effective_limit}:include_deleted={include_deleted}"
 
         if is_cache_enabled():
             cached = metrics_cache.get(cache_key)
@@ -208,6 +209,7 @@ class ServerService:
             metric_type="server",
             entity_model=DbServer,
             limit=effective_limit,
+            include_deleted=include_deleted,
         )
         top_performers = build_top_performers(results)
 
@@ -1338,13 +1340,14 @@ class ServerService:
             )
             raise ServerError(f"Failed to toggle server status: {str(e)}")
 
-    async def delete_server(self, db: Session, server_id: str, user_email: Optional[str] = None) -> None:
+    async def delete_server(self, db: Session, server_id: str, user_email: Optional[str] = None, purge_metrics: bool = False) -> None:
         """Permanently delete a server.
 
         Args:
             db: Database session.
             server_id: The unique identifier of the server.
             user_email: Email of user performing deletion (for ownership check).
+            purge_metrics: If True, delete raw + rollup metrics for this server.
 
         Raises:
             ServerNotFoundError: If the server is not found.
@@ -1381,6 +1384,9 @@ class ServerService:
                     raise PermissionError("Only the owner can delete this server")
 
             server_info = {"id": server.id, "name": server.name}
+            if purge_metrics:
+                db.execute(delete(ServerMetric).where(ServerMetric.server_id == server_id))
+                db.execute(delete(ServerMetricsHourly).where(ServerMetricsHourly.server_id == server_id))
             db.delete(server)
             db.commit()
 
@@ -1392,6 +1398,11 @@ class ServerService:
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
             await admin_stats_cache.invalidate_tags()
+            # First-Party
+            from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
+
+            metrics_cache.invalidate_prefix("top_servers:")
+            metrics_cache.invalidate("servers")
 
             await self._notify_server_deleted(server_info)
             logger.info(f"Deleted server: {server_info['name']}")
@@ -1417,6 +1428,7 @@ class ServerService:
                 server_name=server_info["name"],
                 deleted_by=user_email,
                 user_email=user_email,
+                purge_metrics=purge_metrics,
             )
         except PermissionError as pe:
             db.rollback()
@@ -1630,7 +1642,7 @@ class ServerService:
 
     async def reset_metrics(self, db: Session) -> None:
         """
-        Reset all server metrics by deleting all records from the server metrics table.
+        Reset all server metrics by deleting raw and hourly rollup records.
 
         Args:
             db: Database session
@@ -1646,6 +1658,7 @@ class ServerService:
             >>> asyncio.run(service.reset_metrics(db))
         """
         db.execute(delete(ServerMetric))
+        db.execute(delete(ServerMetricsHourly))
         db.commit()
 
         # Invalidate metrics cache
