@@ -581,7 +581,8 @@ class TestResourceManagement:
             result = await resource_service.toggle_resource_status(mock_db, 2, activate=True)
 
             assert mock_inactive_resource.enabled is True
-            mock_db.commit.assert_called_once()
+            # commit called twice: once for status change, once in _get_team_name to release transaction
+            assert mock_db.commit.call_count == 2
 
     @pytest.mark.asyncio
     async def test_toggle_resource_status_deactivate(self, resource_service, mock_db, mock_resource):
@@ -615,7 +616,8 @@ class TestResourceManagement:
             result = await resource_service.toggle_resource_status(mock_db, 1, activate=False)
 
             assert mock_resource.enabled is False
-            mock_db.commit.assert_called_once()
+            # commit called twice: once for status change, once in _get_team_name to release transaction
+            assert mock_db.commit.call_count == 2
 
     @pytest.mark.asyncio
     async def test_toggle_resource_status_not_found(self, resource_service, mock_db):
@@ -661,8 +663,8 @@ class TestResourceManagement:
             # Try to activate already active resource
             result = await resource_service.toggle_resource_status(mock_db, 1, activate=True)
 
-            # Should not commit or notify
-            mock_db.commit.assert_not_called()
+            # No status change commit, but _get_team_name commits to release transaction
+            assert mock_db.commit.call_count == 1
 
     @pytest.mark.asyncio
     async def test_update_resource_success(self, resource_service, mock_db, mock_resource):

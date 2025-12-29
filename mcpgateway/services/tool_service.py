@@ -388,6 +388,7 @@ class ToolService:
         if not team_id:
             return None
         team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
+        db.commit()  # Release transaction to avoid idle-in-transaction
         return team.name if team else None
 
     def _convert_tool_to_read(self, tool: DbTool, include_metrics: bool = False) -> ToolRead:
@@ -1461,6 +1462,8 @@ class ToolService:
             query = query.limit(page_size + 1)
         rows = db.execute(query).all()
 
+        db.commit()  # Release transaction to avoid idle-in-transaction
+
         # Check if there are more results (only when paginating)
         has_more = page_size is not None and len(rows) > page_size
         if has_more:
@@ -1550,6 +1553,8 @@ class ToolService:
         query_with_join = query.outerjoin(EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True))).add_columns(EmailTeam.name.label("team_name"))
 
         rows = db.execute(query_with_join).all()
+
+        db.commit()  # Release transaction to avoid idle-in-transaction
 
         # Add team names to tools based on join result
         result = []
@@ -1670,6 +1675,8 @@ class ToolService:
             rows = db.execute(query_with_join.limit(page_size + 1)).all()
         else:
             rows = db.execute(query_with_join).all()
+
+        db.commit()  # Release transaction to avoid idle-in-transaction
 
         # Check if there are more results (only when paginating)
         has_more = page_size is not None and len(rows) > page_size

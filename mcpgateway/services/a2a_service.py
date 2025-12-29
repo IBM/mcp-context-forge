@@ -179,6 +179,7 @@ class A2AAgentService:
             return None
 
         team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
+        db.commit()  # Release transaction to avoid idle-in-transaction
         return team.name if team else None
 
     def _batch_get_team_names(self, db: Session, team_ids: List[str]) -> Dict[str, str]:
@@ -447,6 +448,8 @@ class A2AAgentService:
         team_ids = list({a.team_id for a in agents if a.team_id})
         team_map = self._batch_get_team_names(db, team_ids)
 
+        db.commit()  # Release transaction to avoid idle-in-transaction
+
         # Skip metrics to avoid N+1 queries in list operations
         result = [self._db_to_schema(db=db, db_agent=agent, include_metrics=False, team_map=team_map) for agent in agents]
 
@@ -535,6 +538,8 @@ class A2AAgentService:
         # Batch fetch team names to avoid N+1 queries
         team_ids = list({a.team_id for a in agents if a.team_id})
         team_map = self._batch_get_team_names(db, team_ids)
+
+        db.commit()  # Release transaction to avoid idle-in-transaction
 
         # Skip metrics to avoid N+1 queries in list operations
         return [self._db_to_schema(db=db, db_agent=agent, include_metrics=False, team_map=team_map) for agent in agents]

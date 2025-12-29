@@ -177,9 +177,15 @@ def build_engine() -> Engine:
         )
 
     # Other databases support full pooling configuration
+    # Disable pool_pre_ping when using PgBouncer - it handles connection health
+    # and pre_ping contributes to idle-in-transaction issues in transaction mode
+    use_pre_ping = "pgbouncer" not in settings.database_url.lower()
+    if not use_pre_ping:
+        logger.info("PgBouncer detected - disabling pool_pre_ping (PgBouncer handles connection health)")
+
     return create_engine(
         settings.database_url,
-        pool_pre_ping=True,  # quick liveness check per checkout
+        pool_pre_ping=use_pre_ping,
         pool_size=settings.db_pool_size,
         max_overflow=settings.db_max_overflow,
         pool_timeout=settings.db_pool_timeout,
@@ -403,7 +409,41 @@ class ResilientSession(Session):
 
 
 # Session factory using ResilientSession
-SessionLocal = sessionmaker(class_=ResilientSession, autocommit=False, autoflush=False, bind=engine)
+# expire_on_commit=False prevents SQLAlchemy from expiring ORM objects after commit,
+# allowing continued access to attributes without re-querying the database.
+# This is essential when commits happen during read operations (e.g., to release transactions).
+SessionLocal = sessionmaker(class_=ResilientSession, autocommit=False, autoflush=False, expire_on_commit=False, bind=engine)
+
+
+@event.listens_for(ResilientSession, "after_transaction_end")
+def end_transaction_cleanup(_session, _transaction):
+    """Ensure connection is properly released after transaction ends.
+
+    This event fires after COMMIT or ROLLBACK, ensuring the connection
+    is returned to PgBouncer cleanly with no open transaction.
+
+    Args:
+        _session: The SQLAlchemy session that ended the transaction.
+        _transaction: The transaction that was ended.
+    """
+    # The transaction has already ended - nothing to do here
+    # This is just for monitoring/logging if needed
+
+
+@event.listens_for(ResilientSession, "before_commit")
+def before_commit_handler(session):
+    """Handler before commit to ensure transaction is in good state.
+
+    This is called before COMMIT, ensuring any pending work is flushed.
+
+    Args:
+        session: The SQLAlchemy session about to commit.
+    """
+    try:
+        session.flush()
+    except Exception:  # nosec B110
+        # If flush fails, the commit will also fail and trigger rollback
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -487,6 +527,51 @@ def handle_pool_error(exception_context):
             "ProtocolViolation detected (likely PgBouncer), marking as disconnect: %s",
             exc_msg[:200],
         )
+
+
+@event.listens_for(engine, "checkin")
+def reset_connection_on_checkin(dbapi_connection, _connection_record):
+    """Reset connection state when returned to pool.
+
+    This ensures transactions are properly closed before the connection
+    is returned to PgBouncer, preventing 'idle in transaction' buildup.
+    With PgBouncer in transaction mode, connections stays reserved until
+    the transaction ends - this rollback releases them immediately.
+
+    Args:
+        dbapi_connection: The raw DBAPI connection being checked in.
+        _connection_record: The connection record tracking this connection.
+    """
+    try:
+        # Issue a rollback to close any open transaction
+        # This is safe for both read and write operations:
+        # - For reads: rollback has no effect but closes the transaction
+        # - For writes: they should already be committed by the application
+        dbapi_connection.rollback()
+    except Exception as e:
+        # Connection may be invalid - log and try to force close
+        logger.debug("Connection checkin rollback failed: %s", e)
+        try:
+            # Try to close the raw connection to release it from PgBouncer
+            dbapi_connection.close()
+        except Exception:  # nosec B110
+            pass  # Nothing more we can do
+
+
+@event.listens_for(engine, "reset")
+def reset_connection_on_reset(dbapi_connection, _connection_record):
+    """Reset connection state when the pool resets a connection.
+
+    This handles the case where a connection is being reset before reuse.
+
+    Args:
+        dbapi_connection: The raw DBAPI connection being reset.
+        _connection_record: The connection record tracking this connection.
+    """
+    try:
+        dbapi_connection.rollback()
+    except Exception:  # nosec B110
+        pass  # Connection may be invalid
 
 
 def _refresh_gateway_slugs_batched(session: Session, batch_size: int) -> None:

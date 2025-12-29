@@ -34,7 +34,7 @@ from dataclasses import dataclass
 import logging
 import threading
 import time
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +148,8 @@ class AuthCache:
             self._revocation_ttl = revocation_ttl or getattr(settings, "auth_cache_revocation_ttl", 30)
             self._team_ttl = team_ttl or getattr(settings, "auth_cache_team_ttl", 60)
             self._role_ttl = role_ttl or getattr(settings, "auth_cache_role_ttl", 60)
+            self._teams_list_ttl = getattr(settings, "auth_cache_teams_ttl", 60)
+            self._teams_list_enabled = getattr(settings, "auth_cache_teams_enabled", True)
             self._enabled = enabled if enabled is not None else getattr(settings, "auth_cache_enabled", True)
             self._cache_prefix = getattr(settings, "cache_prefix", "mcpgw:")
         except ImportError:
@@ -155,6 +157,8 @@ class AuthCache:
             self._revocation_ttl = revocation_ttl or 30
             self._team_ttl = team_ttl or 60
             self._role_ttl = role_ttl or 60
+            self._teams_list_ttl = 60
+            self._teams_list_enabled = True
             self._enabled = enabled if enabled is not None else True
             self._cache_prefix = "mcpgw:"
 
@@ -164,6 +168,7 @@ class AuthCache:
         self._revocation_cache: Dict[str, CacheEntry] = {}
         self._context_cache: Dict[str, CacheEntry] = {}
         self._role_cache: Dict[str, CacheEntry] = {}
+        self._teams_list_cache: Dict[str, CacheEntry] = {}
 
         # Known revoked tokens (fast local lookup)
         self._revoked_jtis: Set[str] = set()
@@ -182,7 +187,10 @@ class AuthCache:
         self._redis_miss_count = 0
 
         logger.info(
-            f"AuthCache initialized: enabled={self._enabled}, " f"user_ttl={self._user_ttl}s, revocation_ttl={self._revocation_ttl}s, " f"team_ttl={self._team_ttl}s, role_ttl={self._role_ttl}s"
+            f"AuthCache initialized: enabled={self._enabled}, "
+            f"user_ttl={self._user_ttl}s, revocation_ttl={self._revocation_ttl}s, "
+            f"team_ttl={self._team_ttl}s, role_ttl={self._role_ttl}s, "
+            f"teams_list_enabled={self._teams_list_enabled}, teams_list_ttl={self._teams_list_ttl}s"
         )
 
     def _get_redis_key(self, key_type: str, identifier: str) -> str:
@@ -634,6 +642,129 @@ class AuthCache:
             except Exception as e:
                 logger.warning(f"AuthCache Redis invalidate_team_roles failed: {e}")
 
+    async def get_user_teams(self, cache_key: str) -> Optional[List[str]]:
+        """Get cached team IDs for a user.
+
+        The cache_key should be in the format "email:include_personal" to
+        distinguish between calls with different include_personal flags.
+
+        Returns:
+            - None: Cache miss (caller should query DB)
+            - Empty list: User has no teams (cached result)
+            - List of team IDs: Cached team IDs
+
+        Args:
+            cache_key: Cache key in format "email:include_personal"
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AuthCache()
+            >>> result = asyncio.run(cache.get_user_teams("test@example.com:True"))
+            >>> result is None  # Cache miss
+            True
+        """
+        if not self._enabled or not self._teams_list_enabled:
+            return None
+
+        # Try Redis first
+        redis = await self._get_redis_client()
+        if redis:
+            try:
+                redis_key = self._get_redis_key("teams", cache_key)
+                data = await redis.get(redis_key)
+                if data is not None:
+                    self._hit_count += 1
+                    self._redis_hit_count += 1
+                    # Third-Party
+                    import orjson  # pylint: disable=import-outside-toplevel
+
+                    return orjson.loads(data)
+                self._redis_miss_count += 1
+            except Exception as e:
+                logger.warning(f"AuthCache Redis get_user_teams failed: {e}")
+
+        # Fall back to in-memory cache
+        entry = self._teams_list_cache.get(cache_key)
+        if entry and not entry.is_expired():
+            self._hit_count += 1
+            return entry.value
+
+        self._miss_count += 1
+        return None
+
+    async def set_user_teams(self, cache_key: str, team_ids: List[str]) -> None:
+        """Store team IDs for a user in cache.
+
+        Args:
+            cache_key: Cache key in format "email:include_personal"
+            team_ids: List of team IDs the user belongs to
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AuthCache()
+            >>> asyncio.run(cache.set_user_teams("test@example.com:True", ["team-1", "team-2"]))
+        """
+        if not self._enabled or not self._teams_list_enabled:
+            return
+
+        # Store in Redis
+        redis = await self._get_redis_client()
+        if redis:
+            try:
+                # Third-Party
+                import orjson  # pylint: disable=import-outside-toplevel
+
+                redis_key = self._get_redis_key("teams", cache_key)
+                await redis.setex(redis_key, self._teams_list_ttl, orjson.dumps(team_ids))
+            except Exception as e:
+                logger.warning(f"AuthCache Redis set_user_teams failed: {e}")
+
+        # Store in in-memory cache
+        with self._lock:
+            self._teams_list_cache[cache_key] = CacheEntry(
+                value=team_ids,
+                expiry=time.time() + self._teams_list_ttl,
+            )
+
+    async def invalidate_user_teams(self, email: str) -> None:
+        """Invalidate cached teams list for a user.
+
+        Call this when a user's team membership changes (add/remove member,
+        delete team, approve join request).
+
+        This invalidates both include_personal=True and include_personal=False
+        cache entries for the user.
+
+        Args:
+            email: User email whose teams cache should be invalidated
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AuthCache()
+            >>> asyncio.run(cache.invalidate_user_teams("test@example.com"))
+        """
+        logger.debug(f"AuthCache: Invalidating teams list cache for {email}")
+
+        # Clear in-memory cache entries for this user (both True and False variants)
+        with self._lock:
+            keys_to_remove = [k for k in self._teams_list_cache if k.startswith(f"{email}:")]
+            for key in keys_to_remove:
+                self._teams_list_cache.pop(key, None)
+
+        # Clear Redis
+        redis = await self._get_redis_client()
+        if redis:
+            try:
+                # Delete both variants
+                await redis.delete(
+                    self._get_redis_key("teams", f"{email}:True"),
+                    self._get_redis_key("teams", f"{email}:False"),
+                )
+                # Publish invalidation for other workers
+                await redis.publish("mcpgw:auth:invalidate", f"teams:{email}")
+            except Exception as e:
+                logger.warning(f"AuthCache Redis invalidate_user_teams failed: {e}")
+
     async def is_token_revoked(self, jti: str) -> Optional[bool]:
         """Check if a token is revoked (cached check only).
 
@@ -744,6 +875,7 @@ class AuthCache:
             self._revocation_cache.clear()
             self._context_cache.clear()
             self._role_cache.clear()
+            self._teams_list_cache.clear()
             # Don't clear _revoked_jtis as those are confirmed revocations
 
         logger.info("AuthCache: All caches invalidated")
@@ -775,10 +907,13 @@ class AuthCache:
             "revoked_tokens_cached": len(self._revoked_jtis),
             "context_cache_size": len(self._context_cache),
             "role_cache_size": len(self._role_cache),
+            "teams_list_cache_size": len(self._teams_list_cache),
             "user_ttl": self._user_ttl,
             "revocation_ttl": self._revocation_ttl,
             "team_ttl": self._team_ttl,
             "role_ttl": self._role_ttl,
+            "teams_list_enabled": self._teams_list_enabled,
+            "teams_list_ttl": self._teams_list_ttl,
         }
 
     def reset_stats(self) -> None:

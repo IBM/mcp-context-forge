@@ -308,7 +308,8 @@ class TestPromptService:
         upd = PromptUpdate(description="new desc", template="Hi, {{ name }}!")
         res = await prompt_service.update_prompt(test_db, 1, upd)
 
-        test_db.commit.assert_called_once()
+        # commit called twice: once for update, once in _get_team_name to release transaction
+        assert test_db.commit.call_count == 2
         prompt_service._notify_prompt_updated.assert_called_once()
         assert res["description"] == "new desc"
         assert res["template"] == "Hi, {{ name }}!"

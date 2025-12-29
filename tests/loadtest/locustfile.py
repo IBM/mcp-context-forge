@@ -210,7 +210,7 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
             if resp.status_code == 200:
                 data = resp.json()
                 items = data if isinstance(data, list) else data.get("items", [])
-                SERVER_IDS.extend([str(s.get("id") or s.get("name")) for s in items[:50]])
+                SERVER_IDS.extend([str(s.get("id")) for s in items[:50] if s.get("id")])
                 logger.info(f"Loaded {len(SERVER_IDS)} server IDs")
 
             # Fetch gateways
@@ -218,7 +218,7 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
             if resp.status_code == 200:
                 data = resp.json()
                 items = data if isinstance(data, list) else data.get("items", [])
-                GATEWAY_IDS.extend([str(g.get("id") or g.get("name")) for g in items[:50]])
+                GATEWAY_IDS.extend([str(g.get("id")) for g in items[:50] if g.get("id")])
                 logger.info(f"Loaded {len(GATEWAY_IDS)} gateway IDs")
 
             # Fetch resources
