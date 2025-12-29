@@ -1811,18 +1811,24 @@ async def handle_sampling(request: Request, db: Session = Depends(get_db), user=
 @require_permission("servers.read")
 async def list_servers(
     request: Request,
+    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
+    limit: Optional[int] = Query(None, ge=0, description="Maximum number of servers to return"),
     include_inactive: bool = False,
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> List[ServerRead]:
+) -> Union[List[ServerRead], Dict[str, Any]]:
     """
-    Lists servers accessible to the user, with team filtering support.
+    Lists servers accessible to the user, with team filtering and cursor pagination support.
 
     Args:
         request (Request): The incoming request object for team_id retrieval.
+        cursor (Optional[str]): Cursor for pagination.
+        include_pagination (bool): Include cursor pagination metadata in response.
+        limit (Optional[int]): Maximum number of servers to return.
         include_inactive (bool): Whether to include inactive servers in the response.
         tags (Optional[str]): Comma-separated list of tags to filter by.
         team_id (Optional[str]): Filter by specific team ID.
@@ -1831,7 +1837,7 @@ async def list_servers(
         user (str): The authenticated user making the request.
 
     Returns:
-        List[ServerRead]: A list of server objects the user has access to.
+        Union[List[ServerRead], Dict[str, Any]]: A list of server objects or paginated response with nextCursor.
     """
     # Parse tags parameter if provided
     tags_list = None
@@ -1855,14 +1861,22 @@ async def list_servers(
 
     # Use consolidated server listing with optional team filtering
     logger.debug(f"User: {user_email} requested server list with include_inactive={include_inactive}, tags={tags_list}, team_id={team_id}, visibility={visibility}")
-    data, _ = await server_service.list_servers(
+    data, next_cursor = await server_service.list_servers(
         db=db,
+        cursor=cursor,
+        limit=limit,
         include_inactive=include_inactive,
         tags=tags_list,
         user_email=user_email if (team_id or visibility) else None,
         team_id=team_id,
         visibility=visibility,
     )
+
+    if include_pagination:
+        payload = {"servers": [server.model_dump(by_alias=True) for server in data]}
+        if next_cursor:
+            payload["nextCursor"] = next_cursor
+        return payload
     return data
 
 
@@ -2300,10 +2314,11 @@ async def list_a2a_agents(
     team_id: Optional[str] = Query(None, description="Filter by team ID"),
     visibility: Optional[str] = Query(None, description="Filter by visibility (private, team, public)"),
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, description="Maximum number of agents to return"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> List[A2AAgentRead]:
+) -> Union[List[A2AAgentRead], Dict[str, Any]]:
     """
     Lists A2A agents user has access to with cursor pagination and team filtering.
 
@@ -2313,12 +2328,13 @@ async def list_a2a_agents(
         team_id (Optional[str]): Team ID to filter by.
         visibility (Optional[str]): Visibility level to filter by.
         cursor (Optional[str]): Cursor for pagination.
+        include_pagination (bool): Include cursor pagination metadata in response.
         limit (Optional[int]): Maximum number of agents to return.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
     Returns:
-        List[A2AAgentRead]: A list of A2A agent objects the user has access to.
+        Union[List[A2AAgentRead], Dict[str, Any]]: A list of A2A agent objects or paginated response with nextCursor.
 
     Raises:
         HTTPException: If A2A service is not available.
@@ -2342,7 +2358,7 @@ async def list_a2a_agents(
         raise HTTPException(status_code=503, detail="A2A service not available")
 
     # Use consolidated agent listing with optional team filtering
-    data, _ = await a2a_service.list_agents(
+    data, next_cursor = await a2a_service.list_agents(
         db=db,
         cursor=cursor,
         include_inactive=include_inactive,
@@ -2352,6 +2368,12 @@ async def list_a2a_agents(
         team_id=team_id,
         visibility=visibility,
     )
+
+    if include_pagination:
+        payload = {"agents": [agent.model_dump(by_alias=True) for agent in data]}
+        if next_cursor:
+            payload["nextCursor"] = next_cursor
+        return payload
     return data
 
 
@@ -3057,20 +3079,24 @@ async def toggle_resource_status(
 @require_permission("resources.read")
 async def list_resources(
     request: Request,
-    cursor: Optional[str] = None,
+    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
+    limit: Optional[int] = Query(None, ge=0, description="Maximum number of resources to return"),
     include_inactive: bool = False,
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> List[Dict[str, Any]]:
+) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
     """
-    Retrieve a list of resources accessible to the user, with team filtering support.
+    Retrieve a list of resources accessible to the user, with team filtering and cursor pagination support.
 
     Args:
         request (Request): The FastAPI request object for team_id retrieval
-        cursor (Optional[str]): Optional cursor for pagination.
+        cursor (Optional[str]): Cursor for pagination.
+        include_pagination (bool): Include cursor pagination metadata in response.
+        limit (Optional[int]): Maximum number of resources to return.
         include_inactive (bool): Whether to include inactive resources.
         tags (Optional[str]): Comma-separated list of tags to filter by.
         team_id (Optional[str]): Filter by specific team ID.
@@ -3079,7 +3105,7 @@ async def list_resources(
         user (str): Authenticated user.
 
     Returns:
-        List[ResourceRead]: List of resources the user has access to.
+        Union[List[ResourceRead], Dict[str, Any]]: List of resources or paginated response with nextCursor.
     """
     # Parse tags parameter if provided
     tags_list = None
@@ -3104,15 +3130,22 @@ async def list_resources(
     # Use unified list_resources() with optional team filtering
     # When team_id or visibility is specified, user_email enables team-based access control
     logger.debug(f"User {user_email} requested resource list with cursor {cursor}, include_inactive={include_inactive}, tags={tags_list}, team_id={team_id}, visibility={visibility}")
-    data, _ = await resource_service.list_resources(
+    data, next_cursor = await resource_service.list_resources(
         db=db,
         cursor=cursor,
+        limit=limit,
         include_inactive=include_inactive,
         tags=tags_list,
         user_email=user_email if (team_id or visibility) else None,
         team_id=team_id,
         visibility=visibility,
     )
+
+    if include_pagination:
+        payload = {"resources": [resource.model_dump(by_alias=True) if hasattr(resource, "model_dump") else resource for resource in data]}
+        if next_cursor:
+            payload["nextCursor"] = next_cursor
+        return payload
     return data
 
 
@@ -3423,20 +3456,24 @@ async def toggle_prompt_status(
 @require_permission("prompts.read")
 async def list_prompts(
     request: Request,
-    cursor: Optional[str] = None,
+    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
+    limit: Optional[int] = Query(None, ge=0, description="Maximum number of prompts to return"),
     include_inactive: bool = False,
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> List[Dict[str, Any]]:
+) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
     """
-    List prompts accessible to the user, with team filtering support.
+    List prompts accessible to the user, with team filtering and cursor pagination support.
 
     Args:
         request (Request): The FastAPI request object for team_id retrieval
-        cursor: Cursor for pagination.
+        cursor (Optional[str]): Cursor for pagination.
+        include_pagination (bool): Include cursor pagination metadata in response.
+        limit (Optional[int]): Maximum number of prompts to return.
         include_inactive: Include inactive prompts.
         tags: Comma-separated list of tags to filter by.
         team_id: Filter by specific team ID.
@@ -3445,7 +3482,7 @@ async def list_prompts(
         user: Authenticated user.
 
     Returns:
-        List of prompt records the user has access to.
+        Union[List[Dict[str, Any]], Dict[str, Any]]: List of prompt records or paginated response with nextCursor.
     """
     # Parse tags parameter if provided
     tags_list = None
@@ -3469,15 +3506,22 @@ async def list_prompts(
 
     # Use consolidated prompt listing with optional team filtering
     logger.debug(f"User: {user_email} requested prompt list with include_inactive={include_inactive}, cursor={cursor}, tags={tags_list}, team_id={team_id}, visibility={visibility}")
-    data, _ = await prompt_service.list_prompts(
+    data, next_cursor = await prompt_service.list_prompts(
         db=db,
         cursor=cursor,
+        limit=limit,
         include_inactive=include_inactive,
         tags=tags_list,
         user_email=user_email if (team_id or visibility) else None,
         team_id=team_id,
         visibility=visibility,
     )
+
+    if include_pagination:
+        payload = {"prompts": [prompt.model_dump(by_alias=True) if hasattr(prompt, "model_dump") else prompt for prompt in data]}
+        if next_cursor:
+            payload["nextCursor"] = next_cursor
+        return payload
     return data
 
 
@@ -3826,17 +3870,23 @@ async def toggle_gateway_status(
 @require_permission("gateways.read")
 async def list_gateways(
     request: Request,
+    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
+    limit: Optional[int] = Query(None, ge=0, description="Maximum number of gateways to return"),
     include_inactive: bool = False,
     team_id: Optional[str] = Query(None, description="Filter by team ID"),
     visibility: Optional[str] = Query(None, description="Filter by visibility: private, team, public"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> List[GatewayRead]:
+) -> Union[List[GatewayRead], Dict[str, Any]]:
     """
-    List all gateways.
+    List all gateways with cursor pagination support.
 
     Args:
         request (Request): The FastAPI request object for team_id retrieval
+        cursor (Optional[str]): Cursor for pagination.
+        include_pagination (bool): Include cursor pagination metadata in response.
+        limit (Optional[int]): Maximum number of gateways to return.
         include_inactive: Include inactive gateways.
         team_id (Optional): Filter by specific team ID.
         visibility (Optional): Filter by visibility (private, team, public).
@@ -3844,7 +3894,7 @@ async def list_gateways(
         user: Authenticated user.
 
     Returns:
-        List of gateway records.
+        Union[List[GatewayRead], Dict[str, Any]]: List of gateway records or paginated response with nextCursor.
     """
     logger.debug(f"User '{user}' requested list of gateways with include_inactive={include_inactive}")
 
@@ -3865,13 +3915,21 @@ async def list_gateways(
 
     # Use consolidated gateway listing with optional team filtering
     logger.debug(f"User: {user_email} requested gateway list with include_inactive={include_inactive}, team_id={team_id}, visibility={visibility}")
-    data, _ = await gateway_service.list_gateways(
+    data, next_cursor = await gateway_service.list_gateways(
         db=db,
+        cursor=cursor,
+        limit=limit,
         include_inactive=include_inactive,
         user_email=user_email if (team_id or visibility) else None,
         team_id=team_id,
         visibility=visibility,
     )
+
+    if include_pagination:
+        payload = {"gateways": [gateway.model_dump(by_alias=True) for gateway in data]}
+        if next_cursor:
+            payload["nextCursor"] = next_cursor
+        return payload
     return data
 
 

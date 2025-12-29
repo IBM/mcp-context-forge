@@ -474,7 +474,7 @@ class TestServerEndpoints:
     @patch("mcpgateway.main.server_service.list_servers")
     def test_list_servers_endpoint(self, mock_list_servers, test_client, auth_headers):
         """Test listing all servers."""
-        mock_list_servers.return_value = [ServerRead(**MOCK_SERVER_READ)]
+        mock_list_servers.return_value = ([ServerRead(**MOCK_SERVER_READ)], None)
 
         response = test_client.get("/servers/", headers=auth_headers)
         assert response.status_code == 200
@@ -931,7 +931,7 @@ class TestGatewayEndpoints:
     @patch("mcpgateway.main.gateway_service.list_gateways")
     def test_list_gateways_endpoint(self, mock_list, test_client, auth_headers):
         """Test listing all registered gateways."""
-        mock_list.return_value = [MOCK_GATEWAY_READ]
+        mock_list.return_value = ([MOCK_GATEWAY_READ], None)
         response = test_client.get("/gateways/", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
@@ -1006,7 +1006,7 @@ class TestGatewayEndpoints:
     @patch("mcpgateway.main.gateway_service.list_gateways")
     def test_list_gateways_endpoint(self, mock_list, test_client, auth_headers):
         """Test listing all registered gateways."""
-        mock_list.return_value = [MOCK_GATEWAY_READ]
+        mock_list.return_value = ([MOCK_GATEWAY_READ], None)
         response = test_client.get("/gateways/", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
