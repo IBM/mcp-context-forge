@@ -808,7 +808,17 @@ class ResourceService:
 
         return stats
 
-    async def list_resources(self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None) -> tuple[List[ResourceRead], Optional[str]]:
+    async def list_resources(
+        self,
+        db: Session,
+        include_inactive: bool = False,
+        cursor: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        limit: Optional[int] = None,
+        user_email: Optional[str] = None,
+        team_id: Optional[str] = None,
+        visibility: Optional[str] = None,
+    ) -> tuple[List[ResourceRead], Optional[str]]:
         """
         Retrieve a list of registered resources from the database with pagination support.
 
@@ -821,8 +831,13 @@ class ResourceService:
             include_inactive (bool): If True, include inactive resources in the result.
                 Defaults to False.
             cursor (Optional[str], optional): An opaque cursor token for pagination.
-                Opaque base64-encoded string containing last item's ID.
+                Opaque base64-encoded string containing last item's ID and created_at.
             tags (Optional[List[str]]): Filter resources by tags. If provided, only resources with at least one matching tag will be returned.
+            limit (Optional[int]): Maximum number of resources to return. Use 0 for all resources (no limit).
+                If not specified, uses pagination_default_page_size.
+            user_email (Optional[str]): User email for team-based access control. If None, no access control is applied.
+            team_id (Optional[str]): Filter by specific team ID. Requires user_email for access validation.
+            visibility (Optional[str]): Filter by visibility (private, team, public).
 
         Returns:
             tuple[List[ResourceRead], Optional[str]]: Tuple containing:
@@ -854,31 +869,84 @@ class ResourceService:
             True
         """
         # Check cache for first page only (cursor=None)
+        # Skip caching when user_email is provided (team-filtered results are user-specific)
         cache = _get_registry_cache()
-        if cursor is None:
-            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
+        if cursor is None and user_email is None:
+            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, limit=limit)
             cached = await cache.get("resources", filters_hash)
             if cached is not None:
                 # Reconstruct ResourceRead objects from cached dicts
                 cached_resources = [ResourceRead.model_validate(r) for r in cached["resources"]]
                 return (cached_resources, cached.get("next_cursor"))
 
-        page_size = settings.pagination_default_page_size
-        query = select(DbResource).where(DbResource.uri_template.is_(None)).order_by(DbResource.id)  # Consistent ordering for cursor pagination
+        # Determine page size based on limit parameter
+        # limit=None: use default, limit=0: no limit (all), limit>0: use specified (capped)
+        if limit is None:
+            page_size = settings.pagination_default_page_size
+        elif limit == 0:
+            page_size = None  # No limit - fetch all
+        else:
+            page_size = min(limit, settings.pagination_max_page_size)
 
-        # Decode cursor to get last_id if provided
+        query = select(DbResource).where(DbResource.uri_template.is_(None)).order_by(desc(DbResource.created_at), desc(DbResource.id))
+
+        # Apply team-based access control if user_email is provided
+        if user_email:
+            # First-Party
+            from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email)
+            team_ids = [team.id for team in user_teams]
+
+            if team_id:
+                # User requesting specific team - verify access
+                if team_id not in team_ids:
+                    return ([], None)  # No access to this team
+
+                access_conditions = [
+                    and_(DbResource.team_id == team_id, DbResource.visibility.in_(["team", "public"])),
+                    and_(DbResource.team_id == team_id, DbResource.owner_email == user_email),
+                ]
+                query = query.where(or_(*access_conditions))
+            else:
+                # General access: user's resources + public resources + team resources
+                access_conditions = [
+                    DbResource.owner_email == user_email,
+                    DbResource.visibility == "public",
+                ]
+                if team_ids:
+                    access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
+
+                query = query.where(or_(*access_conditions))
+
+            # Apply visibility filter if specified
+            if visibility:
+                query = query.where(DbResource.visibility == visibility)
+
+        # Decode cursor to get last_id and last_created if provided
         last_id = None
+        last_created = None
         if cursor:
             try:
                 cursor_data = decode_cursor(cursor)
                 last_id = cursor_data.get("id")
-                logger.debug(f"Decoded cursor: last_id={last_id}")
+                last_created = cursor_data.get("created_at")
+                logger.debug(f"Decoded cursor: last_id={last_id}, last_created={last_created}")
             except ValueError as e:
                 logger.warning(f"Invalid cursor, ignoring: {e}")
 
-        # Apply cursor filter (WHERE id > last_id)
-        if last_id:
-            query = query.where(DbResource.id > last_id)
+        # Apply cursor filter (keyset pagination)
+        if last_id and last_created:
+            query = query.where(
+                or_(
+                    DbResource.created_at < last_created,
+                    and_(
+                        DbResource.created_at == last_created,
+                        DbResource.id < last_id
+                    )
+                )
+            )
 
         if not include_inactive:
             query = query.where(DbResource.enabled)
@@ -887,12 +955,13 @@ class ResourceService:
         if tags:
             query = query.where(json_contains_expr(db, DbResource.tags, tags, match_any=True))
 
-        # Fetch page_size + 1 to determine if there are more results
-        query = query.limit(page_size + 1)
+        # Fetch page_size + 1 to determine if there are more results (unless no limit)
+        if page_size is not None:
+            query = query.limit(page_size + 1)
         resources = db.execute(query).scalars().all()
 
-        # Check if there are more results
-        has_more = len(resources) > page_size
+        # Check if there are more results (only when paginating)
+        has_more = page_size is not None and len(resources) > page_size
         if has_more:
             resources = resources[:page_size]  # Trim to page_size
 
@@ -915,11 +984,14 @@ class ResourceService:
         next_cursor = None
         if has_more and result:
             last_resource = resources[-1]  # Get last DB object
-            next_cursor = encode_cursor({"id": last_resource.id})
+            next_cursor = encode_cursor({
+                "created_at": last_resource.created_at.isoformat(),
+                "id": last_resource.id
+            })
             logger.debug(f"Generated next_cursor for id={last_resource.id}")
 
-        # Cache first page results
-        if cursor is None:
+        # Cache first page results (only for non-user-specific queries)
+        if cursor is None and user_email is None:
             try:
                 cache_data = {"resources": [r.model_dump(mode="json") for r in result], "next_cursor": next_cursor}
                 await cache.set("resources", cache_data, filters_hash)
@@ -932,7 +1004,12 @@ class ResourceService:
         self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
     ) -> List[ResourceRead]:
         """
+        DEPRECATED: Use list_resources() with user_email parameter instead.
+
         List resources user has access to with team filtering.
+
+        This method is maintained for backward compatibility but is no longer used.
+        New code should call list_resources() with user_email, team_id, and visibility parameters.
 
         Args:
             db: Database session

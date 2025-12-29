@@ -1913,8 +1913,8 @@ async def admin_list_resources(
         ... )
         >>>
         >>> # Mock the resource_service.list_resources_for_user method
-        >>> original_list_resources_for_user = resource_service.list_resources_for_user
-        >>> resource_service.list_resources_for_user = AsyncMock(return_value=[mock_resource])
+        >>> original_list_resources = resource_service.list_resources
+        >>> resource_service.list_resources = AsyncMock(return_value=([mock_resource], None))
         >>>
         >>> # Test listing active resources
         >>> async def test_admin_list_resources_active():
@@ -1935,7 +1935,7 @@ async def admin_list_resources(
         ...         avg_response_time=0.0, last_execution_time=None),
         ...     tags=[]
         ... )
-        >>> resource_service.list_resources_for_user = AsyncMock(return_value=[mock_resource, mock_inactive_resource])
+        >>> resource_service.list_resources = AsyncMock(return_value=([mock_resource, mock_inactive_resource], None))
         >>> async def test_admin_list_resources_all():
         ...     result = await admin_list_resources(include_inactive=True, db=mock_db, user=mock_user)
         ...     return len(result) == 2 and not result[1]['enabled']
@@ -1944,7 +1944,7 @@ async def admin_list_resources(
         True
         >>>
         >>> # Test empty list
-        >>> resource_service.list_resources_for_user = AsyncMock(return_value=[])
+        >>> resource_service.list_resources = AsyncMock(return_value=([], None))
         >>> async def test_admin_list_resources_empty():
         ...     result = await admin_list_resources(include_inactive=False, db=mock_db, user=mock_user)
         ...     return result == []
@@ -1953,7 +1953,7 @@ async def admin_list_resources(
         True
         >>>
         >>> # Test exception handling
-        >>> resource_service.list_resources_for_user = AsyncMock(side_effect=Exception("Resource list error"))
+        >>> resource_service.list_resources = AsyncMock(side_effect=Exception("Resource list error"))
         >>> async def test_admin_list_resources_exception():
         ...     try:
         ...         await admin_list_resources(False, mock_db, mock_user)
@@ -1965,11 +1965,12 @@ async def admin_list_resources(
         True
         >>>
         >>> # Restore original method
-        >>> resource_service.list_resources_for_user = original_list_resources_for_user
+        >>> resource_service.list_resources = original_list_resources
     """
     LOGGER.debug(f"User {get_user_email(user)} requested resource list")
     user_email = get_user_email(user)
-    resources = await resource_service.list_resources_for_user(db, user_email, include_inactive=include_inactive)
+    resources_tuple = await resource_service.list_resources(db, include_inactive=include_inactive, user_email=user_email)
+    resources = resources_tuple[0] if isinstance(resources_tuple, tuple) else resources_tuple
     return [resource.model_dump(by_alias=True) for resource in resources]
 
 
@@ -2380,14 +2381,14 @@ async def admin_ui(
         >>> # Mock services to return empty lists for simplicity in doctest
         >>> original_list_servers_for_user = server_service.list_servers_for_user
         >>> original_list_tools = tool_service.list_tools
-        >>> original_list_resources_for_user = resource_service.list_resources_for_user
+        >>> original_list_resources = resource_service.list_resources
         >>> original_list_prompts_for_user = prompt_service.list_prompts_for_user
         >>> original_list_gateways = gateway_service.list_gateways
         >>> original_list_roots = root_service.list_roots
         >>>
         >>> server_service.list_servers_for_user = AsyncMock(return_value=[])
         >>> tool_service.list_tools = AsyncMock(return_value=([], None))
-        >>> resource_service.list_resources_for_user = AsyncMock(return_value=[])
+        >>> resource_service.list_resources = AsyncMock(return_value=([], None))
         >>> prompt_service.list_prompts_for_user = AsyncMock(return_value=[])
         >>> gateway_service.list_gateways = AsyncMock(return_value=[])
         >>> root_service.list_roots = AsyncMock(return_value=[])
@@ -2473,7 +2474,7 @@ async def admin_ui(
         >>> # Restore original methods
         >>> server_service.list_servers_for_user = original_list_servers_for_user
         >>> tool_service.list_tools = original_list_tools
-        >>> resource_service.list_resources_for_user = original_list_resources_for_user
+        >>> resource_service.list_resources = original_list_resources
         >>> prompt_service.list_prompts_for_user = original_list_prompts_for_user
         >>> gateway_service.list_gateways = original_list_gateways
         >>> root_service.list_roots = original_list_roots
@@ -2710,7 +2711,9 @@ async def admin_ui(
         raw_servers = []
 
     try:
-        raw_resources = await _call_list_with_team_support(resource_service.list_resources_for_user, db, user_email, include_inactive=include_inactive)
+        raw_resources = await _call_list_with_team_support(resource_service.list_resources, db, include_inactive=include_inactive, user_email=user_email)
+        if isinstance(raw_resources, tuple):
+            raw_resources = raw_resources[0]
     except Exception as e:
         LOGGER.exception("Failed to load resources for user: %s", e)
         raw_resources = []
