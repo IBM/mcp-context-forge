@@ -89,6 +89,7 @@ from mcpgateway.schemas import (
     GatewayUpdate,
     GlobalConfigRead,
     GlobalConfigUpdate,
+    PaginatedResponse,
     PaginationMeta,
     PluginDetail,
     PluginListResponse,
@@ -996,7 +997,7 @@ async def get_configuration_settings(
     }
 
 
-@admin_router.get("/servers", response_model=List[ServerRead])
+@admin_router.get("/servers", response_model=PaginatedResponse)
 async def admin_list_servers(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
@@ -1906,7 +1907,7 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
     return RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
 
 
-@admin_router.get("/resources", response_model=List[ResourceRead])
+@admin_router.get("/resources", response_model=PaginatedResponse)
 async def admin_list_resources(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
@@ -2074,7 +2075,7 @@ async def admin_list_resources(
     }
 
 
-@admin_router.get("/prompts", response_model=List[PromptRead])
+@admin_router.get("/prompts", response_model=PaginatedResponse)
 async def admin_list_prompts(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
@@ -2211,7 +2212,7 @@ async def admin_list_prompts(
     }
 
 
-@admin_router.get("/gateways", response_model=List[GatewayRead])
+@admin_router.get("/gateways", response_model=PaginatedResponse)
 async def admin_list_gateways(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
@@ -5853,7 +5854,7 @@ async def admin_force_password_change(
         return HTMLResponse(content=f'<div class="text-red-500">Error forcing password change: {str(e)}</div>', status_code=400)
 
 
-@admin_router.get("/tools")
+@admin_router.get("/tools", response_model=PaginatedResponse)
 async def admin_list_tools(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
@@ -10568,7 +10569,7 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
 ####################
 
 
-@admin_router.get("/tags", response_model=List[Dict[str, Any]])
+@admin_router.get("/tags", response_model=PaginatedResponse)
 async def admin_list_tags(
     entity_types: Optional[str] = None,
     include_entities: bool = False,
@@ -11642,7 +11643,7 @@ async def admin_get_agent(
         raise e
 
 
-@admin_router.get("/a2a")
+@admin_router.get("/a2a", response_model=PaginatedResponse)
 async def admin_list_a2a_agents(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
@@ -12466,7 +12467,7 @@ async def admin_test_a2a_agent(
 # gRPC Service Management Endpoints
 
 
-@admin_router.get("/grpc", response_model=List[GrpcServiceRead])
+@admin_router.get("/grpc", response_model=PaginatedResponse)
 async def admin_list_grpc_services(
     include_inactive: bool = False,
     team_id: Optional[str] = Query(None),
