@@ -2022,9 +2022,9 @@ async def admin_list_prompts(
         ...     tags=[]
         ... )
         >>>
-        >>> # Mock the prompt_service.list_prompts_for_user method
-        >>> original_list_prompts_for_user = prompt_service.list_prompts_for_user
-        >>> prompt_service.list_prompts_for_user = AsyncMock(return_value=[mock_prompt])
+        >>> # Mock the prompt_service.list_prompts method
+        >>> original_list_prompts = prompt_service.list_prompts
+        >>> prompt_service.list_prompts = AsyncMock(return_value=([mock_prompt], None))
         >>>
         >>> # Test listing active prompts
         >>> async def test_admin_list_prompts_active():
@@ -2045,7 +2045,7 @@ async def admin_list_prompts(
         ...     ),
         ...     tags=[]
         ... )
-        >>> prompt_service.list_prompts_for_user = AsyncMock(return_value=[mock_prompt, mock_inactive_prompt])
+        >>> prompt_service.list_prompts = AsyncMock(return_value=([mock_prompt, mock_inactive_prompt], None))
         >>> async def test_admin_list_prompts_all():
         ...     result = await admin_list_prompts(include_inactive=True, db=mock_db, user=mock_user)
         ...     return len(result) == 2 and not result[1]['enabled']
@@ -2054,7 +2054,7 @@ async def admin_list_prompts(
         True
         >>>
         >>> # Test empty list
-        >>> prompt_service.list_prompts_for_user = AsyncMock(return_value=[])
+        >>> prompt_service.list_prompts = AsyncMock(return_value=([], None))
         >>> async def test_admin_list_prompts_empty():
         ...     result = await admin_list_prompts(include_inactive=False, db=mock_db, user=mock_user)
         ...     return result == []
@@ -2063,7 +2063,7 @@ async def admin_list_prompts(
         True
         >>>
         >>> # Test exception handling
-        >>> prompt_service.list_prompts_for_user = AsyncMock(side_effect=Exception("Prompt list error"))
+        >>> prompt_service.list_prompts = AsyncMock(side_effect=Exception("Prompt list error"))
         >>> async def test_admin_list_prompts_exception():
         ...     try:
         ...         await admin_list_prompts(False, mock_db, mock_user)
@@ -2075,11 +2075,11 @@ async def admin_list_prompts(
         True
         >>>
         >>> # Restore original method
-        >>> prompt_service.list_prompts_for_user = original_list_prompts_for_user
+        >>> prompt_service.list_prompts = original_list_prompts
     """
     LOGGER.debug(f"User {get_user_email(user)} requested prompt list")
     user_email = get_user_email(user)
-    prompts = await prompt_service.list_prompts_for_user(db, user_email, include_inactive=include_inactive)
+    prompts, _ = await prompt_service.list_prompts(db, include_inactive=include_inactive, user_email=user_email)
     return [prompt.model_dump(by_alias=True) for prompt in prompts]
 
 
@@ -2382,14 +2382,14 @@ async def admin_ui(
         >>> original_list_servers_for_user = server_service.list_servers_for_user
         >>> original_list_tools = tool_service.list_tools
         >>> original_list_resources = resource_service.list_resources
-        >>> original_list_prompts_for_user = prompt_service.list_prompts_for_user
+        >>> original_list_prompts = prompt_service.list_prompts
         >>> original_list_gateways = gateway_service.list_gateways
         >>> original_list_roots = root_service.list_roots
         >>>
         >>> server_service.list_servers_for_user = AsyncMock(return_value=[])
         >>> tool_service.list_tools = AsyncMock(return_value=([], None))
         >>> resource_service.list_resources = AsyncMock(return_value=([], None))
-        >>> prompt_service.list_prompts_for_user = AsyncMock(return_value=[])
+        >>> prompt_service.list_prompts = AsyncMock(return_value=([], None))
         >>> gateway_service.list_gateways = AsyncMock(return_value=[])
         >>> root_service.list_roots = AsyncMock(return_value=[])
         >>>
@@ -2475,7 +2475,7 @@ async def admin_ui(
         >>> server_service.list_servers_for_user = original_list_servers_for_user
         >>> tool_service.list_tools = original_list_tools
         >>> resource_service.list_resources = original_list_resources
-        >>> prompt_service.list_prompts_for_user = original_list_prompts_for_user
+        >>> prompt_service.list_prompts = original_list_prompts
         >>> gateway_service.list_gateways = original_list_gateways
         >>> root_service.list_roots = original_list_roots
     """
@@ -2719,7 +2719,10 @@ async def admin_ui(
         raw_resources = []
 
     try:
-        raw_prompts = await _call_list_with_team_support(prompt_service.list_prompts_for_user, db, user_email, include_inactive=include_inactive)
+        raw_prompts = await _call_list_with_team_support(prompt_service.list_prompts, db, include_inactive=include_inactive, user_email=user_email)
+        # Handle tuple return (list, cursor)
+        if isinstance(raw_prompts, tuple):
+            raw_prompts = raw_prompts[0]
     except Exception as e:
         LOGGER.exception("Failed to load prompts for user: %s", e)
         raw_prompts = []

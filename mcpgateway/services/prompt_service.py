@@ -813,7 +813,17 @@ class PromptService:
 
         return stats
 
-    async def list_prompts(self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None) -> tuple[List[PromptRead], Optional[str]]:
+    async def list_prompts(
+        self,
+        db: Session,
+        include_inactive: bool = False,
+        cursor: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        limit: Optional[int] = None,
+        user_email: Optional[str] = None,
+        team_id: Optional[str] = None,
+        visibility: Optional[str] = None,
+    ) -> tuple[List[PromptRead], Optional[str]]:
         """
         Retrieve a list of prompt templates from the database with pagination support.
 
@@ -826,8 +836,13 @@ class PromptService:
             include_inactive (bool): If True, include inactive prompts in the result.
                 Defaults to False.
             cursor (Optional[str], optional): An opaque cursor token for pagination.
-                Opaque base64-encoded string containing last item's ID.
+                Opaque base64-encoded string containing last item's ID and created_at.
             tags (Optional[List[str]]): Filter prompts by tags. If provided, only prompts with at least one matching tag will be returned.
+            limit (Optional[int]): Maximum number of prompts to return. Use 0 for all prompts (no limit).
+                If not specified, uses pagination_default_page_size.
+            user_email (Optional[str]): User email for team-based access control. If None, no access control is applied.
+            team_id (Optional[str]): Filter by specific team ID. Requires user_email for access validation.
+            visibility (Optional[str]): Filter by visibility (private, team, public).
 
         Returns:
             tuple[List[PromptRead], Optional[str]]: Tuple containing:
@@ -849,9 +864,9 @@ class PromptService:
             >>> prompts == ['prompt_read']
             True
         """
-        # Check cache for first page only (cursor=None)
+        # Check cache for first page only (cursor=None) - skip when user_email provided
         cache = _get_registry_cache()
-        if cursor is None:
+        if cursor is None and user_email is None:
             filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
             cached = await cache.get("prompts", filters_hash)
             if cached is not None:
@@ -859,38 +874,89 @@ class PromptService:
                 cached_prompts = [PromptRead.model_validate(p) for p in cached["prompts"]]
                 return (cached_prompts, cached.get("next_cursor"))
 
-        page_size = settings.pagination_default_page_size
-        query = select(DbPrompt).order_by(DbPrompt.id)  # Consistent ordering for cursor pagination
+        # Determine page size from limit parameter
+        if limit is not None:
+            if limit == 0:
+                page_size = None  # No limit, fetch all
+            else:
+                page_size = min(limit, settings.pagination_max_page_size)
+        else:
+            page_size = settings.pagination_default_page_size
 
-        # Decode cursor to get last_id if provided
+        # Build query with proper ordering for cursor pagination
+        query = select(DbPrompt).order_by(desc(DbPrompt.created_at), desc(DbPrompt.id))
+
+        # Decode cursor to get last values if provided
         last_id = None
+        last_created = None
         if cursor:
             try:
                 cursor_data = decode_cursor(cursor)
                 last_id = cursor_data.get("id")
-                logger.debug(f"Decoded cursor: last_id={last_id}")
-            except ValueError as e:
+                created_str = cursor_data.get("created_at")
+                if created_str:
+                    last_created = datetime.fromisoformat(created_str)
+                logger.debug(f"Decoded cursor: last_created={last_created}, last_id={last_id}")
+            except (ValueError, TypeError) as e:
                 logger.warning(f"Invalid cursor, ignoring: {e}")
 
-        # Apply cursor filter (WHERE id > last_id)
-        if last_id:
-            query = query.where(DbPrompt.id > last_id)
+        # Apply cursor filter with keyset pagination (created_at DESC, id DESC)
+        if last_id and last_created:
+            query = query.where(
+                or_(
+                    DbPrompt.created_at < last_created,
+                    and_(DbPrompt.created_at == last_created, DbPrompt.id < last_id)
+                )
+            )
 
         if not include_inactive:
             query = query.where(DbPrompt.enabled)
+
+        # Apply team-based access control if user_email is provided
+        if user_email:
+            from mcpgateway.services.team_management_service import TeamManagementService
+
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email)
+            team_ids = [team.id for team in user_teams]
+
+            if team_id:
+                # User requesting specific team - verify access
+                if team_id not in team_ids:
+                    return ([], None)
+                access_conditions = [
+                    and_(DbPrompt.team_id == team_id, DbPrompt.visibility.in_(["team", "public"])),
+                    and_(DbPrompt.team_id == team_id, DbPrompt.owner_email == user_email),
+                ]
+                query = query.where(or_(*access_conditions))
+            else:
+                # General access: user's prompts + public prompts + team prompts
+                access_conditions = [
+                    DbPrompt.owner_email == user_email,
+                    DbPrompt.visibility == "public",
+                ]
+                if team_ids:
+                    access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
+                query = query.where(or_(*access_conditions))
+
+            if visibility:
+                query = query.where(DbPrompt.visibility == visibility)
 
         # Add tag filtering if tags are provided
         if tags:
             query = query.where(json_contains_expr(db, DbPrompt.tags, tags, match_any=True))
 
-        # Fetch page_size + 1 to determine if there are more results
-        query = query.limit(page_size + 1)
+        # Fetch page_size + 1 to determine if there are more results (unless limit=0 for unlimited)
+        if page_size is not None:
+            query = query.limit(page_size + 1)
         prompts = db.execute(query).scalars().all()
 
-        # Check if there are more results
-        has_more = len(prompts) > page_size
-        if has_more:
-            prompts = prompts[:page_size]  # Trim to page_size
+        # Check if there are more results (only if we used pagination)
+        has_more = False
+        if page_size is not None:
+            has_more = len(prompts) > page_size
+            if has_more:
+                prompts = prompts[:page_size]  # Trim to page_size
 
         # Batch fetch team names to avoid N+1 queries
         team_ids = {p.team_id for p in prompts if p.team_id}
@@ -911,11 +977,11 @@ class PromptService:
         next_cursor = None
         if has_more and result:
             last_prompt = prompts[-1]  # Get last DB object
-            next_cursor = encode_cursor({"id": last_prompt.id})
-            logger.debug(f"Generated next_cursor for id={last_prompt.id}")
+            next_cursor = encode_cursor({"created_at": last_prompt.created_at.isoformat(), "id": last_prompt.id})
+            logger.debug(f"Generated next_cursor for created_at={last_prompt.created_at}, id={last_prompt.id}")
 
-        # Cache first page results
-        if cursor is None:
+        # Cache first page results - only for non-user-specific queries
+        if cursor is None and user_email is None:
             try:
                 cache_data = {"prompts": [p.model_dump(mode="json") for p in result], "next_cursor": next_cursor}
                 await cache.set("prompts", cache_data, filters_hash)
@@ -928,6 +994,11 @@ class PromptService:
         self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
     ) -> List[PromptRead]:
         """
+        DEPRECATED: Use list_prompts() with user_email parameter instead.
+
+        This method is maintained for backward compatibility but is no longer used.
+        New code should call list_prompts() with user_email, team_id, and visibility parameters.
+
         List prompts user has access to with team filtering.
 
         Args:

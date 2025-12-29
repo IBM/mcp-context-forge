@@ -3454,16 +3454,17 @@ async def list_prompts(
     # Determine final team ID
     team_id = team_id or token_team_id
 
-    # Use team-filtered prompt listing
-    if team_id or visibility:
-        data = await prompt_service.list_prompts_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
-        # Apply tag filtering to team-filtered results if needed
-        if tags_list:
-            data = [prompt for prompt in data if any(tag in prompt.tags for tag in tags_list)]
-    else:
-        # Use existing method for backward compatibility when no team filtering
-        logger.debug(f"User: {user_email} requested prompt list with include_inactive={include_inactive}, cursor={cursor}, tags={tags_list}")
-        data, _ = await prompt_service.list_prompts(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
+    # Use consolidated prompt listing with optional team filtering
+    logger.debug(f"User: {user_email} requested prompt list with include_inactive={include_inactive}, cursor={cursor}, tags={tags_list}, team_id={team_id}, visibility={visibility}")
+    data, _ = await prompt_service.list_prompts(
+        db=db,
+        cursor=cursor,
+        include_inactive=include_inactive,
+        tags=tags_list,
+        user_email=user_email if (team_id or visibility) else None,
+        team_id=team_id,
+        visibility=visibility,
+    )
     return data
 
 
