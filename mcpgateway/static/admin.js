@@ -6906,8 +6906,12 @@ function showTab(tabName) {
                 }
 
                 if (tabName === "maintenance") {
-                    const maintenancePanel = safeGetElement("maintenance-panel");
-                    if (maintenancePanel && maintenancePanel.innerHTML.trim() === "") {
+                    const maintenancePanel =
+                        safeGetElement("maintenance-panel");
+                    if (
+                        maintenancePanel &&
+                        maintenancePanel.innerHTML.trim() === ""
+                    ) {
                         fetchWithTimeout(
                             `${window.ROOT_PATH}/admin/maintenance/partial`,
                             {},
@@ -6916,7 +6920,9 @@ function showTab(tabName) {
                             .then((resp) => {
                                 if (!resp.ok) {
                                     if (resp.status === 403) {
-                                        throw new Error("Platform administrator access required");
+                                        throw new Error(
+                                            "Platform administrator access required",
+                                        );
                                     }
                                     throw new Error(
                                         `HTTP ${resp.status}: ${resp.statusText}`,
@@ -6936,7 +6942,8 @@ function showTab(tabName) {
                                 const errorDiv = document.createElement("div");
                                 errorDiv.className = "text-red-600 p-4";
                                 errorDiv.textContent =
-                                    err.message || "Failed to load maintenance panel. Please try again.";
+                                    err.message ||
+                                    "Failed to load maintenance panel. Please try again.";
                                 maintenancePanel.innerHTML = "";
                                 maintenancePanel.appendChild(errorDiv);
                             });
@@ -16522,11 +16529,15 @@ function initializeTabState() {
         setTimeout(() => {
             const panel = safeGetElement("maintenance-panel");
             if (panel && panel.innerHTML.trim() === "") {
-                fetchWithTimeout(`${window.ROOT_PATH}/admin/maintenance/partial`)
+                fetchWithTimeout(
+                    `${window.ROOT_PATH}/admin/maintenance/partial`,
+                )
                     .then((resp) => {
                         if (!resp.ok) {
                             if (resp.status === 403) {
-                                throw new Error("Platform administrator access required");
+                                throw new Error(
+                                    "Platform administrator access required",
+                                );
                             }
                             throw new Error("Network response was not ok");
                         }
@@ -16536,10 +16547,14 @@ function initializeTabState() {
                         safeSetInnerHTML(panel, html, true);
                     })
                     .catch((err) => {
-                        console.error("Failed to preload maintenance panel:", err);
+                        console.error(
+                            "Failed to preload maintenance panel:",
+                            err,
+                        );
                         const errorDiv = document.createElement("div");
                         errorDiv.className = "text-red-600 p-4";
-                        errorDiv.textContent = err.message || "Failed to load maintenance panel.";
+                        errorDiv.textContent =
+                            err.message || "Failed to load maintenance panel.";
                         panel.innerHTML = "";
                         panel.appendChild(errorDiv);
                     });

@@ -20,6 +20,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import logging
+import time
 from typing import Any, Dict, List, Optional, Tuple, Type
 
 # Third-Party
@@ -266,7 +267,7 @@ class MetricsRollupService:
                 # Find the earliest raw metric timestamp across all tables
                 earliest_raw = None
 
-                for _, raw_model, hourly_model, _, _, _ in self.METRIC_TABLES:
+                for _, raw_model, _hourly_model, _, _, _ in self.METRIC_TABLES:
                     # Get earliest unprocessed raw metric (where no rollup exists for that hour)
                     result = db.execute(select(func.min(raw_model.timestamp))).scalar()
 
@@ -302,9 +303,6 @@ class MetricsRollupService:
         Returns:
             RollupSummary: Summary of rollup operations
         """
-        # Standard
-        import time
-
         started_at = datetime.now(timezone.utc)
         start_time = time.monotonic()
 
@@ -382,9 +380,6 @@ class MetricsRollupService:
         Returns:
             RollupResult: Result of the rollup operation
         """
-        # Standard
-        import time
-
         start_time = time.monotonic()
         hours_processed = 0
         records_aggregated = 0
@@ -403,6 +398,7 @@ class MetricsRollupService:
                     hour_end = current + timedelta(hours=1)
 
                     # Check if we have raw metrics for this hour
+                    # pylint: disable=not-callable
                     raw_count = (
                         db.execute(
                             select(func.count())
@@ -420,7 +416,7 @@ class MetricsRollupService:
                     if raw_count > 0:
                         # Check if rollup already exists for this hour (skip if not force_reprocess)
                         if not force_reprocess:
-                            existing_rollup_count = db.execute(select(func.count()).select_from(hourly_model).where(hourly_model.hour_start == current)).scalar() or 0
+                            existing_rollup_count = db.execute(select(func.count()).select_from(hourly_model).where(hourly_model.hour_start == current)).scalar() or 0  # pylint: disable=not-callable
                             if existing_rollup_count > 0:
                                 # Skip this hour, rollup already exists
                                 current = hour_end
@@ -529,6 +525,7 @@ class MetricsRollupService:
         )
 
         # OPTIMIZED: Single bulk query for basic aggregations per entity
+        # pylint: disable=not-callable
         agg_query = (
             select(
                 *group_cols,
@@ -722,11 +719,11 @@ class MetricsRollupService:
                 if key not in (entity_id_col, "hour_start", "interaction_type"):
                     setattr(existing, key, value)
             return (0, 1)
-        else:
-            # Insert new
-            rollup = hourly_model(**values)
-            db.add(rollup)
-            return (1, 0)
+
+        # Insert new
+        rollup = hourly_model(**values)
+        db.add(rollup)
+        return (1, 0)
 
     def _delete_raw_metrics(
         self,

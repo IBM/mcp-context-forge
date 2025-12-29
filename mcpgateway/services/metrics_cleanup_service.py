@@ -20,6 +20,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import logging
+import time
 from typing import Dict, Optional
 
 # Third-Party
@@ -217,9 +218,6 @@ class MetricsCleanupService:
         Returns:
             CleanupSummary: Summary of cleanup operations
         """
-        # Standard
-        import time
-
         started_at = datetime.now(timezone.utc)
         start_time = time.monotonic()
 
@@ -290,9 +288,6 @@ class MetricsCleanupService:
         Returns:
             CleanupResult: Result of the cleanup operation
         """
-        # Standard
-        import time
-
         start_time = time.monotonic()
         total_deleted = 0
         error_msg = None
@@ -325,7 +320,7 @@ class MetricsCleanupService:
                         break
 
                 # Get remaining count
-                remaining_count = db.execute(select(func.count()).select_from(model_class)).scalar() or 0
+                remaining_count = db.execute(select(func.count()).select_from(model_class)).scalar() or 0  # pylint: disable=not-callable
 
         except Exception as e:
             logger.error(f"Error cleaning up {table_name}: {e}")
@@ -414,6 +409,7 @@ class MetricsCleanupService:
         def _get_sizes() -> Dict[str, int]:
             with fresh_db_session() as db:
                 for table_name, model_class, hourly_class, _ in self.METRIC_TABLES:
+                    # pylint: disable=not-callable
                     sizes[table_name] = db.execute(select(func.count()).select_from(model_class)).scalar() or 0
                     hourly_name = f"{table_name}_hourly"
                     sizes[hourly_name] = db.execute(select(func.count()).select_from(hourly_class)).scalar() or 0

@@ -123,6 +123,7 @@ def aggregate_metrics_combined(
     if entity_id is not None:
         raw_filters.append(getattr(raw_model, id_col) == entity_id)
 
+    # pylint: disable=not-callable
     raw_result = db.execute(
         select(
             func.count(raw_model.id).label("total"),
@@ -253,6 +254,7 @@ def get_top_entities_combined(
     # This is a more complex query that unions raw + rollup data
 
     # Subquery for raw metrics aggregated by entity
+    # pylint: disable=not-callable
     raw_subq = (
         select(
             getattr(raw_model, id_col).label("entity_id"),
