@@ -1695,15 +1695,23 @@ class ResourceService:
 
                 original_uri = uri
                 contexts = None
-                # Call pre-fetch hooks if plugin manager is available
-                plugin_eligible = bool(self._plugin_manager and PLUGINS_AVAILABLE and uri and ("://" in uri))
-                if plugin_eligible:
-                    # Initialize plugin manager if needed
-                    # pylint: disable=protected-access
-                    if not self._plugin_manager._initialized:
-                        await self._plugin_manager.initialize()
-                    # pylint: enable=protected-access
 
+                # Check if plugin manager is available and eligible for this request
+                plugin_eligible = bool(self._plugin_manager and PLUGINS_AVAILABLE and uri and ("://" in uri))
+
+                # Initialize plugin manager if needed (lazy init must happen before has_hooks_for check)
+                # pylint: disable=protected-access
+                if plugin_eligible and not self._plugin_manager._initialized:
+                    await self._plugin_manager.initialize()
+                # pylint: enable=protected-access
+
+                # Check if any resource hooks are registered to avoid unnecessary context creation
+                has_pre_fetch = plugin_eligible and self._plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_PRE_FETCH)
+                has_post_fetch = plugin_eligible and self._plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_POST_FETCH)
+
+                # Initialize plugin context variables only if hooks are registered
+                global_context = None
+                if has_pre_fetch or has_post_fetch:
                     # Create plugin context
                     # Normalize user to an identifier string if provided
                     user_id = None
@@ -1728,6 +1736,8 @@ class ResourceService:
                         # Create new context (fallback when middleware didn't run)
                         global_context = GlobalContext(request_id=request_id, user=user_id, server_id=server_id)
 
+                # Call pre-fetch hooks if registered
+                if has_pre_fetch:
                     # Create pre-fetch payload
                     pre_payload = ResourcePreFetchPayload(uri=uri, metadata={})
 
@@ -1804,8 +1814,8 @@ class ResourceService:
                             raise ResourceNotFoundError(f"Resource '{resource_id}' exists but is inactive")
                         raise ResourceNotFoundError(f"Resource not found for the resource id: {resource_id}")
 
-                # Call post-fetch hooks if plugin manager is available
-                if plugin_eligible:
+                # Call post-fetch hooks if registered
+                if has_post_fetch:
                     # Create post-fetch payload
                     post_payload = ResourcePostFetchPayload(uri=original_uri, content=content)
                     # Execute post-fetch hooks

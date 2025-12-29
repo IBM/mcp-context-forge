@@ -1184,11 +1184,15 @@ class PromptService:
                 # Determine how to look up the prompt
                 prompt_name = None
 
-                if self._plugin_manager:
-                    # Use existing context_table from previous hooks if available
-                    context_table = plugin_context_table
+                # Check if any prompt hooks are registered to avoid unnecessary context creation
+                has_pre_fetch = self._plugin_manager and self._plugin_manager.has_hooks_for(PromptHookType.PROMPT_PRE_FETCH)
+                has_post_fetch = self._plugin_manager and self._plugin_manager.has_hooks_for(PromptHookType.PROMPT_POST_FETCH)
 
-                    # Reuse existing global_context from middleware or create new one
+                # Initialize plugin context variables only if hooks are registered
+                context_table = None
+                global_context = None
+                if has_pre_fetch or has_post_fetch:
+                    context_table = plugin_context_table
                     if plugin_global_context:
                         global_context = plugin_global_context
                         # Update fields with prompt-specific information
@@ -1204,6 +1208,7 @@ class PromptService:
                             request_id = uuid.uuid4().hex
                         global_context = GlobalContext(request_id=request_id, user=user, server_id=server_id, tenant_id=tenant_id)
 
+                if has_pre_fetch:
                     pre_result, context_table = await self._plugin_manager.invoke_hook(
                         PromptHookType.PROMPT_PRE_FETCH,
                         payload=PromptPrehookPayload(prompt_id=prompt_id, args=arguments),
@@ -1261,7 +1266,7 @@ class PromptService:
                             span.set_attribute("error.message", str(e))
                         raise PromptError(f"Failed to process prompt: {str(e)}")
 
-                if self._plugin_manager:
+                if has_post_fetch:
                     post_result, _ = await self._plugin_manager.invoke_hook(
                         PromptHookType.PROMPT_POST_FETCH,
                         payload=PromptPosthookPayload(prompt_id=str(prompt.id), result=result),
