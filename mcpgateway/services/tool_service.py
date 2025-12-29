@@ -1472,15 +1472,7 @@ class ToolService:
 
         # Apply cursor filter (WHERE id > last_id)
         if last_id and last_created:
-            query = query.where(
-                or_(
-                    DbTool.created_at < last_created,
-                    and_(
-                        DbTool.created_at == last_created,
-                        DbTool.id < last_id
-                    )
-                )
-            )
+            query = query.where(or_(DbTool.created_at < last_created, and_(DbTool.created_at == last_created, DbTool.id < last_id)))
 
         if not include_inactive:
             query = query.where(DbTool.enabled)
@@ -1712,7 +1704,7 @@ class ToolService:
 
         # Execute query with LEFT JOIN for team names in single query
         query_with_join = query.outerjoin(EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True))).add_columns(EmailTeam.name.label("team_name"))
-        
+
         if page_size is not None:
             rows = db.execute(query_with_join.limit(page_size + 1)).all()
         else:
@@ -1739,10 +1731,7 @@ class ToolService:
         # Generate cursor if there are more results (cursor-based pagination)
         if has_more and tools:
             last_tool = tools[-1]
-            next_cursor = encode_cursor({
-                "created_at": last_tool.created_at.isoformat(),
-                "id": last_tool.id
-            })
+            next_cursor = encode_cursor({"created_at": last_tool.created_at.isoformat(), "id": last_tool.id})
 
         return (result, next_cursor)
 

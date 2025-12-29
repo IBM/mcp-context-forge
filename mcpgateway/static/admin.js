@@ -21510,7 +21510,11 @@ async function loadVirtualServersForChat() {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
-        const data = await response.json();
+        let data = await response.json();
+        // Handle new paginated response format
+        if ("data" in data) {
+            data = data.data;
+        }
         const servers = Array.isArray(data) ? data : data.servers || [];
 
         if (servers.length === 0) {

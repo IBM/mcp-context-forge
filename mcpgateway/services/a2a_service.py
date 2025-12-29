@@ -463,8 +463,12 @@ class A2AAgentService:
         last_created = None
         if cursor:
             try:
-                from mcpgateway.utils.pagination import decode_cursor
+                # Standard
                 from datetime import datetime
+
+                # First-Party
+                from mcpgateway.utils.pagination import decode_cursor
+
                 cursor_data = decode_cursor(cursor)
                 last_id = cursor_data.get("id")
                 created_str = cursor_data.get("created_at")
@@ -476,18 +480,14 @@ class A2AAgentService:
 
         # Apply cursor filter with keyset pagination (created_at DESC, id DESC)
         if last_id and last_created:
-            query = query.where(
-                or_(
-                    DbA2AAgent.created_at < last_created,
-                    and_(DbA2AAgent.created_at == last_created, DbA2AAgent.id < last_id)
-                )
-            )
+            query = query.where(or_(DbA2AAgent.created_at < last_created, and_(DbA2AAgent.created_at == last_created, DbA2AAgent.id < last_id)))
 
         if not include_inactive:
             query = query.where(DbA2AAgent.enabled.is_(True))
 
         # Apply team-based access control if user_email is provided
         if user_email:
+            # First-Party
             from mcpgateway.services.team_management_service import TeamManagementService
 
             team_service = TeamManagementService(db)
@@ -550,7 +550,9 @@ class A2AAgentService:
         next_cursor = None
         if has_more and result:
             last_agent = agents[-1]  # Get last DB object
+            # First-Party
             from mcpgateway.utils.pagination import encode_cursor
+
             next_cursor = encode_cursor({"created_at": last_agent.created_at.isoformat(), "id": last_agent.id})
             logger.debug(f"Generated next_cursor for created_at={last_agent.created_at}, id={last_agent.id}")
 

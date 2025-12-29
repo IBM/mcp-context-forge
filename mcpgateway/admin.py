@@ -60,9 +60,13 @@ from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
-from mcpgateway.db import extract_json_field, get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
+from mcpgateway.db import A2AAgent as DbA2AAgent
+from mcpgateway.db import extract_json_field
+from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
+from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import utc_now
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
@@ -133,7 +137,7 @@ from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
-from mcpgateway.utils.pagination import generate_pagination_links, paginate_query
+from mcpgateway.utils.pagination import paginate_query
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.security_cookies import set_auth_cookie
@@ -994,20 +998,33 @@ async def get_configuration_settings(
 
 @admin_router.get("/servers", response_model=List[ServerRead])
 async def admin_list_servers(
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> List[Dict[str, Any]]:
+) -> Dict[str, Any]:
     """
-    List servers for the admin UI with an option to include inactive servers.
+    List servers for the admin UI with pagination support.
+
+    This endpoint retrieves a paginated list of servers from the database, optionally
+    including those that are inactive. The endpoint supports both offset-based (page/per_page)
+    and cursor-based pagination, automatically switching to cursor pagination for large datasets.
 
     Args:
+        page (int): Page number (1-indexed) for offset pagination.
+        per_page (int): Number of items per page (1-500).
+        cursor (Optional[str]): Cursor for cursor-based pagination.
         include_inactive (bool): Whether to include inactive servers.
         db (Session): The database session dependency.
         user (str): The authenticated user dependency.
 
     Returns:
-        List[ServerRead]: A list of server records.
+        Dict[str, Any]: A dictionary containing:
+            - data: List of server records formatted with by_alias=True
+            - pagination: Pagination metadata
+            - links: Pagination links (optional)
 
     Examples:
         >>> import asyncio
@@ -1044,55 +1061,81 @@ async def admin_list_servers(
         ...     metrics=mock_metrics
         ... )
         >>>
-        >>> # Mock the server_service.list_servers method
-        >>> original_list_servers = server_service.list_servers
-        >>> server_service.list_servers = AsyncMock(return_value=([mock_server], None))
+        >>> # Mock paginate_query
+        >>> from mcpgateway.utils.pagination import paginate_query
+        >>> original_paginate = paginate_query
+        >>> async def mock_paginate_query(*args, **kwargs):
+        ...     from mcpgateway.schemas import PaginationMeta
+        ...     return {
+        ...         "data": [mock_server],
+        ...         "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False),
+        ...         "links": None
+        ...     }
         >>>
-        >>> # Test the function
-        >>> async def test_admin_list_servers():
-        ...     result = await admin_list_servers(
-        ...         include_inactive=False,
-        ...         db=mock_db,
-        ...         user=mock_user
-        ...     )
-        ...     return len(result) > 0 and isinstance(result[0], dict)
+        >>> import mcpgateway.utils.pagination
+        >>> mcpgateway.utils.pagination.paginate_query = mock_paginate_query
         >>>
-        >>> # Run the test
-        >>> asyncio.run(test_admin_list_servers())
+        >>> # Test listing servers with pagination
+        >>> async def test_admin_list_servers_paginated():
+        ...     result = await admin_list_servers(page=1, per_page=50, cursor=None, include_inactive=False, db=mock_db, user=mock_user)
+        ...     return "data" in result and "pagination" in result
+        >>>
+        >>> asyncio.run(test_admin_list_servers_paginated())
         True
         >>>
-        >>> # Restore original method
-        >>> server_service.list_servers = original_list_servers
-        >>>
-        >>> # Additional test for empty server list
-        >>> server_service.list_servers = AsyncMock(return_value=([], None))
-        >>> async def test_admin_list_servers_empty():
-        ...     result = await admin_list_servers(
-        ...         include_inactive=True,
-        ...         db=mock_db,
-        ...         user=mock_user
-        ...     )
-        ...     return result == []
-        >>> asyncio.run(test_admin_list_servers_empty())
-        True
-        >>> server_service.list_servers = original_list_servers
-        >>>
-        >>> # Additional test for exception handling
-        >>> import pytest
-        >>> from fastapi import HTTPException
-        >>> async def test_admin_list_servers_exception():
-        ...     server_service.list_servers = AsyncMock(side_effect=Exception("Test error"))
-        ...     try:
-        ...         await admin_list_servers(False, mock_db, mock_user)
-        ...     except Exception as e:
-        ...         return str(e) == "Test error"
-        >>> asyncio.run(test_admin_list_servers_exception())
-        True
+        >>> # Restore original function
+        >>> mcpgateway.utils.pagination.paginate_query = original_paginate
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested server list")
+    LOGGER.debug(f"User {get_user_email(user)} requested server list (page={page}, per_page={per_page})")
     user_email = get_user_email(user)
-    servers, _ = await server_service.list_servers(db, include_inactive=include_inactive, user_email=user_email)
-    return [server.model_dump(by_alias=True) for server in servers]
+
+    # Team scoping
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    # Build base query
+    query = select(DbServer)
+
+    if not include_inactive:
+        query = query.where(DbServer.enabled.is_(True))
+
+    # Access conditions: owner, team, public
+    access_conditions = [DbServer.owner_email == user_email]
+    if team_ids:
+        access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
+    access_conditions.append(DbServer.visibility == "public")
+
+    query = query.where(or_(*access_conditions))
+    query = query.order_by(desc(DbServer.created_at), desc(DbServer.id))
+
+    # Use unified pagination function
+    paginated_result = await paginate_query(
+        db=db,
+        query=query,
+        page=page,
+        per_page=per_page,
+        cursor=cursor,
+        base_url="/admin/servers",
+        query_params={"include_inactive": include_inactive} if include_inactive else {},
+    )
+
+    # Extract paginated servers
+    servers_db = paginated_result["data"]
+
+    # Convert to ServerRead
+    result = []
+    for s in servers_db:
+        team_name = server_service._get_team_name(db, getattr(s, "team_id", None))  # pylint: disable=protected-access
+        s.team = team_name
+        result.append(server_service._convert_server_to_read(s, include_metrics=False))  # pylint: disable=protected-access
+
+    # Return standardized paginated response
+    return {
+        "data": [server.model_dump(by_alias=True) for server in result],
+        "pagination": paginated_result["pagination"].model_dump(),
+        "links": paginated_result["links"].model_dump() if paginated_result["links"] else None,
+    }
 
 
 @admin_router.get("/servers/{server_id}", response_model=ServerRead)
@@ -1865,24 +1908,32 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
 
 @admin_router.get("/resources", response_model=List[ResourceRead])
 async def admin_list_resources(
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    cursor: Optional[str] = None,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> List[Dict[str, Any]]:
+) -> Dict[str, Any]:
     """
-    List resources for the admin UI with an option to include inactive resources.
+    List resources for the admin UI with pagination support.
 
-    This endpoint retrieves a list of resources from the database, optionally including
-    those that are inactive. The inactive filter is useful for administrators who need
-    to view or manage resources that have been deactivated but not deleted.
+    This endpoint retrieves a paginated list of resources from the database, optionally
+    including those that are inactive. Supports both offset-based and cursor-based
+    pagination. Automatically switches to cursor-based pagination for large datasets
+    (>10K records) for better performance.
 
     Args:
+        page (int): Page number (1-indexed). Default: 1.
+        per_page (int): Items per page (1-500). Default: 50.
+        cursor (Optional[str]): Cursor for cursor-based pagination. When provided,
+            page parameter is ignored.
         include_inactive (bool): Whether to include inactive resources in the results.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
     Returns:
-        List[ResourceRead]: A list of resource records formatted with by_alias=True.
+        Dict with 'data', 'pagination', and 'links' keys containing paginated resources.
 
     Examples:
         >>> import asyncio
@@ -1967,33 +2018,91 @@ async def admin_list_resources(
         >>> # Restore original method
         >>> resource_service.list_resources = original_list_resources
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested resource list")
+    LOGGER.debug(f"User {get_user_email(user)} requested resource list (page={page}, per_page={per_page}, cursor={cursor})")
     user_email = get_user_email(user)
-    resources_tuple = await resource_service.list_resources(db, include_inactive=include_inactive, user_email=user_email)
-    resources = resources_tuple[0] if isinstance(resources_tuple, tuple) else resources_tuple
-    return [resource.model_dump(by_alias=True) for resource in resources]
+
+    # Build base query using resource_service's team filtering logic
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [team.id for team in user_teams]
+
+    # Build query
+    query = select(DbResource)
+
+    # Apply active/inactive filter
+    if not include_inactive:
+        query = query.where(DbResource.enabled.is_(True))
+
+    # Build access conditions (same logic as resource_service.list_resources with user_email)
+    access_conditions = [
+        DbResource.owner_email == user_email,
+        DbResource.visibility == "public",
+    ]
+    if team_ids:
+        access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
+    query = query.where(or_(*access_conditions))
+
+    # Add sorting for consistent pagination
+    query = query.order_by(desc(DbResource.created_at), desc(DbResource.id))
+
+    # Use unified pagination function
+    paginated_result = await paginate_query(
+        db=db,
+        query=query,
+        page=page,
+        per_page=per_page,
+        cursor=cursor,
+        base_url="/admin/resources",
+        query_params={"include_inactive": include_inactive} if include_inactive else {},
+    )
+
+    # Extract paginated resources
+    resources = paginated_result["data"]
+
+    # Convert to ResourceRead using resource_service
+    result = []
+    for r in resources:
+        team_name = resource_service._get_team_name(db, getattr(r, "team_id", None))  # pylint: disable=protected-access
+        r.team = team_name
+        result.append(resource_service._convert_resource_to_read(r, include_metrics=False))  # pylint: disable=protected-access
+
+    # Return with pagination metadata and links
+    return {
+        "data": [resource.model_dump(by_alias=True) for resource in result],
+        "pagination": paginated_result["pagination"].model_dump(),
+        "links": paginated_result["links"].model_dump() if paginated_result["links"] else None,
+    }
 
 
 @admin_router.get("/prompts", response_model=List[PromptRead])
 async def admin_list_prompts(
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> List[Dict[str, Any]]:
+) -> Dict[str, Any]:
     """
-    List prompts for the admin UI with an option to include inactive prompts.
+    List prompts for the admin UI with pagination support.
 
-    This endpoint retrieves a list of prompts from the database, optionally including
-    those that are inactive. The inactive filter helps administrators see and manage
-    prompts that have been deactivated but not deleted from the system.
+    This endpoint retrieves a paginated list of prompts from the database, optionally
+    including those that are inactive. The endpoint supports both offset-based (page/per_page)
+    and cursor-based pagination, automatically switching to cursor pagination for large datasets.
 
     Args:
+        page (int): Page number (1-indexed) for offset pagination.
+        per_page (int): Number of items per page (1-500).
+        cursor (Optional[str]): Cursor for cursor-based pagination.
         include_inactive (bool): Whether to include inactive prompts in the results.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
     Returns:
-        List[PromptRead]: A list of prompt records formatted with by_alias=True.
+        Dict[str, Any]: A dictionary containing:
+            - data: List of prompt records formatted with by_alias=True
+            - pagination: Pagination metadata
+            - links: Pagination links (optional)
 
     Examples:
         >>> import asyncio
@@ -2022,87 +2131,115 @@ async def admin_list_prompts(
         ...     tags=[]
         ... )
         >>>
-        >>> # Mock the prompt_service.list_prompts method
-        >>> original_list_prompts = prompt_service.list_prompts
-        >>> prompt_service.list_prompts = AsyncMock(return_value=([mock_prompt], None))
+        >>> # Mock paginate_query
+        >>> from mcpgateway.utils.pagination import paginate_query
+        >>> original_paginate = paginate_query
+        >>> async def mock_paginate_query(*args, **kwargs):
+        ...     from mcpgateway.schemas import PaginationMeta, PaginationLinks
+        ...     return {
+        ...         "data": [mock_prompt],
+        ...         "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False),
+        ...         "links": None
+        ...     }
         >>>
-        >>> # Test listing active prompts
-        >>> async def test_admin_list_prompts_active():
-        ...     result = await admin_list_prompts(include_inactive=False, db=mock_db, user=mock_user)
-        ...     return len(result) > 0 and isinstance(result[0], dict) and result[0]['name'] == "Test Prompt"
+        >>> import mcpgateway.utils.pagination
+        >>> mcpgateway.utils.pagination.paginate_query = mock_paginate_query
         >>>
-        >>> asyncio.run(test_admin_list_prompts_active())
+        >>> # Test listing active prompts with pagination
+        >>> async def test_admin_list_prompts_paginated():
+        ...     result = await admin_list_prompts(page=1, per_page=50, cursor=None, include_inactive=False, db=mock_db, user=mock_user)
+        ...     return "data" in result and "pagination" in result
+        >>>
+        >>> asyncio.run(test_admin_list_prompts_paginated())
         True
         >>>
-        >>> # Test listing with inactive prompts (if mock includes them)
-        >>> mock_inactive_prompt = PromptRead(
-        ...     id="39334ce0ed2644d79ede8913a66930c9", name="Inactive Prompt", description="Another test", template="Bye!",
-        ...     arguments=[], created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
-        ...     enabled=False, metrics=PromptMetrics(
-        ...         total_executions=0, successful_executions=0, failed_executions=0,
-        ...         failure_rate=0.0, min_response_time=0.0, max_response_time=0.0,
-        ...         avg_response_time=0.0, last_execution_time=None
-        ...     ),
-        ...     tags=[]
-        ... )
-        >>> prompt_service.list_prompts = AsyncMock(return_value=([mock_prompt, mock_inactive_prompt], None))
-        >>> async def test_admin_list_prompts_all():
-        ...     result = await admin_list_prompts(include_inactive=True, db=mock_db, user=mock_user)
-        ...     return len(result) == 2 and not result[1]['enabled']
-        >>>
-        >>> asyncio.run(test_admin_list_prompts_all())
-        True
-        >>>
-        >>> # Test empty list
-        >>> prompt_service.list_prompts = AsyncMock(return_value=([], None))
-        >>> async def test_admin_list_prompts_empty():
-        ...     result = await admin_list_prompts(include_inactive=False, db=mock_db, user=mock_user)
-        ...     return result == []
-        >>>
-        >>> asyncio.run(test_admin_list_prompts_empty())
-        True
-        >>>
-        >>> # Test exception handling
-        >>> prompt_service.list_prompts = AsyncMock(side_effect=Exception("Prompt list error"))
-        >>> async def test_admin_list_prompts_exception():
-        ...     try:
-        ...         await admin_list_prompts(False, mock_db, mock_user)
-        ...         return False
-        ...     except Exception as e:
-        ...         return str(e) == "Prompt list error"
-        >>>
-        >>> asyncio.run(test_admin_list_prompts_exception())
-        True
-        >>>
-        >>> # Restore original method
-        >>> prompt_service.list_prompts = original_list_prompts
+        >>> # Restore original function
+        >>> mcpgateway.utils.pagination.paginate_query = original_paginate
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested prompt list")
+    LOGGER.debug(f"User {get_user_email(user)} requested prompt list (page={page}, per_page={per_page})")
     user_email = get_user_email(user)
-    prompts, _ = await prompt_service.list_prompts(db, include_inactive=include_inactive, user_email=user_email)
-    return [prompt.model_dump(by_alias=True) for prompt in prompts]
+
+    # Team scoping
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    # Build base query
+    query = select(DbPrompt)
+
+    if not include_inactive:
+        query = query.where(DbPrompt.enabled.is_(True))
+
+    # Access conditions: owner, team, public
+    access_conditions = [DbPrompt.owner_email == user_email]
+    if team_ids:
+        access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
+    access_conditions.append(DbPrompt.visibility == "public")
+
+    query = query.where(or_(*access_conditions))
+    query = query.order_by(desc(DbPrompt.created_at), desc(DbPrompt.id))
+
+    # Use unified pagination function
+    paginated_result = await paginate_query(
+        db=db,
+        query=query,
+        page=page,
+        per_page=per_page,
+        cursor=cursor,
+        base_url="/admin/prompts",
+        query_params={"include_inactive": include_inactive} if include_inactive else {},
+    )
+
+    # Convert to schemas using PromptService
+    prompts_db = paginated_result["data"]
+    local_prompt_service = PromptService()
+    prompts_data = []
+    for p in prompts_db:
+        try:
+            prompt_dict = await local_prompt_service.get_prompt_details(db, p.id, include_inactive=include_inactive)
+            if prompt_dict:
+                prompts_data.append(prompt_dict)
+        except Exception as e:
+            LOGGER.warning(f"Failed to convert prompt {p.id} to schema: {e}")
+            continue
+
+    # Return standardized paginated response
+    return {
+        "data": prompts_data,
+        "pagination": paginated_result["pagination"].model_dump(),
+        "links": paginated_result["links"].model_dump() if paginated_result["links"] else None,
+    }
 
 
 @admin_router.get("/gateways", response_model=List[GatewayRead])
 async def admin_list_gateways(
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> List[Dict[str, Any]]:
+) -> Dict[str, Any]:
     """
-    List gateways for the admin UI with an option to include inactive gateways.
+    List gateways for the admin UI with pagination support.
 
-    This endpoint retrieves a list of gateways from the database, optionally
-    including those that are inactive. The inactive filter allows administrators
-    to view and manage gateways that have been deactivated but not deleted.
+    This endpoint retrieves a paginated list of gateways from the database, optionally
+    including those that are inactive. The endpoint supports both offset-based (page/per_page)
+    and cursor-based pagination, automatically switching to cursor pagination for large datasets.
 
     Args:
+        page (int): Page number (1-indexed) for offset pagination.
+        per_page (int): Number of items per page (1-500).
+        cursor (Optional[str]): Cursor for cursor-based pagination.
         include_inactive (bool): Whether to include inactive gateways in the results.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
     Returns:
-        List[GatewayRead]: A list of gateway records formatted with by_alias=True.
+        Dict[str, Any]: A dictionary containing:
+            - data: List of gateway records formatted with by_alias=True
+            - pagination: Pagination metadata
+            - links: Pagination links (optional)
 
     Examples:
         >>> import asyncio
@@ -2128,66 +2265,81 @@ async def admin_list_gateways(
         ...     slug="test-gateway"
         ... )
         >>>
-        >>> # Mock the gateway_service.list_gateways method
-        >>> original_list_gateways = gateway_service.list_gateways
-        >>> gateway_service.list_gateways = AsyncMock(return_value=([mock_gateway], None))
+        >>> # Mock paginate_query
+        >>> from mcpgateway.utils.pagination import paginate_query
+        >>> original_paginate = paginate_query
+        >>> async def mock_paginate_query(*args, **kwargs):
+        ...     from mcpgateway.schemas import PaginationMeta
+        ...     return {
+        ...         "data": [mock_gateway],
+        ...         "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False),
+        ...         "links": None
+        ...     }
         >>>
-        >>> # Test listing active gateways
-        >>> async def test_admin_list_gateways_active():
-        ...     result = await admin_list_gateways(include_inactive=False, db=mock_db, user=mock_user)
-        ...     return len(result) > 0 and isinstance(result[0], dict) and result[0]['name'] == "Test Gateway"
+        >>> import mcpgateway.utils.pagination
+        >>> mcpgateway.utils.pagination.paginate_query = mock_paginate_query
         >>>
-        >>> asyncio.run(test_admin_list_gateways_active())
+        >>> # Test listing gateways with pagination
+        >>> async def test_admin_list_gateways_paginated():
+        ...     result = await admin_list_gateways(page=1, per_page=50, cursor=None, include_inactive=False, db=mock_db, user=mock_user)
+        ...     return "data" in result and "pagination" in result
+        >>>
+        >>> asyncio.run(test_admin_list_gateways_paginated())
         True
         >>>
-        >>> # Test listing with inactive gateways (if mock includes them)
-        >>> mock_inactive_gateway = GatewayRead(
-        ...     id="gateway-2", name="Inactive Gateway", url="http://inactive.com",
-        ...     description="Another test", transport="HTTP", created_at=datetime.now(timezone.utc),
-        ...     updated_at=datetime.now(timezone.utc), enabled=False,
-        ...     auth_type=None, auth_username=None, auth_password=None, auth_token=None,
-        ...     auth_header_key=None, auth_header_value=None,
-        ...     slug="test-gateway"
-        ... )
-        >>> gateway_service.list_gateways = AsyncMock(return_value=([
-        ...     mock_gateway, # Return the GatewayRead objects, not pre-dumped dicts
-        ...     mock_inactive_gateway # Return the GatewayRead objects, not pre-dumped dicts
-        ... ], None))
-        >>> async def test_admin_list_gateways_all():
-        ...     result = await admin_list_gateways(include_inactive=True, db=mock_db, user=mock_user)
-        ...     return len(result) == 2 and not result[1]['enabled']
-        >>>
-        >>> asyncio.run(test_admin_list_gateways_all())
-        True
-        >>>
-        >>> # Test empty list
-        >>> gateway_service.list_gateways = AsyncMock(return_value=([], None))
-        >>> async def test_admin_list_gateways_empty():
-        ...     result = await admin_list_gateways(include_inactive=False, db=mock_db, user=mock_user)
-        ...     return result == []
-        >>>
-        >>> asyncio.run(test_admin_list_gateways_empty())
-        True
-        >>>
-        >>> # Test exception handling
-        >>> gateway_service.list_gateways = AsyncMock(side_effect=Exception("Gateway list error"))
-        >>> async def test_admin_list_gateways_exception():
-        ...     try:
-        ...         await admin_list_gateways(False, mock_db, mock_user)
-        ...         return False
-        ...     except Exception as e:
-        ...         return str(e) == "Gateway list error"
-        >>>
-        >>> asyncio.run(test_admin_list_gateways_exception())
-        True
-        >>>
-        >>> # Restore original method
-        >>> gateway_service.list_gateways = original_list_gateways
+        >>> # Restore original function
+        >>> mcpgateway.utils.pagination.paginate_query = original_paginate
     """
     user_email = get_user_email(user)
-    LOGGER.debug(f"User {user_email} requested gateway list")
-    gateways, _ = await gateway_service.list_gateways(db, include_inactive=include_inactive, user_email=user_email)
-    return [gateway.model_dump(by_alias=True) for gateway in gateways]
+    LOGGER.debug(f"User {user_email} requested gateway list (page={page}, per_page={per_page})")
+
+    # Team scoping
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    # Build base query
+    query = select(DbGateway)
+
+    if not include_inactive:
+        query = query.where(DbGateway.enabled.is_(True))
+
+    # Access conditions: owner, team, public
+    access_conditions = [DbGateway.owner_email == user_email]
+    if team_ids:
+        access_conditions.append(and_(DbGateway.team_id.in_(team_ids), DbGateway.visibility.in_(["team", "public"])))
+    access_conditions.append(DbGateway.visibility == "public")
+
+    query = query.where(or_(*access_conditions))
+    query = query.order_by(desc(DbGateway.created_at), desc(DbGateway.id))
+
+    # Use unified pagination function
+    paginated_result = await paginate_query(
+        db=db,
+        query=query,
+        page=page,
+        per_page=per_page,
+        cursor=cursor,
+        base_url="/admin/gateways",
+        query_params={"include_inactive": include_inactive} if include_inactive else {},
+    )
+
+    # Extract paginated gateways
+    gateways_db = paginated_result["data"]
+
+    # Convert to GatewayRead
+    result = []
+    for g in gateways_db:
+        team_name = gateway_service._get_team_name(db, getattr(g, "team_id", None))  # pylint: disable=protected-access
+        g.team = team_name
+        result.append(gateway_service._convert_gateway_to_read(g))  # pylint: disable=protected-access
+
+    # Return standardized paginated response
+    return {
+        "data": [gateway.model_dump(by_alias=True) for gateway in result],
+        "pagination": paginated_result["pagination"].model_dump(),
+        "links": paginated_result["links"].model_dump() if paginated_result["links"] else None,
+    }
 
 
 @admin_router.get("/gateways/ids")
@@ -6199,29 +6351,31 @@ async def admin_prompts_partial_html(
 
     query = query.where(or_(*access_conditions))
 
-    # Count total items - must include gateway filter for accurate count
-    count_query = select(func.count(DbPrompt.id)).where(or_(*access_conditions))  # pylint: disable=not-callable
+    # Apply pagination ordering for cursor support
+    query = query.order_by(desc(DbPrompt.created_at), desc(DbPrompt.id))
+
+    # Build query params for pagination links
+    query_params = {}
+    if include_inactive:
+        query_params["include_inactive"] = "true"
     if gateway_id:
-        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
-        if gateway_ids:
-            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
-            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
-            if non_null_ids and null_requested:
-                count_query = count_query.where(or_(DbPrompt.gateway_id.in_(non_null_ids), DbPrompt.gateway_id.is_(None)))
-            elif null_requested:
-                count_query = count_query.where(DbPrompt.gateway_id.is_(None))
-            else:
-                count_query = count_query.where(DbPrompt.gateway_id.in_(non_null_ids))
-    if not include_inactive:
-        count_query = count_query.where(DbPrompt.enabled.is_(True))
+        query_params["gateway_id"] = gateway_id
 
-    total_items = db.scalar(count_query) or 0
+    # Use unified pagination function
+    paginated_result = await paginate_query(
+        db=db,
+        query=query,
+        page=page,
+        per_page=per_page,
+        cursor=None,  # HTMX partials use page-based navigation
+        base_url=f"{settings.app_root_path}/admin/prompts/partial",
+        query_params=query_params,
+    )
 
-    # Apply pagination ordering and limits
-    offset = (page - 1) * per_page
-    query = query.order_by(DbPrompt.name, DbPrompt.id).offset(offset).limit(per_page)
-
-    prompts_db = list(db.scalars(query).all())
+    # Extract paginated prompts
+    prompts_db = paginated_result["data"]
+    pagination = paginated_result["pagination"]
+    links = paginated_result["links"]
 
     # Convert to schemas using PromptService
     local_prompt_service = PromptService()
@@ -6236,25 +6390,7 @@ async def admin_prompts_partial_html(
             continue
 
     data = jsonable_encoder(prompts_data)
-
-    # Build pagination metadata
-    pagination = PaginationMeta(
-        page=page,
-        per_page=per_page,
-        total_items=total_items,
-        total_pages=math.ceil(total_items / per_page) if per_page > 0 else 0,
-        has_next=page < math.ceil(total_items / per_page) if per_page > 0 else False,
-        has_prev=page > 1,
-    )
-
     base_url = f"{settings.app_root_path}/admin/prompts/partial"
-    links = generate_pagination_links(
-        base_url=base_url,
-        page=page,
-        per_page=per_page,
-        total_pages=pagination.total_pages,
-        query_params={"include_inactive": "true"} if include_inactive else {},
-    )
 
     if render == "controls":
         return request.app.state.templates.TemplateResponse(
@@ -6265,7 +6401,7 @@ async def admin_prompts_partial_html(
                 "base_url": base_url,
                 "hx_target": "#prompts-table-body",
                 "hx_indicator": "#prompts-loading",
-                "query_params": {"include_inactive": "true"} if include_inactive else {},
+                "query_params": query_params,
                 "root_path": request.scope.get("root_path", ""),
             },
         )
@@ -6375,29 +6511,31 @@ async def admin_resources_partial_html(
 
     query = query.where(or_(*access_conditions))
 
-    # Count total items - must include gateway filter for accurate count
-    count_query = select(func.count(DbResource.id)).where(or_(*access_conditions))  # pylint: disable=not-callable
+    # Add sorting for consistent pagination
+    query = query.order_by(desc(DbResource.created_at), desc(DbResource.id))
+
+    # Build query params for pagination links
+    query_params = {}
+    if include_inactive:
+        query_params["include_inactive"] = "true"
     if gateway_id:
-        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
-        if gateway_ids:
-            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
-            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
-            if non_null_ids and null_requested:
-                count_query = count_query.where(or_(DbResource.gateway_id.in_(non_null_ids), DbResource.gateway_id.is_(None)))
-            elif null_requested:
-                count_query = count_query.where(DbResource.gateway_id.is_(None))
-            else:
-                count_query = count_query.where(DbResource.gateway_id.in_(non_null_ids))
-    if not include_inactive:
-        count_query = count_query.where(DbResource.enabled.is_(True))
+        query_params["gateway_id"] = gateway_id
 
-    total_items = db.scalar(count_query) or 0
+    # Use unified pagination function
+    paginated_result = await paginate_query(
+        db=db,
+        query=query,
+        page=page,
+        per_page=per_page,
+        cursor=None,
+        base_url=f"{settings.app_root_path}/admin/resources/partial",
+        query_params=query_params,
+    )
 
-    # Apply pagination ordering and limits
-    offset = (page - 1) * per_page
-    query = query.order_by(DbResource.name, DbResource.id).offset(offset).limit(per_page)
-
-    resources_db = list(db.scalars(query).all())
+    # Extract paginated resources
+    resources_db = paginated_result["data"]
+    pagination = paginated_result["pagination"]
+    links = paginated_result["links"]
 
     # Convert to schemas using ResourceService
     local_resource_service = ResourceService()
@@ -6410,35 +6548,16 @@ async def admin_resources_partial_html(
             continue
     data = jsonable_encoder(resources_data)
 
-    # Build pagination metadata
-    pagination = PaginationMeta(
-        page=page,
-        per_page=per_page,
-        total_items=total_items,
-        total_pages=math.ceil(total_items / per_page) if per_page > 0 else 0,
-        has_next=page < math.ceil(total_items / per_page) if per_page > 0 else False,
-        has_prev=page > 1,
-    )
-
-    base_url = f"{settings.app_root_path}/admin/resources/partial"
-    links = generate_pagination_links(
-        base_url=base_url,
-        page=page,
-        per_page=per_page,
-        total_pages=pagination.total_pages,
-        query_params={"include_inactive": "true"} if include_inactive else {},
-    )
-
     if render == "controls":
         return request.app.state.templates.TemplateResponse(
             "pagination_controls.html",
             {
                 "request": request,
                 "pagination": pagination.model_dump(),
-                "base_url": base_url,
+                "base_url": f"{settings.app_root_path}/admin/resources/partial",
                 "hx_target": "#resources-table-body",
                 "hx_indicator": "#resources-loading",
-                "query_params": {"include_inactive": "true"} if include_inactive else {},
+                "query_params": query_params,
                 "root_path": request.scope.get("root_path", ""),
             },
         )
@@ -11525,24 +11644,34 @@ async def admin_get_agent(
 
 @admin_router.get("/a2a")
 async def admin_list_a2a_agents(
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> List[A2AAgentRead]:
+) -> Dict[str, Any]:
     """
-    List A2A Agents for the admin UI with an option to include inactive agents.
+    List A2A Agents for the admin UI with pagination support.
 
-    This endpoint retrieves a list of A2A (Agent-to-Agent) agents associated with
+    This endpoint retrieves a paginated list of A2A (Agent-to-Agent) agents associated with
     the current user. Administrators can optionally include inactive agents for
-    management or auditing purposes.
+    management or auditing purposes. The endpoint supports both offset-based (page/per_page)
+    and cursor-based pagination, automatically switching to cursor pagination for large datasets.
 
     Args:
+        page (int): Page number (1-indexed) for offset pagination.
+        per_page (int): Number of items per page (1-500).
+        cursor (Optional[str]): Cursor for cursor-based pagination.
         include_inactive (bool): Whether to include inactive agents in the results.
         db (Session): Database session dependency.
         user (dict): Authenticated user dependency.
 
     Returns:
-        List[A2AAgentRead]: A list of A2A agent records formatted with by_alias=True.
+        Dict[str, Any]: A dictionary containing:
+            - data: List of A2A agent records formatted with by_alias=True
+            - pagination: Pagination metadata
+            - links: Pagination links (optional)
 
     Raises:
         HTTPException (500): If an error occurs while retrieving the agent list.
@@ -11585,42 +11714,94 @@ async def admin_list_a2a_agents(
         ...     )
         ... )
         >>>
-        >>> async def test_admin_list_a2a_agents_active():
-        ...     fake_service = MagicMock()
-        ...     fake_service.list_agents_for_user = AsyncMock(return_value=[mock_agent])
-        ...     with patch("mcpgateway.admin.a2a_service", new=fake_service):
-        ...         result = await admin_list_a2a_agents(include_inactive=False, db=mock_db, user=mock_user)
-        ...         return len(result) > 0 and isinstance(result[0], dict) and result[0]['name'] == "Agent1"
+        >>> # Mock paginate_query
+        >>> from mcpgateway.utils.pagination import paginate_query
+        >>> original_paginate = paginate_query
+        >>> async def mock_paginate_query(*args, **kwargs):
+        ...     from mcpgateway.schemas import PaginationMeta
+        ...     return {
+        ...         "data": [mock_agent],
+        ...         "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False),
+        ...         "links": None
+        ...     }
         >>>
-        >>> asyncio.run(test_admin_list_a2a_agents_active())
+        >>> import mcpgateway.utils.pagination
+        >>> mcpgateway.utils.pagination.paginate_query = mock_paginate_query
+        >>>
+        >>> # Test listing A2A agents with pagination
+        >>> async def test_admin_list_a2a_agents_paginated():
+        ...     fake_service = MagicMock()
+        ...     with patch("mcpgateway.admin.a2a_service", new=fake_service):
+        ...         result = await admin_list_a2a_agents(page=1, per_page=50, cursor=None, include_inactive=False, db=mock_db, user=mock_user)
+        ...         return "data" in result and "pagination" in result
+        >>>
+        >>> asyncio.run(test_admin_list_a2a_agents_paginated())
         True
         >>>
-        >>> async def test_admin_list_a2a_agents_exception():
-        ...     fake_service = MagicMock()
-        ...     fake_service.list_agents_for_user = AsyncMock(side_effect=Exception("A2A error"))
-        ...     with patch("mcpgateway.admin.a2a_service", new=fake_service):
-        ...         try:
-        ...             await admin_list_a2a_agents(False, db=mock_db, user=mock_user)
-        ...             return False
-        ...         except Exception as e:
-        ...             return "A2A error" in str(e)
-        >>>
-        >>> asyncio.run(test_admin_list_a2a_agents_exception())
-        True
+        >>> # Restore original function
+        >>> mcpgateway.utils.pagination.paginate_query = original_paginate
     """
     if a2a_service is None:
-        LOGGER.warning("A2A features are disabled, returning empty list")
-        return []
+        LOGGER.warning("A2A features are disabled, returning empty paginated response")
+        # First-Party
+        from mcpgateway.schemas import PaginationMeta
 
-    LOGGER.debug(f"User {get_user_email(user)} requested A2A Agent list")
+        return {
+            "data": [],
+            "pagination": PaginationMeta(page=page, per_page=per_page, total_items=0, total_pages=0, has_next=False, has_prev=False).model_dump(),
+            "links": None,
+        }
+
+    LOGGER.debug(f"User {get_user_email(user)} requested A2A Agent list (page={page}, per_page={per_page})")
     user_email = get_user_email(user)
 
-    agents = await a2a_service.list_agents_for_user(
-        db,
-        user_info=user_email,
-        include_inactive=include_inactive,
+    # Team scoping
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    # Build base query
+    query = select(DbA2AAgent)
+
+    if not include_inactive:
+        query = query.where(DbA2AAgent.enabled.is_(True))
+
+    # Access conditions: owner, team, public
+    access_conditions = [DbA2AAgent.owner_email == user_email]
+    if team_ids:
+        access_conditions.append(and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])))
+    access_conditions.append(DbA2AAgent.visibility == "public")
+
+    query = query.where(or_(*access_conditions))
+    query = query.order_by(desc(DbA2AAgent.created_at), desc(DbA2AAgent.id))
+
+    # Use unified pagination function
+    paginated_result = await paginate_query(
+        db=db,
+        query=query,
+        page=page,
+        per_page=per_page,
+        cursor=cursor,
+        base_url="/admin/a2a",
+        query_params={"include_inactive": include_inactive} if include_inactive else {},
     )
-    return [agent.model_dump(by_alias=True) for agent in agents]
+
+    # Extract paginated agents
+    agents_db = paginated_result["data"]
+
+    # Convert to A2AAgentRead
+    result = []
+    for a in agents_db:
+        team_name = a2a_service._get_team_name(db, getattr(a, "team_id", None))  # pylint: disable=protected-access
+        a.team = team_name
+        result.append(a2a_service._convert_agent_to_read(a, include_metrics=False))  # pylint: disable=protected-access
+
+    # Return standardized paginated response
+    return {
+        "data": [agent.model_dump(by_alias=True) for agent in result],
+        "pagination": paginated_result["pagination"].model_dump(),
+        "links": paginated_result["links"].model_dump() if paginated_result["links"] else None,
+    }
 
 
 @admin_router.post("/a2a")

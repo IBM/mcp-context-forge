@@ -938,15 +938,7 @@ class ResourceService:
 
         # Apply cursor filter (keyset pagination)
         if last_id and last_created:
-            query = query.where(
-                or_(
-                    DbResource.created_at < last_created,
-                    and_(
-                        DbResource.created_at == last_created,
-                        DbResource.id < last_id
-                    )
-                )
-            )
+            query = query.where(or_(DbResource.created_at < last_created, and_(DbResource.created_at == last_created, DbResource.id < last_id)))
 
         if not include_inactive:
             query = query.where(DbResource.enabled)
@@ -984,10 +976,7 @@ class ResourceService:
         next_cursor = None
         if has_more and result:
             last_resource = resources[-1]  # Get last DB object
-            next_cursor = encode_cursor({
-                "created_at": last_resource.created_at.isoformat(),
-                "id": last_resource.id
-            })
+            next_cursor = encode_cursor({"created_at": last_resource.created_at.isoformat(), "id": last_resource.id})
             logger.debug(f"Generated next_cursor for id={last_resource.id}")
 
         # Cache first page results (only for non-user-specific queries)

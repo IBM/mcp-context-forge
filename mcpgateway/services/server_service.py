@@ -754,18 +754,14 @@ class ServerService:
 
         # Apply cursor filter with keyset pagination (created_at DESC, id DESC)
         if last_id and last_created:
-            query = query.where(
-                or_(
-                    DbServer.created_at < last_created,
-                    and_(DbServer.created_at == last_created, DbServer.id < last_id)
-                )
-            )
+            query = query.where(or_(DbServer.created_at < last_created, and_(DbServer.created_at == last_created, DbServer.id < last_id)))
 
         if not include_inactive:
             query = query.where(DbServer.enabled)
 
         # Apply team-based access control if user_email is provided
         if user_email:
+            # First-Party
             from mcpgateway.services.team_management_service import TeamManagementService
 
             team_service = TeamManagementService(db)

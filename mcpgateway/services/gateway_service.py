@@ -1299,12 +1299,16 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         last_created = None
         if cursor:
             try:
+                # First-Party
                 from mcpgateway.utils.pagination import decode_cursor
+
                 cursor_data = decode_cursor(cursor)
                 last_id = cursor_data.get("id")
                 created_str = cursor_data.get("created_at")
                 if created_str:
+                    # Standard
                     from datetime import datetime
+
                     last_created = datetime.fromisoformat(created_str)
                 logger.debug(f"Decoded cursor: last_created={last_created}, last_id={last_id}")
             except (ValueError, TypeError) as e:
@@ -1312,18 +1316,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         # Apply cursor filter with keyset pagination (created_at DESC, id DESC)
         if last_id and last_created:
-            query = query.where(
-                or_(
-                    DbGateway.created_at < last_created,
-                    and_(DbGateway.created_at == last_created, DbGateway.id < last_id)
-                )
-            )
+            query = query.where(or_(DbGateway.created_at < last_created, and_(DbGateway.created_at == last_created, DbGateway.id < last_id)))
 
         if not include_inactive:
             query = query.where(DbGateway.enabled)
 
         # Apply team-based access control if user_email is provided
         if user_email:
+            # First-Party
             from mcpgateway.services.team_management_service import TeamManagementService
 
             team_service = TeamManagementService(db)
@@ -1385,7 +1385,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         next_cursor = None
         if has_more and result:
             last_gateway = gateways[-1]  # Get last DB object
+            # First-Party
             from mcpgateway.utils.pagination import encode_cursor
+
             next_cursor = encode_cursor({"created_at": last_gateway.created_at.isoformat(), "id": last_gateway.id})
             logger.debug(f"Generated next_cursor for created_at={last_gateway.created_at}, id={last_gateway.id}")
 
