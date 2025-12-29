@@ -179,8 +179,9 @@ class PluginInstanceRegistry:
 
         Args:
             hook_type: The type of hook to check for.
+
         Returns:
-            True if there are hooks registered for the specified type, False otherwise.
+            bool: True if there are hooks registered for the specified type, False otherwise.
         """
         return bool(self._hooks.get(hook_type))
 
