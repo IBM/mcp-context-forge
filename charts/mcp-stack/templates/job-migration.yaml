@@ -49,7 +49,7 @@ spec:
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "mcp-stack.fullname" . }}-external-db-secret
+                  name: {{ .Values.postgres.external.secretName }}
                   key: DATABASE_URL
             {{- else }}
             # In-cluster database: construct DATABASE_URL from components
