@@ -55,9 +55,23 @@ curl -H "Authorization: Bearer $TOKEN" $BASE_URL/endpoint
 !!! info "Default Pagination Behavior"
     As of version 1.0, **all list endpoints return paginated responses by default**. This provides better performance and consistent navigation for large datasets.
 
+### Pagination Methods
+
+The API supports two pagination approaches:
+
+1. **Cursor-based pagination** (Main API endpoints: `/tools`, `/servers`, `/gateways`, etc.)
+   - Uses opaque cursors for efficient traversal
+   - Best for real-time data and large datasets
+   - No knowledge of total pages required
+
+2. **Page-based pagination** (Admin API endpoints: `/admin/tools`, `/admin/servers`, etc.)
+   - Uses page numbers and per-page limits
+   - Provides total count and page information
+   - Easier for UI components with page numbers
+
 ### Response Formats
 
-**Paginated (default):**
+**Main API (Cursor-based):**
 ```json
 {
   "entities": [...],
@@ -67,14 +81,35 @@ curl -H "Authorization: Bearer $TOKEN" $BASE_URL/endpoint
 
 The entity key name matches the resource type: `tools`, `gateways`, `servers`, `resources`, `prompts`, or `agents`.
 
+**Admin API (Page-based):**
+```json
+{
+  "data": [...],
+  "pagination": {
+    "total": 150,
+    "page": 1,
+    "per_page": 50,
+    "total_pages": 3
+  },
+  "links": {
+    "first": "/admin/tools?page=1&per_page=50",
+    "last": "/admin/tools?page=3&per_page=50",
+    "next": "/admin/tools?page=2&per_page=50",
+    "prev": null
+  }
+}
+```
+
 **Non-Paginated (legacy):**
 ```json
 [...]
 ```
 
-Add `?include_pagination=false` to get a simple array.
+Add `?include_pagination=false` to main API endpoints to get a simple array.
 
 ### Pagination Parameters
+
+**Main API (Cursor-based):**
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
@@ -82,10 +117,20 @@ Add `?include_pagination=false` to get a simple array.
 | `limit` | Maximum items per page (0 = all) | 50 |
 | `include_pagination` | Return paginated format with cursor | `true` |
 
+**Admin API (Page-based):**
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `page` | Page number (1-indexed) | 1 |
+| `per_page` | Items per page | 50 |
+| `cursor` | Optional cursor (overrides page if provided) | `null` |
+
 ### Examples
 
+**Cursor-based pagination (Main API):**
+
 ```bash
-# First page (paginated)
+# First page
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools | jq '.'
 
 # Extract cursor and get next page
@@ -95,6 +140,23 @@ curl -s -H "Authorization: Bearer $TOKEN" "$BASE_URL/tools?cursor=$CURSOR" | jq 
 # Get all items as array (no pagination)
 curl -s -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/tools?limit=0&include_pagination=false" | jq '.'
+```
+
+**Page-based pagination (Admin API):**
+
+```bash
+# First page (default)
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/admin/tools | jq '.'
+
+# Specific page with custom page size
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/admin/tools?page=2&per_page=25" | jq '.'
+
+# Loop through all pages
+for page in {1..5}; do
+  curl -s -H "Authorization: Bearer $TOKEN" \
+    "$BASE_URL/admin/tools?page=$page&per_page=50" | jq '.data[]'
+done
 ```
 
 ## Health & Status
