@@ -2,7 +2,7 @@
 """Add indexes for cursor pagination
 
 Revision ID: 4f07c116f917
-Revises: p0a1b2c3d4e5
+Revises: q1b2c3d4e5f6
 Create Date: 2025-12-29 15:00:00.000000
 
 This migration adds composite indexes on (created_at, id) for cursor-based
@@ -28,7 +28,7 @@ from sqlalchemy import inspect
 
 # revision identifiers, used by Alembic.
 revision: str = "4f07c116f917"
-down_revision: Union[str, Sequence[str], None] = "p0a1b2c3d4e5"
+down_revision: Union[str, Sequence[str], None] = "q1b2c3d4e5f6"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
