@@ -236,9 +236,9 @@ class PromptService:
 
         return top_performers
 
-    def _convert_db_prompt(self, db_prompt: DbPrompt, include_metrics: bool = False) -> Dict[str, Any]:
+    def _convert_prompt_to_read(self, db_prompt: DbPrompt, include_metrics: bool = False) -> PromptRead:
         """
-        Convert a DbPrompt instance to a dictionary matching the PromptRead schema,
+        Convert a DbPrompt instance to a PromptRead Pydantic model,
         optionally including aggregated metrics computed from the associated PromptMetric records.
 
         Args:
@@ -247,7 +247,7 @@ class PromptService:
                 Set to False for list operations to avoid N+1 query issues.
 
         Returns:
-            dict: Dictionary matching the PromptRead schema
+            PromptRead: Pydantic model instance
         """
         arg_schema = db_prompt.argument_schema or {}
         properties = arg_schema.get("properties", {})
@@ -286,7 +286,7 @@ class PromptService:
         else:
             metrics_dict = None
 
-        return {
+        prompt_dict = {
             "id": db_prompt.id,
             "name": db_prompt.name,
             "description": db_prompt.description,
@@ -312,6 +312,7 @@ class PromptService:
             "team_id": getattr(db_prompt, "team_id", None),
             "owner_email": getattr(db_prompt, "owner_email", None),
         }
+        return PromptRead.model_validate(prompt_dict)
 
     def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
         """Retrieve the team name given a team ID.
@@ -377,7 +378,7 @@ class PromptService:
             >>> db.commit = MagicMock()
             >>> db.refresh = MagicMock()
             >>> service._notify_prompt_added = MagicMock()
-            >>> service._convert_db_prompt = MagicMock(return_value={})
+            >>> service._convert_prompt_to_read = MagicMock(return_value={})
             >>> import asyncio
             >>> try:
             ...     asyncio.run(service.register_prompt(db, prompt))
@@ -486,7 +487,7 @@ class PromptService:
             )
 
             db_prompt.team = self._get_team_name(db, db_prompt.team_id)
-            prompt_dict = self._convert_db_prompt(db_prompt)
+            prompt_dict = self._convert_prompt_to_read(db_prompt)
 
             # Invalidate cache after successful creation
             cache = _get_registry_cache()
@@ -858,7 +859,7 @@ class PromptService:
             >>> service = PromptService()
             >>> db = MagicMock()
             >>> prompt_dict = {'id': '1', 'name': 'test', 'description': 'desc', 'template': 'tpl', 'arguments': [], 'createdAt': '2023-01-01T00:00:00', 'updatedAt': '2023-01-01T00:00:00', 'isActive': True, 'metrics': {}}
-            >>> service._convert_db_prompt = MagicMock(return_value=prompt_dict)
+            >>> service._convert_prompt_to_read = MagicMock(return_value=prompt_dict)
             >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
             >>> PromptRead.model_validate = MagicMock(return_value='prompt_read')
             >>> import asyncio
@@ -953,7 +954,7 @@ class PromptService:
         result = []
         for s in prompts_db:
             s.team = team_map.get(s.team_id) if s.team_id else None
-            result.append(self._convert_db_prompt(s, include_metrics=False))
+            result.append(self._convert_prompt_to_read(s, include_metrics=False))
         # Return appropriate format based on pagination type
         if page is not None:
             # Page-based format
@@ -1059,7 +1060,7 @@ class PromptService:
         result = []
         for t in prompts:
             t.team = team_map.get(str(t.team_id)) if t.team_id else None
-            result.append(PromptRead.model_validate(self._convert_db_prompt(t, include_metrics=False)))
+            result.append(self._convert_prompt_to_read(t, include_metrics=False))
         return result
 
     async def list_server_prompts(self, db: Session, server_id: str, include_inactive: bool = False, cursor: Optional[str] = None) -> List[PromptRead]:
@@ -1089,7 +1090,7 @@ class PromptService:
             >>> service = PromptService()
             >>> db = MagicMock()
             >>> prompt_dict = {'id': '1', 'name': 'test', 'description': 'desc', 'template': 'tpl', 'arguments': [], 'createdAt': '2023-01-01T00:00:00', 'updatedAt': '2023-01-01T00:00:00', 'isActive': True, 'metrics': {}}
-            >>> service._convert_db_prompt = MagicMock(return_value=prompt_dict)
+            >>> service._convert_prompt_to_read = MagicMock(return_value=prompt_dict)
             >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
             >>> PromptRead.model_validate = MagicMock(return_value='prompt_read')
             >>> import asyncio
@@ -1116,7 +1117,7 @@ class PromptService:
         result = []
         for t in prompts:
             t.team = team_map.get(str(t.team_id)) if t.team_id else None
-            result.append(PromptRead.model_validate(self._convert_db_prompt(t, include_metrics=False)))
+            result.append(self._convert_prompt_to_read(t, include_metrics=False))
         return result
 
     async def _record_prompt_metric(self, db: Session, prompt: DbPrompt, start_time: float, success: bool, error_message: Optional[str]) -> None:
@@ -1455,7 +1456,7 @@ class PromptService:
             >>> db.commit = MagicMock()
             >>> db.refresh = MagicMock()
             >>> service._notify_prompt_updated = MagicMock()
-            >>> service._convert_db_prompt = MagicMock(return_value={})
+            >>> service._convert_prompt_to_read = MagicMock(return_value={})
             >>> import asyncio
             >>> try:
             ...     asyncio.run(service.update_prompt(db, 'prompt_name', MagicMock()))
@@ -1581,7 +1582,7 @@ class PromptService:
 
             await admin_stats_cache.invalidate_tags()
 
-            return PromptRead.model_validate(self._convert_db_prompt(prompt))
+            return self._convert_prompt_to_read(prompt)
 
         except PermissionError as pe:
             db.rollback()
@@ -1691,7 +1692,7 @@ class PromptService:
             >>> db.refresh = MagicMock()
             >>> service._notify_prompt_activated = MagicMock()
             >>> service._notify_prompt_deactivated = MagicMock()
-            >>> service._convert_db_prompt = MagicMock(return_value={})
+            >>> service._convert_prompt_to_read = MagicMock(return_value={})
             >>> import asyncio
             >>> try:
             ...     asyncio.run(service.toggle_prompt_status(db, 1, True))
@@ -1755,7 +1756,7 @@ class PromptService:
                 )
 
             prompt.team = self._get_team_name(db, prompt.team_id)
-            return PromptRead.model_validate(self._convert_db_prompt(prompt))
+            return self._convert_prompt_to_read(prompt)
         except PermissionError as e:
             structured_logger.log(
                 level="WARNING",
@@ -1807,7 +1808,7 @@ class PromptService:
             >>> service = PromptService()
             >>> db = MagicMock()
             >>> prompt_dict = {'id': '1', 'name': 'test', 'description': 'desc', 'template': 'tpl', 'arguments': [], 'createdAt': '2023-01-01T00:00:00', 'updatedAt': '2023-01-01T00:00:00', 'isActive': True, 'metrics': {}}
-            >>> service._convert_db_prompt = MagicMock(return_value=prompt_dict)
+            >>> service._convert_prompt_to_read = MagicMock(return_value=prompt_dict)
             >>> db.execute.return_value.scalar_one_or_none.return_value = MagicMock()
             >>> import asyncio
             >>> result = asyncio.run(service.get_prompt_details(db, 'prompt_name'))
@@ -1819,7 +1820,7 @@ class PromptService:
             raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
         # Return the fully converted prompt including metrics
         prompt.team = self._get_team_name(db, prompt.team_id)
-        prompt_data = self._convert_db_prompt(prompt)
+        prompt_data = self._convert_prompt_to_read(prompt)
 
         audit_trail.log_action(
             user_id="system",
