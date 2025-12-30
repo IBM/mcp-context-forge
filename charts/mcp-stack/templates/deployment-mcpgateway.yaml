@@ -50,6 +50,16 @@ spec:
           #   placeholders in the derived URL variables declared below.
           ################################################################
           env:
+            # ---------- POSTGRES ----------
+            {{- if .Values.postgres.external.enabled }}
+            # External database: use provided DATABASE_URL directly from secret
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.external.secretName }}
+                  key: DATABASE_URL
+            {{- else }}
+            # In-cluster database: construct DATABASE_URL from components
             # ---------- POSTGRES (via PgBouncer if enabled) ----------
             - name: POSTGRES_HOST
               {{- if .Values.pgbouncer.enabled }}
@@ -107,6 +117,7 @@ spec:
                 postgresql+psycopg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)
             - name: REDIS_URL
               value: "redis://$(REDIS_HOST):$(REDIS_PORT)/0"
+            {{- end }}
 
           ################################################################
           # BULK ENV-VARS - pulled from ConfigMap + Secret

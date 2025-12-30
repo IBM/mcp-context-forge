@@ -121,6 +121,14 @@
               "minimum": 1,
               "maximum": 65535,
               "default": 80
+            },
+            "annotations": {
+              "type": "object",
+              "description": "Service annotations (e.g., for AWS NLB configuration)",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {}
             }
           },
           "additionalProperties": false
@@ -402,7 +410,7 @@
             "CACHE_TYPE": {
               "type": "string",
               "description": "Cache backend type",
-              "enum": ["redis", "memory", "database"],
+              "enum": ["redis", "memory", "none", "database"],
               "default": "redis"
             },
             "CACHE_PREFIX": {
@@ -950,6 +958,28 @@
           "type": "boolean",
           "description": "Enable PostgreSQL",
           "default": true
+        },
+        "external": {
+          "type": "object",
+          "description": "External database configuration (RDS, Cloud SQL, etc.)",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Use external managed database instead of in-cluster PostgreSQL",
+              "default": false
+            },
+            "databaseUrl": {
+              "type": "string",
+              "description": "Full PostgreSQL connection string (e.g., postgresql://user:pass@host:5432/db)",
+              "default": ""
+            },
+            "secretName": {
+              "type": "string",
+              "description": "k8s secret name containing the full PostgreSQL connection string )",
+              "default": ""
+            }              
+          },
+          "additionalProperties": false
         },
         "image": {
           "type": "object",
