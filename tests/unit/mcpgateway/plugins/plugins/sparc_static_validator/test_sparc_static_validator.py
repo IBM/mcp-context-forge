@@ -43,7 +43,10 @@ from plugins.sparc_static_validator.sparc_static_validator import (
 # Check if ALTK is available
 have_altk = True
 try:
-    import altk
+    import importlib.util
+
+    if importlib.util.find_spec("altk") is None:
+        raise ModuleNotFoundError("altk not found")
     from plugins.sparc_static_validator.sparc_static_validator import (
         ALTK_AVAILABLE,
     )
