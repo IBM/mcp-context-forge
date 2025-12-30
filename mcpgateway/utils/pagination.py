@@ -622,6 +622,159 @@ async def paginate_query(
     )
 
 
+async def unified_paginate(
+    db: Session,
+    query: Select,
+    page: Optional[int] = None,
+    per_page: Optional[int] = None,
+    cursor: Optional[str] = None,
+    limit: Optional[int] = None,
+    base_url: str = "",
+    query_params: Optional[Dict[str, Any]] = None,
+    convert_fn: Optional[callable] = None,
+) -> Any:
+    """Unified pagination helper that returns cursor or page format based on parameters.
+
+    This function eliminates duplication in service methods by handling both pagination
+    styles in one place. It automatically returns the appropriate format:
+    - Page-based format when `page` is provided: {"data": [...], "pagination": {...}, "links": {...}}
+    - Cursor-based format when `cursor` or neither is provided: (list, next_cursor)
+
+    Args:
+        db: Database session
+        query: SQLAlchemy select query (must include ORDER BY for cursor pagination)
+        page: Page number for page-based pagination (1-indexed)
+        per_page: Items per page for page-based pagination
+        cursor: Cursor for cursor-based pagination
+        limit: Maximum items for cursor-based pagination (overrides default page size)
+        base_url: Base URL for link generation in page-based mode
+        query_params: Additional query parameters for links
+        convert_fn: Optional function to convert DB models to response models
+
+    Returns:
+        If page is provided: Dict with {"data": [...], "pagination": {...}, "links": {...}}
+        Otherwise: tuple of (list, next_cursor) for backward compatibility
+
+    Examples:
+        >>> from sqlalchemy import select
+        >>> from mcpgateway.db import Server as DbServer
+        >>>
+        >>> # Page-based pagination (for admin API)
+        >>> result = await unified_paginate(
+        ...     db=db,
+        ...     query=select(DbServer).order_by(DbServer.created_at.desc()),
+        ...     page=2,
+        ...     per_page=25,
+        ...     base_url="/admin/servers"
+        ... )
+        >>> # Returns: {"data": [...], "pagination": {...}, "links": {...}}
+        >>>
+        >>> # Cursor-based pagination (for main API)
+        >>> servers, next_cursor = await unified_paginate(
+        ...     db=db,
+        ...     query=select(DbServer).order_by(DbServer.created_at.desc()),
+        ...     cursor=None,
+        ...     limit=50
+        ... )
+        >>> # Returns: (list, cursor_string or None)
+    """
+    from typing import List, Tuple, Union
+
+    # Determine page size
+    if per_page is None:
+        per_page = limit if limit and limit > 0 else settings.pagination_default_page_size
+
+    # PAGE-BASED PAGINATION
+    if page is not None:
+        # Use existing paginate_query for page-based
+        result = await paginate_query(
+            db=db,
+            query=query,
+            page=page,
+            per_page=per_page,
+            base_url=base_url,
+            query_params=query_params,
+            use_cursor_threshold=False,  # Explicit page-based mode
+        )
+
+        # Apply conversion function if provided
+        if convert_fn:
+            result["data"] = [convert_fn(item) for item in result["data"]]
+
+        return result
+
+    # CURSOR-BASED PAGINATION
+    # Determine page size from limit parameter
+    if limit is not None:
+        if limit == 0:
+            page_size = None  # No limit, fetch all
+        else:
+            page_size = min(limit, settings.pagination_max_page_size)
+    else:
+        page_size = settings.pagination_default_page_size
+
+    # Decode cursor if provided
+    from datetime import datetime
+    last_id = None
+    last_created = None
+    if cursor:
+        try:
+            cursor_data = decode_cursor(cursor)
+            last_id = cursor_data.get("id")
+            created_str = cursor_data.get("created_at")
+            if created_str:
+                last_created = datetime.fromisoformat(created_str)
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Invalid cursor, ignoring: {e}")
+
+    # Apply cursor filter with keyset pagination (assumes query already has ORDER BY)
+    if last_id and last_created:
+        # Extract model from query to apply filters
+        entities = query.column_descriptions
+        if entities:
+            from sqlalchemy import and_, or_
+            model = entities[0]["entity"]
+            # Assumes descending order: created_at DESC, id DESC
+            query = query.where(
+                or_(
+                    model.created_at < last_created,
+                    and_(model.created_at == last_created, model.id < last_id)
+                )
+            )
+
+    # Fetch page_size + 1 to determine if there are more results
+    if page_size is not None:
+        query = query.limit(page_size + 1)
+    items = db.execute(query).scalars().all()
+
+    # Check if there are more results
+    has_more = False
+    if page_size is not None:
+        has_more = len(items) > page_size
+        if has_more:
+            items = items[:page_size]
+
+    # Apply conversion function if provided
+    if convert_fn:
+        items = [convert_fn(item) for item in items]
+
+    # Generate next_cursor if there are more results
+    next_cursor = None
+    if has_more and items:
+        # Get last item (before conversion if convert_fn was applied)
+        last_item = db.execute(query.limit(page_size)).scalars().all()[-1] if convert_fn else items[-1]
+        cursor_data = {
+            "created_at": getattr(last_item, "created_at", None),
+            "id": getattr(last_item, "id", None)
+        }
+        # Handle datetime serialization
+        if cursor_data["created_at"]:
+            cursor_data["created_at"] = cursor_data["created_at"].isoformat()
+        next_cursor = encode_cursor(cursor_data)
+
+    return (items, next_cursor)
+
+
 def parse_pagination_params(request: Request) -> Dict[str, Any]:
     """Parse pagination parameters from request.
 

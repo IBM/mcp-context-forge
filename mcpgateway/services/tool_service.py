@@ -21,7 +21,7 @@ import os
 import re
 import ssl
 import time
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 from urllib.parse import parse_qs, urlparse
 import uuid
 
@@ -1354,11 +1354,13 @@ class ToolService:
         tags: Optional[List[str]] = None,
         gateway_id: Optional[str] = None,
         limit: Optional[int] = None,
+        page: Optional[int] = None,
+        per_page: Optional[int] = None,
         user_email: Optional[str] = None,
         team_id: Optional[str] = None,
         visibility: Optional[str] = None,
         _request_headers: Optional[Dict[str, str]] = None,
-    ) -> tuple[List[ToolRead], Optional[str]]:
+    ) -> Union[tuple[List[ToolRead], Optional[str]], Dict[str, Any]]:
         """
         Retrieve a list of registered tools from the database with pagination support.
 
@@ -1397,9 +1399,9 @@ class ToolService:
             True
         """
         # Check cache for first page only (cursor=None)
-        # Skip caching when user_email is provided (team-filtered results are user-specific)
+        # Skip caching when user_email is provided (team-filtered results are user-specific) or page based pagination
         cache = _get_registry_cache()
-        if cursor is None and user_email is None:
+        if cursor is None and user_email is None and page is None:
             filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, gateway_id=gateway_id, limit=limit)
             cached = await cache.get("tools", filters_hash)
             if cached is not None:
@@ -1407,40 +1409,17 @@ class ToolService:
                 cached_tools = [ToolRead.model_validate(t) for t in cached["tools"]]
                 return (cached_tools, cached.get("next_cursor"))
 
-        # Determine page size based on limit parameter
-        # limit=None: use default, limit=0: no limit (all), limit>0: use specified (capped)
-        if limit is None:
-            page_size = settings.pagination_default_page_size
-        elif limit == 0:
-            page_size = None  # No limit - fetch all
-        else:
-            page_size = min(limit, settings.pagination_max_page_size)
+        # Build base query with ordering
+        query = select(DbTool).order_by(desc(DbTool.created_at), desc(DbTool.id))
 
-        # Decode cursor to get last_id if provided
-        last_id = None
-        if cursor:
-            try:
-                cursor_data = decode_cursor(cursor)
-                last_id = cursor_data.get("id")
-                last_created = cursor_data.get("created_at")
-                logger.debug(f"Decoded cursor: last_id={last_id}")
-            except ValueError as e:
-                logger.warning(f"Invalid cursor, ignoring: {e}")
-
-        logger.debug(
-            "Listing tools with include_inactive=%s, cursor=%s, tags=%s, gateway_id=%s, page_size=%s",
-            include_inactive,
-            cursor,
-            tags,
-            gateway_id,
-            page_size,
-        )
-
-        # Build query with LEFT JOIN for team names in single query instead of batch fetching
-        query = select(DbTool, EmailTeam.name.label("team_name")).outerjoin(EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True))).order_by(DbTool.id)
-
+        # Apply active/inactive filter
+        if not include_inactive:
+            query = query.where(DbTool.enabled)
         # Apply team-based access control if user_email is provided
         if user_email:
+            # First-Party
+            from mcpgateway.services.team_management_service import TeamManagementService
+
             team_service = TeamManagementService(db)
             user_teams = await team_service.get_user_teams(user_email)
             team_ids = [team.id for team in user_teams]
@@ -1448,8 +1427,7 @@ class ToolService:
             if team_id:
                 # User requesting specific team - verify access
                 if team_id not in team_ids:
-                    return ([], None)  # No access to this team
-
+                    return ([], None)
                 access_conditions = [
                     and_(DbTool.team_id == team_id, DbTool.visibility.in_(["team", "public"])),
                     and_(DbTool.team_id == team_id, DbTool.owner_email == user_email),
@@ -1463,62 +1441,67 @@ class ToolService:
                 ]
                 if team_ids:
                     access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
-
                 query = query.where(or_(*access_conditions))
 
-            # Apply visibility filter if specified
             if visibility:
                 query = query.where(DbTool.visibility == visibility)
-
-        # Apply cursor filter (WHERE id > last_id)
-        if last_id and last_created:
-            query = query.where(or_(DbTool.created_at < last_created, and_(DbTool.created_at == last_created, DbTool.id < last_id)))
-
-        if not include_inactive:
-            query = query.where(DbTool.enabled)
-
         # Add tag filtering if tags are provided
         if tags:
             query = query.where(json_contains_expr(db, DbTool.tags, tags, match_any=True))
 
-        if gateway_id:
-            if gateway_id.lower() == "null":
-                query = query.where(DbTool.gateway_id.is_(None))
-            else:
-                query = query.where(DbTool.gateway_id == gateway_id)
+        # Use unified pagination helper - handles both page and cursor pagination
+        # First-Party
+        from mcpgateway.utils.pagination import unified_paginate
 
-        # Fetch page_size + 1 to determine if there are more results (unless no limit)
-        if page_size is not None:
-            query = query.limit(page_size + 1)
-        rows = db.execute(query).all()
+        pag_result = await unified_paginate(
+            db=db,
+            query=query,
+            page=page,
+            per_page=per_page,
+            cursor=cursor,
+            limit=limit,
+            base_url="/admin/tools",  # Used for page-based links
+            query_params={"include_inactive": include_inactive} if include_inactive else {},
+        )
+
+        # Extract servers based on pagination type
+        if page is not None:
+            # Page-based: pag_result is a dict
+            tools_db = pag_result["data"]
+        else:
+            # Cursor-based: pag_result is a tuple
+            tools_db, next_cursor = pag_result
+
+        # Fetch team names for the tools (common for both pagination types)
+        team_ids_set = {s.team_id for s in tools_db if s.team_id}
+        team_map = {}
+        if team_ids_set:
+            teams = db.execute(select(DbEmailTeam.id, DbEmailTeam.name).where(DbEmailTeam.id.in_(team_ids_set), DbEmailTeam.is_active.is_(True))).all()
+            team_map = {team.id: team.name for team in teams}
 
         db.commit()  # Release transaction to avoid idle-in-transaction
 
-        # Check if there are more results (only when paginating)
-        has_more = page_size is not None and len(rows) > page_size
-        if has_more:
-            rows = rows[:page_size]  # Trim to page_size
-
-        # Convert to ToolRead objects with team names from join result
+        # Convert to ToolRead (common for both pagination types)
         result = []
-        tools = []
-        for row in rows:
-            tool, team_name = row[0], row.team_name
-            tool.team = team_name
-            tools.append(tool)
-            result.append(self._convert_tool_to_read(tool, include_metrics=False))
+        for s in tools_db:
+            s.team = team_map.get(s.team_id) if s.team_id else None
+            result.append(self._convert_tool_to_read(s, include_metrics=False))
 
-        # Generate next_cursor if there are more results
-        next_cursor = None
-        if has_more and result:
-            last_tool = tools[-1]  # Get last DB object (not ToolRead)
-            next_cursor = encode_cursor({"id": last_tool.id})
-            logger.debug(f"Generated next_cursor for id={last_tool.id}")
+        # Return appropriate format based on pagination type
+        if page is not None:
+            # Page-based format
+            return {
+                "data": result,
+                "pagination": pag_result["pagination"],
+                "links": pag_result["links"],
+            }
 
-        # Cache first page results (only for non-user-specific queries)
+        # Cursor-based format
+
+        # Cache first page results - only for non-user-specific queries
         if cursor is None and user_email is None:
             try:
-                cache_data = {"tools": [t.model_dump(mode="json") for t in result], "next_cursor": next_cursor}
+                cache_data = {"tools": [s.model_dump(mode="json") for s in result], "next_cursor": next_cursor}
                 await cache.set("tools", cache_data, filters_hash)
             except AttributeError:
                 pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)

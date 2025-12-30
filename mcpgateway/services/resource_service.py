@@ -815,10 +815,12 @@ class ResourceService:
         cursor: Optional[str] = None,
         tags: Optional[List[str]] = None,
         limit: Optional[int] = None,
+        page: Optional[int] = None,
+        per_page: Optional[int] = None,
         user_email: Optional[str] = None,
         team_id: Optional[str] = None,
         visibility: Optional[str] = None,
-    ) -> tuple[List[ResourceRead], Optional[str]]:
+    ) -> Union[tuple[List[ResourceRead], Optional[str]], Dict[str, Any]]:
         """
         Retrieve a list of registered resources from the database with pagination support.
 
@@ -835,14 +837,15 @@ class ResourceService:
             tags (Optional[List[str]]): Filter resources by tags. If provided, only resources with at least one matching tag will be returned.
             limit (Optional[int]): Maximum number of resources to return. Use 0 for all resources (no limit).
                 If not specified, uses pagination_default_page_size.
+            page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
+            per_page: Items per page for page-based pagination. Defaults to pagination_default_page_size.
             user_email (Optional[str]): User email for team-based access control. If None, no access control is applied.
             team_id (Optional[str]): Filter by specific team ID. Requires user_email for access validation.
             visibility (Optional[str]): Filter by visibility (private, team, public).
 
         Returns:
-            tuple[List[ResourceRead], Optional[str]]: Tuple containing:
-                - List of resources for current page
-                - Next cursor token if more results exist, None otherwise
+            If page is provided: Dict with {"data": [...], "pagination": {...}, "links": {...}}
+            If cursor is provided or neither: tuple of (list of ResourceRead objects, next_cursor).
 
         Examples:
             >>> from mcpgateway.services.resource_service import ResourceService
@@ -869,9 +872,9 @@ class ResourceService:
             True
         """
         # Check cache for first page only (cursor=None)
-        # Skip caching when user_email is provided (team-filtered results are user-specific)
+        # Skip caching when user_email is provided (team-filtered results are user-specific) or page based pagination
         cache = _get_registry_cache()
-        if cursor is None and user_email is None:
+        if cursor is None and user_email is None and page in None:
             filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, limit=limit)
             cached = await cache.get("resources", filters_hash)
             if cached is not None:
@@ -879,15 +882,7 @@ class ResourceService:
                 cached_resources = [ResourceRead.model_validate(r) for r in cached["resources"]]
                 return (cached_resources, cached.get("next_cursor"))
 
-        # Determine page size based on limit parameter
-        # limit=None: use default, limit=0: no limit (all), limit>0: use specified (capped)
-        if limit is None:
-            page_size = settings.pagination_default_page_size
-        elif limit == 0:
-            page_size = None  # No limit - fetch all
-        else:
-            page_size = min(limit, settings.pagination_max_page_size)
-
+        # Build base query with ordering
         query = select(DbResource).where(DbResource.uri_template.is_(None)).order_by(desc(DbResource.created_at), desc(DbResource.id))
 
         # Apply team-based access control if user_email is provided
@@ -924,65 +919,62 @@ class ResourceService:
             if visibility:
                 query = query.where(DbResource.visibility == visibility)
 
-        # Decode cursor to get last_id and last_created if provided
-        last_id = None
-        last_created = None
-        if cursor:
-            try:
-                cursor_data = decode_cursor(cursor)
-                last_id = cursor_data.get("id")
-                last_created = cursor_data.get("created_at")
-                logger.debug(f"Decoded cursor: last_id={last_id}, last_created={last_created}")
-            except ValueError as e:
-                logger.warning(f"Invalid cursor, ignoring: {e}")
-
-        # Apply cursor filter (keyset pagination)
-        if last_id and last_created:
-            query = query.where(or_(DbResource.created_at < last_created, and_(DbResource.created_at == last_created, DbResource.id < last_id)))
-
-        if not include_inactive:
-            query = query.where(DbResource.enabled)
-
         # Add tag filtering if tags are provided
         if tags:
             query = query.where(json_contains_expr(db, DbResource.tags, tags, match_any=True))
 
-        # Fetch page_size + 1 to determine if there are more results (unless no limit)
-        if page_size is not None:
-            query = query.limit(page_size + 1)
-        resources = db.execute(query).scalars().all()
+        # Use unified pagination helper - handles both page and cursor pagination
+        # First-Party
+        from mcpgateway.utils.pagination import unified_paginate
 
-        # Check if there are more results (only when paginating)
-        has_more = page_size is not None and len(resources) > page_size
-        if has_more:
-            resources = resources[:page_size]  # Trim to page_size
+        pag_result = await unified_paginate(
+            db=db,
+            query=query,
+            page=page,
+            per_page=per_page,
+            cursor=cursor,
+            limit=limit,
+            base_url="/admin/resources",  # Used for page-based links
+            query_params={"include_inactive": include_inactive} if include_inactive else {},
+        )
 
-        # Batch fetch team names to avoid N+1 queries
-        team_ids = {r.team_id for r in resources if r.team_id}
+        # Extract servers based on pagination type
+        if page is not None:
+            # Page-based: pag_result is a dict
+            resources_db = pag_result["data"]
+        else:
+            # Cursor-based: pag_result is a tuple
+            resources_db, next_cursor = pag_result
+
+        # Fetch team names for the resources (common for both pagination types)
+        team_ids_set = {s.team_id for s in resources_db if s.team_id}
         team_map = {}
-        if team_ids:
-            teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids), EmailTeam.is_active.is_(True))).all()
-            team_map = {str(team.id): team.name for team in teams}
+        if team_ids_set:
+            teams = db.execute(select(DbEmailTeam.id, DbEmailTeam.name).where(DbEmailTeam.id.in_(team_ids_set), DbEmailTeam.is_active.is_(True))).all()
+            team_map = {team.id: team.name for team in teams}
 
         db.commit()  # Release transaction to avoid idle-in-transaction
 
-        # Convert to ResourceRead objects (skip metrics to avoid N+1 queries)
+        # Convert to ResourceRead (common for both pagination types)
         result = []
-        for t in resources:
-            t.team = team_map.get(str(t.team_id)) if t.team_id else None
-            result.append(self._convert_resource_to_read(t, include_metrics=False))
+        for s in resources_db:
+            s.team = team_map.get(s.team_id) if s.team_id else None
+            result.append(self._convert_resource_to_read(s, include_metrics=False))
+        # Return appropriate format based on pagination type
+        if page is not None:
+            # Page-based format
+            return {
+                "data": result,
+                "pagination": pag_result["pagination"],
+                "links": pag_result["links"],
+            }
 
-        # Generate next_cursor if there are more results
-        next_cursor = None
-        if has_more and result:
-            last_resource = resources[-1]  # Get last DB object
-            next_cursor = encode_cursor({"created_at": last_resource.created_at.isoformat(), "id": last_resource.id})
-            logger.debug(f"Generated next_cursor for id={last_resource.id}")
+        # Cursor-based format
 
-        # Cache first page results (only for non-user-specific queries)
+        # Cache first page results - only for non-user-specific queries
         if cursor is None and user_email is None:
             try:
-                cache_data = {"resources": [r.model_dump(mode="json") for r in result], "next_cursor": next_cursor}
+                cache_data = {"resources": [s.model_dump(mode="json") for s in result], "next_cursor": next_cursor}
                 await cache.set("resources", cache_data, filters_hash)
             except AttributeError:
                 pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)

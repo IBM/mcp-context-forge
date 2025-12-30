@@ -820,10 +820,12 @@ class PromptService:
         cursor: Optional[str] = None,
         tags: Optional[List[str]] = None,
         limit: Optional[int] = None,
+        page: Optional[int] = None,
+        per_page: Optional[int] = None,
         user_email: Optional[str] = None,
         team_id: Optional[str] = None,
         visibility: Optional[str] = None,
-    ) -> tuple[List[PromptRead], Optional[str]]:
+    ) -> Union[tuple[List[PromptRead], Optional[str]], Dict[str, Any]]:
         """
         Retrieve a list of prompt templates from the database with pagination support.
 
@@ -840,14 +842,15 @@ class PromptService:
             tags (Optional[List[str]]): Filter prompts by tags. If provided, only prompts with at least one matching tag will be returned.
             limit (Optional[int]): Maximum number of prompts to return. Use 0 for all prompts (no limit).
                 If not specified, uses pagination_default_page_size.
+            page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
+            per_page: Items per page for page-based pagination. Defaults to pagination_default_page_size.
             user_email (Optional[str]): User email for team-based access control. If None, no access control is applied.
             team_id (Optional[str]): Filter by specific team ID. Requires user_email for access validation.
             visibility (Optional[str]): Filter by visibility (private, team, public).
 
         Returns:
-            tuple[List[PromptRead], Optional[str]]: Tuple containing:
-                - List of prompts for current page
-                - Next cursor token if more results exist, None otherwise
+            If page is provided: Dict with {"data": [...], "pagination": {...}, "links": {...}}
+            If cursor is provided or neither: tuple of (list of PromptRead objects, next_cursor).
 
         Examples:
             >>> from mcpgateway.services.prompt_service import PromptService
@@ -864,9 +867,9 @@ class PromptService:
             >>> prompts == ['prompt_read']
             True
         """
-        # Check cache for first page only (cursor=None) - skip when user_email provided
+        # Check cache for first page only (cursor=None) - skip when user_email provided or page based pagination
         cache = _get_registry_cache()
-        if cursor is None and user_email is None:
+        if cursor is None and user_email is None and page is None:
             filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
             cached = await cache.get("prompts", filters_hash)
             if cached is not None:
@@ -874,35 +877,8 @@ class PromptService:
                 cached_prompts = [PromptRead.model_validate(p) for p in cached["prompts"]]
                 return (cached_prompts, cached.get("next_cursor"))
 
-        # Determine page size from limit parameter
-        if limit is not None:
-            if limit == 0:
-                page_size = None  # No limit, fetch all
-            else:
-                page_size = min(limit, settings.pagination_max_page_size)
-        else:
-            page_size = settings.pagination_default_page_size
-
-        # Build query with proper ordering for cursor pagination
+        # Build base query with ordering
         query = select(DbPrompt).order_by(desc(DbPrompt.created_at), desc(DbPrompt.id))
-
-        # Decode cursor to get last values if provided
-        last_id = None
-        last_created = None
-        if cursor:
-            try:
-                cursor_data = decode_cursor(cursor)
-                last_id = cursor_data.get("id")
-                created_str = cursor_data.get("created_at")
-                if created_str:
-                    last_created = datetime.fromisoformat(created_str)
-                logger.debug(f"Decoded cursor: last_created={last_created}, last_id={last_id}")
-            except (ValueError, TypeError) as e:
-                logger.warning(f"Invalid cursor, ignoring: {e}")
-
-        # Apply cursor filter with keyset pagination (created_at DESC, id DESC)
-        if last_id and last_created:
-            query = query.where(or_(DbPrompt.created_at < last_created, and_(DbPrompt.created_at == last_created, DbPrompt.id < last_id)))
 
         if not include_inactive:
             query = query.where(DbPrompt.enabled)
@@ -942,44 +918,58 @@ class PromptService:
         if tags:
             query = query.where(json_contains_expr(db, DbPrompt.tags, tags, match_any=True))
 
-        # Fetch page_size + 1 to determine if there are more results (unless limit=0 for unlimited)
-        if page_size is not None:
-            query = query.limit(page_size + 1)
-        prompts = db.execute(query).scalars().all()
+        # Use unified pagination helper - handles both page and cursor pagination
+        # First-Party
+        from mcpgateway.utils.pagination import unified_paginate
 
-        # Check if there are more results (only if we used pagination)
-        has_more = False
-        if page_size is not None:
-            has_more = len(prompts) > page_size
-            if has_more:
-                prompts = prompts[:page_size]  # Trim to page_size
+        pag_result = await unified_paginate(
+            db=db,
+            query=query,
+            page=page,
+            per_page=per_page,
+            cursor=cursor,
+            limit=limit,
+            base_url="/admin/resources",  # Used for page-based links
+            query_params={"include_inactive": include_inactive} if include_inactive else {},
+        )
 
-        # Batch fetch team names to avoid N+1 queries
-        team_ids = {p.team_id for p in prompts if p.team_id}
+        # Extract servers based on pagination type
+        if page is not None:
+            # Page-based: pag_result is a dict
+            prompts_db = pag_result["data"]
+        else:
+            # Cursor-based: pag_result is a tuple
+            prompts_db, next_cursor = pag_result
+
+        # Fetch team names for the prompts (common for both pagination types)
+        team_ids_set = {s.team_id for s in prompts_db if s.team_id}
         team_map = {}
-        if team_ids:
-            teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids), EmailTeam.is_active.is_(True))).all()
-            team_map = {str(team.id): team.name for team in teams}
+        if team_ids_set:
+            teams = db.execute(select(DbEmailTeam.id, DbEmailTeam.name).where(DbEmailTeam.id.in_(team_ids_set), DbEmailTeam.is_active.is_(True))).all()
+            team_map = {team.id: team.name for team in teams}
 
         db.commit()  # Release transaction to avoid idle-in-transaction
 
-        # Convert to PromptRead objects (skip metrics to avoid N+1 queries)
+        # Convert to PromptRead (common for both pagination types)
         result = []
-        for t in prompts:
-            t.team = team_map.get(str(t.team_id)) if t.team_id else None
-            result.append(PromptRead.model_validate(self._convert_db_prompt(t, include_metrics=False)))
+        for s in prompts_db:
+            s.team = team_map.get(s.team_id) if s.team_id else None
+            result.append(self._convert_prompt_to_read(s, include_metrics=False))
+        # Return appropriate format based on pagination type
+        if page is not None:
+            # Page-based format
+            return {
+                "data": result,
+                "pagination": pag_result["pagination"],
+                "links": pag_result["links"],
+            }
 
-        # Generate next_cursor if there are more results
-        next_cursor = None
-        if has_more and result:
-            last_prompt = prompts[-1]  # Get last DB object
-            next_cursor = encode_cursor({"created_at": last_prompt.created_at.isoformat(), "id": last_prompt.id})
-            logger.debug(f"Generated next_cursor for created_at={last_prompt.created_at}, id={last_prompt.id}")
+        # Cursor-based format
 
         # Cache first page results - only for non-user-specific queries
         if cursor is None and user_email is None:
             try:
-                cache_data = {"prompts": [p.model_dump(mode="json") for p in result], "next_cursor": next_cursor}
+                cache_data = {"prompts": [s.model_dump(mode="json") for s in result], "next_cursor": next_cursor}
                 await cache.set("prompts", cache_data, filters_hash)
             except AttributeError:
                 pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)

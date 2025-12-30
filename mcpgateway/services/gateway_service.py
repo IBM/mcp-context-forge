@@ -46,7 +46,7 @@ import os
 import ssl
 import tempfile
 import time
-from typing import Any, AsyncGenerator, cast, Dict, List, Optional, Set, TYPE_CHECKING
+from typing import Any, AsyncGenerator, cast, Dict, List, Optional, Set, TYPE_CHECKING, Union
 from urllib.parse import urljoin, urlparse, urlunparse
 import uuid
 
@@ -1226,10 +1226,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         tags: Optional[List[str]] = None,
         cursor: Optional[str] = None,
         limit: Optional[int] = None,
+        page: Optional[int] = None,
+        per_page: Optional[int] = None,
         user_email: Optional[str] = None,
         team_id: Optional[str] = None,
         visibility: Optional[str] = None,
-    ) -> tuple[List[GatewayRead], Optional[str]]:
+    ) -> Union[tuple[List[GatewayRead], Optional[str]], Dict[str, Any]]:
         """List all registered gateways with cursor pagination and optional team filtering.
 
         Args:
@@ -1238,12 +1240,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             tags (Optional[List[str]]): Filter resources by tags. If provided, only resources with at least one matching tag will be returned.
             cursor: Cursor for pagination (encoded last created_at and id).
             limit: Maximum number of gateways to return. None for default, 0 for unlimited.
+            page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
+            per_page: Items per page for page-based pagination. Defaults to pagination_default_page_size.
             user_email: Email of user for team-based access control. None for no access control.
             team_id: Optional team ID to filter by specific team (requires user_email).
             visibility: Optional visibility filter (private, team, public) (requires user_email).
 
         Returns:
-            A tuple of (list of GatewayRead objects, next_cursor).
+            If page is provided: Dict with {"data": [...], "pagination": {...}, "links": {...}}
+            If cursor is provided or neither: tuple of (list of GatewayRead objects, next_cursor).
 
         Examples:
             >>> from mcpgateway.services.gateway_service import GatewayService
@@ -1272,9 +1277,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             >>> empty_result == [] and cursor is None
             True
         """
-        # Check cache for first page only - skip when user_email provided
+        # Check cache for first page only - skip when user_email provided or page based pagination
         cache = _get_registry_cache()
-        if cursor is None and user_email is None:
+        if cursor is None and user_email is None and page is None:
             filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
             cached = await cache.get("gateways", filters_hash)
             if cached is not None:
@@ -1282,45 +1287,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 cached_gateways = [GatewayRead.model_validate(g) for g in cached["gateways"]]
                 return (cached_gateways, cached.get("next_cursor"))
 
-        # Determine page size from limit parameter
-        if limit is not None:
-            if limit == 0:
-                page_size = None  # No limit, fetch all
-            else:
-                page_size = min(limit, settings.pagination_max_page_size)
-        else:
-            page_size = settings.pagination_default_page_size
-
-        # Build query with proper ordering for cursor pagination
+        # Build base query with ordering
         query = select(DbGateway).order_by(desc(DbGateway.created_at), desc(DbGateway.id))
 
-        # Decode cursor to get last values if provided
-        last_id = None
-        last_created = None
-        if cursor:
-            try:
-                # First-Party
-                from mcpgateway.utils.pagination import decode_cursor
-
-                cursor_data = decode_cursor(cursor)
-                last_id = cursor_data.get("id")
-                created_str = cursor_data.get("created_at")
-                if created_str:
-                    # Standard
-                    from datetime import datetime
-
-                    last_created = datetime.fromisoformat(created_str)
-                logger.debug(f"Decoded cursor: last_created={last_created}, last_id={last_id}")
-            except (ValueError, TypeError) as e:
-                logger.warning(f"Invalid cursor, ignoring: {e}")
-
-        # Apply cursor filter with keyset pagination (created_at DESC, id DESC)
-        if last_id and last_created:
-            query = query.where(or_(DbGateway.created_at < last_created, and_(DbGateway.created_at == last_created, DbGateway.id < last_id)))
-
+        # Apply active/inactive filter
         if not include_inactive:
             query = query.where(DbGateway.enabled)
-
         # Apply team-based access control if user_email is provided
         if user_email:
             # First-Party
@@ -1328,11 +1300,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             team_service = TeamManagementService(db)
             user_teams = await team_service.get_user_teams(user_email)
-            team_ids_list = [team.id for team in user_teams]
+            team_ids = [team.id for team in user_teams]
 
             if team_id:
                 # User requesting specific team - verify access
-                if team_id not in team_ids_list:
+                if team_id not in team_ids:
                     return ([], None)
                 access_conditions = [
                     and_(DbGateway.team_id == team_id, DbGateway.visibility.in_(["team", "public"])),
@@ -1345,57 +1317,70 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     DbGateway.owner_email == user_email,
                     DbGateway.visibility == "public",
                 ]
-                if team_ids_list:
-                    access_conditions.append(and_(DbGateway.team_id.in_(team_ids_list), DbGateway.visibility.in_(["team", "public"])))
+                if team_ids:
+                    access_conditions.append(and_(DbGateway.team_id.in_(team_ids), DbGateway.visibility.in_(["team", "public"])))
                 query = query.where(or_(*access_conditions))
 
             if visibility:
                 query = query.where(DbGateway.visibility == visibility)
 
+        # Add tag filtering if tags are provided
         if tags:
             query = query.where(json_contains_expr(db, DbGateway.tags, tags, match_any=True))
+        # Use unified pagination helper - handles both page and cursor pagination
+        # First-Party
+        from mcpgateway.utils.pagination import unified_paginate
 
-        # Fetch page_size + 1 to determine if there are more results (unless limit=0 for unlimited)
-        if page_size is not None:
-            query = query.limit(page_size + 1)
-        gateways = db.execute(query).scalars().all()
+        pag_result = await unified_paginate(
+            db=db,
+            query=query,
+            page=page,
+            per_page=per_page,
+            cursor=cursor,
+            limit=limit,
+            base_url="/admin/gateways",  # Used for page-based links
+            query_params={"include_inactive": include_inactive} if include_inactive else {},
+        )
 
-        # Check if there are more results (only if we used pagination)
-        has_more = False
-        if page_size is not None:
-            has_more = len(gateways) > page_size
-            if has_more:
-                gateways = gateways[:page_size]  # Trim to page_size
+        # Extract gateways based on pagination type
+        if page is not None:
+            # Page-based: pag_result is a dict
+            gateways_db = pag_result["data"]
+        else:
+            # Cursor-based: pag_result is a tuple
+            gateways_db, next_cursor = pag_result
 
-        # Batch fetch team names
-        team_ids = {g.team_id for g in gateways if g.team_id}
-        team_names = {}
-        if team_ids:
-            teams = db.query(EmailTeam).filter(EmailTeam.id.in_(team_ids), EmailTeam.is_active.is_(True)).all()
-            team_names = {team.id: team.name for team in teams}
+        # Fetch team names for the gateways (common for both pagination types)
+        team_ids_set = {s.team_id for s in gateways_db if s.team_id}
+        team_map = {}
+        if team_ids_set:
+            teams = db.execute(select(DbEmailTeam.id, DbEmailTeam.name).where(DbEmailTeam.id.in_(team_ids_set), DbEmailTeam.is_active.is_(True))).all()
+            team_map = {team.id: team.name for team in teams}
 
         db.commit()  # Release transaction to avoid idle-in-transaction
 
+        # Convert to GatewayRead (common for both pagination types)
         result = []
-        for g in gateways:
-            g.team = team_names.get(g.team_id) if g.team_id else None
-            result.append(GatewayRead.model_validate(self._prepare_gateway_for_read(g)).masked())
+        for s in gateways_db:
+            s.team = team_map.get(s.team_id) if s.team_id else None
+            result.append(self._convert_gateway_to_read(s, include_metrics=False))
 
-        # Generate next_cursor if there are more results
-        next_cursor = None
-        if has_more and result:
-            last_gateway = gateways[-1]  # Get last DB object
-            # First-Party
-            from mcpgateway.utils.pagination import encode_cursor
+        # Return appropriate format based on pagination type
+        if page is not None:
+            # Page-based format
+            return {
+                "data": result,
+                "pagination": pag_result["pagination"],
+                "links": pag_result["links"],
+            }
 
-            next_cursor = encode_cursor({"created_at": last_gateway.created_at.isoformat(), "id": last_gateway.id})
-            logger.debug(f"Generated next_cursor for created_at={last_gateway.created_at}, id={last_gateway.id}")
+        # Cursor-based format
 
         # Cache first page results - only for non-user-specific queries
         if cursor is None and user_email is None:
             try:
-                cache_data = {"gateways": [g.model_dump(mode="json") for g in result], "next_cursor": next_cursor}
-                await cache.set("gateways", cache_data, filters_hash)
+                cache_data = {"servers": [s.model_dump(mode="json") for s in result], "next_cursor": next_cursor}
+                await cache.set("servers", cache_data, filters_hash)
             except AttributeError:
                 pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)
 

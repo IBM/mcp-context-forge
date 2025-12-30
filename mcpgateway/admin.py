@@ -1088,50 +1088,18 @@ async def admin_list_servers(
     LOGGER.debug(f"User {get_user_email(user)} requested server list (page={page}, per_page={per_page})")
     user_email = get_user_email(user)
 
-    # Team scoping
-    team_service = TeamManagementService(db)
-    user_teams = await team_service.get_user_teams(user_email)
-    team_ids = [t.id for t in user_teams]
-
-    # Build base query
-    query = select(DbServer)
-
-    if not include_inactive:
-        query = query.where(DbServer.enabled.is_(True))
-
-    # Access conditions: owner, team, public
-    access_conditions = [DbServer.owner_email == user_email]
-    if team_ids:
-        access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
-    access_conditions.append(DbServer.visibility == "public")
-
-    query = query.where(or_(*access_conditions))
-    query = query.order_by(desc(DbServer.created_at), desc(DbServer.id))
-
-    # Use unified pagination function
-    paginated_result = await paginate_query(
+    # Call server_service.list_servers with page-based pagination
+    paginated_result = await server_service.list_servers(
         db=db,
-        query=query,
+        include_inactive=include_inactive,
         page=page,
         per_page=per_page,
-        cursor=cursor,
-        base_url="/admin/servers",
-        query_params={"include_inactive": include_inactive} if include_inactive else {},
+        user_email=user_email,
     )
-
-    # Extract paginated servers
-    servers_db = paginated_result["data"]
-
-    # Convert to ServerRead
-    result = []
-    for s in servers_db:
-        team_name = server_service._get_team_name(db, getattr(s, "team_id", None))  # pylint: disable=protected-access
-        s.team = team_name
-        result.append(server_service._convert_server_to_read(s, include_metrics=False))  # pylint: disable=protected-access
 
     # Return standardized paginated response
     return {
-        "data": [server.model_dump(by_alias=True) for server in result],
+        "data": [server.model_dump(by_alias=True) for server in paginated_result["data"]],
         "pagination": paginated_result["pagination"].model_dump(),
         "links": paginated_result["links"].model_dump() if paginated_result["links"] else None,
     }
@@ -1984,54 +1952,18 @@ async def admin_list_resources(
     LOGGER.debug(f"User {get_user_email(user)} requested resource list (page={page}, per_page={per_page}, cursor={cursor})")
     user_email = get_user_email(user)
 
-    # Build base query using resource_service's team filtering logic
-    team_service = TeamManagementService(db)
-    user_teams = await team_service.get_user_teams(user_email)
-    team_ids = [team.id for team in user_teams]
-
-    # Build query
-    query = select(DbResource)
-
-    # Apply active/inactive filter
-    if not include_inactive:
-        query = query.where(DbResource.enabled.is_(True))
-
-    # Build access conditions (same logic as resource_service.list_resources with user_email)
-    access_conditions = [
-        DbResource.owner_email == user_email,
-        DbResource.visibility == "public",
-    ]
-    if team_ids:
-        access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
-    query = query.where(or_(*access_conditions))
-
-    # Add sorting for consistent pagination
-    query = query.order_by(desc(DbResource.created_at), desc(DbResource.id))
-
-    # Use unified pagination function
-    paginated_result = await paginate_query(
+    # Call resource_service.list_resources with page-based pagination
+    paginated_result = await resource_service.list_resources(
         db=db,
-        query=query,
+        include_inactive=include_inactive,
         page=page,
         per_page=per_page,
-        cursor=cursor,
-        base_url="/admin/resources",
-        query_params={"include_inactive": include_inactive} if include_inactive else {},
+        user_email=user_email,
     )
 
-    # Extract paginated resources
-    resources = paginated_result["data"]
-
-    # Convert to ResourceRead using resource_service
-    result = []
-    for r in resources:
-        team_name = resource_service._get_team_name(db, getattr(r, "team_id", None))  # pylint: disable=protected-access
-        r.team = team_name
-        result.append(resource_service._convert_resource_to_read(r, include_metrics=False))  # pylint: disable=protected-access
-
-    # Return with pagination metadata and links
+    # Return standardized paginated response
     return {
-        "data": [resource.model_dump(by_alias=True) for resource in result],
+        "data": [resource.model_dump(by_alias=True) for resource in paginated_result["data"]],
         "pagination": paginated_result["pagination"].model_dump(),
         "links": paginated_result["links"].model_dump() if paginated_result["links"] else None,
     }
@@ -2116,53 +2048,18 @@ async def admin_list_prompts(
     LOGGER.debug(f"User {get_user_email(user)} requested prompt list (page={page}, per_page={per_page})")
     user_email = get_user_email(user)
 
-    # Team scoping
-    team_service = TeamManagementService(db)
-    user_teams = await team_service.get_user_teams(user_email)
-    team_ids = [t.id for t in user_teams]
-
-    # Build base query
-    query = select(DbPrompt)
-
-    if not include_inactive:
-        query = query.where(DbPrompt.enabled.is_(True))
-
-    # Access conditions: owner, team, public
-    access_conditions = [DbPrompt.owner_email == user_email]
-    if team_ids:
-        access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
-    access_conditions.append(DbPrompt.visibility == "public")
-
-    query = query.where(or_(*access_conditions))
-    query = query.order_by(desc(DbPrompt.created_at), desc(DbPrompt.id))
-
-    # Use unified pagination function
-    paginated_result = await paginate_query(
+    # Call prompt_service.list_prompts with page-based pagination
+    paginated_result = await prompt_service.list_prompts(
         db=db,
-        query=query,
+        include_inactive=include_inactive,
         page=page,
         per_page=per_page,
-        cursor=cursor,
-        base_url="/admin/prompts",
-        query_params={"include_inactive": include_inactive} if include_inactive else {},
+        user_email=user_email,
     )
-
-    # Convert to schemas using PromptService
-    prompts_db = paginated_result["data"]
-    local_prompt_service = PromptService()
-    prompts_data = []
-    for p in prompts_db:
-        try:
-            prompt_dict = await local_prompt_service.get_prompt_details(db, p.id, include_inactive=include_inactive)
-            if prompt_dict:
-                prompts_data.append(prompt_dict)
-        except Exception as e:
-            LOGGER.warning(f"Failed to convert prompt {p.id} to schema: {e}")
-            continue
 
     # Return standardized paginated response
     return {
-        "data": prompts_data,
+        "data": [prompt.model_dump(by_alias=True) for prompt in paginated_result["data"]],
         "pagination": paginated_result["pagination"].model_dump(),
         "links": paginated_result["links"].model_dump() if paginated_result["links"] else None,
     }
@@ -2244,51 +2141,18 @@ async def admin_list_gateways(
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} requested gateway list (page={page}, per_page={per_page})")
 
-    # Team scoping
-    team_service = TeamManagementService(db)
-    user_teams = await team_service.get_user_teams(user_email)
-    team_ids = [t.id for t in user_teams]
-
-    # Build base query
-    query = select(DbGateway)
-
-    if not include_inactive:
-        query = query.where(DbGateway.enabled.is_(True))
-
-    # Access conditions: owner, team, public
-    access_conditions = [DbGateway.owner_email == user_email]
-    if team_ids:
-        access_conditions.append(and_(DbGateway.team_id.in_(team_ids), DbGateway.visibility.in_(["team", "public"])))
-    access_conditions.append(DbGateway.visibility == "public")
-
-    query = query.where(or_(*access_conditions))
-    query = query.order_by(desc(DbGateway.created_at), desc(DbGateway.id))
-
-    # Use unified pagination function
-    paginated_result = await paginate_query(
+    # Call gateway_service.list_gateways with page-based pagination
+    paginated_result = await gateway_service.list_gateways(
         db=db,
-        query=query,
+        include_inactive=include_inactive,
         page=page,
         per_page=per_page,
-        cursor=cursor,
-        base_url="/admin/gateways",
-        query_params={"include_inactive": include_inactive} if include_inactive else {},
+        user_email=user_email,
     )
-
-    # Extract paginated gateways
-    gateways_db = paginated_result["data"]
-
-    # Convert to GatewayRead
-    result = []
-    for g in gateways_db:
-        team_name = gateway_service._get_team_name(db, getattr(g, "team_id", None))  # pylint: disable=protected-access
-        g.team = team_name
-        prepared_gateway = gateway_service._prepare_gateway_for_read(g)  # pylint: disable=protected-access
-        result.append(GatewayRead.model_validate(prepared_gateway))
 
     # Return standardized paginated response
     return {
-        "data": [gateway.model_dump(by_alias=True) for gateway in result],
+        "data": [gateway.model_dump(by_alias=True) for gateway in paginated_result["data"]],
         "pagination": paginated_result["pagination"].model_dump(),
         "links": paginated_result["links"].model_dump() if paginated_result["links"] else None,
     }
@@ -5838,60 +5702,18 @@ async def admin_list_tools(
     LOGGER.debug(f"User {get_user_email(user)} requested tool list (page={page}, per_page={per_page}, cursor={cursor})")
     user_email = get_user_email(user)
 
-    # Build base query using tool_service's team filtering logic
-    team_service = TeamManagementService(db)
-    user_teams = await team_service.get_user_teams(user_email)
-    team_ids = [team.id for team in user_teams]
-
-    # Build query
-    query = select(DbTool)
-
-    # Apply active/inactive filter
-    if not include_inactive:
-        query = query.where(DbTool.enabled.is_(True))
-
-    # Build access conditions (same logic as tool_service.list_tools with user_email)
-    access_conditions = []
-
-    # 1. User's personal tools (owner_email matches)
-    access_conditions.append(DbTool.owner_email == user_email)
-
-    # 2. Team tools where user is member
-    if team_ids:
-        access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
-
-    # 3. Public tools
-    access_conditions.append(DbTool.visibility == "public")
-
-    query = query.where(or_(*access_conditions))
-
-    # Add sorting for consistent pagination (required for cursor-based pagination)
-    query = query.order_by(desc(DbTool.created_at), desc(DbTool.id))
-
-    # Use unified pagination function (auto-selects offset vs cursor strategy)
-    paginated_result = await paginate_query(
+    # Call tool_service.list_tools with page-based pagination
+    paginated_result = await tool_service.list_tools(
         db=db,
-        query=query,
+        include_inactive=include_inactive,
         page=page,
         per_page=per_page,
-        cursor=cursor,
-        base_url="/admin/tools",
-        query_params={"include_inactive": include_inactive} if include_inactive else {},
+        user_email=user_email,
     )
 
-    # Extract paginated tools
-    tools = paginated_result["data"]
-
-    # Convert to ToolRead using tool_service
-    result = []
-    for t in tools:
-        team_name = tool_service._get_team_name(db, getattr(t, "team_id", None))  # pylint: disable=protected-access
-        t.team = team_name
-        result.append(tool_service._convert_tool_to_read(t, include_metrics=False))  # pylint: disable=protected-access
-
-    # Return with pagination metadata and links from paginate_query
+    # Return standardized paginated response
     return {
-        "data": [tool.model_dump(by_alias=True) for tool in result],
+        "data": [tool.model_dump(by_alias=True) for tool in paginated_result["data"]],
         "pagination": paginated_result["pagination"].model_dump(),
         "links": paginated_result["links"].model_dump() if paginated_result["links"] else None,
     }
@@ -11705,50 +11527,18 @@ async def admin_list_a2a_agents(
     LOGGER.debug(f"User {get_user_email(user)} requested A2A Agent list (page={page}, per_page={per_page})")
     user_email = get_user_email(user)
 
-    # Team scoping
-    team_service = TeamManagementService(db)
-    user_teams = await team_service.get_user_teams(user_email)
-    team_ids = [t.id for t in user_teams]
-
-    # Build base query
-    query = select(DbA2AAgent)
-
-    if not include_inactive:
-        query = query.where(DbA2AAgent.enabled.is_(True))
-
-    # Access conditions: owner, team, public
-    access_conditions = [DbA2AAgent.owner_email == user_email]
-    if team_ids:
-        access_conditions.append(and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])))
-    access_conditions.append(DbA2AAgent.visibility == "public")
-
-    query = query.where(or_(*access_conditions))
-    query = query.order_by(desc(DbA2AAgent.created_at), desc(DbA2AAgent.id))
-
-    # Use unified pagination function
-    paginated_result = await paginate_query(
+    # Call a2a_service.list_agents with page-based pagination
+    paginated_result = await a2a_service.list_agents(
         db=db,
-        query=query,
+        include_inactive=include_inactive,
         page=page,
         per_page=per_page,
-        cursor=cursor,
-        base_url="/admin/a2a",
-        query_params={"include_inactive": include_inactive} if include_inactive else {},
+        user_email=user_email,
     )
-
-    # Extract paginated agents
-    agents_db = paginated_result["data"]
-
-    # Convert to A2AAgentRead
-    result = []
-    for a in agents_db:
-        team_name = a2a_service._get_team_name(db, getattr(a, "team_id", None))  # pylint: disable=protected-access
-        a.team = team_name
-        result.append(a2a_service._convert_agent_to_read(a, include_metrics=False))  # pylint: disable=protected-access
 
     # Return standardized paginated response
     return {
-        "data": [agent.model_dump(by_alias=True) for agent in result],
+        "data": [agent.model_dump(by_alias=True) for agent in paginated_result["data"]],
         "pagination": paginated_result["pagination"].model_dump(),
         "links": paginated_result["links"].model_dump() if paginated_result["links"] else None,
     }

@@ -14,7 +14,7 @@ It also publishes event notifications for server changes.
 # Standard
 import asyncio
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 # Third-Party
 import httpx
@@ -684,11 +684,13 @@ class ServerService:
         tags: Optional[List[str]] = None,
         cursor: Optional[str] = None,
         limit: Optional[int] = None,
+        page: Optional[int] = None,
+        per_page: Optional[int] = None,
         user_email: Optional[str] = None,
         team_id: Optional[str] = None,
         visibility: Optional[str] = None,
-    ) -> tuple[List[ServerRead], Optional[str]]:
-        """List all registered servers with cursor pagination and optional team filtering.
+    ) -> Union[tuple[List[ServerRead], Optional[str]], Dict[str, Any]]:
+        """List all registered servers with cursor or page-based pagination and optional team filtering.
 
         Args:
             db: Database session.
@@ -696,12 +698,15 @@ class ServerService:
             tags: Filter servers by tags. If provided, only servers with at least one matching tag will be returned.
             cursor: Cursor for pagination (encoded last created_at and id).
             limit: Maximum number of servers to return. None for default, 0 for unlimited.
+            page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
+            per_page: Items per page for page-based pagination. Defaults to pagination_default_page_size.
             user_email: Email of user for team-based access control. None for no access control.
             team_id: Optional team ID to filter by specific team (requires user_email).
             visibility: Optional visibility filter (private, team, public) (requires user_email).
 
         Returns:
-            A tuple of (list of ServerRead objects, next_cursor).
+            If page is provided: Dict with {"data": [...], "pagination": {...}, "links": {...}}
+            If cursor is provided or neither: tuple of (list of ServerRead objects, next_cursor).
 
         Examples:
             >>> from mcpgateway.services.server_service import ServerService
@@ -716,9 +721,9 @@ class ServerService:
             >>> isinstance(servers, list) and cursor is None
             True
         """
-        # Check cache for first page only - skip when user_email provided
+        # Check cache for first page only - skip when user_email provided or page-based pagination
         cache = _get_registry_cache()
-        if cursor is None and user_email is None:
+        if cursor is None and user_email is None and page is None:
             filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
             cached = await cache.get("servers", filters_hash)
             if cached is not None:
@@ -726,36 +731,10 @@ class ServerService:
                 cached_servers = [ServerRead.model_validate(s) for s in cached["servers"]]
                 return (cached_servers, cached.get("next_cursor"))
 
-        # Determine page size from limit parameter
-        if limit is not None:
-            if limit == 0:
-                page_size = None  # No limit, fetch all
-            else:
-                page_size = min(limit, settings.pagination_max_page_size)
-        else:
-            page_size = settings.pagination_default_page_size
-
-        # Build query with proper ordering for cursor pagination
+        # Build base query with ordering
         query = select(DbServer).order_by(desc(DbServer.created_at), desc(DbServer.id))
 
-        # Decode cursor to get last values if provided
-        last_id = None
-        last_created = None
-        if cursor:
-            try:
-                cursor_data = decode_cursor(cursor)
-                last_id = cursor_data.get("id")
-                created_str = cursor_data.get("created_at")
-                if created_str:
-                    last_created = datetime.fromisoformat(created_str)
-                logger.debug(f"Decoded cursor: last_created={last_created}, last_id={last_id}")
-            except (ValueError, TypeError) as e:
-                logger.warning(f"Invalid cursor, ignoring: {e}")
-
-        # Apply cursor filter with keyset pagination (created_at DESC, id DESC)
-        if last_id and last_created:
-            query = query.where(or_(DbServer.created_at < last_created, and_(DbServer.created_at == last_created, DbServer.id < last_id)))
-
+        # Apply active/inactive filter
         if not include_inactive:
             query = query.where(DbServer.enabled)
 
@@ -794,39 +773,54 @@ class ServerService:
         if tags:
             query = query.where(json_contains_expr(db, DbServer.tags, tags, match_any=True))
 
-        # Fetch page_size + 1 to determine if there are more results (unless limit=0 for unlimited)
-        if page_size is not None:
-            query = query.limit(page_size + 1)
-        servers = db.execute(query).scalars().all()
+        # Use unified pagination helper - handles both page and cursor pagination
+        # First-Party
+        from mcpgateway.utils.pagination import unified_paginate
 
-        # Check if there are more results (only if we used pagination)
-        has_more = False
-        if page_size is not None:
-            has_more = len(servers) > page_size
-            if has_more:
-                servers = servers[:page_size]  # Trim to page_size
+        pag_result = await unified_paginate(
+            db=db,
+            query=query,
+            page=page,
+            per_page=per_page,
+            cursor=cursor,
+            limit=limit,
+            base_url="/admin/servers",  # Used for page-based links
+            query_params={"include_inactive": include_inactive} if include_inactive else {},
+        )
 
-        # Fetch all team names
-        team_ids = [s.team_id for s in servers if s.team_id]
+        # Extract servers based on pagination type
+        if page is not None:
+            # Page-based: pag_result is a dict
+            servers_db = pag_result["data"]
+        else:
+            # Cursor-based: pag_result is a tuple
+            servers_db, next_cursor = pag_result
+
+        # Fetch team names for the servers (common for both pagination types)
+        team_ids_set = {s.team_id for s in servers_db if s.team_id}
         team_map = {}
-        if team_ids:
-            teams = db.execute(select(DbEmailTeam.id, DbEmailTeam.name).where(DbEmailTeam.id.in_(team_ids), DbEmailTeam.is_active.is_(True))).all()
+        if team_ids_set:
+            teams = db.execute(select(DbEmailTeam.id, DbEmailTeam.name).where(DbEmailTeam.id.in_(team_ids_set), DbEmailTeam.is_active.is_(True))).all()
             team_map = {team.id: team.name for team in teams}
 
         db.commit()  # Release transaction to avoid idle-in-transaction
 
-        # Skip metrics to avoid N+1 queries in list operations
+        # Convert to ServerRead (common for both pagination types)
         result = []
-        for s in servers:
+        for s in servers_db:
             s.team = team_map.get(s.team_id) if s.team_id else None
             result.append(self._convert_server_to_read(s, include_metrics=False))
 
-        # Generate next_cursor if there are more results
-        next_cursor = None
-        if has_more and result:
-            last_server = servers[-1]  # Get last DB object
-            next_cursor = encode_cursor({"created_at": last_server.created_at.isoformat(), "id": last_server.id})
-            logger.debug(f"Generated next_cursor for created_at={last_server.created_at}, id={last_server.id}")
+        # Return appropriate format based on pagination type
+        if page is not None:
+            # Page-based format
+            return {
+                "data": result,
+                "pagination": pag_result["pagination"],
+                "links": pag_result["links"],
+            }
+
+        # Cursor-based format
 
         # Cache first page results - only for non-user-specific queries
         if cursor is None and user_email is None:
