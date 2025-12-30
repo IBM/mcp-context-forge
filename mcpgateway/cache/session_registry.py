@@ -1189,8 +1189,8 @@ class SessionRegistry(SessionBackend):
                 else:
                     connected.append(session_id)
             except Exception as e:
+                # Only log error, don't remove session on transient errors
                 logger.error(f"Error checking connection for session {session_id}: {e}")
-                await self.remove_session(session_id)
 
         # Parallel refresh of connected sessions
         if connected:
@@ -1200,8 +1200,8 @@ class SessionRegistry(SessionBackend):
             for session_id, result in zip(connected, results):
                 try:
                     if isinstance(result, Exception):
+                        # Only log error, don't remove session on transient DB errors
                         logger.error(f"Error refreshing session {session_id}: {result}")
-                        await self.remove_session(session_id)
                     elif not result:
                         # Session no longer in database, remove locally
                         await self.remove_session(session_id)
