@@ -116,6 +116,10 @@ spec:
                 name: {{ include "mcp-stack.fullname" . }}-gateway-secret
             - configMapRef:
                 name: {{ include "mcp-stack.fullname" . }}-gateway-config
+{{- with .Values.mcpContextForge.externalSecret }}
+            - secretRef:
+                name: {{ . }}
+{{- end }}
 
           ################################################################
           # HEALTH & READINESS PROBES

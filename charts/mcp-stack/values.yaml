@@ -11,6 +11,12 @@ global:
 # MCP CONTEXT-FORGE (Gateway / API tier)
 ########################################################################
 mcpContextForge:
+  # --- External Secret Reference (Optional) ---#
+  # Name of an external secret to inject additional environment variables
+  # Leave empty to disable. Useful for secrets managed by External Secrets Operator,
+  # Sealed Secrets, or other external secret management tools.
+  externalSecret: ""
+
   # --- Specific plugin file ----#
   pluginConfig:
     enabled: false

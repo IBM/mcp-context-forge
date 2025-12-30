@@ -252,6 +252,12 @@
           "additionalProperties": false
         },
 
+        "externalSecret": {
+          "type": "string",
+          "description": "Optional name of an external secret to inject additional environment variables. Leave empty to disable. Useful for secrets managed by External Secrets Operator, Sealed Secrets, or other external secret management tools.",
+          "default": ""
+        },
+
         "pluginConfig": {
           "type": "object",
           "description": "Plugin configuration via ConfigMap",
