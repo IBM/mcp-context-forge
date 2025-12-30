@@ -216,9 +216,6 @@ if logging_service is None:
     LOGGER = logging_service.get_logger("mcpgateway.admin")
 
 
-# Removed duplicate function definition - using the more comprehensive version below
-
-
 # Initialize services
 server_service: ServerService = ServerService()
 tool_service: ToolService = ToolService()
@@ -5755,8 +5752,10 @@ async def admin_list_tools(
     # Add sorting for consistent pagination (using new indexes)
     query = query.order_by(desc(DbTool.created_at), desc(DbTool.id))
 
-    # Get total count
-    count_query = select(func.count()).select_from(query.alias())  # pylint: disable=not-callable
+    # Get total count (use direct count on model with same access filters)
+    count_query = select(func.count(DbTool.id)).where(or_(*access_conditions))  # pylint: disable=not-callable
+    if not include_inactive:
+        count_query = count_query.where(DbTool.enabled.is_(True))
     total_items = db.execute(count_query).scalar() or 0
 
     # Calculate pagination metadata
@@ -5889,7 +5888,7 @@ async def admin_tools_partial_html(
     query = query.where(or_(*access_conditions))
 
     # Count total items - must include gateway filter for accurate count
-    count_query = select(func.count()).select_from(DbTool).where(or_(*access_conditions))  # pylint: disable=not-callable
+    count_query = select(func.count(DbTool.id)).where(or_(*access_conditions))  # pylint: disable=not-callable
     if gateway_id:
         gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
         if gateway_ids:
@@ -6233,7 +6232,7 @@ async def admin_prompts_partial_html(
     query = query.where(or_(*access_conditions))
 
     # Count total items - must include gateway filter for accurate count
-    count_query = select(func.count()).select_from(DbPrompt).where(or_(*access_conditions))  # pylint: disable=not-callable
+    count_query = select(func.count(DbPrompt.id)).where(or_(*access_conditions))  # pylint: disable=not-callable
     if gateway_id:
         gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
         if gateway_ids:
@@ -6409,7 +6408,7 @@ async def admin_resources_partial_html(
     query = query.where(or_(*access_conditions))
 
     # Count total items - must include gateway filter for accurate count
-    count_query = select(func.count()).select_from(DbResource).where(or_(*access_conditions))  # pylint: disable=not-callable
+    count_query = select(func.count(DbResource.id)).where(or_(*access_conditions))  # pylint: disable=not-callable
     if gateway_id:
         gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
         if gateway_ids:
@@ -13611,21 +13610,22 @@ async def get_observability_stats(request: Request, hours: int = Query(24, ge=1,
     try:
         cutoff_time = datetime.now() - timedelta(hours=hours)
 
-        # pylint: disable=not-callable
-        total_traces = db.query(func.count(ObservabilityTrace.trace_id)).filter(ObservabilityTrace.start_time >= cutoff_time).scalar() or 0
-
-        success_count = db.query(func.count(ObservabilityTrace.trace_id)).filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.status == "ok").scalar() or 0
-
-        error_count = db.query(func.count(ObservabilityTrace.trace_id)).filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.status == "error").scalar() or 0
-        # pylint: enable=not-callable
-
-        avg_duration = db.query(func.avg(ObservabilityTrace.duration_ms)).filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.duration_ms.isnot(None)).scalar() or 0
+        # Consolidate multiple count queries into a single aggregated select
+        # Filter by start_time first (uses index), then aggregate by status
+        result = db.execute(
+            select(
+                func.count(ObservabilityTrace.trace_id).label("total_traces"),  # pylint: disable=not-callable
+                func.sum(case((ObservabilityTrace.status == "ok", 1), else_=0)).label("success_count"),
+                func.sum(case((ObservabilityTrace.status == "error", 1), else_=0)).label("error_count"),
+                func.avg(ObservabilityTrace.duration_ms).label("avg_duration_ms"),
+            ).where(ObservabilityTrace.start_time >= cutoff_time)
+        ).one()
 
         stats = {
-            "total_traces": total_traces,
-            "success_count": success_count,
-            "error_count": error_count,
-            "avg_duration_ms": avg_duration,
+            "total_traces": int(result.total_traces or 0),
+            "success_count": int(result.success_count or 0),
+            "error_count": int(result.error_count or 0),
+            "avg_duration_ms": float(result.avg_duration_ms or 0),
         }
 
         return request.app.state.templates.TemplateResponse("observability_stats.html", {"request": request, "stats": stats})
