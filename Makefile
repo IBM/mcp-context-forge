@@ -2482,7 +2482,11 @@ containerfile-update:
 
 dist: clean                  ## Build wheel + sdist into ./dist (optionally includes Rust plugins)
 	@echo "📦 Building Python package..."
-	@uv build
+	@if command -v uv >/dev/null 2>&1; then \
+		uv build; \
+	else \
+		pip install --quiet build && python -m build; \
+	fi
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust plugins..."; \
 		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
@@ -2498,7 +2502,11 @@ dist: clean                  ## Build wheel + sdist into ./dist (optionally incl
 
 wheel:                       ## Build wheel only (Python + optionally Rust)
 	@echo "📦 Building Python wheel..."
-	@uv build --wheel
+	@if command -v uv >/dev/null 2>&1; then \
+		uv build --wheel; \
+	else \
+		pip install --quiet build && python -m build --wheel; \
+	fi
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust wheels..."; \
 		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
@@ -2510,21 +2518,36 @@ wheel:                       ## Build wheel only (Python + optionally Rust)
 
 sdist:                       ## Build source distribution only
 	@echo "📦 Building source distribution..."
-	@uv build --sdist
+	@if command -v uv >/dev/null 2>&1; then \
+		uv build --sdist; \
+	else \
+		pip install --quiet build && python -m build --sdist; \
+	fi
 	@echo '🛠  Source distribution written to ./dist'
 
 verify: dist               ## Build, run metadata & manifest checks
-	@uvx twine check dist/*
-	@uvx check-manifest
-	@uvx pyroma -d .
+	@if command -v uvx >/dev/null 2>&1; then \
+		uvx twine check dist/* && uvx check-manifest && uvx pyroma -d .; \
+	else \
+		pip install --quiet twine check-manifest pyroma && \
+		twine check dist/* && check-manifest && pyroma -d .; \
+	fi
 	@echo "✅  Package verified - ready to publish."
 
 publish: verify            ## Verify, then upload to PyPI
-	@uvx twine upload dist/*
+	@if command -v uvx >/dev/null 2>&1; then \
+		uvx twine upload dist/*; \
+	else \
+		pip install --quiet twine && twine upload dist/*; \
+	fi
 	@echo "🚀  Upload finished - check https://pypi.org/project/$(PROJECT_NAME)/"
 
 publish-testpypi: verify   ## Verify, then upload to TestPyPI
-	@uvx twine upload --repository testpypi dist/*
+	@if command -v uvx >/dev/null 2>&1; then \
+		uvx twine upload --repository testpypi dist/*; \
+	else \
+		pip install --quiet twine && twine upload --repository testpypi dist/*; \
+	fi
 	@echo "🚀  Upload finished - check https://test.pypi.org/project/$(PROJECT_NAME)/"
 
 # Allow override via environment

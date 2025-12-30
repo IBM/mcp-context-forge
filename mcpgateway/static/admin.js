@@ -9978,7 +9978,7 @@ function handleDeleteSubmit(event, type, name = "", inactiveType = "") {
     }
 
     const purgeConfirmation = confirm(
-        `Also purge ALL metrics history for ${targetName}? This deletes raw metrics and hourly rollups and cannot be undone.`
+        `Also purge ALL metrics history for ${targetName}? This deletes raw metrics and hourly rollups and cannot be undone.`,
     );
     if (purgeConfirmation) {
         const form = event.target;
