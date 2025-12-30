@@ -620,9 +620,8 @@ class EmailAuthService:
             int: Total user count
         """
         try:
-            stmt = select(EmailUser)
-            result = self.db.execute(stmt)
-            count = len(list(result.scalars().all()))
+            stmt = select(func.count(EmailUser.email))  # pylint: disable=not-callable
+            count = self.db.execute(stmt).scalar() or 0
             return count
         except Exception as e:
             logger.error(f"Error counting users: {e}")
