@@ -16,7 +16,7 @@ from typing import List, Optional, Tuple
 
 # Third-Party
 import httpx
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -225,11 +225,11 @@ class LLMProviderService:
         if enabled_only:
             query = query.where(LLMProvider.enabled.is_(True))
 
-        # Get total count
-        count_query = select(LLMProvider.id)
+        # Get total count efficiently using func.count()
+        count_query = select(func.count(LLMProvider.id))  # pylint: disable=not-callable
         if enabled_only:
             count_query = count_query.where(LLMProvider.enabled.is_(True))
-        total = len(db.execute(count_query).all())
+        total = db.execute(count_query).scalar() or 0
 
         # Apply pagination
         offset = (page - 1) * page_size
@@ -466,13 +466,13 @@ class LLMProviderService:
         if enabled_only:
             query = query.where(LLMModel.enabled.is_(True))
 
-        # Get total count
-        count_query = select(LLMModel.id)
+        # Get total count efficiently using func.count()
+        count_query = select(func.count(LLMModel.id))  # pylint: disable=not-callable
         if provider_id:
             count_query = count_query.where(LLMModel.provider_id == provider_id)
         if enabled_only:
             count_query = count_query.where(LLMModel.enabled.is_(True))
-        total = len(db.execute(count_query).all())
+        total = db.execute(count_query).scalar() or 0
 
         # Apply pagination
         offset = (page - 1) * page_size
