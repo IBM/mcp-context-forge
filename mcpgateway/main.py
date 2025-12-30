@@ -478,6 +478,24 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await metrics_buffer_service.start()
             logger.info("Metrics buffer service initialized")
 
+        # Initialize metrics cleanup service for automatic deletion of old metrics
+        if settings.metrics_cleanup_enabled:
+            # First-Party
+            from mcpgateway.services.metrics_cleanup_service import get_metrics_cleanup_service  # pylint: disable=import-outside-toplevel
+
+            metrics_cleanup_service = get_metrics_cleanup_service()
+            await metrics_cleanup_service.start()
+            logger.info("Metrics cleanup service initialized (retention: %d days)", settings.metrics_retention_days)
+
+        # Initialize metrics rollup service for hourly aggregation
+        if settings.metrics_rollup_enabled:
+            # First-Party
+            from mcpgateway.services.metrics_rollup_service import get_metrics_rollup_service  # pylint: disable=import-outside-toplevel
+
+            metrics_rollup_service = get_metrics_rollup_service()
+            await metrics_rollup_service.start()
+            logger.info("Metrics rollup service initialized (interval: %dh)", settings.metrics_rollup_interval_hours)
+
         refresh_slugs_on_startup()
 
         # Bootstrap SSO providers from environment configuration
@@ -602,6 +620,22 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
             metrics_buffer_service = get_metrics_buffer_service()
             services_to_shutdown.insert(0, metrics_buffer_service)  # Shutdown first to flush metrics
+
+        # Add metrics rollup service if enabled (shutdown before cleanup)
+        if settings.metrics_rollup_enabled:
+            # First-Party
+            from mcpgateway.services.metrics_rollup_service import get_metrics_rollup_service  # pylint: disable=import-outside-toplevel
+
+            metrics_rollup_service = get_metrics_rollup_service()
+            services_to_shutdown.insert(1, metrics_rollup_service)
+
+        # Add metrics cleanup service if enabled
+        if settings.metrics_cleanup_enabled:
+            # First-Party
+            from mcpgateway.services.metrics_cleanup_service import get_metrics_cleanup_service  # pylint: disable=import-outside-toplevel
+
+            metrics_cleanup_service = get_metrics_cleanup_service()
+            services_to_shutdown.insert(2, metrics_cleanup_service)
 
         await shutdown_services(services_to_shutdown)
 
@@ -2018,12 +2052,18 @@ async def toggle_server_status(
 
 @server_router.delete("/{server_id}", response_model=Dict[str, str])
 @require_permission("servers.delete")
-async def delete_server(server_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_server(
+    server_id: str,
+    purge_metrics: bool = Query(False, description="Purge raw + rollup metrics for this server"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, str]:
     """
     Deletes a server by its ID.
 
     Args:
         server_id (str): The ID of the server to delete.
+        purge_metrics (bool): Whether to delete raw + hourly rollup metrics for this server.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
@@ -2037,7 +2077,7 @@ async def delete_server(server_id: str, db: Session = Depends(get_db), user=Depe
         logger.debug(f"User {user} is deleting server with ID {server_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         await server_service.get_server(db, server_id)
-        await server_service.delete_server(db, server_id, user_email=user_email)
+        await server_service.delete_server(db, server_id, user_email=user_email, purge_metrics=purge_metrics)
         return {
             "status": "success",
             "message": f"Server {server_id} deleted successfully",
@@ -2498,12 +2538,18 @@ async def toggle_a2a_agent_status(
 
 @a2a_router.delete("/{agent_id}", response_model=Dict[str, str])
 @require_permission("a2a.delete")
-async def delete_a2a_agent(agent_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_a2a_agent(
+    agent_id: str,
+    purge_metrics: bool = Query(False, description="Purge raw + rollup metrics for this agent"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, str]:
     """
     Deletes an A2A agent by its ID.
 
     Args:
         agent_id (str): The ID of the agent to delete.
+        purge_metrics (bool): Whether to delete raw + hourly rollup metrics for this agent.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
@@ -2518,7 +2564,7 @@ async def delete_a2a_agent(agent_id: str, db: Session = Depends(get_db), user=De
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        await a2a_service.delete_agent(db, agent_id, user_email=user_email)
+        await a2a_service.delete_agent(db, agent_id, user_email=user_email, purge_metrics=purge_metrics)
         return {
             "status": "success",
             "message": f"A2A Agent {agent_id} deleted successfully",
@@ -2853,12 +2899,18 @@ async def update_tool(
 
 @tool_router.delete("/{tool_id}")
 @require_permission("tools.delete")
-async def delete_tool(tool_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_tool(
+    tool_id: str,
+    purge_metrics: bool = Query(False, description="Purge raw + rollup metrics for this tool"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, str]:
     """
     Permanently deletes a tool by ID.
 
     Args:
         tool_id (str): The ID of the tool to delete.
+        purge_metrics (bool): Whether to delete raw + hourly rollup metrics for this tool.
         db (Session): The database session dependency.
         user (str): The authenticated user making the request.
 
@@ -2871,7 +2923,7 @@ async def delete_tool(tool_id: str, db: Session = Depends(get_db), user=Depends(
     try:
         logger.debug(f"User {user} is deleting tool with ID {tool_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        await tool_service.delete_tool(db, tool_id, user_email=user_email)
+        await tool_service.delete_tool(db, tool_id, user_email=user_email, purge_metrics=purge_metrics)
         return {"status": "success", "message": f"Tool {tool_id} permanently deleted"}
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -3260,12 +3312,18 @@ async def update_resource(
 
 @resource_router.delete("/{resource_id}")
 @require_permission("resources.delete")
-async def delete_resource(resource_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_resource(
+    resource_id: str,
+    purge_metrics: bool = Query(False, description="Purge raw + rollup metrics for this resource"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, str]:
     """
     Delete a resource by its ID.
 
     Args:
         resource_id (str): ID of the resource to delete.
+        purge_metrics (bool): Whether to delete raw + hourly rollup metrics for this resource.
         db (Session): Database session.
         user (str): Authenticated user.
 
@@ -3278,7 +3336,7 @@ async def delete_resource(resource_id: str, db: Session = Depends(get_db), user=
     try:
         logger.debug(f"User {user} is deleting resource with id {resource_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        await resource_service.delete_resource(db, resource_id, user_email=user_email)
+        await resource_service.delete_resource(db, resource_id, user_email=user_email, purge_metrics=purge_metrics)
         await invalidate_resource_cache(resource_id)
         return {"status": "success", "message": f"Resource {resource_id} deleted"}
     except PermissionError as e:
@@ -3660,12 +3718,18 @@ async def update_prompt(
 
 @prompt_router.delete("/{prompt_id}")
 @require_permission("prompts.delete")
-async def delete_prompt(prompt_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_prompt(
+    prompt_id: str,
+    purge_metrics: bool = Query(False, description="Purge raw + rollup metrics for this prompt"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, str]:
     """
     Delete a prompt by ID.
 
     Args:
         prompt_id: ID of the prompt.
+        purge_metrics: Whether to delete raw + hourly rollup metrics for this prompt.
         db: Database session.
         user: Authenticated user.
 
@@ -3678,7 +3742,7 @@ async def delete_prompt(prompt_id: str, db: Session = Depends(get_db), user=Depe
     logger.debug(f"User: {user} requested deletion of prompt {prompt_id}")
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        await prompt_service.delete_prompt(db, prompt_id, user_email=user_email)
+        await prompt_service.delete_prompt(db, prompt_id, user_email=user_email, purge_metrics=purge_metrics)
         return {"status": "success", "message": f"Prompt {prompt_id} deleted"}
     except Exception as e:
         if isinstance(e, PermissionError):
@@ -5202,6 +5266,14 @@ if settings.observability_enabled:
     logger.info("Observability router included - observability API endpoints enabled")
 else:
     logger.info("Observability router not included - observability disabled")
+
+# Conditionally include metrics maintenance router if cleanup or rollup is enabled
+if settings.metrics_cleanup_enabled or settings.metrics_rollup_enabled:
+    # First-Party
+    from mcpgateway.routers.metrics_maintenance import router as metrics_maintenance_router
+
+    app.include_router(metrics_maintenance_router)
+    logger.info("Metrics maintenance router included - cleanup/rollup API endpoints enabled")
 
 # Conditionally include A2A router if A2A features are enabled
 if settings.mcpgateway_a2a_enabled:

@@ -425,6 +425,21 @@ class TestPromptService:
         test_db.delete.assert_called_once_with(p)
         prompt_service._notify_prompt_deleted.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_delete_prompt_purge_metrics(self, prompt_service, test_db):
+        p = _build_db_prompt()
+        test_db.get = Mock(return_value=p)
+        test_db.delete = Mock()
+        test_db.commit = Mock()
+        test_db.execute = Mock()
+        prompt_service._notify_prompt_deleted = AsyncMock()
+
+        await prompt_service.delete_prompt(test_db, 1, purge_metrics=True)
+
+        assert test_db.execute.call_count == 2
+        test_db.delete.assert_called_once_with(p)
+        test_db.commit.assert_called_once()
+
 
     @pytest.mark.asyncio
     async def test_delete_prompt_not_found(self, prompt_service, test_db):
@@ -515,31 +530,34 @@ class TestPromptService:
 
     @pytest.mark.asyncio
     async def test_aggregate_and_reset_metrics(self, prompt_service, test_db):
-        # Mock a single aggregated query result with .one() call
-        mock_result = MagicMock()
-        mock_result.total_executions = 10
-        mock_result.successful_executions = 8
-        mock_result.failed_executions = 2
-        mock_result.min_response_time = 0.1
-        mock_result.max_response_time = 0.9
-        mock_result.avg_response_time = 0.5
-        mock_result.last_execution_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        # Mock aggregate_metrics_combined to return a proper AggregatedMetrics result
+        from mcpgateway.services.metrics_query_service import AggregatedMetrics
 
-        execute_result = MagicMock()
-        execute_result.one.return_value = mock_result
-        test_db.execute = Mock(return_value=execute_result)
+        mock_result = AggregatedMetrics(
+            total_executions=10,
+            successful_executions=8,
+            failed_executions=2,
+            failure_rate=0.2,
+            min_response_time=0.1,
+            max_response_time=0.9,
+            avg_response_time=0.5,
+            last_execution_time="2025-01-01T00:00:00+00:00",
+            raw_count=6,
+            rollup_count=4,
+        )
 
-        metrics = await prompt_service.aggregate_metrics(test_db)
-        assert metrics["total_executions"] == 10
-        assert metrics["successful_executions"] == 8
-        assert metrics["failed_executions"] == 2
-        assert metrics["failure_rate"] == 0.2
+        with patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", return_value=mock_result):
+            metrics = await prompt_service.aggregate_metrics(test_db)
+            assert metrics["total_executions"] == 10
+            assert metrics["successful_executions"] == 8
+            assert metrics["failed_executions"] == 2
+            assert metrics["failure_rate"] == 0.2
 
         # reset_metrics
         test_db.execute = Mock()
         test_db.commit = Mock()
         await prompt_service.reset_metrics(test_db)
-        test_db.execute.assert_called()
+        assert test_db.execute.call_count == 2
         test_db.commit.assert_called_once()
 
     @pytest.mark.asyncio

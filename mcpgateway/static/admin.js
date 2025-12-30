@@ -6905,6 +6905,51 @@ function showTab(tabName) {
                     }
                 }
 
+                if (tabName === "maintenance") {
+                    const maintenancePanel =
+                        safeGetElement("maintenance-panel");
+                    if (
+                        maintenancePanel &&
+                        maintenancePanel.innerHTML.trim() === ""
+                    ) {
+                        fetchWithTimeout(
+                            `${window.ROOT_PATH}/admin/maintenance/partial`,
+                            {},
+                            window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000,
+                        )
+                            .then((resp) => {
+                                if (!resp.ok) {
+                                    if (resp.status === 403) {
+                                        throw new Error(
+                                            "Platform administrator access required",
+                                        );
+                                    }
+                                    throw new Error(
+                                        `HTTP ${resp.status}: ${resp.statusText}`,
+                                    );
+                                }
+                                return resp.text();
+                            })
+                            .then((html) => {
+                                safeSetInnerHTML(maintenancePanel, html, true);
+                                console.log("✓ Maintenance panel loaded");
+                            })
+                            .catch((err) => {
+                                console.error(
+                                    "Failed to load maintenance panel:",
+                                    err,
+                                );
+                                const errorDiv = document.createElement("div");
+                                errorDiv.className = "text-red-600 p-4";
+                                errorDiv.textContent =
+                                    err.message ||
+                                    "Failed to load maintenance panel. Please try again.";
+                                maintenancePanel.innerHTML = "";
+                                maintenancePanel.appendChild(errorDiv);
+                            });
+                    }
+                }
+
                 if (tabName === "export-import") {
                     // Initialize export/import functionality when tab is shown
                     if (!panel.classList.contains("hidden")) {
@@ -9920,6 +9965,32 @@ function handleSubmitWithConfirmation(event, type) {
     }
 
     return handleToggleSubmit(event, type);
+}
+
+function handleDeleteSubmit(event, type, name = "", inactiveType = "") {
+    event.preventDefault();
+
+    const targetName = name ? `${type} "${name}"` : `this ${type}`;
+    const confirmationMessage = `Are you sure you want to permanently delete ${targetName}? (Deactivation is reversible, deletion is permanent)`;
+    const confirmation = confirm(confirmationMessage);
+    if (!confirmation) {
+        return false;
+    }
+
+    const purgeConfirmation = confirm(
+        `Also purge ALL metrics history for ${targetName}? This deletes raw metrics and hourly rollups and cannot be undone.`,
+    );
+    if (purgeConfirmation) {
+        const form = event.target;
+        const purgeField = document.createElement("input");
+        purgeField.type = "hidden";
+        purgeField.name = "purge_metrics";
+        purgeField.value = "true";
+        form.appendChild(purgeField);
+    }
+
+    const toggleType = inactiveType || type;
+    return handleToggleSubmit(event, toggleType);
 }
 
 // ===================================================================
@@ -16479,6 +16550,44 @@ function initializeTabState() {
         }, 100);
     }
 
+    // Pre-load maintenance panel if that's the initial tab
+    if (window.location.hash === "#maintenance") {
+        setTimeout(() => {
+            const panel = safeGetElement("maintenance-panel");
+            if (panel && panel.innerHTML.trim() === "") {
+                fetchWithTimeout(
+                    `${window.ROOT_PATH}/admin/maintenance/partial`,
+                )
+                    .then((resp) => {
+                        if (!resp.ok) {
+                            if (resp.status === 403) {
+                                throw new Error(
+                                    "Platform administrator access required",
+                                );
+                            }
+                            throw new Error("Network response was not ok");
+                        }
+                        return resp.text();
+                    })
+                    .then((html) => {
+                        safeSetInnerHTML(panel, html, true);
+                    })
+                    .catch((err) => {
+                        console.error(
+                            "Failed to preload maintenance panel:",
+                            err,
+                        );
+                        const errorDiv = document.createElement("div");
+                        errorDiv.className = "text-red-600 p-4";
+                        errorDiv.textContent =
+                            err.message || "Failed to load maintenance panel.";
+                        panel.innerHTML = "";
+                        panel.appendChild(errorDiv);
+                    });
+            }
+        }, 100);
+    }
+
     // Set checkbox states based on URL parameter
     const urlParams = new URLSearchParams(window.location.search);
     const includeInactive = urlParams.get("include_inactive") === "true";
@@ -16526,6 +16635,7 @@ window.toggleInactiveItems = toggleInactiveItems;
 window.loadServers = loadServers;
 window.handleToggleSubmit = handleToggleSubmit;
 window.handleSubmitWithConfirmation = handleSubmitWithConfirmation;
+window.handleDeleteSubmit = handleDeleteSubmit;
 window.viewTool = viewTool;
 window.editTool = editTool;
 window.testTool = testTool;

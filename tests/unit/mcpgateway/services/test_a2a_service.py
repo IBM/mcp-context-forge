@@ -284,6 +284,18 @@ class TestA2AAgentService:
         mock_db.delete.assert_called_once_with(sample_db_agent)
         mock_db.commit.assert_called_once()
 
+    async def test_delete_agent_purge_metrics(self, service, mock_db, sample_db_agent):
+        """Test agent deletion with metric purge."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent
+        mock_db.delete = MagicMock()
+        mock_db.commit = MagicMock()
+
+        await service.delete_agent(mock_db, sample_db_agent.id, purge_metrics=True)
+
+        assert mock_db.execute.call_count == 3
+        mock_db.delete.assert_called_once_with(sample_db_agent)
+        mock_db.commit.assert_called_once()
+
     async def test_delete_agent_not_found(self, service, mock_db):
         """Test deleting non-existent agent."""
         # Mock database query returning None
@@ -401,25 +413,31 @@ class TestA2AAgentService:
 
     async def test_aggregate_metrics(self, service, mock_db):
         """Test metrics aggregation."""
-        # Mock database queries
-        # The cache uses .one() to get both total and active in a single query
+        # Mock aggregate_metrics_combined to return a proper AggregatedMetrics result
+        from mcpgateway.services.metrics_query_service import AggregatedMetrics
+
+        mock_metrics = AggregatedMetrics(
+            total_executions=100,
+            successful_executions=90,
+            failed_executions=10,
+            failure_rate=0.1,
+            min_response_time=0.5,
+            max_response_time=3.0,
+            avg_response_time=1.5,
+            last_execution_time="2025-01-01T00:00:00+00:00",
+            raw_count=60,
+            rollup_count=40,
+        )
+
+        # Mock the cache for agent counts
         mock_counts_result = MagicMock()
         mock_counts_result.total = 5
         mock_counts_result.active = 3
-
-        mock_metrics_result = MagicMock()
-        mock_metrics_result.total_interactions = 100
-        mock_metrics_result.successful_interactions = 90
-        mock_metrics_result.avg_response_time = 1.5
-        mock_metrics_result.min_response_time = 0.5
-        mock_metrics_result.max_response_time = 3.0
-
-        # First call is from cache (get_counts -> .one()), second is metrics query (.first())
         mock_db.execute.return_value.one.return_value = mock_counts_result
-        mock_db.execute.return_value.first.return_value = mock_metrics_result
 
-        # Execute
-        result = await service.aggregate_metrics(mock_db)
+        with patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", return_value=mock_metrics):
+            # Execute
+            result = await service.aggregate_metrics(mock_db)
 
         # Verify
         assert result["total_agents"] == 5
@@ -439,7 +457,7 @@ class TestA2AAgentService:
         await service.reset_metrics(mock_db)
 
         # Verify
-        mock_db.execute.assert_called_once()
+        assert mock_db.execute.call_count == 2
         mock_db.commit.assert_called_once()
 
     async def test_reset_metrics_specific_agent(self, service, mock_db):
@@ -452,7 +470,7 @@ class TestA2AAgentService:
         await service.reset_metrics(mock_db, agent_id)
 
         # Verify
-        mock_db.execute.assert_called_once()
+        assert mock_db.execute.call_count == 2
         mock_db.commit.assert_called_once()
 
     def test_db_to_schema_conversion(self, service, sample_db_agent):

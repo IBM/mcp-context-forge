@@ -17,16 +17,17 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 # Third-Party
 import httpx
-from sqlalchemy import and_, case, delete, desc, func, or_, select
+from sqlalchemy import and_, delete, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import A2AAgentMetric, EmailTeam, fresh_db_session
+from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, EmailTeam, fresh_db_session
 from mcpgateway.schemas import A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.tool_service import ToolService
@@ -323,6 +324,10 @@ class A2AAgentService:
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
             await admin_stats_cache.invalidate_tags()
+            # First-Party
+            from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
+
+            metrics_cache.invalidate("a2a")
 
             # Automatically create a tool for the A2A agent if not already present
             tool_service = ToolService()
@@ -857,13 +862,14 @@ class A2AAgentService:
 
         return self._db_to_schema(db=db, db_agent=agent)
 
-    async def delete_agent(self, db: Session, agent_id: str, user_email: Optional[str] = None) -> None:
+    async def delete_agent(self, db: Session, agent_id: str, user_email: Optional[str] = None, purge_metrics: bool = False) -> None:
         """Delete an A2A agent.
 
         Args:
             db: Database session.
             agent_id: Agent ID.
             user_email: Email of user performing delete (for ownership check).
+            purge_metrics: If True, delete raw + rollup metrics for this agent.
 
         Raises:
             A2AAgentNotFoundError: If the agent is not found.
@@ -886,6 +892,10 @@ class A2AAgentService:
                     raise PermissionError("Only the owner can delete this agent")
 
             agent_name = agent.name
+            if purge_metrics:
+                with pause_rollup_during_purge(reason=f"purge_a2a_agent:{agent_id}"):
+                    delete_metrics_in_batches(db, A2AAgentMetric, A2AAgentMetric.a2a_agent_id, agent_id)
+                    delete_metrics_in_batches(db, A2AAgentMetricsHourly, A2AAgentMetricsHourly.a2a_agent_id, agent_id)
             db.delete(agent)
             db.commit()
 
@@ -909,7 +919,10 @@ class A2AAgentService:
                 user_email=user_email,
                 resource_type="a2a_agent",
                 resource_id=str(agent_id),
-                custom_fields={"agent_name": agent_name},
+                custom_fields={
+                    "agent_name": agent_name,
+                    "purge_metrics": purge_metrics,
+                },
             )
         except PermissionError:
             db.rollback()
@@ -1101,14 +1114,15 @@ class A2AAgentService:
     async def aggregate_metrics(self, db: Session) -> Dict[str, Any]:
         """Aggregate metrics for all A2A agents.
 
-        Uses in-memory caching (10s TTL) to reduce database load under high
-        request rates. Cache is invalidated when metrics are reset.
+        Combines recent raw metrics (within retention period) with historical
+        hourly rollups for complete historical coverage. Uses in-memory caching
+        (10s TTL) to reduce database load under high request rates.
 
         Args:
             db: Database session.
 
         Returns:
-            Aggregated metrics.
+            Aggregated metrics from raw + hourly rollup tables.
         """
         # Check cache first (if enabled)
         # First-Party
@@ -1124,30 +1138,15 @@ class A2AAgentService:
         total_agents = counts["total"]
         active_agents = counts["active"]
 
-        # Get overall metrics
-        metrics_query = select(
-            func.count(A2AAgentMetric.id).label("total_interactions"),  # pylint: disable=not-callable
-            func.sum(case((A2AAgentMetric.is_success.is_(True), 1), else_=0)).label("successful_interactions"),
-            func.avg(A2AAgentMetric.response_time).label("avg_response_time"),
-            func.min(A2AAgentMetric.response_time).label("min_response_time"),
-            func.max(A2AAgentMetric.response_time).label("max_response_time"),
-        )
+        # Use combined raw + rollup query for full historical coverage
+        # First-Party
+        from mcpgateway.services.metrics_query_service import aggregate_metrics_combined  # pylint: disable=import-outside-toplevel
 
-        metrics_result = db.execute(metrics_query).first()
+        result = aggregate_metrics_combined(db, "a2a_agent")
 
-        if metrics_result:
-            total_interactions = metrics_result.total_interactions or 0
-            successful_interactions = metrics_result.successful_interactions or 0
-            avg_rt = float(metrics_result.avg_response_time or 0.0)
-            min_rt = float(metrics_result.min_response_time or 0.0)
-            max_rt = float(metrics_result.max_response_time or 0.0)
-        else:
-            total_interactions = 0
-            successful_interactions = 0
-            avg_rt = 0.0
-            min_rt = 0.0
-            max_rt = 0.0
-        failed_interactions = total_interactions - successful_interactions
+        total_interactions = result.total_executions
+        successful_interactions = result.successful_executions
+        failed_interactions = result.failed_executions
 
         metrics = {
             "total_agents": total_agents,
@@ -1156,9 +1155,9 @@ class A2AAgentService:
             "successful_interactions": successful_interactions,
             "failed_interactions": failed_interactions,
             "success_rate": (successful_interactions / total_interactions * 100) if total_interactions > 0 else 0.0,
-            "avg_response_time": avg_rt,
-            "min_response_time": min_rt,
-            "max_response_time": max_rt,
+            "avg_response_time": float(result.avg_response_time or 0.0),
+            "min_response_time": float(result.min_response_time or 0.0),
+            "max_response_time": float(result.max_response_time or 0.0),
         }
 
         # Cache the result (if enabled)
@@ -1168,20 +1167,18 @@ class A2AAgentService:
         return metrics
 
     async def reset_metrics(self, db: Session, agent_id: Optional[str] = None) -> None:
-        """Reset metrics for agents.
+        """Reset metrics for agents (raw + hourly rollups).
 
         Args:
             db: Database session.
             agent_id: Optional agent ID to reset metrics for specific agent.
         """
         if agent_id:
-            # Reset metrics for specific agent
-            delete_query = delete(A2AAgentMetric).where(A2AAgentMetric.a2a_agent_id == agent_id)
+            db.execute(delete(A2AAgentMetric).where(A2AAgentMetric.a2a_agent_id == agent_id))
+            db.execute(delete(A2AAgentMetricsHourly).where(A2AAgentMetricsHourly.a2a_agent_id == agent_id))
         else:
-            # Reset all metrics
-            delete_query = delete(A2AAgentMetric)
-
-        db.execute(delete_query)
+            db.execute(delete(A2AAgentMetric))
+            db.execute(delete(A2AAgentMetricsHourly))
         db.commit()
 
         # Invalidate metrics cache

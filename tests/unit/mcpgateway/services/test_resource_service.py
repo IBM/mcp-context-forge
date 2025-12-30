@@ -854,6 +854,20 @@ class TestResourceDeletion:
             mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_delete_resource_purge_metrics(self, resource_service, mock_db, mock_resource):
+        """Test resource deletion with metric purge."""
+        mock_scalar = MagicMock()
+        mock_scalar.scalar_one_or_none.return_value = mock_resource
+        mock_db.execute.return_value = mock_scalar
+
+        with patch.object(resource_service, "_notify_resource_deleted", new_callable=AsyncMock):
+            await resource_service.delete_resource(mock_db, "test://resource", purge_metrics=True)
+
+            assert mock_db.execute.call_count == 4
+            mock_db.delete.assert_called_once_with(mock_resource)
+            mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_delete_resource_not_found(self, resource_service, mock_db):
         """Test deleting non-existent resource."""
         mock_scalar = MagicMock()
@@ -1212,27 +1226,31 @@ class TestResourceMetrics:
 
     @pytest.mark.asyncio
     async def test_aggregate_metrics(self, resource_service, mock_db):
-        """Test metrics aggregation."""
-        # Mock a single aggregated query result with .one() call
-        mock_result = MagicMock()
-        mock_result.total_executions = 100
-        mock_result.successful_executions = 80
-        mock_result.failed_executions = 20
-        mock_result.min_response_time = 0.1
-        mock_result.max_response_time = 2.5
-        mock_result.avg_response_time = 1.2
-        mock_result.last_execution_time = datetime.now(timezone.utc)
+        """Test metrics aggregation using combined raw + rollup query."""
+        from unittest.mock import patch
+        from mcpgateway.services.metrics_query_service import AggregatedMetrics
 
-        execute_result = MagicMock()
-        execute_result.one.return_value = mock_result
-        mock_db.execute.return_value = execute_result
+        # Create a mock AggregatedMetrics result
+        mock_result = AggregatedMetrics(
+            total_executions=100,
+            successful_executions=80,
+            failed_executions=20,
+            failure_rate=0.2,
+            min_response_time=0.1,
+            max_response_time=2.5,
+            avg_response_time=1.2,
+            last_execution_time=datetime.now(timezone.utc),
+            raw_count=60,
+            rollup_count=40,
+        )
 
-        result = await resource_service.aggregate_metrics(mock_db)
+        with patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", return_value=mock_result):
+            result = await resource_service.aggregate_metrics(mock_db)
 
         assert result.total_executions == 100
         assert result.successful_executions == 80
         assert result.failed_executions == 20
-        assert result.failure_rate == 0.2  # 20/100
+        assert result.failure_rate == 0.2
         assert result.min_response_time == 0.1
         assert result.max_response_time == 2.5
         assert result.avg_response_time == 1.2
@@ -1240,21 +1258,25 @@ class TestResourceMetrics:
     @pytest.mark.asyncio
     async def test_aggregate_metrics_empty(self, resource_service, mock_db):
         """Test metrics aggregation with no data."""
-        # Mock empty database result
-        mock_result = MagicMock()
-        mock_result.total_executions = 0
-        mock_result.successful_executions = 0
-        mock_result.failed_executions = 0
-        mock_result.min_response_time = None
-        mock_result.max_response_time = None
-        mock_result.avg_response_time = None
-        mock_result.last_execution_time = None
+        from unittest.mock import patch
+        from mcpgateway.services.metrics_query_service import AggregatedMetrics
 
-        execute_result = MagicMock()
-        execute_result.one.return_value = mock_result
-        mock_db.execute.return_value = execute_result
+        # Create a mock AggregatedMetrics result with no data
+        mock_result = AggregatedMetrics(
+            total_executions=0,
+            successful_executions=0,
+            failed_executions=0,
+            failure_rate=0.0,
+            min_response_time=None,
+            max_response_time=None,
+            avg_response_time=None,
+            last_execution_time=None,
+            raw_count=0,
+            rollup_count=0,
+        )
 
-        result = await resource_service.aggregate_metrics(mock_db)
+        with patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", return_value=mock_result):
+            result = await resource_service.aggregate_metrics(mock_db)
 
         assert result.total_executions == 0
         assert result.failure_rate == 0.0
@@ -1265,7 +1287,7 @@ class TestResourceMetrics:
         """Test metrics reset."""
         await resource_service.reset_metrics(mock_db)
 
-        mock_db.execute.assert_called_once()
+        assert mock_db.execute.call_count == 2
         mock_db.commit.assert_called_once()
 
 
@@ -1631,43 +1653,46 @@ class TestResourceServiceMetricsExtended:
     @pytest.mark.asyncio
     async def test_get_top_resources(self, resource_service, mock_db):
         """Test getting top performing resources."""
-        # Mock query results
-        mock_result1 = MagicMock()
-        mock_result1.id = "39334ce0ed2644d79ede8913a66930c9"
-        mock_result1.name = "resource1"
-        mock_result1.execution_count = 10
-        mock_result1.avg_response_time = 1.5
-        mock_result1.success_rate = 100.0
-        mock_result1.last_execution = "2025-01-10T12:00:00"
+        # Mock the combined query results (TopPerformerResult objects)
+        mock_performer1 = MagicMock()
+        mock_performer1.id = "39334ce0ed2644d79ede8913a66930c9"
+        mock_performer1.name = "resource1"
+        mock_performer1.execution_count = 10
+        mock_performer1.avg_response_time = 1.5
+        mock_performer1.success_rate = 100.0
+        mock_performer1.last_execution = "2025-01-10T12:00:00"
 
-        mock_result2 = MagicMock()
-        mock_result2.id = "2"
-        mock_result2.name = "resource2"
-        mock_result2.execution_count = 7
-        mock_result2.avg_response_time = 2.3
-        mock_result2.success_rate = 71.43
-        mock_result2.last_execution = "2025-01-10T11:00:00"
+        mock_performer2 = MagicMock()
+        mock_performer2.id = "2"
+        mock_performer2.name = "resource2"
+        mock_performer2.execution_count = 7
+        mock_performer2.avg_response_time = 2.3
+        mock_performer2.success_rate = 71.43
+        mock_performer2.last_execution = "2025-01-10T11:00:00"
 
-        # Mock the query chain
-        mock_query = MagicMock()
-        mock_query.outerjoin.return_value = mock_query
-        mock_query.group_by.return_value = mock_query
-        mock_query.order_by.return_value = mock_query
-        mock_query.limit.return_value = mock_query
-        mock_query.all.return_value = [mock_result1, mock_result2]
+        mock_combined_results = [mock_performer1, mock_performer2]
 
-        mock_db.query.return_value = mock_query
+        with patch("mcpgateway.services.metrics_query_service.get_top_performers_combined") as mock_combined:
+            mock_combined.return_value = mock_combined_results
 
-        result = await resource_service.get_top_resources(mock_db, limit=2)
+            result = await resource_service.get_top_resources(mock_db, limit=2)
 
-        assert len(result) == 2
-        assert result[0].name == "resource1"
-        assert result[0].execution_count == 10
-        assert result[0].success_rate == 100.0
+            # Assert get_top_performers_combined was called with correct params
+            mock_combined.assert_called_once()
+            call_kwargs = mock_combined.call_args[1]
+            assert call_kwargs["metric_type"] == "resource"
+            assert call_kwargs["limit"] == 2
+            assert call_kwargs["name_column"] == "uri"  # Resources use URI as display name
+            assert call_kwargs["include_deleted"] is False
 
-        assert result[1].name == "resource2"
-        assert result[1].execution_count == 7
-        assert result[1].success_rate == pytest.approx(71.43, rel=0.01)
+            assert len(result) == 2
+            assert result[0].name == "resource1"
+            assert result[0].execution_count == 10
+            assert result[0].success_rate == 100.0
+
+            assert result[1].name == "resource2"
+            assert result[1].execution_count == 7
+            assert result[1].success_rate == pytest.approx(71.43, rel=0.01)
 
 
 if __name__ == "__main__":
