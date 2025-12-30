@@ -3802,13 +3802,22 @@ async function runResourceTest() {
 
     // Fullscreen mode
     fullscreenBtn.onclick = (event) => {
+        event.preventDefault();
         event.stopPropagation();
 
         const overlay = document.createElement("div");
+        overlay.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+        };
         overlay.className =
             "fixed inset-0 bg-black bg-opacity-70 z-[9999] flex items-center justify-center p-4";
 
         const box = document.createElement("div");
+        box.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+        };
         box.className =
             "bg-white dark:bg-gray-900 rounded-lg w-full h-full p-4 overflow-auto";
 
