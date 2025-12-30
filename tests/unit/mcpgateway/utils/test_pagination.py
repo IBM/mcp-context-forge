@@ -647,6 +647,75 @@ class TestPaginationSchemas:
         assert links.prev is None
 
 
+class TestTotalCountOptimization:
+    """Test that pre-computed total_count avoids duplicate COUNT queries."""
+
+    @pytest.mark.asyncio
+    async def test_offset_paginate_uses_precomputed_count(self, db_session):
+        """Test that offset_paginate uses total_count when provided."""
+        for i in range(50):
+            tool = Tool(
+                id=f"tool-{i}",
+                original_name=f"Tool {i}",
+                custom_name=f"Tool {i}",
+                url=f"http://test.com/tool{i}",
+                description=f"Test tool {i}",
+                input_schema={"type": "object"},
+                enabled=True,
+            )
+            db_session.add(tool)
+        db_session.commit()
+
+        query = select(Tool).where(Tool.enabled.is_(True))
+
+        # Pass a pre-computed count (intentionally wrong to verify it's used)
+        result = await offset_paginate(
+            db=db_session,
+            query=query,
+            page=1,
+            per_page=20,
+            base_url="/admin/tools",
+            total_count=999,  # Fake count to verify it's used
+        )
+
+        # Should use the provided count, not query the database
+        pagination = result["pagination"]
+        assert pagination.total_items == 999
+        assert pagination.total_pages == 50  # ceil(999/20)
+
+    @pytest.mark.asyncio
+    async def test_cursor_paginate_uses_precomputed_count(self, db_session):
+        """Test that cursor_paginate uses total_count when provided."""
+        for i in range(50):
+            tool = Tool(
+                id=f"tool-{i}",
+                original_name=f"Tool {i}",
+                custom_name=f"Tool {i}",
+                url=f"http://test.com/tool{i}",
+                description=f"Test tool {i}",
+                input_schema={"type": "object"},
+                enabled=True,
+            )
+            db_session.add(tool)
+        db_session.commit()
+
+        query = select(Tool).where(Tool.enabled.is_(True))
+
+        # Pass a pre-computed count (intentionally wrong to verify it's used)
+        result = await cursor_paginate(
+            db=db_session,
+            query=query,
+            cursor=None,
+            per_page=20,
+            base_url="/admin/tools",
+            total_count=888,  # Fake count to verify it's used
+        )
+
+        # Should use the provided count, not query the database
+        pagination = result["pagination"]
+        assert pagination.total_items == 888
+
+
 # Pytest fixtures
 
 

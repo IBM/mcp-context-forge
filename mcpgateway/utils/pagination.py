@@ -391,6 +391,7 @@ async def cursor_paginate(
     cursor_id_field: str = "id",
     query_params: Optional[Dict[str, Any]] = None,
     include_links: bool = True,
+    total_count: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Paginate query using cursor-based pagination.
 
@@ -407,6 +408,7 @@ async def cursor_paginate(
         cursor_id_field: ID field for tie-breaking (default: id)
         query_params: Additional query parameters
         include_links: Whether to include navigation links
+        total_count: Pre-computed total count (avoids duplicate count query)
 
     Returns:
         Dictionary with 'data', 'pagination', and 'links' keys
@@ -468,9 +470,12 @@ async def cursor_paginate(
             }
         )
 
-    # Get approximate total count (expensive for large tables)
-    count_query = select(func.count()).select_from(query.alias())
-    total_items = db.execute(count_query).scalar() or 0
+    # Get total count (use pre-computed count if provided to avoid duplicate queries)
+    if total_count is not None:
+        total_items = total_count
+    else:
+        count_query = select(func.count()).select_from(query.alias())
+        total_items = db.execute(count_query).scalar() or 0
 
     # Build pagination metadata
     pagination = PaginationMeta(
@@ -574,6 +579,7 @@ async def paginate_query(
 
         if total_items > settings.pagination_cursor_threshold:
             logger.info(f"Switching to cursor-based pagination (total_items={total_items} > threshold={settings.pagination_cursor_threshold})")
+            # Pass pre-computed count to cursor_paginate to avoid duplicate query
             return await cursor_paginate(
                 db=db,
                 query=query,
@@ -581,6 +587,7 @@ async def paginate_query(
                 per_page=per_page,
                 base_url=base_url,
                 query_params=query_params,
+                total_count=total_items,
             )
 
         # Pass pre-computed count to offset_paginate to avoid duplicate query
