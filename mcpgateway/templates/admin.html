@@ -439,6 +439,15 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">ℹ️</span>
               <span x-show="!sidebarCollapsed">Version Info</span>
             </a>
+            {% if is_admin %}
+            <a href="#maintenance" id="tab-maintenance"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('maintenance')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔧</span>
+              <span x-show="!sidebarCollapsed">Maintenance</span>
+            </a>
+            {% endif %}
           </div>
         </nav>
 
@@ -1242,6 +1251,9 @@
       </div>
       <!-- Version Info Panel -->
       <div id="version-info-panel" class="tab-panel hidden"></div>
+
+      <!-- Maintenance Panel (admin only) -->
+      <div id="maintenance-panel" class="tab-panel hidden"></div>
 
       <!-- Plugins Panel -->
       <div id="plugins-panel" class="tab-panel hidden"></div>
@@ -2311,7 +2323,7 @@
                           method="POST"
                           action="{{ root_path }}/admin/servers/{{ server.id }}/delete"
                           class="contents"
-                          onsubmit="return handleSubmitWithConfirmation(event, 'servers')"
+                          onsubmit="return handleDeleteSubmit(event, 'server', '{{ server.name }}', 'servers')"
                         >
                           <button
                             type="submit"
@@ -5970,7 +5982,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                             </form>
                             {% endif %}
 
-                            <form method="POST" action="{{ root_path }}/admin/a2a/{{ agent.id }}/delete" class="contents" onsubmit="return confirm('Are you sure you want to delete this A2A agent?')">
+                            <form method="POST" action="{{ root_path }}/admin/a2a/{{ agent.id }}/delete" class="contents" onsubmit="return handleDeleteSubmit(event, 'a2a agent', '{{ agent.name }}', 'a2a-agents')">
                               <button
                                 type="submit"
                                 class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 transition-colors"

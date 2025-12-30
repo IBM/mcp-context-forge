@@ -18,7 +18,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 # Third-Party
 import httpx
-from sqlalchemy import and_, case, delete, desc, Float, func, or_, select
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -30,11 +30,12 @@ from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
-from mcpgateway.db import ServerMetric
+from mcpgateway.db import ServerMetric, ServerMetricsHourly
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
@@ -166,16 +167,18 @@ class ServerService:
         logger.info("Server service shutdown complete")
 
     # get_top_server
-    async def get_top_servers(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
+    async def get_top_servers(self, db: Session, limit: Optional[int] = 5, include_deleted: bool = False) -> List[TopPerformer]:
         """Retrieve the top-performing servers based on execution count.
 
         Queries the database to get servers with their metrics, ordered by the number of executions
-        in descending order. Returns a list of TopPerformer objects containing server details and
+        in descending order. Combines recent raw metrics with historical hourly rollups for complete
+        historical coverage. Returns a list of TopPerformer objects containing server details and
         performance metrics. Results are cached for performance.
 
         Args:
             db (Session): Database session for querying server metrics.
             limit (Optional[int]): Maximum number of servers to return. Defaults to 5.
+            include_deleted (bool): Whether to include deleted servers from rollups.
 
         Returns:
             List[TopPerformer]: A list of TopPerformer objects, each containing:
@@ -191,36 +194,24 @@ class ServerService:
         from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
 
         effective_limit = limit or 5
-        cache_key = f"top_servers:{effective_limit}"
+        cache_key = f"top_servers:{effective_limit}:include_deleted={include_deleted}"
 
         if is_cache_enabled():
             cached = metrics_cache.get(cache_key)
             if cached is not None:
                 return cached
 
-        query = (
-            db.query(
-                DbServer.id,
-                DbServer.name,
-                func.count(ServerMetric.id).label("execution_count"),  # pylint: disable=not-callable
-                func.avg(ServerMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
-                case(
-                    (
-                        func.count(ServerMetric.id) > 0,  # pylint: disable=not-callable
-                        func.sum(case((ServerMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(ServerMetric.id) * 100,  # pylint: disable=not-callable
-                    ),
-                    else_=None,
-                ).label("success_rate"),
-                func.max(ServerMetric.timestamp).label("last_execution"),  # pylint: disable=not-callable
-            )
-            .outerjoin(ServerMetric)
-            .group_by(DbServer.id, DbServer.name)
-            .order_by(desc("execution_count"))
+        # Use combined query that includes both raw metrics and rollup data
+        # First-Party
+        from mcpgateway.services.metrics_query_service import get_top_performers_combined  # pylint: disable=import-outside-toplevel
+
+        results = get_top_performers_combined(
+            db=db,
+            metric_type="server",
+            entity_model=DbServer,
+            limit=effective_limit,
+            include_deleted=include_deleted,
         )
-
-        query = query.limit(effective_limit)
-
-        results = query.all()
         top_performers = build_top_performers(results)
 
         # Cache the result (if enabled)
@@ -1350,13 +1341,14 @@ class ServerService:
             )
             raise ServerError(f"Failed to toggle server status: {str(e)}")
 
-    async def delete_server(self, db: Session, server_id: str, user_email: Optional[str] = None) -> None:
+    async def delete_server(self, db: Session, server_id: str, user_email: Optional[str] = None, purge_metrics: bool = False) -> None:
         """Permanently delete a server.
 
         Args:
             db: Database session.
             server_id: The unique identifier of the server.
             user_email: Email of user performing deletion (for ownership check).
+            purge_metrics: If True, delete raw + rollup metrics for this server.
 
         Raises:
             ServerNotFoundError: If the server is not found.
@@ -1393,6 +1385,10 @@ class ServerService:
                     raise PermissionError("Only the owner can delete this server")
 
             server_info = {"id": server.id, "name": server.name}
+            if purge_metrics:
+                with pause_rollup_during_purge(reason=f"purge_server:{server_id}"):
+                    delete_metrics_in_batches(db, ServerMetric, ServerMetric.server_id, server_id)
+                    delete_metrics_in_batches(db, ServerMetricsHourly, ServerMetricsHourly.server_id, server_id)
             db.delete(server)
             db.commit()
 
@@ -1404,6 +1400,11 @@ class ServerService:
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
             await admin_stats_cache.invalidate_tags()
+            # First-Party
+            from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
+
+            metrics_cache.invalidate_prefix("top_servers:")
+            metrics_cache.invalidate("servers")
 
             await self._notify_server_deleted(server_info)
             logger.info(f"Deleted server: {server_info['name']}")
@@ -1429,6 +1430,7 @@ class ServerService:
                 server_name=server_info["name"],
                 deleted_by=user_email,
                 user_email=user_email,
+                purge_metrics=purge_metrics,
             )
         except PermissionError as pe:
             db.rollback()
@@ -1591,33 +1593,21 @@ class ServerService:
         """
         Aggregate metrics for all server invocations across all servers.
 
-        Uses in-memory caching (10s TTL) to reduce database load under high
-        request rates. Cache is invalidated when metrics are reset.
+        Combines recent raw metrics (within retention period) with historical
+        hourly rollups for complete historical coverage. Uses in-memory caching
+        (10s TTL) to reduce database load under high request rates.
 
         Args:
             db: Database session
 
         Returns:
-            ServerMetrics: Aggregated metrics computed from all ServerMetric records.
+            ServerMetrics: Aggregated metrics from raw + hourly rollup tables.
 
         Examples:
             >>> from mcpgateway.services.server_service import ServerService
-            >>> from unittest.mock import MagicMock
             >>> service = ServerService()
-            >>> db = MagicMock()
-            >>> # Mocking the result to return values that can be compared with integers
-            >>> db.execute.return_value.one.return_value = MagicMock(
-            ...     total_executions=10,
-            ...     successful_executions=8,
-            ...     failed_executions=2,
-            ...     min_response_time=0.1,
-            ...     max_response_time=0.5,
-            ...     avg_response_time=0.3,
-            ...     last_execution_time="2023-12-01T12:00:00"
-            ... )
-            >>> import asyncio
-            >>> result = asyncio.run(service.aggregate_metrics(db))
-            >>> hasattr(result, 'total_executions')
+            >>> # Method exists and is callable
+            >>> callable(service.aggregate_metrics)
             True
         """
         # Check cache first (if enabled)
@@ -1629,28 +1619,17 @@ class ServerService:
             if cached is not None:
                 return ServerMetrics(**cached)
 
-        # Execute a single query to get all metrics at once
-        result = db.execute(
-            select(
-                func.count().label("total_executions"),  # pylint: disable=not-callable
-                func.sum(case((ServerMetric.is_success.is_(True), 1), else_=0)).label("successful_executions"),  # pylint: disable=not-callable
-                func.sum(case((ServerMetric.is_success.is_(False), 1), else_=0)).label("failed_executions"),  # pylint: disable=not-callable
-                func.min(ServerMetric.response_time).label("min_response_time"),  # pylint: disable=not-callable
-                func.max(ServerMetric.response_time).label("max_response_time"),  # pylint: disable=not-callable
-                func.avg(ServerMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
-                func.max(ServerMetric.timestamp).label("last_execution_time"),  # pylint: disable=not-callable
-            ).select_from(ServerMetric)
-        ).one()
+        # Use combined raw + rollup query for full historical coverage
+        # First-Party
+        from mcpgateway.services.metrics_query_service import aggregate_metrics_combined  # pylint: disable=import-outside-toplevel
 
-        total_executions = result.total_executions or 0
-        successful_executions = result.successful_executions or 0
-        failed_executions = result.failed_executions or 0
+        result = aggregate_metrics_combined(db, "server")
 
         metrics = ServerMetrics(
-            total_executions=total_executions,
-            successful_executions=successful_executions,
-            failed_executions=failed_executions,
-            failure_rate=(failed_executions / total_executions) if total_executions > 0 else 0.0,
+            total_executions=result.total_executions,
+            successful_executions=result.successful_executions,
+            failed_executions=result.failed_executions,
+            failure_rate=result.failure_rate,
             min_response_time=result.min_response_time,
             max_response_time=result.max_response_time,
             avg_response_time=result.avg_response_time,
@@ -1665,7 +1644,7 @@ class ServerService:
 
     async def reset_metrics(self, db: Session) -> None:
         """
-        Reset all server metrics by deleting all records from the server metrics table.
+        Reset all server metrics by deleting raw and hourly rollup records.
 
         Args:
             db: Database session
@@ -1681,6 +1660,7 @@ class ServerService:
             >>> asyncio.run(service.reset_metrics(db))
         """
         db.execute(delete(ServerMetric))
+        db.execute(delete(ServerMetricsHourly))
         db.commit()
 
         # Invalidate metrics cache

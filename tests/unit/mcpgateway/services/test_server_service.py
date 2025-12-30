@@ -769,6 +769,20 @@ class TestServerService:
         server_service._notify_server_deleted.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_delete_server_purge_metrics(self, server_service, mock_server, test_db):
+        test_db.get = Mock(return_value=mock_server)
+        test_db.delete = Mock()
+        test_db.commit = Mock()
+        test_db.execute = Mock()
+        server_service._notify_server_deleted = AsyncMock()
+
+        await server_service.delete_server(test_db, 1, purge_metrics=True)
+
+        assert test_db.execute.call_count == 2
+        test_db.delete.assert_called_once_with(mock_server)
+        test_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_delete_server_not_found(self, server_service, test_db):
         test_db.get = Mock(return_value=None)
         with pytest.raises(ServerError) as exc:
@@ -781,7 +795,7 @@ class TestServerService:
         test_db.execute = Mock()
         test_db.commit = Mock()
         await server_service.reset_metrics(test_db)
-        test_db.execute.assert_called_once()
+        assert test_db.execute.call_count == 2
         test_db.commit.assert_called_once()
 
     # --------------------------- UUID normalization -------------------- #

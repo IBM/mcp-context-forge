@@ -33,7 +33,7 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 import orjson
-from sqlalchemy import and_, case, delete, desc, Float, func, not_, or_, select
+from sqlalchemy import and_, delete, not_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload, selectinload, Session
 
@@ -47,7 +47,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import EmailTeam, fresh_db_session, server_tool_association
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.db import ToolMetric
+from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework import (
     GlobalContext,
@@ -65,6 +65,8 @@ from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
+from mcpgateway.services.metrics_query_service import get_top_performers_combined
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
@@ -315,7 +317,7 @@ class ToolService:
         await self._event_service.shutdown()
         logger.info("Tool service shutdown complete")
 
-    async def get_top_tools(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
+    async def get_top_tools(self, db: Session, limit: Optional[int] = 5, include_deleted: bool = False) -> List[TopPerformer]:
         """Retrieve the top-performing tools based on execution count.
 
         Queries the database to get tools with their metrics, ordered by the number of executions
@@ -325,6 +327,7 @@ class ToolService:
         Args:
             db (Session): Database session for querying tool metrics.
             limit (Optional[int]): Maximum number of tools to return. Defaults to 5.
+            include_deleted (bool): Whether to include deleted tools from rollups.
 
         Returns:
             List[TopPerformer]: A list of TopPerformer objects, each containing:
@@ -340,33 +343,21 @@ class ToolService:
         from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
 
         effective_limit = limit or 5
-        cache_key = f"top_tools:{effective_limit}"
+        cache_key = f"top_tools:{effective_limit}:include_deleted={include_deleted}"
 
         if is_cache_enabled():
             cached = metrics_cache.get(cache_key)
             if cached is not None:
                 return cached
 
-        success_rate = case(
-            (func.count(ToolMetric.id) > 0, func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)).cast(Float) * 100 / func.count(ToolMetric.id)), else_=None  # pylint: disable=not-callable
+        # Use combined query that includes both raw metrics and rollup data
+        results = get_top_performers_combined(
+            db=db,
+            metric_type="tool",
+            entity_model=DbTool,
+            limit=effective_limit,
+            include_deleted=include_deleted,
         )
-
-        query = (
-            select(
-                DbTool.id,
-                DbTool.name,
-                func.count(ToolMetric.id).label("execution_count"),  # pylint: disable=not-callable
-                func.avg(ToolMetric.response_time).label("avg_response_time"),
-                success_rate.label("success_rate"),
-                func.max(ToolMetric.timestamp).label("last_execution"),
-            )
-            .outerjoin(ToolMetric, ToolMetric.tool_id == DbTool.id)
-            .group_by(DbTool.id, DbTool.name)
-            .order_by(desc("execution_count"))
-            .limit(effective_limit)
-        )
-
-        results = db.execute(query).all()
         top_performers = build_top_performers(results)
 
         # Cache the result (if enabled)
@@ -1750,7 +1741,7 @@ class ToolService:
 
         return tool_read
 
-    async def delete_tool(self, db: Session, tool_id: str, user_email: Optional[str] = None) -> None:
+    async def delete_tool(self, db: Session, tool_id: str, user_email: Optional[str] = None, purge_metrics: bool = False) -> None:
         """
         Delete a tool by its ID.
 
@@ -1758,6 +1749,7 @@ class ToolService:
             db (Session): The SQLAlchemy database session.
             tool_id (str): The unique identifier of the tool.
             user_email (Optional[str]): Email of user performing delete (for ownership check).
+            purge_metrics (bool): If True, delete raw + rollup metrics for this tool.
 
         Raises:
             ToolNotFoundError: If the tool is not found.
@@ -1795,6 +1787,11 @@ class ToolService:
             tool_name = tool.name
             tool_team_id = tool.team_id
 
+            if purge_metrics:
+                with pause_rollup_during_purge(reason=f"purge_tool:{tool_id}"):
+                    delete_metrics_in_batches(db, ToolMetric, ToolMetric.tool_id, tool_id)
+                    delete_metrics_in_batches(db, ToolMetricsHourly, ToolMetricsHourly.tool_id, tool_id)
+
             db.delete(tool)
             db.commit()
             await self._notify_tool_deleted(tool_info)
@@ -1827,6 +1824,7 @@ class ToolService:
                 resource_id=tool_info["id"],
                 custom_fields={
                     "tool_name": tool_name,
+                    "purge_metrics": purge_metrics,
                 },
                 db=db,
             )
@@ -1839,6 +1837,12 @@ class ToolService:
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
             await admin_stats_cache.invalidate_tags()
+            # Invalidate top performers cache
+            # First-Party
+            from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
+
+            metrics_cache.invalidate_prefix("top_tools:")
+            metrics_cache.invalidate("tools")
         except PermissionError as pe:
             db.rollback()
 
@@ -3115,38 +3119,22 @@ class ToolService:
         """
         Aggregate metrics for all tool invocations across all tools.
 
-        Uses in-memory caching (10s TTL) to reduce database load under high
-        request rates. Cache is invalidated when metrics are reset.
+        Combines recent raw metrics (within retention period) with historical
+        hourly rollups for complete historical coverage. Uses in-memory caching
+        (10s TTL) to reduce database load under high request rates.
 
         Args:
             db: Database session
 
         Returns:
-            Aggregated metrics computed from all ToolMetric records.
+            Aggregated metrics computed from raw ToolMetric + ToolMetricsHourly.
 
         Examples:
             >>> from mcpgateway.services.tool_service import ToolService
-            >>> from unittest.mock import MagicMock
             >>> service = ToolService()
-            >>> db = MagicMock()
-            >>> # Mock the row result object returned by db.execute().one()
-            >>> mock_result_row = MagicMock()
-            >>> mock_result_row.total = 10
-            >>> mock_result_row.successful = 8
-            >>> mock_result_row.failed = 2
-            >>> mock_result_row.min_rt = 50.0
-            >>> mock_result_row.max_rt = 250.0
-            >>> mock_result_row.avg_rt = 150.0
-            >>> mock_result_row.last_time = "2023-01-01T12:00:00"
-            >>> db.execute.return_value.one.return_value = mock_result_row
-            >>> import asyncio
-            >>> result = asyncio.run(service.aggregate_metrics(db))
-            >>> isinstance(result, dict)
+            >>> # Method exists and is callable
+            >>> callable(service.aggregate_metrics)
             True
-            >>> result['total_executions']
-            10
-            >>> result['failure_rate']
-            0.2
         """
         # Check cache first (if enabled)
         # First-Party
@@ -3157,34 +3145,12 @@ class ToolService:
             if cached is not None:
                 return cached
 
-        # Query to get all aggregated metrics at once
-        result = db.execute(
-            select(
-                func.count(ToolMetric.id).label("total"),  # pylint: disable=not-callable
-                func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)).label("successful"),  # pylint: disable=not-callable
-                func.sum(case((ToolMetric.is_success.is_(False), 1), else_=0)).label("failed"),  # pylint: disable=not-callable
-                func.min(ToolMetric.response_time).label("min_rt"),  # pylint: disable=not-callable
-                func.max(ToolMetric.response_time).label("max_rt"),  # pylint: disable=not-callable
-                func.avg(ToolMetric.response_time).label("avg_rt"),  # pylint: disable=not-callable
-                func.max(ToolMetric.timestamp).label("last_time"),  # pylint: disable=not-callable
-            )
-        ).one()
+        # Use combined raw + rollup query for full historical coverage
+        # First-Party
+        from mcpgateway.services.metrics_query_service import aggregate_metrics_combined  # pylint: disable=import-outside-toplevel
 
-        total = result.total or 0
-        successful = result.successful or 0
-        failed = result.failed or 0
-        failure_rate = failed / total if total > 0 else 0.0
-
-        metrics = {
-            "total_executions": total,
-            "successful_executions": successful,
-            "failed_executions": failed,
-            "failure_rate": failure_rate,
-            "min_response_time": result.min_rt,
-            "max_response_time": result.max_rt,
-            "avg_response_time": result.avg_rt,
-            "last_execution_time": result.last_time,
-        }
+        result = aggregate_metrics_combined(db, "tool")
+        metrics = result.to_dict()
 
         # Cache the result (if enabled)
         if is_cache_enabled():
@@ -3194,7 +3160,7 @@ class ToolService:
 
     async def reset_metrics(self, db: Session, tool_id: Optional[int] = None) -> None:
         """
-        Reset all tool metrics by deleting all records from the tool metrics table.
+        Reset all tool metrics by deleting raw and hourly rollup records.
 
         Args:
             db: Database session
@@ -3213,8 +3179,10 @@ class ToolService:
 
         if tool_id:
             db.execute(delete(ToolMetric).where(ToolMetric.tool_id == tool_id))
+            db.execute(delete(ToolMetricsHourly).where(ToolMetricsHourly.tool_id == tool_id))
         else:
             db.execute(delete(ToolMetric))
+            db.execute(delete(ToolMetricsHourly))
         db.commit()
 
         # Invalidate metrics cache

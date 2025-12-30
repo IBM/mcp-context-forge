@@ -917,6 +917,22 @@ class Settings(BaseSettings):
     metrics_cache_enabled: bool = Field(default=True, description="Enable in-memory caching for aggregate metrics queries")
     metrics_cache_ttl_seconds: int = Field(default=10, ge=1, le=300, description="TTL for cached aggregate metrics in seconds")
 
+    # Metrics Cleanup Configuration (automatic deletion of old metrics)
+    metrics_cleanup_enabled: bool = Field(default=True, description="Enable automatic cleanup of old metrics data")
+    metrics_retention_days: int = Field(default=30, ge=1, le=365, description="Days to retain raw metrics before cleanup")
+    metrics_cleanup_interval_hours: int = Field(default=24, ge=1, le=168, description="Hours between automatic cleanup runs")
+    metrics_cleanup_batch_size: int = Field(default=10000, ge=100, le=100000, description="Batch size for metrics deletion (prevents long locks)")
+
+    # Metrics Rollup Configuration (hourly aggregation for historical queries)
+    metrics_rollup_enabled: bool = Field(default=True, description="Enable hourly metrics rollup for efficient historical queries")
+    metrics_rollup_interval_hours: int = Field(default=1, ge=1, le=24, description="Hours between rollup runs")
+    metrics_rollup_retention_days: int = Field(default=365, ge=30, le=3650, description="Days to retain hourly rollup data")
+    metrics_rollup_late_data_hours: int = Field(
+        default=4, ge=1, le=48, description="Hours to re-process on each run to catch late-arriving data (smaller = less CPU, larger = more tolerance for delayed metrics)"
+    )
+    metrics_delete_raw_after_rollup: bool = Field(default=False, description="Delete raw metrics after rollup (aggressive cleanup)")
+    metrics_delete_raw_after_rollup_days: int = Field(default=7, ge=1, le=30, description="Days after which to delete raw metrics if rollup exists")
+
     # Auth Cache Configuration (reduces DB queries during authentication)
     auth_cache_enabled: bool = Field(default=True, description="Enable Redis/in-memory caching for authentication data (user, team, revocation)")
     auth_cache_user_ttl: int = Field(default=60, ge=10, le=300, description="TTL in seconds for cached user data")

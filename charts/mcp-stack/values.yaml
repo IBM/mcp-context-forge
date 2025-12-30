@@ -302,6 +302,22 @@ mcpContextForge:
     METRICS_BUFFER_FLUSH_INTERVAL: "60" # seconds between flushes (5-300)
     METRICS_BUFFER_MAX_SIZE: "1000"  # max entries before forced flush (100-10000)
 
+    # ─ Metrics Cleanup ─
+    # Automatically deletes old metrics to prevent unbounded table growth
+    METRICS_CLEANUP_ENABLED: "true"  # enable automatic cleanup
+    METRICS_RETENTION_DAYS: "30"     # days to retain raw metrics (1-365)
+    METRICS_CLEANUP_INTERVAL_HOURS: "24" # hours between cleanup runs (1-168)
+    METRICS_CLEANUP_BATCH_SIZE: "10000" # batch size for deletion (100-100000)
+
+    # ─ Metrics Rollup ─
+    # Aggregates raw metrics into hourly summaries for efficient historical queries
+    METRICS_ROLLUP_ENABLED: "true"   # enable hourly rollup
+    METRICS_ROLLUP_INTERVAL_HOURS: "1" # hours between rollup runs (1-24)
+    METRICS_ROLLUP_RETENTION_DAYS: "365" # days to retain rollup data (30-3650)
+    METRICS_ROLLUP_LATE_DATA_HOURS: "4" # hours to re-process for late-arriving data (1-48)
+    METRICS_DELETE_RAW_AFTER_ROLLUP: "false" # delete raw after rollup (aggressive)
+    METRICS_DELETE_RAW_AFTER_ROLLUP_DAYS: "7" # days before raw deletion if rollup exists
+
     # ─ Transports ─
     TRANSPORT_TYPE: all              # comma-separated list: http, ws, sse, stdio, all
     WEBSOCKET_PING_INTERVAL: "30"    # seconds between WS pings

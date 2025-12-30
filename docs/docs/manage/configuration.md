@@ -861,6 +861,67 @@ MAX_TOOL_RETRIES=5
 TOOL_CONCURRENT_LIMIT=10
 ```
 
+### Metrics Cleanup and Rollup
+
+!!! tip "Automatic Metrics Management"
+    MCP Gateway includes automatic cleanup and rollup of metrics data to prevent unbounded table growth and maintain query performance under high load.
+
+**Metrics Cleanup** - Automatic deletion of old raw metrics:
+
+```bash
+# Enable automatic cleanup of old metrics (default: true)
+METRICS_CLEANUP_ENABLED=true
+
+# Days to retain raw metrics before cleanup (default: 30, range: 1-365)
+METRICS_RETENTION_DAYS=30
+
+# Hours between automatic cleanup runs (default: 24, range: 1-168)
+METRICS_CLEANUP_INTERVAL_HOURS=24
+
+# Batch size for deletion to prevent long locks (default: 10000, range: 100-100000)
+METRICS_CLEANUP_BATCH_SIZE=10000
+```
+
+**Metrics Rollup** - Pre-aggregation into hourly summaries for efficient historical queries:
+
+```bash
+# Enable hourly metrics rollup (default: true)
+METRICS_ROLLUP_ENABLED=true
+
+# Hours between rollup runs (default: 1, range: 1-24)
+METRICS_ROLLUP_INTERVAL_HOURS=1
+
+# Days to retain hourly rollup data (default: 365, range: 30-3650)
+METRICS_ROLLUP_RETENTION_DAYS=365
+
+# Hours to re-process on each rollup run to catch late-arriving data (default: 4, range: 1-48)
+# Smaller = less CPU/IO overhead, larger = more tolerance for delayed metrics
+METRICS_ROLLUP_LATE_DATA_HOURS=4
+
+# Delete raw metrics after rollup exists (default: false)
+# WARNING: Aggressive cleanup - only enable if you don't need raw data
+METRICS_DELETE_RAW_AFTER_ROLLUP=false
+
+# Days after which to delete raw if rollup exists (default: 7, range: 1-30)
+METRICS_DELETE_RAW_AFTER_ROLLUP_DAYS=7
+```
+
+**Admin API Endpoints:**
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/metrics/cleanup` | POST | Trigger manual cleanup |
+| `/api/metrics/rollup` | POST | Trigger manual rollup |
+| `/api/metrics/stats` | GET | Get cleanup/rollup statistics |
+| `/api/metrics/config` | GET | Get current configuration |
+
+**Deletion behavior:**
+- Deleted tools/resources/prompts/servers are removed from Top Performers by default, but historical rollups remain for reporting.
+- To permanently erase metrics for a deleted entity, use the Admin UI delete prompt and choose **Purge metrics**, or call the delete endpoints with `?purge_metrics=true`.
+- Purge deletes use batched deletes sized by `METRICS_CLEANUP_BATCH_SIZE` to reduce long table locks on large datasets.
+
+See [ADR-030: Metrics Cleanup and Rollup](../architecture/adr/030-metrics-cleanup-rollup.md) for architecture details.
+
 ### Security Hardening
 
 ```bash

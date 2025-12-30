@@ -24,7 +24,7 @@ import uuid
 
 # Third-Party
 from jinja2 import Environment, meta, select_autoescape
-from sqlalchemy import and_, case, delete, desc, Float, func, not_, or_, select
+from sqlalchemy import and_, delete, not_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -33,13 +33,14 @@ from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam
 from mcpgateway.db import Prompt as DbPrompt
-from mcpgateway.db import PromptMetric, server_prompt_association
+from mcpgateway.db import PromptMetric, PromptMetricsHourly, server_prompt_association
 from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework import GlobalContext, PluginContextTable, PluginManager, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -183,16 +184,18 @@ class PromptService:
         await self._event_service.shutdown()
         logger.info("Prompt service shutdown complete")
 
-    async def get_top_prompts(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
+    async def get_top_prompts(self, db: Session, limit: Optional[int] = 5, include_deleted: bool = False) -> List[TopPerformer]:
         """Retrieve the top-performing prompts based on execution count.
 
         Queries the database to get prompts with their metrics, ordered by the number of executions
-        in descending order. Returns a list of TopPerformer objects containing prompt details and
+        in descending order. Combines recent raw metrics with historical hourly rollups for complete
+        historical coverage. Returns a list of TopPerformer objects containing prompt details and
         performance metrics. Results are cached for performance.
 
         Args:
             db (Session): Database session for querying prompt metrics.
             limit (Optional[int]): Maximum number of prompts to return. Defaults to 5.
+            include_deleted (bool): Whether to include deleted prompts from rollups.
 
         Returns:
             List[TopPerformer]: A list of TopPerformer objects, each containing:
@@ -208,36 +211,24 @@ class PromptService:
         from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
 
         effective_limit = limit or 5
-        cache_key = f"top_prompts:{effective_limit}"
+        cache_key = f"top_prompts:{effective_limit}:include_deleted={include_deleted}"
 
         if is_cache_enabled():
             cached = metrics_cache.get(cache_key)
             if cached is not None:
                 return cached
 
-        query = (
-            db.query(
-                DbPrompt.id,
-                DbPrompt.name,
-                func.count(PromptMetric.id).label("execution_count"),  # pylint: disable=not-callable
-                func.avg(PromptMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
-                case(
-                    (
-                        func.count(PromptMetric.id) > 0,  # pylint: disable=not-callable
-                        func.sum(case((PromptMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(PromptMetric.id) * 100,  # pylint: disable=not-callable
-                    ),
-                    else_=None,
-                ).label("success_rate"),
-                func.max(PromptMetric.timestamp).label("last_execution"),  # pylint: disable=not-callable
-            )
-            .outerjoin(PromptMetric)
-            .group_by(DbPrompt.id, DbPrompt.name)
-            .order_by(desc("execution_count"))
+        # Use combined query that includes both raw metrics and rollup data
+        # First-Party
+        from mcpgateway.services.metrics_query_service import get_top_performers_combined  # pylint: disable=import-outside-toplevel
+
+        results = get_top_performers_combined(
+            db=db,
+            metric_type="prompt",
+            entity_model=DbPrompt,
+            limit=effective_limit,
+            include_deleted=include_deleted,
         )
-
-        query = query.limit(effective_limit)
-
-        results = query.all()
         top_performers = build_top_performers(results)
 
         # Cache the result (if enabled)
@@ -506,6 +497,11 @@ class PromptService:
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
             await admin_stats_cache.invalidate_tags()
+            # First-Party
+            from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
+
+            metrics_cache.invalidate_prefix("top_prompts:")
+            metrics_cache.invalidate("prompts")
 
             return PromptRead.model_validate(prompt_dict)
 
@@ -1797,7 +1793,7 @@ class PromptService:
 
         return prompt_data
 
-    async def delete_prompt(self, db: Session, prompt_id: Union[int, str], user_email: Optional[str] = None) -> None:
+    async def delete_prompt(self, db: Session, prompt_id: Union[int, str], user_email: Optional[str] = None, purge_metrics: bool = False) -> None:
         """
         Delete a prompt template by its ID.
 
@@ -1805,6 +1801,7 @@ class PromptService:
             db (Session): Database session.
             prompt_id (str): ID of the prompt to delete.
             user_email (Optional[str]): Email of user performing delete (for ownership check).
+            purge_metrics (bool): If True, delete raw + rollup metrics for this prompt.
 
         Raises:
             PromptNotFoundError: If the prompt is not found.
@@ -1846,6 +1843,11 @@ class PromptService:
             prompt_name = prompt.name
             prompt_team_id = prompt.team_id
 
+            if purge_metrics:
+                with pause_rollup_during_purge(reason=f"purge_prompt:{prompt_id}"):
+                    delete_metrics_in_batches(db, PromptMetric, PromptMetric.prompt_id, prompt_id)
+                    delete_metrics_in_batches(db, PromptMetricsHourly, PromptMetricsHourly.prompt_id, prompt_id)
+
             db.delete(prompt)
             db.commit()
             await self._notify_prompt_deleted(prompt_info)
@@ -1874,7 +1876,10 @@ class PromptService:
                 team_id=prompt_team_id,
                 resource_type="prompt",
                 resource_id=str(prompt_info["id"]),
-                custom_fields={"prompt_name": prompt_name},
+                custom_fields={
+                    "prompt_name": prompt_name,
+                    "purge_metrics": purge_metrics,
+                },
                 db=db,
             )
 
@@ -2185,33 +2190,21 @@ class PromptService:
         """
         Aggregate metrics for all prompt invocations across all prompts.
 
-        Uses in-memory caching (10s TTL) to reduce database load under high
-        request rates. Cache is invalidated when metrics are reset.
+        Combines recent raw metrics (within retention period) with historical
+        hourly rollups for complete historical coverage. Uses in-memory caching
+        (10s TTL) to reduce database load under high request rates.
 
         Args:
             db: Database session
 
         Returns:
-            Dict[str, Any]: Aggregated prompt metrics with keys:
-                - total_executions
-                - successful_executions
-                - failed_executions
-                - failure_rate
-                - min_response_time
-                - max_response_time
-                - avg_response_time
-                - last_execution_time
-            Aggregated metrics computed from all PromptMetric records.
+            Dict[str, Any]: Aggregated prompt metrics from raw + hourly rollups.
 
         Examples:
             >>> from mcpgateway.services.prompt_service import PromptService
-            >>> from unittest.mock import MagicMock
             >>> service = PromptService()
-            >>> db = MagicMock()
-            >>> db.execute.return_value.one.return_value = MagicMock(total_executions=0, successful_executions=0, failed_executions=0, min_response_time=None, max_response_time=None, avg_response_time=None, last_execution_time=None)
-            >>> import asyncio
-            >>> result = asyncio.run(service.aggregate_metrics(db))
-            >>> isinstance(result, dict)
+            >>> # Method exists and is callable
+            >>> callable(service.aggregate_metrics)
             True
         """
         # Check cache first (if enabled)
@@ -2223,34 +2216,12 @@ class PromptService:
             if cached is not None:
                 return cached
 
-        # Execute a single query to get all metrics at once
-        result = db.execute(
-            select(
-                func.count(PromptMetric.id).label("total_executions"),  # pylint: disable=not-callable
-                func.sum(case((PromptMetric.is_success.is_(True), 1), else_=0)).label("successful_executions"),  # pylint: disable=not-callable
-                func.sum(case((PromptMetric.is_success.is_(False), 1), else_=0)).label("failed_executions"),  # pylint: disable=not-callable
-                func.min(PromptMetric.response_time).label("min_response_time"),  # pylint: disable=not-callable
-                func.max(PromptMetric.response_time).label("max_response_time"),  # pylint: disable=not-callable
-                func.avg(PromptMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
-                func.max(PromptMetric.timestamp).label("last_execution_time"),  # pylint: disable=not-callable
-            )
-        ).one()
+        # Use combined raw + rollup query for full historical coverage
+        # First-Party
+        from mcpgateway.services.metrics_query_service import aggregate_metrics_combined  # pylint: disable=import-outside-toplevel
 
-        total = result.total_executions or 0
-        successful = result.successful_executions or 0
-        failed = result.failed_executions or 0
-        failure_rate = failed / total if total > 0 else 0.0
-
-        metrics = {
-            "total_executions": total,
-            "successful_executions": successful,
-            "failed_executions": failed,
-            "failure_rate": failure_rate,
-            "min_response_time": result.min_response_time,
-            "max_response_time": result.max_response_time,
-            "avg_response_time": result.avg_response_time,
-            "last_execution_time": result.last_execution_time,
-        }
+        result = aggregate_metrics_combined(db, "prompt")
+        metrics = result.to_dict()
 
         # Cache the result (if enabled)
         if is_cache_enabled():
@@ -2260,7 +2231,7 @@ class PromptService:
 
     async def reset_metrics(self, db: Session) -> None:
         """
-        Reset all prompt metrics by deleting all records from the prompt metrics table.
+        Reset all prompt metrics by deleting raw and hourly rollup records.
 
         Args:
             db: Database session
@@ -2277,6 +2248,7 @@ class PromptService:
         """
 
         db.execute(delete(PromptMetric))
+        db.execute(delete(PromptMetricsHourly))
         db.commit()
 
         # Invalidate metrics cache

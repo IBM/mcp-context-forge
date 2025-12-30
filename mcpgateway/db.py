@@ -2027,6 +2027,160 @@ class A2AAgentMetric(Base):
 
 
 # ===================================
+# Metrics Hourly Rollup Tables
+# These tables store pre-aggregated hourly summaries for efficient historical queries.
+# Raw metrics can be cleaned up after rollup, reducing storage while preserving trends.
+# ===================================
+
+
+class ToolMetricsHourly(Base):
+    """
+    Hourly rollup of tool metrics for efficient historical trend analysis.
+
+    This table stores pre-aggregated metrics per tool per hour, enabling fast
+    queries for dashboards and reports without scanning millions of raw metrics.
+
+    Attributes:
+        id: Primary key.
+        tool_id: Foreign key to the tool (nullable for deleted tools).
+        tool_name: Tool name snapshot (preserved even if tool is deleted).
+        hour_start: Start of the aggregation hour (UTC).
+        total_count: Total invocations during this hour.
+        success_count: Successful invocations.
+        failure_count: Failed invocations.
+        min_response_time: Minimum response time in seconds.
+        max_response_time: Maximum response time in seconds.
+        avg_response_time: Average response time in seconds.
+        p50_response_time: 50th percentile (median) response time.
+        p95_response_time: 95th percentile response time.
+        p99_response_time: 99th percentile response time.
+        created_at: When this rollup was created.
+    """
+
+    __tablename__ = "tool_metrics_hourly"
+    __table_args__ = (
+        UniqueConstraint("tool_id", "hour_start", name="uq_tool_metrics_hourly_tool_hour"),
+        Index("ix_tool_metrics_hourly_hour_start", "hour_start"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tool_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("tools.id", ondelete="SET NULL"), nullable=True, index=True)
+    tool_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    hour_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    min_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    max_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    avg_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    p50_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    p95_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    p99_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class ResourceMetricsHourly(Base):
+    """Hourly rollup of resource metrics for efficient historical trend analysis."""
+
+    __tablename__ = "resource_metrics_hourly"
+    __table_args__ = (
+        UniqueConstraint("resource_id", "hour_start", name="uq_resource_metrics_hourly_resource_hour"),
+        Index("ix_resource_metrics_hourly_hour_start", "hour_start"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    resource_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("resources.id", ondelete="SET NULL"), nullable=True, index=True)
+    resource_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    hour_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    min_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    max_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    avg_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    p50_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    p95_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    p99_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class PromptMetricsHourly(Base):
+    """Hourly rollup of prompt metrics for efficient historical trend analysis."""
+
+    __tablename__ = "prompt_metrics_hourly"
+    __table_args__ = (
+        UniqueConstraint("prompt_id", "hour_start", name="uq_prompt_metrics_hourly_prompt_hour"),
+        Index("ix_prompt_metrics_hourly_hour_start", "hour_start"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    prompt_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("prompts.id", ondelete="SET NULL"), nullable=True, index=True)
+    prompt_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    hour_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    min_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    max_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    avg_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    p50_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    p95_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    p99_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class ServerMetricsHourly(Base):
+    """Hourly rollup of server metrics for efficient historical trend analysis."""
+
+    __tablename__ = "server_metrics_hourly"
+    __table_args__ = (
+        UniqueConstraint("server_id", "hour_start", name="uq_server_metrics_hourly_server_hour"),
+        Index("ix_server_metrics_hourly_hour_start", "hour_start"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    server_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("servers.id", ondelete="SET NULL"), nullable=True, index=True)
+    server_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    hour_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    min_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    max_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    avg_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    p50_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    p95_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    p99_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class A2AAgentMetricsHourly(Base):
+    """Hourly rollup of A2A agent metrics for efficient historical trend analysis."""
+
+    __tablename__ = "a2a_agent_metrics_hourly"
+    __table_args__ = (
+        UniqueConstraint("a2a_agent_id", "hour_start", "interaction_type", name="uq_a2a_agent_metrics_hourly_agent_hour_type"),
+        Index("ix_a2a_agent_metrics_hourly_hour_start", "hour_start"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    a2a_agent_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("a2a_agents.id", ondelete="SET NULL"), nullable=True, index=True)
+    agent_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    hour_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    interaction_type: Mapped[str] = mapped_column(String(50), nullable=False, default="invoke")
+    total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    min_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    max_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    avg_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    p50_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    p95_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    p99_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+# ===================================
 # Observability Models (OpenTelemetry-style traces, spans, events)
 # ===================================
 

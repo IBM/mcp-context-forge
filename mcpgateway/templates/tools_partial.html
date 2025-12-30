@@ -257,7 +257,7 @@
             method="POST"
             action="{{ root_path }}/admin/tools/{{ tool.id }}/delete"
             class="contents"
-            onsubmit="return handleDeleteSubmit(event, 'tool', '{{ tool.name }}')"
+            onsubmit="return handleDeleteSubmit(event, 'tool', '{{ tool.name }}', 'tools')"
           >
             <button
               type="submit"
