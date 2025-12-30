@@ -1363,7 +1363,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         result = []
         for s in gateways_db:
             s.team = team_map.get(s.team_id) if s.team_id else None
-            result.append(self._convert_gateway_to_read(s, include_metrics=False))
+            result.append(self._prepare_gateway_for_read(s))
 
         # Return appropriate format based on pagination type
         if page is not None:

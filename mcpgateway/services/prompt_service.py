@@ -954,7 +954,7 @@ class PromptService:
         result = []
         for s in prompts_db:
             s.team = team_map.get(s.team_id) if s.team_id else None
-            result.append(self._convert_prompt_to_read(s, include_metrics=False))
+            result.append(self._convert_db_prompt(s, include_metrics=False))
         # Return appropriate format based on pagination type
         if page is not None:
             # Page-based format
