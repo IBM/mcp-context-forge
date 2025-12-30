@@ -81,7 +81,14 @@ def delete_metrics_in_batches(db: Session, model_class, filter_column, entity_id
 
 @contextmanager
 def pause_rollup_during_purge(reason: str = "purge_metrics"):
-    """Pause rollup task while purging metrics to reduce race conditions."""
+    """Pause rollup task while purging metrics to reduce race conditions.
+
+    Args:
+        reason: Reason for pausing the rollup task.
+
+    Yields:
+        None
+    """
     rollup_service = get_metrics_rollup_service_if_initialized()
     if rollup_service:
         rollup_service.pause(reason)

@@ -169,7 +169,11 @@ class MetricsRollupService:
         )
 
     def pause(self, reason: str = "maintenance") -> None:
-        """Pause background rollup execution."""
+        """Pause background rollup execution.
+
+        Args:
+            reason: Reason for pausing the rollup task.
+        """
         with self._pause_lock:
             self._pause_count += 1
             self._pause_reason = reason
@@ -187,7 +191,14 @@ class MetricsRollupService:
 
     @contextmanager
     def pause_during(self, reason: str = "maintenance"):
-        """Pause rollups for the duration of the context manager."""
+        """Pause rollups for the duration of the context manager.
+
+        Args:
+            reason: Reason for pausing the rollup task.
+
+        Yields:
+            None
+        """
         self.pause(reason)
         try:
             yield
@@ -835,5 +846,9 @@ def get_metrics_rollup_service() -> MetricsRollupService:
 
 
 def get_metrics_rollup_service_if_initialized() -> Optional[MetricsRollupService]:
-    """Return the rollup service instance if it has been created."""
+    """Return the rollup service instance if it has been created.
+
+    Returns:
+        The rollup service instance or None if not initialized.
+    """
     return _metrics_rollup_service
