@@ -125,14 +125,10 @@ uv:
 	fi
 
 .PHONY: venv
-venv:
+venv: uv
 	@rm -Rf "$(VENV_DIR)"
 	@test -d "$(VENVS_DIR)" || mkdir -p "$(VENVS_DIR)"
-	@python3 -m venv "$(VENV_DIR)"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m pip install --upgrade pip setuptools pdm"
-	# Eventually, we want to transition to using uv/uvx exclusively, at which point we will only need
-	# a virtual environment if the user has not installed uv into their account.
-	@/bin/bash -c "type uv || ( source $(VENV_DIR)/bin/activate && python3 -m pip install --upgrade uv )"
+	@uv venv "$(VENV_DIR)"
 	@echo -e "✅  Virtual env created.\n💡  Enter it with:\n    . $(VENV_DIR)/bin/activate\n"
 
 .PHONY: activate
@@ -1638,11 +1634,11 @@ tox:                                ## 🧪  Multi-Python tox matrix (uv)
 		uv pip install -q tox tox-uv && \
 		python3 -m tox -p auto $(TOXARGS)"
 
-sbom:								## 🛡️  Generate SBOM & security report
+sbom: uv							## 🛡️  Generate SBOM & security report
 	@echo "🛡️   Generating SBOM & security report..."
 	@rm -Rf "$(VENV_DIR).sbom"
-	@python3 -m venv "$(VENV_DIR).sbom"
-	@/bin/bash -c "source $(VENV_DIR).sbom/bin/activate && python3 -m pip install --upgrade pip setuptools pdm uv && python3 -m uv pip install .[dev]"
+	@uv venv "$(VENV_DIR).sbom"
+	@/bin/bash -c "source $(VENV_DIR).sbom/bin/activate && uv pip install .[dev]"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install -q cyclonedx-bom sbom2doc"
 	@echo "🔍  Generating SBOM from environment..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
@@ -2297,14 +2293,14 @@ PROJECT_BASEDIR     ?= $(strip $(PWD))
 # ─────────────────────────────────────────────────────────────────────────
 
 ## ─────────── Dependencies (compose + misc) ─────────────────────────────
-sonar-deps-podman:
+sonar-deps-podman: uv
 	@echo "🔧 Installing podman-compose ..."
-	python3 -m pip install --quiet podman-compose
+	uv tool install --quiet podman-compose
 
-sonar-deps-docker:
+sonar-deps-docker: uv
 	@echo "🔧 Ensuring $(COMPOSE_CMD) is available ..."
 	@command -v $(firstword $(COMPOSE_CMD)) >/dev/null || \
-	  python3 -m pip install --quiet docker-compose
+	  uv tool install --quiet docker-compose
 
 ## ─────────── Run SonarQube server (compose) ────────────────────────────
 sonar-up-podman:
@@ -2341,11 +2337,10 @@ sonar-submit-podman:
 		-Dproject.settings=$(SONAR_PROPS)
 
 ## ─────────── Python wrapper (pysonar-scanner) ───────────────────────────
-pysonar-scanner:
+pysonar-scanner: uv
 	@echo "🐍 Scanning code with pysonar-scanner (PyPI) ..."
 	@test -f $(SONAR_PROPS) || { echo "❌ $(SONAR_PROPS) not found."; exit 1; }
-	python3 -m pip install --upgrade --quiet pysonar-scanner
-	python3 -m pysonar_scanner \
+	uvx pysonar-scanner \
 		-Dproject.settings=$(SONAR_PROPS) \
 		-Dsonar.host.url=$(SONAR_HOST_URL) \
 		$(if $(SONAR_TOKEN),-Dsonar.login=$(SONAR_TOKEN),)
@@ -2491,13 +2486,9 @@ containerfile-update:
 # =============================================================================
 .PHONY: dist wheel sdist verify publish publish-testpypi
 
-dist: clean                  ## Build wheel + sdist into ./dist (optionally includes Rust plugins)
+dist: clean uv               ## Build wheel + sdist into ./dist (optionally includes Rust plugins)
 	@echo "📦 Building Python package..."
-	@if command -v uv >/dev/null 2>&1; then \
-		uv build; \
-	else \
-		pip install --quiet build && python -m build; \
-	fi
+	@uv build
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust plugins..."; \
 		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
@@ -2511,13 +2502,9 @@ dist: clean                  ## Build wheel + sdist into ./dist (optionally incl
 	@echo '   make publish         # Publish Python package'
 	@echo '   make rust-publish    # Publish Rust wheels (if configured)'
 
-wheel:                       ## Build wheel only (Python + optionally Rust)
+wheel: uv                    ## Build wheel only (Python + optionally Rust)
 	@echo "📦 Building Python wheel..."
-	@if command -v uv >/dev/null 2>&1; then \
-		uv build --wheel; \
-	else \
-		pip install --quiet build && python -m build --wheel; \
-	fi
+	@uv build --wheel
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust wheels..."; \
 		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
@@ -2527,38 +2514,21 @@ wheel:                       ## Build wheel only (Python + optionally Rust)
 	fi
 	@echo '🛠  Python wheel written to ./dist'
 
-sdist:                       ## Build source distribution only
+sdist: uv                    ## Build source distribution only
 	@echo "📦 Building source distribution..."
-	@if command -v uv >/dev/null 2>&1; then \
-		uv build --sdist; \
-	else \
-		pip install --quiet build && python -m build --sdist; \
-	fi
+	@uv build --sdist
 	@echo '🛠  Source distribution written to ./dist'
 
-verify: dist               ## Build, run metadata & manifest checks
-	@if command -v uvx >/dev/null 2>&1; then \
-		uvx twine check dist/* && uvx check-manifest && uvx pyroma -d .; \
-	else \
-		pip install --quiet twine check-manifest pyroma && \
-		twine check dist/* && check-manifest && pyroma -d .; \
-	fi
+verify: dist uv            ## Build, run metadata & manifest checks
+	@uvx twine check dist/* && uvx check-manifest && uvx pyroma -d .
 	@echo "✅  Package verified - ready to publish."
 
-publish: verify            ## Verify, then upload to PyPI
-	@if command -v uvx >/dev/null 2>&1; then \
-		uvx twine upload dist/*; \
-	else \
-		pip install --quiet twine && twine upload dist/*; \
-	fi
+publish: verify uv         ## Verify, then upload to PyPI
+	@uvx twine upload dist/*
 	@echo "🚀  Upload finished - check https://pypi.org/project/$(PROJECT_NAME)/"
 
-publish-testpypi: verify   ## Verify, then upload to TestPyPI
-	@if command -v uvx >/dev/null 2>&1; then \
-		uvx twine upload --repository testpypi dist/*; \
-	else \
-		pip install --quiet twine && twine upload --repository testpypi dist/*; \
-	fi
+publish-testpypi: verify uv ## Verify, then upload to TestPyPI
+	@uvx twine upload --repository testpypi dist/*
 	@echo "🚀  Upload finished - check https://test.pypi.org/project/$(PROJECT_NAME)/"
 
 # Allow override via environment
@@ -3944,7 +3914,7 @@ LOCAL_PYPI_AUTH := $(LOCAL_PYPI_DIR)/.htpasswd
 
 local-pypi-install:
 	@echo "📦  Installing pypiserver..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && pip install 'pypiserver>=2.3.0' passlib"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install 'pypiserver>=2.3.0' passlib"
 	@mkdir -p $(LOCAL_PYPI_DIR)
 
 local-pypi-start: local-pypi-install local-pypi-stop
@@ -4025,15 +3995,15 @@ local-pypi-upload-auth:
 local-pypi-test:
 	@echo "📥  Installing from local PyPI..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-	pip install --index-url $(LOCAL_PYPI_URL)/simple/ \
+	uv pip install --index-url $(LOCAL_PYPI_URL)/simple/ \
 	            --extra-index-url https://pypi.org/simple/ \
-	            --force-reinstall $(PROJECT_NAME)"
+	            --reinstall $(PROJECT_NAME)"
 	@echo "✅  Installed from local PyPI"
 
 local-pypi-clean: clean dist local-pypi-start-auth local-pypi-upload-auth local-pypi-test
 	@echo "🎉  Full local PyPI cycle complete!"
 	@echo "📊  Package info:"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && pip show $(PROJECT_NAME)"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip show $(PROJECT_NAME)"
 
 # Convenience target to restart server
 local-pypi-restart: local-pypi-stop local-pypi-start
@@ -4095,7 +4065,7 @@ DEVPI_PID := /tmp/devpi-server.pid
 devpi-install:
 	@echo "📦  Installing devpi server and client..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-	pip install devpi-server devpi-client devpi-web"
+	uv pip install devpi-server devpi-client devpi-web"
 	@echo "✅  DevPi installed"
 
 devpi-init: devpi-install
@@ -4201,15 +4171,15 @@ devpi-test:
 		exit 1; \
 	fi
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-	pip install --index-url $(DEVPI_URL)/$(DEVPI_INDEX)/+simple/ \
+	uv pip install --index-url $(DEVPI_URL)/$(DEVPI_INDEX)/+simple/ \
 	            --extra-index-url https://pypi.org/simple/ \
-	            --force-reinstall mcp-contextforge-gateway"
+	            --reinstall mcp-contextforge-gateway"
 	@echo "✅  Installed mcp-contextforge-gateway from devpi"
 
 devpi-clean: clean dist devpi-upload devpi-test
 	@echo "🎉  Full devpi cycle complete!"
 	@echo "📊  Package info:"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && pip show mcp-contextforge-gateway"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip show mcp-contextforge-gateway"
 
 devpi-status:
 	@echo "🔍  DevPi server status:"
@@ -4442,7 +4412,7 @@ ALEMBIC_CONFIG = mcpgateway/alembic.ini
 
 alembic-install:
 	@echo "➜ Installing Alembic ..."
-	pip install --quiet alembic sqlalchemy
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install -q alembic sqlalchemy"
 
 .PHONY: db-init
 db-init: ## Initialize alembic migrations
@@ -4558,7 +4528,7 @@ playwright-install:
 	@echo "🎭 Installing Playwright browsers (chromium)..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		pip install -e '.[playwright]' 2>/dev/null || pip install playwright pytest-playwright && \
+		uv pip install -e '.[playwright]' 2>/dev/null || uv pip install playwright pytest-playwright && \
 		playwright install chromium"
 	@echo "✅ Playwright chromium browser installed!"
 
@@ -4566,7 +4536,7 @@ playwright-install-all:
 	@echo "🎭 Installing all Playwright browsers..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		pip install -e '.[playwright]' 2>/dev/null || pip install playwright pytest-playwright && \
+		uv pip install -e '.[playwright]' 2>/dev/null || uv pip install playwright pytest-playwright && \
 		playwright install"
 	@echo "✅ All Playwright browsers installed!"
 
@@ -4623,7 +4593,7 @@ test-ui-parallel: playwright-install
 	@echo "🎭 Running UI tests in parallel..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		pip install -q pytest-xdist && \
+		uv pip install -q pytest-xdist && \
 		pytest $(PLAYWRIGHT_DIR)/ -v -n auto --dist loadscope \
 		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
 	@echo "✅ UI parallel tests completed!"
@@ -4634,7 +4604,7 @@ test-ui-report: playwright-install
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(PLAYWRIGHT_REPORTS)
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		pip install -q pytest-html && \
+		uv pip install -q pytest-html && \
 		pytest $(PLAYWRIGHT_DIR)/ -v --screenshot=only-on-failure \
 		--html=$(PLAYWRIGHT_REPORTS)/report.html --self-contained-html \
 		--browser chromium || true"
@@ -5008,8 +4978,7 @@ security-fix:                       ## 🔧 Auto-fix security issues where possi
 		find $(TARGET) -name '*.py' -exec $(VENV_DIR)/bin/pyupgrade --py312-plus {} +"
 	@echo "➤ Updating dependencies to latest secure versions..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install --upgrade pip setuptools && \
-		python3 -m pip list --outdated"
+		uv pip list --outdated"
 	@echo "✅ Auto-fixes applied where possible"
 	@echo "⚠️  Manual review still required for:"
 	@echo "   - Dependency updates (run 'make update')"
@@ -5389,7 +5358,7 @@ fuzz-install:                       ## 🔧 Install all fuzzing dependencies
 	@echo "🔧 Installing fuzzing dependencies..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		pip install -e .[fuzz]"
+		uv pip install -e .[fuzz]"
 	@echo "✅ Fuzzing tools installed"
 
 fuzz-hypothesis: fuzz-install         ## 🧪 Run Hypothesis property-based tests
@@ -5689,12 +5658,12 @@ rust-verify:                            ## Verify Rust plugin installation
 rust-check-maturin:                     ## Check/install maturin
 	@which maturin > /dev/null 2>&1 || { \
 		echo "📦 Installing maturin..."; \
-		/bin/bash -c "source $(VENV_DIR)/bin/activate && pip install maturin"; \
+		/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install maturin"; \
 	}
 
 rust-install-deps:                      ## Install all Rust build dependencies
 	@echo "📦 Installing Rust build dependencies..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && pip install maturin"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install maturin"
 	@rustup --version > /dev/null 2>&1 || { \
 		echo "❌ Rust not installed. Install with:"; \
 		echo "   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"; \
