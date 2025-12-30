@@ -106,3 +106,8 @@ Transient errors (network blips, temporary DB issues) are logged but don't remov
 ## Usage
 
 This optimization is automatically applied in database-backed session registries and runs every 5 minutes as part of the cleanup task. No configuration changes are required to benefit from the parallel implementation.
+
+## Related Documentation
+
+- [Scaling Guide](scale.md) - High availability and horizontal scaling
+- [ADR-031: Parallel Session Cleanup](../architecture/adr/031-parallel-session-cleanup.md) - Architecture decision record
