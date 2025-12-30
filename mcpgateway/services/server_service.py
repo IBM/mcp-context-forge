@@ -36,7 +36,6 @@ from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUp
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
-from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService

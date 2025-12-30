@@ -69,7 +69,8 @@ def delete_metrics_in_batches(db: Session, model_class, filter_column, entity_id
         delete_stmt = delete(model_class).where(model_class.id.in_(subq))
         result = db.execute(delete_stmt)
 
-        batch_deleted = int(result.rowcount or 0)
+        rowcount = result.rowcount
+        batch_deleted = rowcount if isinstance(rowcount, int) else 0
         total_deleted += batch_deleted
 
         if batch_deleted <= 0 or batch_deleted < effective_batch_size:
