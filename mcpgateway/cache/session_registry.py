@@ -1202,7 +1202,14 @@ class SessionRegistry(SessionBackend):
             semaphore = asyncio.Semaphore(max_concurrent)
 
             async def bounded_refresh(session_id: str) -> bool:
-                """Refresh session with semaphore-bounded concurrency."""
+                """Refresh session with semaphore-bounded concurrency.
+
+                Args:
+                    session_id: The session ID to refresh.
+
+                Returns:
+                    True if refresh succeeded, False otherwise.
+                """
                 async with semaphore:
                     return await asyncio.to_thread(self._refresh_session_db, session_id)
 
