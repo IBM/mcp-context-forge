@@ -527,7 +527,7 @@ async def create_user(user_request: EmailRegistrationRequest, current_user_ctx: 
             email=user_request.email,
             password=user_request.password,
             full_name=user_request.full_name,
-            is_admin=getattr(user_request, "is_admin", False),
+            is_admin=user_request.is_admin,
             auth_provider="local",
         )
 
