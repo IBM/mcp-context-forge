@@ -11,12 +11,12 @@ optimization opportunities.
 """
 
 # Standard
-from collections import defaultdict, deque
+from collections import defaultdict, deque, OrderedDict
 from contextlib import contextmanager
 import logging
 import statistics
 import time
-from typing import Any, Dict, Generator, Optional
+from typing import Any, Dict, Generator, Optional, Tuple
 
 # First-Party
 from mcpgateway.config import settings
@@ -30,7 +30,22 @@ class PerformanceTracker:
 
     Provides context managers for tracking operation timing,
     aggregation of metrics, and threshold-based alerting.
+
+    Uses version-based caching for performance summaries:
+    - Per-operation versions track changes to specific operations
+    - Global version tracks any change (for "all operations" summaries)
+    - Cache entries store the version at computation time
+    - Entries are valid only if versions match (no TTL-based expiry)
+
+    Note: Internal state (_operation_timings, _op_version, etc.) should not be
+    accessed directly. Use record_timing() or track_operation() to add data.
     """
+
+    # Sentinel for "all operations" cache key
+    _ALL_OPERATIONS_KEY = "__all__"
+
+    # Maximum cache entries to prevent unbounded growth with varying min_samples
+    _MAX_CACHE_ENTRIES = 64
 
     def __init__(self):
         """Initialize performance tracker."""
@@ -38,7 +53,8 @@ class PerformanceTracker:
         self.max_samples = getattr(settings, "perf_max_samples_per_operation", 1000)
 
         # Use deque with maxlen for O(1) automatic eviction instead of O(n) pop(0)
-        self.operation_timings: Dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=self.max_samples))
+        # Private to ensure all mutations go through record_timing/track_operation (version tracking)
+        self._operation_timings: Dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=self.max_samples))
 
         # Performance thresholds (seconds) from settings or defaults
         self.performance_thresholds = {
@@ -51,6 +67,24 @@ class PerformanceTracker:
             "resource_fetch": getattr(settings, "perf_threshold_resource_fetch", 1.0),
             "prompt_processing": getattr(settings, "perf_threshold_prompt_processing", 0.5),
         }
+
+        # Version counters for cache invalidation
+        self._op_version: Dict[str, int] = defaultdict(int)  # Per-operation version
+        self._global_version: int = 0  # Incremented on any mutation
+
+        # Summary cache: key=(operation_name, min_samples), value=(version, summary_dict)
+        # For specific ops: version is op_version; for all ops: version is global_version
+        self._summary_cache: OrderedDict[Tuple[str, int], Tuple[int, Dict[str, Any]]] = OrderedDict()
+
+    def _increment_version(self, operation_name: Optional[str] = None) -> None:
+        """Increment version counters to invalidate cached summaries.
+
+        Args:
+            operation_name: Specific operation that changed. If None, only increments global version.
+        """
+        self._global_version += 1
+        if operation_name:
+            self._op_version[operation_name] += 1
 
     @contextmanager
     def track_operation(self, operation_name: str, component: Optional[str] = None, log_slow: bool = True, extra_context: Optional[Dict[str, Any]] = None) -> Generator[None, None, None]:
@@ -87,7 +121,10 @@ class PerformanceTracker:
             duration = time.time() - start_time
 
             # Record timing (deque automatically evicts oldest when at maxlen)
-            self.operation_timings[operation_name].append(duration)
+            self._operation_timings[operation_name].append(duration)
+
+            # Increment version to invalidate cached summaries
+            self._increment_version(operation_name)
 
             # Check threshold and log if needed
             threshold = self.performance_thresholds.get(operation_name, float("inf"))
@@ -118,7 +155,10 @@ class PerformanceTracker:
             extra_context: Additional context
         """
         # Record timing (deque automatically evicts oldest when at maxlen)
-        self.operation_timings[operation_name].append(duration)
+        self._operation_timings[operation_name].append(duration)
+
+        # Increment version to invalidate cached summaries
+        self._increment_version(operation_name)
 
         # Check threshold
         threshold = self.performance_thresholds.get(operation_name, float("inf"))
@@ -151,9 +191,26 @@ class PerformanceTracker:
             >>> isinstance(summary, dict)
             True
         """
+        # Determine if we're summarizing a specific operation or all operations
+        # Normalize cache key: use _ALL_OPERATIONS_KEY if operation doesn't exist or None was passed
+        is_specific_op = operation_name and operation_name in self._operation_timings
+        cache_key = (operation_name if is_specific_op else self._ALL_OPERATIONS_KEY, min_samples)
+
+        # Get current version for cache validation
+        current_version = self._op_version[operation_name] if is_specific_op else self._global_version
+
+        # Check cache - valid if version matches
+        if cache_key in self._summary_cache:
+            cached_version, cached_summary = self._summary_cache[cache_key]
+            if cached_version == current_version:
+                # Mark as recently used and return a copy to prevent external mutation
+                self._summary_cache.move_to_end(cache_key)
+                return {k: dict(v) for k, v in cached_summary.items()}
+
+        # Compute summary
         summary = {}
 
-        operations = {operation_name: self.operation_timings[operation_name]} if operation_name and operation_name in self.operation_timings else self.operation_timings
+        operations = {operation_name: self._operation_timings[operation_name]} if is_specific_op else self._operation_timings
 
         for op_name, timings in operations.items():
             if len(timings) < min_samples:
@@ -194,6 +251,18 @@ class PerformanceTracker:
                 "violation_rate": sum(1 for t in timings if t > self.performance_thresholds.get(op_name, float("inf"))) / count,
             }
 
+        # Store a copy in cache with current version
+        # Only evict if adding a new key (not updating existing) and at capacity (LRU)
+        if cache_key not in self._summary_cache and len(self._summary_cache) >= self._MAX_CACHE_ENTRIES:
+            # Remove least-recently-used entry
+            try:
+                self._summary_cache.popitem(last=False)
+            except (StopIteration, KeyError):
+                pass
+
+        self._summary_cache[cache_key] = (current_version, {k: dict(v) for k, v in summary.items()})
+        self._summary_cache.move_to_end(cache_key)
+
         return summary
 
     def get_operation_stats(self, operation_name: str) -> Optional[Dict[str, Any]]:
@@ -205,10 +274,10 @@ class PerformanceTracker:
         Returns:
             Statistics dictionary or None if no data
         """
-        if operation_name not in self.operation_timings:
+        if operation_name not in self._operation_timings:
             return None
 
-        timings = self.operation_timings[operation_name]
+        timings = self._operation_timings[operation_name]
         if not timings:
             return None
 
@@ -229,10 +298,16 @@ class PerformanceTracker:
             operation_name: Specific operation to clear (None for all)
         """
         if operation_name:
-            if operation_name in self.operation_timings:
-                self.operation_timings[operation_name].clear()
+            if operation_name in self._operation_timings:
+                self._operation_timings[operation_name].clear()
+            # Increment version to invalidate cached summaries
+            self._increment_version(operation_name)
         else:
-            self.operation_timings.clear()
+            self._operation_timings.clear()
+            # Clear all version tracking and cache on full reset
+            self._global_version += 1
+            self._op_version.clear()
+            self._summary_cache.clear()
 
     def set_threshold(self, operation_name: str, threshold_seconds: float) -> None:
         """Set or update performance threshold for an operation.
@@ -242,6 +317,9 @@ class PerformanceTracker:
             threshold_seconds: Threshold in seconds
         """
         self.performance_thresholds[operation_name] = threshold_seconds
+
+        # Increment version (threshold affects violation stats in summaries)
+        self._increment_version(operation_name)
 
     def check_performance_degradation(self, operation_name: str, baseline_multiplier: float = 2.0) -> Dict[str, Any]:
         """Check if performance has degraded compared to baseline.
@@ -253,10 +331,10 @@ class PerformanceTracker:
         Returns:
             Dictionary with degradation analysis
         """
-        if operation_name not in self.operation_timings:
+        if operation_name not in self._operation_timings:
             return {"degraded": False, "reason": "no_data"}
 
-        timings = self.operation_timings[operation_name]
+        timings = self._operation_timings[operation_name]
         if len(timings) < 10:
             return {"degraded": False, "reason": "insufficient_samples"}
 
