@@ -593,7 +593,7 @@ class TestGatewayService:
         # Patch using full path string to GatewayRead.model_validate
         monkeypatch.setattr("mcpgateway.services.gateway_service.GatewayRead.model_validate", lambda x: mock_model)
 
-        result = await gateway_service.list_gateways(test_db)
+        result, next_cursor = await gateway_service.list_gateways(test_db)
 
         # Assert that execute was called twice
         assert test_db.execute.call_count == 2
@@ -1596,9 +1596,11 @@ class TestGatewayService:
         """Test listing gateways with tag filtering."""
         # Third-Party
 
-        # Mock query chain
+        # Mock query chain - needs to support chaining through order_by, where, limit
         mock_query = MagicMock()
+        mock_query.order_by.return_value = mock_query
         mock_query.where.return_value = mock_query
+        mock_query.limit.return_value = mock_query
 
         session = MagicMock()
         session.execute.return_value.scalars.return_value.all.return_value = [mock_gateway]
@@ -1608,10 +1610,19 @@ class TestGatewayService:
         bind.dialect.name = "sqlite"  # or "postgresql" or "mysql"
         session.get_bind.return_value = bind
 
+        # Mock EmailTeam query for team names
+        session.query.return_value.filter.return_value.all.return_value = []
+        session.commit = MagicMock()
+
         mocked_gateway_read = MagicMock()
         mocked_gateway_read.masked.return_value = "masked_result"
+        mocked_gateway_read.model_dump.return_value = {"id": "1", "name": "test"}
 
-        with patch("mcpgateway.services.gateway_service.select", return_value=mock_query):
+        # Mock select to return the mock_query that supports chaining
+        def mock_select(*args):
+            return mock_query
+
+        with patch("mcpgateway.services.gateway_service.select", side_effect=mock_select):
             with patch("mcpgateway.services.gateway_service.json_contains_expr") as mock_json_contains:
                 with patch(
                     "mcpgateway.services.gateway_service.GatewayRead.model_validate",
@@ -1620,7 +1631,7 @@ class TestGatewayService:
                     fake_condition = MagicMock()
                     mock_json_contains.return_value = fake_condition
 
-                    result = await gateway_service.list_gateways(session, tags=["test", "production"])
+                    result, next_cursor = await gateway_service.list_gateways(session, tags=["test", "production"])
 
                     mock_json_contains.assert_called_once()  # called exactly once
                     called_args = mock_json_contains.call_args[0]  # positional args tuple

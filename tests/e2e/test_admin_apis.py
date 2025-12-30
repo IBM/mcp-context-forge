@@ -226,7 +226,9 @@ class TestAdminServerAPIs:
 
         # Get all servers and find our server
         response = await client.get("/admin/servers", headers=TEST_AUTH_HEADER)
-        servers = response.json()
+        resp_json = response.json()
+        # Handle paginated response
+        servers = resp_json["data"] if isinstance(resp_json, dict) and "data" in resp_json else resp_json
         server = next((s for s in servers if s["name"] == unique_name), None)
         assert server is not None
         server_id = server["id"]
@@ -478,7 +480,10 @@ class TestAdminPromptAPIs:
         """Test GET /admin/prompts returns empty list initially."""
         response = await client.get("/admin/prompts", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
-        assert response.json() == []
+        resp_json = response.json()
+        # Handle paginated response
+        prompts = resp_json["data"] if isinstance(resp_json, dict) and "data" in resp_json else resp_json
+        assert prompts == []
 
     async def test_admin_prompt_lifecycle(self, client: AsyncClient, mock_settings):
         """Test complete prompt lifecycle through admin UI."""
@@ -497,7 +502,9 @@ class TestAdminPromptAPIs:
 
         # List prompts to verify creation
         response = await client.get("/admin/prompts", headers=TEST_AUTH_HEADER)
-        prompts = response.json()
+        resp_json = response.json()
+        # Handle paginated response
+        prompts = resp_json["data"] if isinstance(resp_json, dict) and "data" in resp_json else resp_json
         assert len(prompts) == 1
         prompt = prompts[0]
         assert prompt["name"] == "test_admin_prompt"
@@ -538,8 +545,11 @@ class TestAdminGatewayAPIs:
         """Test GET /admin/gateways returns list of gateways."""
         response = await client.get("/admin/gateways", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
-        # Don't assume empty - just check it returns a list
-        assert isinstance(response.json(), list)
+        resp_json = response.json()
+        # Handle paginated response
+        assert isinstance(resp_json, (list, dict))
+        if isinstance(resp_json, dict):
+            assert "data" in resp_json
 
     @pytest.mark.skip(reason="Gateway registration requires external connectivity")
     async def test_admin_gateway_lifecycle(self, client: AsyncClient, mock_settings):
