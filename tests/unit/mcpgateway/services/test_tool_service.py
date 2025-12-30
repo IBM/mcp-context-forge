@@ -604,8 +604,8 @@ class TestToolService:
         tool_service._convert_tool_to_read.assert_called_once_with(mock_tool, include_metrics=False)
 
     @pytest.mark.asyncio
-    async def test_list_tools_for_user_pagination(self, tool_service, test_db, monkeypatch):
-        """Test list_tools_for_user returns next_cursor when page size is exceeded."""
+    async def test_list_tools_pagination(self, tool_service, test_db, monkeypatch):
+        """Test list_tools returns next_cursor when page size is exceeded."""
         monkeypatch.setattr(settings, "pagination_default_page_size", 1)
 
         tool_1 = MagicMock(spec=DbTool, id="1")
@@ -626,21 +626,21 @@ class TestToolService:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[mock_team])
             tool_service._convert_tool_to_read = Mock(side_effect=[MagicMock(), MagicMock()])
 
-            result, next_cursor = await tool_service.list_tools_for_user(test_db, user_email="user@example.com", team_id="team-1")
+            result, next_cursor = await tool_service.list_tools(test_db, user_email="user@example.com", team_id="team-1")
 
         assert len(result) == 1
         assert next_cursor is not None
         assert decode_cursor(next_cursor)["id"] == "1"
 
     @pytest.mark.asyncio
-    async def test_list_tools_for_user_denies_unknown_team(self, tool_service, test_db):
-        """Test list_tools_for_user returns empty when user lacks team membership."""
+    async def test_list_tools_denies_unknown_team(self, tool_service, test_db):
+        """Test list_tools returns empty when user lacks team membership."""
         test_db.execute = Mock()
         mock_team = MagicMock(id="other-team", is_personal=True)
 
         with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[mock_team])
-            result, next_cursor = await tool_service.list_tools_for_user(test_db, user_email="user@example.com", team_id="team-1")
+            result, next_cursor = await tool_service.list_tools(test_db, user_email="user@example.com", team_id="team-1")
 
         assert result == []
         assert next_cursor is None
