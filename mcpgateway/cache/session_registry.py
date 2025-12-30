@@ -1171,11 +1171,16 @@ class SessionRegistry(SessionBackend):
         finally:
             db_session.close()
 
-    async def _cleanup_database_sessions(self) -> None:
-        """Parallelize session cleanup with asyncio.gather().
+    async def _cleanup_database_sessions(self, max_concurrent: int = 20) -> None:
+        """Parallelize session cleanup with bounded concurrency.
 
         Checks connection status first (fast), then refreshes connected sessions
-        in parallel using asyncio.gather() for optimal performance.
+        in parallel using asyncio.gather() with a semaphore to limit concurrent
+        DB operations and prevent resource exhaustion.
+
+        Args:
+            max_concurrent: Maximum number of concurrent DB refresh operations.
+                Defaults to 20 to balance parallelism with resource usage.
         """
         async with self._lock:
             local_transports = self._sessions.copy()
@@ -1192,9 +1197,15 @@ class SessionRegistry(SessionBackend):
                 # Only log error, don't remove session on transient errors
                 logger.error(f"Error checking connection for session {session_id}: {e}")
 
-        # Parallel refresh of connected sessions
+        # Parallel refresh of connected sessions with bounded concurrency
         if connected:
-            refresh_tasks = [asyncio.to_thread(self._refresh_session_db, session_id) for session_id in connected]
+            semaphore = asyncio.Semaphore(max_concurrent)
+
+            async def bounded_refresh(session_id: str) -> bool:
+                async with semaphore:
+                    return await asyncio.to_thread(self._refresh_session_db, session_id)
+
+            refresh_tasks = [bounded_refresh(session_id) for session_id in connected]
             results = await asyncio.gather(*refresh_tasks, return_exceptions=True)
 
             for session_id, result in zip(connected, results):
