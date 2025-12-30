@@ -45,11 +45,20 @@ spec:
           env:
             # ---------- POSTGRES ----------
             - name: POSTGRES_HOST
-              value: {{ printf "%s-postgres" (include "mcp-stack.fullname" .) }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: POSTGRES_HOST
             - name: POSTGRES_PORT
-              value: "{{ .Values.mcpContextForge.env.postgres.port }}"
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: POSTGRES_PORT
             - name: POSTGRES_DB
-              value: "{{ .Values.mcpContextForge.env.postgres.db }}"
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: POSTGRES_DB
             - name: POSTGRES_USER
               valueFrom:
                 secretKeyRef:
