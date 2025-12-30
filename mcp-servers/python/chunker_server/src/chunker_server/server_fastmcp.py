@@ -17,6 +17,7 @@ import sys
 from typing import Any
 
 from fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 from pydantic import Field
 
 # Configure logging to stderr to avoid MCP protocol interference
@@ -587,7 +588,8 @@ chunker = TextChunker()
 
 # Tool definitions using FastMCP
 @mcp.tool(
-    description="Chunk text using various strategies (recursive, semantic, sentence, fixed_size)"
+    description="Chunk text using various strategies (recursive, semantic, sentence, fixed_size)",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
 )
 async def chunk_text(
     text: str = Field(..., description="Text to chunk"),
@@ -619,7 +621,10 @@ async def chunk_text(
         return {"success": False, "error": f"Unknown strategy: {chunking_strategy}"}
 
 
-@mcp.tool(description="Chunk markdown text with header awareness")
+@mcp.tool(
+    description="Chunk markdown text with header awareness",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def chunk_markdown(
     text: str = Field(..., description="Markdown text to chunk"),
     headers_to_split_on: list[str] = Field(["#", "##", "###"], description="Headers to split on"),
@@ -635,7 +640,10 @@ async def chunk_markdown(
     )
 
 
-@mcp.tool(description="Semantic chunking based on content similarity")
+@mcp.tool(
+    description="Semantic chunking based on content similarity",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def semantic_chunk(
     text: str = Field(..., description="Text to chunk semantically"),
     min_chunk_size: int = Field(200, ge=50, description="Minimum chunk size"),
@@ -653,7 +661,10 @@ async def semantic_chunk(
     )
 
 
-@mcp.tool(description="Sentence-based chunking with configurable grouping")
+@mcp.tool(
+    description="Sentence-based chunking with configurable grouping",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def sentence_chunk(
     text: str = Field(..., description="Text to chunk by sentences"),
     sentences_per_chunk: int = Field(5, ge=1, le=50, description="Target sentences per chunk"),
@@ -667,7 +678,10 @@ async def sentence_chunk(
     )
 
 
-@mcp.tool(description="Fixed-size chunking with word boundary options")
+@mcp.tool(
+    description="Fixed-size chunking with word boundary options",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def fixed_size_chunk(
     text: str = Field(..., description="Text to chunk"),
     chunk_size: int = Field(1000, ge=100, le=100000, description="Fixed chunk size in characters"),
@@ -685,7 +699,10 @@ async def fixed_size_chunk(
     )
 
 
-@mcp.tool(description="Analyze text and recommend optimal chunking strategy")
+@mcp.tool(
+    description="Analyze text and recommend optimal chunking strategy",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def analyze_text(
     text: str = Field(..., description="Text to analyze for chunking recommendations"),
 ) -> dict[str, Any]:
@@ -693,7 +710,10 @@ async def analyze_text(
     return chunker.analyze_text(text)
 
 
-@mcp.tool(description="List available chunking strategies and capabilities")
+@mcp.tool(
+    description="List available chunking strategies and capabilities",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+)
 async def get_strategies() -> dict[str, Any]:
     """Get information about available chunking strategies and libraries."""
     return chunker.get_chunking_strategies()
