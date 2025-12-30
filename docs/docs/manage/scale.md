@@ -2008,6 +2008,17 @@ CACHE_TYPE=redis
 - True horizontal scaling
 - Automatic failover
 
+#### Session Cleanup Performance
+
+For high session counts, MCP Gateway uses parallel session cleanup with bounded concurrency to efficiently manage database-backed sessions:
+
+- Uses `asyncio.gather()` with semaphore for parallel database operations
+- Default concurrency limit of 20 prevents DB pool exhaustion
+- Achieves 11-13x speedup over sequential cleanup
+- Runs automatically every 5 minutes
+
+See [Parallel Session Cleanup](parallel-session-cleanup.md) for implementation details.
+
 ### Long-Running Connections
 
 MCP Gateway supports long-running connections for streaming:
