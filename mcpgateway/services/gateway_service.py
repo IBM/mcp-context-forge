@@ -57,7 +57,7 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 from pydantic import ValidationError
-from sqlalchemy import and_, delete, desc, or_, select, desc
+from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -1363,7 +1363,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         result = []
         for s in gateways_db:
             s.team = team_map.get(s.team_id) if s.team_id else None
-            result.append(self._prepare_gateway_for_read(s))
+            result.append(self._convert_gateway_to_read(s, include_metrics=False))
 
         # Return appropriate format based on pagination type
         if page is not None:
@@ -3668,8 +3668,50 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         }
         await self._publish_event(event)
 
+    def _convert_gateway_to_read(self, gateway: DbGateway, include_metrics: bool = False) -> GatewayRead:
+        """Convert a DbGateway instance to a GatewayRead Pydantic model.
+
+        Args:
+            gateway: Gateway database object
+            include_metrics: Whether to include metrics (default False to avoid N+1 queries in list operations)
+
+        Returns:
+            GatewayRead: Pydantic model instance
+        """
+        gateway_dict = gateway.__dict__.copy()
+        gateway_dict.pop("_sa_instance_state", None)
+
+        # Ensure auth_value is properly encoded
+        if isinstance(gateway.auth_value, dict):
+            gateway_dict["auth_value"] = encode_auth(gateway.auth_value)
+
+        # Convert tags from List[str] to List[Dict[str, str]] for GatewayRead
+        if gateway.tags:
+            gateway_dict["tags"] = validate_tags_field(gateway.tags)
+        else:
+            gateway_dict["tags"] = []
+
+        # Include metadata fields
+        gateway_dict["created_by"] = getattr(gateway, "created_by", None)
+        gateway_dict["modified_by"] = getattr(gateway, "modified_by", None)
+        gateway_dict["created_at"] = getattr(gateway, "created_at", None)
+        gateway_dict["updated_at"] = getattr(gateway, "updated_at", None)
+        gateway_dict["version"] = getattr(gateway, "version", None)
+        gateway_dict["team"] = getattr(gateway, "team", None)
+
+        # Metrics handling (future implementation if needed)
+        if include_metrics:
+            # TODO: Add metrics aggregation similar to server_service if needed
+            gateway_dict["metrics"] = None
+        else:
+            gateway_dict["metrics"] = None
+
+        return GatewayRead.model_validate(gateway_dict)
+
     def _prepare_gateway_for_read(self, gateway: DbGateway) -> DbGateway:
-        """Prepare a gateway object for GatewayRead validation.
+        """DEPRECATED: Use _convert_gateway_to_read instead.
+
+        Prepare a gateway object for GatewayRead validation.
 
         Ensures auth_value is in the correct format (encoded string) for the schema.
         Converts tags from List[str] (database format) to List[Dict[str, str]] (schema format).

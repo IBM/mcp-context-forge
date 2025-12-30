@@ -60,13 +60,9 @@ from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
-from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import extract_json_field
-from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
+from mcpgateway.db import extract_json_field, get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
-from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import utc_now
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
@@ -100,7 +96,6 @@ from mcpgateway.schemas import (
     PromptUpdate,
     ResourceCreate,
     ResourceMetrics,
-    ResourceRead,
     ResourceUpdate,
     ServerCreate,
     ServerMetrics,

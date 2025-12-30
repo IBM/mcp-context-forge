@@ -678,7 +678,6 @@ async def unified_paginate(
         ... )
         >>> # Returns: (list, cursor_string or None)
     """
-    from typing import List, Tuple, Union
 
     # Determine page size
     if per_page is None:
@@ -714,7 +713,9 @@ async def unified_paginate(
         page_size = settings.pagination_default_page_size
 
     # Decode cursor if provided
+    # Standard
     from datetime import datetime
+
     last_id = None
     last_created = None
     if cursor:
@@ -732,15 +733,12 @@ async def unified_paginate(
         # Extract model from query to apply filters
         entities = query.column_descriptions
         if entities:
+            # Third-Party
             from sqlalchemy import and_, or_
+
             model = entities[0]["entity"]
             # Assumes descending order: created_at DESC, id DESC
-            query = query.where(
-                or_(
-                    model.created_at < last_created,
-                    and_(model.created_at == last_created, model.id < last_id)
-                )
-            )
+            query = query.where(or_(model.created_at < last_created, and_(model.created_at == last_created, model.id < last_id)))
 
     # Fetch page_size + 1 to determine if there are more results
     if page_size is not None:
@@ -763,10 +761,7 @@ async def unified_paginate(
     if has_more and items:
         # Get last item (before conversion if convert_fn was applied)
         last_item = db.execute(query.limit(page_size)).scalars().all()[-1] if convert_fn else items[-1]
-        cursor_data = {
-            "created_at": getattr(last_item, "created_at", None),
-            "id": getattr(last_item, "id", None)
-        }
+        cursor_data = {"created_at": getattr(last_item, "created_at", None), "id": getattr(last_item, "id", None)}
         # Handle datetime serialization
         if cursor_data["created_at"]:
             cursor_data["created_at"] = cursor_data["created_at"].isoformat()
