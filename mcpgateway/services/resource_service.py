@@ -1608,12 +1608,14 @@ class ResourceService:
         Examples:
             >>> from mcpgateway.common.models import ResourceContent
             >>> from mcpgateway.services.resource_service import ResourceService
-            >>> from unittest.mock import MagicMock
+            >>> from unittest.mock import MagicMock, PropertyMock
             >>> service = ResourceService()
             >>> db = MagicMock()
             >>> uri = 'http://example.com/resource.txt'
-            >>> import types
-            >>> mock_resource = types.SimpleNamespace(id=123,content='test', uri=uri)
+            >>> mock_resource = MagicMock()
+            >>> mock_resource.id = 123
+            >>> mock_resource.uri = uri
+            >>> type(mock_resource).content = PropertyMock(return_value='test')
             >>> db.execute.return_value.scalar_one_or_none.return_value = mock_resource
             >>> db.get.return_value = mock_resource
             >>> import asyncio
@@ -1625,13 +1627,20 @@ class ResourceService:
 
             >>> db2 = MagicMock()
             >>> db2.execute.return_value.scalar_one_or_none.return_value = None
+            >>> db2.get.return_value = None
             >>> import asyncio
+            >>> # Disable path validation for doctest
+            >>> import mcpgateway.config
+            >>> old_val = getattr(mcpgateway.config.settings, 'experimental_validate_io', False)
+            >>> mcpgateway.config.settings.experimental_validate_io = False
             >>> def _nf():
             ...     try:
             ...         asyncio.run(service.read_resource(db2, resource_uri='abc'))
             ...     except ResourceNotFoundError:
             ...         return True
-            >>> _nf()
+            >>> result = _nf()
+            >>> mcpgateway.config.settings.experimental_validate_io = old_val
+            >>> result
             True
         """
         start_time = time.monotonic()
