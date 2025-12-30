@@ -53,8 +53,10 @@ GATEWAY_SERVICE_TEMPLATE = """  gateway{instance_suffix}:
       context: .
       dockerfile: Containerfile.lite
     container_name: gateway{instance_suffix}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/mcpgateway
+      - DATABASE_URL=postgresql+psycopg://postgres:postgres@postgres:5432/mcpgateway
 {redis_url}
       - HOST=0.0.0.0
       - PORT=4444
@@ -98,6 +100,8 @@ REDIS_SERVICE = """  redis:
 NGINX_LOAD_BALANCER = """  nginx:
     image: nginx:alpine
     container_name: nginx_lb
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8000:80"
     volumes:
@@ -261,7 +265,7 @@ class DockerComposeGenerator:
         depends = []
         for i in range(num_instances):
             suffix = f"_{i + 1}"
-            depends.append(f"      - gateway{suffix}")
+            depends.append(f"      gateway{suffix}:\n        condition: service_healthy")
 
         return NGINX_LOAD_BALANCER.format(nginx_depends="\n".join(depends))
 
@@ -289,10 +293,14 @@ http {{
 
         location / {{
             proxy_pass http://gateway_backend;
-            proxy_set_header Host $host;
+            proxy_set_header Host $http_host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Host $http_host;
+
+            # Disable redirect rewriting to preserve backend URLs
+            proxy_redirect off;
 
             # Timeouts
             proxy_connect_timeout 60s;
