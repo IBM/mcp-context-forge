@@ -57,7 +57,7 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 from pydantic import ValidationError
-from sqlalchemy import and_, delete, desc, or_, select
+from sqlalchemy import and_, delete, desc, or_, select, desc
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 

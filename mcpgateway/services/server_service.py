@@ -18,7 +18,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 # Third-Party
 import httpx
-from sqlalchemy import and_, delete, or_, select
+from sqlalchemy import and_, delete, or_, select, desc
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 

@@ -24,7 +24,7 @@ import uuid
 
 # Third-Party
 from jinja2 import Environment, meta, select_autoescape
-from sqlalchemy import and_, delete, not_, or_, select
+from sqlalchemy import and_, delete, not_, or_, select, desc
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
