@@ -1379,8 +1379,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         # Cache first page results - only for non-user-specific queries
         if cursor is None and user_email is None:
             try:
-                cache_data = {"servers": [s.model_dump(mode="json") for s in result], "next_cursor": next_cursor}
-                await cache.set("servers", cache_data, filters_hash)
+                cache_data = {"gateways": [s.model_dump(mode="json") for s in result], "next_cursor": next_cursor}
+                await cache.set("gateways", cache_data, filters_hash)
             except AttributeError:
                 pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)
 
