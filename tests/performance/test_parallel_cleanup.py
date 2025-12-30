@@ -60,8 +60,10 @@ async def test_parallel_cleanup_performance():
 
     # Theoretical sequential time
     sequential_time = num_sessions * db_delay
+    max_concurrent = 20  # Default semaphore limit in _cleanup_database_sessions
+    expected_parallel = (num_sessions / max_concurrent) * db_delay
     print(f"\nExpected sequential time: {sequential_time:.2f} seconds")
-    print(f"Expected parallel time: ~{db_delay:.2f} seconds (limited by slowest operation)")
+    print(f"Expected parallel time: ~{expected_parallel:.2f} seconds ({max_concurrent} concurrent)")
 
     # Run parallel cleanup
     start_time = time.time()

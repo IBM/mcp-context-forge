@@ -838,6 +838,7 @@ class AuthCache:
             from mcpgateway.db import fresh_db_session, TokenRevocation  # pylint: disable=import-outside-toplevel
 
             def _load_revoked_jtis() -> Set[str]:
+                """Load all revoked JTIs from database."""
                 with fresh_db_session() as db:
                     result = db.execute(select(TokenRevocation.jti))
                     return {row[0] for row in result}
