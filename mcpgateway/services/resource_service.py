@@ -873,7 +873,7 @@ class ResourceService:
         # Check cache for first page only (cursor=None)
         # Skip caching when user_email is provided (team-filtered results are user-specific) or page based pagination
         cache = _get_registry_cache()
-        if cursor is None and user_email is None and page in None:
+        if cursor is None and user_email is None and page is None:
             filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, limit=limit)
             cached = await cache.get("resources", filters_hash)
             if cached is not None:

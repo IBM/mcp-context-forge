@@ -204,6 +204,48 @@ class ExportService:
             cursor = next_cursor
         return all_resources
 
+    async def _fetch_all_gateways(self, db: Session, tags: Optional[List[str]], include_inactive: bool) -> List[Any]:
+        """Fetch all gateways by following pagination cursors.
+
+        Args:
+            db: Database session
+            tags: Filter by tags
+            include_inactive: Include inactive gateways
+
+        Returns:
+            List of all gateways across all pages
+        """
+        all_gateways = []
+        cursor = None
+        while True:
+            gateways, next_cursor = await self.gateway_service.list_gateways(db, tags=tags, include_inactive=include_inactive, cursor=cursor)
+            all_gateways.extend(gateways)
+            if not next_cursor:
+                break
+            cursor = next_cursor
+        return all_gateways
+
+    async def _fetch_all_servers(self, db: Session, tags: Optional[List[str]], include_inactive: bool) -> List[Any]:
+        """Fetch all servers by following pagination cursors.
+
+        Args:
+            db: Database session
+            tags: Filter by tags
+            include_inactive: Include inactive servers
+
+        Returns:
+            List of all servers across all pages
+        """
+        all_servers = []
+        cursor = None
+        while True:
+            servers, next_cursor = await self.server_service.list_servers(db, tags=tags, include_inactive=include_inactive, cursor=cursor)
+            all_servers.extend(servers)
+            if not next_cursor:
+                break
+            cursor = next_cursor
+        return all_servers
+
     async def export_configuration(
         self,
         db: Session,
@@ -416,11 +458,8 @@ class ExportService:
         Returns:
             List of exported gateway dictionaries
         """
-        gateways = await self.gateway_service.list_gateways(db, include_inactive=include_inactive)
-
-        # Filter by tags if specified
-        if tags:
-            gateways = [g for g in gateways if any(str(tag) in {(str(t.get("id")) if isinstance(t, dict) and t.get("id") is not None else str(t)) for t in (g.tags or [])} for tag in tags)]
+        # Fetch all gateways across all pages (bypasses pagination limit)
+        gateways = await self._fetch_all_gateways(db, tags, include_inactive)
 
         # Batch fetch auth data for gateways with masked values (single query instead of N queries)
         gateway_ids_needing_auth = [g.id for g in gateways if g.auth_type and g.auth_value == settings.masked_auth_value]
@@ -475,7 +514,8 @@ class ExportService:
         Returns:
             List of exported server dictionaries
         """
-        servers = await self.server_service.list_servers(db, tags=tags, include_inactive=include_inactive)
+        # Fetch all servers across all pages (bypasses pagination limit)
+        servers = await self._fetch_all_servers(db, tags, include_inactive)
         exported_servers = []
 
         for server in servers:
