@@ -1231,13 +1231,10 @@ def destroy_kubernetes(manifests_dir: Path, verbose: bool = False) -> None:
 
     Examples:
         >>> from pathlib import Path
-        >>> # Test with non-existent directory (graceful handling)
-        >>> import shutil
-        >>> if not shutil.which("kubectl"):
-        ...     print("kubectl not available")
-        ... else:
-        ...     destroy_kubernetes(Path("/nonexistent/manifests"), verbose=False)
-        kubectl not available
+        >>> # Gracefully handle non-existent manifests directory
+        >>> destroy_kubernetes(Path("/nonexistent/manifests"), verbose=False)
+        Manifests directory not found: /nonexistent/manifests
+        Nothing to destroy
 
         >>> # Test function signature
         >>> import inspect
