@@ -67,6 +67,7 @@ async def test_auth_method_propagation_from_plugin():
         with patch("mcpgateway.auth.get_plugin_manager") as mock_get_pm_auth:
             mock_pm = MagicMock()
             mock_pm.invoke_hook = AsyncMock(return_value=(mock_plugin_result, None))
+            mock_pm.has_hooks_for = MagicMock(return_value=True)  # Enable hook invocation
             mock_get_pm_framework.return_value = mock_pm
             mock_get_pm_auth.return_value = mock_pm
 

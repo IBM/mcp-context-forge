@@ -383,3 +383,119 @@ class TestGetCurrentUser:
 
                     assert "Attempting JWT token validation" in caplog.text
                     assert "JWT token validated successfully" in caplog.text
+
+
+class TestAuthHooksOptimization:
+    """Test cases for has_hooks_for optimization in get_current_user."""
+
+    @pytest.mark.asyncio
+    async def test_invoke_hook_skipped_when_has_hooks_for_returns_false(self):
+        """Test that invoke_hook is NOT called when has_hooks_for returns False."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")
+
+        jwt_payload = {"sub": "test@example.com", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
+
+        mock_user = EmailUser(
+            email="test@example.com",
+            password_hash="hash",
+            full_name="Test User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        # Create mock plugin manager with has_hooks_for returning False
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(return_value=False)
+        mock_pm.invoke_hook = AsyncMock()
+
+        with patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm):
+            with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(return_value=jwt_payload)):
+                with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                    with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                        user = await get_current_user(credentials=credentials)
+
+                        # Verify user was authenticated via standard JWT path
+                        assert user.email == mock_user.email
+
+                        # Verify has_hooks_for was called
+                        mock_pm.has_hooks_for.assert_called_once()
+
+                        # Verify invoke_hook was NOT called (optimization working)
+                        mock_pm.invoke_hook.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_invoke_hook_called_when_has_hooks_for_returns_true(self):
+        """Test that invoke_hook IS called when has_hooks_for returns True."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")
+
+        # Mock plugin result that continues to standard auth
+        from mcpgateway.plugins.framework import PluginResult
+
+        mock_plugin_result = PluginResult(
+            modified_payload=None,
+            continue_processing=True,
+        )
+
+        jwt_payload = {"sub": "test@example.com", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
+
+        mock_user = EmailUser(
+            email="test@example.com",
+            password_hash="hash",
+            full_name="Test User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        # Create mock plugin manager with has_hooks_for returning True
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(return_value=True)
+        mock_pm.invoke_hook = AsyncMock(return_value=(mock_plugin_result, None))
+
+        with patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm):
+            with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(return_value=jwt_payload)):
+                with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                    with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                        user = await get_current_user(credentials=credentials)
+
+                        # Verify user was authenticated
+                        assert user.email == mock_user.email
+
+                        # Verify has_hooks_for was called
+                        mock_pm.has_hooks_for.assert_called_once()
+
+                        # Verify invoke_hook WAS called
+                        mock_pm.invoke_hook.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_standard_auth_fallback_when_no_plugin_manager(self):
+        """Test that standard JWT auth works when plugin manager is None."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")
+
+        jwt_payload = {"sub": "test@example.com", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
+
+        mock_user = EmailUser(
+            email="test@example.com",
+            password_hash="hash",
+            full_name="Test User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        # Plugin manager returns None
+        with patch("mcpgateway.auth.get_plugin_manager", return_value=None):
+            with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(return_value=jwt_payload)):
+                with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                    with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                        user = await get_current_user(credentials=credentials)
+
+                        # Verify user was authenticated via standard JWT path
+                        assert user.email == mock_user.email

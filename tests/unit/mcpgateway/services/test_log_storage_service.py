@@ -9,7 +9,7 @@ Unit tests for LogStorageService.
 
 # Standard
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 # Third-Party
@@ -304,7 +304,8 @@ async def test_get_logs_time_range():
         await service.add_log(level=LogLevel.INFO, message="Current log")
 
         # Filter by time range (should only include current log)
-        future_time = datetime(2025, 12, 31, tzinfo=timezone.utc)
+        # Use now + 1 day to ensure the current log falls within the range
+        future_time = now + timedelta(days=1)
         result = await service.get_logs(start_time=datetime(2024, 6, 1, tzinfo=timezone.utc), end_time=future_time)
         assert len(result) == 1
         assert result[0]["message"] == "Current log"
