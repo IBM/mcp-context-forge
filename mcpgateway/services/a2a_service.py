@@ -362,7 +362,7 @@ class A2AAgentService:
                 },
             )
 
-            return self._db_to_schema(db=db, db_agent=new_agent)
+            return self.convert_agent_to_read(db=db, db_agent=new_agent)
 
         except A2AAgentNameConflictError as ie:
             db.rollback()
@@ -525,7 +525,7 @@ class A2AAgentService:
         result = []
         for s in a2a_agents_db:
             s.team = team_map.get(s.team_id) if s.team_id else None
-            result.append(self._db_to_schema(db=db, db_agent=s, include_metrics=False, team_map=team_map))
+            result.append(self.convert_agent_to_read(db=db, db_agent=s, include_metrics=False, team_map=team_map))
 
         # Return appropriate format based on pagination type
         if page is not None:
@@ -632,7 +632,7 @@ class A2AAgentService:
         db.commit()  # Release transaction to avoid idle-in-transaction
 
         # Skip metrics to avoid N+1 queries in list operations
-        return [self._db_to_schema(db=db, db_agent=agent, include_metrics=False, team_map=team_map) for agent in agents]
+        return [self.convert_agent_to_read(db=db, db_agent=agent, include_metrics=False, team_map=team_map) for agent in agents]
 
     async def get_agent(self, db: Session, agent_id: str, include_inactive: bool = True) -> A2AAgentRead:
         """Retrieve an A2A agent by ID.
@@ -699,8 +699,8 @@ class A2AAgentService:
 
             >>> db.get.return_value = agent_mock
 
-            >>> # Mock _db_to_schema to simplify test
-            >>> service._db_to_schema = lambda db, db_agent: 'agent_read'
+            >>> # Mock convert_agent_to_read to simplify test
+            >>> service.convert_agent_to_read = lambda db, db_agent: 'agent_read'
 
             >>> # Test with active agent
             >>> result = asyncio.run(service.get_agent(db, 'agent_id'))
@@ -729,8 +729,8 @@ class A2AAgentService:
         if not agent.enabled and not include_inactive:
             raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
 
-        # ✅ Delegate conversion and masking to _db_to_schema()
-        return self._db_to_schema(db=db, db_agent=agent)
+        # ✅ Delegate conversion and masking to convert_agent_to_read()
+        return self.convert_agent_to_read(db=db, db_agent=agent)
 
     async def get_agent_by_name(self, db: Session, agent_name: str) -> A2AAgentRead:
         """Retrieve an A2A agent by name.
@@ -751,7 +751,7 @@ class A2AAgentService:
         if not agent:
             raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
 
-        return self._db_to_schema(db=db, db_agent=agent)
+        return self.convert_agent_to_read(db=db, db_agent=agent)
 
     async def update_agent(
         self,
@@ -866,7 +866,7 @@ class A2AAgentService:
             await admin_stats_cache.invalidate_tags()
 
             logger.info(f"Updated A2A agent: {agent.name} (ID: {agent.id})")
-            return self._db_to_schema(db=db, db_agent=agent)
+            return self.convert_agent_to_read(db=db, db_agent=agent)
         except PermissionError:
             db.rollback()
             raise
@@ -945,7 +945,7 @@ class A2AAgentService:
             },
         )
 
-        return self._db_to_schema(db=db, db_agent=agent)
+        return self.convert_agent_to_read(db=db, db_agent=agent)
 
     async def delete_agent(self, db: Session, agent_id: str, user_email: Optional[str] = None, purge_metrics: bool = False) -> None:
         """Delete an A2A agent.
@@ -1290,7 +1290,7 @@ class A2AAgentService:
             agent.auth_value = encode_auth(agent.auth_value)
         return agent
 
-    def _db_to_schema(self, db: Session, db_agent: DbA2AAgent, include_metrics: bool = False, team_map: Optional[Dict[str, str]] = None) -> A2AAgentRead:
+    def convert_agent_to_read(self, db: Session, db_agent: DbA2AAgent, include_metrics: bool = False, team_map: Optional[Dict[str, str]] = None) -> A2AAgentRead:
         """Convert database model to schema.
 
         Args:
