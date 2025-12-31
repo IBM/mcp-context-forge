@@ -417,7 +417,7 @@ async def get_current_user(
         # Get plugin manager singleton
         plugin_manager = get_plugin_manager()
 
-        if plugin_manager:
+        if plugin_manager and plugin_manager.has_hooks_for(HttpHookType.HTTP_AUTH_RESOLVE_USER):
             # Extract client information
             client_host = None
             client_port = None
