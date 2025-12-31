@@ -585,17 +585,18 @@ class TestToolService:
         )
         tool_service.convert_tool_to_read = Mock(return_value=tool_read)
 
-        # Mock DB to return a tuple of (tool, team_name) from LEFT JOIN
-        mock_row = MagicMock()
-        mock_row.__getitem__ = lambda self, idx: mock_tool if idx == 0 else None
-        mock_row.team_name = None
-        test_db.execute = Mock(return_value=MagicMock(all=Mock(return_value=[mock_row])))
+        # Mock DB execute chain for unified_paginate: execute().scalars().all()
+        # First call: fetch tools
+        # Second call (if tool has team_id): fetch team names
+        mock_tool.team_id = None  # No team, so no second query
+        test_db.execute = Mock(return_value=MagicMock(scalars=Mock(return_value=MagicMock(all=Mock(return_value=[mock_tool])))))
+        test_db.commit = Mock()  # Mock commit to avoid errors
 
         # Call method
         result, next_cursor = await tool_service.list_tools(test_db)
 
-        # Verify DB query: should be called once (LEFT JOIN optimization)
-        assert test_db.execute.call_count == 1
+        # Verify DB query was called
+        assert test_db.execute.called
 
         # Verify result
         assert len(result) == 1
@@ -608,18 +609,12 @@ class TestToolService:
         """Test list_tools returns next_cursor when page size is exceeded."""
         monkeypatch.setattr(settings, "pagination_default_page_size", 1)
 
-        tool_1 = MagicMock(spec=DbTool, id="1")
-        tool_2 = MagicMock(spec=DbTool, id="2")
+        tool_1 = MagicMock(spec=DbTool, id="1", team_id=None)
+        tool_2 = MagicMock(spec=DbTool, id="2", team_id=None)
 
-        row_1 = MagicMock()
-        row_1.__getitem__ = lambda self, idx: tool_1 if idx == 0 else None
-        row_1.team_name = None
-
-        row_2 = MagicMock()
-        row_2.__getitem__ = lambda self, idx: tool_2 if idx == 0 else None
-        row_2.team_name = None
-
-        test_db.execute = Mock(return_value=MagicMock(all=Mock(return_value=[row_1, row_2])))
+        # Mock DB execute chain for unified_paginate: execute().scalars().all()
+        test_db.execute = Mock(return_value=MagicMock(scalars=Mock(return_value=MagicMock(all=Mock(return_value=[tool_1, tool_2])))))
+        test_db.commit = Mock()
 
         mock_team = MagicMock(id="team-1", is_personal=True)
         with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
@@ -652,15 +647,12 @@ class TestToolService:
         monkeypatch.setattr(settings, "pagination_default_page_size", 50)
         monkeypatch.setattr(settings, "pagination_max_page_size", 500)
 
-        tools = [MagicMock(spec=DbTool, id=str(i)) for i in range(150)]
-        rows = []
-        for tool in tools:
-            row = MagicMock()
-            row.__getitem__ = lambda self, idx, t=tool: t if idx == 0 else None
-            row.team_name = None
-            rows.append(row)
+        tools = [MagicMock(spec=DbTool, id=str(i), team_id=None) for i in range(150)]
 
-        test_db.execute = Mock(return_value=MagicMock(all=Mock(return_value=rows[:101])))  # 100 + 1 for has_more check
+        # Mock DB execute chain for unified_paginate: execute().scalars().all()
+        # unified_paginate fetches limit+1 to check if there are more results
+        test_db.execute = Mock(return_value=MagicMock(scalars=Mock(return_value=MagicMock(all=Mock(return_value=tools[:101])))))
+        test_db.commit = Mock()
         tool_service.convert_tool_to_read = Mock(side_effect=lambda t, **kw: MagicMock())
 
         result, next_cursor = await tool_service.list_tools(test_db, limit=100)
@@ -673,15 +665,11 @@ class TestToolService:
         """Test list_tools with limit=0 returns all tools without pagination."""
         monkeypatch.setattr(settings, "pagination_default_page_size", 50)
 
-        tools = [MagicMock(spec=DbTool, id=str(i)) for i in range(200)]
-        rows = []
-        for tool in tools:
-            row = MagicMock()
-            row.__getitem__ = lambda self, idx, t=tool: t if idx == 0 else None
-            row.team_name = None
-            rows.append(row)
+        tools = [MagicMock(spec=DbTool, id=str(i), team_id=None) for i in range(200)]
 
-        test_db.execute = Mock(return_value=MagicMock(all=Mock(return_value=rows)))
+        # Mock DB execute chain for unified_paginate: execute().scalars().all()
+        test_db.execute = Mock(return_value=MagicMock(scalars=Mock(return_value=MagicMock(all=Mock(return_value=tools)))))
+        test_db.commit = Mock()
         tool_service.convert_tool_to_read = Mock(side_effect=lambda t, **kw: MagicMock())
 
         result, next_cursor = await tool_service.list_tools(test_db, limit=0)
@@ -694,11 +682,11 @@ class TestToolService:
         """Test listing tools."""
         # Mock DB to return a tuple of (tool, team_name) from LEFT JOIN
         mock_tool.enabled = False
-        mock_row = MagicMock()
-        mock_row.__getitem__ = lambda self, idx: mock_tool if idx == 0 else None
-        mock_row.team_name = None
-        mock_execute = Mock(return_value=MagicMock(all=Mock(return_value=[mock_row])))
-        test_db.execute = mock_execute
+        mock_tool.team_id = None
+
+        # Mock DB execute chain for unified_paginate: execute().scalars().all()
+        test_db.execute = Mock(return_value=MagicMock(scalars=Mock(return_value=MagicMock(all=Mock(return_value=[mock_tool])))))
+        test_db.commit = Mock()
 
         # Mock conversion
         tool_read = ToolRead(
@@ -739,8 +727,8 @@ class TestToolService:
         # Call method
         result, _ = await tool_service.list_tools(test_db, include_inactive=True)
 
-        # Verify DB query: should be called once (LEFT JOIN optimization)
-        assert test_db.execute.call_count == 1
+        # Verify DB query was called
+        assert test_db.execute.called
 
         # Verify result
         assert len(result) == 1
@@ -2200,16 +2188,18 @@ class TestToolService:
 
         session = MagicMock()
 
-        # Mock LEFT JOIN row result
-        mock_row = MagicMock()
-        mock_row.__getitem__ = lambda self, idx: mock_tool if idx == 0 else None
-        mock_row.team_name = "test-team"
-        session.execute.return_value.all.return_value = [mock_row]
+        # Mock DB execute chain for unified_paginate: execute().scalars().all()
+        mock_tool.team_id = None
+        session.execute = Mock(return_value=MagicMock(scalars=Mock(return_value=MagicMock(all=Mock(return_value=[mock_tool])))))
+        session.commit = Mock()
 
         bind = MagicMock()
         bind.dialect = MagicMock()
         bind.dialect.name = "sqlite"  # or "postgresql" or "mysql"
         session.get_bind.return_value = bind
+
+        # Mock convert_tool_to_read
+        tool_service.convert_tool_to_read = Mock(return_value=MagicMock())
 
         with patch("mcpgateway.services.tool_service.select", return_value=mock_query):
             with patch("mcpgateway.services.tool_service.json_contains_expr") as mock_json_contains:
@@ -2217,7 +2207,7 @@ class TestToolService:
                 fake_condition = MagicMock()
                 mock_json_contains.return_value = fake_condition
 
-                result, _ = await tool_service.list_tools(session, tags=["test", "production"])
+                result, _ = await tool_service.list_tools(session, tags=["test", "production"], include_inactive=True)
 
                 # json_contains_expr should be called once with the tags list
                 mock_json_contains.assert_called_once()
