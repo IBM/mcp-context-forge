@@ -1818,7 +1818,7 @@ async def handle_sampling(request: Request, db: Session = Depends(get_db), user=
 async def list_servers(
     request: Request,
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
-    include_pagination: bool = Query(True, description="Include cursor pagination metadata in response"),
+    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, ge=0, description="Maximum number of servers to return"),
     include_inactive: bool = False,
     tags: Optional[str] = None,
@@ -2320,7 +2320,7 @@ async def list_a2a_agents(
     team_id: Optional[str] = Query(None, description="Filter by team ID"),
     visibility: Optional[str] = Query(None, description="Filter by visibility (private, team, public)"),
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
-    include_pagination: bool = Query(True, description="Include cursor pagination metadata in response"),
+    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, description="Maximum number of agents to return"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -2679,7 +2679,7 @@ async def invoke_a2a_agent(
 async def list_tools(
     request: Request,
     cursor: Optional[str] = None,
-    include_pagination: bool = Query(True, description="Include cursor pagination metadata in response"),
+    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, ge=0, description="Maximum number of tools to return. 0 means all (no limit). Default uses pagination_default_page_size."),
     include_inactive: bool = False,
     tags: Optional[str] = None,
@@ -3086,7 +3086,7 @@ async def toggle_resource_status(
 async def list_resources(
     request: Request,
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
-    include_pagination: bool = Query(True, description="Include cursor pagination metadata in response"),
+    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, ge=0, description="Maximum number of resources to return"),
     include_inactive: bool = False,
     tags: Optional[str] = None,
@@ -3463,7 +3463,7 @@ async def toggle_prompt_status(
 async def list_prompts(
     request: Request,
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
-    include_pagination: bool = Query(True, description="Include cursor pagination metadata in response"),
+    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, ge=0, description="Maximum number of prompts to return"),
     include_inactive: bool = False,
     tags: Optional[str] = None,
@@ -3877,7 +3877,7 @@ async def toggle_gateway_status(
 async def list_gateways(
     request: Request,
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
-    include_pagination: bool = Query(True, description="Include cursor pagination metadata in response"),
+    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, ge=0, description="Maximum number of gateways to return"),
     include_inactive: bool = False,
     team_id: Optional[str] = Query(None, description="Filter by team ID"),

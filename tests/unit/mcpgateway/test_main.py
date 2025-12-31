@@ -481,10 +481,9 @@ class TestServerEndpoints:
         response = test_client.get("/servers/", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
-        # Response is now paginated format: {"servers": [...], "nextCursor": "..."}
-        assert "servers" in data
-        assert len(data["servers"]) == 1 and data["servers"][0]["name"] == "test_server"
-        assert "nextCursor" in data
+        # Default response is a plain list (include_pagination=False by default)
+        assert isinstance(data, list)
+        assert len(data) == 1 and data[0]["name"] == "test_server"
         mock_list_servers.assert_called_once()
 
     @patch("mcpgateway.main.server_service.get_server")
@@ -619,10 +618,9 @@ class TestToolEndpoints:
         response = test_client.get("/tools/", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
-        # Response is now paginated format: {"tools": [...], "nextCursor": "..."}
-        assert "tools" in data
-        assert len(data["tools"]) == 1 and data["tools"][0]["name"] == "test_tool"
-        assert "nextCursor" in data
+        # Default response is a plain list (include_pagination=False by default)
+        assert isinstance(data, list)
+        assert len(data) == 1 and data[0]["name"] == "test_tool"
         mock_list_tools.assert_called_once()
 
     @patch("mcpgateway.main.tool_service.register_tool")
@@ -701,10 +699,9 @@ class TestResourceEndpoints:
         response = test_client.get("/resources/", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
-        # Response is now paginated format: {"resources": [...], "nextCursor": "..."}
-        assert "resources" in data
-        assert len(data["resources"]) == 1 and data["resources"][0]["name"] == "Test Resource"
-        assert "nextCursor" in data
+        # Default response is a plain list (include_pagination=False by default)
+        assert isinstance(data, list)
+        assert len(data) == 1 and data[0]["name"] == "Test Resource"
         mock_list_resources.assert_called_once()
 
     @patch("mcpgateway.main.resource_service.register_resource")
@@ -869,10 +866,9 @@ class TestPromptEndpoints:
         response = test_client.get("/prompts/", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
-        # Response is now paginated format: {"prompts": [...], "nextCursor": "..."}
-        assert "prompts" in data
-        assert len(data["prompts"]) == 1
-        assert "nextCursor" in data
+        # Default response is a plain list (include_pagination=False by default)
+        assert isinstance(data, list)
+        assert len(data) == 1
         mock_list_prompts.assert_called_once()
 
     @patch("mcpgateway.main.prompt_service.register_prompt")
@@ -952,10 +948,9 @@ class TestGatewayEndpoints:
         response = test_client.get("/gateways/", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
-        # Response is now paginated format: {"gateways": [...], "nextCursor": "..."}
-        assert "gateways" in data
-        assert len(data["gateways"]) == 1
-        assert "nextCursor" in data
+        # Default response is a plain list (include_pagination=False by default)
+        assert isinstance(data, list)
+        assert len(data) == 1
         mock_list.assert_called_once()
 
     @patch("mcpgateway.main.gateway_service.register_gateway")
@@ -1031,10 +1026,9 @@ class TestGatewayEndpoints:
         response = test_client.get("/gateways/", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
-        # Response is now paginated format: {"gateways": [...], "nextCursor": "..."}
-        assert "gateways" in data
-        assert len(data["gateways"]) == 1
-        assert "nextCursor" in data
+        # Default response is a plain list (include_pagination=False by default)
+        assert isinstance(data, list)
+        assert len(data) == 1
         mock_list.assert_called_once()
 
     @patch("mcpgateway.main.gateway_service.register_gateway")

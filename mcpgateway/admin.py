@@ -60,7 +60,7 @@ from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
-from mcpgateway.db import extract_json_field, get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
+from mcpgateway.db import EmailTeam, extract_json_field, get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Tool as DbTool
@@ -996,7 +996,6 @@ async def get_configuration_settings(
 async def admin_list_servers(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
-    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -1005,13 +1004,11 @@ async def admin_list_servers(
     List servers for the admin UI with pagination support.
 
     This endpoint retrieves a paginated list of servers from the database, optionally
-    including those that are inactive. The endpoint supports both offset-based (page/per_page)
-    and cursor-based pagination, automatically switching to cursor pagination for large datasets.
+    including those that are inactive. Uses offset-based (page/per_page) pagination.
 
     Args:
         page (int): Page number (1-indexed) for offset pagination.
         per_page (int): Number of items per page (1-500).
-        cursor (Optional[str]): Cursor for cursor-based pagination.
         include_inactive (bool): Whether to include inactive servers.
         db (Session): The database session dependency.
         user (str): The authenticated user dependency.
@@ -1070,7 +1067,7 @@ async def admin_list_servers(
         >>> # Test listing servers with pagination
         >>> async def test_admin_list_servers_paginated():
         ...     with patch("mcpgateway.admin.server_service.list_servers", new=mock_list_servers):
-        ...         result = await admin_list_servers(page=1, per_page=50, cursor=None, include_inactive=False, db=mock_db, user=mock_user)
+        ...         result = await admin_list_servers(page=1, per_page=50, include_inactive=False, db=mock_db, user=mock_user)
         ...         return "data" in result and "pagination" in result
         >>>
         >>> asyncio.run(test_admin_list_servers_paginated())
@@ -1083,7 +1080,6 @@ async def admin_list_servers(
     paginated_result = await server_service.list_servers(
         db=db,
         include_inactive=include_inactive,
-        cursor=cursor,
         page=page,
         per_page=per_page,
         user_email=user_email,
@@ -1869,7 +1865,6 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
 async def admin_list_resources(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
-    cursor: Optional[str] = None,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -1878,15 +1873,11 @@ async def admin_list_resources(
     List resources for the admin UI with pagination support.
 
     This endpoint retrieves a paginated list of resources from the database, optionally
-    including those that are inactive. Supports both offset-based and cursor-based
-    pagination. Automatically switches to cursor-based pagination for large datasets
-    (>10K records) for better performance.
+    including those that are inactive. Uses offset-based (page/per_page) pagination.
 
     Args:
         page (int): Page number (1-indexed). Default: 1.
         per_page (int): Items per page (1-500). Default: 50.
-        cursor (Optional[str]): Cursor for cursor-based pagination. When provided,
-            page parameter is ignored.
         include_inactive (bool): Whether to include inactive resources in the results.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -1935,13 +1926,13 @@ async def admin_list_resources(
         >>> # Test listing resources with pagination
         >>> async def test_admin_list_resources_paginated():
         ...     with patch("mcpgateway.admin.resource_service.list_resources", new=mock_list_resources):
-        ...         result = await admin_list_resources(page=1, per_page=50, cursor=None, include_inactive=False, db=mock_db, user=mock_user)
+        ...         result = await admin_list_resources(page=1, per_page=50, include_inactive=False, db=mock_db, user=mock_user)
         ...         return "data" in result and "pagination" in result
         >>>
         >>> asyncio.run(test_admin_list_resources_paginated())
         True
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested resource list (page={page}, per_page={per_page}, cursor={cursor})")
+    LOGGER.debug(f"User {get_user_email(user)} requested resource list (page={page}, per_page={per_page})")
     user_email = get_user_email(user)
 
     # Call resource_service.list_resources with page-based pagination
@@ -1965,7 +1956,6 @@ async def admin_list_resources(
 async def admin_list_prompts(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
-    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -1974,13 +1964,11 @@ async def admin_list_prompts(
     List prompts for the admin UI with pagination support.
 
     This endpoint retrieves a paginated list of prompts from the database, optionally
-    including those that are inactive. The endpoint supports both offset-based (page/per_page)
-    and cursor-based pagination, automatically switching to cursor pagination for large datasets.
+    including those that are inactive. Uses offset-based (page/per_page) pagination.
 
     Args:
         page (int): Page number (1-indexed) for offset pagination.
         per_page (int): Number of items per page (1-500).
-        cursor (Optional[str]): Cursor for cursor-based pagination.
         include_inactive (bool): Whether to include inactive prompts in the results.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -2031,7 +2019,7 @@ async def admin_list_prompts(
         >>> # Test listing active prompts with pagination
         >>> async def test_admin_list_prompts_paginated():
         ...     with patch("mcpgateway.admin.prompt_service.list_prompts", new=mock_list_prompts):
-        ...         result = await admin_list_prompts(page=1, per_page=50, cursor=None, include_inactive=False, db=mock_db, user=mock_user)
+        ...         result = await admin_list_prompts(page=1, per_page=50, include_inactive=False, db=mock_db, user=mock_user)
         ...         return "data" in result and "pagination" in result
         >>>
         >>> asyncio.run(test_admin_list_prompts_paginated())
@@ -2044,7 +2032,6 @@ async def admin_list_prompts(
     paginated_result = await prompt_service.list_prompts(
         db=db,
         include_inactive=include_inactive,
-        cursor=cursor,
         page=page,
         per_page=per_page,
         user_email=user_email,
@@ -2062,7 +2049,6 @@ async def admin_list_prompts(
 async def admin_list_gateways(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
-    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -2071,13 +2057,11 @@ async def admin_list_gateways(
     List gateways for the admin UI with pagination support.
 
     This endpoint retrieves a paginated list of gateways from the database, optionally
-    including those that are inactive. The endpoint supports both offset-based (page/per_page)
-    and cursor-based pagination, automatically switching to cursor pagination for large datasets.
+    including those that are inactive. Uses offset-based (page/per_page) pagination.
 
     Args:
         page (int): Page number (1-indexed) for offset pagination.
         per_page (int): Number of items per page (1-500).
-        cursor (Optional[str]): Cursor for cursor-based pagination.
         include_inactive (bool): Whether to include inactive gateways in the results.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -2125,7 +2109,7 @@ async def admin_list_gateways(
         >>> # Test listing gateways with pagination
         >>> async def test_admin_list_gateways_paginated():
         ...     with patch("mcpgateway.admin.gateway_service.list_gateways", new=mock_list_gateways):
-        ...         result = await admin_list_gateways(page=1, per_page=50, cursor=None, include_inactive=False, db=mock_db, user=mock_user)
+        ...         result = await admin_list_gateways(page=1, per_page=50, include_inactive=False, db=mock_db, user=mock_user)
         ...         return "data" in result and "pagination" in result
         >>>
         >>> asyncio.run(test_admin_list_gateways_paginated())
@@ -2138,7 +2122,6 @@ async def admin_list_gateways(
     paginated_result = await gateway_service.list_gateways(
         db=db,
         include_inactive=include_inactive,
-        cursor=cursor,
         page=page,
         per_page=per_page,
         user_email=user_email,
@@ -2175,7 +2158,7 @@ async def admin_list_gateway_ids(
     """
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} requested gateway ids list")
-    gateways, _ = await gateway_service.list_gateways(db, include_inactive=include_inactive, user_email=user_email)
+    gateways, _ = await gateway_service.list_gateways(db, include_inactive=include_inactive, user_email=user_email, limit=0)
     ids = [str(g.id) for g in gateways]
     LOGGER.info(f"Gateway IDs retrieved: {ids}")
     return {"gateway_ids": ids}
@@ -2659,7 +2642,7 @@ async def admin_ui(
     # applying server-side filtering as a fallback if the service didn't accept team_id.
     # --------------------------------------------------------------------------------
     try:
-        raw_tools = await _call_list_with_team_support(tool_service.list_tools, db, include_inactive=include_inactive, user_email=user_email)
+        raw_tools = await _call_list_with_team_support(tool_service.list_tools, db, include_inactive=include_inactive, user_email=user_email, limit=0)
         if isinstance(raw_tools, tuple):
             raw_tools = raw_tools[0]
     except Exception as e:
@@ -2667,7 +2650,7 @@ async def admin_ui(
         raw_tools = []
 
     try:
-        raw_servers = await _call_list_with_team_support(server_service.list_servers, db, include_inactive=include_inactive, user_email=user_email)
+        raw_servers = await _call_list_with_team_support(server_service.list_servers, db, include_inactive=include_inactive, user_email=user_email, limit=0)
         # Handle tuple return (list, cursor)
         if isinstance(raw_servers, tuple):
             raw_servers = raw_servers[0]
@@ -2676,7 +2659,7 @@ async def admin_ui(
         raw_servers = []
 
     try:
-        raw_resources = await _call_list_with_team_support(resource_service.list_resources, db, include_inactive=include_inactive, user_email=user_email)
+        raw_resources = await _call_list_with_team_support(resource_service.list_resources, db, include_inactive=include_inactive, user_email=user_email, limit=0)
         if isinstance(raw_resources, tuple):
             raw_resources = raw_resources[0]
     except Exception as e:
@@ -2684,7 +2667,7 @@ async def admin_ui(
         raw_resources = []
 
     try:
-        raw_prompts = await _call_list_with_team_support(prompt_service.list_prompts, db, include_inactive=include_inactive, user_email=user_email)
+        raw_prompts = await _call_list_with_team_support(prompt_service.list_prompts, db, include_inactive=include_inactive, user_email=user_email, limit=0)
         # Handle tuple return (list, cursor)
         if isinstance(raw_prompts, tuple):
             raw_prompts = raw_prompts[0]
@@ -2693,7 +2676,7 @@ async def admin_ui(
         raw_prompts = []
 
     try:
-        gateways_raw = await _call_list_with_team_support(gateway_service.list_gateways, db, include_inactive=include_inactive, user_email=user_email)
+        gateways_raw = await _call_list_with_team_support(gateway_service.list_gateways, db, include_inactive=include_inactive, user_email=user_email, limit=0)
         # Handle tuple return (list, cursor)
         if isinstance(gateways_raw, tuple):
             gateways_raw = gateways_raw[0]
@@ -5667,7 +5650,6 @@ async def admin_force_password_change(
 async def admin_list_tools(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
-    cursor: Optional[str] = None,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -5676,15 +5658,11 @@ async def admin_list_tools(
     List tools for the admin UI with pagination support.
 
     This endpoint retrieves a paginated list of tools from the database, optionally
-    including those that are inactive. Supports both offset-based and cursor-based
-    pagination. Automatically switches to cursor-based pagination for large datasets
-    (>10K records) for better performance.
+    including those that are inactive. Uses offset-based (page/per_page) pagination.
 
     Args:
         page (int): Page number (1-indexed). Default: 1.
         per_page (int): Items per page (1-500). Default: 50.
-        cursor (Optional[str]): Cursor for cursor-based pagination. When provided,
-            page parameter is ignored.
         include_inactive (bool): Whether to include inactive tools in the results.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -5693,7 +5671,7 @@ async def admin_list_tools(
         Dict with 'data', 'pagination', and 'links' keys containing paginated tools.
 
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested tool list (page={page}, per_page={per_page}, cursor={cursor})")
+    LOGGER.debug(f"User {get_user_email(user)} requested tool list (page={page}, per_page={per_page})")
     user_email = get_user_email(user)
 
     # Call tool_service.list_tools with page-based pagination
@@ -5819,6 +5797,17 @@ async def admin_tools_partial_html(
     tools_db = paginated_result["data"]
     pagination = paginated_result["pagination"]
     links = paginated_result["links"]
+
+    # Batch fetch team names for the tools to avoid N+1 queries
+    team_ids_set = {t.team_id for t in tools_db if t.team_id}
+    team_map = {}
+    if team_ids_set:
+        teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids_set), EmailTeam.is_active.is_(True))).all()
+        team_map = {team.id: team.name for team in teams}
+
+    # Apply team names to DB objects before conversion
+    for t in tools_db:
+        t.team = team_map.get(t.team_id) if t.team_id else None
 
     # Batch convert to Pydantic models using tool service
     # This eliminates the N+1 query problem from calling get_tool() in a loop
@@ -6129,12 +6118,24 @@ async def admin_prompts_partial_html(
         cursor=None,  # HTMX partials use page-based navigation
         base_url=f"{settings.app_root_path}/admin/prompts/partial",
         query_params=query_params,
+        use_cursor_threshold=False,  # Disable auto-cursor switching for UI
     )
 
     # Extract paginated prompts (DbPrompt objects)
     prompts_db = paginated_result["data"]
     pagination = paginated_result["pagination"]
     links = paginated_result["links"]
+
+    # Batch fetch team names for the prompts to avoid N+1 queries
+    team_ids_set = {p.team_id for p in prompts_db if p.team_id}
+    team_map = {}
+    if team_ids_set:
+        teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids_set), EmailTeam.is_active.is_(True))).all()
+        team_map = {team.id: team.name for team in teams}
+
+    # Apply team names to DB objects before conversion
+    for p in prompts_db:
+        p.team = team_map.get(p.team_id) if p.team_id else None
 
     # Batch convert to Pydantic models using prompt service
     # This eliminates the N+1 query problem from calling get_prompt_details() in a loop
@@ -6278,15 +6279,27 @@ async def admin_resources_partial_html(
         query=query,
         page=page,
         per_page=per_page,
-        cursor=None,
+        cursor=None,  # HTMX partials use page-based navigation
         base_url=f"{settings.app_root_path}/admin/resources/partial",
         query_params=query_params,
+        use_cursor_threshold=False,  # Disable auto-cursor switching for UI
     )
 
     # Extract paginated resources (DbResource objects)
     resources_db = paginated_result["data"]
     pagination = paginated_result["pagination"]
     links = paginated_result["links"]
+
+    # Batch fetch team names for the resources to avoid N+1 queries
+    team_ids_set = {r.team_id for r in resources_db if r.team_id}
+    team_map = {}
+    if team_ids_set:
+        teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids_set), EmailTeam.is_active.is_(True))).all()
+        team_map = {team.id: team.name for team in teams}
+
+    # Apply team names to DB objects before conversion
+    for r in resources_db:
+        r.team = team_map.get(r.team_id) if r.team_id else None
 
     # Batch convert to Pydantic models using resource service
     resources_pydantic = [resource_service.convert_resource_to_read(r, include_metrics=False) for r in resources_db]
@@ -11391,7 +11404,6 @@ async def admin_get_agent(
 async def admin_list_a2a_agents(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
-    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -11401,13 +11413,11 @@ async def admin_list_a2a_agents(
 
     This endpoint retrieves a paginated list of A2A (Agent-to-Agent) agents associated with
     the current user. Administrators can optionally include inactive agents for
-    management or auditing purposes. The endpoint supports both offset-based (page/per_page)
-    and cursor-based pagination, automatically switching to cursor pagination for large datasets.
+    management or auditing purposes. Uses offset-based (page/per_page) pagination.
 
     Args:
         page (int): Page number (1-indexed) for offset pagination.
         per_page (int): Number of items per page (1-500).
-        cursor (Optional[str]): Cursor for cursor-based pagination.
         include_inactive (bool): Whether to include inactive agents in the results.
         db (Session): Database session dependency.
         user (dict): Authenticated user dependency.
@@ -11474,7 +11484,7 @@ async def admin_list_a2a_agents(
         ...     fake_service = MagicMock()
         ...     fake_service.list_agents = mock_list_agents
         ...     with patch("mcpgateway.admin.a2a_service", new=fake_service):
-        ...         result = await admin_list_a2a_agents(page=1, per_page=50, cursor=None, include_inactive=False, db=mock_db, user=mock_user)
+        ...         result = await admin_list_a2a_agents(page=1, per_page=50, include_inactive=False, db=mock_db, user=mock_user)
         ...         return "data" in result and "pagination" in result
         >>>
         >>> asyncio.run(test_admin_list_a2a_agents_paginated())
@@ -11497,7 +11507,6 @@ async def admin_list_a2a_agents(
     paginated_result = await a2a_service.list_agents(
         db=db,
         include_inactive=include_inactive,
-        cursor=cursor,
         page=page,
         per_page=per_page,
         user_email=user_email,

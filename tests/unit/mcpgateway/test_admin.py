@@ -252,7 +252,7 @@ class TestAdminServerRoutes:
         })
 
         # Test with include_inactive=False
-        result = await admin_list_servers(page=1, per_page=50, cursor=None, include_inactive=False, db=mock_db, user="test-user")
+        result = await admin_list_servers(page=1, per_page=50, include_inactive=False, db=mock_db, user="test-user")
 
         assert "data" in result
         assert "pagination" in result
@@ -828,7 +828,7 @@ class TestAdminResourceRoutes:
             "links": None
         })
 
-        result = await admin_list_resources(page=1, per_page=50, cursor=None, include_inactive=False, db=mock_db, user="test-user")
+        result = await admin_list_resources(page=1, per_page=50, include_inactive=False, db=mock_db, user="test-user")
 
         assert "data" in result
         assert len(result["data"]) == 1
@@ -958,7 +958,7 @@ class TestAdminPromptRoutes:
             "links": None
         })
 
-        result = await admin_list_prompts(page=1, per_page=50, cursor=None, include_inactive=False, db=mock_db, user="test-user")
+        result = await admin_list_prompts(page=1, per_page=50, include_inactive=False, db=mock_db, user="test-user")
 
         assert "data" in result
         assert "pagination" in result
@@ -1138,7 +1138,7 @@ class TestAdminGatewayRoutes:
             "links": None
         })
 
-        result = await admin_list_gateways(page=1, per_page=50, cursor=None, include_inactive=False, db=mock_db, user="test-user")
+        result = await admin_list_gateways(page=1, per_page=50, include_inactive=False, db=mock_db, user="test-user")
 
         assert "data" in result
         assert result["data"][0]["authType"] == "bearer"  # Using camelCase as per by_alias=True
@@ -1883,7 +1883,7 @@ class TestA2AAgentManagement:
         """Test listing A2A agents when A2A is disabled."""
         # First-Party
 
-        result = await admin_list_a2a_agents(page=1, per_page=50, cursor=None, include_inactive=False, db=mock_db, user="test-user")
+        result = await admin_list_a2a_agents(page=1, per_page=50, include_inactive=False, db=mock_db, user="test-user")
 
         assert isinstance(result, dict)
         assert "data" in result

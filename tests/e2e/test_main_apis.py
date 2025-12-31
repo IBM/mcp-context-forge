@@ -524,7 +524,8 @@ class TestServerAPIs:
 
         # With our simplified dependency override, this should work
         assert response.status_code == 200
-        assert response.json().get("servers") == []
+        # Default response is a plain list (include_pagination=False by default)
+        assert response.json() == []
 
     async def test_create_virtual_server(self, client: AsyncClient, mock_auth):
         """Test POST /servers - create virtual server."""
@@ -720,7 +721,8 @@ class TestToolAPIs:
         """Test GET /tools returns empty list initially."""
         response = await client.get("/tools", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
-        assert response.json().get("tools") == []
+        # Default response is a plain list (include_pagination=False by default)
+        assert response.json() == []
 
     # FIXME: we should remove MCP as an integration type
     # async def test_create_rest_tool(self, client: AsyncClient, mock_auth):
@@ -847,7 +849,8 @@ class TestToolAPIs:
         # Verify it's deactivated by listing with include_inactive
         response = await client.get("/tools?include_inactive=true", headers=TEST_AUTH_HEADER)
         tools_response = response.json()
-        tools = tools_response.get("tools", tools_response)  # Handle both paginated and non-paginated responses
+        # Handle both paginated and non-paginated responses
+        tools = tools_response.get("tools", tools_response) if isinstance(tools_response, dict) else tools_response
         deactivated_tool = next((t for t in tools if t["id"] == tool_id), None)
         assert deactivated_tool is not None
         assert deactivated_tool["enabled"] is False
@@ -929,7 +932,8 @@ class TestResourceAPIs:
         """Test GET /resources returns empty list initially."""
         response = await client.get("/resources", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
-        assert response.json(),get("resources") == []
+        # Default response is a plain list (include_pagination=False by default)
+        assert response.json() == []
 
     async def test_list_resource_templates(self, client: AsyncClient, mock_auth):
         """Test GET /resources/templates/list."""
@@ -1169,7 +1173,8 @@ class TestPromptAPIs:
         """Test GET /prompts returns empty list initially."""
         response = await client.get("/prompts", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
-        assert response.json().get("prompts") == []
+        # Default response is a plain list (include_pagination=False by default)
+        assert response.json() == []
 
     async def test_create_prompt_with_arguments(self, client: AsyncClient, mock_auth):
         """Test POST /prompts - create prompt with arguments."""
@@ -1393,7 +1398,8 @@ class TestGatewayAPIs:
         """Test GET /gateways returns empty list initially."""
         response = await client.get("/gateways", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
-        assert response.json().get("gateways") == []
+        # Default response is a plain list (include_pagination=False by default)
+        assert response.json() == []
 
     async def test_gateway_validation_errors(self, client: AsyncClient, mock_auth):
         """Test POST /gateways with validation errors."""

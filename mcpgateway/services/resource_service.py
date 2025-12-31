@@ -885,6 +885,10 @@ class ResourceService:
         # Build base query with ordering
         query = select(DbResource).where(DbResource.uri_template.is_(None)).order_by(desc(DbResource.created_at), desc(DbResource.id))
 
+        # Apply active/inactive filter
+        if not include_inactive:
+            query = query.where(DbResource.enabled)
+
         # Apply team-based access control if user_email is provided
         if user_email:
             # First-Party

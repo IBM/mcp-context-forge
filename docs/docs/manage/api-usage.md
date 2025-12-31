@@ -53,7 +53,7 @@ curl -H "Authorization: Bearer $TOKEN" $BASE_URL/endpoint
 ## Pagination
 
 !!! info "Default Pagination Behavior"
-    As of version 1.0, **all list endpoints return paginated responses by default**. This provides better performance and consistent navigation for large datasets.
+    For backward compatibility, **main API list endpoints return plain arrays by default**. Add `?include_pagination=true` to get paginated responses with cursor metadata. Admin API endpoints always return paginated responses.
 
 ### Pagination Methods
 
@@ -86,7 +86,7 @@ The entity key name matches the resource type: `tools`, `gateways`, `servers`, `
 {
   "data": [...],
   "pagination": {
-    "total": 150,
+    "total_items": 150,
     "page": 1,
     "per_page": 50,
     "total_pages": 3
@@ -100,12 +100,12 @@ The entity key name matches the resource type: `tools`, `gateways`, `servers`, `
 }
 ```
 
-**Non-Paginated (legacy):**
+**Plain Array (default for Main API):**
 ```json
 [...]
 ```
 
-Add `?include_pagination=false` to main API endpoints to get a simple array.
+Add `?include_pagination=true` to main API endpoints to get paginated responses with cursor metadata.
 
 ### Pagination Parameters
 
@@ -115,7 +115,7 @@ Add `?include_pagination=false` to main API endpoints to get a simple array.
 |-----------|-------------|---------|
 | `cursor` | Opaque pagination cursor for fetching next page | `null` (first page) |
 | `limit` | Maximum items per page (0 = all) | 50 |
-| `include_pagination` | Return paginated format with cursor | `true` |
+| `include_pagination` | Return paginated format with cursor | `false` |
 
 **Admin API (Page-based):**
 
@@ -123,23 +123,24 @@ Add `?include_pagination=false` to main API endpoints to get a simple array.
 |-----------|-------------|---------|
 | `page` | Page number (1-indexed) | 1 |
 | `per_page` | Items per page | 50 |
-| `cursor` | Optional cursor (overrides page if provided) | `null` |
 
 ### Examples
 
 **Cursor-based pagination (Main API):**
 
 ```bash
-# First page
+# Default: plain array (first 50 items)
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools | jq '.'
 
-# Extract cursor and get next page
-CURSOR=$(curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools | jq -r '.nextCursor')
-curl -s -H "Authorization: Bearer $TOKEN" "$BASE_URL/tools?cursor=$CURSOR" | jq '.'
+# Enable pagination to get cursor metadata
+curl -s -H "Authorization: Bearer $TOKEN" "$BASE_URL/tools?include_pagination=true" | jq '.'
 
-# Get all items as array (no pagination)
-curl -s -H "Authorization: Bearer $TOKEN" \
-  "$BASE_URL/tools?limit=0&include_pagination=false" | jq '.'
+# Extract cursor and get next page
+CURSOR=$(curl -s -H "Authorization: Bearer $TOKEN" "$BASE_URL/tools?include_pagination=true" | jq -r '.nextCursor')
+curl -s -H "Authorization: Bearer $TOKEN" "$BASE_URL/tools?include_pagination=true&cursor=$CURSOR" | jq '.'
+
+# Get all items as plain array
+curl -s -H "Authorization: Bearer $TOKEN" "$BASE_URL/tools?limit=0" | jq '.'
 ```
 
 **Page-based pagination (Admin API):**

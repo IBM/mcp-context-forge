@@ -434,6 +434,9 @@ async def cursor_paginate(
     # Validate parameters
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
 
+    # Store unfiltered query for total count (before cursor filter)
+    unfiltered_query = query
+
     # Decode cursor if provided
     cursor_data = None
     if cursor:
@@ -449,6 +452,16 @@ async def cursor_paginate(
         cursor_id_value = cursor_data.get(cursor_id_field)
 
         if cursor_value and cursor_id_value:
+            # Parse datetime strings for reliable comparisons
+            # Standard
+            from datetime import datetime
+
+            if isinstance(cursor_value, str):
+                try:
+                    cursor_value = datetime.fromisoformat(cursor_value)
+                except (ValueError, TypeError):
+                    pass  # Keep as string if parsing fails
+
             # Extract model class from query to access columns
             entities = query.column_descriptions
             if entities:
@@ -481,10 +494,11 @@ async def cursor_paginate(
         )
 
     # Get total count (use pre-computed count if provided to avoid duplicate queries)
+    # Use unfiltered_query for count so total_items reflects the full dataset, not remaining items
     if total_count is not None:
         total_items = total_count
     else:
-        count_query = select(func.count()).select_from(query.alias())
+        count_query = select(func.count()).select_from(unfiltered_query.alias())
         total_items = db.execute(count_query).scalar() or 0
 
     # Build pagination metadata
