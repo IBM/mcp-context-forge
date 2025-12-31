@@ -919,8 +919,8 @@ class Settings(BaseSettings):
 
     # Metrics Cleanup Configuration (automatic deletion of old metrics)
     metrics_cleanup_enabled: bool = Field(default=True, description="Enable automatic cleanup of old metrics data")
-    metrics_retention_days: int = Field(default=30, ge=1, le=365, description="Days to retain raw metrics before cleanup")
-    metrics_cleanup_interval_hours: int = Field(default=24, ge=1, le=168, description="Hours between automatic cleanup runs")
+    metrics_retention_days: int = Field(default=7, ge=1, le=365, description="Days to retain raw metrics before cleanup (fallback when rollup disabled)")
+    metrics_cleanup_interval_hours: int = Field(default=1, ge=1, le=168, description="Hours between automatic cleanup runs")
     metrics_cleanup_batch_size: int = Field(default=10000, ge=100, le=100000, description="Batch size for metrics deletion (prevents long locks)")
 
     # Metrics Rollup Configuration (hourly aggregation for historical queries)
@@ -928,10 +928,10 @@ class Settings(BaseSettings):
     metrics_rollup_interval_hours: int = Field(default=1, ge=1, le=24, description="Hours between rollup runs")
     metrics_rollup_retention_days: int = Field(default=365, ge=30, le=3650, description="Days to retain hourly rollup data")
     metrics_rollup_late_data_hours: int = Field(
-        default=4, ge=1, le=48, description="Hours to re-process on each run to catch late-arriving data (smaller = less CPU, larger = more tolerance for delayed metrics)"
+        default=1, ge=1, le=48, description="Hours to re-process on each run to catch late-arriving data (smaller = less CPU, larger = more tolerance for delayed metrics)"
     )
-    metrics_delete_raw_after_rollup: bool = Field(default=False, description="Delete raw metrics after rollup (aggressive cleanup)")
-    metrics_delete_raw_after_rollup_days: int = Field(default=7, ge=1, le=30, description="Days after which to delete raw metrics if rollup exists")
+    metrics_delete_raw_after_rollup: bool = Field(default=True, description="Delete raw metrics after hourly rollup exists (recommended for production)")
+    metrics_delete_raw_after_rollup_hours: int = Field(default=1, ge=1, le=8760, description="Hours to retain raw metrics when hourly rollup exists")
 
     # Auth Cache Configuration (reduces DB queries during authentication)
     auth_cache_enabled: bool = Field(default=True, description="Enable Redis/in-memory caching for authentication data (user, team, revocation)")

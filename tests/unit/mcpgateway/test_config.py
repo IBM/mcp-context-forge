@@ -146,6 +146,11 @@ def test_settings_default_values():
         assert settings.jwt_secret_key.get_secret_value() == "x" * 32
         assert settings.auth_encryption_secret.get_secret_value() == "dummy-secret"
         assert str(settings.app_domain) == "http://localhost/"
+        assert settings.metrics_delete_raw_after_rollup is True
+        assert settings.metrics_delete_raw_after_rollup_hours == 1
+        assert settings.metrics_cleanup_interval_hours == 1
+        assert settings.metrics_retention_days == 7
+        assert settings.metrics_rollup_late_data_hours == 1
 
 
 def test_api_key_property():

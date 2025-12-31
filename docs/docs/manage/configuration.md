@@ -864,46 +864,71 @@ TOOL_CONCURRENT_LIMIT=10
 ### Metrics Cleanup and Rollup
 
 !!! tip "Automatic Metrics Management"
-    MCP Gateway includes automatic cleanup and rollup of metrics data to prevent unbounded table growth and maintain query performance under high load.
+    MCP Gateway automatically manages metrics data to prevent unbounded table growth while preserving historical analytics through hourly rollups.
 
-**Metrics Cleanup** - Automatic deletion of old raw metrics:
+#### Understanding Raw vs Rollup Metrics
+
+**Raw metrics** store individual execution events (timestamp, response time, success/failure, error message). **Hourly rollups** aggregate these into summary statistics (counts, averages, p50/p95/p99 percentiles).
+
+| Use Case | Raw Metrics Needed? |
+|----------|---------------------|
+| Dashboard charts (latency percentiles) | No - rollups have p50/p95/p99 |
+| Error rate monitoring | No - rollups have success/failure counts |
+| Debugging specific failures | Yes - need exact error messages |
+| Identifying slowest requests | Yes - need individual rows |
+
+#### External Observability Integration
+
+If you use external observability platforms (ELK Stack, Datadog, Splunk, Grafana/Loki, CloudWatch, OpenTelemetry), raw metrics in the gateway database are typically redundant. Your external platform handles:
+
+- Detailed request logs and traces
+- Error message search and filtering
+- Individual request debugging
+- Compliance audit trails
+
+With external observability, the gateway's hourly rollups provide efficient aggregated analytics, while raw metrics can be deleted quickly (1 hour default).
+
+#### Configuration Reference
+
+**Cleanup Settings:**
 
 ```bash
-# Enable automatic cleanup of old metrics (default: true)
-METRICS_CLEANUP_ENABLED=true
-
-# Days to retain raw metrics before cleanup (default: 30, range: 1-365)
-METRICS_RETENTION_DAYS=30
-
-# Hours between automatic cleanup runs (default: 24, range: 1-168)
-METRICS_CLEANUP_INTERVAL_HOURS=24
-
-# Batch size for deletion to prevent long locks (default: 10000, range: 100-100000)
-METRICS_CLEANUP_BATCH_SIZE=10000
+METRICS_CLEANUP_ENABLED=true           # Enable automatic cleanup (default: true)
+METRICS_CLEANUP_INTERVAL_HOURS=1       # Hours between cleanup runs (default: 1)
+METRICS_RETENTION_DAYS=7               # Fallback retention when rollup disabled (default: 7)
+METRICS_CLEANUP_BATCH_SIZE=10000       # Batch size for deletion (default: 10000)
 ```
 
-**Metrics Rollup** - Pre-aggregation into hourly summaries for efficient historical queries:
+**Rollup Settings:**
 
 ```bash
-# Enable hourly metrics rollup (default: true)
-METRICS_ROLLUP_ENABLED=true
+METRICS_ROLLUP_ENABLED=true            # Enable hourly rollup (default: true)
+METRICS_ROLLUP_INTERVAL_HOURS=1        # Hours between rollup runs (default: 1)
+METRICS_ROLLUP_RETENTION_DAYS=365      # Rollup data retention (default: 365)
+METRICS_ROLLUP_LATE_DATA_HOURS=1       # Hours to re-process for late data (default: 1)
+```
 
-# Hours between rollup runs (default: 1, range: 1-24)
-METRICS_ROLLUP_INTERVAL_HOURS=1
+**Raw Metrics Deletion (when rollups exist):**
 
-# Days to retain hourly rollup data (default: 365, range: 30-3650)
-METRICS_ROLLUP_RETENTION_DAYS=365
+```bash
+METRICS_DELETE_RAW_AFTER_ROLLUP=true   # Delete raw after rollup (default: true)
+METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS=1  # Hours before deletion (default: 1)
+```
 
-# Hours to re-process on each rollup run to catch late-arriving data (default: 4, range: 1-48)
-# Smaller = less CPU/IO overhead, larger = more tolerance for delayed metrics
-METRICS_ROLLUP_LATE_DATA_HOURS=4
+#### Configuration Examples
 
-# Delete raw metrics after rollup exists (default: false)
-# WARNING: Aggressive cleanup - only enable if you don't need raw data
-METRICS_DELETE_RAW_AFTER_ROLLUP=false
+**Default (recommended for most deployments):**
+Raw metrics deleted after 1 hour, hourly rollups retained for 1 year.
 
-# Days after which to delete raw if rollup exists (default: 7, range: 1-30)
-METRICS_DELETE_RAW_AFTER_ROLLUP_DAYS=7
+**Without external observability (need debugging from raw data):**
+```bash
+METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS=168  # Keep raw data 7 days for debugging
+```
+
+**Disable raw deletion (compliance/audit requirements):**
+```bash
+METRICS_DELETE_RAW_AFTER_ROLLUP=false   # Keep all raw metrics
+METRICS_RETENTION_DAYS=90               # Delete raw after 90 days via cleanup
 ```
 
 **Admin API Endpoints:**
