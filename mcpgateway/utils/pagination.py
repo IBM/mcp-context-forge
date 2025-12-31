@@ -639,7 +639,6 @@ async def unified_paginate(
     limit: Optional[int] = None,
     base_url: str = "",
     query_params: Optional[Dict[str, Any]] = None,
-    convert_fn: Optional[callable] = None,
 ) -> Union[Dict[str, Any], Tuple[List[Any], Optional[str]]]:
     """Unified pagination helper that returns cursor or page format based on parameters.
 
@@ -657,7 +656,6 @@ async def unified_paginate(
         limit: Maximum items for cursor-based pagination (overrides default page size)
         base_url: Base URL for link generation in page-based mode
         query_params: Additional query parameters for links
-        convert_fn: Optional function to convert DB models to response models
 
     Returns:
         Union[Dict[str, Any], Tuple[List[Any], Optional[str]]]:
@@ -708,10 +706,6 @@ async def unified_paginate(
             query_params=query_params,
             use_cursor_threshold=False,  # Explicit page-based mode
         )
-
-        # Apply conversion function if provided
-        if convert_fn:
-            result["data"] = [convert_fn(item) for item in result["data"]]
 
         return result
 
@@ -765,15 +759,10 @@ async def unified_paginate(
         if has_more:
             items = items[:page_size]
 
-    # Apply conversion function if provided
-    if convert_fn:
-        items = [convert_fn(item) for item in items]
-
     # Generate next_cursor if there are more results
     next_cursor = None
     if has_more and items:
-        # Get last item (before conversion if convert_fn was applied)
-        last_item = db.execute(query.limit(page_size)).scalars().all()[-1] if convert_fn else items[-1]
+        last_item = items[-1]
         cursor_data = {"created_at": getattr(last_item, "created_at", None), "id": getattr(last_item, "id", None)}
         # Handle datetime serialization
         if cursor_data["created_at"]:
