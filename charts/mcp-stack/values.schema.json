@@ -121,6 +121,14 @@
               "minimum": 1,
               "maximum": 65535,
               "default": 80
+            },
+            "annotations": {
+              "type": "object",
+              "description": "Service annotations (e.g., for AWS NLB configuration)",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {}
             }
           },
           "additionalProperties": false
@@ -250,6 +258,12 @@
             }
           },
           "additionalProperties": false
+        },
+
+        "externalSecret": {
+          "type": "string",
+          "description": "Optional name of an external secret to inject additional environment variables. Leave empty to disable. Useful for secrets managed by External Secrets Operator, Sealed Secrets, or other external secret management tools.",
+          "default": ""
         },
 
         "pluginConfig": {
@@ -402,7 +416,7 @@
             "CACHE_TYPE": {
               "type": "string",
               "description": "Cache backend type",
-              "enum": ["redis", "memory", "database"],
+              "enum": ["redis", "memory", "none", "database"],
               "default": "redis"
             },
             "CACHE_PREFIX": {
