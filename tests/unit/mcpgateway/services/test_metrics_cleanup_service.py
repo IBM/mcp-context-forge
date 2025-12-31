@@ -37,21 +37,23 @@ class TestMetricsCleanupService:
         service = MetricsCleanupService()
 
         assert service.enabled is True
-        assert service.retention_days == 30
+        assert service.retention_days == 7
         assert service.batch_size == 10000
-        assert service.cleanup_interval_hours == 24
+        assert service.cleanup_interval_hours == 1
+        assert service.delete_raw_after_rollup is True
+        assert service.delete_raw_after_rollup_hours == 1
 
     def test_init_custom_values(self):
         """Test service initialization with custom values."""
         service = MetricsCleanupService(
-            retention_days=7,
+            retention_days=14,
             batch_size=500,
             cleanup_interval_hours=12,
             enabled=False,
         )
 
         assert service.enabled is False
-        assert service.retention_days == 7
+        assert service.retention_days == 14
         assert service.batch_size == 500
         assert service.cleanup_interval_hours == 12
 

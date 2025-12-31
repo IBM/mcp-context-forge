@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ---
 
+## [1.0.0-BETA-2] - TBD
+
+### Changed
+
+#### **⚡ Metrics Performance Defaults** ([#1799](https://github.com/IBM/mcp-context-forge/issues/1799))
+* **Changed default behavior** - Raw metrics now deleted after hourly rollups exist (1 hour retention)
+  - `METRICS_DELETE_RAW_AFTER_ROLLUP`: `false` → `true`
+  - `METRICS_DELETE_RAW_AFTER_ROLLUP_DAYS` → `METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS` (units now hours)
+  - `METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS`: `168` → `1`
+  - `METRICS_ROLLUP_LATE_DATA_HOURS`: `4` → `1`
+  - `METRICS_CLEANUP_INTERVAL_HOURS`: `24` → `1`
+  - `METRICS_RETENTION_DAYS`: `30` → `7`
+* **Rationale**: Prevents unbounded table growth under sustained load while preserving analytics in hourly rollups
+* **Opt-out**: Set `METRICS_DELETE_RAW_AFTER_ROLLUP=false` to preserve previous behavior
+* **External observability**: If using ELK, Datadog, or similar platforms, raw metrics are redundant - the new defaults are optimal
+
 ## [0.9.1] - 2025-12-03
 
 ### Added
