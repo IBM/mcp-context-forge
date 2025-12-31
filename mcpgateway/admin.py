@@ -5746,7 +5746,6 @@ async def admin_tools_partial_html(
     """
     LOGGER.debug(f"User {get_user_email(user)} requested tools HTML partial (page={page}, per_page={per_page}, render={render}, gateway_id={gateway_id})")
 
-    # Get paginated data using unified pagination logic
     user_email = get_user_email(user)
 
     # Build base query using tool_service's team filtering logic
@@ -5817,22 +5816,14 @@ async def admin_tools_partial_html(
         use_cursor_threshold=False,  # Disable auto-cursor switching for UI
     )
 
-    # Extract paginated tools
+    # Extract paginated tools (DbTool objects)
     tools_db = paginated_result["data"]
     pagination = paginated_result["pagination"]
     links = paginated_result["links"]
 
-    # Convert to Pydantic models
-    local_tool_service = ToolService()
-    tools_pydantic = []
-    for tool_db in tools_db:
-        try:
-            tool_schema = await local_tool_service.get_tool(db, tool_db.id)
-            if tool_schema:
-                tools_pydantic.append(tool_schema)
-        except Exception as e:
-            LOGGER.warning(f"Failed to convert tool {tool_db.id} to schema: {e}")
-            continue
+    # Batch convert to Pydantic models using tool service
+    # This eliminates the N+1 query problem from calling get_tool() in a loop
+    tools_pydantic = [tool_service._convert_tool_to_read(t, include_metrics=False) for t in tools_db]
 
     # Serialize tools
     data = jsonable_encoder(tools_pydantic)
@@ -6141,24 +6132,16 @@ async def admin_prompts_partial_html(
         query_params=query_params,
     )
 
-    # Extract paginated prompts
+    # Extract paginated prompts (DbPrompt objects)
     prompts_db = paginated_result["data"]
     pagination = paginated_result["pagination"]
     links = paginated_result["links"]
 
-    # Convert to schemas using PromptService
-    local_prompt_service = PromptService()
-    prompts_data = []
-    for p in prompts_db:
-        try:
-            prompt_dict = await local_prompt_service.get_prompt_details(db, p.id, include_inactive=include_inactive)
-            if prompt_dict:
-                prompts_data.append(prompt_dict)
-        except Exception as e:
-            LOGGER.warning(f"Failed to convert prompt {p.id} to schema: {e}")
-            continue
+    # Batch convert to Pydantic models using prompt service
+    # This eliminates the N+1 query problem from calling get_prompt_details() in a loop
+    prompts_pydantic = [prompt_service._convert_prompt_to_read(p, include_metrics=False) for p in prompts_db]
 
-    data = jsonable_encoder(prompts_data)
+    data = jsonable_encoder(prompts_pydantic)
     base_url = f"{settings.app_root_path}/admin/prompts/partial"
 
     if render == "controls":
@@ -6301,21 +6284,15 @@ async def admin_resources_partial_html(
         query_params=query_params,
     )
 
-    # Extract paginated resources
+    # Extract paginated resources (DbResource objects)
     resources_db = paginated_result["data"]
     pagination = paginated_result["pagination"]
     links = paginated_result["links"]
 
-    # Convert to schemas using ResourceService
-    local_resource_service = ResourceService()
-    resources_data = []
-    for r in resources_db:
-        try:
-            resources_data.append(local_resource_service._convert_resource_to_read(r, include_metrics=False))  # pylint: disable=protected-access
-        except Exception as e:
-            LOGGER.warning(f"Failed to convert resource {getattr(r, 'id', '<unknown>')} to schema: {e}")
-            continue
-    data = jsonable_encoder(resources_data)
+    # Batch convert to Pydantic models using resource service
+    resources_pydantic = [resource_service._convert_resource_to_read(r, include_metrics=False) for r in resources_db]
+
+    data = jsonable_encoder(resources_pydantic)
 
     if render == "controls":
         return request.app.state.templates.TemplateResponse(
