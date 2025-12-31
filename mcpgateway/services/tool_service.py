@@ -1444,6 +1444,14 @@ class ToolService:
 
             if visibility:
                 query = query.where(DbTool.visibility == visibility)
+
+        # Add gateway_id filtering if provided
+        if gateway_id:
+            if gateway_id.lower() == "null":
+                query = query.where(DbTool.gateway_id.is_(None))
+            else:
+                query = query.where(DbTool.gateway_id == gateway_id)
+
         # Add tag filtering if tags are provided
         if tags:
             query = query.where(json_contains_expr(db, DbTool.tags, tags, match_any=True))
