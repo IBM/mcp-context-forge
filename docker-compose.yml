@@ -228,10 +228,10 @@ services:
       # Execution Metrics Recording
       # ═══════════════════════════════════════════════════════════════════════════
       # Controls tool/resource/prompt/server/A2A execution metrics (one DB row per operation).
-      # Disabled by default for docker-compose (assumes external observability).
+      # Disable when using external observability to improve performance.
       # Set to true if you need per-operation metrics in the database.
       # Note: Does NOT affect log aggregation (METRICS_AGGREGATION_ENABLED) or Prometheus.
-      - DB_METRICS_RECORDING_ENABLED=false
+      - DB_METRICS_RECORDING_ENABLED=true
 
       # ═══════════════════════════════════════════════════════════════════════════
       # Metrics Configuration
