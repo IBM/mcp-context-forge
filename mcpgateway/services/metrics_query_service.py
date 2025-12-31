@@ -106,17 +106,17 @@ def get_retention_cutoff() -> datetime:
     Returns:
         datetime: The cutoff point (hour-aligned) - data older than this comes from rollups.
     """
-    retention_days = getattr(settings, "metrics_retention_days", 30)
+    retention_days = getattr(settings, "metrics_retention_days", 7)
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=retention_days)
 
-    # If raw data is deleted after rollup, use the earlier of the two cutoffs
-    # to ensure we don't miss data in the gap
+    # If raw data is deleted after rollup, use the more recent cutoff
+    # to ensure rollups cover any deleted raw data
     delete_raw_enabled = getattr(settings, "metrics_delete_raw_after_rollup", False)
     if delete_raw_enabled:
-        delete_raw_days = getattr(settings, "metrics_delete_raw_after_rollup_days", 7)
-        # Use the smaller value to ensure rollups cover any deleted raw data
-        retention_days = min(retention_days, delete_raw_days)
-
-    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+        delete_raw_hours = getattr(settings, "metrics_delete_raw_after_rollup_hours", 1)
+        delete_cutoff = now - timedelta(hours=delete_raw_hours)
+        cutoff = max(cutoff, delete_cutoff)
 
     # Align to hour boundary (round down) to prevent double-counting at the boundary
     # Raw query uses >= cutoff, rollup query uses < cutoff, so no overlap

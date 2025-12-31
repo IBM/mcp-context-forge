@@ -2029,15 +2029,15 @@ Automatic management of metrics data to prevent unbounded table growth and maint
 | Setting                              | Description                                      | Default  | Options     |
 | ------------------------------------ | ------------------------------------------------ | -------- | ----------- |
 | `METRICS_CLEANUP_ENABLED`            | Enable automatic cleanup of old metrics          | `true`   | bool        |
-| `METRICS_RETENTION_DAYS`             | Days to retain raw metrics before cleanup        | `30`     | 1-365       |
-| `METRICS_CLEANUP_INTERVAL_HOURS`     | Hours between automatic cleanup runs             | `24`     | 1-168       |
+| `METRICS_RETENTION_DAYS`             | Days to retain raw metrics (fallback)            | `7`      | 1-365       |
+| `METRICS_CLEANUP_INTERVAL_HOURS`     | Hours between automatic cleanup runs             | `1`      | 1-168       |
 | `METRICS_CLEANUP_BATCH_SIZE`         | Batch size for deletion (prevents long locks)    | `10000`  | 100-100000  |
 | `METRICS_ROLLUP_ENABLED`             | Enable hourly metrics rollup                     | `true`   | bool        |
 | `METRICS_ROLLUP_INTERVAL_HOURS`      | Hours between rollup runs                        | `1`      | 1-24        |
 | `METRICS_ROLLUP_RETENTION_DAYS`      | Days to retain hourly rollup data                | `365`    | 30-3650     |
-| `METRICS_ROLLUP_LATE_DATA_HOURS`     | Hours to re-process for late-arriving data       | `4`      | 1-48        |
-| `METRICS_DELETE_RAW_AFTER_ROLLUP`    | Delete raw metrics after rollup (aggressive)     | `false`  | bool        |
-| `METRICS_DELETE_RAW_AFTER_ROLLUP_DAYS` | Days before raw deletion if rollup exists      | `7`      | 1-30        |
+| `METRICS_ROLLUP_LATE_DATA_HOURS`     | Hours to re-process for late-arriving data       | `1`      | 1-48        |
+| `METRICS_DELETE_RAW_AFTER_ROLLUP`    | Delete raw metrics after rollup exists           | `true`   | bool        |
+| `METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS` | Hours to retain raw when rollup exists        | `1`      | 1-8760      |
 
 **Key Features:**
 - 📊 **Hourly rollup**: Pre-aggregated summaries with p50/p95/p99 percentiles

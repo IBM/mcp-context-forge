@@ -113,8 +113,8 @@ class MetricsRollupService:
     Configuration (via environment variables):
     - METRICS_ROLLUP_ENABLED: Enable automatic rollup (default: True)
     - METRICS_ROLLUP_INTERVAL_HOURS: Hours between rollup runs (default: 1)
-    - METRICS_DELETE_RAW_AFTER_ROLLUP: Delete raw after rollup (default: False)
-    - METRICS_DELETE_RAW_AFTER_ROLLUP_DAYS: Days after which to delete if rollup exists (default: 7)
+    - METRICS_DELETE_RAW_AFTER_ROLLUP: Delete raw after rollup (default: True)
+    - METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS: Hours after which to delete if rollup exists (default: 1)
     """
 
     # Table configuration: (name, raw_model, hourly_model, entity_model, entity_id_col, entity_name_col)
@@ -131,20 +131,20 @@ class MetricsRollupService:
         rollup_interval_hours: Optional[int] = None,
         enabled: Optional[bool] = None,
         delete_raw_after_rollup: Optional[bool] = None,
-        delete_raw_after_days: Optional[int] = None,
+        delete_raw_after_rollup_hours: Optional[int] = None,
     ):
         """Initialize the metrics rollup service.
 
         Args:
             rollup_interval_hours: Hours between rollup runs (default: from settings or 1)
             enabled: Whether rollup is enabled (default: from settings or True)
-            delete_raw_after_rollup: Delete raw metrics after rollup (default: from settings or False)
-            delete_raw_after_days: Days after which to delete raw if rollup exists (default: from settings or 7)
+            delete_raw_after_rollup: Delete raw metrics after rollup (default: from settings or True)
+            delete_raw_after_rollup_hours: Hours after which to delete raw if rollup exists (default: from settings or 1)
         """
         self.rollup_interval_hours = rollup_interval_hours or getattr(settings, "metrics_rollup_interval_hours", 1)
         self.enabled = enabled if enabled is not None else getattr(settings, "metrics_rollup_enabled", True)
-        self.delete_raw_after_rollup = delete_raw_after_rollup if delete_raw_after_rollup is not None else getattr(settings, "metrics_delete_raw_after_rollup", False)
-        self.delete_raw_after_days = delete_raw_after_days or getattr(settings, "metrics_delete_raw_after_rollup_days", 7)
+        self.delete_raw_after_rollup = delete_raw_after_rollup if delete_raw_after_rollup is not None else getattr(settings, "metrics_delete_raw_after_rollup", True)
+        self.delete_raw_after_rollup_hours = delete_raw_after_rollup_hours or getattr(settings, "metrics_delete_raw_after_rollup_hours", 1)
 
         # Check if using PostgreSQL
         self._is_postgresql = settings.database_url.startswith("postgresql")
@@ -283,9 +283,9 @@ class MetricsRollupService:
                     first_run = False
                 else:
                     # Normal runs: only process recent hours to catch late-arriving data
-                    # Configurable via METRICS_ROLLUP_LATE_DATA_HOURS (default: 4 hours)
+                    # Configurable via METRICS_ROLLUP_LATE_DATA_HOURS (default: 1 hour)
                     # This avoids walking through entire retention period every interval
-                    hours_back = getattr(settings, "metrics_rollup_late_data_hours", 4)
+                    hours_back = getattr(settings, "metrics_rollup_late_data_hours", 1)
 
                 # Run rollup for the calculated time range
                 summary = await self.rollup_all(hours_back=hours_back)
@@ -510,7 +510,7 @@ class MetricsRollupService:
 
                         # Delete raw metrics if configured
                         if self.delete_raw_after_rollup:
-                            delete_cutoff = datetime.now(timezone.utc) - timedelta(days=self.delete_raw_after_days)
+                            delete_cutoff = datetime.now(timezone.utc) - timedelta(hours=self.delete_raw_after_rollup_hours)
                             if hour_end < delete_cutoff:
                                 deleted = self._delete_raw_metrics(db, raw_model, current, hour_end)
                                 raw_deleted += deleted
@@ -822,7 +822,7 @@ class MetricsRollupService:
             "enabled": self.enabled,
             "rollup_interval_hours": self.rollup_interval_hours,
             "delete_raw_after_rollup": self.delete_raw_after_rollup,
-            "delete_raw_after_days": self.delete_raw_after_days,
+            "delete_raw_after_rollup_hours": self.delete_raw_after_rollup_hours,
             "total_rollups": self._total_rollups,
             "rollup_runs": self._rollup_runs,
             "is_postgresql": self._is_postgresql,

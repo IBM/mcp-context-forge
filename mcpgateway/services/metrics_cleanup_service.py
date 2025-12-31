@@ -134,11 +134,11 @@ class MetricsCleanupService:
 
     Configuration (via environment variables):
     - METRICS_CLEANUP_ENABLED: Enable automatic cleanup (default: True)
-    - METRICS_RETENTION_DAYS: Days to retain raw metrics (default: 30)
-    - METRICS_CLEANUP_INTERVAL_HOURS: Hours between cleanup runs (default: 24)
+    - METRICS_RETENTION_DAYS: Days to retain raw metrics (default: 7)
+    - METRICS_CLEANUP_INTERVAL_HOURS: Hours between cleanup runs (default: 1)
     - METRICS_CLEANUP_BATCH_SIZE: Batch size for deletion (default: 10000)
-    - METRICS_DELETE_RAW_AFTER_ROLLUP: Delete raw after rollup exists (default: False)
-    - METRICS_DELETE_RAW_AFTER_ROLLUP_DAYS: Days after which to delete if rollup exists (default: 7)
+    - METRICS_DELETE_RAW_AFTER_ROLLUP: Delete raw after rollup exists (default: True)
+    - METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS: Hours after which to delete if rollup exists (default: 1)
     """
 
     # Map of raw metric tables to their hourly rollup counterparts
@@ -160,19 +160,19 @@ class MetricsCleanupService:
         """Initialize the metrics cleanup service.
 
         Args:
-            retention_days: Days to retain raw metrics (default: from settings or 30)
+            retention_days: Days to retain raw metrics (default: from settings or 7)
             batch_size: Batch size for deletion (default: from settings or 10000)
-            cleanup_interval_hours: Hours between cleanup runs (default: from settings or 24)
+            cleanup_interval_hours: Hours between cleanup runs (default: from settings or 1)
             enabled: Whether cleanup is enabled (default: from settings or True)
         """
-        self.retention_days = retention_days or getattr(settings, "metrics_retention_days", 30)
+        self.retention_days = retention_days or getattr(settings, "metrics_retention_days", 7)
         self.batch_size = batch_size or getattr(settings, "metrics_cleanup_batch_size", 10000)
-        self.cleanup_interval_hours = cleanup_interval_hours or getattr(settings, "metrics_cleanup_interval_hours", 24)
+        self.cleanup_interval_hours = cleanup_interval_hours or getattr(settings, "metrics_cleanup_interval_hours", 1)
         self.enabled = enabled if enabled is not None else getattr(settings, "metrics_cleanup_enabled", True)
 
-        # Advanced cleanup options
-        self.delete_raw_after_rollup = getattr(settings, "metrics_delete_raw_after_rollup", False)
-        self.delete_raw_after_rollup_days = getattr(settings, "metrics_delete_raw_after_rollup_days", 7)
+        # Raw deletion after rollup is handled by MetricsRollupService; stored for stats/reporting.
+        self.delete_raw_after_rollup = getattr(settings, "metrics_delete_raw_after_rollup", True)
+        self.delete_raw_after_rollup_hours = getattr(settings, "metrics_delete_raw_after_rollup_hours", 1)
 
         # Rollup retention
         self.rollup_retention_days = getattr(settings, "metrics_rollup_retention_days", 365)
@@ -460,6 +460,7 @@ class MetricsCleanupService:
             "total_cleaned": self._total_cleaned,
             "cleanup_runs": self._cleanup_runs,
             "delete_raw_after_rollup": self.delete_raw_after_rollup,
+            "delete_raw_after_rollup_hours": self.delete_raw_after_rollup_hours,
         }
 
     async def get_table_sizes(self) -> Dict[str, int]:

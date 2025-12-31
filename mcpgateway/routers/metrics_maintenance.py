@@ -290,6 +290,6 @@ async def get_metrics_config():
             "retention_days": settings.metrics_rollup_retention_days,
             "late_data_hours": settings.metrics_rollup_late_data_hours,
             "delete_raw_after_rollup": settings.metrics_delete_raw_after_rollup,
-            "delete_raw_after_rollup_days": settings.metrics_delete_raw_after_rollup_days,
+            "delete_raw_after_rollup_hours": settings.metrics_delete_raw_after_rollup_hours,
         },
     }

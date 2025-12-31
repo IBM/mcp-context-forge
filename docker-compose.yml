@@ -224,6 +224,24 @@ services:
       # Granian workers (auto = CPU count, or set explicit number)
       - GRANIAN_WORKERS=16
 
+      # ═══════════════════════════════════════════════════════════════════════════
+      # Metrics Configuration
+      # ═══════════════════════════════════════════════════════════════════════════
+      # Raw metrics are deleted after hourly rollups exist (default: 1 hour retention).
+      # Rollups preserve all analytics (counts, p50/p95/p99) for 365 days.
+      #
+      # If using external observability (ELK, Datadog, Splunk), raw metrics are
+      # redundant - your external platform handles debugging and audit trails.
+      #
+      # Configurable settings (uncomment to override defaults):
+      # - METRICS_DELETE_RAW_AFTER_ROLLUP=true      # Delete raw after rollup (default)
+      # - METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS=1    # Raw retention when rollup exists
+      # - METRICS_CLEANUP_INTERVAL_HOURS=1          # Cleanup frequency (default: hourly)
+      # - METRICS_RETENTION_DAYS=7                  # Fallback retention (rollup disabled)
+      #
+      # For debugging without external observability, increase raw retention:
+      # - METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS=168  # Keep raw data 7 days
+
       # Phoenix Observability Integration (uncomment when using Phoenix)
       # - PHOENIX_ENDPOINT=${PHOENIX_ENDPOINT:-http://phoenix:6006}
       # - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://phoenix:4317}
@@ -346,6 +364,18 @@ services:
       - "synchronous_commit=off"           # Async WAL writes (2-10x faster commits)
       - "-c"
       - "commit_delay=100"                 # Batch commits within 100μs window
+      # ═══════════════════════════════════════════════════════════════════════════
+      # AUTOVACUUM TUNING - High-insert workloads (metrics tables)
+      # ═══════════════════════════════════════════════════════════════════════════
+      # High insert rates cause dead tuple accumulation. These settings help
+      # PostgreSQL keep up with table bloat from metrics writes.
+      # Uncomment if experiencing performance degradation under sustained load:
+      # - "-c"
+      # - "autovacuum_naptime=30s"              # Check more frequently (default: 60s)
+      # - "-c"
+      # - "autovacuum_vacuum_scale_factor=0.05" # Vacuum at 5% dead tuples (default: 0.2)
+      # - "-c"
+      # - "autovacuum_vacuum_cost_limit=1000"   # More vacuum work per cycle (default: 200)
       # === PG_STAT_STATEMENTS - Query performance tracking ===
       # Uncomment to enable query statistics (slight overhead, ~2-5%)
       # After enabling, run in psql:

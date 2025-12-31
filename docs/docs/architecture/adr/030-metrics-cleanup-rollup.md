@@ -74,17 +74,17 @@ Each table includes:
 
 **Cleanup Configuration:**
 - `METRICS_CLEANUP_ENABLED` (default: true)
-- `METRICS_RETENTION_DAYS` (default: 30, range: 1-365)
-- `METRICS_CLEANUP_INTERVAL_HOURS` (default: 24, range: 1-168)
+- `METRICS_RETENTION_DAYS` (default: 7, range: 1-365) - fallback when rollup disabled
+- `METRICS_CLEANUP_INTERVAL_HOURS` (default: 1, range: 1-168)
 - `METRICS_CLEANUP_BATCH_SIZE` (default: 10000, range: 100-100000)
 
 **Rollup Configuration:**
 - `METRICS_ROLLUP_ENABLED` (default: true)
 - `METRICS_ROLLUP_INTERVAL_HOURS` (default: 1, range: 1-24)
 - `METRICS_ROLLUP_RETENTION_DAYS` (default: 365, range: 30-3650)
-- `METRICS_ROLLUP_LATE_DATA_HOURS` (default: 4, range: 1-48) - hours to re-process each run for late-arriving data
-- `METRICS_DELETE_RAW_AFTER_ROLLUP` (default: false)
-- `METRICS_DELETE_RAW_AFTER_ROLLUP_DAYS` (default: 7, range: 1-30)
+- `METRICS_ROLLUP_LATE_DATA_HOURS` (default: 1, range: 1-48) - hours to re-process each run for late-arriving data
+- `METRICS_DELETE_RAW_AFTER_ROLLUP` (default: true) - delete raw after rollup exists
+- `METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS` (default: 1, range: 1-8760)
 
 ## Performance Characteristics
 
@@ -150,7 +150,7 @@ The background rollup service includes automatic backfill detection:
 1. On startup, checks for earliest unprocessed raw metrics
 2. Calculates hours since earliest data (capped at retention period)
 3. Processes all unprocessed hours on first run
-4. Subsequent runs process only the last N hours (configurable via `METRICS_ROLLUP_LATE_DATA_HOURS`, default: 4)
+4. Subsequent runs process only the last N hours (configurable via `METRICS_ROLLUP_LATE_DATA_HOURS`, default: 1)
 
 This handles scenarios where the service was down for extended periods and ensures late-arriving metrics (from buffer flushes or ingestion lag) are included in rollups.
 

@@ -40,9 +40,9 @@
     rollupResult: null,
     showCleanupConfirm: false,
     showRollupConfirm: false,
-    retentionDays: {{ payload.settings.metrics_retention_days | default(30) }},
+    retentionDays: {{ payload.settings.metrics_retention_days | default(7) }},
     deleteAll: false,
-    rollupHoursBack: 168,
+    rollupHoursBack: 1,
     includeRollupData: true
   }">
     <h3 class="text-lg font-medium mb-4 dark:text-gray-200 flex items-center">
@@ -231,6 +231,9 @@
               x-model="rollupHoursBack"
               class="px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded dark:bg-gray-800 dark:text-gray-200"
             >
+              <option value="1">1 hour</option>
+              <option value="4">4 hours</option>
+              <option value="12">12 hours</option>
               <option value="24">24 hours (1 day)</option>
               <option value="72">72 hours (3 days)</option>
               <option value="168">168 hours (7 days)</option>

@@ -32,7 +32,8 @@ class TestMetricsRollupService:
 
         assert service.enabled is True
         assert service.rollup_interval_hours == 1
-        assert service.delete_raw_after_rollup is False
+        assert service.delete_raw_after_rollup is True
+        assert service.delete_raw_after_rollup_hours == 1
 
     def test_init_custom_values(self):
         """Test service initialization with custom values."""
@@ -40,13 +41,13 @@ class TestMetricsRollupService:
             rollup_interval_hours=6,
             enabled=False,
             delete_raw_after_rollup=True,
-            delete_raw_after_days=14,
+            delete_raw_after_rollup_hours=14,
         )
 
         assert service.enabled is False
         assert service.rollup_interval_hours == 6
         assert service.delete_raw_after_rollup is True
-        assert service.delete_raw_after_days == 14
+        assert service.delete_raw_after_rollup_hours == 14
 
     def test_get_stats(self):
         """Test getting service statistics."""
