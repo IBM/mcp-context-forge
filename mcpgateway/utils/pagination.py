@@ -41,7 +41,7 @@ import base64
 import json
 import logging
 import math
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlencode
 
 # Third-Party
@@ -632,7 +632,7 @@ async def unified_paginate(
     base_url: str = "",
     query_params: Optional[Dict[str, Any]] = None,
     convert_fn: Optional[callable] = None,
-) -> Any:
+) -> Union[Dict[str, Any], Tuple[List[Any], Optional[str]]]:
     """Unified pagination helper that returns cursor or page format based on parameters.
 
     This function eliminates duplication in service methods by handling both pagination
@@ -652,8 +652,9 @@ async def unified_paginate(
         convert_fn: Optional function to convert DB models to response models
 
     Returns:
-        If page is provided: Dict with {"data": [...], "pagination": {...}, "links": {...}}
-        Otherwise: tuple of (list, next_cursor) for backward compatibility
+        Union[Dict[str, Any], Tuple[List[Any], Optional[str]]]:
+            If page is provided: Dict with {"data": [...], "pagination": {...}, "links": {...}}
+            Otherwise: tuple of (list, next_cursor) for backward compatibility
 
     Examples:
         >>> from sqlalchemy import select
