@@ -1067,6 +1067,7 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 
 - `MCPGATEWAY_A2A_ENABLED=false`: Completely disables A2A features (API endpoints return 404, admin tab hidden)
 - `MCPGATEWAY_A2A_METRICS_ENABLED=false`: Disables metrics collection while keeping functionality
+- `DB_METRICS_RECORDING_ENABLED=false`: Disables all execution metrics (tool/resource/prompt/server/A2A) database writes
 
 ### Email-Based Authentication & User Management
 

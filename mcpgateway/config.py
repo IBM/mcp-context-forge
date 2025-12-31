@@ -908,6 +908,14 @@ class Settings(BaseSettings):
     metrics_aggregation_window_minutes: int = Field(default=5, description="Time window for metrics aggregation (minutes)")
     metrics_aggregation_auto_start: bool = Field(default=False, description="Automatically run the log aggregation loop on application startup")
 
+    # Execution Metrics Recording
+    # Controls whether tool/resource/prompt/server/A2A execution metrics are written to the database.
+    # Disable if using external observability (ELK, Datadog, Splunk).
+    # Note: Does NOT affect log aggregation (METRICS_AGGREGATION_ENABLED) or Prometheus (ENABLE_METRICS).
+    db_metrics_recording_enabled: bool = Field(
+        default=True, description="Enable recording of execution metrics (tool/resource/prompt/server/A2A) to database. Disable if using external observability."
+    )
+
     # Metrics Buffer Configuration (for batching tool/resource/prompt metrics writes)
     metrics_buffer_enabled: bool = Field(default=True, description="Enable buffered metrics writes (reduces DB pressure under load)")
     metrics_buffer_flush_interval: int = Field(default=60, ge=5, le=300, description="Seconds between automatic metrics buffer flushes")

@@ -118,6 +118,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.MCPGATEWAY_UI_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT | string | `"60000"` |  |
 | mcpContextForge.config.MESSAGE_TTL | string | `"600"` |  |
+| mcpContextForge.config.DB_METRICS_RECORDING_ENABLED | string | `"true"` | Enable execution metrics recording |
 | mcpContextForge.config.METRICS_BUFFER_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.METRICS_BUFFER_FLUSH_INTERVAL | string | `"60"` |  |
 | mcpContextForge.config.METRICS_BUFFER_MAX_SIZE | string | `"1000"` |  |

@@ -861,6 +861,54 @@ MAX_TOOL_RETRIES=5
 TOOL_CONCURRENT_LIMIT=10
 ```
 
+### Execution Metrics Recording
+
+Control whether execution metrics are recorded to the database:
+
+```bash
+DB_METRICS_RECORDING_ENABLED=true   # Record execution metrics (default)
+DB_METRICS_RECORDING_ENABLED=false  # Disable execution metrics database writes
+```
+
+**What are execution metrics?**
+
+Each MCP operation (tool call, resource read, prompt get, etc.) records one database row with:
+
+- Entity ID (tool_id, resource_id, etc.)
+- Timestamp
+- Response time (seconds)
+- Success/failure status
+- Error message (if failed)
+- Interaction type (A2A metrics only)
+
+**When disabled:**
+
+- No new rows written to `ToolMetric`, `ResourceMetric`, `PromptMetric`, `ServerMetric`, `A2AAgentMetric` tables
+- Existing metrics remain queryable until cleanup removes them
+- Cleanup and rollup services still run (they process existing data)
+- Admin UI metrics pages show no new data
+
+**Use cases for disabling:**
+
+- External observability platforms handle all metrics (ELK, Datadog, Splunk, Grafana)
+- Minimal database footprint deployments
+- High-throughput environments where per-operation DB writes are costly
+
+**Related settings (separate systems):**
+
+| Setting | What it controls |
+|---------|------------------|
+| `METRICS_AGGREGATION_ENABLED` | Log aggregation into `PerformanceMetric` table |
+| `ENABLE_METRICS` | Prometheus `/metrics` endpoint |
+| `OBSERVABILITY_METRICS_ENABLED` | Internal observability system |
+
+To fully minimize metrics database writes, disable both:
+
+```bash
+DB_METRICS_RECORDING_ENABLED=false   # Disable execution metrics
+METRICS_AGGREGATION_ENABLED=false    # Disable log aggregation
+```
+
 ### Metrics Cleanup and Rollup
 
 !!! tip "Automatic Metrics Management"

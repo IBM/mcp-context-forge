@@ -296,6 +296,11 @@ mcpContextForge:
     # WARNING: Causes a DB write on EVERY API request - disable for load testing!
     AUDIT_TRAIL_ENABLED: "false"     # enable audit trail logging (default: false for performance)
 
+    # ─ Execution Metrics Recording ─
+    # Controls tool/resource/prompt/server/A2A execution metrics (one DB row per operation).
+    # Disable if using external observability (ELK, Datadog, Splunk) to reduce DB I/O.
+    DB_METRICS_RECORDING_ENABLED: "true"
+
     # ─ Metrics Buffer ─
     # Batches metric writes to reduce DB pressure under high load
     METRICS_BUFFER_ENABLED: "true"   # enable buffered metrics writes
