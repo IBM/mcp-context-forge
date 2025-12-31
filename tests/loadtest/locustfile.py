@@ -202,44 +202,49 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
 
         with httpx.Client(base_url=host, timeout=30.0) as client:
             # Fetch tools
+            # API returns {"tools": [...], "nextCursor": ...} or list for legacy
             resp = client.get("/tools", headers=headers)
             if resp.status_code == 200:
                 data = resp.json()
-                items = data if isinstance(data, list) else data.get("items", [])
+                items = data if isinstance(data, list) else data.get("tools", data.get("items", []))
                 TOOL_IDS.extend([str(t.get("id")) for t in items[:50] if t.get("id")])
                 TOOL_NAMES.extend([str(t.get("name")) for t in items[:50] if t.get("name")])
                 logger.info(f"Loaded {len(TOOL_IDS)} tool IDs, {len(TOOL_NAMES)} tool names")
 
             # Fetch servers
+            # API returns {"servers": [...], "nextCursor": ...} or list for legacy
             resp = client.get("/servers", headers=headers)
             if resp.status_code == 200:
                 data = resp.json()
-                items = data if isinstance(data, list) else data.get("items", [])
+                items = data if isinstance(data, list) else data.get("servers", data.get("items", []))
                 SERVER_IDS.extend([str(s.get("id")) for s in items[:50] if s.get("id")])
                 logger.info(f"Loaded {len(SERVER_IDS)} server IDs")
 
             # Fetch gateways
+            # API returns {"gateways": [...], "nextCursor": ...} or list for legacy
             resp = client.get("/gateways", headers=headers)
             if resp.status_code == 200:
                 data = resp.json()
-                items = data if isinstance(data, list) else data.get("items", [])
+                items = data if isinstance(data, list) else data.get("gateways", data.get("items", []))
                 GATEWAY_IDS.extend([str(g.get("id")) for g in items[:50] if g.get("id")])
                 logger.info(f"Loaded {len(GATEWAY_IDS)} gateway IDs")
 
             # Fetch resources
+            # API returns {"resources": [...], "nextCursor": ...} or list for legacy
             resp = client.get("/resources", headers=headers)
             if resp.status_code == 200:
                 data = resp.json()
-                items = data if isinstance(data, list) else data.get("items", [])
+                items = data if isinstance(data, list) else data.get("resources", data.get("items", []))
                 RESOURCE_IDS.extend([str(r.get("id")) for r in items[:50] if r.get("id")])
                 RESOURCE_URIS.extend([str(r.get("uri")) for r in items[:50] if r.get("uri")])
                 logger.info(f"Loaded {len(RESOURCE_IDS)} resource IDs, {len(RESOURCE_URIS)} resource URIs")
 
             # Fetch prompts
+            # API returns {"prompts": [...], "nextCursor": ...} or list for legacy
             resp = client.get("/prompts", headers=headers)
             if resp.status_code == 200:
                 data = resp.json()
-                items = data if isinstance(data, list) else data.get("items", [])
+                items = data if isinstance(data, list) else data.get("prompts", data.get("items", []))
                 PROMPT_IDS.extend([str(p.get("id")) for p in items[:50] if p.get("id")])
                 PROMPT_NAMES.extend([str(p.get("name")) for p in items[:50] if p.get("name")])
                 logger.info(f"Loaded {len(PROMPT_IDS)} prompt IDs, {len(PROMPT_NAMES)} prompt names")
@@ -1288,6 +1293,7 @@ class WriteAPIUser(BaseUser):
     def read_and_refresh_gateway(self):
         """Read existing gateway and trigger a refresh."""
         # First, get list of gateways
+        # API returns {"gateways": [...], "nextCursor": ...} or list for legacy
         with self.client.get(
             "/gateways",
             headers=self.auth_headers,
@@ -1298,7 +1304,9 @@ class WriteAPIUser(BaseUser):
                 response.failure(f"Failed to list gateways: {response.status_code}")
                 return
             try:
-                gateways = response.json()
+                data = response.json()
+                # Extract gateways list from paginated response
+                gateways = data if isinstance(data, list) else data.get("gateways", data.get("items", []))
                 if not gateways:
                     response.success()
                     return
