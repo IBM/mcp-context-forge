@@ -31,6 +31,8 @@ services:
     command:
       - "postgres"
 {postgres_config_commands}
+    networks:
+      - mcpnet
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -46,6 +48,10 @@ services:
 volumes:
   postgres_data:
 {redis_volume}
+
+networks:
+  mcpnet:
+    driver: bridge
 """
 
 GATEWAY_SERVICE_TEMPLATE = """  gateway{instance_suffix}:
@@ -73,6 +79,8 @@ GATEWAY_SERVICE_TEMPLATE = """  gateway{instance_suffix}:
       - MCPGATEWAY_UI_ENABLED=true
     ports:
       - "{port_mapping}:4444"
+    networks:
+      - mcpnet
     depends_on:
       postgres:
         condition: service_healthy
@@ -89,6 +97,8 @@ REDIS_SERVICE = """  redis:
     container_name: redis_perf
     ports:
       - "6379:6379"
+    networks:
+      - mcpnet
     command: redis-server{redis_config}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -104,6 +114,8 @@ NGINX_LOAD_BALANCER = """  nginx:
       - "host.docker.internal:host-gateway"
     ports:
       - "8000:80"
+    networks:
+      - mcpnet
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
