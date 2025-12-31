@@ -13410,7 +13410,12 @@ async def get_system_stats(
             # Return HTML partial for HTMX
             return request.app.state.templates.TemplateResponse(
                 "metrics_partial.html",
-                {"request": request, "stats": stats, "root_path": request.scope.get("root_path", "")},
+                {
+                    "request": request,
+                    "stats": stats,
+                    "root_path": request.scope.get("root_path", ""),
+                    "db_metrics_recording_enabled": settings.db_metrics_recording_enabled,
+                },
             )
 
         # Return JSON for API requests

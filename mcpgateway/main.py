@@ -476,7 +476,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
             metrics_buffer_service = get_metrics_buffer_service()
             await metrics_buffer_service.start()
-            logger.info("Metrics buffer service initialized")
+            if settings.db_metrics_recording_enabled:
+                logger.info("Metrics buffer service initialized")
+            else:
+                logger.info("Metrics buffer service initialized (recording disabled)")
 
         # Initialize metrics cleanup service for automatic deletion of old metrics
         if settings.metrics_cleanup_enabled:

@@ -122,6 +122,7 @@ http://localhost:4444/admin/observability
 
 | Variable | Description | Default | Options |
 |----------|-------------|---------|---------|
+| `DB_METRICS_RECORDING_ENABLED` | Enable execution metrics (tool/resource/prompt/server/A2A) | `true` | `true`, `false` |
 | `OBSERVABILITY_METRICS_ENABLED` | Enable metrics collection | `true` | `true`, `false` |
 | `OBSERVABILITY_EVENTS_ENABLED` | Enable event logging | `true` | `true`, `false` |
 
