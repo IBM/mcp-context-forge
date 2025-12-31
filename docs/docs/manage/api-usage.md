@@ -50,6 +50,116 @@ All API requests require JWT Bearer token authentication:
 curl -H "Authorization: Bearer $TOKEN" $BASE_URL/endpoint
 ```
 
+## Pagination
+
+!!! info "Default Pagination Behavior"
+    For backward compatibility, **main API list endpoints return plain arrays by default**. Add `?include_pagination=true` to get paginated responses with cursor metadata. Admin API endpoints always return paginated responses.
+
+### Pagination Methods
+
+The API supports two pagination approaches:
+
+1. **Cursor-based pagination** (Main API endpoints: `/tools`, `/servers`, `/gateways`, etc.)
+   - Uses opaque cursors for efficient traversal
+   - Best for real-time data and large datasets
+   - No knowledge of total pages required
+
+2. **Page-based pagination** (Admin API endpoints: `/admin/tools`, `/admin/servers`, etc.)
+   - Uses page numbers and per-page limits
+   - Provides total count and page information
+   - Easier for UI components with page numbers
+
+### Response Formats
+
+**Main API (Cursor-based):**
+```json
+{
+  "entities": [...],
+  "nextCursor": "base64-encoded-cursor"
+}
+```
+
+The entity key name matches the resource type: `tools`, `gateways`, `servers`, `resources`, `prompts`, or `agents`.
+
+**Admin API (Page-based):**
+```json
+{
+  "data": [...],
+  "pagination": {
+    "total_items": 150,
+    "page": 1,
+    "per_page": 50,
+    "total_pages": 3
+  },
+  "links": {
+    "first": "/admin/tools?page=1&per_page=50",
+    "last": "/admin/tools?page=3&per_page=50",
+    "next": "/admin/tools?page=2&per_page=50",
+    "prev": null
+  }
+}
+```
+
+**Plain Array (default for Main API):**
+```json
+[...]
+```
+
+Add `?include_pagination=true` to main API endpoints to get paginated responses with cursor metadata.
+
+### Pagination Parameters
+
+**Main API (Cursor-based):**
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `cursor` | Opaque pagination cursor for fetching next page | `null` (first page) |
+| `limit` | Maximum items per page (0 = all) | 50 |
+| `include_pagination` | Return paginated format with cursor | `false` |
+
+**Admin API (Page-based):**
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `page` | Page number (1-indexed) | 1 |
+| `per_page` | Items per page | 50 |
+
+### Examples
+
+**Cursor-based pagination (Main API):**
+
+```bash
+# Default: plain array (first 50 items)
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools | jq '.'
+
+# Enable pagination to get cursor metadata
+curl -s -H "Authorization: Bearer $TOKEN" "$BASE_URL/tools?include_pagination=true" | jq '.'
+
+# Extract cursor and get next page
+CURSOR=$(curl -s -H "Authorization: Bearer $TOKEN" "$BASE_URL/tools?include_pagination=true" | jq -r '.nextCursor')
+curl -s -H "Authorization: Bearer $TOKEN" "$BASE_URL/tools?include_pagination=true&cursor=$CURSOR" | jq '.'
+
+# Get all items as plain array
+curl -s -H "Authorization: Bearer $TOKEN" "$BASE_URL/tools?limit=0" | jq '.'
+```
+
+**Page-based pagination (Admin API):**
+
+```bash
+# First page (default)
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/admin/tools | jq '.'
+
+# Specific page with custom page size
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/admin/tools?page=2&per_page=25" | jq '.'
+
+# Loop through all pages
+for page in {1..5}; do
+  curl -s -H "Authorization: Bearer $TOKEN" \
+    "$BASE_URL/admin/tools?page=$page&per_page=50" | jq '.data[]'
+done
+```
+
 ## Health & Status
 
 ### Check Server Health
@@ -88,8 +198,46 @@ Gateways represent upstream MCP servers or peer gateways that provide tools, res
 ### List All Gateways
 
 ```bash
-# List all registered gateways
+# First page - List gateways (paginated response - default)
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/gateways | jq '.'
+```
+
+**Response:**
+```json
+{
+  "gateways": [
+    {
+      "id": "abc123",
+      "name": "my-mcp-server",
+      "url": "http://localhost:9000/mcp",
+      "enabled": true,
+      ...
+    }
+  ],
+  "nextCursor": "eyJjcmVhdGVkX2F0IjogIjIwMjQtMDEtMDFUMTI6MDA6MDBaIiwgImlkIjogImFiYzEyMyJ9"
+}
+```
+
+```bash
+# Second page - Use cursor from first response
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/gateways?cursor=eyJjcmVhdGVkX2F0IjogIjIwMjQtMDEtMDFUMTI6MDA6MDBaIiwgImlkIjogImFiYzEyMyJ9" | jq '.'
+
+# Or loop through all pages programmatically
+CURSOR=""
+while true; do
+  RESPONSE=$(curl -s -H "Authorization: Bearer $TOKEN" "$BASE_URL/gateways${CURSOR:+?cursor=$CURSOR}")
+  echo "$RESPONSE" | jq '.gateways[]'
+  CURSOR=$(echo "$RESPONSE" | jq -r '.nextCursor')
+  [ "$CURSOR" == "null" ] && break
+done
+```
+
+**Non-Paginated (Array Only):**
+```bash
+# Get simple array without pagination metadata
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/gateways?include_pagination=false" | jq '.'
 ```
 
 ### Get Gateway Details
@@ -182,11 +330,40 @@ Tools are executable operations exposed by MCP servers through the gateway.
 ### List All Tools
 
 ```bash
-# List all available tools (returns first 50 by default)
+# First page - List all available tools (paginated response - default)
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools | jq '.'
+```
 
-# List tools with pretty formatting
-curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools | \
+**Response:**
+```json
+{
+  "tools": [
+    {
+      "name": "get_weather",
+      "description": "Get current weather",
+      "gatewaySlug": "weather-api",
+      ...
+    }
+  ],
+  "nextCursor": "eyJjcmVhdGVkX2F0IjogIjIwMjQtMDEtMDFUMTI6MDA6MDBaIiwgImlkIjogInRvb2wxMjMifQ"
+}
+```
+
+```bash
+# Second page - Use cursor from first response
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tools?cursor=eyJjcmVhdGVkX2F0IjogIjIwMjQtMDEtMDFUMTI6MDA6MDBaIiwgImlkIjogInRvb2wxMjMifQ" | jq '.'
+```
+
+**Non-Paginated (Array Only):**
+```bash
+# Get simple array without pagination metadata
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tools?include_pagination=false" | jq '.'
+
+# Extract specific fields from array
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tools?include_pagination=false" | \
   jq '.[] | {name: .name, description: .description, gateway: .gatewaySlug}'
 ```
 
@@ -201,35 +378,33 @@ The `/tools` endpoint supports several query parameters for filtering and pagina
 | `visibility` | Filter by visibility: `private`, `team`, or `public`. |
 | `team_id` | Filter by team ID. |
 | `include_inactive` | Include disabled tools (default: `false`). |
-| `limit` | Maximum tools to return. Use `0` for all tools (no limit). Default: 50, Max: 500. |
+| `limit` | Maximum tools to return. Use `0` for all tools (no limit). Default: 50. |
 | `cursor` | Pagination cursor for fetching the next page. |
-| `include_pagination` | Return `{tools: [...], nextCursor: "..."}` format (default: `false`). |
+| `include_pagination` | Return paginated format with cursor (default: `true`). Set to `false` for array only. |
+
+**Examples:**
 
 ```bash
-# Filter by gateway
+# Filter by gateway (paginated)
 curl -s -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/tools?gateway_id=<gateway-id>" | jq '.'
 
-# Filter by tags
+# Filter by tags (paginated)
 curl -s -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/tools?tags=api,data" | jq '.'
 
-# Get up to 100 tools
+# Get up to 100 tools per page
 curl -s -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/tools?limit=100" | jq '.'
 
-# Get ALL tools (no pagination limit)
+# Get ALL tools (no pagination - returns all as array)
 curl -s -H "Authorization: Bearer $TOKEN" \
-  "$BASE_URL/tools?limit=0" | jq '.'
+  "$BASE_URL/tools?limit=0&include_pagination=false" | jq '.'
 
-# Paginate through results
+# Navigate to next page using cursor
+NEXT=$(curl -s -H "Authorization: Bearer $TOKEN" "$BASE_URL/tools" | jq -r '.nextCursor')
 curl -s -H "Authorization: Bearer $TOKEN" \
-  "$BASE_URL/tools?include_pagination=true" | jq '.'
-# Response: {"tools": [...], "nextCursor": "eyJpZCI6Ii4uLiJ9"}
-
-# Get next page using cursor
-curl -s -H "Authorization: Bearer $TOKEN" \
-  "$BASE_URL/tools?include_pagination=true&cursor=eyJpZCI6Ii4uLiJ9" | jq '.'
+  "$BASE_URL/tools?cursor=$NEXT" | jq '.'
 ```
 
 ### Get Tool Details
@@ -346,8 +521,36 @@ Virtual servers allow you to compose multiple MCP servers and tools into unified
 ### List All Servers
 
 ```bash
-# List all virtual servers
+# First page - List all virtual servers (paginated response - default)
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/servers | jq '.'
+```
+
+**Response:**
+```json
+{
+  "servers": [
+    {
+      "id": "server123",
+      "name": "my-virtual-server",
+      "description": "Combined MCP endpoints",
+      ...
+    }
+  ],
+  "nextCursor": "eyJjcmVhdGVkX2F0IjogIjIwMjQtMDEtMDFUMTI6MDA6MDBaIiwgImlkIjogInNlcnZlcjEyMyJ9"
+}
+```
+
+```bash
+# Second page - Use cursor from first response
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/servers?cursor=eyJjcmVhdGVkX2F0IjogIjIwMjQtMDEtMDFUMTI6MDA6MDBaIiwgImlkIjogInNlcnZlcjEyMyJ9" | jq '.'
+```
+
+**Non-Paginated:**
+```bash
+# Get simple array
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/servers?include_pagination=false" | jq '.'
 ```
 
 ### Create Virtual Server
@@ -469,8 +672,35 @@ Resources are data sources (files, documents, database queries) exposed by MCP s
 ### List All Resources
 
 ```bash
-# List all available resources
+# First page - List all available resources (paginated response - default)
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/resources | jq '.'
+```
+
+**Paginated Response:**
+```json
+{
+  "resources": [
+    {
+      "uri": "file:///data/config.json",
+      "name": "Application Config",
+      "mimeType": "application/json",
+      ...
+    }
+  ],
+  "nextCursor": "eyJjcmVhdGVkX2F0IjogIjIwMjQtMDEtMDFUMTI6MDA6MDBaIiwgImlkIjogInJlczEyMyJ9"
+}
+```
+
+```bash
+# Second page - Use cursor from first response
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/resources?cursor=eyJjcmVhdGVkX2F0IjogIjIwMjQtMDEtMDFUMTI6MDA6MDBaIiwgImlkIjogInJlczEyMyJ9" | jq '.'
+```
+
+**Non-Paginated:**
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/resources?include_pagination=false" | jq '.'
 ```
 
 ### Register a Resource
@@ -561,8 +791,35 @@ Prompts are reusable templates with arguments for AI interactions.
 ### List All Prompts
 
 ```bash
-# List all available prompts
+# First page - List all available prompts (paginated response - default)
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/prompts | jq '.'
+```
+
+**Paginated Response:**
+```json
+{
+  "prompts": [
+    {
+      "name": "code_review",
+      "description": "Review code for best practices",
+      "arguments": [...],
+      ...
+    }
+  ],
+  "nextCursor": "eyJjcmVhdGVkX2F0IjogIjIwMjQtMDEtMDFUMTI6MDA6MDBaIiwgImlkIjogInByb21wdDEyMyJ9"
+}
+```
+
+```bash
+# Second page - Use cursor from first response
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/prompts?cursor=eyJjcmVhdGVkX2F0IjogIjIwMjQtMDEtMDFUMTI6MDA6MDBaIiwgImlkIjogInByb21wdDEyMyJ9" | jq '.'
+```
+
+**Non-Paginated:**
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/prompts?include_pagination=false" | jq '.'
 ```
 
 ### Register a Prompt
@@ -762,8 +1019,35 @@ A2A (Agent-to-Agent) enables integration with external AI agents.
 ### List All A2A Agents
 
 ```bash
-# List registered A2A agents
+# First page - List registered A2A agents (paginated response - default)
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/a2a | jq '.'
+```
+
+**Paginated Response:**
+```json
+{
+  "agents": [
+    {
+      "id": "agent123",
+      "name": "data-analyzer",
+      "url": "https://agent.example.com/v1",
+      ...
+    }
+  ],
+  "nextCursor": "eyJjcmVhdGVkX2F0IjogIjIwMjQtMDEtMDFUMTI6MDA6MDBaIiwgImlkIjogImFnZW50MTIzIn0"
+}
+```
+
+```bash
+# Second page - Use cursor from first response
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/a2a?cursor=eyJjcmVhdGVkX2F0IjogIjIwMjQtMDEtMDFUMTI6MDA6MDBaIiwgImlkIjogImFnZW50MTIzIn0" | jq '.'
+```
+
+**Non-Paginated:**
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/a2a?include_pagination=false" | jq '.'
 ```
 
 ### Register A2A Agent

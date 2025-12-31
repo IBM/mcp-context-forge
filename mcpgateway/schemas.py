@@ -6548,6 +6548,53 @@ class PaginationParams(BaseModel):
 
 
 # ============================================================================
+# Cursor Pagination Response Schemas (for main API endpoints)
+# ============================================================================
+
+
+class CursorPaginatedToolsResponse(BaseModel):
+    """Cursor-paginated response for tools list endpoint."""
+
+    tools: List["ToolRead"] = Field(..., description="List of tools for this page")
+    next_cursor: Optional[str] = Field(None, alias="nextCursor", description="Cursor for the next page, null if no more pages")
+
+
+class CursorPaginatedServersResponse(BaseModel):
+    """Cursor-paginated response for servers list endpoint."""
+
+    servers: List["ServerRead"] = Field(..., description="List of servers for this page")
+    next_cursor: Optional[str] = Field(None, alias="nextCursor", description="Cursor for the next page, null if no more pages")
+
+
+class CursorPaginatedGatewaysResponse(BaseModel):
+    """Cursor-paginated response for gateways list endpoint."""
+
+    gateways: List["GatewayRead"] = Field(..., description="List of gateways for this page")
+    next_cursor: Optional[str] = Field(None, alias="nextCursor", description="Cursor for the next page, null if no more pages")
+
+
+class CursorPaginatedResourcesResponse(BaseModel):
+    """Cursor-paginated response for resources list endpoint."""
+
+    resources: List["ResourceRead"] = Field(..., description="List of resources for this page")
+    next_cursor: Optional[str] = Field(None, alias="nextCursor", description="Cursor for the next page, null if no more pages")
+
+
+class CursorPaginatedPromptsResponse(BaseModel):
+    """Cursor-paginated response for prompts list endpoint."""
+
+    prompts: List["PromptRead"] = Field(..., description="List of prompts for this page")
+    next_cursor: Optional[str] = Field(None, alias="nextCursor", description="Cursor for the next page, null if no more pages")
+
+
+class CursorPaginatedA2AAgentsResponse(BaseModel):
+    """Cursor-paginated response for A2A agents list endpoint."""
+
+    agents: List["A2AAgentRead"] = Field(..., description="List of A2A agents for this page")
+    next_cursor: Optional[str] = Field(None, alias="nextCursor", description="Cursor for the next page, null if no more pages")
+
+
+# ============================================================================
 # Observability Schemas (OpenTelemetry-style traces, spans, events, metrics)
 # ============================================================================
 

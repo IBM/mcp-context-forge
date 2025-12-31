@@ -23,7 +23,7 @@ from unittest.mock import MagicMock
 # Third-Party
 import pytest
 from fastapi import Request
-from sqlalchemy import select
+from sqlalchemy import desc, select
 
 # First-Party
 from mcpgateway.config import settings
@@ -395,7 +395,7 @@ class TestCursorPagination:
             db_session.add(tool)
         db_session.commit()
 
-        query = select(Tool).where(Tool.enabled.is_(True))
+        query = select(Tool).where(Tool.enabled.is_(True)).order_by(desc(Tool.created_at), desc(Tool.id))
 
         result = await cursor_paginate(
             db=db_session,
@@ -427,7 +427,7 @@ class TestCursorPagination:
         db_session.commit()
 
         # First page to get a cursor
-        query = select(Tool).where(Tool.enabled.is_(True))
+        query = select(Tool).where(Tool.enabled.is_(True)).order_by(desc(Tool.created_at), desc(Tool.id))
         first_page = await cursor_paginate(
             db=db_session,
             query=query,

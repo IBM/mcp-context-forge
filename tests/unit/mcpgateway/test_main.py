@@ -26,9 +26,11 @@ import pytest
 from mcpgateway.config import settings
 from mcpgateway.common.models import InitializeResult, ResourceContent, ServerCapabilities
 from mcpgateway.schemas import (
+    GatewayRead,
     PromptRead,
     ResourceRead,
     ServerRead,
+    ToolRead,
 )
 
 # --------------------------------------------------------------------------- #
@@ -474,11 +476,13 @@ class TestServerEndpoints:
     @patch("mcpgateway.main.server_service.list_servers")
     def test_list_servers_endpoint(self, mock_list_servers, test_client, auth_headers):
         """Test listing all servers."""
-        mock_list_servers.return_value = [ServerRead(**MOCK_SERVER_READ)]
+        mock_list_servers.return_value = ([ServerRead(**MOCK_SERVER_READ)], None)
 
         response = test_client.get("/servers/", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
+        # Default response is a plain list (include_pagination=False by default)
+        assert isinstance(data, list)
         assert len(data) == 1 and data[0]["name"] == "test_server"
         mock_list_servers.assert_called_once()
 
@@ -608,11 +612,14 @@ class TestToolEndpoints:
     @patch("mcpgateway.main.tool_service.list_tools")
     def test_list_tools_endpoint(self, mock_list_tools, test_client, auth_headers):
         """Test listing all registered tools."""
-        mock_list_tools.return_value = ([MOCK_TOOL_READ], None)
+        tool_read = ToolRead(**MOCK_TOOL_READ_SNAKE)
+        mock_list_tools.return_value = ([tool_read], None)
 
         response = test_client.get("/tools/", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
+        # Default response is a plain list (include_pagination=False by default)
+        assert isinstance(data, list)
         assert len(data) == 1 and data[0]["name"] == "test_tool"
         mock_list_tools.assert_called_once()
 
@@ -692,6 +699,8 @@ class TestResourceEndpoints:
         response = test_client.get("/resources/", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
+        # Default response is a plain list (include_pagination=False by default)
+        assert isinstance(data, list)
         assert len(data) == 1 and data[0]["name"] == "Test Resource"
         mock_list_resources.assert_called_once()
 
@@ -852,10 +861,13 @@ class TestPromptEndpoints:
     @patch("mcpgateway.main.prompt_service.list_prompts")
     def test_list_prompts_endpoint(self, mock_list_prompts, test_client, auth_headers):
         """Test listing all available prompts."""
-        mock_list_prompts.return_value = ([MOCK_PROMPT_READ], None)
+        prompt_read = PromptRead(**MOCK_PROMPT_READ)
+        mock_list_prompts.return_value = ([prompt_read], None)
         response = test_client.get("/prompts/", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
+        # Default response is a plain list (include_pagination=False by default)
+        assert isinstance(data, list)
         assert len(data) == 1
         mock_list_prompts.assert_called_once()
 
@@ -931,10 +943,13 @@ class TestGatewayEndpoints:
     @patch("mcpgateway.main.gateway_service.list_gateways")
     def test_list_gateways_endpoint(self, mock_list, test_client, auth_headers):
         """Test listing all registered gateways."""
-        mock_list.return_value = [MOCK_GATEWAY_READ]
+        gateway_read = GatewayRead(**MOCK_GATEWAY_READ)
+        mock_list.return_value = ([gateway_read], None)
         response = test_client.get("/gateways/", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
+        # Default response is a plain list (include_pagination=False by default)
+        assert isinstance(data, list)
         assert len(data) == 1
         mock_list.assert_called_once()
 
@@ -1006,10 +1021,13 @@ class TestGatewayEndpoints:
     @patch("mcpgateway.main.gateway_service.list_gateways")
     def test_list_gateways_endpoint(self, mock_list, test_client, auth_headers):
         """Test listing all registered gateways."""
-        mock_list.return_value = [MOCK_GATEWAY_READ]
+        gateway_read = GatewayRead(**MOCK_GATEWAY_READ)
+        mock_list.return_value = ([gateway_read], None)
         response = test_client.get("/gateways/", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
+        # Default response is a plain list (include_pagination=False by default)
+        assert isinstance(data, list)
         assert len(data) == 1
         mock_list.assert_called_once()
 

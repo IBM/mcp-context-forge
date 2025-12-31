@@ -593,7 +593,7 @@ class TestGatewayService:
         # Patch using full path string to GatewayRead.model_validate
         monkeypatch.setattr("mcpgateway.services.gateway_service.GatewayRead.model_validate", lambda x: mock_model)
 
-        result = await gateway_service.list_gateways(test_db)
+        result, next_cursor = await gateway_service.list_gateways(test_db)
 
         # Assert that execute was called twice
         assert test_db.execute.call_count == 2
@@ -1596,9 +1596,11 @@ class TestGatewayService:
         """Test listing gateways with tag filtering."""
         # Third-Party
 
-        # Mock query chain
+        # Mock query chain - needs to support chaining through order_by, where, limit
         mock_query = MagicMock()
+        mock_query.order_by.return_value = mock_query
         mock_query.where.return_value = mock_query
+        mock_query.limit.return_value = mock_query
 
         session = MagicMock()
         session.execute.return_value.scalars.return_value.all.return_value = [mock_gateway]
@@ -1608,30 +1610,42 @@ class TestGatewayService:
         bind.dialect.name = "sqlite"  # or "postgresql" or "mysql"
         session.get_bind.return_value = bind
 
+        # Mock EmailTeam query for team names
+        session.query.return_value.filter.return_value.all.return_value = []
+        session.commit = MagicMock()
+
         mocked_gateway_read = MagicMock()
-        mocked_gateway_read.masked.return_value = "masked_result"
+        mocked_gateway_read.model_dump.return_value = {"id": "1", "name": "test"}
 
-        with patch("mcpgateway.services.gateway_service.select", return_value=mock_query):
+        # Mock select to return the mock_query that supports chaining
+        def mock_select(*args):
+            return mock_query
+
+        # Mock convert_gateway_to_read to return the mocked gateway
+        gateway_service.convert_gateway_to_read = MagicMock(return_value=mocked_gateway_read)
+
+        with patch("mcpgateway.services.gateway_service.select", side_effect=mock_select):
             with patch("mcpgateway.services.gateway_service.json_contains_expr") as mock_json_contains:
-                with patch(
-                    "mcpgateway.services.gateway_service.GatewayRead.model_validate",
-                    return_value=mocked_gateway_read,
-                ) as mock_model_validate:
-                    fake_condition = MagicMock()
-                    mock_json_contains.return_value = fake_condition
+                fake_condition = MagicMock()
+                mock_json_contains.return_value = fake_condition
 
-                    result = await gateway_service.list_gateways(session, tags=["test", "production"])
+                # Pass include_inactive=True to avoid the enabled filter, so we can test tag filtering in isolation
+                result, next_cursor = await gateway_service.list_gateways(session, tags=["test", "production"], include_inactive=True)
 
-                    mock_json_contains.assert_called_once()  # called exactly once
-                    called_args = mock_json_contains.call_args[0]  # positional args tuple
-                    assert called_args[0] is session  # session passed through
-                    # third positional arg is the tags list (signature: session, col, values, match_any=True)
-                    assert called_args[2] == ["test", "production"]
-                    # and the fake condition returned must have been passed to where()
-                    mock_query.where.assert_called_with(fake_condition)
-                    # finally, your service should return the list produced by mock_db.execute(...)
-                    assert isinstance(result, list)
-                    assert len(result) == 1
+                mock_json_contains.assert_called_once()  # called exactly once
+                called_args = mock_json_contains.call_args[0]  # positional args tuple
+                assert called_args[0] is session  # session passed through
+                # third positional arg is the tags list (signature: session, col, values, match_any=True)
+                assert called_args[2] == ["test", "production"]
+                # Verify where() was called and the fake_condition is in one of the calls
+                assert mock_query.where.called, "where() should have been called"
+                # Check that fake_condition appears in at least one of the where() calls
+                where_calls = mock_query.where.call_args_list
+                assert any(fake_condition in call.args for call in where_calls), f"fake_condition not found in where() calls: {where_calls}"
+                # finally, your service should return the list produced by mock_db.execute(...)
+                assert isinstance(result, list)
+                assert len(result) == 1
 
-                    mock_model_validate.assert_called_once()
-                    assert result == ["masked_result"]
+                # Verify convert_gateway_to_read was called
+                gateway_service.convert_gateway_to_read.assert_called_once()
+                assert result == [mocked_gateway_read]

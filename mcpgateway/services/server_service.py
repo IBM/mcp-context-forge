@@ -14,11 +14,11 @@ It also publishes event notifications for server changes.
 # Standard
 import asyncio
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 # Third-Party
 import httpx
-from sqlalchemy import and_, delete, or_, select
+from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -40,6 +40,7 @@ from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.metrics_common import build_top_performers
+from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 
 # Cache import (lazy to avoid circular dependencies)
@@ -220,7 +221,7 @@ class ServerService:
 
         return top_performers
 
-    def _convert_server_to_read(self, server: DbServer, include_metrics: bool = False) -> ServerRead:
+    def convert_server_to_read(self, server: DbServer, include_metrics: bool = False) -> ServerRead:
         """
         Converts a DbServer instance into a ServerRead model, optionally including aggregated metrics.
 
@@ -247,7 +248,7 @@ class ServerService:
             ...     tags=[], metrics=[m1, m2],
             ...     tools=[], resources=[], prompts=[], a2a_agents=[]
             ... )
-            >>> result = svc._convert_server_to_read(server, include_metrics=True)
+            >>> result = svc.convert_server_to_read(server, include_metrics=True)
             >>> result.metrics.total_executions
             2
             >>> result.metrics.successful_executions
@@ -443,7 +444,7 @@ class ServerService:
             >>> db.commit = MagicMock()
             >>> db.refresh = MagicMock()
             >>> service._notify_server_added = AsyncMock()
-            >>> service._convert_server_to_read = MagicMock(return_value='server_read')
+            >>> service.convert_server_to_read = MagicMock(return_value='server_read')
             >>> service._structured_logger = MagicMock()  # Mock structured logger to prevent database writes
             >>> service._audit_trail = MagicMock()  # Mock audit trail to prevent database writes
             >>> ServerRead.model_validate = MagicMock(return_value='server_read')
@@ -626,7 +627,7 @@ class ServerService:
             )
 
             db_server.team = self._get_team_name(db, db_server.team_id)
-            return self._convert_server_to_read(db_server)
+            return self.convert_server_to_read(db_server)
         except IntegrityError as ie:
             db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
@@ -676,16 +677,36 @@ class ServerService:
             )
             raise ServerError(f"Failed to register server: {str(ex)}")
 
-    async def list_servers(self, db: Session, include_inactive: bool = False, tags: Optional[List[str]] = None) -> List[ServerRead]:
-        """List all registered servers.
+    async def list_servers(
+        self,
+        db: Session,
+        include_inactive: bool = False,
+        tags: Optional[List[str]] = None,
+        cursor: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        per_page: Optional[int] = None,
+        user_email: Optional[str] = None,
+        team_id: Optional[str] = None,
+        visibility: Optional[str] = None,
+    ) -> Union[tuple[List[ServerRead], Optional[str]], Dict[str, Any]]:
+        """List all registered servers with cursor or page-based pagination and optional team filtering.
 
         Args:
             db: Database session.
             include_inactive: Whether to include inactive servers.
             tags: Filter servers by tags. If provided, only servers with at least one matching tag will be returned.
+            cursor: Cursor for pagination (encoded last created_at and id).
+            limit: Maximum number of servers to return. None for default, 0 for unlimited.
+            page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
+            per_page: Items per page for page-based pagination. Defaults to pagination_default_page_size.
+            user_email: Email of user for team-based access control. None for no access control.
+            team_id: Optional team ID to filter by specific team (requires user_email).
+            visibility: Optional visibility filter (private, team, public) (requires user_email).
 
         Returns:
-            A list of ServerRead objects.
+            If page is provided: Dict with {"data": [...], "pagination": {...}, "links": {...}}
+            If cursor is provided or neither: tuple of (list of ServerRead objects, next_cursor).
 
         Examples:
             >>> from mcpgateway.services.server_service import ServerService
@@ -693,59 +714,128 @@ class ServerService:
             >>> service = ServerService()
             >>> db = MagicMock()
             >>> server_read = MagicMock()
-            >>> service._convert_server_to_read = MagicMock(return_value=server_read)
+            >>> service.convert_server_to_read = MagicMock(return_value=server_read)
             >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
             >>> import asyncio
-            >>> result = asyncio.run(service.list_servers(db))
-            >>> isinstance(result, list)
+            >>> servers, cursor = asyncio.run(service.list_servers(db))
+            >>> isinstance(servers, list) and cursor is None
             True
         """
-        # Check cache
+        # Check cache for first page only - skip when user_email provided or page-based pagination
         cache = _get_registry_cache()
-        filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
-        cached = await cache.get("servers", filters_hash)
-        if cached is not None:
-            # Reconstruct ServerRead objects from cached dicts
-            return [ServerRead.model_validate(s) for s in cached]
+        if cursor is None and user_email is None and page is None:
+            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
+            cached = await cache.get("servers", filters_hash)
+            if cached is not None:
+                # Reconstruct ServerRead objects from cached dicts
+                cached_servers = [ServerRead.model_validate(s) for s in cached["servers"]]
+                return (cached_servers, cached.get("next_cursor"))
 
-        query = select(DbServer)
+        # Build base query with ordering
+        query = select(DbServer).order_by(desc(DbServer.created_at), desc(DbServer.id))
+
+        # Apply active/inactive filter
         if not include_inactive:
             query = query.where(DbServer.enabled)
+
+        # Apply team-based access control if user_email is provided
+        if user_email:
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email)
+            team_ids = [team.id for team in user_teams]
+
+            if team_id:
+                # User requesting specific team - verify access
+                if team_id not in team_ids:
+                    return ([], None)
+                access_conditions = [
+                    and_(DbServer.team_id == team_id, DbServer.visibility.in_(["team", "public"])),
+                    and_(DbServer.team_id == team_id, DbServer.owner_email == user_email),
+                ]
+                query = query.where(or_(*access_conditions))
+            else:
+                # General access: user's servers + public servers + team servers
+                access_conditions = [
+                    DbServer.owner_email == user_email,
+                    DbServer.visibility == "public",
+                ]
+                if team_ids:
+                    access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
+                query = query.where(or_(*access_conditions))
+
+            if visibility:
+                query = query.where(DbServer.visibility == visibility)
 
         # Add tag filtering if tags are provided
         if tags:
             query = query.where(json_contains_expr(db, DbServer.tags, tags, match_any=True))
 
-        servers = db.execute(query).scalars().all()
+        # Use unified pagination helper - handles both page and cursor pagination
+        pag_result = await unified_paginate(
+            db=db,
+            query=query,
+            page=page,
+            per_page=per_page,
+            cursor=cursor,
+            limit=limit,
+            base_url="/admin/servers",  # Used for page-based links
+            query_params={"include_inactive": include_inactive} if include_inactive else {},
+        )
 
-        # Fetch all team names
-        team_ids = [s.team_id for s in servers if s.team_id]
+        next_cursor = None
+        # Extract servers based on pagination type
+        if page is not None:
+            # Page-based: pag_result is a dict
+            servers_db = pag_result["data"]
+        else:
+            # Cursor-based: pag_result is a tuple
+            servers_db, next_cursor = pag_result
+
+        # Fetch team names for the servers (common for both pagination types)
+        team_ids_set = {s.team_id for s in servers_db if s.team_id}
         team_map = {}
-        if team_ids:
-            teams = db.execute(select(DbEmailTeam.id, DbEmailTeam.name).where(DbEmailTeam.id.in_(team_ids), DbEmailTeam.is_active.is_(True))).all()
+        if team_ids_set:
+            teams = db.execute(select(DbEmailTeam.id, DbEmailTeam.name).where(DbEmailTeam.id.in_(team_ids_set), DbEmailTeam.is_active.is_(True))).all()
             team_map = {team.id: team.name for team in teams}
 
         db.commit()  # Release transaction to avoid idle-in-transaction
 
-        # Skip metrics to avoid N+1 queries in list operations
+        # Convert to ServerRead (common for both pagination types)
         result = []
-        for s in servers:
+        for s in servers_db:
             s.team = team_map.get(s.team_id) if s.team_id else None
-            result.append(self._convert_server_to_read(s, include_metrics=False))
+            result.append(self.convert_server_to_read(s, include_metrics=False))
 
-        # Cache results
-        try:
-            cache_data = [s.model_dump(mode="json") for s in result]
-            await cache.set("servers", cache_data, filters_hash)
-        except AttributeError:
-            pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)
+        # Return appropriate format based on pagination type
+        if page is not None:
+            # Page-based format
+            return {
+                "data": result,
+                "pagination": pag_result["pagination"],
+                "links": pag_result["links"],
+            }
 
-        return result
+        # Cursor-based format
+
+        # Cache first page results - only for non-user-specific queries
+        if cursor is None and user_email is None:
+            try:
+                cache_data = {"servers": [s.model_dump(mode="json") for s in result], "next_cursor": next_cursor}
+                await cache.set("servers", cache_data, filters_hash)
+            except AttributeError:
+                pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)
+
+        return (result, next_cursor)
 
     async def list_servers_for_user(
         self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
     ) -> List[ServerRead]:
         """
+        DEPRECATED: Use list_servers() with user_email parameter instead.
+
+        This method is maintained for backward compatibility but is no longer used.
+        New code should call list_servers() with user_email, team_id, and visibility parameters.
+
         List servers user has access to with team filtering.
 
         Args:
@@ -821,7 +911,7 @@ class ServerService:
         result = []
         for s in servers:
             s.team = team_map.get(s.team_id) if s.team_id else None
-            result.append(self._convert_server_to_read(s, include_metrics=False))
+            result.append(self.convert_server_to_read(s, include_metrics=False))
         return result
 
     async def get_server(self, db: Session, server_id: str) -> ServerRead:
@@ -844,7 +934,7 @@ class ServerService:
             >>> db = MagicMock()
             >>> server = MagicMock()
             >>> db.get.return_value = server
-            >>> service._convert_server_to_read = MagicMock(return_value='server_read')
+            >>> service.convert_server_to_read = MagicMock(return_value='server_read')
             >>> import asyncio
             >>> asyncio.run(service.get_server(db, 'server_id'))
             'server_read'
@@ -866,7 +956,7 @@ class ServerService:
         }
         logger.debug(f"Server Data: {server_data}")
         server.team = self._get_team_name(db, server.team_id) if server else None
-        server_read = self._convert_server_to_read(server)
+        server_read = self.convert_server_to_read(server)
 
         self._structured_logger.log(
             level="INFO",
@@ -949,7 +1039,7 @@ class ServerService:
             >>> db.commit = MagicMock()
             >>> db.refresh = MagicMock()
             >>> db.execute.return_value.scalar_one_or_none.return_value = None
-            >>> service._convert_server_to_read = MagicMock(return_value='server_read')
+            >>> service.convert_server_to_read = MagicMock(return_value='server_read')
             >>> service._structured_logger = MagicMock()  # Mock structured logger to prevent database writes
             >>> service._audit_trail = MagicMock()  # Mock audit trail to prevent database writes
             >>> ServerRead.model_validate = MagicMock(return_value='server_read')
@@ -1158,7 +1248,7 @@ class ServerService:
                 "associated_prompts": [prompt.id for prompt in server.prompts],
             }
             logger.debug(f"Server Data: {server_data}")
-            return self._convert_server_to_read(server)
+            return self.convert_server_to_read(server)
         except IntegrityError as ie:
             db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
@@ -1237,7 +1327,7 @@ class ServerService:
             >>> db.refresh = MagicMock()
             >>> service._notify_server_activated = AsyncMock()
             >>> service._notify_server_deactivated = AsyncMock()
-            >>> service._convert_server_to_read = MagicMock(return_value='server_read')
+            >>> service.convert_server_to_read = MagicMock(return_value='server_read')
             >>> service._structured_logger = MagicMock()  # Mock structured logger to prevent database writes
             >>> service._audit_trail = MagicMock()  # Mock audit trail to prevent database writes
             >>> ServerRead.model_validate = MagicMock(return_value='server_read')
@@ -1313,7 +1403,7 @@ class ServerService:
                 "associated_prompts": [prompt.id for prompt in server.prompts],
             }
             logger.info(f"Server Data: {server_data}")
-            return self._convert_server_to_read(server)
+            return self.convert_server_to_read(server)
         except PermissionError as e:
             # Structured logging: Log permission error
             self._structured_logger.log(

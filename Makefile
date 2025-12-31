@@ -760,7 +760,7 @@ generate-report:                           ## Display most recent load test repo
 # =============================================================================
 # help: 🔥 HTTP LOAD TESTING (Locust)
 # help: load-test             - Run HTTP load test (50 users, 60s, headless)
-# help: load-test-ui          - Start Locust web UI at http://localhost:8089
+# help: load-test-ui          - Start Locust web UI (distributed, auto-detect CPUs)
 # help: load-test-light       - Light load test (10 users, 30s)
 # help: load-test-heavy       - Heavy load test (200 users, 120s)
 # help: load-test-sustained   - Sustained load test (25 users, 300s)
@@ -809,11 +809,12 @@ load-test:                                 ## Run HTTP load test (50 users, 60s,
 	@echo "📊 CSV Reports: $(LOADTEST_CSV_PREFIX)_*.csv"
 
 load-test-ui:                              ## Start Locust web UI at http://localhost:8089
-	@echo "🔥 Starting Locust Web UI..."
+	@echo "🔥 Starting Locust Web UI (distributed, auto-detect CPUs)..."
 	@echo "   🌐 Open http://localhost:8089 in your browser"
 	@echo "   🎯 Default host: $(LOADTEST_HOST)"
 	@echo "   👥 Default users: $(LOADTEST_USERS), spawn rate: $(LOADTEST_SPAWN_RATE)/s"
 	@echo "   ⏱️  Default run time: $(LOADTEST_RUN_TIME)"
+	@echo "   🚀 Workers: auto-detect (1 per CPU core)"
 	@echo ""
 	@echo "   💡 Use 'User classes' dropdown to select FastTimeUser, etc."
 	@echo "   💡 Start server first with 'make dev' or 'docker compose up'"
@@ -825,6 +826,7 @@ load-test-ui:                              ## Start Locust web UI at http://loca
 			--users=$(LOADTEST_USERS) \
 			--spawn-rate=$(LOADTEST_SPAWN_RATE) \
 			--run-time=$(LOADTEST_RUN_TIME) \
+			--processes=-1 \
 			--class-picker"
 
 load-test-light:                           ## Light load test (10 users, 30s)

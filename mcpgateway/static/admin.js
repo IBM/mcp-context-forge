@@ -10409,13 +10409,11 @@ async function loadTools() {
             if (!response.ok) {
                 throw new Error("Failed to load tools");
             }
-            let tools = await response.json(); // 👈 expect JSON array
+            let tools = await response.json();
             if ("data" in tools) {
                 tools = tools.data;
             }
             console.log("Fetched tools:", tools);
-
-            //   document.getElementById("temp_lable").innerText = `Loaded ${tools.length} tools`;
 
             if (!tools.length) {
                 toolBody.innerHTML = `
@@ -10424,7 +10422,6 @@ async function loadTools() {
                 return;
             }
 
-            // ✅ Build HTML rows dynamically
             const rows = tools
                 .map((tool) => {
                     const { id, name, integrationType, enabled, reachable } =
@@ -18555,7 +18552,7 @@ function refreshCurrentTabData() {
                 window.loadCatalog();
             }
         } else if (href === "#tools") {
-            // Refresh tools
+            // Refresh tools (for tool-ops-panel when toolops_enabled=true)
             if (typeof window.loadTools === "function") {
                 window.loadTools();
             }
@@ -21513,7 +21510,11 @@ async function loadVirtualServersForChat() {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
-        const data = await response.json();
+        let data = await response.json();
+        // Handle new paginated response format
+        if ("data" in data) {
+            data = data.data;
+        }
         const servers = Array.isArray(data) ? data : data.servers || [];
 
         if (servers.length === 0) {
