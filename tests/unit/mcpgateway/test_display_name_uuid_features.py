@@ -654,7 +654,7 @@ class TestServiceIntegration:
 
     async def test_tool_service_display_name_in_response(self, db_session, tool_service):
         """Test that tool service includes displayName in response."""
-        # Mock the _convert_tool_to_read method behavior
+        # Mock the convert_tool_to_read method behavior
         db_tool = DbTool(
             id="test-tool-id",
             original_name="service_test_tool",

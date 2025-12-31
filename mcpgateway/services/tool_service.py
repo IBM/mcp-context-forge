@@ -81,6 +81,7 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 from mcpgateway.utils.validate_signature import validate_signature
+from mcpgateway.utils.pagination import unified_paginate
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -382,7 +383,7 @@ class ToolService:
         db.commit()  # Release transaction to avoid idle-in-transaction
         return team.name if team else None
 
-    def _convert_tool_to_read(self, tool: DbTool, include_metrics: bool = False) -> ToolRead:
+    def convert_tool_to_read(self, tool: DbTool, include_metrics: bool = False) -> ToolRead:
         """Converts a DbTool instance into a ToolRead model, including aggregated metrics and
         new API gateway fields: request_type and authentication credentials (masked).
 
@@ -731,7 +732,7 @@ class ToolService:
             ...     obj.gateway = mock_gateway
             >>> db.refresh = MagicMock(side_effect=mock_refresh)
             >>> service._notify_tool_added = AsyncMock()
-            >>> service._convert_tool_to_read = MagicMock(return_value='tool_read')
+            >>> service.convert_tool_to_read = MagicMock(return_value='tool_read')
             >>> ToolRead.model_validate = MagicMock(return_value='tool_read')
             >>> import asyncio
             >>> asyncio.run(service.register_tool(db, tool))
@@ -869,7 +870,7 @@ class ToolService:
 
             await admin_stats_cache.invalidate_tags()
 
-            return self._convert_tool_to_read(db_tool)
+            return self.convert_tool_to_read(db_tool)
         except IntegrityError as ie:
             db.rollback()
             logger.error(f"IntegrityError during tool registration: {ie}")
@@ -1393,7 +1394,7 @@ class ToolService:
             >>> service = ToolService()
             >>> db = MagicMock()
             >>> tool_read = MagicMock()
-            >>> service._convert_tool_to_read = MagicMock(return_value=tool_read)
+            >>> service.convert_tool_to_read = MagicMock(return_value=tool_read)
             >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
             >>> import asyncio
             >>> tools, next_cursor = asyncio.run(service.list_tools(db))
@@ -1419,9 +1420,6 @@ class ToolService:
             query = query.where(DbTool.enabled)
         # Apply team-based access control if user_email is provided
         if user_email:
-            # First-Party
-            from mcpgateway.services.team_management_service import TeamManagementService
-
             team_service = TeamManagementService(db)
             user_teams = await team_service.get_user_teams(user_email)
             team_ids = [team.id for team in user_teams]
@@ -1452,9 +1450,6 @@ class ToolService:
             query = query.where(json_contains_expr(db, DbTool.tags, tags, match_any=True))
 
         # Use unified pagination helper - handles both page and cursor pagination
-        # First-Party
-        from mcpgateway.utils.pagination import unified_paginate
-
         pag_result = await unified_paginate(
             db=db,
             query=query,
@@ -1466,6 +1461,7 @@ class ToolService:
             query_params={"include_inactive": include_inactive} if include_inactive else {},
         )
 
+        next_cursor = None
         # Extract servers based on pagination type
         if page is not None:
             # Page-based: pag_result is a dict
@@ -1487,7 +1483,7 @@ class ToolService:
         result = []
         for s in tools_db:
             s.team = team_map.get(s.team_id) if s.team_id else None
-            result.append(self._convert_tool_to_read(s, include_metrics=False))
+            result.append(self.convert_tool_to_read(s, include_metrics=False))
 
         # Return appropriate format based on pagination type
         if page is not None:
@@ -1537,7 +1533,7 @@ class ToolService:
             >>> service = ToolService()
             >>> db = MagicMock()
             >>> tool_read = MagicMock()
-            >>> service._convert_tool_to_read = MagicMock(return_value=tool_read)
+            >>> service.convert_tool_to_read = MagicMock(return_value=tool_read)
             >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
             >>> import asyncio
             >>> result = asyncio.run(service.list_server_tools(db, 'server1'))
@@ -1577,7 +1573,7 @@ class ToolService:
             tool = row[0]
             team_name = row.team_name
             tool.team = team_name
-            result.append(self._convert_tool_to_read(tool, include_metrics=include_metrics))
+            result.append(self.convert_tool_to_read(tool, include_metrics=include_metrics))
 
         return result
 
@@ -1710,7 +1706,7 @@ class ToolService:
             team_name = row.team_name
             tool.team = team_name
             tools.append(tool)
-            result.append(self._convert_tool_to_read(tool, include_metrics=False))
+            result.append(self.convert_tool_to_read(tool, include_metrics=False))
 
         next_cursor = None
         # Generate cursor if there are more results (cursor-based pagination)
@@ -1741,7 +1737,7 @@ class ToolService:
             >>> db = MagicMock()
             >>> tool = MagicMock()
             >>> db.get.return_value = tool
-            >>> service._convert_tool_to_read = MagicMock(return_value='tool_read')
+            >>> service.convert_tool_to_read = MagicMock(return_value='tool_read')
             >>> import asyncio
             >>> asyncio.run(service.get_tool(db, 'tool_id'))
             'tool_read'
@@ -1751,7 +1747,7 @@ class ToolService:
             raise ToolNotFoundError(f"Tool not found: {tool_id}")
         tool.team = self._get_team_name(db, getattr(tool, "team_id", None))
 
-        tool_read = self._convert_tool_to_read(tool)
+        tool_read = self.convert_tool_to_read(tool)
 
         structured_logger.log(
             level="INFO",
@@ -1937,7 +1933,7 @@ class ToolService:
             >>> db.refresh = MagicMock()
             >>> service._notify_tool_activated = AsyncMock()
             >>> service._notify_tool_deactivated = AsyncMock()
-            >>> service._convert_tool_to_read = MagicMock(return_value='tool_read')
+            >>> service.convert_tool_to_read = MagicMock(return_value='tool_read')
             >>> ToolRead.model_validate = MagicMock(return_value='tool_read')
             >>> import asyncio
             >>> asyncio.run(service.toggle_tool_status(db, 'tool_id', True, True))
@@ -2025,7 +2021,7 @@ class ToolService:
                     db=db,
                 )
 
-            return self._convert_tool_to_read(tool)
+            return self.convert_tool_to_read(tool)
         except PermissionError as e:
             # Structured logging: Log permission error
             structured_logger.log(
@@ -2726,7 +2722,7 @@ class ToolService:
             >>> db.refresh = MagicMock()
             >>> db.execute.return_value.scalar_one_or_none.return_value = None
             >>> service._notify_tool_updated = AsyncMock()
-            >>> service._convert_tool_to_read = MagicMock(return_value='tool_read')
+            >>> service.convert_tool_to_read = MagicMock(return_value='tool_read')
             >>> ToolRead.model_validate = MagicMock(return_value='tool_read')
             >>> import asyncio
             >>> asyncio.run(service.update_tool(db, 'tool_id', MagicMock()))
@@ -2883,7 +2879,7 @@ class ToolService:
 
             await admin_stats_cache.invalidate_tags()
 
-            return self._convert_tool_to_read(tool)
+            return self.convert_tool_to_read(tool)
         except PermissionError as pe:
             db.rollback()
 
@@ -3253,7 +3249,7 @@ class ToolService:
 
         if existing_tool:
             # Tool already exists, return it
-            return self._convert_tool_to_read(existing_tool)
+            return self.convert_tool_to_read(existing_tool)
 
         # Create tool entry for the A2A agent
         logger.debug(f"agent.tags: {agent.tags} for agent: {agent.name} (ID: {agent.id})")

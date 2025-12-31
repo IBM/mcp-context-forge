@@ -63,6 +63,7 @@ from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 from mcpgateway.utils.validate_signature import validate_signature
+from mcpgateway.utils.pagination import unified_paginate
 
 # Plugin support imports (conditional)
 try:
@@ -243,7 +244,7 @@ class ResourceService:
 
         return top_performers
 
-    def _convert_resource_to_read(self, resource: DbResource, include_metrics: bool = False) -> ResourceRead:
+    def convert_resource_to_read(self, resource: DbResource, include_metrics: bool = False) -> ResourceRead:
         """
         Converts a DbResource instance into a ResourceRead model, optionally including aggregated metrics.
 
@@ -267,7 +268,7 @@ class ResourceService:
             ...     id="ca627760127d409080fdefc309147e08", uri='res://x', name='R', description=None, mime_type='text/plain', size=123,
             ...     created_at=now, updated_at=now, enabled=True, tags=[{"id": "t", "label": "T"}], metrics=[m1, m2]
             ... )
-            >>> out = svc._convert_resource_to_read(r, include_metrics=True)
+            >>> out = svc.convert_resource_to_read(r, include_metrics=True)
             >>> out.metrics.total_executions
             2
             >>> out.metrics.successful_executions
@@ -390,7 +391,7 @@ class ResourceService:
             >>> db.commit = MagicMock()
             >>> db.refresh = MagicMock()
             >>> service._notify_resource_added = AsyncMock()
-            >>> service._convert_resource_to_read = MagicMock(return_value='resource_read')
+            >>> service.convert_resource_to_read = MagicMock(return_value='resource_read')
             >>> ResourceRead.model_validate = MagicMock(return_value='resource_read')
             >>> import asyncio
             >>> asyncio.run(service.register_resource(db, resource))
@@ -498,7 +499,7 @@ class ResourceService:
             )
 
             db_resource.team = self._get_team_name(db, db_resource.team_id)
-            return self._convert_resource_to_read(db_resource)
+            return self.convert_resource_to_read(db_resource)
         except IntegrityError as ie:
             logger.error(f"IntegrityErrors in group: {ie}")
 
@@ -852,7 +853,7 @@ class ResourceService:
             >>> service = ResourceService()
             >>> db = MagicMock()
             >>> resource_read = MagicMock()
-            >>> service._convert_resource_to_read = MagicMock(return_value=resource_read)
+            >>> service.convert_resource_to_read = MagicMock(return_value=resource_read)
             >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
             >>> import asyncio
             >>> resources, next_cursor = asyncio.run(service.list_resources(db))
@@ -923,9 +924,6 @@ class ResourceService:
             query = query.where(json_contains_expr(db, DbResource.tags, tags, match_any=True))
 
         # Use unified pagination helper - handles both page and cursor pagination
-        # First-Party
-        from mcpgateway.utils.pagination import unified_paginate
-
         pag_result = await unified_paginate(
             db=db,
             query=query,
@@ -937,6 +935,7 @@ class ResourceService:
             query_params={"include_inactive": include_inactive} if include_inactive else {},
         )
 
+        next_cursor = None
         # Extract servers based on pagination type
         if page is not None:
             # Page-based: pag_result is a dict
@@ -958,7 +957,7 @@ class ResourceService:
         result = []
         for s in resources_db:
             s.team = team_map.get(s.team_id) if s.team_id else None
-            result.append(self._convert_resource_to_read(s, include_metrics=False))
+            result.append(self.convert_resource_to_read(s, include_metrics=False))
         # Return appropriate format based on pagination type
         if page is not None:
             # Page-based format
@@ -1019,7 +1018,7 @@ class ResourceService:
             ...     team_id = None
             >>> fake_resource = FakeResource()
             >>> db.execute.return_value.scalars.return_value.all.return_value = [fake_resource]
-            >>> service._convert_resource_to_read = MagicMock(return_value="converted")
+            >>> service.convert_resource_to_read = MagicMock(return_value="converted")
             >>> asyncio.run(service.list_resources_for_user(db, "user@example.com"))
             ['converted']
 
@@ -1029,7 +1028,7 @@ class ResourceService:
             ...     team_id = None
             >>> fake_resource2 = FakeResource2()
             >>> db2.execute.return_value.scalars.return_value.all.return_value = [fake_resource2]
-            >>> service._convert_resource_to_read = MagicMock(return_value="converted2")
+            >>> service.convert_resource_to_read = MagicMock(return_value="converted2")
             >>> out2 = asyncio.run(service.list_resources_for_user(db2, "user@example.com"))
             >>> out2
             ['converted2']
@@ -1095,7 +1094,7 @@ class ResourceService:
         result = []
         for t in resources:
             t.team = team_map.get(str(t.team_id)) if t.team_id else None
-            result.append(self._convert_resource_to_read(t, include_metrics=False))
+            result.append(self.convert_resource_to_read(t, include_metrics=False))
         return result
 
     async def list_server_resources(self, db: Session, server_id: str, include_inactive: bool = False) -> List[ResourceRead]:
@@ -1122,7 +1121,7 @@ class ResourceService:
             >>> service = ResourceService()
             >>> db = MagicMock()
             >>> resource_read = MagicMock()
-            >>> service._convert_resource_to_read = MagicMock(return_value=resource_read)
+            >>> service.convert_resource_to_read = MagicMock(return_value=resource_read)
             >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
             >>> import asyncio
             >>> result = asyncio.run(service.list_server_resources(db, 'server1'))
@@ -1157,7 +1156,7 @@ class ResourceService:
         result = []
         for t in resources:
             t.team = team_map.get(str(t.team_id)) if t.team_id else None
-            result.append(self._convert_resource_to_read(t, include_metrics=False))
+            result.append(self.convert_resource_to_read(t, include_metrics=False))
         return result
 
     async def _record_resource_metric(self, db: Session, resource: DbResource, start_time: float, success: bool, error_message: Optional[str]) -> None:
@@ -1992,7 +1991,7 @@ class ResourceService:
             >>> db.refresh = MagicMock()
             >>> service._notify_resource_activated = AsyncMock()
             >>> service._notify_resource_deactivated = AsyncMock()
-            >>> service._convert_resource_to_read = MagicMock(return_value='resource_read')
+            >>> service.convert_resource_to_read = MagicMock(return_value='resource_read')
             >>> ResourceRead.model_validate = MagicMock(return_value='resource_read')
             >>> import asyncio
             >>> asyncio.run(service.toggle_resource_status(db, 1, True))
@@ -2066,7 +2065,7 @@ class ResourceService:
                 )
 
             resource.team = self._get_team_name(db, resource.team_id)
-            return self._convert_resource_to_read(resource)
+            return self.convert_resource_to_read(resource)
         except PermissionError as e:
             # Structured logging: Log permission error
             structured_logger.log(
@@ -2225,7 +2224,7 @@ class ResourceService:
             >>> db.commit = MagicMock()
             >>> db.refresh = MagicMock()
             >>> service._notify_resource_updated = AsyncMock()
-            >>> service._convert_resource_to_read = MagicMock(return_value='resource_read')
+            >>> service.convert_resource_to_read = MagicMock(return_value='resource_read')
             >>> ResourceRead.model_validate = MagicMock(return_value='resource_read')
             >>> import asyncio
             >>> asyncio.run(service.update_resource(db, 'resource_id', MagicMock()))
@@ -2375,7 +2374,7 @@ class ResourceService:
                 db=db,
             )
 
-            return self._convert_resource_to_read(resource)
+            return self.convert_resource_to_read(resource)
         except PermissionError as pe:
             db.rollback()
 
@@ -2645,7 +2644,7 @@ class ResourceService:
             >>> db = MagicMock()
             >>> resource = MagicMock()
             >>> db.execute.return_value.scalar_one_or_none.return_value = resource
-            >>> service._convert_resource_to_read = MagicMock(return_value='resource_read')
+            >>> service.convert_resource_to_read = MagicMock(return_value='resource_read')
             >>> import asyncio
             >>> asyncio.run(service.get_resource_by_id(db, "39334ce0ed2644d79ede8913a66930c9"))
             'resource_read'
@@ -2667,7 +2666,7 @@ class ResourceService:
 
             raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
-        resource_read = self._convert_resource_to_read(resource)
+        resource_read = self.convert_resource_to_read(resource)
 
         structured_logger.log(
             level="INFO",

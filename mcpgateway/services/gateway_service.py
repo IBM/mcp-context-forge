@@ -102,6 +102,7 @@ from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 from mcpgateway.utils.validate_signature import validate_signature
 from mcpgateway.validation.tags import validate_tags_field
+from mcpgateway.utils.pagination import unified_paginate
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -1295,9 +1296,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             query = query.where(DbGateway.enabled)
         # Apply team-based access control if user_email is provided
         if user_email:
-            # First-Party
-            from mcpgateway.services.team_management_service import TeamManagementService
-
             team_service = TeamManagementService(db)
             user_teams = await team_service.get_user_teams(user_email)
             team_ids = [team.id for team in user_teams]
@@ -1328,9 +1326,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         if tags:
             query = query.where(json_contains_expr(db, DbGateway.tags, tags, match_any=True))
         # Use unified pagination helper - handles both page and cursor pagination
-        # First-Party
-        from mcpgateway.utils.pagination import unified_paginate
-
         pag_result = await unified_paginate(
             db=db,
             query=query,
@@ -1342,6 +1337,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             query_params={"include_inactive": include_inactive} if include_inactive else {},
         )
 
+        next_cursor = None
         # Extract gateways based on pagination type
         if page is not None:
             # Page-based: pag_result is a dict
@@ -1363,7 +1359,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         result = []
         for s in gateways_db:
             s.team = team_map.get(s.team_id) if s.team_id else None
-            result.append(self._convert_gateway_to_read(s, include_metrics=False))
+            result.append(self.convert_gateway_to_read(s))
 
         # Return appropriate format based on pagination type
         if page is not None:
@@ -3668,7 +3664,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         }
         await self._publish_event(event)
 
-    def _convert_gateway_to_read(self, gateway: DbGateway, include_metrics: bool = False) -> GatewayRead:
+    def convert_gateway_to_read(self, gateway: DbGateway) -> GatewayRead:
         """Convert a DbGateway instance to a GatewayRead Pydantic model.
 
         Args:
@@ -3699,17 +3695,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         gateway_dict["version"] = getattr(gateway, "version", None)
         gateway_dict["team"] = getattr(gateway, "team", None)
 
-        # Metrics handling (future implementation if needed)
-        if include_metrics:
-            # TODO: Add metrics aggregation similar to server_service if needed
-            gateway_dict["metrics"] = None
-        else:
-            gateway_dict["metrics"] = None
-
         return GatewayRead.model_validate(gateway_dict)
 
     def _prepare_gateway_for_read(self, gateway: DbGateway) -> DbGateway:
-        """DEPRECATED: Use _convert_gateway_to_read instead.
+        """DEPRECATED: Use convert_gateway_to_read instead.
 
         Prepare a gateway object for GatewayRead validation.
 

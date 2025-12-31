@@ -256,7 +256,7 @@ class TestToolService:
         # password = "test_password"
         # mock_tool.auth_value = "FpZyxAu5PVpT0FN-gJ0JUmdovCMS0emkwW1Vb8HvkhjiBZhj1gDgDRF1wcWNrjTJSLtkz1rLzKibXrhk4GbxXnV6LV4lSw_JDYZ2sPNRy68j_UKOJnf_"
         # mock_tool.auth_value = encode_auth({"user": "test_user", "password": "test_password"})
-        tool_read = tool_service._convert_tool_to_read(mock_tool)
+        tool_read = tool_service.convert_tool_to_read(mock_tool)
 
         assert tool_read.auth.auth_type == "basic"
         assert tool_read.auth.username == "test_user"
@@ -270,7 +270,7 @@ class TestToolService:
         # Create auth_value with the following values
         # bearer token ABC123
         mock_tool.auth_value = encode_auth({"Authorization": "Bearer ABC123"})
-        tool_read = tool_service._convert_tool_to_read(mock_tool)
+        tool_read = tool_service.convert_tool_to_read(mock_tool)
 
         assert tool_read.auth.auth_type == "bearer"
         assert tool_read.auth.token == "********"
@@ -284,7 +284,7 @@ class TestToolService:
         # {"test-api-key": "test-api-value"}
         # mock_tool.auth_value = "8pvPTCegaDhrx0bmBf488YvGg9oSo4cJJX68WCTvxjMY-C2yko_QSPGVggjjNt59TPvlGLsotTZvAiewPRQ"
         mock_tool.auth_value = encode_auth({"test-api-key": "test-api-value"})
-        tool_read = tool_service._convert_tool_to_read(mock_tool)
+        tool_read = tool_service.convert_tool_to_read(mock_tool)
 
         assert tool_read.auth.auth_type == "authheaders"
         assert tool_read.auth.auth_header_key == "test-api-key"
@@ -303,7 +303,7 @@ class TestToolService:
 
         # Set up tool service methods
         tool_service._notify_tool_added = AsyncMock()
-        tool_service._convert_tool_to_read = Mock(
+        tool_service.convert_tool_to_read = Mock(
             return_value=ToolRead(
                 id="1",
                 original_name="test_tool",
@@ -583,7 +583,7 @@ class TestToolService:
                 "last_execution_time": None,
             },
         )
-        tool_service._convert_tool_to_read = Mock(return_value=tool_read)
+        tool_service.convert_tool_to_read = Mock(return_value=tool_read)
 
         # Mock DB to return a tuple of (tool, team_name) from LEFT JOIN
         mock_row = MagicMock()
@@ -601,7 +601,7 @@ class TestToolService:
         assert len(result) == 1
         assert result[0] == tool_read
         assert next_cursor is None  # No pagination needed for single result
-        tool_service._convert_tool_to_read.assert_called_once_with(mock_tool, include_metrics=False)
+        tool_service.convert_tool_to_read.assert_called_once_with(mock_tool, include_metrics=False)
 
     @pytest.mark.asyncio
     async def test_list_tools_pagination(self, tool_service, test_db, monkeypatch):
@@ -624,7 +624,7 @@ class TestToolService:
         mock_team = MagicMock(id="team-1", is_personal=True)
         with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[mock_team])
-            tool_service._convert_tool_to_read = Mock(side_effect=[MagicMock(), MagicMock()])
+            tool_service.convert_tool_to_read = Mock(side_effect=[MagicMock(), MagicMock()])
 
             result, next_cursor = await tool_service.list_tools(test_db, user_email="user@example.com", team_id="team-1")
 
@@ -661,7 +661,7 @@ class TestToolService:
             rows.append(row)
 
         test_db.execute = Mock(return_value=MagicMock(all=Mock(return_value=rows[:101])))  # 100 + 1 for has_more check
-        tool_service._convert_tool_to_read = Mock(side_effect=lambda t, **kw: MagicMock())
+        tool_service.convert_tool_to_read = Mock(side_effect=lambda t, **kw: MagicMock())
 
         result, next_cursor = await tool_service.list_tools(test_db, limit=100)
 
@@ -682,7 +682,7 @@ class TestToolService:
             rows.append(row)
 
         test_db.execute = Mock(return_value=MagicMock(all=Mock(return_value=rows)))
-        tool_service._convert_tool_to_read = Mock(side_effect=lambda t, **kw: MagicMock())
+        tool_service.convert_tool_to_read = Mock(side_effect=lambda t, **kw: MagicMock())
 
         result, next_cursor = await tool_service.list_tools(test_db, limit=0)
 
@@ -734,7 +734,7 @@ class TestToolService:
             customName="test_tool",
             customNameSlug="test-tool",
         )
-        tool_service._convert_tool_to_read = Mock(return_value=tool_read)
+        tool_service.convert_tool_to_read = Mock(return_value=tool_read)
 
         # Call method
         result, _ = await tool_service.list_tools(test_db, include_inactive=True)
@@ -745,7 +745,7 @@ class TestToolService:
         # Verify result
         assert len(result) == 1
         assert result[0] == tool_read
-        tool_service._convert_tool_to_read.assert_called_once_with(mock_tool, include_metrics=False)
+        tool_service.convert_tool_to_read.assert_called_once_with(mock_tool, include_metrics=False)
 
     @pytest.mark.asyncio
     async def test_list_server_tools_active_only(self):
@@ -758,12 +758,12 @@ class TestToolService:
         mock_db.execute.return_value.all.return_value = [mock_row]
 
         service = ToolService()
-        service._convert_tool_to_read = Mock(return_value="converted_tool")
+        service.convert_tool_to_read = Mock(return_value="converted_tool")
 
         tools = await service.list_server_tools(mock_db, server_id="server123", include_inactive=False)
 
         assert tools == ["converted_tool"]
-        service._convert_tool_to_read.assert_called_once_with(mock_tool, include_metrics=False)
+        service.convert_tool_to_read.assert_called_once_with(mock_tool, include_metrics=False)
 
     @pytest.mark.asyncio
     async def test_list_server_tools_include_inactive(self):
@@ -782,12 +782,12 @@ class TestToolService:
         mock_db.execute.return_value.all.return_value = [active_row, inactive_row]
 
         service = ToolService()
-        service._convert_tool_to_read = Mock(side_effect=["active_converted", "inactive_converted"])
+        service.convert_tool_to_read = Mock(side_effect=["active_converted", "inactive_converted"])
 
         tools = await service.list_server_tools(mock_db, server_id="server123", include_inactive=True)
 
         assert tools == ["active_converted", "inactive_converted"]
-        assert service._convert_tool_to_read.call_count == 2
+        assert service.convert_tool_to_read.call_count == 2
 
     @pytest.mark.asyncio
     async def test_get_tool(self, tool_service, mock_tool, test_db):
@@ -829,7 +829,7 @@ class TestToolService:
             customName="test_tool",
             customNameSlug="test-tool",
         )
-        tool_service._convert_tool_to_read = Mock(return_value=tool_read)
+        tool_service.convert_tool_to_read = Mock(return_value=tool_read)
 
         # Call method
         result = await tool_service.get_tool(test_db, 1)
@@ -839,7 +839,7 @@ class TestToolService:
 
         # Verify result
         assert result == tool_read
-        tool_service._convert_tool_to_read.assert_called_once_with(mock_tool)
+        tool_service.convert_tool_to_read.assert_called_once_with(mock_tool)
 
     @pytest.mark.asyncio
     async def test_get_tool_not_found(self, tool_service, test_db):
@@ -948,7 +948,7 @@ class TestToolService:
                 "last_execution_time": None,
             },
         )
-        tool_service._convert_tool_to_read = Mock(return_value=tool_read)
+        tool_service.convert_tool_to_read = Mock(return_value=tool_read)
 
         # Deactivate the tool (it's active by default)
         result = await tool_service.toggle_tool_status(test_db, 1, activate=False, reachable=True)
@@ -1104,7 +1104,7 @@ class TestToolService:
                 "last_execution_time": None,
             },
         )
-        tool_service._convert_tool_to_read = Mock(return_value=tool_read)
+        tool_service.convert_tool_to_read = Mock(return_value=tool_read)
 
         # Deactivate the tool (it's active by default)
         result = await tool_service.toggle_tool_status(test_db, 1, activate=True, reachable=True)
@@ -1175,7 +1175,7 @@ class TestToolService:
                 "last_execution_time": None,
             },
         )
-        tool_service._convert_tool_to_read = Mock(return_value=tool_read)
+        tool_service.convert_tool_to_read = Mock(return_value=tool_read)
 
         # Create update request
         tool_update = ToolUpdate(

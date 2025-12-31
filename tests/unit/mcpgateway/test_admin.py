@@ -798,7 +798,7 @@ class TestAdminResourceRoutes:
     """Test admin routes for resource management with enhanced coverage."""
 
     @patch("mcpgateway.admin.paginate_query")
-    @patch("mcpgateway.admin.resource_service._convert_resource_to_read")
+    @patch("mcpgateway.admin.resource_service.convert_resource_to_read")
     async def test_admin_list_resources_with_complex_data(self, mock_convert, mock_paginate_query, mock_db):
         """Test listing resources with complex data structures."""
         from mcpgateway.schemas import PaginationMeta, ResourceRead, ResourceMetrics

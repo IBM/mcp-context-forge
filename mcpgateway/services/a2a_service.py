@@ -35,6 +35,7 @@ from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.services_auth import encode_auth  # ,decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
+from mcpgateway.utils.pagination import unified_paginate
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -460,9 +461,6 @@ class A2AAgentService:
             query = query.where(DbA2AAgent.enabled)
         # Apply team-based access control if user_email is provided
         if user_email:
-            # First-Party
-            from mcpgateway.services.team_management_service import TeamManagementService
-
             team_service = TeamManagementService(db)
             user_teams = await team_service.get_user_teams(user_email)
             team_ids = [team.id for team in user_teams]
@@ -494,9 +492,6 @@ class A2AAgentService:
             query = query.where(json_contains_expr(db, DbA2AAgent.tags, tags, match_any=True))
 
         # Use unified pagination helper - handles both page and cursor pagination
-        # First-Party
-        from mcpgateway.utils.pagination import unified_paginate
-
         pag_result = await unified_paginate(
             db=db,
             query=query,
@@ -508,6 +503,7 @@ class A2AAgentService:
             query_params={"include_inactive": include_inactive} if include_inactive else {},
         )
 
+        next_cursor = None
         # Extract servers based on pagination type
         if page is not None:
             # Page-based: pag_result is a dict

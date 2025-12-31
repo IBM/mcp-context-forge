@@ -41,6 +41,7 @@ from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
+from mcpgateway.utils.pagination import unified_paginate
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -220,7 +221,7 @@ class ServerService:
 
         return top_performers
 
-    def _convert_server_to_read(self, server: DbServer, include_metrics: bool = False) -> ServerRead:
+    def convert_server_to_read(self, server: DbServer, include_metrics: bool = False) -> ServerRead:
         """
         Converts a DbServer instance into a ServerRead model, optionally including aggregated metrics.
 
@@ -247,7 +248,7 @@ class ServerService:
             ...     tags=[], metrics=[m1, m2],
             ...     tools=[], resources=[], prompts=[], a2a_agents=[]
             ... )
-            >>> result = svc._convert_server_to_read(server, include_metrics=True)
+            >>> result = svc.convert_server_to_read(server, include_metrics=True)
             >>> result.metrics.total_executions
             2
             >>> result.metrics.successful_executions
@@ -443,7 +444,7 @@ class ServerService:
             >>> db.commit = MagicMock()
             >>> db.refresh = MagicMock()
             >>> service._notify_server_added = AsyncMock()
-            >>> service._convert_server_to_read = MagicMock(return_value='server_read')
+            >>> service.convert_server_to_read = MagicMock(return_value='server_read')
             >>> service._structured_logger = MagicMock()  # Mock structured logger to prevent database writes
             >>> service._audit_trail = MagicMock()  # Mock audit trail to prevent database writes
             >>> ServerRead.model_validate = MagicMock(return_value='server_read')
@@ -626,7 +627,7 @@ class ServerService:
             )
 
             db_server.team = self._get_team_name(db, db_server.team_id)
-            return self._convert_server_to_read(db_server)
+            return self.convert_server_to_read(db_server)
         except IntegrityError as ie:
             db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
@@ -713,7 +714,7 @@ class ServerService:
             >>> service = ServerService()
             >>> db = MagicMock()
             >>> server_read = MagicMock()
-            >>> service._convert_server_to_read = MagicMock(return_value=server_read)
+            >>> service.convert_server_to_read = MagicMock(return_value=server_read)
             >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
             >>> import asyncio
             >>> servers, cursor = asyncio.run(service.list_servers(db))
@@ -739,9 +740,6 @@ class ServerService:
 
         # Apply team-based access control if user_email is provided
         if user_email:
-            # First-Party
-            from mcpgateway.services.team_management_service import TeamManagementService
-
             team_service = TeamManagementService(db)
             user_teams = await team_service.get_user_teams(user_email)
             team_ids = [team.id for team in user_teams]
@@ -773,9 +771,6 @@ class ServerService:
             query = query.where(json_contains_expr(db, DbServer.tags, tags, match_any=True))
 
         # Use unified pagination helper - handles both page and cursor pagination
-        # First-Party
-        from mcpgateway.utils.pagination import unified_paginate
-
         pag_result = await unified_paginate(
             db=db,
             query=query,
@@ -787,6 +782,7 @@ class ServerService:
             query_params={"include_inactive": include_inactive} if include_inactive else {},
         )
 
+        next_cursor = None
         # Extract servers based on pagination type
         if page is not None:
             # Page-based: pag_result is a dict
@@ -808,7 +804,7 @@ class ServerService:
         result = []
         for s in servers_db:
             s.team = team_map.get(s.team_id) if s.team_id else None
-            result.append(self._convert_server_to_read(s, include_metrics=False))
+            result.append(self.convert_server_to_read(s, include_metrics=False))
 
         # Return appropriate format based on pagination type
         if page is not None:
@@ -915,7 +911,7 @@ class ServerService:
         result = []
         for s in servers:
             s.team = team_map.get(s.team_id) if s.team_id else None
-            result.append(self._convert_server_to_read(s, include_metrics=False))
+            result.append(self.convert_server_to_read(s, include_metrics=False))
         return result
 
     async def get_server(self, db: Session, server_id: str) -> ServerRead:
@@ -938,7 +934,7 @@ class ServerService:
             >>> db = MagicMock()
             >>> server = MagicMock()
             >>> db.get.return_value = server
-            >>> service._convert_server_to_read = MagicMock(return_value='server_read')
+            >>> service.convert_server_to_read = MagicMock(return_value='server_read')
             >>> import asyncio
             >>> asyncio.run(service.get_server(db, 'server_id'))
             'server_read'
@@ -960,7 +956,7 @@ class ServerService:
         }
         logger.debug(f"Server Data: {server_data}")
         server.team = self._get_team_name(db, server.team_id) if server else None
-        server_read = self._convert_server_to_read(server)
+        server_read = self.convert_server_to_read(server)
 
         self._structured_logger.log(
             level="INFO",
@@ -1043,7 +1039,7 @@ class ServerService:
             >>> db.commit = MagicMock()
             >>> db.refresh = MagicMock()
             >>> db.execute.return_value.scalar_one_or_none.return_value = None
-            >>> service._convert_server_to_read = MagicMock(return_value='server_read')
+            >>> service.convert_server_to_read = MagicMock(return_value='server_read')
             >>> service._structured_logger = MagicMock()  # Mock structured logger to prevent database writes
             >>> service._audit_trail = MagicMock()  # Mock audit trail to prevent database writes
             >>> ServerRead.model_validate = MagicMock(return_value='server_read')
@@ -1252,7 +1248,7 @@ class ServerService:
                 "associated_prompts": [prompt.id for prompt in server.prompts],
             }
             logger.debug(f"Server Data: {server_data}")
-            return self._convert_server_to_read(server)
+            return self.convert_server_to_read(server)
         except IntegrityError as ie:
             db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
@@ -1331,7 +1327,7 @@ class ServerService:
             >>> db.refresh = MagicMock()
             >>> service._notify_server_activated = AsyncMock()
             >>> service._notify_server_deactivated = AsyncMock()
-            >>> service._convert_server_to_read = MagicMock(return_value='server_read')
+            >>> service.convert_server_to_read = MagicMock(return_value='server_read')
             >>> service._structured_logger = MagicMock()  # Mock structured logger to prevent database writes
             >>> service._audit_trail = MagicMock()  # Mock audit trail to prevent database writes
             >>> ServerRead.model_validate = MagicMock(return_value='server_read')
@@ -1407,7 +1403,7 @@ class ServerService:
                 "associated_prompts": [prompt.id for prompt in server.prompts],
             }
             logger.info(f"Server Data: {server_data}")
-            return self._convert_server_to_read(server)
+            return self.convert_server_to_read(server)
         except PermissionError as e:
             # Structured logging: Log permission error
             self._structured_logger.log(

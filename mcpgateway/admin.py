@@ -1087,6 +1087,7 @@ async def admin_list_servers(
     paginated_result = await server_service.list_servers(
         db=db,
         include_inactive=include_inactive,
+        cursor=cursor,
         page=page,
         per_page=per_page,
         user_email=user_email,
@@ -2047,6 +2048,7 @@ async def admin_list_prompts(
     paginated_result = await prompt_service.list_prompts(
         db=db,
         include_inactive=include_inactive,
+        cursor=cursor,
         page=page,
         per_page=per_page,
         user_email=user_email,
@@ -2140,6 +2142,7 @@ async def admin_list_gateways(
     paginated_result = await gateway_service.list_gateways(
         db=db,
         include_inactive=include_inactive,
+        cursor=cursor,
         page=page,
         per_page=per_page,
         user_email=user_email,
@@ -5823,7 +5826,7 @@ async def admin_tools_partial_html(
 
     # Batch convert to Pydantic models using tool service
     # This eliminates the N+1 query problem from calling get_tool() in a loop
-    tools_pydantic = [tool_service._convert_tool_to_read(t, include_metrics=False) for t in tools_db]
+    tools_pydantic = [tool_service.convert_tool_to_read(t, include_metrics=False) for t in tools_db]
 
     # Serialize tools
     data = jsonable_encoder(tools_pydantic)
@@ -6139,7 +6142,7 @@ async def admin_prompts_partial_html(
 
     # Batch convert to Pydantic models using prompt service
     # This eliminates the N+1 query problem from calling get_prompt_details() in a loop
-    prompts_pydantic = [prompt_service._convert_prompt_to_read(p, include_metrics=False) for p in prompts_db]
+    prompts_pydantic = [prompt_service.convert_prompt_to_read(p, include_metrics=False) for p in prompts_db]
 
     data = jsonable_encoder(prompts_pydantic)
     base_url = f"{settings.app_root_path}/admin/prompts/partial"
@@ -6290,7 +6293,7 @@ async def admin_resources_partial_html(
     links = paginated_result["links"]
 
     # Batch convert to Pydantic models using resource service
-    resources_pydantic = [resource_service._convert_resource_to_read(r, include_metrics=False) for r in resources_db]
+    resources_pydantic = [resource_service.convert_resource_to_read(r, include_metrics=False) for r in resources_db]
 
     data = jsonable_encoder(resources_pydantic)
 
@@ -11488,7 +11491,6 @@ async def admin_list_a2a_agents(
     if a2a_service is None:
         LOGGER.warning("A2A features are disabled, returning empty paginated response")
         # First-Party
-        from mcpgateway.schemas import PaginationMeta
 
         return {
             "data": [],
@@ -11503,6 +11505,7 @@ async def admin_list_a2a_agents(
     paginated_result = await a2a_service.list_agents(
         db=db,
         include_inactive=include_inactive,
+        cursor=cursor,
         page=page,
         per_page=per_page,
         user_email=user_email,
