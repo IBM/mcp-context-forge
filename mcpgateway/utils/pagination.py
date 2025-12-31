@@ -529,6 +529,7 @@ async def paginate_query(
     base_url: str = "",
     query_params: Optional[Dict[str, Any]] = None,
     use_cursor_threshold: bool = True,
+    total_count: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Automatically paginate query using best strategy.
 
@@ -544,6 +545,7 @@ async def paginate_query(
         base_url: Base URL for link generation
         query_params: Additional query parameters
         use_cursor_threshold: Whether to auto-switch to cursor-based
+        total_count: Pre-computed total count (avoids duplicate count query)
 
     Returns:
         Dictionary with 'data', 'pagination', and 'links' keys
@@ -580,12 +582,17 @@ async def paginate_query(
             per_page=per_page,
             base_url=base_url,
             query_params=query_params,
+            total_count=total_count,
         )
 
     # Check if we should use cursor-based pagination based on total count
     if use_cursor_threshold and settings.pagination_cursor_enabled:
-        count_query = select(func.count()).select_from(query.alias())
-        total_items = db.execute(count_query).scalar() or 0
+        # Use pre-computed count if provided, otherwise query for it
+        if total_count is not None:
+            total_items = total_count
+        else:
+            count_query = select(func.count()).select_from(query.alias())
+            total_items = db.execute(count_query).scalar() or 0
 
         if total_items > settings.pagination_cursor_threshold:
             logger.info(f"Switching to cursor-based pagination (total_items={total_items} > threshold={settings.pagination_cursor_threshold})")
@@ -619,6 +626,7 @@ async def paginate_query(
         per_page=per_page,
         base_url=base_url,
         query_params=query_params,
+        total_count=total_count,
     )
 
 
@@ -657,27 +665,31 @@ async def unified_paginate(
             Otherwise: tuple of (list, next_cursor) for backward compatibility
 
     Examples:
-        >>> from sqlalchemy import select
-        >>> from mcpgateway.db import Server as DbServer
+        >>> import asyncio
+        >>> from unittest.mock import MagicMock
         >>>
-        >>> # Page-based pagination (for admin API)
-        >>> result = await unified_paginate(
-        ...     db=db,
-        ...     query=select(DbServer).order_by(DbServer.created_at.desc()),
-        ...     page=2,
-        ...     per_page=25,
-        ...     base_url="/admin/servers"
-        ... )
-        >>> # Returns: {"data": [...], "pagination": {...}, "links": {...}}
+        >>> # Test cursor-based pagination returns tuple format (list, next_cursor)
+        >>> async def test_cursor_based():
+        ...     mock_db = MagicMock()
+        ...     mock_query = MagicMock()
+        ...     mock_query.column_descriptions = []
+        ...     mock_query.limit = MagicMock(return_value=mock_query)
+        ...     mock_db.execute = MagicMock(return_value=MagicMock(
+        ...         scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+        ...     ))
+        ...     result = await unified_paginate(
+        ...         db=mock_db,
+        ...         query=mock_query,
+        ...         cursor=None,
+        ...         limit=50
+        ...     )
+        ...     return isinstance(result, tuple) and len(result) == 2
+        >>> asyncio.run(test_cursor_based())
+        True
         >>>
-        >>> # Cursor-based pagination (for main API)
-        >>> servers, next_cursor = await unified_paginate(
-        ...     db=db,
-        ...     query=select(DbServer).order_by(DbServer.created_at.desc()),
-        ...     cursor=None,
-        ...     limit=50
-        ... )
-        >>> # Returns: (list, cursor_string or None)
+        >>> # Verify return type difference: cursor mode returns tuple, page mode returns dict
+        >>> # Note: Page-based mode testing requires complex SQLAlchemy mocking,
+        >>> # see unit tests in tests/ for comprehensive page-based pagination tests
     """
 
     # Determine page size
