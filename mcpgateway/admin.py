@@ -6036,8 +6036,8 @@ async def admin_search_tools(
 @admin_router.get("/prompts/partial", response_class=HTMLResponse)
 async def admin_prompts_partial_html(
     request: Request,
-    page: int = Query(1, ge=1),
-    per_page: int = Query(50, ge=1),
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
