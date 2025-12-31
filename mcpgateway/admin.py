@@ -1058,24 +1058,20 @@ async def admin_list_servers(
         ... )
         >>>
         >>> # Mock paginate_query
-        >>> async def mock_paginate_query(*args, **kwargs):
-        ...     from mcpgateway.schemas import PaginationMeta
-        ...     db_server = MagicMock()
-        ...     db_server.team_id = None
+        >>> async def mock_list_servers(*args, **kwargs):
+        ...     from mcpgateway.schemas import PaginationMeta, PaginationLinks
         ...     return {
-        ...         "data": [db_server],
+        ...         "data": [mock_server],
         ...         "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False),
-        ...         "links": None
+        ...         "links": PaginationLinks(self="/admin/servers?page=1&per_page=50", first="/admin/servers?page=1&per_page=50", last="/admin/servers?page=1&per_page=50", next=None, prev=None)
         ...     }
         >>>
         >>> from unittest.mock import patch
         >>> # Test listing servers with pagination
         >>> async def test_admin_list_servers_paginated():
-        ...     with patch("mcpgateway.admin.paginate_query", new=mock_paginate_query):
-        ...         with patch("mcpgateway.admin.server_service._get_team_name", return_value=None):
-        ...             with patch("mcpgateway.admin.server_service._convert_server_to_read", return_value=mock_server):
-        ...                 result = await admin_list_servers(page=1, per_page=50, cursor=None, include_inactive=False, db=mock_db, user=mock_user)
-        ...                 return "data" in result and "pagination" in result
+        ...     with patch("mcpgateway.admin.server_service.list_servers", new=mock_list_servers):
+        ...         result = await admin_list_servers(page=1, per_page=50, cursor=None, include_inactive=False, db=mock_db, user=mock_user)
+        ...         return "data" in result and "pagination" in result
         >>>
         >>> asyncio.run(test_admin_list_servers_paginated())
         True
@@ -1926,19 +1922,19 @@ async def admin_list_resources(
         ...     tags=[]
         ... )
         >>>
-        >>> # Mock paginate_query
-        >>> async def mock_paginate_query(*args, **kwargs):
-        ...     from mcpgateway.schemas import PaginationMeta
+        >>> # Mock resource_service.list_resources
+        >>> async def mock_list_resources(*args, **kwargs):
+        ...     from mcpgateway.schemas import PaginationMeta, PaginationLinks
         ...     return {
         ...         "data": [mock_resource],
         ...         "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False),
-        ...         "links": None
+        ...         "links": PaginationLinks(self="/admin/resources?page=1&per_page=50", first="/admin/resources?page=1&per_page=50", last="/admin/resources?page=1&per_page=50", next=None, prev=None)
         ...     }
         >>>
         >>> from unittest.mock import patch
         >>> # Test listing resources with pagination
         >>> async def test_admin_list_resources_paginated():
-        ...     with patch("mcpgateway.admin.paginate_query", new=mock_paginate_query):
+        ...     with patch("mcpgateway.admin.resource_service.list_resources", new=mock_list_resources):
         ...         result = await admin_list_resources(page=1, per_page=50, cursor=None, include_inactive=False, db=mock_db, user=mock_user)
         ...         return "data" in result and "pagination" in result
         >>>
@@ -2022,19 +2018,19 @@ async def admin_list_prompts(
         ...     tags=[]
         ... )
         >>>
-        >>> # Mock paginate_query
-        >>> async def mock_paginate_query(*args, **kwargs):
-        ...     from mcpgateway.schemas import PaginationMeta
+        >>> # Mock prompt_service.list_prompts
+        >>> async def mock_list_prompts(*args, **kwargs):
+        ...     from mcpgateway.schemas import PaginationMeta, PaginationLinks
         ...     return {
         ...         "data": [mock_prompt],
         ...         "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False),
-        ...         "links": None
+        ...         "links": PaginationLinks(self="/admin/prompts?page=1&per_page=50", first="/admin/prompts?page=1&per_page=50", last="/admin/prompts?page=1&per_page=50", next=None, prev=None)
         ...     }
         >>>
         >>> from unittest.mock import patch
         >>> # Test listing active prompts with pagination
         >>> async def test_admin_list_prompts_paginated():
-        ...     with patch("mcpgateway.admin.paginate_query", new=mock_paginate_query):
+        ...     with patch("mcpgateway.admin.prompt_service.list_prompts", new=mock_list_prompts):
         ...         result = await admin_list_prompts(page=1, per_page=50, cursor=None, include_inactive=False, db=mock_db, user=mock_user)
         ...         return "data" in result and "pagination" in result
         >>>
@@ -2116,19 +2112,19 @@ async def admin_list_gateways(
         ...     slug="test-gateway"
         ... )
         >>>
-        >>> # Mock paginate_query
-        >>> async def mock_paginate_query(*args, **kwargs):
-        ...     from mcpgateway.schemas import PaginationMeta
+        >>> # Mock gateway_service.list_gateways
+        >>> async def mock_list_gateways(*args, **kwargs):
+        ...     from mcpgateway.schemas import PaginationMeta, PaginationLinks
         ...     return {
         ...         "data": [mock_gateway],
         ...         "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False),
-        ...         "links": None
+        ...         "links": PaginationLinks(self="/admin/gateways?page=1&per_page=50", first="/admin/gateways?page=1&per_page=50", last="/admin/gateways?page=1&per_page=50", next=None, prev=None)
         ...     }
         >>>
         >>> from unittest.mock import patch
         >>> # Test listing gateways with pagination
         >>> async def test_admin_list_gateways_paginated():
-        ...     with patch("mcpgateway.admin.paginate_query", new=mock_paginate_query):
+        ...     with patch("mcpgateway.admin.gateway_service.list_gateways", new=mock_list_gateways):
         ...         result = await admin_list_gateways(page=1, per_page=50, cursor=None, include_inactive=False, db=mock_db, user=mock_user)
         ...         return "data" in result and "pagination" in result
         >>>
@@ -11463,27 +11459,23 @@ async def admin_list_a2a_agents(
         ...     )
         ... )
         >>>
-        >>> # Mock paginate_query
-        >>> async def mock_paginate_query(*args, **kwargs):
-        ...     from mcpgateway.schemas import PaginationMeta
-        ...     db_agent = MagicMock()
-        ...     db_agent.team_id = None
+        >>> # Mock a2a_service.list_agents
+        >>> async def mock_list_agents(*args, **kwargs):
+        ...     from mcpgateway.schemas import PaginationMeta, PaginationLinks
         ...     return {
-        ...         "data": [db_agent],
+        ...         "data": [mock_agent],
         ...         "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False),
-        ...         "links": None
+        ...         "links": PaginationLinks(self="/admin/a2a?page=1&per_page=50", first="/admin/a2a?page=1&per_page=50", last="/admin/a2a?page=1&per_page=50", next=None, prev=None)
         ...     }
         >>>
         >>> from unittest.mock import patch
         >>> # Test listing A2A agents with pagination
         >>> async def test_admin_list_a2a_agents_paginated():
         ...     fake_service = MagicMock()
-        ...     fake_service._get_team_name = MagicMock(return_value=None)
-        ...     fake_service._convert_agent_to_read = MagicMock(return_value=mock_agent)
+        ...     fake_service.list_agents = mock_list_agents
         ...     with patch("mcpgateway.admin.a2a_service", new=fake_service):
-        ...         with patch("mcpgateway.admin.paginate_query", new=mock_paginate_query):
-        ...             result = await admin_list_a2a_agents(page=1, per_page=50, cursor=None, include_inactive=False, db=mock_db, user=mock_user)
-        ...             return "data" in result and "pagination" in result
+        ...         result = await admin_list_a2a_agents(page=1, per_page=50, cursor=None, include_inactive=False, db=mock_db, user=mock_user)
+        ...         return "data" in result and "pagination" in result
         >>>
         >>> asyncio.run(test_admin_list_a2a_agents_paginated())
         True

@@ -860,13 +860,12 @@ class PromptService:
             >>> from mcpgateway.schemas import PromptRead
             >>> service = PromptService()
             >>> db = MagicMock()
-            >>> prompt_dict = {'id': '1', 'name': 'test', 'description': 'desc', 'template': 'tpl', 'arguments': [], 'createdAt': '2023-01-01T00:00:00', 'updatedAt': '2023-01-01T00:00:00', 'isActive': True, 'metrics': {}}
-            >>> service.convert_prompt_to_read = MagicMock(return_value=prompt_dict)
+            >>> prompt_read_obj = MagicMock(spec=PromptRead)
+            >>> service.convert_prompt_to_read = MagicMock(return_value=prompt_read_obj)
             >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
-            >>> PromptRead.model_validate = MagicMock(return_value='prompt_read')
             >>> import asyncio
             >>> prompts, next_cursor = asyncio.run(service.list_prompts(db))
-            >>> prompts == ['prompt_read']
+            >>> prompts == [prompt_read_obj]
             True
         """
         # Check cache for first page only (cursor=None) - skip when user_email provided or page based pagination
@@ -1083,13 +1082,12 @@ class PromptService:
             >>> from mcpgateway.schemas import PromptRead
             >>> service = PromptService()
             >>> db = MagicMock()
-            >>> prompt_dict = {'id': '1', 'name': 'test', 'description': 'desc', 'template': 'tpl', 'arguments': [], 'createdAt': '2023-01-01T00:00:00', 'updatedAt': '2023-01-01T00:00:00', 'isActive': True, 'metrics': {}}
-            >>> service.convert_prompt_to_read = MagicMock(return_value=prompt_dict)
+            >>> prompt_read_obj = MagicMock(spec=PromptRead)
+            >>> service.convert_prompt_to_read = MagicMock(return_value=prompt_read_obj)
             >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
-            >>> PromptRead.model_validate = MagicMock(return_value='prompt_read')
             >>> import asyncio
             >>> result = asyncio.run(service.list_server_prompts(db, 'server1'))
-            >>> result == ['prompt_read']
+            >>> result == [prompt_read_obj]
             True
         """
         query = select(DbPrompt).join(server_prompt_association, DbPrompt.id == server_prompt_association.c.prompt_id).where(server_prompt_association.c.server_id == server_id)

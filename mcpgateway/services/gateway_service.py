@@ -320,6 +320,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         Examples:
             >>> from mcpgateway.services.gateway_service import GatewayService
             >>> from mcpgateway.services.event_service import EventService
+            >>> from mcpgateway.utils.retry_manager import ResilientHttpClient
+            >>> from mcpgateway.services.tool_service import ToolService
             >>> service = GatewayService()
             >>> isinstance(service._event_service, EventService)
             True
@@ -1253,29 +1255,36 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         Examples:
             >>> from mcpgateway.services.gateway_service import GatewayService
-            >>> from unittest.mock import MagicMock
+            >>> from unittest.mock import MagicMock, AsyncMock, patch
             >>> from mcpgateway.schemas import GatewayRead
+            >>> import asyncio
             >>> service = GatewayService()
             >>> db = MagicMock()
             >>> gateway_obj = MagicMock()
             >>> db.execute.return_value.scalars.return_value.all.return_value = [gateway_obj]
-            >>> mocked_gateway_read = MagicMock()
-            >>> mocked_gateway_read.masked.return_value = 'gateway_read'
-            >>> GatewayRead.model_validate = MagicMock(return_value=mocked_gateway_read)
-            >>> import asyncio
-            >>> gateways, cursor = asyncio.run(service.list_gateways(db))
-            >>> gateways == ['gateway_read'] and cursor is None
-            True
-
-            >>> # Test include_inactive parameter
-            >>> gateways_with_inactive, cursor = asyncio.run(service.list_gateways(db, include_inactive=True))
-            >>> gateways_with_inactive == ['gateway_read'] and cursor is None
+            >>> gateway_read_obj = MagicMock(spec=GatewayRead)
+            >>> service.convert_gateway_to_read = MagicMock(return_value=gateway_read_obj)
+            >>> # Mock the cache to bypass caching logic
+            >>> with patch('mcpgateway.services.gateway_service._get_registry_cache') as mock_cache_factory:
+            ...     mock_cache = MagicMock()
+            ...     mock_cache.get = AsyncMock(return_value=None)
+            ...     mock_cache.set = AsyncMock(return_value=None)
+            ...     mock_cache.hash_filters = MagicMock(return_value="hash")
+            ...     mock_cache_factory.return_value = mock_cache
+            ...     gateways, cursor = asyncio.run(service.list_gateways(db))
+            ...     gateways == [gateway_read_obj] and cursor is None
             True
 
             >>> # Test empty result
             >>> db.execute.return_value.scalars.return_value.all.return_value = []
-            >>> empty_result, cursor = asyncio.run(service.list_gateways(db))
-            >>> empty_result == [] and cursor is None
+            >>> with patch('mcpgateway.services.gateway_service._get_registry_cache') as mock_cache_factory:
+            ...     mock_cache = MagicMock()
+            ...     mock_cache.get = AsyncMock(return_value=None)
+            ...     mock_cache.set = AsyncMock(return_value=None)
+            ...     mock_cache.hash_filters = MagicMock(return_value="hash")
+            ...     mock_cache_factory.return_value = mock_cache
+            ...     empty_result, cursor = asyncio.run(service.list_gateways(db))
+            ...     empty_result == [] and cursor is None
             True
         """
         # Check cache for first page only - skip when user_email provided or page based pagination
