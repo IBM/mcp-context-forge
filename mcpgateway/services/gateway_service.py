@@ -3669,7 +3669,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         Args:
             gateway: Gateway database object
-            include_metrics: Whether to include metrics (default False to avoid N+1 queries in list operations)
 
         Returns:
             GatewayRead: Pydantic model instance
