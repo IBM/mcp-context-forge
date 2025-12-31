@@ -19,6 +19,7 @@ Environment Variables (also reads from .env file):
     LOADTEST_USERS: Number of concurrent users (default: 1000)
     LOADTEST_SPAWN_RATE: Users spawned per second (default: 100)
     LOADTEST_RUN_TIME: Test duration, e.g., "60s", "5m" (default: 5m)
+    LOADTEST_JWT_EXPIRY_HOURS: JWT token expiry in hours (default: 8760 = 1 year)
     MCPGATEWAY_BEARER_TOKEN: JWT token for authenticated requests
     BASIC_AUTH_USER: Basic auth username (default: admin)
     BASIC_AUTH_PASSWORD: Basic auth password (default: changeme)
@@ -137,6 +138,9 @@ JWT_ISSUER = _get_config("JWT_ISSUER", "mcpgateway")
 # Default to platform admin email for guaranteed authentication
 # This matches the PLATFORM_ADMIN_EMAIL default in .env.example
 JWT_USERNAME = _get_config("JWT_USERNAME", _get_config("PLATFORM_ADMIN_EMAIL", "admin@example.com"))
+# Token expiry in hours - default 8760 (1 year) to avoid expiration during long load tests
+# JTI (JWT ID) is automatically generated for each token for proper cache keying
+JWT_TOKEN_EXPIRY_HOURS = int(_get_config("LOADTEST_JWT_EXPIRY_HOURS", "8760"))
 
 # Log loaded configuration (masking sensitive values)
 logger.info("Configuration loaded:")
@@ -145,6 +149,7 @@ logger.info(f"  JWT_ALGORITHM: {JWT_ALGORITHM}")
 logger.info(f"  JWT_AUDIENCE: {JWT_AUDIENCE}")
 logger.info(f"  JWT_ISSUER: {JWT_ISSUER}")
 logger.info(f"  JWT_SECRET_KEY: {'*' * len(JWT_SECRET_KEY) if JWT_SECRET_KEY else '(not set)'}")
+logger.info(f"  JWT_TOKEN_EXPIRY_HOURS: {JWT_TOKEN_EXPIRY_HOURS}")
 
 # Test data pools (populated during test setup)
 # IDs for REST API calls (GET /tools/{id}, etc.)
@@ -354,6 +359,14 @@ def _generate_jwt_token() -> str:
 
     Uses PyJWT to create a token with the configured secret and algorithm.
     Reads JWT settings from .env file or environment variables.
+
+    The token includes:
+    - sub: User email (JWT_USERNAME)
+    - exp: Expiration time (configurable via LOADTEST_JWT_EXPIRY_HOURS, default 1 year)
+    - iat: Issued at time
+    - aud: Audience (JWT_AUDIENCE)
+    - iss: Issuer (JWT_ISSUER)
+    - jti: JWT ID - unique identifier for cache keying and token revocation
     """
     try:
         # Standard
@@ -362,15 +375,17 @@ def _generate_jwt_token() -> str:
         # Third-Party
         import jwt  # pylint: disable=import-outside-toplevel
 
+        jti = str(uuid.uuid4())
         payload = {
             "sub": JWT_USERNAME,
-            "exp": datetime.now(timezone.utc) + timedelta(hours=24),
+            "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_TOKEN_EXPIRY_HOURS),
             "iat": datetime.now(timezone.utc),
             "aud": JWT_AUDIENCE,
             "iss": JWT_ISSUER,
+            "jti": jti,  # JWT ID for auth cache keying and token revocation support
         }
         token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
-        logger.info(f"Generated JWT token for user: {JWT_USERNAME} (aud={JWT_AUDIENCE}, iss={JWT_ISSUER})")
+        logger.info(f"Generated JWT token for user: {JWT_USERNAME} (aud={JWT_AUDIENCE}, iss={JWT_ISSUER}, jti={jti[:8]}..., expires_in={JWT_TOKEN_EXPIRY_HOURS}h)")
         return token
     except ImportError:
         logger.warning("PyJWT not installed, falling back to basic auth. Install with: pip install pyjwt")

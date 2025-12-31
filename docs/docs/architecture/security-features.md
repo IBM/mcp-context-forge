@@ -23,6 +23,45 @@
 - **Secret validation.** The Pydantic field validator (`Settings.validate_secrets`) logs warnings for default or low-entropy secrets, and when `REQUIRE_STRONG_SECRETS=true` startup fails if critical values remain weak.
 - **Revocation and audit.** API tokens are modelled as JWTs with per-token `jti` identifiers. Revocations (`TokenRevocation`) and usage logs (`TokenUsageLog`) persist to the database, enabling immediate invalidation and monitoring.
 
+#### JWT ID (JTI) Claim
+
+The `jti` (JWT ID) claim is a unique identifier for each JWT token, defined in [RFC 7519 Section 4.1.7](https://www.rfc-editor.org/rfc/rfc7519#section-4.1.7). MCP Gateway uses JTI for:
+
+1. **Token Revocation**: Each token can be individually revoked by its JTI without invalidating all tokens for a user. The `TokenRevocation` table stores revoked JTIs.
+
+2. **Auth Cache Keying**: The authentication cache uses `{email}:{jti}` as the cache key pattern (`mcpgateway/cache/auth_cache.py`). This enables per-token caching and prevents cache collisions when users have multiple active tokens.
+
+3. **Replay Attack Prevention**: JTIs enable detection of token reuse, allowing the gateway to track and limit how many times a specific token is used.
+
+4. **Audit Trails**: Every `TokenUsageLog` entry records the JTI, enabling detailed per-token usage analytics and anomaly detection.
+
+**Token Generation Examples**:
+
+```python
+# Email auth tokens (always include JTI)
+# Location: mcpgateway/routers/email_auth.py
+payload = {
+    "sub": user.email,
+    "jti": str(uuid.uuid4()),  # Unique per token
+    ...
+}
+
+# Load test tokens (configurable)
+# Location: tests/loadtest/locustfile.py
+payload = {
+    "sub": JWT_USERNAME,
+    "jti": str(uuid.uuid4()),  # Added for proper cache keying
+    "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_TOKEN_EXPIRY_HOURS),
+    ...
+}
+```
+
+**Cache Behavior**:
+- Tokens **with** JTI: Cache key is `mcpgw:auth:ctx:{email}:{jti-uuid}`
+- Tokens **without** JTI: Cache key is `mcpgw:auth:ctx:{email}:no-jti`
+
+For production deployments, always include JTI in issued tokens to enable proper caching, revocation, and audit capabilities.
+
 ### Email-Based Authentication
 
 - **Argon2id password hashing.** `EmailAuthService` hashes credentials with configurable `ARGON2ID_TIME_COST`, `ARGON2ID_MEMORY_COST`, and `ARGON2ID_PARALLELISM`.
