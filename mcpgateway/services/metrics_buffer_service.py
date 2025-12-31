@@ -111,6 +111,7 @@ class MetricsBufferService:
         self.flush_interval = flush_interval or getattr(settings, "metrics_buffer_flush_interval", 60)
         self.max_buffer_size = max_buffer_size or getattr(settings, "metrics_buffer_max_size", 1000)
         self.enabled = enabled if enabled is not None else getattr(settings, "metrics_buffer_enabled", True)
+        self.recording_enabled = getattr(settings, "db_metrics_recording_enabled", True)
 
         # Thread-safe buffers using deque with locks
         self._tool_metrics: Deque[BufferedToolMetric] = deque()
@@ -129,10 +130,16 @@ class MetricsBufferService:
         self._total_flushed = 0
         self._flush_count = 0
 
-        logger.info(f"MetricsBufferService initialized: enabled={self.enabled}, " f"flush_interval={self.flush_interval}s, max_buffer_size={self.max_buffer_size}")
+        logger.info(
+            f"MetricsBufferService initialized: recording_enabled={self.recording_enabled}, "
+            f"buffer_enabled={self.enabled}, flush_interval={self.flush_interval}s, max_buffer_size={self.max_buffer_size}"
+        )
 
     async def start(self) -> None:
         """Start the background flush task."""
+        if not self.recording_enabled:
+            logger.info("MetricsBufferService: recording disabled, skipping flush loop")
+            return
         if not self.enabled:
             logger.info("MetricsBufferService disabled, skipping start")
             return
@@ -177,6 +184,8 @@ class MetricsBufferService:
             success: True if the invocation succeeded.
             error_message: Error message if failed.
         """
+        if not self.recording_enabled:
+            return  # Execution metrics recording disabled
         if not self.enabled:
             # Fall back to immediate write
             self._write_tool_metric_immediately(tool_id, start_time, success, error_message)
@@ -209,6 +218,8 @@ class MetricsBufferService:
             success: Whether the operation succeeded.
             error_message: Optional error message if failed.
         """
+        if not self.recording_enabled:
+            return  # Execution metrics recording disabled
         if not self.enabled:
             self._write_resource_metric_immediately(resource_id, start_time, success, error_message)
             return
@@ -240,6 +251,8 @@ class MetricsBufferService:
             success: Whether the operation succeeded.
             error_message: Optional error message if failed.
         """
+        if not self.recording_enabled:
+            return  # Execution metrics recording disabled
         if not self.enabled:
             self._write_prompt_metric_immediately(prompt_id, start_time, success, error_message)
             return
@@ -271,6 +284,8 @@ class MetricsBufferService:
             success: Whether the operation succeeded.
             error_message: Optional error message if failed.
         """
+        if not self.recording_enabled:
+            return  # Execution metrics recording disabled
         if not self.enabled:
             self._write_server_metric_immediately(server_id, start_time, success, error_message)
             return
@@ -304,6 +319,8 @@ class MetricsBufferService:
             interaction_type: Type of interaction (e.g., "invoke").
             error_message: Optional error message if failed.
         """
+        if not self.recording_enabled:
+            return  # Execution metrics recording disabled
         if not self.enabled:
             self._write_a2a_agent_metric_immediately(a2a_agent_id, start_time, success, interaction_type, error_message)
             return
@@ -338,6 +355,8 @@ class MetricsBufferService:
             interaction_type: Type of interaction (e.g., "invoke").
             error_message: Optional error message if failed.
         """
+        if not self.recording_enabled:
+            return  # Execution metrics recording disabled
         if not self.enabled:
             self._write_a2a_agent_metric_with_duration_immediately(a2a_agent_id, response_time, success, interaction_type, error_message)
             return
@@ -728,6 +747,7 @@ class MetricsBufferService:
             current_size = len(self._tool_metrics) + len(self._resource_metrics) + len(self._prompt_metrics) + len(self._server_metrics) + len(self._a2a_agent_metrics)
 
         return {
+            "recording_enabled": self.recording_enabled,
             "enabled": self.enabled,
             "flush_interval": self.flush_interval,
             "max_buffer_size": self.max_buffer_size,

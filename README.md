@@ -2028,6 +2028,7 @@ Automatic management of metrics data to prevent unbounded table growth and maint
 
 | Setting                              | Description                                      | Default  | Options     |
 | ------------------------------------ | ------------------------------------------------ | -------- | ----------- |
+| `DB_METRICS_RECORDING_ENABLED`       | Enable execution metrics recording (tool/resource/prompt/server/A2A) | `true` | bool |
 | `METRICS_CLEANUP_ENABLED`            | Enable automatic cleanup of old metrics          | `true`   | bool        |
 | `METRICS_RETENTION_DAYS`             | Days to retain raw metrics (fallback)            | `7`      | 1-365       |
 | `METRICS_CLEANUP_INTERVAL_HOURS`     | Hours between automatic cleanup runs             | `1`      | 1-168       |

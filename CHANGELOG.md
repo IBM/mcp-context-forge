@@ -6,6 +6,15 @@
 
 ## [1.0.0-BETA-2] - TBD
 
+### Added
+
+#### **🎛️ Execution Metrics Recording Switch** ([#1804](https://github.com/IBM/mcp-context-forge/issues/1804))
+* **New setting** `DB_METRICS_RECORDING_ENABLED` - Disable execution metrics database writes
+  - Controls tool/resource/prompt/server/A2A metrics recording (one DB row per operation)
+  - Set `DB_METRICS_RECORDING_ENABLED=false` to disable when using external observability
+  - Does NOT affect log aggregation (`METRICS_AGGREGATION_ENABLED`) or Prometheus (`ENABLE_METRICS`)
+  - Default: `true` (existing behavior unchanged)
+
 ### Changed
 
 #### **⚡ Metrics Performance Defaults** ([#1799](https://github.com/IBM/mcp-context-forge/issues/1799))

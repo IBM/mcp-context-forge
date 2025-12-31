@@ -1,6 +1,18 @@
 <!-- htmlhint doctype-first:false -->
 <!-- System Metrics Display with Tabs -->
 <div x-data="{ activeTab: 'overview' }" class="space-y-6">
+  {% if not db_metrics_recording_enabled %}
+  <div
+    class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 rounded mb-4"
+  >
+    <p class="font-bold">Execution metrics recording is disabled</p>
+    <p class="text-sm">
+      Set DB_METRICS_RECORDING_ENABLED=true in your environment to record
+      tool/resource/prompt/server execution metrics to the database.
+    </p>
+  </div>
+  {% endif %}
+
   <!-- Tab Navigation -->
   <div class="border-b border-gray-200 dark:border-gray-700">
     <nav class="flex flex-wrap -mb-px text-sm font-medium" aria-label="Metrics Tabs">
