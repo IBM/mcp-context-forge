@@ -228,31 +228,36 @@ def mock_metrics():
 class TestAdminServerRoutes:
     """Test admin routes for server management with enhanced coverage."""
 
-    @patch.object(ServerService, "list_servers_for_user")
-    async def test_admin_list_servers_with_various_states(self, mock_list_servers_for_user, mock_db):
+    @patch("mcpgateway.admin.paginate_query")
+    @patch("mcpgateway.admin.TeamManagementService")
+    @patch("mcpgateway.admin.server_service")
+    async def test_admin_list_servers_with_various_states(self, mock_server_service, mock_team_service_class, mock_paginate, mock_db):
         """Test listing servers with various states and configurations."""
+        from mcpgateway.schemas import PaginationMeta
+
+        # Mock team service
+        mock_team_service = AsyncMock()
+        mock_team_service.get_user_teams = AsyncMock(return_value=[])
+        mock_team_service_class.return_value = mock_team_service
+
         # Setup servers with different states
         mock_server_active = MagicMock()
         mock_server_active.model_dump.return_value = {"id": 1, "name": "Active Server", "is_active": True, "associated_tools": ["tool1", "tool2"], "metrics": {"total_executions": 50}}
 
-        mock_server_inactive = MagicMock()
-        mock_server_inactive.model_dump.return_value = {"id": 2, "name": "Inactive Server", "is_active": False, "associated_tools": [], "metrics": {"total_executions": 0}}
+        # Mock server_service.list_servers to return paginated response
+        mock_server_service.list_servers = AsyncMock(return_value={
+            "data": [mock_server_active],
+            "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False),
+            "links": None
+        })
 
         # Test with include_inactive=False
-        mock_list_servers_for_user.return_value = [mock_server_active]
-        result = await admin_list_servers(False, mock_db, "test-user")
+        result = await admin_list_servers(page=1, per_page=50, include_inactive=False, db=mock_db, user="test-user")
 
-        assert len(result) == 1
-        assert result[0]["name"] == "Active Server"
-        mock_list_servers_for_user.assert_called_with(mock_db, "test-user", include_inactive=False)
-
-        # Test with include_inactive=True
-        mock_list_servers_for_user.return_value = [mock_server_active, mock_server_inactive]
-        result = await admin_list_servers(True, mock_db, "test-user")
-
-        assert len(result) == 2
-        assert result[1]["name"] == "Inactive Server"
-        mock_list_servers_for_user.assert_called_with(mock_db, "test-user", include_inactive=True)
+        assert "data" in result
+        assert "pagination" in result
+        assert len(result["data"]) == 1
+        assert result["data"][0]["name"] == "Active Server"
 
     @patch.object(ServerService, "get_server")
     async def test_admin_get_server_edge_cases(self, mock_get_server, mock_db):
@@ -361,15 +366,19 @@ class TestAdminServerRoutes:
 class TestAdminToolRoutes:
     """Test admin routes for tool management with enhanced coverage."""
 
-    @patch.object(ToolService, "list_tools_for_user")
-    async def test_admin_list_tools_empty_and_exception(self, mock_list_tools, mock_db):
+    @patch("mcpgateway.admin.TeamManagementService")
+    @patch("mcpgateway.admin.tool_service")
+    async def test_admin_list_tools_empty_and_exception(self, mock_tool_service, mock_team_service_class, mock_db):
         """Test listing tools with empty results and exceptions."""
+        from mcpgateway.schemas import PaginationMeta
+
         # Test empty list
-        # Arrange: make db.execute return an object whose scalar() -> 0 and scalars().all() -> []
-        mock_result = MagicMock()
-        mock_result.scalar.return_value = 0
-        mock_result.scalars.return_value.all.return_value = []
-        mock_db.execute.return_value = mock_result
+        # Mock tool_service.list_tools to return empty paginated response
+        mock_tool_service.list_tools = AsyncMock(return_value={
+            "data": [],
+            "pagination": PaginationMeta(page=1, per_page=50, total_items=0, total_pages=0, has_next=False, has_prev=False),
+            "links": None
+        })
 
         # Call the function with explicit pagination params
         result = await admin_list_tools(page=1, per_page=50, include_inactive=False, db=mock_db, user="test-user")
@@ -379,8 +388,8 @@ class TestAdminToolRoutes:
         assert result["data"] == []
 
         # Test with exception
-        # Simulate DB execution error
-        mock_db.execute.side_effect = RuntimeError("Service unavailable")
+        # Mock tool_service.list_tools to raise RuntimeError
+        mock_tool_service.list_tools = AsyncMock(side_effect=RuntimeError("Service unavailable"))
 
         with pytest.raises(RuntimeError):
             await admin_list_tools(page=1, per_page=50, include_inactive=False, db=mock_db, user="test-user")
@@ -782,24 +791,48 @@ class TestAdminBulkImportRoutes:
 class TestAdminResourceRoutes:
     """Test admin routes for resource management with enhanced coverage."""
 
-    @patch.object(ResourceService, "list_resources_for_user")
-    async def test_admin_list_resources_with_complex_data(self, mock_list_resources, mock_db):
+    @patch("mcpgateway.admin.resource_service")
+    async def test_admin_list_resources_with_complex_data(self, mock_resource_service, mock_db):
         """Test listing resources with complex data structures."""
-        mock_resource = MagicMock()
-        mock_resource.model_dump.return_value = {
-            "id": 1,
-            "uri": "complex://resource",
-            "name": "Complex Resource",
-            "mime_type": "application/json",
-            "content": {"nested": {"data": "value"}},
-            "metrics": {"total_executions": 100},
-        }
+        from mcpgateway.schemas import PaginationMeta, ResourceRead, ResourceMetrics
+        from datetime import datetime, timezone
 
-        mock_list_resources.return_value = [mock_resource]
-        result = await admin_list_resources(False, mock_db, "test-user")
+        # Create a proper ResourceRead Pydantic object
+        resource_read = ResourceRead(
+            id="1",
+            uri="complex://resource",
+            name="Complex Resource",
+            mime_type="application/json",
+            description="Test resource",
+            size=1024,
+            enabled=True,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+            metrics=ResourceMetrics(
+                total_executions=100,
+                successful_executions=100,
+                failed_executions=0,
+                failure_rate=0.0,
+                min_response_time=0.1,
+                max_response_time=0.5,
+                avg_response_time=0.3,
+                last_execution_time=None
+            ),
+            tags=[]
+        )
 
-        assert len(result) == 1
-        assert result[0]["uri"] == "complex://resource"
+        # Mock resource_service.list_resources to return paginated response
+        mock_resource_service.list_resources = AsyncMock(return_value={
+            "data": [resource_read],
+            "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False),
+            "links": None
+        })
+
+        result = await admin_list_resources(page=1, per_page=50, include_inactive=False, db=mock_db, user="test-user")
+
+        assert "data" in result
+        assert len(result["data"]) == 1
+        assert result["data"][0]["uri"] == "complex://resource"
 
     @patch.object(ResourceService, "get_resource_by_id")
     @patch.object(ResourceService, "read_resource")
@@ -890,12 +923,25 @@ class TestAdminResourceRoutes:
 class TestAdminPromptRoutes:
     """Test admin routes for prompt management with enhanced coverage."""
 
-    @patch.object(PromptService, "list_prompts_for_user")
-    async def test_admin_list_prompts_with_complex_arguments(self, mock_list_prompts, mock_db):
+    @patch("mcpgateway.admin.prompt_service")
+    @patch("mcpgateway.admin.TeamManagementService")
+    async def test_admin_list_prompts_with_complex_arguments(
+        self, mock_team_service_class, mock_prompt_service, mock_db
+    ):
         """Test listing prompts with complex argument structures."""
+        from mcpgateway.schemas import PaginationMeta
+        from mcpgateway.db import Prompt as DbPrompt
+        from datetime import datetime, timezone
+
+        # Mock team service
+        mock_team_service = AsyncMock()
+        mock_team_service.get_user_teams = AsyncMock(return_value=[])
+        mock_team_service_class.return_value = mock_team_service
+
+        # Mock prompt object with model_dump method
         mock_prompt = MagicMock()
         mock_prompt.model_dump.return_value = {
-            "id": 1,
+            "id": "test-id",
             "name": "Complex Prompt",
             "arguments": [
                 {"name": "arg1", "type": "string", "required": True},
@@ -905,11 +951,19 @@ class TestAdminPromptRoutes:
             "metrics": {"total_executions": 50},
         }
 
-        mock_list_prompts.return_value = [mock_prompt]
-        result = await admin_list_prompts(False, mock_db, "test-user")
+        # Mock prompt_service.list_prompts to return paginated response
+        mock_prompt_service.list_prompts = AsyncMock(return_value={
+            "data": [mock_prompt],
+            "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False),
+            "links": None
+        })
 
-        assert len(result) == 1
-        assert len(result[0]["arguments"]) == 3
+        result = await admin_list_prompts(page=1, per_page=50, include_inactive=False, db=mock_db, user="test-user")
+
+        assert "data" in result
+        assert "pagination" in result
+        assert len(result["data"]) == 1
+        assert len(result["data"][0]["arguments"]) == 3
 
     @patch.object(PromptService, "get_prompt_details")
     async def test_admin_get_prompt_with_detailed_metrics(self, mock_get_prompt_details, mock_db):
@@ -1046,25 +1100,48 @@ class TestAdminPromptRoutes:
 class TestAdminGatewayRoutes:
     """Test admin routes for gateway management with enhanced coverage."""
 
-    @patch.object(GatewayService, "list_gateways_for_user")
-    async def test_admin_list_gateways_with_auth_info(self, mock_list_gateways, mock_db):
+    @patch("mcpgateway.admin.gateway_service")
+    @patch("mcpgateway.admin.TeamManagementService")
+    async def test_admin_list_gateways_with_auth_info(self, mock_team_service_class, mock_gateway_service, mock_db):
         """Test listing gateways with authentication information."""
+        from mcpgateway.schemas import PaginationMeta
+        from datetime import datetime, timezone
+
+        # Mock team service
+        mock_team_service = AsyncMock()
+        mock_team_service.get_user_teams = AsyncMock(return_value=[])
+        mock_team_service_class.return_value = mock_team_service
+
+        # Create a mock gateway object with model_dump method
         mock_gateway = MagicMock()
         mock_gateway.model_dump.return_value = {
             "id": "gateway-1",
             "name": "Secure Gateway",
             "url": "https://secure.example.com",
+            "description": "Test gateway",
             "transport": "HTTP",
             "enabled": True,
-            "auth_type": "bearer",
-            "auth_token": "Bearer hidden",  # Should be masked
-            "auth_value": "Some value",
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+            "updatedAt": datetime.now(timezone.utc).isoformat(),
+            "authType": "bearer",
+            "authToken": "Bearer hidden",
+            "authValue": "Some value",
+            "slug": "secure-gateway",
+            "capabilities": {},
+            "reachable": True
         }
 
-        mock_list_gateways.return_value = [mock_gateway]
-        result = await admin_list_gateways(False, mock_db, "test-user")
+        # Mock gateway_service.list_gateways to return paginated response
+        mock_gateway_service.list_gateways = AsyncMock(return_value={
+            "data": [mock_gateway],
+            "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False),
+            "links": None
+        })
 
-        assert result[0]["auth_type"] == "bearer"
+        result = await admin_list_gateways(page=1, per_page=50, include_inactive=False, db=mock_db, user="test-user")
+
+        assert "data" in result
+        assert result["data"][0]["authType"] == "bearer"  # Using camelCase as per by_alias=True
 
     @patch.object(GatewayService, "get_gateway")
     async def test_admin_get_gateway_all_transports(self, mock_get_gateway, mock_db):
@@ -1474,10 +1551,10 @@ class TestAdminGatewayTestRoute:
 class TestAdminUIRoute:
     """Test the main admin UI route with enhanced coverage."""
 
-    @patch.object(ServerService, "list_servers_for_user", new_callable=AsyncMock)
-    @patch.object(ToolService, "list_tools_for_user", new_callable=AsyncMock)
-    @patch.object(ResourceService, "list_resources_for_user", new_callable=AsyncMock)
-    @patch.object(PromptService, "list_prompts_for_user", new_callable=AsyncMock)
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
     @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
     @patch.object(RootService, "list_roots", new_callable=AsyncMock)
     async def test_admin_ui_with_service_failures(
@@ -1520,10 +1597,10 @@ class TestAdminUIRoute:
             mock_log.assert_called()
             assert any("Failed to load resources" in str(call.args[0]) for call in mock_log.call_args_list)
 
-    @patch.object(ServerService, "list_servers_for_user", new_callable=AsyncMock)
-    @patch.object(ToolService, "list_tools_for_user", new_callable=AsyncMock)
-    @patch.object(ResourceService, "list_resources_for_user", new_callable=AsyncMock)
-    @patch.object(PromptService, "list_prompts_for_user", new_callable=AsyncMock)
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
     @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
     @patch.object(RootService, "list_roots", new_callable=AsyncMock)
     async def test_admin_ui_template_context(self, mock_roots, mock_gateways, mock_prompts, mock_resources, mock_tools, mock_servers, mock_request, mock_db):
@@ -1557,10 +1634,10 @@ class TestAdminUIRoute:
             assert "gateways" in context
             assert "roots" in context
 
-    @patch.object(ServerService, "list_servers_for_user", new_callable=AsyncMock)
-    @patch.object(ToolService, "list_tools_for_user", new_callable=AsyncMock)
-    @patch.object(ResourceService, "list_resources_for_user", new_callable=AsyncMock)
-    @patch.object(PromptService, "list_prompts_for_user", new_callable=AsyncMock)
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
     @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
     @patch.object(RootService, "list_roots", new_callable=AsyncMock)
     async def test_admin_ui_cookie_settings(self, mock_roots, mock_gateways, mock_prompts, mock_resources, mock_tools, mock_servers, mock_request, mock_db):
@@ -1806,10 +1883,11 @@ class TestA2AAgentManagement:
         """Test listing A2A agents when A2A is disabled."""
         # First-Party
 
-        result = await admin_list_a2a_agents(include_inactive=False, db=mock_db, user="test-user")
+        result = await admin_list_a2a_agents(page=1, per_page=50, include_inactive=False, db=mock_db, user="test-user")
 
-        assert isinstance(result, list)
-        assert len(result) == 0
+        assert isinstance(result, dict)
+        assert "data" in result
+        assert len(result["data"]) == 0
 
     @patch("mcpgateway.admin.a2a_service")
     async def _test_admin_add_a2a_agent_success(self, mock_a2a_service, mock_request, mock_db):
@@ -2535,10 +2613,10 @@ class TestAdminUIMainEndpoint:
     """Test the main admin UI endpoint and its edge cases."""
 
     @patch("mcpgateway.admin.a2a_service", None)  # Mock A2A disabled
-    @patch.object(ServerService, "list_servers_for_user", new_callable=AsyncMock)
-    @patch.object(ToolService, "list_tools_for_user", new_callable=AsyncMock)
-    @patch.object(ResourceService, "list_resources_for_user", new_callable=AsyncMock)
-    @patch.object(PromptService, "list_prompts_for_user", new_callable=AsyncMock)
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
     @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
     @patch.object(RootService, "list_roots", new_callable=AsyncMock)
     async def test_admin_ui_a2a_disabled(self, mock_roots, mock_gateways, mock_prompts, mock_resources, mock_tools, mock_servers, mock_request, mock_db):

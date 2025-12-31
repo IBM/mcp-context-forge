@@ -231,7 +231,7 @@ class TestResourceRegistration:
         with (
             patch.object(resource_service, "_detect_mime_type", return_value="text/plain"),
             patch.object(resource_service, "_notify_resource_added", new_callable=AsyncMock),
-            patch.object(resource_service, "_convert_resource_to_read") as mock_convert,
+            patch.object(resource_service, "convert_resource_to_read") as mock_convert,
         ):
             mock_convert.return_value = ResourceRead(
                 id="39334ce0ed2644d79ede8913a66930c9",
@@ -347,7 +347,7 @@ class TestResourceRegistration:
         with (
             patch.object(resource_service, "_detect_mime_type", return_value="application/octet-stream"),
             patch.object(resource_service, "_notify_resource_added", new_callable=AsyncMock),
-            patch.object(resource_service, "_convert_resource_to_read") as mock_convert,
+            patch.object(resource_service, "convert_resource_to_read") as mock_convert,
         ):
             mock_convert.return_value = ResourceRead(
                 id="39334ce0ed2644d79ede8913a66930c9",
@@ -554,7 +554,7 @@ class TestResourceManagement:
         """Test activating an inactive resource."""
         mock_db.get.return_value = mock_inactive_resource
 
-        with patch.object(resource_service, "_notify_resource_activated", new_callable=AsyncMock), patch.object(resource_service, "_convert_resource_to_read") as mock_convert:
+        with patch.object(resource_service, "_notify_resource_activated", new_callable=AsyncMock), patch.object(resource_service, "convert_resource_to_read") as mock_convert:
             mock_convert.return_value = ResourceRead(
                 id="39334ce0ed2644d79ede8913a66930c9",
                 uri=mock_inactive_resource.uri,
@@ -589,7 +589,7 @@ class TestResourceManagement:
         """Test deactivating an active resource."""
         mock_db.get.return_value = mock_resource
 
-        with patch.object(resource_service, "_notify_resource_deactivated", new_callable=AsyncMock), patch.object(resource_service, "_convert_resource_to_read") as mock_convert:
+        with patch.object(resource_service, "_notify_resource_deactivated", new_callable=AsyncMock), patch.object(resource_service, "convert_resource_to_read") as mock_convert:
             mock_convert.return_value = ResourceRead(
                 id="39334ce0ed2644d79ede8913a66930c9",
                 uri=mock_resource.uri,
@@ -636,7 +636,7 @@ class TestResourceManagement:
         mock_db.get.return_value = mock_resource
         mock_resource.enabled = True
 
-        with patch.object(resource_service, "_convert_resource_to_read") as mock_convert:
+        with patch.object(resource_service, "convert_resource_to_read") as mock_convert:
             mock_convert.return_value = ResourceRead(
                 id="39334ce0ed2644d79ede8913a66930c9",
                 uri=mock_resource.uri,
@@ -677,7 +677,7 @@ class TestResourceManagement:
         mock_db.execute.return_value = mock_scalar
         mock_db.get.return_value = mock_resource
 
-        with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock), patch.object(resource_service, "_convert_resource_to_read") as mock_convert:
+        with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock), patch.object(resource_service, "convert_resource_to_read") as mock_convert:
             mock_convert.return_value = ResourceRead(
                 id="39334ce0ed2644d79ede8913a66930c9",
                 uri=mock_resource.uri,
@@ -750,7 +750,7 @@ class TestResourceManagement:
         mock_scalar.scalar_one_or_none.return_value = mock_resource
         mock_db.execute.return_value = mock_scalar
 
-        with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock), patch.object(resource_service, "_convert_resource_to_read") as mock_convert:
+        with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock), patch.object(resource_service, "convert_resource_to_read") as mock_convert:
             mock_convert.return_value = ResourceRead(
                 id="",
                 uri=mock_resource.uri,
@@ -1314,7 +1314,7 @@ class TestUtilityMethods:
         result = resource_service._detect_mime_type(uri, content)
         assert result == expected
 
-    def test_convert_resource_to_read(self, resource_service, mock_resource):
+    def testconvert_resource_to_read(self, resource_service, mock_resource):
         """Resource → ResourceRead with populated metrics."""
         # create two mock metric rows
         metric1, metric2 = MagicMock(), MagicMock()
@@ -1323,7 +1323,7 @@ class TestUtilityMethods:
         metric1.timestamp = metric2.timestamp = datetime.now(timezone.utc)
         mock_resource.metrics = [metric1, metric2]
 
-        result = resource_service._convert_resource_to_read(mock_resource, include_metrics=True)
+        result = resource_service.convert_resource_to_read(mock_resource, include_metrics=True)
         m = result.metrics  # ResourceMetrics model
 
         assert m.total_executions == 2
@@ -1331,20 +1331,20 @@ class TestUtilityMethods:
         assert m.failed_executions == 1
         assert m.failure_rate == 0.5
 
-    def test_convert_resource_to_read_no_metrics(self, resource_service, mock_resource):
+    def testconvert_resource_to_read_no_metrics(self, resource_service, mock_resource):
         """Conversion when metrics list is empty."""
         mock_resource.metrics = []
 
-        m = resource_service._convert_resource_to_read(mock_resource, include_metrics=True).metrics
+        m = resource_service.convert_resource_to_read(mock_resource, include_metrics=True).metrics
         assert m.total_executions == 0
         assert m.failure_rate == 0.0
         assert m.min_response_time is None
 
-    def test_convert_resource_to_read_none_metrics(self, resource_service, mock_resource):
+    def testconvert_resource_to_read_none_metrics(self, resource_service, mock_resource):
         """Conversion when metrics is None."""
         mock_resource.metrics = None
 
-        m = resource_service._convert_resource_to_read(mock_resource, include_metrics=True).metrics
+        m = resource_service.convert_resource_to_read(mock_resource, include_metrics=True).metrics
         assert m.total_executions == 0
         assert m.failure_rate == 0.0
         assert m.min_response_time is None

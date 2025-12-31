@@ -21,7 +21,7 @@ import os
 import re
 import ssl
 import time
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 from urllib.parse import parse_qs, urlparse
 import uuid
 
@@ -33,7 +33,7 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 import orjson
-from sqlalchemy import and_, delete, not_, or_, select
+from sqlalchemy import and_, delete, desc, not_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload, selectinload, Session
 
@@ -75,7 +75,7 @@ from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.metrics_common import build_top_performers
-from mcpgateway.utils.pagination import decode_cursor, encode_cursor
+from mcpgateway.utils.pagination import decode_cursor, encode_cursor, unified_paginate
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
@@ -382,7 +382,7 @@ class ToolService:
         db.commit()  # Release transaction to avoid idle-in-transaction
         return team.name if team else None
 
-    def _convert_tool_to_read(self, tool: DbTool, include_metrics: bool = False) -> ToolRead:
+    def convert_tool_to_read(self, tool: DbTool, include_metrics: bool = False) -> ToolRead:
         """Converts a DbTool instance into a ToolRead model, including aggregated metrics and
         new API gateway fields: request_type and authentication credentials (masked).
 
@@ -731,7 +731,7 @@ class ToolService:
             ...     obj.gateway = mock_gateway
             >>> db.refresh = MagicMock(side_effect=mock_refresh)
             >>> service._notify_tool_added = AsyncMock()
-            >>> service._convert_tool_to_read = MagicMock(return_value='tool_read')
+            >>> service.convert_tool_to_read = MagicMock(return_value='tool_read')
             >>> ToolRead.model_validate = MagicMock(return_value='tool_read')
             >>> import asyncio
             >>> asyncio.run(service.register_tool(db, tool))
@@ -869,7 +869,7 @@ class ToolService:
 
             await admin_stats_cache.invalidate_tags()
 
-            return self._convert_tool_to_read(db_tool)
+            return self.convert_tool_to_read(db_tool)
         except IntegrityError as ie:
             db.rollback()
             logger.error(f"IntegrityError during tool registration: {ie}")
@@ -1354,8 +1354,13 @@ class ToolService:
         tags: Optional[List[str]] = None,
         gateway_id: Optional[str] = None,
         limit: Optional[int] = None,
+        page: Optional[int] = None,
+        per_page: Optional[int] = None,
+        user_email: Optional[str] = None,
+        team_id: Optional[str] = None,
+        visibility: Optional[str] = None,
         _request_headers: Optional[Dict[str, str]] = None,
-    ) -> tuple[List[ToolRead], Optional[str]]:
+    ) -> Union[tuple[List[ToolRead], Optional[str]], Dict[str, Any]]:
         """
         Retrieve a list of registered tools from the database with pagination support.
 
@@ -1369,6 +1374,11 @@ class ToolService:
             gateway_id (Optional[str]): Filter tools by gateway ID. Accepts the literal value 'null' to match NULL gateway_id.
             limit (Optional[int]): Maximum number of tools to return. Use 0 for all tools (no limit).
                 If not specified, uses pagination_default_page_size.
+            page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
+            per_page: Items per page for page-based pagination. Defaults to pagination_default_page_size.
+            user_email (Optional[str]): User email for team-based access control. If None, no access control is applied.
+            team_id (Optional[str]): Filter by specific team ID. Requires user_email for access validation.
+            visibility (Optional[str]): Filter by visibility (private, team, public).
             _request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
                 Currently unused but kept for API consistency. Defaults to None.
 
@@ -1383,7 +1393,7 @@ class ToolService:
             >>> service = ToolService()
             >>> db = MagicMock()
             >>> tool_read = MagicMock()
-            >>> service._convert_tool_to_read = MagicMock(return_value=tool_read)
+            >>> service.convert_tool_to_read = MagicMock(return_value=tool_read)
             >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
             >>> import asyncio
             >>> tools, next_cursor = asyncio.run(service.list_tools(db))
@@ -1391,8 +1401,9 @@ class ToolService:
             True
         """
         # Check cache for first page only (cursor=None)
+        # Skip caching when user_email is provided (team-filtered results are user-specific) or page based pagination
         cache = _get_registry_cache()
-        if cursor is None:
+        if cursor is None and user_email is None and page is None:
             filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, gateway_id=gateway_id, limit=limit)
             cached = await cache.get("tools", filters_hash)
             if cached is not None:
@@ -1400,86 +1411,102 @@ class ToolService:
                 cached_tools = [ToolRead.model_validate(t) for t in cached["tools"]]
                 return (cached_tools, cached.get("next_cursor"))
 
-        # Determine page size based on limit parameter
-        # limit=None: use default, limit=0: no limit (all), limit>0: use specified (capped)
-        if limit is None:
-            page_size = settings.pagination_default_page_size
-        elif limit == 0:
-            page_size = None  # No limit - fetch all
-        else:
-            page_size = min(limit, settings.pagination_max_page_size)
+        # Build base query with ordering
+        query = select(DbTool).order_by(desc(DbTool.created_at), desc(DbTool.id))
 
-        # Decode cursor to get last_id if provided
-        last_id = None
-        if cursor:
-            try:
-                cursor_data = decode_cursor(cursor)
-                last_id = cursor_data.get("id")
-                logger.debug(f"Decoded cursor: last_id={last_id}")
-            except ValueError as e:
-                logger.warning(f"Invalid cursor, ignoring: {e}")
-
-        logger.debug(
-            "Listing tools with include_inactive=%s, cursor=%s, tags=%s, gateway_id=%s, page_size=%s",
-            include_inactive,
-            cursor,
-            tags,
-            gateway_id,
-            page_size,
-        )
-
-        # Build query with LEFT JOIN for team names in single query instead of batch fetching
-        query = select(DbTool, EmailTeam.name.label("team_name")).outerjoin(EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True))).order_by(DbTool.id)
-
-        # Apply cursor filter (WHERE id > last_id)
-        if last_id:
-            query = query.where(DbTool.id > last_id)
-
+        # Apply active/inactive filter
         if not include_inactive:
             query = query.where(DbTool.enabled)
+        # Apply team-based access control if user_email is provided
+        if user_email:
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email)
+            team_ids = [team.id for team in user_teams]
 
-        # Add tag filtering if tags are provided
-        if tags:
-            query = query.where(json_contains_expr(db, DbTool.tags, tags, match_any=True))
+            if team_id:
+                # User requesting specific team - verify access
+                if team_id not in team_ids:
+                    return ([], None)
+                access_conditions = [
+                    and_(DbTool.team_id == team_id, DbTool.visibility.in_(["team", "public"])),
+                    and_(DbTool.team_id == team_id, DbTool.owner_email == user_email),
+                ]
+                query = query.where(or_(*access_conditions))
+            else:
+                # General access: user's tools + public tools + team tools
+                access_conditions = [
+                    DbTool.owner_email == user_email,
+                    DbTool.visibility == "public",
+                ]
+                if team_ids:
+                    access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
+                query = query.where(or_(*access_conditions))
 
+            if visibility:
+                query = query.where(DbTool.visibility == visibility)
+
+        # Add gateway_id filtering if provided
         if gateway_id:
             if gateway_id.lower() == "null":
                 query = query.where(DbTool.gateway_id.is_(None))
             else:
                 query = query.where(DbTool.gateway_id == gateway_id)
 
-        # Fetch page_size + 1 to determine if there are more results (unless no limit)
-        if page_size is not None:
-            query = query.limit(page_size + 1)
-        rows = db.execute(query).all()
+        # Add tag filtering if tags are provided
+        if tags:
+            query = query.where(json_contains_expr(db, DbTool.tags, tags, match_any=True))
+
+        # Use unified pagination helper - handles both page and cursor pagination
+        pag_result = await unified_paginate(
+            db=db,
+            query=query,
+            page=page,
+            per_page=per_page,
+            cursor=cursor,
+            limit=limit,
+            base_url="/admin/tools",  # Used for page-based links
+            query_params={"include_inactive": include_inactive} if include_inactive else {},
+        )
+
+        next_cursor = None
+        # Extract servers based on pagination type
+        if page is not None:
+            # Page-based: pag_result is a dict
+            tools_db = pag_result["data"]
+        else:
+            # Cursor-based: pag_result is a tuple
+            tools_db, next_cursor = pag_result
+
+        # Fetch team names for the tools (common for both pagination types)
+        team_ids_set = {s.team_id for s in tools_db if s.team_id}
+        team_map = {}
+        if team_ids_set:
+            teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids_set), EmailTeam.is_active.is_(True))).all()
+            team_map = {team.id: team.name for team in teams}
 
         db.commit()  # Release transaction to avoid idle-in-transaction
 
-        # Check if there are more results (only when paginating)
-        has_more = page_size is not None and len(rows) > page_size
-        if has_more:
-            rows = rows[:page_size]  # Trim to page_size
-
-        # Convert to ToolRead objects with team names from join result
+        # Convert to ToolRead (common for both pagination types)
         result = []
-        tools = []
-        for row in rows:
-            tool, team_name = row[0], row.team_name
-            tool.team = team_name
-            tools.append(tool)
-            result.append(self._convert_tool_to_read(tool, include_metrics=False))
+        for s in tools_db:
+            s.team = team_map.get(s.team_id) if s.team_id else None
+            result.append(self.convert_tool_to_read(s, include_metrics=False))
 
-        # Generate next_cursor if there are more results
-        next_cursor = None
-        if has_more and result:
-            last_tool = tools[-1]  # Get last DB object (not ToolRead)
-            next_cursor = encode_cursor({"id": last_tool.id})
-            logger.debug(f"Generated next_cursor for id={last_tool.id}")
+        # Return appropriate format based on pagination type
+        if page is not None:
+            # Page-based format
+            return {
+                "data": result,
+                "pagination": pag_result["pagination"],
+                "links": pag_result["links"],
+            }
 
-        # Cache first page results
-        if cursor is None:
+        # Cursor-based format
+
+        # Cache first page results - only for non-user-specific queries
+        if cursor is None and user_email is None:
             try:
-                cache_data = {"tools": [t.model_dump(mode="json") for t in result], "next_cursor": next_cursor}
+                cache_data = {"tools": [s.model_dump(mode="json") for s in result], "next_cursor": next_cursor}
                 await cache.set("tools", cache_data, filters_hash)
             except AttributeError:
                 pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)
@@ -1513,7 +1540,7 @@ class ToolService:
             >>> service = ToolService()
             >>> db = MagicMock()
             >>> tool_read = MagicMock()
-            >>> service._convert_tool_to_read = MagicMock(return_value=tool_read)
+            >>> service.convert_tool_to_read = MagicMock(return_value=tool_read)
             >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
             >>> import asyncio
             >>> result = asyncio.run(service.list_server_tools(db, 'server1'))
@@ -1553,7 +1580,7 @@ class ToolService:
             tool = row[0]
             team_name = row.team_name
             tool.team = team_name
-            result.append(self._convert_tool_to_read(tool, include_metrics=include_metrics))
+            result.append(self.convert_tool_to_read(tool, include_metrics=include_metrics))
 
         return result
 
@@ -1573,7 +1600,12 @@ class ToolService:
         limit: Optional[int] = None,
     ) -> tuple[List[ToolRead], Optional[str]]:
         """
+        DEPRECATED: Use list_tools() with user_email parameter instead.
+
         List tools user has access to with team filtering and cursor pagination.
+
+        This method is maintained for backward compatibility but is no longer used.
+        New code should call list_tools() with user_email, team_id, and visibility parameters.
 
         Args:
             db: Database session
@@ -1658,10 +1690,9 @@ class ToolService:
         if last_id:
             query = query.where(DbTool.id > last_id)
 
-        query = query.order_by(DbTool.id)
-
         # Execute query with LEFT JOIN for team names in single query
         query_with_join = query.outerjoin(EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True))).add_columns(EmailTeam.name.label("team_name"))
+
         if page_size is not None:
             rows = db.execute(query_with_join.limit(page_size + 1)).all()
         else:
@@ -1682,12 +1713,13 @@ class ToolService:
             team_name = row.team_name
             tool.team = team_name
             tools.append(tool)
-            result.append(self._convert_tool_to_read(tool, include_metrics=False))
+            result.append(self.convert_tool_to_read(tool, include_metrics=False))
 
         next_cursor = None
+        # Generate cursor if there are more results (cursor-based pagination)
         if has_more and tools:
             last_tool = tools[-1]
-            next_cursor = encode_cursor({"id": last_tool.id})
+            next_cursor = encode_cursor({"created_at": last_tool.created_at.isoformat(), "id": last_tool.id})
 
         return (result, next_cursor)
 
@@ -1712,7 +1744,7 @@ class ToolService:
             >>> db = MagicMock()
             >>> tool = MagicMock()
             >>> db.get.return_value = tool
-            >>> service._convert_tool_to_read = MagicMock(return_value='tool_read')
+            >>> service.convert_tool_to_read = MagicMock(return_value='tool_read')
             >>> import asyncio
             >>> asyncio.run(service.get_tool(db, 'tool_id'))
             'tool_read'
@@ -1722,7 +1754,7 @@ class ToolService:
             raise ToolNotFoundError(f"Tool not found: {tool_id}")
         tool.team = self._get_team_name(db, getattr(tool, "team_id", None))
 
-        tool_read = self._convert_tool_to_read(tool)
+        tool_read = self.convert_tool_to_read(tool)
 
         structured_logger.log(
             level="INFO",
@@ -1908,7 +1940,7 @@ class ToolService:
             >>> db.refresh = MagicMock()
             >>> service._notify_tool_activated = AsyncMock()
             >>> service._notify_tool_deactivated = AsyncMock()
-            >>> service._convert_tool_to_read = MagicMock(return_value='tool_read')
+            >>> service.convert_tool_to_read = MagicMock(return_value='tool_read')
             >>> ToolRead.model_validate = MagicMock(return_value='tool_read')
             >>> import asyncio
             >>> asyncio.run(service.toggle_tool_status(db, 'tool_id', True, True))
@@ -1996,7 +2028,7 @@ class ToolService:
                     db=db,
                 )
 
-            return self._convert_tool_to_read(tool)
+            return self.convert_tool_to_read(tool)
         except PermissionError as e:
             # Structured logging: Log permission error
             structured_logger.log(
@@ -2697,7 +2729,7 @@ class ToolService:
             >>> db.refresh = MagicMock()
             >>> db.execute.return_value.scalar_one_or_none.return_value = None
             >>> service._notify_tool_updated = AsyncMock()
-            >>> service._convert_tool_to_read = MagicMock(return_value='tool_read')
+            >>> service.convert_tool_to_read = MagicMock(return_value='tool_read')
             >>> ToolRead.model_validate = MagicMock(return_value='tool_read')
             >>> import asyncio
             >>> asyncio.run(service.update_tool(db, 'tool_id', MagicMock()))
@@ -2854,7 +2886,7 @@ class ToolService:
 
             await admin_stats_cache.invalidate_tags()
 
-            return self._convert_tool_to_read(tool)
+            return self.convert_tool_to_read(tool)
         except PermissionError as pe:
             db.rollback()
 
@@ -3224,7 +3256,7 @@ class ToolService:
 
         if existing_tool:
             # Tool already exists, return it
-            return self._convert_tool_to_read(existing_tool)
+            return self.convert_tool_to_read(existing_tool)
 
         # Create tool entry for the A2A agent
         logger.debug(f"agent.tags: {agent.tags} for agent: {agent.name} (ID: {agent.id})")

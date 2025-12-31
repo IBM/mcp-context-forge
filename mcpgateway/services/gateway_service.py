@@ -46,7 +46,7 @@ import os
 import ssl
 import tempfile
 import time
-from typing import Any, AsyncGenerator, cast, Dict, List, Optional, Set, TYPE_CHECKING
+from typing import Any, AsyncGenerator, cast, Dict, List, Optional, Set, TYPE_CHECKING, Union
 from urllib.parse import urljoin, urlparse, urlunparse
 import uuid
 
@@ -57,7 +57,7 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 from pydantic import ValidationError
-from sqlalchemy import and_, delete, or_, select
+from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -96,6 +96,7 @@ from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
+from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
@@ -319,6 +320,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         Examples:
             >>> from mcpgateway.services.gateway_service import GatewayService
             >>> from mcpgateway.services.event_service import EventService
+            >>> from mcpgateway.utils.retry_manager import ResilientHttpClient
+            >>> from mcpgateway.services.tool_service import ToolService
             >>> service = GatewayService()
             >>> isinstance(service._event_service, EventService)
             True
@@ -1219,89 +1222,184 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             logger.error(f"Failed to fetch tools after OAuth for gateway {gateway_id}: {e}")
             raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(e)}")
 
-    async def list_gateways(self, db: Session, include_inactive: bool = False, tags: Optional[List[str]] = None) -> List[GatewayRead]:
-        """List all registered gateways.
+    async def list_gateways(
+        self,
+        db: Session,
+        include_inactive: bool = False,
+        tags: Optional[List[str]] = None,
+        cursor: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        per_page: Optional[int] = None,
+        user_email: Optional[str] = None,
+        team_id: Optional[str] = None,
+        visibility: Optional[str] = None,
+    ) -> Union[tuple[List[GatewayRead], Optional[str]], Dict[str, Any]]:
+        """List all registered gateways with cursor pagination and optional team filtering.
 
         Args:
             db: Database session
             include_inactive: Whether to include inactive gateways
             tags (Optional[List[str]]): Filter resources by tags. If provided, only resources with at least one matching tag will be returned.
+            cursor: Cursor for pagination (encoded last created_at and id).
+            limit: Maximum number of gateways to return. None for default, 0 for unlimited.
+            page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
+            per_page: Items per page for page-based pagination. Defaults to pagination_default_page_size.
+            user_email: Email of user for team-based access control. None for no access control.
+            team_id: Optional team ID to filter by specific team (requires user_email).
+            visibility: Optional visibility filter (private, team, public) (requires user_email).
 
         Returns:
-            List of registered gateways
+            If page is provided: Dict with {"data": [...], "pagination": {...}, "links": {...}}
+            If cursor is provided or neither: tuple of (list of GatewayRead objects, next_cursor).
 
         Examples:
             >>> from mcpgateway.services.gateway_service import GatewayService
-            >>> from unittest.mock import MagicMock
+            >>> from unittest.mock import MagicMock, AsyncMock, patch
             >>> from mcpgateway.schemas import GatewayRead
+            >>> import asyncio
             >>> service = GatewayService()
             >>> db = MagicMock()
             >>> gateway_obj = MagicMock()
             >>> db.execute.return_value.scalars.return_value.all.return_value = [gateway_obj]
-            >>> mocked_gateway_read = MagicMock()
-            >>> mocked_gateway_read.masked.return_value = 'gateway_read'
-            >>> GatewayRead.model_validate = MagicMock(return_value=mocked_gateway_read)
-            >>> import asyncio
-            >>> result = asyncio.run(service.list_gateways(db))
-            >>> result == ['gateway_read']
-            True
-
-            >>> # Test include_inactive parameter
-            >>> result_with_inactive = asyncio.run(service.list_gateways(db, include_inactive=True))
-            >>> result_with_inactive == ['gateway_read']
+            >>> gateway_read_obj = MagicMock(spec=GatewayRead)
+            >>> service.convert_gateway_to_read = MagicMock(return_value=gateway_read_obj)
+            >>> # Mock the cache to bypass caching logic
+            >>> with patch('mcpgateway.services.gateway_service._get_registry_cache') as mock_cache_factory:
+            ...     mock_cache = MagicMock()
+            ...     mock_cache.get = AsyncMock(return_value=None)
+            ...     mock_cache.set = AsyncMock(return_value=None)
+            ...     mock_cache.hash_filters = MagicMock(return_value="hash")
+            ...     mock_cache_factory.return_value = mock_cache
+            ...     gateways, cursor = asyncio.run(service.list_gateways(db))
+            ...     gateways == [gateway_read_obj] and cursor is None
             True
 
             >>> # Test empty result
             >>> db.execute.return_value.scalars.return_value.all.return_value = []
-            >>> empty_result = asyncio.run(service.list_gateways(db))
-            >>> empty_result
-            []
+            >>> with patch('mcpgateway.services.gateway_service._get_registry_cache') as mock_cache_factory:
+            ...     mock_cache = MagicMock()
+            ...     mock_cache.get = AsyncMock(return_value=None)
+            ...     mock_cache.set = AsyncMock(return_value=None)
+            ...     mock_cache.hash_filters = MagicMock(return_value="hash")
+            ...     mock_cache_factory.return_value = mock_cache
+            ...     empty_result, cursor = asyncio.run(service.list_gateways(db))
+            ...     empty_result == [] and cursor is None
+            True
         """
-        # Check cache
+        # Check cache for first page only - skip when user_email provided or page based pagination
         cache = _get_registry_cache()
-        filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
-        cached = await cache.get("gateways", filters_hash)
-        if cached is not None:
-            # Reconstruct GatewayRead objects from cached dicts
-            return [GatewayRead.model_validate(g) for g in cached]
+        if cursor is None and user_email is None and page is None:
+            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
+            cached = await cache.get("gateways", filters_hash)
+            if cached is not None:
+                # Reconstruct GatewayRead objects from cached dicts
+                cached_gateways = [GatewayRead.model_validate(g) for g in cached["gateways"]]
+                return (cached_gateways, cached.get("next_cursor"))
 
-        query = select(DbGateway)
+        # Build base query with ordering
+        query = select(DbGateway).order_by(desc(DbGateway.created_at), desc(DbGateway.id))
 
+        # Apply active/inactive filter
         if not include_inactive:
             query = query.where(DbGateway.enabled)
+        # Apply team-based access control if user_email is provided
+        if user_email:
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email)
+            team_ids = [team.id for team in user_teams]
 
+            if team_id:
+                # User requesting specific team - verify access
+                if team_id not in team_ids:
+                    return ([], None)
+                access_conditions = [
+                    and_(DbGateway.team_id == team_id, DbGateway.visibility.in_(["team", "public"])),
+                    and_(DbGateway.team_id == team_id, DbGateway.owner_email == user_email),
+                ]
+                query = query.where(or_(*access_conditions))
+            else:
+                # General access: user's gateways + public gateways + team gateways
+                access_conditions = [
+                    DbGateway.owner_email == user_email,
+                    DbGateway.visibility == "public",
+                ]
+                if team_ids:
+                    access_conditions.append(and_(DbGateway.team_id.in_(team_ids), DbGateway.visibility.in_(["team", "public"])))
+                query = query.where(or_(*access_conditions))
+
+            if visibility:
+                query = query.where(DbGateway.visibility == visibility)
+
+        # Add tag filtering if tags are provided
         if tags:
             query = query.where(json_contains_expr(db, DbGateway.tags, tags, match_any=True))
+        # Use unified pagination helper - handles both page and cursor pagination
+        pag_result = await unified_paginate(
+            db=db,
+            query=query,
+            page=page,
+            per_page=per_page,
+            cursor=cursor,
+            limit=limit,
+            base_url="/admin/gateways",  # Used for page-based links
+            query_params={"include_inactive": include_inactive} if include_inactive else {},
+        )
 
-        gateways = db.execute(query).scalars().all()
+        next_cursor = None
+        # Extract gateways based on pagination type
+        if page is not None:
+            # Page-based: pag_result is a dict
+            gateways_db = pag_result["data"]
+        else:
+            # Cursor-based: pag_result is a tuple
+            gateways_db, next_cursor = pag_result
 
-        # Batch fetch team names
-        team_ids = {g.team_id for g in gateways if g.team_id}
-        team_names = {}
-        if team_ids:
-            teams = db.query(EmailTeam).filter(EmailTeam.id.in_(team_ids), EmailTeam.is_active.is_(True)).all()
-            team_names = {team.id: team.name for team in teams}
+        # Fetch team names for the gateways (common for both pagination types)
+        team_ids_set = {s.team_id for s in gateways_db if s.team_id}
+        team_map = {}
+        if team_ids_set:
+            teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids_set), EmailTeam.is_active.is_(True))).all()
+            team_map = {team.id: team.name for team in teams}
 
         db.commit()  # Release transaction to avoid idle-in-transaction
 
+        # Convert to GatewayRead (common for both pagination types)
         result = []
-        for g in gateways:
-            g.team = team_names.get(g.team_id) if g.team_id else None
-            result.append(GatewayRead.model_validate(self._prepare_gateway_for_read(g)).masked())
+        for s in gateways_db:
+            s.team = team_map.get(s.team_id) if s.team_id else None
+            result.append(self.convert_gateway_to_read(s))
 
-        # Cache results
-        try:
-            cache_data = [g.model_dump(mode="json") for g in result]
-            await cache.set("gateways", cache_data, filters_hash)
-        except AttributeError:
-            pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)
+        # Return appropriate format based on pagination type
+        if page is not None:
+            # Page-based format
+            return {
+                "data": result,
+                "pagination": pag_result["pagination"],
+                "links": pag_result["links"],
+            }
 
-        return result
+        # Cursor-based format
+
+        # Cache first page results - only for non-user-specific queries
+        if cursor is None and user_email is None:
+            try:
+                cache_data = {"gateways": [s.model_dump(mode="json") for s in result], "next_cursor": next_cursor}
+                await cache.set("gateways", cache_data, filters_hash)
+            except AttributeError:
+                pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)
+
+        return (result, next_cursor)
 
     async def list_gateways_for_user(
         self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
     ) -> List[GatewayRead]:
         """
+        DEPRECATED: Use list_gateways() with user_email parameter instead.
+
+        This method is maintained for backward compatibility but is no longer used.
+        New code should call list_gateways() with user_email, team_id, and visibility parameters.
+
         List gateways user has access to with team filtering.
 
         Args:
@@ -3575,8 +3673,42 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         }
         await self._publish_event(event)
 
+    def convert_gateway_to_read(self, gateway: DbGateway) -> GatewayRead:
+        """Convert a DbGateway instance to a GatewayRead Pydantic model.
+
+        Args:
+            gateway: Gateway database object
+
+        Returns:
+            GatewayRead: Pydantic model instance
+        """
+        gateway_dict = gateway.__dict__.copy()
+        gateway_dict.pop("_sa_instance_state", None)
+
+        # Ensure auth_value is properly encoded
+        if isinstance(gateway.auth_value, dict):
+            gateway_dict["auth_value"] = encode_auth(gateway.auth_value)
+
+        # Convert tags from List[str] to List[Dict[str, str]] for GatewayRead
+        if gateway.tags:
+            gateway_dict["tags"] = validate_tags_field(gateway.tags)
+        else:
+            gateway_dict["tags"] = []
+
+        # Include metadata fields
+        gateway_dict["created_by"] = getattr(gateway, "created_by", None)
+        gateway_dict["modified_by"] = getattr(gateway, "modified_by", None)
+        gateway_dict["created_at"] = getattr(gateway, "created_at", None)
+        gateway_dict["updated_at"] = getattr(gateway, "updated_at", None)
+        gateway_dict["version"] = getattr(gateway, "version", None)
+        gateway_dict["team"] = getattr(gateway, "team", None)
+
+        return GatewayRead.model_validate(gateway_dict)
+
     def _prepare_gateway_for_read(self, gateway: DbGateway) -> DbGateway:
-        """Prepare a gateway object for GatewayRead validation.
+        """DEPRECATED: Use convert_gateway_to_read instead.
+
+        Prepare a gateway object for GatewayRead validation.
 
         Ensures auth_value is in the correct format (encoded string) for the schema.
         Converts tags from List[str] (database format) to List[Dict[str, str]] (schema format).

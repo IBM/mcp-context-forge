@@ -2726,7 +2726,11 @@ class Tool(Base):
         """
         return cls._computed_name
 
-    __table_args__ = (UniqueConstraint("gateway_id", "original_name", name="uq_gateway_id__original_name"), UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_email_name_tool"))
+    __table_args__ = (
+        UniqueConstraint("gateway_id", "original_name", name="uq_gateway_id__original_name"),
+        UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_email_name_tool"),
+        Index("idx_tools_created_at_id", "created_at", "id"),
+    )
 
     @hybrid_property
     def gateway_slug(self) -> Optional[str]:
@@ -2960,7 +2964,10 @@ class Resource(Base):
 
     # Many-to-many relationship with Servers
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_resource_association, back_populates="resources")
-    __table_args__ = (UniqueConstraint("team_id", "owner_email", "uri", name="uq_team_owner_uri_resource"),)
+    __table_args__ = (
+        UniqueConstraint("team_id", "owner_email", "uri", name="uq_team_owner_uri_resource"),
+        Index("idx_resources_created_at_id", "created_at", "id"),
+    )
 
     @property
     def content(self) -> "ResourceContent":
@@ -3244,7 +3251,10 @@ class Prompt(Base):
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
 
-    __table_args__ = (UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_prompt"),)
+    __table_args__ = (
+        UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_prompt"),
+        Index("idx_prompts_created_at_id", "created_at", "id"),
+    )
 
     def validate_arguments(self, args: Dict[str, str]) -> None:
         """
@@ -3588,7 +3598,10 @@ class Server(Base):
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
-    __table_args__ = (UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_server"),)
+    __table_args__ = (
+        UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_server"),
+        Index("idx_servers_created_at_id", "created_at", "id"),
+    )
 
 
 class Gateway(Base):
@@ -3670,7 +3683,10 @@ class Gateway(Base):
 
     registered_oauth_clients: Mapped[List["RegisteredOAuthClient"]] = relationship("RegisteredOAuthClient", back_populates="gateway", cascade="all, delete-orphan")
 
-    __table_args__ = (UniqueConstraint("team_id", "owner_email", "slug", name="uq_team_owner_slug_gateway"),)
+    __table_args__ = (
+        UniqueConstraint("team_id", "owner_email", "slug", name="uq_team_owner_slug_gateway"),
+        Index("idx_gateways_created_at_id", "created_at", "id"),
+    )
 
 
 @event.listens_for(Gateway, "after_update")
@@ -3777,7 +3793,10 @@ class A2AAgent(Base):
     # Relationships
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_a2a_association, back_populates="a2a_agents")
     metrics: Mapped[List["A2AAgentMetric"]] = relationship("A2AAgentMetric", back_populates="a2a_agent", cascade="all, delete-orphan")
-    __table_args__ = (UniqueConstraint("team_id", "owner_email", "slug", name="uq_team_owner_slug_a2a_agent"),)
+    __table_args__ = (
+        UniqueConstraint("team_id", "owner_email", "slug", name="uq_team_owner_slug_a2a_agent"),
+        Index("idx_a2a_agents_created_at_id", "created_at", "id"),
+    )
 
     # Relationship with OAuth tokens
     # oauth_tokens: Mapped[List["OAuthToken"]] = relationship("OAuthToken", back_populates="gateway", cascade="all, delete-orphan")

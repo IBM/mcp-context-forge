@@ -13,11 +13,11 @@ and interactions with A2A-compatible agents.
 
 # Standard
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 # Third-Party
 import httpx
-from sqlalchemy import and_, delete, desc, func, or_, select
+from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -33,7 +33,9 @@ from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import encode_auth  # ,decode_auth
+from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -360,7 +362,7 @@ class A2AAgentService:
                 },
             )
 
-            return self._db_to_schema(db=db, db_agent=new_agent)
+            return self.convert_agent_to_read(db=db, db_agent=new_agent)
 
         except A2AAgentNameConflictError as ie:
             db.rollback()
@@ -375,17 +377,36 @@ class A2AAgentService:
             db.rollback()
             raise A2AAgentError(f"Failed to register A2A agent: {str(e)}")
 
-    async def list_agents(self, db: Session, cursor: Optional[str] = None, include_inactive: bool = False, tags: Optional[List[str]] = None) -> List[A2AAgentRead]:  # pylint: disable=unused-argument
-        """List A2A agents with optional filtering.
+    async def list_agents(
+        self,
+        db: Session,
+        cursor: Optional[str] = None,
+        include_inactive: bool = False,
+        tags: Optional[List[str]] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        per_page: Optional[int] = None,
+        user_email: Optional[str] = None,
+        team_id: Optional[str] = None,
+        visibility: Optional[str] = None,
+    ) -> Union[tuple[List[A2AAgentRead], Optional[str]], Dict[str, Any]]:
+        """List A2A agents with cursor pagination and optional team filtering.
 
         Args:
             db: Database session.
-            cursor: Pagination cursor (not implemented yet).
+            cursor: Pagination cursor for keyset pagination.
             include_inactive: Whether to include inactive agents.
             tags: List of tags to filter by.
+            limit: Maximum number of agents to return. None for default, 0 for unlimited.
+            page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
+            per_page: Items per page for page-based pagination. Defaults to pagination_default_page_size.
+            user_email: Email of user for team-based access control. None for no access control.
+            team_id: Optional team ID to filter by specific team (requires user_email).
+            visibility: Optional visibility filter (private, team, public) (requires user_email).
 
         Returns:
-            List of agent data.
+            If page is provided: Dict with {"data": [...], "pagination": {...}, "links": {...}}
+            If cursor is provided or neither: tuple of (list of A2AAgentRead objects, next_cursor).
 
         Examples:
             >>> from mcpgateway.services.a2a_service import A2AAgentService
@@ -406,72 +427,136 @@ class A2AAgentService:
             >>> A2AAgentRead.model_validate = MagicMock(return_value=mocked_agent_read)
 
             >>> # Run the service method
-            >>> result = asyncio.run(service.list_agents(db))
-            >>> result == ['agent_read']
+            >>> agents, cursor = asyncio.run(service.list_agents(db))
+            >>> agents == ['agent_read'] and cursor is None
             True
 
             >>> # Test include_inactive parameter (same mock works)
-            >>> result_with_inactive = asyncio.run(service.list_agents(db, include_inactive=True))
-            >>> result_with_inactive == ['agent_read']
+            >>> agents_with_inactive, cursor = asyncio.run(service.list_agents(db, include_inactive=True))
+            >>> agents_with_inactive == ['agent_read'] and cursor is None
             True
 
             >>> # Test empty result
             >>> db.execute.return_value.scalars.return_value.all.return_value = []
-            >>> empty_result = asyncio.run(service.list_agents(db))
-            >>> empty_result
-            []
+            >>> empty_agents, cursor = asyncio.run(service.list_agents(db))
+            >>> empty_agents == [] and cursor is None
+            True
 
         """
-        # Check cache (cursor not implemented yet, so always cache)
+        # Check cache for first page only - skip when user_email provided or page based pagination
         cache = _get_registry_cache()
-        if cursor is None:
+        if cursor is None and user_email is None and page is None:
             filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
             cached = await cache.get("agents", filters_hash)
             if cached is not None:
                 # Reconstruct A2AAgentRead objects from cached dicts
-                return [A2AAgentRead.model_validate(a) for a in cached]
+                cached_agents = [A2AAgentRead.model_validate(a) for a in cached["agents"]]
+                return (cached_agents, cached.get("next_cursor"))
 
-        query = select(DbA2AAgent)
+        # Build base query with ordering
+        query = select(DbA2AAgent).order_by(desc(DbA2AAgent.created_at), desc(DbA2AAgent.id))
 
+        # Apply active/inactive filter
         if not include_inactive:
-            query = query.where(DbA2AAgent.enabled.is_(True))
+            query = query.where(DbA2AAgent.enabled)
+        # Apply team-based access control if user_email is provided
+        if user_email:
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email)
+            team_ids = [team.id for team in user_teams]
 
+            if team_id:
+                # User requesting specific team - verify access
+                if team_id not in team_ids:
+                    return ([], None)
+                access_conditions = [
+                    and_(DbA2AAgent.team_id == team_id, DbA2AAgent.visibility.in_(["team", "public"])),
+                    and_(DbA2AAgent.team_id == team_id, DbA2AAgent.owner_email == user_email),
+                ]
+                query = query.where(or_(*access_conditions))
+            else:
+                # General access: user's agents + public agents + team agents
+                access_conditions = [
+                    DbA2AAgent.owner_email == user_email,
+                    DbA2AAgent.visibility == "public",
+                ]
+                if team_ids:
+                    access_conditions.append(and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])))
+                query = query.where(or_(*access_conditions))
+
+            if visibility:
+                query = query.where(DbA2AAgent.visibility == visibility)
+
+        # Add tag filtering if tags are provided
         if tags:
-            # Filter by tags - agent must have at least one of the specified tags
-            tag_conditions = []
-            for tag in tags:
-                tag_conditions.append(func.json_extract(DbA2AAgent.tags, "$").contains(tag))
+            query = query.where(json_contains_expr(db, DbA2AAgent.tags, tags, match_any=True))
 
-            if tag_conditions:
-                query = query.where(*tag_conditions)
+        # Use unified pagination helper - handles both page and cursor pagination
+        pag_result = await unified_paginate(
+            db=db,
+            query=query,
+            page=page,
+            per_page=per_page,
+            cursor=cursor,
+            limit=limit,
+            base_url="/admin/a2a",  # Used for page-based links
+            query_params={"include_inactive": include_inactive} if include_inactive else {},
+        )
 
-        query = query.order_by(desc(DbA2AAgent.created_at))
+        next_cursor = None
+        # Extract servers based on pagination type
+        if page is not None:
+            # Page-based: pag_result is a dict
+            a2a_agents_db = pag_result["data"]
+        else:
+            # Cursor-based: pag_result is a tuple
+            a2a_agents_db, next_cursor = pag_result
 
-        agents = db.execute(query).scalars().all()
-
-        # Batch fetch team names to avoid N+1 queries
-        team_ids = list({a.team_id for a in agents if a.team_id})
-        team_map = self._batch_get_team_names(db, team_ids)
+        # Fetch team names for the agents (common for both pagination types)
+        team_ids_set = {s.team_id for s in a2a_agents_db if s.team_id}
+        team_map = {}
+        if team_ids_set:
+            teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids_set), EmailTeam.is_active.is_(True))).all()
+            team_map = {team.id: team.name for team in teams}
 
         db.commit()  # Release transaction to avoid idle-in-transaction
 
-        # Skip metrics to avoid N+1 queries in list operations
-        result = [self._db_to_schema(db=db, db_agent=agent, include_metrics=False, team_map=team_map) for agent in agents]
+        # Convert to A2AAgentRead (common for both pagination types)
+        result = []
+        for s in a2a_agents_db:
+            s.team = team_map.get(s.team_id) if s.team_id else None
+            result.append(self.convert_agent_to_read(db=db, db_agent=s, include_metrics=False, team_map=team_map))
 
-        # Cache results
-        if cursor is None:
+        # Return appropriate format based on pagination type
+        if page is not None:
+            # Page-based format
+            return {
+                "data": result,
+                "pagination": pag_result["pagination"],
+                "links": pag_result["links"],
+            }
+
+        # Cursor-based format
+
+        # Cache first page results - only for non-user-specific queries
+        if cursor is None and user_email is None:
             try:
-                cache_data = [a.model_dump(mode="json") for a in result]
+                cache_data = {"agents": [s.model_dump(mode="json") for s in result], "next_cursor": next_cursor}
                 await cache.set("agents", cache_data, filters_hash)
             except AttributeError:
                 pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)
 
-        return result
+        return (result, next_cursor)
 
     async def list_agents_for_user(
         self, db: Session, user_info: Dict[str, Any], team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
     ) -> List[A2AAgentRead]:
         """
+        DEPRECATED: Use list_agents() with user_email parameter instead.
+
+        This method is maintained for backward compatibility but is no longer used.
+        New code should call list_agents() with user_email, team_id, and visibility parameters.
+
         List A2A agents user has access to with team filtering.
 
         Args:
@@ -547,7 +632,7 @@ class A2AAgentService:
         db.commit()  # Release transaction to avoid idle-in-transaction
 
         # Skip metrics to avoid N+1 queries in list operations
-        return [self._db_to_schema(db=db, db_agent=agent, include_metrics=False, team_map=team_map) for agent in agents]
+        return [self.convert_agent_to_read(db=db, db_agent=agent, include_metrics=False, team_map=team_map) for agent in agents]
 
     async def get_agent(self, db: Session, agent_id: str, include_inactive: bool = True) -> A2AAgentRead:
         """Retrieve an A2A agent by ID.
@@ -614,8 +699,8 @@ class A2AAgentService:
 
             >>> db.get.return_value = agent_mock
 
-            >>> # Mock _db_to_schema to simplify test
-            >>> service._db_to_schema = lambda db, db_agent: 'agent_read'
+            >>> # Mock convert_agent_to_read to simplify test
+            >>> service.convert_agent_to_read = lambda db, db_agent: 'agent_read'
 
             >>> # Test with active agent
             >>> result = asyncio.run(service.get_agent(db, 'agent_id'))
@@ -644,8 +729,8 @@ class A2AAgentService:
         if not agent.enabled and not include_inactive:
             raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
 
-        # ✅ Delegate conversion and masking to _db_to_schema()
-        return self._db_to_schema(db=db, db_agent=agent)
+        # ✅ Delegate conversion and masking to convert_agent_to_read()
+        return self.convert_agent_to_read(db=db, db_agent=agent)
 
     async def get_agent_by_name(self, db: Session, agent_name: str) -> A2AAgentRead:
         """Retrieve an A2A agent by name.
@@ -666,7 +751,7 @@ class A2AAgentService:
         if not agent:
             raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
 
-        return self._db_to_schema(db=db, db_agent=agent)
+        return self.convert_agent_to_read(db=db, db_agent=agent)
 
     async def update_agent(
         self,
@@ -781,7 +866,7 @@ class A2AAgentService:
             await admin_stats_cache.invalidate_tags()
 
             logger.info(f"Updated A2A agent: {agent.name} (ID: {agent.id})")
-            return self._db_to_schema(db=db, db_agent=agent)
+            return self.convert_agent_to_read(db=db, db_agent=agent)
         except PermissionError:
             db.rollback()
             raise
@@ -860,7 +945,7 @@ class A2AAgentService:
             },
         )
 
-        return self._db_to_schema(db=db, db_agent=agent)
+        return self.convert_agent_to_read(db=db, db_agent=agent)
 
     async def delete_agent(self, db: Session, agent_id: str, user_email: Optional[str] = None, purge_metrics: bool = False) -> None:
         """Delete an A2A agent.
@@ -1205,7 +1290,7 @@ class A2AAgentService:
             agent.auth_value = encode_auth(agent.auth_value)
         return agent
 
-    def _db_to_schema(self, db: Session, db_agent: DbA2AAgent, include_metrics: bool = False, team_map: Optional[Dict[str, str]] = None) -> A2AAgentRead:
+    def convert_agent_to_read(self, db: Session, db_agent: DbA2AAgent, include_metrics: bool = False, team_map: Optional[Dict[str, str]] = None) -> A2AAgentRead:
         """Convert database model to schema.
 
         Args:

@@ -324,16 +324,19 @@ class TestServerUUIDNormalization:
         db_session.refresh = Mock()
         db_session.get = Mock(return_value=None)  # No associated items
 
+        # Standard
+        from datetime import datetime, timezone
+
         # Mock the service methods
         server_service._notify_server_added = AsyncMock()
-        server_service._convert_server_to_read = Mock(
+        server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
                 id=expected_hex_uuid,
                 name="Test Server",
                 description="Test server with UUID normalization",
                 icon=None,
-                created_at="2023-01-01T00:00:00",
-                updated_at="2023-01-01T00:00:00",
+                created_at=datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+                updated_at=datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
                 enabled=True,
                 associated_tools=[],
                 associated_resources=[],
@@ -392,16 +395,19 @@ class TestServerUUIDNormalization:
         db_session.refresh = Mock()
         db_session.get = Mock(return_value=None)  # No associated items
 
+        # Standard
+        from datetime import datetime, timezone
+
         # Mock the service methods
         server_service._notify_server_added = AsyncMock()
-        server_service._convert_server_to_read = Mock(
+        server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
                 id=hex_uuid,
                 name="Test Server Hex",
                 description="Test server with hex UUID",
                 icon=None,
-                created_at="2023-01-01T00:00:00",
-                updated_at="2023-01-01T00:00:00",
+                created_at=datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+                updated_at=datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
                 enabled=True,
                 associated_tools=[],
                 associated_resources=[],
@@ -456,16 +462,19 @@ class TestServerUUIDNormalization:
         db_session.refresh = Mock()
         db_session.get = Mock(return_value=None)  # No associated items
 
+        # Standard
+        from datetime import datetime, timezone
+
         # Mock the service methods
         server_service._notify_server_added = AsyncMock()
-        server_service._convert_server_to_read = Mock(
+        server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
                 id="auto_generated_id_32_chars_long_hex",
                 name="Auto UUID Server",
                 description="Test server with auto UUID",
                 icon=None,
-                created_at="2023-01-01T00:00:00",
-                updated_at="2023-01-01T00:00:00",
+                created_at=datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+                updated_at=datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
                 enabled=True,
                 associated_tools=[],
                 associated_resources=[],
@@ -607,16 +616,19 @@ class TestServerUUIDNormalization:
             db_session.refresh = Mock()
             db_session.get = Mock(return_value=None)
 
+            # Standard
+            from datetime import datetime, timezone
+
             # Mock service methods
             server_service._notify_server_added = AsyncMock()
-            server_service._convert_server_to_read = Mock(
+            server_service.convert_server_to_read = Mock(
                 return_value=ServerRead(
                     id=expected_hex,
                     name=scenario["name"],
                     description=scenario["description"],
                     icon=None,
-                    created_at="2023-01-01T00:00:00",
-                    updated_at="2023-01-01T00:00:00",
+                    created_at=datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+                    updated_at=datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
                     enabled=True,
                     associated_tools=[],
                     associated_resources=[],
@@ -654,7 +666,7 @@ class TestServiceIntegration:
 
     async def test_tool_service_display_name_in_response(self, db_session, tool_service):
         """Test that tool service includes displayName in response."""
-        # Mock the _convert_tool_to_read method behavior
+        # Mock the convert_tool_to_read method behavior
         db_tool = DbTool(
             id="test-tool-id",
             original_name="service_test_tool",
