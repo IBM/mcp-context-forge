@@ -911,8 +911,7 @@ services:
   ###############################################################################
   # Fast Time Server - High-performance time/timezone service for MCP
   # Note: This is an amd64-only image. On ARM platforms (Apple Silicon),
-  # emulation may not work properly. Use profiles to disable:
-  # docker compose --profile with-fast-time up -d
+  # emulation may not work properly.
   ###############################################################################
   fast_time_server:
     image: ghcr.io/ibm/fast-time-server:latest
@@ -922,7 +921,6 @@ services:
       - "8888:8080"    # Map host port 8888 to container port 8080
     # Use dual mode for both SSE (/sse) and Streamable HTTP (/http) endpoints
     command: ["-transport=dual", "-listen=0.0.0.0", "-port=8080", "-log-level=info"]
-    profiles: ["with-fast-time"]  # Optional: enable with --profile with-fast-time
 
   ###############################################################################
   # Auto-registration service - registers fast_time_server with gateway
@@ -939,7 +937,6 @@ services:
       - JWT_SECRET_KEY=my-test-key
     # This is a one-shot container that exits after registration
     restart: "no"
-    profiles: ["with-fast-time"]  # Optional: enable with --profile with-fast-time
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
