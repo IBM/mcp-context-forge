@@ -41,7 +41,15 @@ scrape_configs:
 
   # MCP Gateway application metrics (FastAPI instrumentation)
   # Endpoint: /metrics/prometheus (Prometheus format with gzip)
+  # Uses DNS discovery to scrape ALL gateway replicas (not just one)
   - job_name: 'mcpgateway'
-    static_configs:
-      - targets: ['gateway:4444']
+    dns_sd_configs:
+      - names: ['gateway']
+        type: 'A'
+        port: 4444
+        refresh_interval: 30s
     metrics_path: '/metrics/prometheus'
+    relabel_configs:
+      # Add instance label from discovered IP for per-replica visibility
+      - source_labels: [__address__]
+        target_label: instance
