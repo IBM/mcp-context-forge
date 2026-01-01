@@ -27,7 +27,7 @@ services:
   # ──────────────────────────────────────────────────────────────────────
   nginx:
     build:
-      context: ./nginx
+      context: ./infra/nginx
       dockerfile: Dockerfile
     image: mcpgateway/nginx-cache:latest
     restart: unless-stopped
@@ -39,7 +39,7 @@ services:
         condition: service_healthy
     volumes:
       - nginx_cache:/var/cache/nginx    # Persistent cache storage
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro  # Mount config as read-only
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro  # Mount config as read-only
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/health"]
       interval: 30s

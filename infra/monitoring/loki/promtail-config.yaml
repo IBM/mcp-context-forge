@@ -1,0 +1,50 @@
+# Promtail configuration for MCP Gateway stack
+# Collects logs from Docker containers and sends to Loki
+# See: https://grafana.com/docs/loki/latest/clients/promtail/configuration/
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # Collect logs from Docker containers
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      # Only collect logs from mcp-context-forge containers
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/mcp-context-forge.*'
+        action: keep
+      # Extract container name without leading slash
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: container
+      # Extract service name from compose label
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
+        target_label: service
+      # Extract compose project
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_project']
+        target_label: project
+      # Add container ID
+      - source_labels: ['__meta_docker_container_id']
+        target_label: container_id
+    pipeline_stages:
+      # Try to parse JSON logs (MCP Gateway uses structured logging)
+      - json:
+          expressions:
+            level: level
+            message: message
+            timestamp: timestamp
+            logger: logger
+            correlation_id: correlation_id
+      # Fall back to raw log if not JSON
+      - output:
+          source: message
