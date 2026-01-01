@@ -5811,7 +5811,7 @@ async def admin_tools_partial_html(
 
     # Batch convert to Pydantic models using tool service
     # This eliminates the N+1 query problem from calling get_tool() in a loop
-    tools_pydantic = [tool_service.convert_tool_to_read(t, include_metrics=False) for t in tools_db]
+    tools_pydantic = [tool_service.convert_tool_to_read(t, include_metrics=False, include_auth=False) for t in tools_db]
 
     # Serialize tools
     data = jsonable_encoder(tools_pydantic)
