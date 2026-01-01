@@ -1,5 +1,8 @@
 # Prometheus configuration for MCP Gateway stack
 # See: https://prometheus.io/docs/prometheus/latest/configuration/configuration/
+#
+# Usage: docker compose --profile monitoring up -d
+# Access: http://localhost:9090
 
 global:
   scrape_interval: 15s
@@ -21,9 +24,24 @@ scrape_configs:
     static_configs:
       - targets: ['redis_exporter:9121']
 
-  # MCP Gateway metrics (if OBSERVABILITY_ENABLED=true)
-  # Note: With replicas, you may need to scrape each instance
+  # Nginx metrics via nginx-prometheus-exporter
+  - job_name: 'nginx'
+    static_configs:
+      - targets: ['nginx_exporter:9113']
+
+  # PgBouncer metrics via pgbouncer-exporter
+  - job_name: 'pgbouncer'
+    static_configs:
+      - targets: ['pgbouncer_exporter:9127']
+
+  # Container metrics via cAdvisor (CPU, memory, network, disk I/O)
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+
+  # MCP Gateway application metrics (FastAPI instrumentation)
+  # Endpoint: /metrics/prometheus (Prometheus format with gzip)
   - job_name: 'mcpgateway'
     static_configs:
       - targets: ['gateway:4444']
-    metrics_path: '/metrics'
+    metrics_path: '/metrics/prometheus'

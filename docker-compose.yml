@@ -294,7 +294,7 @@ services:
 
     deploy:
       mode: replicated
-      replicas: 2
+      replicas: 3
       resources:
         limits:
           cpus: '8'
@@ -613,72 +613,151 @@ services:
           memory: 1G
 
 ###############################################################################
-#  OPTIONAL MONITORING & DEBUGGING TOOLS (disabled by default)
+#  MONITORING STACK (enabled with --profile monitoring)
+#  Usage: docker compose --profile monitoring up -d
+#  Access: Grafana http://localhost:3000 (admin/changeme)
+#          Prometheus http://localhost:9090
 ###############################################################################
 
-  # # ──────────────────────────────────────────────────────────────────────
-  # # Prometheus PostgreSQL Exporter - Metrics for Prometheus/Grafana
-  # # Exposes PostgreSQL metrics at :9187/metrics
-  # # ──────────────────────────────────────────────────────────────────────
-  # postgres_exporter:
-  #   image: quay.io/prometheuscommunity/postgres-exporter:latest
-  #   restart: unless-stopped
-  #   networks: [mcpnet]
-  #   ports:
-  #     - "9187:9187"    # http://localhost:9187/metrics
-  #   environment:
-  #     - DATA_SOURCE_NAME=postgresql://postgres:mysecretpassword@postgres:5432/mcp?sslmode=disable
-  #     # Enable extra metrics collectors
-  #     - PG_EXPORTER_AUTO_DISCOVER_DATABASES=true
-  #     - PG_EXPORTER_EXTEND_QUERY_PATH=/etc/postgres_exporter/queries.yaml
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
+  # ──────────────────────────────────────────────────────────────────────
+  # Prometheus PostgreSQL Exporter - Database metrics
+  # Metrics: connections, query duration, locks, cache hit ratio
+  # ──────────────────────────────────────────────────────────────────────
+  postgres_exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "9187:9187"    # http://localhost:9187/metrics
+    environment:
+      - DATA_SOURCE_NAME=postgresql://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp?sslmode=disable
+      - PG_EXPORTER_AUTO_DISCOVER_DATABASES=true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: ["monitoring"]
 
-  # # ──────────────────────────────────────────────────────────────────────
-  # # Prometheus Redis Exporter - Metrics for Prometheus/Grafana
-  # # Exposes Redis metrics at :9121/metrics
-  # # ──────────────────────────────────────────────────────────────────────
-  # redis_exporter:
-  #   image: oliver006/redis_exporter:latest
-  #   restart: unless-stopped
-  #   networks: [mcpnet]
-  #   ports:
-  #     - "9121:9121"    # http://localhost:9121/metrics
-  #   environment:
-  #     - REDIS_ADDR=redis://redis:6379
-  #   depends_on:
-  #     redis:
-  #       condition: service_started
+  # ──────────────────────────────────────────────────────────────────────
+  # Prometheus Redis Exporter - Cache metrics
+  # Metrics: memory, clients, commands/sec, keyspace stats
+  # ──────────────────────────────────────────────────────────────────────
+  redis_exporter:
+    image: oliver006/redis_exporter:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "9121:9121"    # http://localhost:9121/metrics
+    environment:
+      - REDIS_ADDR=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_started
+    profiles: ["monitoring"]
 
-  # # ──────────────────────────────────────────────────────────────────────
-  # # Prometheus + Grafana Stack - Full observability
-  # # ──────────────────────────────────────────────────────────────────────
-  # prometheus:
-  #   image: prom/prometheus:latest
-  #   restart: unless-stopped
-  #   networks: [mcpnet]
-  #   ports:
-  #     - "9090:9090"    # http://localhost:9090
-  #   volumes:
-  #     - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-  #   command:
-  #     - '--config.file=/etc/prometheus/prometheus.yml'
-  #     - '--storage.tsdb.retention.time=7d'
+  # ──────────────────────────────────────────────────────────────────────
+  # Prometheus PgBouncer Exporter - Connection pool metrics
+  # Metrics: active/waiting clients, server connections, pool stats
+  # ──────────────────────────────────────────────────────────────────────
+  pgbouncer_exporter:
+    image: prometheuscommunity/pgbouncer-exporter:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "9127:9127"    # http://localhost:9127/metrics
+    environment:
+      - PGBOUNCER_EXPORTER_CONNECTION_STRING=postgres://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@pgbouncer:6432/pgbouncer?sslmode=disable
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    profiles: ["monitoring"]
 
-  # grafana:
-  #   image: grafana/grafana:latest
-  #   restart: unless-stopped
-  #   networks: [mcpnet]
-  #   ports:
-  #     - "3000:3000"    # http://localhost:3000 (admin/admin)
-  #   environment:
-  #     - GF_SECURITY_ADMIN_PASSWORD=changeme
-  #     - GF_USERS_ALLOW_SIGN_UP=false
-  #   volumes:
-  #     - grafanadata:/var/lib/grafana
-  #   depends_on:
-  #     - prometheus
+  # ──────────────────────────────────────────────────────────────────────
+  # Prometheus Nginx Exporter - Proxy metrics
+  # Metrics: active connections, requests/sec, response codes
+  # Requires stub_status enabled in nginx.conf (location /nginx_status)
+  # ──────────────────────────────────────────────────────────────────────
+  nginx_exporter:
+    image: nginx/nginx-prometheus-exporter:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "9113:9113"    # http://localhost:9113/metrics
+    command:
+      - '-nginx.scrape-uri=http://nginx:80/nginx_status'
+    depends_on:
+      nginx:
+        condition: service_healthy
+    profiles: ["monitoring"]
+
+  # ──────────────────────────────────────────────────────────────────────
+  # cAdvisor - Container metrics (CPU, memory, network, disk I/O)
+  # Metrics: container_cpu_usage_seconds_total, container_memory_usage_bytes
+  # Dashboard: Grafana ID 14282 (Docker and cAdvisor)
+  # ──────────────────────────────────────────────────────────────────────
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "8085:8080"    # http://localhost:8085/metrics
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    profiles: ["monitoring"]
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Prometheus - Metrics collection and storage
+  # Scrapes: gateway, postgres, redis, nginx, cadvisor
+  # Retention: 7 days (configurable via --storage.tsdb.retention.time)
+  # ──────────────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "9090:9090"    # http://localhost:9090
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=7d'
+      - '--web.enable-lifecycle'
+    depends_on:
+      - postgres_exporter
+      - redis_exporter
+      - nginx_exporter
+      - cadvisor
+    profiles: ["monitoring"]
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Grafana - Dashboard visualization
+  # Default login: admin / changeme
+  # Recommended dashboards:
+  #   - Docker/cAdvisor: 14282
+  #   - PostgreSQL: 9628
+  #   - Redis: 763
+  #   - Nginx: 12708
+  # ──────────────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    user: "0"  # Run as root to avoid permission issues with provisioning
+    ports:
+      - "3000:3000"    # http://localhost:3000
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=changeme
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafanadata:/var/lib/grafana
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+    depends_on:
+      - prometheus
+    profiles: ["monitoring"]
 
 ###############################################################################
 #  OPTIONAL ADMIN TOOLS - handy web UIs for DB & cache (disabled by default)

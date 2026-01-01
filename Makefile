@@ -756,6 +756,74 @@ generate-report:                           ## Display most recent load test repo
 	done || echo "❌ No reports found. Run 'make generate-small' first."
 
 # =============================================================================
+# 📊 MONITORING STACK - Prometheus + Grafana + Exporters
+# =============================================================================
+# help: 📊 MONITORING STACK
+# help: monitoring-up          - Start monitoring stack (Prometheus, Grafana, exporters)
+# help: monitoring-down        - Stop monitoring stack
+# help: monitoring-clean       - Stop and remove all monitoring data (volumes)
+# help: monitoring-status      - Show status of monitoring services
+# help: monitoring-logs        - Show monitoring stack logs
+
+# Compose command for monitoring (requires --profile support)
+# podman-compose < 1.1.0 doesn't support --profile, so prefer docker compose or podman compose
+COMPOSE_CMD_MONITOR := $(shell \
+	if command -v docker &>/dev/null && docker compose version &>/dev/null 2>&1; then \
+		echo "docker compose"; \
+	elif command -v podman &>/dev/null && podman compose version &>/dev/null 2>&1; then \
+		echo "podman compose"; \
+	else \
+		echo "docker-compose"; \
+	fi)
+
+monitoring-up:                             ## Start monitoring stack (Prometheus, Grafana, exporters)
+	@echo "📊 Starting monitoring stack..."
+	$(COMPOSE_CMD_MONITOR) --profile monitoring up -d
+	@echo "⏳ Waiting for Grafana to be ready..."
+	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+		if curl -s -o /dev/null -w '' http://localhost:3000/api/health 2>/dev/null; then break; fi; \
+		sleep 2; \
+	done
+	@# Configure Grafana: star dashboard and set as home
+	@curl -s -X POST -u admin:changeme 'http://localhost:3000/api/user/stars/dashboard/uid/mcp-gateway-overview' >/dev/null 2>&1 || true
+	@curl -s -X PUT -u admin:changeme -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' 'http://localhost:3000/api/org/preferences' >/dev/null 2>&1 || true
+	@curl -s -X PUT -u admin:changeme -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' 'http://localhost:3000/api/user/preferences' >/dev/null 2>&1 || true
+	@echo ""
+	@echo "✅ Monitoring stack started!"
+	@echo ""
+	@echo "   🌐 Grafana:    http://localhost:3000 (admin/changeme)"
+	@echo "   🔥 Prometheus: http://localhost:9090"
+	@echo ""
+	@echo "   ★ MCP Gateway Overview (home dashboard):"
+	@echo "      • Gateway replicas, Nginx, PostgreSQL, Redis status"
+	@echo "      • Request rate, error rate, P95 latency"
+	@echo "      • Nginx connections and throughput"
+	@echo "      • Database queries and cache hit ratio"
+	@echo "      • Redis memory, ops/sec, hit rate"
+	@echo "      • Container CPU and memory usage"
+	@echo ""
+	@echo "   Run load test: make load-test-ui"
+
+monitoring-down:                           ## Stop monitoring stack
+	@echo "📊 Stopping monitoring stack..."
+	$(COMPOSE_CMD_MONITOR) --profile monitoring down
+	@echo "✅ Monitoring stack stopped."
+
+monitoring-status:                         ## Show status of monitoring services
+	@echo "📊 Monitoring stack status:"
+	@$(COMPOSE_CMD_MONITOR) ps --filter "label=com.docker.compose.profiles=monitoring" 2>/dev/null || \
+		$(COMPOSE_CMD_MONITOR) ps | grep -E "(prometheus|grafana|exporter|cadvisor)" || \
+		echo "   No monitoring services running. Start with 'make monitoring-up'"
+
+monitoring-logs:                           ## Show monitoring stack logs
+	$(COMPOSE_CMD_MONITOR) --profile monitoring logs -f --tail=100
+
+monitoring-clean:                          ## Stop and remove all monitoring data (volumes)
+	@echo "📊 Stopping and cleaning monitoring stack..."
+	$(COMPOSE_CMD_MONITOR) --profile monitoring down -v
+	@echo "✅ Monitoring stack stopped and volumes removed."
+
+# =============================================================================
 # 🔥 HTTP LOAD TESTING - Locust-based traffic generation
 # =============================================================================
 # help: 🔥 HTTP LOAD TESTING (Locust)
