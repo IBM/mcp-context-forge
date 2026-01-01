@@ -29,6 +29,7 @@ Structure:
 import asyncio
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime
+from functools import lru_cache
 import json
 import os as _os  # local alias to avoid collisions
 import sys
@@ -284,10 +285,26 @@ def get_user_email(user):
 resource_cache = ResourceCache(max_size=settings.resource_cache_size, ttl=settings.resource_cache_ttl)
 
 
+@lru_cache(maxsize=512)
+def _parse_jsonpath(jsonpath: str) -> JSONPath:
+    """Cache parsed JSONPath expression.
+
+    Args:
+        jsonpath: The JSONPath expression string.
+
+    Returns:
+        Parsed JSONPath object.
+
+    Raises:
+        Exception: If the JSONPath expression is invalid.
+    """
+    return parse(jsonpath)
+
+
 def jsonpath_modifier(data: Any, jsonpath: str = "$[*]", mappings: Optional[Dict[str, str]] = None) -> Union[List, Dict]:
     """
     Applies the given JSONPath expression and mappings to the data.
-    Only return data that is required by the user dynamically.
+    Uses cached parsed expressions for performance.
 
     Args:
         data: The JSON data to query.
@@ -315,7 +332,7 @@ def jsonpath_modifier(data: Any, jsonpath: str = "$[*]", mappings: Optional[Dict
         jsonpath = "$[*]"
 
     try:
-        main_expr: JSONPath = parse(jsonpath)
+        main_expr: JSONPath = _parse_jsonpath(jsonpath)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid main JSONPath expression: {e}")
 
@@ -337,8 +354,8 @@ def jsonpath_modifier(data: Any, jsonpath: str = "$[*]", mappings: Optional[Dict
 
 def transform_data_with_mappings(data: list[Any], mappings: dict[str, str]) -> list[Any]:
     """
-    Applies the given JSONPath expression and mappings to the data.
-    Only return data that is required by the user dynamically.
+    Applies mappings to data using cached JSONPath expressions.
+    Parses each mapping expression once per call, not per item.
 
     Args:
         data: The set of data to apply mappings to.
@@ -354,16 +371,18 @@ def transform_data_with_mappings(data: list[Any], mappings: dict[str, str]) -> l
         >>> transform_data_with_mappings([{'first_name': "Bruce", 'second_name': "Wayne"},{'first_name': "Diana", 'second_name': "Prince"}], {"n": "$.first_name"})
         [{'n': 'Bruce'}, {'n': 'Diana'}]
     """
+    # Pre-parse all mapping expressions once (not per item)
+    parsed_mappings: Dict[str, JSONPath] = {}
+    for new_key, mapping_expr_str in mappings.items():
+        try:
+            parsed_mappings[new_key] = _parse_jsonpath(mapping_expr_str)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid mapping JSONPath for key '{new_key}': {e}")
 
     mapped_results = []
     for item in data:
         mapped_item = {}
-        for new_key, mapping_expr_str in mappings.items():
-            try:
-                mapping_expr = parse(mapping_expr_str)
-            except Exception as e:
-                raise HTTPException(status_code=400, detail=f"Invalid mapping JSONPath for key '{new_key}': {e}")
-
+        for new_key, mapping_expr in parsed_mappings.items():
             try:
                 mapping_matches = mapping_expr.find(item)
             except Exception as e:

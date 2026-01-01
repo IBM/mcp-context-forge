@@ -2777,12 +2777,24 @@ class TestToolService:
 #                               extract_using_jq                              #
 # --------------------------------------------------------------------------- #
 def test_extract_using_jq_happy_path():
-    data = {"a": 123}
+    """Test jq filter extraction works correctly with caching."""
+    from mcpgateway.services.tool_service import _compile_jq_filter
 
-    with patch("mcpgateway.services.tool_service.jq.all", return_value=[123]) as mock_jq:
-        out = extract_using_jq(data, ".a")
-        mock_jq.assert_called_once_with(".a", data)
-        assert out == [123]
+    # Clear cache for clean test state
+    _compile_jq_filter.cache_clear()
+
+    data = {"a": 123, "b": 456}
+
+    # Test actual behavior (no mocking)
+    result = extract_using_jq(data, ".a")
+    assert result == [123]
+
+    # Verify caching works
+    result2 = extract_using_jq({"a": 999}, ".a")
+    assert result2 == [999]
+
+    info = _compile_jq_filter.cache_info()
+    assert info.hits == 1  # Second call hit cache
 
 
 def test_extract_using_jq_short_circuits_and_errors():
@@ -2795,3 +2807,68 @@ def test_extract_using_jq_short_circuits_and_errors():
 
     # Unsupported input type
     assert extract_using_jq(42, ".foo") == ["Input data must be a JSON string, dictionary, or list."]
+
+
+# --------------------------------------------------------------------------- #
+#                         Cache Behavior Tests                                #
+# --------------------------------------------------------------------------- #
+
+
+class TestJqFilterCaching:
+    """Tests for jq filter caching (#1813)."""
+
+    def test_jq_caching_works(self):
+        """Verify jq filter compilation is cached."""
+        from mcpgateway.services.tool_service import _compile_jq_filter
+
+        _compile_jq_filter.cache_clear()
+
+        result1 = extract_using_jq({"a": 1}, ".a")
+        assert result1 == [1]
+
+        result2 = extract_using_jq({"a": 99}, ".a")
+        assert result2 == [99]
+
+        info = _compile_jq_filter.cache_info()
+        assert info.hits == 1
+
+    def test_empty_filter_bypasses_cache(self):
+        """Empty filter should return data directly without caching."""
+        data = {"x": "y"}
+        result = extract_using_jq(data, "")
+        assert result is data
+
+
+class TestSchemaValidatorCaching:
+    """Tests for JSON Schema validator caching (#1809)."""
+
+    def test_schema_caching_works(self):
+        """Verify schema validation uses cached validator class."""
+        from mcpgateway.services.tool_service import _get_validator_class_and_check, _canonicalize_schema
+
+        _get_validator_class_and_check.cache_clear()
+
+        schema = {"type": "object", "properties": {"foo": {"type": "string"}}}
+        schema_json = _canonicalize_schema(schema)
+
+        cls1, s1 = _get_validator_class_and_check(schema_json)
+        cls2, s2 = _get_validator_class_and_check(schema_json)
+
+        assert cls1 is cls2
+
+        info = _get_validator_class_and_check.cache_info()
+        assert info.hits == 1
+
+    def test_validation_still_works(self):
+        """Verify cached validation still catches errors."""
+        from mcpgateway.services.tool_service import _validate_with_cached_schema
+        import jsonschema
+
+        schema = {"type": "object", "properties": {"foo": {"type": "string"}}, "required": ["foo"]}
+
+        # Valid instance
+        _validate_with_cached_schema({"foo": "bar"}, schema)
+
+        # Invalid instance
+        with pytest.raises(jsonschema.ValidationError):
+            _validate_with_cached_schema({"foo": 123}, schema)

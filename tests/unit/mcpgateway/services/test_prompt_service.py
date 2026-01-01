@@ -125,6 +125,23 @@ def _patch_promptread(monkeypatch):
     monkeypatch.setattr(PromptRead, "model_validate", staticmethod(lambda d: d))
 
 
+@pytest.fixture(autouse=True)
+def reset_jinja_singleton():
+    """Reset the module-level Jinja environment singleton before each test.
+
+    This is needed because PromptService now uses a shared singleton for
+    the Jinja environment (for caching), so tests that modify the environment
+    can affect subsequent tests.
+    """
+    import mcpgateway.services.prompt_service as ps
+
+    ps._JINJA_ENV = None
+    ps._compile_jinja_template.cache_clear()
+    yield
+    ps._JINJA_ENV = None
+    ps._compile_jinja_template.cache_clear()
+
+
 # ---------------------------------------------------------------------------
 # main service fixture
 # ---------------------------------------------------------------------------
@@ -508,15 +525,20 @@ class TestPromptService:
         assert "code" in required
 
     def test_render_template_fallback_and_error(self, prompt_service):
-        # Patch jinja_env.from_string to raise
-        prompt_service._jinja_env.from_string = Mock(side_effect=Exception("bad"))
-        # Fallback to format
-        template = "Hello, {name}!"
-        result = prompt_service._render_template(template, {"name": "Alice"})
-        assert result == "Hello, Alice!"
-        # Format also fails
-        with pytest.raises(PromptError):
-            prompt_service._render_template(template, {})
+        # Patch _compile_jinja_template to return a template that fails on render
+        with patch("mcpgateway.services.prompt_service._compile_jinja_template") as mock_compile:
+            mock_template = MagicMock()
+            mock_template.render.side_effect = Exception("bad")
+            mock_compile.return_value = mock_template
+
+            # Fallback to format
+            template = "Hello, {name}!"
+            result = prompt_service._render_template(template, {"name": "Alice"})
+            assert result == "Hello, Alice!"
+
+            # Format also fails
+            with pytest.raises(PromptError):
+                prompt_service._render_template(template, {})
 
     def test_parse_messages_roles(self, prompt_service):
         text = "# User:\nHello\n# Assistant:\nHi!"
@@ -599,3 +621,61 @@ class TestPromptService:
                 # finally, your service should return the list produced by mock_db.execute(...)
                 assert isinstance(result, list)
                 assert len(result) == 1
+
+
+# --------------------------------------------------------------------------- #
+#                         Cache Behavior Tests                                #
+# --------------------------------------------------------------------------- #
+
+
+class TestJinjaTemplateCaching:
+    """Tests for Jinja template caching (#1814)."""
+
+    def test_template_caching_works(self):
+        """Verify template compilation is cached across renders."""
+        from mcpgateway.services.prompt_service import PromptService, _compile_jinja_template
+
+        service = PromptService()
+        template = "Hello {{ name }}"
+
+        result1 = service._render_template(template, {"name": "World"})
+        assert result1 == "Hello World"
+
+        result2 = service._render_template(template, {"name": "Claude"})
+        assert result2 == "Hello Claude"
+
+        info = _compile_jinja_template.cache_info()
+        assert info.hits == 1
+        assert info.misses == 1
+
+    def test_different_templates_cached_separately(self):
+        """Verify different templates get separate cache entries."""
+        from mcpgateway.services.prompt_service import PromptService, _compile_jinja_template
+
+        service = PromptService()
+
+        result1 = service._render_template("Hello {{ name }}", {"name": "A"})
+        result2 = service._render_template("Goodbye {{ name }}", {"name": "B"})
+
+        assert result1 == "Hello A"
+        assert result2 == "Goodbye B"
+
+        info = _compile_jinja_template.cache_info()
+        assert info.misses == 2  # Two different templates
+
+    def test_format_fallback_still_works(self):
+        """Verify Python format() fallback works when Jinja render fails."""
+        from mcpgateway.services.prompt_service import PromptService, _compile_jinja_template
+
+        service = PromptService()
+
+        # Mock _compile_jinja_template to return a template that fails on render
+        with patch("mcpgateway.services.prompt_service._compile_jinja_template") as mock_compile:
+            mock_template = MagicMock()
+            mock_template.render.side_effect = Exception("Jinja render error")
+            mock_compile.return_value = mock_template
+
+            # Should fall back to Python format()
+            template = "Hello, {name}!"
+            result = service._render_template(template, {"name": "Alice"})
+            assert result == "Hello, Alice!"

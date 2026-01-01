@@ -17,11 +17,12 @@ It handles:
 # Standard
 import base64
 from datetime import datetime, timezone
+from functools import lru_cache
 import os
 import re
 import ssl
 import time
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
 from urllib.parse import parse_qs, urlparse
 import uuid
 
@@ -29,6 +30,7 @@ import uuid
 import httpx
 import jq
 import jsonschema
+from jsonschema import validators
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
@@ -111,9 +113,86 @@ structured_logger = get_structured_logger("tool_service")
 audit_trail = get_audit_trail_service()
 
 
+@lru_cache(maxsize=256)
+def _compile_jq_filter(jq_filter: str):
+    """Cache compiled jq filter program.
+
+    Args:
+        jq_filter: The jq filter string to compile.
+
+    Returns:
+        Compiled jq program object.
+
+    Raises:
+        ValueError: If the jq filter is invalid.
+    """
+    # pylint: disable=c-extension-no-member
+    return jq.compile(jq_filter)
+
+
+@lru_cache(maxsize=128)
+def _get_validator_class_and_check(schema_json: str) -> Tuple[type, dict]:
+    """Cache schema validation and validator class selection.
+
+    This caches the expensive operations:
+    1. Deserializing the schema
+    2. Selecting the appropriate validator class based on $schema
+    3. Checking the schema is valid
+
+    Args:
+        schema_json: Canonical JSON string of the schema (used as cache key).
+
+    Returns:
+        Tuple of (validator_class, schema_dict) ready for instantiation.
+    """
+    schema = orjson.loads(schema_json)
+    validator_cls = validators.validator_for(schema)
+    validator_cls.check_schema(schema)
+    return validator_cls, schema
+
+
+def _canonicalize_schema(schema: dict) -> str:
+    """Create a canonical JSON string of a schema for use as a cache key.
+
+    Args:
+        schema: The JSON Schema dictionary.
+
+    Returns:
+        Canonical JSON string with sorted keys.
+    """
+    return orjson.dumps(schema, option=orjson.OPT_SORT_KEYS).decode()
+
+
+def _validate_with_cached_schema(instance: Any, schema: dict) -> None:
+    # noqa: DAR401
+    """Validate instance against schema using cached validator class.
+
+    Creates a fresh validator instance for thread safety, but reuses
+    the cached validator class and schema check. Uses best_match to
+    preserve jsonschema.validate() error selection semantics.
+
+    Args:
+        instance: The data to validate.
+        schema: The JSON Schema to validate against.
+
+    Raises:
+        jsonschema.exceptions.ValidationError: If validation fails.
+    """
+    schema_json = _canonicalize_schema(schema)
+    validator_cls, checked_schema = _get_validator_class_and_check(schema_json)
+    # Create fresh validator instance for thread safety
+    validator = validator_cls(checked_schema)
+    # Use best_match to match jsonschema.validate() error selection behavior
+    error = jsonschema.exceptions.best_match(validator.iter_errors(instance))
+    if error is not None:
+        raise error
+
+
 def extract_using_jq(data, jq_filter=""):
     """
     Extracts data from a given input (string, dict, or list) using a jq filter string.
+
+    Uses cached compiled jq programs for performance.
 
     Args:
         data (str, dict, list): The input JSON data. Can be a string, dict, or list.
@@ -136,22 +215,24 @@ def extract_using_jq(data, jq_filter=""):
     """
     if jq_filter == "":
         return data
-    if isinstance(data, str):
+
+    # Track if input was originally a string (for error handling)
+    was_string = isinstance(data, str)
+
+    if was_string:
         # If the input is a string, parse it as JSON
         try:
             data = orjson.loads(data)
         except orjson.JSONDecodeError:
             return ["Invalid JSON string provided."]
-
     elif not isinstance(data, (dict, list)):
         # If the input is not a string, dict, or list, raise an error
         return ["Input data must be a JSON string, dictionary, or list."]
 
-    # Apply the jq filter to the data
+    # Apply the jq filter to the data using cached compiled program
     try:
-        # Pylint can't introspect C-extension modules, so it doesn't know that jq really does export an all() function.
-        # pylint: disable=c-extension-no-member
-        result = jq.all(jq_filter, data)  # Use `jq.all` to get all matches (returns a list)
+        program = _compile_jq_filter(jq_filter)
+        result = program.input(data).all()
         if result == [None]:
             result = "Error applying jsonpath filter"
     except Exception as e:
@@ -662,9 +743,9 @@ class ToolService:
             except Exception:
                 logger.debug("Failed to set structured_content on ToolResult")
 
-            # Validate using jsonschema
+            # Validate using cached schema validator
             try:
-                jsonschema.validate(instance=structured, schema=output_schema)
+                _validate_with_cached_schema(structured, output_schema)
                 return True
             except jsonschema.exceptions.ValidationError as e:
                 details = {

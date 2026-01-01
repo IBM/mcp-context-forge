@@ -1881,3 +1881,57 @@ class TestPluginExceptionHandlers:
         assert "Error without code" in content["error"]["message"]
         # Empty code should not be included in data
         assert "plugin_error_code" not in content["error"]["data"] or content["error"]["data"]["plugin_error_code"] == ""
+
+
+# --------------------------------------------------------------------------- #
+#                         Cache Behavior Tests                                #
+# --------------------------------------------------------------------------- #
+
+
+class TestJsonPathCaching:
+    """Tests for JSONPath caching (#1812)."""
+
+    def test_jsonpath_caching_works(self):
+        """Verify JSONPath parsing is cached."""
+        from mcpgateway.main import jsonpath_modifier, _parse_jsonpath
+
+        _parse_jsonpath.cache_clear()
+
+        result1 = jsonpath_modifier([{"a": 1}, {"a": 2}], "$[*].a")
+        assert result1 == [1, 2]
+
+        result2 = jsonpath_modifier([{"a": 3}], "$[*].a")
+        assert result2 == [3]
+
+        info = _parse_jsonpath.cache_info()
+        assert info.hits == 1
+
+    def test_mappings_parsed_once_per_request(self):
+        """Verify mappings are parsed once per request, not per item."""
+        from mcpgateway.main import transform_data_with_mappings, _parse_jsonpath
+
+        _parse_jsonpath.cache_clear()
+
+        data = [{"x": 1}, {"x": 2}, {"x": 3}]
+        mappings = {"y": "$.x"}
+
+        result = transform_data_with_mappings(data, mappings)
+        assert result == [{"y": 1}, {"y": 2}, {"y": 3}]
+
+        info = _parse_jsonpath.cache_info()
+        assert info.misses == 1  # Only one parse for "$.x"
+
+    def test_different_jsonpath_cached_separately(self):
+        """Verify different JSONPath expressions get separate cache entries."""
+        from mcpgateway.main import jsonpath_modifier, _parse_jsonpath
+
+        _parse_jsonpath.cache_clear()
+
+        result1 = jsonpath_modifier({"a": 1, "b": 2}, "$.a")
+        result2 = jsonpath_modifier({"a": 1, "b": 2}, "$.b")
+
+        assert result1 == [1]
+        assert result2 == [2]
+
+        info = _parse_jsonpath.cache_info()
+        assert info.misses == 2
