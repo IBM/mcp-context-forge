@@ -11,7 +11,12 @@ all MCP Gateway entities (tools, resources, prompts, servers, gateways).
 
 # Standard
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Pattern
+
+# Pattern: start with alphanumeric, middle can have hyphen/colon/dot, end with alphanumeric
+_TAG_ALLOWED_PATTERN = r"^[a-z0-9]([a-z0-9\-\:\.]*[a-z0-9])?$"
+# Precompiled regex pattern for tag validation (compiled once at module load)
+_TAG_ALLOWED_RE: Pattern[str] = re.compile(_TAG_ALLOWED_PATTERN)
 
 
 class TagValidator:
@@ -44,9 +49,8 @@ class TagValidator:
 
     MIN_LENGTH = 2
     MAX_LENGTH = 50
-    # Pattern: start with alphanumeric, middle can have hyphen/colon/dot, end with alphanumeric
     # Single character tags are allowed if they are alphanumeric
-    ALLOWED_PATTERN = r"^[a-z0-9]([a-z0-9\-\:\.]*[a-z0-9])?$"
+    ALLOWED_PATTERN = _TAG_ALLOWED_PATTERN
 
     @staticmethod
     def normalize(tag: str) -> str:
@@ -123,8 +127,8 @@ class TagValidator:
         if len(normalized) > TagValidator.MAX_LENGTH:
             return False
 
-        # Check pattern
-        if not re.match(TagValidator.ALLOWED_PATTERN, normalized):
+        # Check pattern (uses precompiled regex)
+        if not _TAG_ALLOWED_RE.match(normalized):
             return False
 
         return True
@@ -209,7 +213,7 @@ class TagValidator:
                     errors.append(f'Tag "{normalized}" is too short (minimum {TagValidator.MIN_LENGTH} characters)')
             elif len(normalized) > TagValidator.MAX_LENGTH:
                 errors.append(f'Tag "{normalized}" is too long (maximum {TagValidator.MAX_LENGTH} characters)')
-            elif not re.match(TagValidator.ALLOWED_PATTERN, normalized):
+            elif not _TAG_ALLOWED_RE.match(normalized):
                 errors.append(f'Tag "{normalized}" contains invalid characters or format')
 
         return errors

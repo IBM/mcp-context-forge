@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 import logging
 import re
 import traceback
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Pattern, Tuple
 import uuid
 
 # Third-Party
@@ -43,6 +43,10 @@ from sqlalchemy.orm import joinedload, Session
 from mcpgateway.db import ObservabilityEvent, ObservabilityMetric, ObservabilitySpan, ObservabilityTrace
 
 logger = logging.getLogger(__name__)
+
+# Precompiled regex for W3C Trace Context traceparent header parsing
+# Format: version-trace_id-parent_id-trace_flags
+_TRACEPARENT_RE: Pattern[str] = re.compile(r"^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$")
 
 # Context variable for tracking the current trace_id across async calls
 current_trace_id: ContextVar[Optional[str]] = ContextVar("current_trace_id", default=None)
@@ -91,8 +95,8 @@ def parse_traceparent(traceparent: str) -> Optional[Tuple[str, str, str]]:
         ('0af7651916cd43dd8448eb211c80319c', 'b7ad6b7169203331', '01')
     """
     # W3C Trace Context format: 00-trace_id(32hex)-parent_id(16hex)-flags(2hex)
-    pattern = r"^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$"
-    match = re.match(pattern, traceparent.lower())
+    # Uses precompiled regex for performance
+    match = _TRACEPARENT_RE.match(traceparent.lower())
 
     if not match:
         logger.warning(f"Invalid traceparent format: {traceparent}")

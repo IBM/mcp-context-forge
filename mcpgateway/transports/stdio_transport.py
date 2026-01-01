@@ -175,8 +175,9 @@ class StdioTransport(Transport):
             raise RuntimeError("Transport not connected")
 
         try:
-            data = orjson.dumps(message).decode()
-            self._stdout_writer.write(f"{data}\n".encode())
+            # Write bytes directly, avoiding decode/encode roundtrip for performance
+            data = orjson.dumps(message)
+            self._stdout_writer.write(data + b"\n")
             await self._stdout_writer.drain()
         except Exception as e:
             logger.error(f"Failed to send message: {e}")

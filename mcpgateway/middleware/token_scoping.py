@@ -14,7 +14,7 @@ and time-based restrictions.
 from datetime import datetime, timezone
 import ipaddress
 import re
-from typing import Optional
+from typing import List, Optional, Pattern, Tuple
 
 # Third-Party
 from fastapi import HTTPException, Request, status
@@ -32,6 +32,58 @@ bearer_scheme = HTTPBearer(auto_error=False)
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+# ============================================================================
+# Precompiled regex patterns (compiled once at module load for performance)
+# ============================================================================
+
+# Server path extraction patterns
+_SERVER_PATH_PATTERNS: List[Pattern[str]] = [
+    re.compile(r"^/servers/([^/]+)(?:$|/)"),
+    re.compile(r"^/sse/([^/?]+)(?:$|\?)"),
+    re.compile(r"^/ws/([^/?]+)(?:$|\?)"),
+]
+
+# Resource ID extraction patterns (IDs are UUID hex strings)
+_RESOURCE_PATTERNS: List[Tuple[Pattern[str], str]] = [
+    (re.compile(r"/servers/?([a-f0-9\-]+)"), "server"),
+    (re.compile(r"/tools/?([a-f0-9\-]+)"), "tool"),
+    (re.compile(r"/resources/?([a-f0-9\-]+)"), "resource"),
+    (re.compile(r"/prompts/?([a-f0-9\-]+)"), "prompt"),
+]
+
+# Permission map with precompiled patterns
+# Maps (HTTP method, path pattern) to required permission
+_PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
+    # Tools permissions
+    ("GET", re.compile(r"^/tools(?:$|/)"), Permissions.TOOLS_READ),
+    ("POST", re.compile(r"^/tools(?:$|/)"), Permissions.TOOLS_CREATE),
+    ("PUT", re.compile(r"^/tools/[^/]+(?:$|/)"), Permissions.TOOLS_UPDATE),
+    ("DELETE", re.compile(r"^/tools/[^/]+(?:$|/)"), Permissions.TOOLS_DELETE),
+    ("GET", re.compile(r"^/servers/[^/]+/tools(?:$|/)"), Permissions.TOOLS_READ),
+    ("POST", re.compile(r"^/servers/[^/]+/tools/[^/]+/call(?:$|/)"), Permissions.TOOLS_EXECUTE),
+    # Resources permissions
+    ("GET", re.compile(r"^/resources(?:$|/)"), Permissions.RESOURCES_READ),
+    ("POST", re.compile(r"^/resources(?:$|/)"), Permissions.RESOURCES_CREATE),
+    ("PUT", re.compile(r"^/resources/[^/]+(?:$|/)"), Permissions.RESOURCES_UPDATE),
+    ("DELETE", re.compile(r"^/resources/[^/]+(?:$|/)"), Permissions.RESOURCES_DELETE),
+    ("GET", re.compile(r"^/servers/[^/]+/resources(?:$|/)"), Permissions.RESOURCES_READ),
+    # Prompts permissions
+    ("GET", re.compile(r"^/prompts(?:$|/)"), Permissions.PROMPTS_READ),
+    ("POST", re.compile(r"^/prompts(?:$|/)"), Permissions.PROMPTS_CREATE),
+    ("PUT", re.compile(r"^/prompts/[^/]+(?:$|/)"), Permissions.PROMPTS_UPDATE),
+    ("DELETE", re.compile(r"^/prompts/[^/]+(?:$|/)"), Permissions.PROMPTS_DELETE),
+    # Server management permissions
+    ("GET", re.compile(r"^/servers(?:$|/)"), Permissions.SERVERS_READ),
+    ("POST", re.compile(r"^/servers(?:$|/)"), Permissions.SERVERS_CREATE),
+    ("PUT", re.compile(r"^/servers/[^/]+(?:$|/)"), Permissions.SERVERS_UPDATE),
+    ("DELETE", re.compile(r"^/servers/[^/]+(?:$|/)"), Permissions.SERVERS_DELETE),
+    # Admin permissions
+    ("GET", re.compile(r"^/admin(?:$|/)"), Permissions.ADMIN_USER_MANAGEMENT),
+    ("POST", re.compile(r"^/admin/[^/]+(?:$|/)"), Permissions.ADMIN_USER_MANAGEMENT),
+    ("PUT", re.compile(r"^/admin/[^/]+(?:$|/)"), Permissions.ADMIN_USER_MANAGEMENT),
+    ("DELETE", re.compile(r"^/admin/[^/]+(?:$|/)"), Permissions.ADMIN_USER_MANAGEMENT),
+]
 
 
 class TokenScopingMiddleware:
@@ -229,19 +281,12 @@ class TokenScopingMiddleware:
         if not server_id:
             return True  # No server restriction
 
-        # Extract server ID from path patterns:
+        # Extract server ID from path patterns (uses precompiled regex)
         # /servers/{server_id}/...
         # /sse/{server_id}
         # /ws/{server_id}
-        # Using segment-aware patterns for precise matching
-        server_path_patterns = [
-            r"^/servers/([^/]+)(?:$|/)",
-            r"^/sse/([^/?]+)(?:$|\?)",
-            r"^/ws/([^/?]+)(?:$|\?)",
-        ]
-
-        for pattern in server_path_patterns:
-            match = re.search(pattern, request_path)
+        for pattern in _SERVER_PATH_PATTERNS:
+            match = pattern.search(request_path)
             if match:
                 path_server_id = match.group(1)
                 return path_server_id == server_id
@@ -294,43 +339,9 @@ class TokenScopingMiddleware:
         if not permissions or "*" in permissions:
             return True  # No restrictions or full access
 
-        # Map HTTP methods and paths to permission requirements
-        # Using canonical permissions from mcpgateway.db.Permissions
-        # Segment-aware patterns to avoid accidental early matches
-        permission_map = {
-            # Tools permissions
-            ("GET", r"^/tools(?:$|/)"): Permissions.TOOLS_READ,
-            ("POST", r"^/tools(?:$|/)"): Permissions.TOOLS_CREATE,
-            ("PUT", r"^/tools/[^/]+(?:$|/)"): Permissions.TOOLS_UPDATE,
-            ("DELETE", r"^/tools/[^/]+(?:$|/)"): Permissions.TOOLS_DELETE,
-            ("GET", r"^/servers/[^/]+/tools(?:$|/)"): Permissions.TOOLS_READ,
-            ("POST", r"^/servers/[^/]+/tools/[^/]+/call(?:$|/)"): Permissions.TOOLS_EXECUTE,
-            # Resources permissions
-            ("GET", r"^/resources(?:$|/)"): Permissions.RESOURCES_READ,
-            ("POST", r"^/resources(?:$|/)"): Permissions.RESOURCES_CREATE,
-            ("PUT", r"^/resources/[^/]+(?:$|/)"): Permissions.RESOURCES_UPDATE,
-            ("DELETE", r"^/resources/[^/]+(?:$|/)"): Permissions.RESOURCES_DELETE,
-            ("GET", r"^/servers/[^/]+/resources(?:$|/)"): Permissions.RESOURCES_READ,
-            # Prompts permissions
-            ("GET", r"^/prompts(?:$|/)"): Permissions.PROMPTS_READ,
-            ("POST", r"^/prompts(?:$|/)"): Permissions.PROMPTS_CREATE,
-            ("PUT", r"^/prompts/[^/]+(?:$|/)"): Permissions.PROMPTS_UPDATE,
-            ("DELETE", r"^/prompts/[^/]+(?:$|/)"): Permissions.PROMPTS_DELETE,
-            # Server management permissions
-            ("GET", r"^/servers(?:$|/)"): Permissions.SERVERS_READ,
-            ("POST", r"^/servers(?:$|/)"): Permissions.SERVERS_CREATE,
-            ("PUT", r"^/servers/[^/]+(?:$|/)"): Permissions.SERVERS_UPDATE,
-            ("DELETE", r"^/servers/[^/]+(?:$|/)"): Permissions.SERVERS_DELETE,
-            # Admin permissions
-            ("GET", r"^/admin(?:$|/)"): Permissions.ADMIN_USER_MANAGEMENT,
-            ("POST", r"^/admin/[^/]+(?:$|/)"): Permissions.ADMIN_USER_MANAGEMENT,
-            ("PUT", r"^/admin/[^/]+(?:$|/)"): Permissions.ADMIN_USER_MANAGEMENT,
-            ("DELETE", r"^/admin/[^/]+(?:$|/)"): Permissions.ADMIN_USER_MANAGEMENT,
-        }
-
-        # Check each permission mapping
-        for (method, path_pattern), required_permission in permission_map.items():
-            if request_method == method and re.match(path_pattern, request_path):
+        # Check each permission mapping (uses precompiled regex patterns)
+        for method, path_pattern, required_permission in _PERMISSION_PATTERNS:
+            if request_method == method and path_pattern.match(request_path):
                 return required_permission in permissions
 
         # Default allow for unmatched paths
@@ -432,20 +443,13 @@ class TokenScopingMiddleware:
         else:
             logger.debug(f"Processing request with TEAM-SCOPED token (teams: {token_teams})")
 
-        # Extract resource type and ID from path using regex patterns
+        # Extract resource type and ID from path (uses precompiled regex patterns)
         # IDs are UUID hex strings (32 chars) or UUID with dashes (36 chars)
-        resource_patterns = [
-            (r"/servers/?([a-f0-9\-]+)", "server"),
-            (r"/tools/?([a-f0-9\-]+)", "tool"),
-            (r"/resources/?([a-f0-9\-]+)", "resource"),
-            (r"/prompts/?([a-f0-9\-]+)", "prompt"),
-        ]
-
         resource_id = None
         resource_type = None
 
-        for pattern, rtype in resource_patterns:
-            match = re.search(pattern, request_path)
+        for pattern, rtype in _RESOURCE_PATTERNS:
+            match = pattern.search(request_path)
             if match:
                 resource_id = match.group(1)
                 resource_type = rtype

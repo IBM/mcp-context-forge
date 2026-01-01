@@ -35,7 +35,7 @@ from contextlib import asynccontextmanager, AsyncExitStack
 import contextvars
 from dataclasses import dataclass
 import re
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, Pattern, Union
 from uuid import uuid4
 
 # Third-Party
@@ -66,6 +66,9 @@ from mcpgateway.utils.verify_credentials import verify_credentials
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+# Precompiled regex for server ID extraction from path
+_SERVER_ID_RE: Pattern[str] = re.compile(r"/servers/(?P<server_id>[a-fA-F0-9\-]+)/mcp")
 
 # Initialize ToolService, PromptService, ResourceService, CompletionService and MCP Server
 tool_service: ToolService = ToolService()
@@ -894,7 +897,8 @@ class SessionManagerWrapper:
         """
 
         path = scope["modified_path"]
-        match = re.search(r"/servers/(?P<server_id>[a-fA-F0-9\-]+)/mcp", path)
+        # Uses precompiled regex for server ID extraction
+        match = _SERVER_ID_RE.search(path)
 
         # Extract request headers from scope
         headers = dict(Headers(scope=scope))

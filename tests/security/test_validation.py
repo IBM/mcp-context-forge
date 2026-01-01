@@ -27,14 +27,14 @@ class TestSecurityValidator:
 
     def test_validate_shell_parameter_dangerous_strict(self):
         """Test dangerous shell parameter in strict mode."""
-        with patch('mcpgateway.common.validators.settings') as mock_settings:
+        with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.validation_strict = True
             with pytest.raises(ValueError, match="shell metacharacters"):
                 SecurityValidator.validate_shell_parameter("file; cat /etc/passwd")
 
     def test_validate_shell_parameter_dangerous_non_strict(self):
         """Test dangerous shell parameter in non-strict mode."""
-        with patch('mcpgateway.common.validators.settings') as mock_settings:
+        with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.validation_strict = False
             result = SecurityValidator.validate_shell_parameter("file; cat /etc/passwd")
             assert "'" in result  # Should be quoted
@@ -66,7 +66,7 @@ class TestSecurityValidator:
 
     def test_validate_sql_parameter_dangerous_strict(self):
         """Test dangerous SQL parameter in strict mode."""
-        with patch('mcpgateway.common.validators.config_settings') as mock_settings:
+        with patch("mcpgateway.common.validators.config_settings") as mock_settings:
             mock_settings.validation_strict = True
             with pytest.raises(ValueError, match="SQL injection"):
                 SecurityValidator.validate_sql_parameter("'; DROP TABLE users; --")
@@ -84,7 +84,7 @@ class TestSecurityValidator:
     def test_validate_path_depth_limit(self):
         """Test path depth validation."""
         # This test requires mocking settings.max_path_depth
-        with patch('mcpgateway.config.settings') as mock_settings:
+        with patch("mcpgateway.config.settings") as mock_settings:
             mock_settings.max_path_depth = 3
             # Deep path should be rejected by middleware
             # (actual implementation in ValidationMiddleware.validate_resource_path)
@@ -120,11 +120,7 @@ class TestOutputSanitizer:
 
     def test_sanitize_json_response_nested(self):
         """Test sanitizing nested JSON response."""
-        data = {
-            "message": "Hello\x1bWorld",
-            "items": ["test\x00", "clean"],
-            "nested": {"value": "bad\x1f"}
-        }
+        data = {"message": "Hello\x1bWorld", "items": ["test\x00", "clean"], "nested": {"value": "bad\x1f"}}
         result = SecurityValidator.sanitize_json_response(data)
         assert result["message"] == "HelloWorld"
         assert result["items"][0] == "test"
@@ -165,6 +161,7 @@ class TestValidationMiddleware:
     async def test_middleware_disabled(self):
         """Test middleware bypasses when disabled."""
         from unittest.mock import AsyncMock
+
         app = MagicMock()
         middleware = ValidationMiddleware(app)
         middleware.enabled = False
@@ -193,7 +190,7 @@ class TestValidationMiddleware:
     async def test_command_injection_prevention(self):
         """Test command injection prevention."""
         # Test dangerous shell metacharacters
-        with patch('mcpgateway.common.validators.settings') as mock_settings:
+        with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.validation_strict = True
             with pytest.raises(ValueError, match="shell metacharacters"):
                 SecurityValidator.validate_shell_parameter("file.jpg; cat /etc/passwd")
@@ -222,7 +219,7 @@ class TestValidationMiddleware:
     @pytest.mark.asyncio
     async def test_sql_injection_prevention(self):
         """Test SQL injection prevention."""
-        with patch('mcpgateway.common.validators.config_settings') as mock_settings:
+        with patch("mcpgateway.common.validators.config_settings") as mock_settings:
             mock_settings.validation_strict = True
 
             # Test SQL injection patterns
@@ -234,3 +231,49 @@ class TestValidationMiddleware:
 
             with pytest.raises(ValueError, match="SQL injection"):
                 SecurityValidator.validate_sql_parameter("admin'--")
+
+    @pytest.mark.asyncio
+    async def test_sql_injection_block_comments(self):
+        """Test SQL injection prevention for block comments."""
+        with patch("mcpgateway.common.validators.config_settings") as mock_settings:
+            mock_settings.validation_strict = True
+
+            # Block comments should be detected
+            with pytest.raises(ValueError, match="SQL injection"):
+                SecurityValidator.validate_sql_parameter("id /* comment */ = 1")
+
+            with pytest.raises(ValueError, match="SQL injection"):
+                SecurityValidator.validate_sql_parameter("/**/")
+
+            with pytest.raises(ValueError, match="SQL injection"):
+                SecurityValidator.validate_sql_parameter("1/*bypass*/OR/**/1=1")
+
+    @pytest.mark.asyncio
+    async def test_sql_injection_keyword_boundaries(self):
+        """Test SQL keyword detection uses word boundaries (no false positives)."""
+        # These should NOT raise - they contain SQL-like substrings but not keywords
+        safe_values = [
+            "selection_field",  # contains "select" but not as word
+            "category_update",  # contains "update" but not as word
+            "dropdown_menu",  # contains "drop" but not as word
+            "executor_id",  # contains "exec" but not as word
+            "reinsert_data",  # contains "insert" but not as word
+            "undelete_flag",  # contains "delete" but not as word
+        ]
+        for value in safe_values:
+            result = SecurityValidator.validate_sql_parameter(value)
+            assert result == value, f"False positive for '{value}'"
+
+        # These SHOULD raise - actual SQL keywords
+        with patch("mcpgateway.common.validators.config_settings") as mock_settings:
+            mock_settings.validation_strict = True
+
+            dangerous_values = [
+                "1 UNION SELECT * FROM users",
+                "data; DROP TABLE users",
+                "x'; DELETE FROM users WHERE 1=1; --",
+                "EXEC sp_executesql",
+            ]
+            for value in dangerous_values:
+                with pytest.raises(ValueError, match="SQL injection"):
+                    SecurityValidator.validate_sql_parameter(value)
