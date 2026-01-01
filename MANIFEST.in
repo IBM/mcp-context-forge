@@ -63,10 +63,13 @@ recursive-include alembic *.mako
 recursive-include alembic *.md
 recursive-include alembic *.py
 
-# nginx configuration and docker files
-recursive-include nginx *.conf
-recursive-include nginx *.md
-include nginx/Dockerfile
+# Infrastructure configuration (nginx, monitoring)
+recursive-include infra *.conf
+recursive-include infra *.json
+recursive-include infra *.md
+recursive-include infra *.yaml
+recursive-include infra *.yml
+include infra/nginx/Dockerfile
 
 # Export/Import functionality (explicitly include new files)
 include mcpgateway/cli_export_import.py
