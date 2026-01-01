@@ -291,6 +291,71 @@ class TestToolService:
         assert tool_read.auth.auth_header_value == "********"
 
     @pytest.mark.asyncio
+    async def test_convert_tool_to_read_include_auth_false_skips_decode(self, tool_service, mock_tool):
+        """Verify include_auth=False skips decryption and returns minimal auth info."""
+        # Set up tool with encrypted basic auth
+        creds = base64.b64encode(b"test_user:test_password").decode()
+        auth_dict = {"Authorization": f"Basic {creds}"}
+        mock_tool.auth_type = "basic"
+        mock_tool.auth_value = encode_auth(auth_dict)
+
+        # Patch decode_auth to verify it's not called
+        with patch("mcpgateway.services.tool_service.decode_auth") as mock_decode:
+            tool_read = tool_service.convert_tool_to_read(mock_tool, include_auth=False)
+
+            # Verify decode_auth was NOT called
+            mock_decode.assert_not_called()
+
+            # Verify minimal auth info is returned
+            assert tool_read.auth is not None
+            assert tool_read.auth.auth_type == "basic"
+            # Other fields should be empty/default (not decrypted)
+            assert tool_read.auth.username == ""
+            assert tool_read.auth.password == ""
+
+    @pytest.mark.asyncio
+    async def test_convert_tool_to_read_include_auth_false_bearer(self, tool_service, mock_tool):
+        """Verify include_auth=False with bearer auth returns minimal auth info."""
+        mock_tool.auth_type = "bearer"
+        mock_tool.auth_value = encode_auth({"Authorization": "Bearer ABC123"})
+
+        with patch("mcpgateway.services.tool_service.decode_auth") as mock_decode:
+            tool_read = tool_service.convert_tool_to_read(mock_tool, include_auth=False)
+
+            mock_decode.assert_not_called()
+            assert tool_read.auth is not None
+            assert tool_read.auth.auth_type == "bearer"
+            assert tool_read.auth.token == ""
+
+    @pytest.mark.asyncio
+    async def test_convert_tool_to_read_oauth_no_auth_value(self, tool_service, mock_tool):
+        """Verify OAuth tools (auth_type set, auth_value=None) return auth=None."""
+        mock_tool.auth_type = "oauth"
+        mock_tool.auth_value = None
+
+        # Test with include_auth=True (detail view)
+        tool_read = tool_service.convert_tool_to_read(mock_tool, include_auth=True)
+        assert tool_read.auth is None
+
+        # Test with include_auth=False (list view)
+        tool_read = tool_service.convert_tool_to_read(mock_tool, include_auth=False)
+        assert tool_read.auth is None
+
+    @pytest.mark.asyncio
+    async def test_convert_tool_to_read_no_auth(self, tool_service, mock_tool):
+        """Verify tools with no auth return auth=None regardless of include_auth."""
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+
+        # Test with include_auth=True
+        tool_read = tool_service.convert_tool_to_read(mock_tool, include_auth=True)
+        assert tool_read.auth is None
+
+        # Test with include_auth=False
+        tool_read = tool_service.convert_tool_to_read(mock_tool, include_auth=False)
+        assert tool_read.auth is None
+
+    @pytest.mark.asyncio
     async def test_register_tool(self, tool_service, mock_tool, test_db):
         """Test successful tool registration."""
         # Set up DB behavior
@@ -602,7 +667,7 @@ class TestToolService:
         assert len(result) == 1
         assert result[0] == tool_read
         assert next_cursor is None  # No pagination needed for single result
-        tool_service.convert_tool_to_read.assert_called_once_with(mock_tool, include_metrics=False)
+        tool_service.convert_tool_to_read.assert_called_once_with(mock_tool, include_metrics=False, include_auth=False)
 
     @pytest.mark.asyncio
     async def test_list_tools_pagination(self, tool_service, test_db, monkeypatch):
@@ -733,7 +798,7 @@ class TestToolService:
         # Verify result
         assert len(result) == 1
         assert result[0] == tool_read
-        tool_service.convert_tool_to_read.assert_called_once_with(mock_tool, include_metrics=False)
+        tool_service.convert_tool_to_read.assert_called_once_with(mock_tool, include_metrics=False, include_auth=False)
 
     @pytest.mark.asyncio
     async def test_list_server_tools_active_only(self):
@@ -751,7 +816,7 @@ class TestToolService:
         tools = await service.list_server_tools(mock_db, server_id="server123", include_inactive=False)
 
         assert tools == ["converted_tool"]
-        service.convert_tool_to_read.assert_called_once_with(mock_tool, include_metrics=False)
+        service.convert_tool_to_read.assert_called_once_with(mock_tool, include_metrics=False, include_auth=False)
 
     @pytest.mark.asyncio
     async def test_list_server_tools_include_inactive(self):

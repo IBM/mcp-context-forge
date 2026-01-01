@@ -382,13 +382,15 @@ class ToolService:
         db.commit()  # Release transaction to avoid idle-in-transaction
         return team.name if team else None
 
-    def convert_tool_to_read(self, tool: DbTool, include_metrics: bool = False) -> ToolRead:
+    def convert_tool_to_read(self, tool: DbTool, include_metrics: bool = False, include_auth: bool = True) -> ToolRead:
         """Converts a DbTool instance into a ToolRead model, including aggregated metrics and
         new API gateway fields: request_type and authentication credentials (masked).
 
         Args:
             tool (DbTool): The ORM instance of the tool.
             include_metrics (bool): Whether to include metrics in the result. Defaults to False.
+            include_auth (bool): Whether to decode and include auth details. Defaults to True.
+                When False, skips expensive AES-GCM decryption and returns minimal auth info.
 
         Returns:
             ToolRead: The Pydantic model representing the tool, including aggregated metrics and new fields.
@@ -396,7 +398,7 @@ class ToolService:
         # NOTE: This serves two purposes:
         #   1. It determines whether to decode auth (used later)
         #   2. It forces the tool object to lazily evaluate (required before copy)
-        auth_type_set = tool.auth_type and tool.auth_value
+        has_encrypted_auth = tool.auth_type and tool.auth_value
 
         # Copy the dict from the tool
         tool_dict = tool.__dict__.copy()
@@ -409,8 +411,8 @@ class ToolService:
         tool_dict["request_type"] = tool.request_type
         tool_dict["annotations"] = tool.annotations or {}
 
-        # Only decode auth if auth_type is set
-        if auth_type_set:
+        # Only decode auth if include_auth=True AND we have encrypted credentials
+        if include_auth and has_encrypted_auth:
             decoded_auth_value = decode_auth(tool.auth_value)
             if tool.auth_type == "basic":
                 decoded_bytes = base64.b64decode(decoded_auth_value["Authorization"].split("Basic ")[1])
@@ -435,7 +437,13 @@ class ToolService:
                 }
             else:
                 tool_dict["auth"] = None
+        elif not include_auth and has_encrypted_auth:
+            # LIST VIEW: Minimal auth info without decryption
+            # Only show auth_type for tools that have encrypted credentials
+            tool_dict["auth"] = {"auth_type": tool.auth_type}
         else:
+            # No encrypted auth (includes OAuth tools where auth_value=None)
+            # Behavior unchanged from current implementation
             tool_dict["auth"] = None
 
         tool_dict["name"] = tool.name
@@ -1490,7 +1498,7 @@ class ToolService:
         result = []
         for s in tools_db:
             s.team = team_map.get(s.team_id) if s.team_id else None
-            result.append(self.convert_tool_to_read(s, include_metrics=False))
+            result.append(self.convert_tool_to_read(s, include_metrics=False, include_auth=False))
 
         # Return appropriate format based on pagination type
         if page is not None:
@@ -1580,7 +1588,7 @@ class ToolService:
             tool = row[0]
             team_name = row.team_name
             tool.team = team_name
-            result.append(self.convert_tool_to_read(tool, include_metrics=include_metrics))
+            result.append(self.convert_tool_to_read(tool, include_metrics=include_metrics, include_auth=False))
 
         return result
 
@@ -1713,7 +1721,7 @@ class ToolService:
             team_name = row.team_name
             tool.team = team_name
             tools.append(tool)
-            result.append(self.convert_tool_to_read(tool, include_metrics=False))
+            result.append(self.convert_tool_to_read(tool, include_metrics=False, include_auth=False))
 
         next_cursor = None
         # Generate cursor if there are more results (cursor-based pagination)
