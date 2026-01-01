@@ -17,6 +17,8 @@ volumes:                # Named volumes survive podman-compose down/up
   redisinsight_data:
   nginx_cache:
   grafanadata:
+  prometheusdata:
+  lokidata:
 
 ###############################################################################
 #  CORE SERVICE - MCP Gateway
@@ -28,7 +30,7 @@ services:
   # ──────────────────────────────────────────────────────────────────────
   nginx:
     build:
-      context: ./nginx
+      context: ./infra/nginx
       dockerfile: Dockerfile
     image: mcpgateway/nginx-cache:latest
     restart: unless-stopped
@@ -40,7 +42,7 @@ services:
         condition: service_healthy
     volumes:
       - nginx_cache:/var/cache/nginx    # Persistent cache storage
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro  # Mount config as read-only
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro  # Mount config as read-only
     # TCP kernel tuning for 3000 concurrent connections
     # Note: net.core.* sysctls are host-level and cannot be set per-container
     # Only net.ipv4.* sysctls that are network-namespace aware work here
@@ -720,7 +722,8 @@ services:
     ports:
       - "9090:9090"    # http://localhost:9090
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheusdata:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.retention.time=7d'
@@ -730,6 +733,40 @@ services:
       - redis_exporter
       - nginx_exporter
       - cadvisor
+    profiles: ["monitoring"]
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Loki - Log aggregation system (like Prometheus, but for logs)
+  # Query logs with LogQL in Grafana
+  # ──────────────────────────────────────────────────────────────────────
+  loki:
+    image: grafana/loki:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    user: "0"  # Run as root to avoid permission issues
+    ports:
+      - "3100:3100"    # http://localhost:3100/ready
+    volumes:
+      - ./infra/monitoring/loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - lokidata:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    profiles: ["monitoring"]
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Promtail - Log collector for Loki
+  # Collects logs from all containers via Docker socket
+  # ──────────────────────────────────────────────────────────────────────
+  promtail:
+    image: grafana/promtail:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    volumes:
+      - ./infra/monitoring/loki/promtail-config.yaml:/etc/promtail/config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    command: -config.file=/etc/promtail/config.yaml
+    depends_on:
+      - loki
     profiles: ["monitoring"]
 
   # ──────────────────────────────────────────────────────────────────────
@@ -753,8 +790,8 @@ services:
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - grafanadata:/var/lib/grafana
-      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
-      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./infra/monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./infra/monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
     depends_on:
       - prometheus
     profiles: ["monitoring"]
