@@ -17,6 +17,8 @@ volumes:                # Named volumes survive podman-compose down/up
   redisinsight_data:
   nginx_cache:
   grafanadata:
+  prometheusdata:
+  lokidata:
 
 ###############################################################################
 #  CORE SERVICE - MCP Gateway
@@ -28,7 +30,7 @@ services:
   # ──────────────────────────────────────────────────────────────────────
   nginx:
     build:
-      context: ./nginx
+      context: ./infra/nginx
       dockerfile: Dockerfile
     image: mcpgateway/nginx-cache:latest
     restart: unless-stopped
@@ -40,7 +42,7 @@ services:
         condition: service_healthy
     volumes:
       - nginx_cache:/var/cache/nginx    # Persistent cache storage
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro  # Mount config as read-only
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro  # Mount config as read-only
     # TCP kernel tuning for 3000 concurrent connections
     # Note: net.core.* sysctls are host-level and cannot be set per-container
     # Only net.ipv4.* sysctls that are network-namespace aware work here
@@ -294,7 +296,7 @@ services:
 
     deploy:
       mode: replicated
-      replicas: 2
+      replicas: 3
       resources:
         limits:
           cpus: '8'
@@ -613,72 +615,186 @@ services:
           memory: 1G
 
 ###############################################################################
-#  OPTIONAL MONITORING & DEBUGGING TOOLS (disabled by default)
+#  MONITORING STACK (enabled with --profile monitoring)
+#  Usage: docker compose --profile monitoring up -d
+#  Access: Grafana http://localhost:3000 (admin/changeme)
+#          Prometheus http://localhost:9090
 ###############################################################################
 
-  # # ──────────────────────────────────────────────────────────────────────
-  # # Prometheus PostgreSQL Exporter - Metrics for Prometheus/Grafana
-  # # Exposes PostgreSQL metrics at :9187/metrics
-  # # ──────────────────────────────────────────────────────────────────────
-  # postgres_exporter:
-  #   image: quay.io/prometheuscommunity/postgres-exporter:latest
-  #   restart: unless-stopped
-  #   networks: [mcpnet]
-  #   ports:
-  #     - "9187:9187"    # http://localhost:9187/metrics
-  #   environment:
-  #     - DATA_SOURCE_NAME=postgresql://postgres:mysecretpassword@postgres:5432/mcp?sslmode=disable
-  #     # Enable extra metrics collectors
-  #     - PG_EXPORTER_AUTO_DISCOVER_DATABASES=true
-  #     - PG_EXPORTER_EXTEND_QUERY_PATH=/etc/postgres_exporter/queries.yaml
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
+  # ──────────────────────────────────────────────────────────────────────
+  # Prometheus PostgreSQL Exporter - Database metrics
+  # Metrics: connections, query duration, locks, cache hit ratio
+  # ──────────────────────────────────────────────────────────────────────
+  postgres_exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "9187:9187"    # http://localhost:9187/metrics
+    environment:
+      - DATA_SOURCE_NAME=postgresql://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp?sslmode=disable
+      - PG_EXPORTER_AUTO_DISCOVER_DATABASES=true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: ["monitoring"]
 
-  # # ──────────────────────────────────────────────────────────────────────
-  # # Prometheus Redis Exporter - Metrics for Prometheus/Grafana
-  # # Exposes Redis metrics at :9121/metrics
-  # # ──────────────────────────────────────────────────────────────────────
-  # redis_exporter:
-  #   image: oliver006/redis_exporter:latest
-  #   restart: unless-stopped
-  #   networks: [mcpnet]
-  #   ports:
-  #     - "9121:9121"    # http://localhost:9121/metrics
-  #   environment:
-  #     - REDIS_ADDR=redis://redis:6379
-  #   depends_on:
-  #     redis:
-  #       condition: service_started
+  # ──────────────────────────────────────────────────────────────────────
+  # Prometheus Redis Exporter - Cache metrics
+  # Metrics: memory, clients, commands/sec, keyspace stats
+  # ──────────────────────────────────────────────────────────────────────
+  redis_exporter:
+    image: oliver006/redis_exporter:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "9121:9121"    # http://localhost:9121/metrics
+    environment:
+      - REDIS_ADDR=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_started
+    profiles: ["monitoring"]
 
-  # # ──────────────────────────────────────────────────────────────────────
-  # # Prometheus + Grafana Stack - Full observability
-  # # ──────────────────────────────────────────────────────────────────────
-  # prometheus:
-  #   image: prom/prometheus:latest
-  #   restart: unless-stopped
-  #   networks: [mcpnet]
-  #   ports:
-  #     - "9090:9090"    # http://localhost:9090
-  #   volumes:
-  #     - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-  #   command:
-  #     - '--config.file=/etc/prometheus/prometheus.yml'
-  #     - '--storage.tsdb.retention.time=7d'
+  # ──────────────────────────────────────────────────────────────────────
+  # Prometheus PgBouncer Exporter - Connection pool metrics
+  # Metrics: active/waiting clients, server connections, pool stats
+  # ──────────────────────────────────────────────────────────────────────
+  pgbouncer_exporter:
+    image: prometheuscommunity/pgbouncer-exporter:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "9127:9127"    # http://localhost:9127/metrics
+    environment:
+      - PGBOUNCER_EXPORTER_CONNECTION_STRING=postgres://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@pgbouncer:6432/pgbouncer?sslmode=disable
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    profiles: ["monitoring"]
 
-  # grafana:
-  #   image: grafana/grafana:latest
-  #   restart: unless-stopped
-  #   networks: [mcpnet]
-  #   ports:
-  #     - "3000:3000"    # http://localhost:3000 (admin/admin)
-  #   environment:
-  #     - GF_SECURITY_ADMIN_PASSWORD=changeme
-  #     - GF_USERS_ALLOW_SIGN_UP=false
-  #   volumes:
-  #     - grafanadata:/var/lib/grafana
-  #   depends_on:
-  #     - prometheus
+  # ──────────────────────────────────────────────────────────────────────
+  # Prometheus Nginx Exporter - Proxy metrics
+  # Metrics: active connections, requests/sec, response codes
+  # Requires stub_status enabled in nginx.conf (location /nginx_status)
+  # ──────────────────────────────────────────────────────────────────────
+  nginx_exporter:
+    image: nginx/nginx-prometheus-exporter:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "9113:9113"    # http://localhost:9113/metrics
+    command:
+      - '-nginx.scrape-uri=http://nginx:80/nginx_status'
+    depends_on:
+      nginx:
+        condition: service_healthy
+    profiles: ["monitoring"]
+
+  # ──────────────────────────────────────────────────────────────────────
+  # cAdvisor - Container metrics (CPU, memory, network, disk I/O)
+  # Metrics: container_cpu_usage_seconds_total, container_memory_usage_bytes
+  # Dashboard: Grafana ID 14282 (Docker and cAdvisor)
+  # ──────────────────────────────────────────────────────────────────────
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "8085:8080"    # http://localhost:8085/metrics
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    profiles: ["monitoring"]
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Prometheus - Metrics collection and storage
+  # Scrapes: gateway, postgres, redis, nginx, cadvisor
+  # Retention: 7 days (configurable via --storage.tsdb.retention.time)
+  # ──────────────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "9090:9090"    # http://localhost:9090
+    volumes:
+      - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheusdata:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=7d'
+      - '--web.enable-lifecycle'
+    depends_on:
+      - postgres_exporter
+      - redis_exporter
+      - nginx_exporter
+      - cadvisor
+    profiles: ["monitoring"]
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Loki - Log aggregation system (like Prometheus, but for logs)
+  # Query logs with LogQL in Grafana
+  # ──────────────────────────────────────────────────────────────────────
+  loki:
+    image: grafana/loki:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    user: "0"  # Run as root to avoid permission issues
+    ports:
+      - "3100:3100"    # http://localhost:3100/ready
+    volumes:
+      - ./infra/monitoring/loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - lokidata:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    profiles: ["monitoring"]
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Promtail - Log collector for Loki
+  # Collects logs from all containers via Docker socket
+  # ──────────────────────────────────────────────────────────────────────
+  promtail:
+    image: grafana/promtail:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    volumes:
+      - ./infra/monitoring/loki/promtail-config.yaml:/etc/promtail/config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    command: -config.file=/etc/promtail/config.yaml
+    depends_on:
+      - loki
+    profiles: ["monitoring"]
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Grafana - Dashboard visualization
+  # Default login: admin / changeme
+  # Recommended dashboards:
+  #   - Docker/cAdvisor: 14282
+  #   - PostgreSQL: 9628
+  #   - Redis: 763
+  #   - Nginx: 12708
+  # ──────────────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    user: "0"  # Run as root to avoid permission issues with provisioning
+    ports:
+      - "3000:3000"    # http://localhost:3000
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=changeme
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafanadata:/var/lib/grafana
+      - ./infra/monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./infra/monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+    depends_on:
+      - prometheus
+    profiles: ["monitoring"]
 
 ###############################################################################
 #  OPTIONAL ADMIN TOOLS - handy web UIs for DB & cache (disabled by default)
@@ -795,8 +911,7 @@ services:
   ###############################################################################
   # Fast Time Server - High-performance time/timezone service for MCP
   # Note: This is an amd64-only image. On ARM platforms (Apple Silicon),
-  # emulation may not work properly. Use profiles to disable:
-  # docker compose --profile with-fast-time up -d
+  # emulation may not work properly.
   ###############################################################################
   fast_time_server:
     image: ghcr.io/ibm/fast-time-server:latest
@@ -806,7 +921,6 @@ services:
       - "8888:8080"    # Map host port 8888 to container port 8080
     # Use dual mode for both SSE (/sse) and Streamable HTTP (/http) endpoints
     command: ["-transport=dual", "-listen=0.0.0.0", "-port=8080", "-log-level=info"]
-    profiles: ["with-fast-time"]  # Optional: enable with --profile with-fast-time
 
   ###############################################################################
   # Auto-registration service - registers fast_time_server with gateway
@@ -823,7 +937,6 @@ services:
       - JWT_SECRET_KEY=my-test-key
     # This is a one-shot container that exits after registration
     restart: "no"
-    profiles: ["with-fast-time"]  # Optional: enable with --profile with-fast-time
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
