@@ -13,7 +13,7 @@ These tests verify the low-level header modification works correctly:
 """
 
 # Standard
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 # Third-Party
 from fastapi import Depends, FastAPI, Request
@@ -24,7 +24,6 @@ import pytest
 # First-Party
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
 from mcpgateway.plugins.framework import (
-    GlobalContext,
     HttpHeaderPayload,
     HttpHookType,
     PluginResult,
@@ -378,3 +377,257 @@ class TestHeaderMergingBehavior:
         assert data["headers"]["authorization"] == "Bearer token123"
         assert "x-custom-header" in data["headers"]
         assert data["headers"]["x-custom-header"] == "CustomValue"
+
+
+class TestHasHooksForOptimization:
+    """Test that has_hooks_for optimization correctly skips unnecessary hook invocations."""
+
+    @pytest.fixture
+    def app_with_hook_tracking(self):
+        """Create app that tracks which hooks are invoked."""
+        app = FastAPI()
+
+        # Track which hooks are actually invoked
+        hooks_invoked = []
+
+        mock_plugin_manager = MagicMock()
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            hooks_invoked.append(hook_type)
+            return PluginResult(continue_processing=True), {}
+
+        mock_plugin_manager.invoke_hook = mock_invoke_hook
+
+        # Default: both hooks registered
+        mock_plugin_manager.has_hooks_for = MagicMock(return_value=True)
+
+        app.add_middleware(HttpAuthMiddleware, plugin_manager=mock_plugin_manager)
+
+        @app.get("/test")
+        async def test_endpoint():
+            return {"status": "ok"}
+
+        app.state.hooks_invoked = hooks_invoked
+        app.state.mock_plugin_manager = mock_plugin_manager
+        return app
+
+    def test_no_hooks_invoked_when_neither_registered(self, app_with_hook_tracking):
+        """Test that no hooks are invoked when neither PRE nor POST is registered."""
+        # Configure: no hooks registered
+        app_with_hook_tracking.state.mock_plugin_manager.has_hooks_for = MagicMock(return_value=False)
+        app_with_hook_tracking.state.hooks_invoked.clear()
+
+        client = TestClient(app_with_hook_tracking)
+        response = client.get("/test")
+
+        assert response.status_code == 200
+        # No hooks should be invoked - early return
+        assert len(app_with_hook_tracking.state.hooks_invoked) == 0
+
+    def test_only_pre_hook_invoked_when_only_pre_registered(self, app_with_hook_tracking):
+        """Test that only PRE hook is invoked when only PRE is registered."""
+
+        def has_hooks_side_effect(hook_type):
+            return hook_type == HttpHookType.HTTP_PRE_REQUEST
+
+        app_with_hook_tracking.state.mock_plugin_manager.has_hooks_for = MagicMock(side_effect=has_hooks_side_effect)
+        app_with_hook_tracking.state.hooks_invoked.clear()
+
+        client = TestClient(app_with_hook_tracking)
+        response = client.get("/test")
+
+        assert response.status_code == 200
+        # Only PRE hook should be invoked
+        assert app_with_hook_tracking.state.hooks_invoked == [HttpHookType.HTTP_PRE_REQUEST]
+
+    def test_only_post_hook_invoked_when_only_post_registered(self, app_with_hook_tracking):
+        """Test that only POST hook is invoked when only POST is registered."""
+
+        def has_hooks_side_effect(hook_type):
+            return hook_type == HttpHookType.HTTP_POST_REQUEST
+
+        app_with_hook_tracking.state.mock_plugin_manager.has_hooks_for = MagicMock(side_effect=has_hooks_side_effect)
+        app_with_hook_tracking.state.hooks_invoked.clear()
+
+        client = TestClient(app_with_hook_tracking)
+        response = client.get("/test")
+
+        assert response.status_code == 200
+        # Only POST hook should be invoked
+        assert app_with_hook_tracking.state.hooks_invoked == [HttpHookType.HTTP_POST_REQUEST]
+
+    def test_both_hooks_invoked_when_both_registered(self, app_with_hook_tracking):
+        """Test that both hooks are invoked when both are registered."""
+        # Default is both registered (return_value=True)
+        app_with_hook_tracking.state.hooks_invoked.clear()
+
+        client = TestClient(app_with_hook_tracking)
+        response = client.get("/test")
+
+        assert response.status_code == 200
+        # Both hooks should be invoked in order
+        assert app_with_hook_tracking.state.hooks_invoked == [HttpHookType.HTTP_PRE_REQUEST, HttpHookType.HTTP_POST_REQUEST]
+
+    def test_context_table_initialized_when_only_post_registered(self, app_with_hook_tracking):
+        """Test that context_table is properly initialized when only POST hook is registered.
+
+        This verifies that local_contexts is None (not undefined) when passed to POST hook
+        if no PRE hook was invoked.
+        """
+        captured_local_contexts = []
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            if hook_type == HttpHookType.HTTP_POST_REQUEST:
+                captured_local_contexts.append(local_contexts)
+            return PluginResult(continue_processing=True), {}
+
+        app_with_hook_tracking.state.mock_plugin_manager.invoke_hook = mock_invoke_hook
+
+        def has_hooks_side_effect(hook_type):
+            return hook_type == HttpHookType.HTTP_POST_REQUEST
+
+        app_with_hook_tracking.state.mock_plugin_manager.has_hooks_for = MagicMock(side_effect=has_hooks_side_effect)
+
+        client = TestClient(app_with_hook_tracking)
+        response = client.get("/test")
+
+        assert response.status_code == 200
+        # local_contexts should be None (explicitly initialized), not undefined
+        assert len(captured_local_contexts) == 1
+        assert captured_local_contexts[0] is None
+
+    def test_context_table_passed_from_pre_to_post(self, app_with_hook_tracking):
+        """Test that context_table from PRE hook is passed to POST hook."""
+        mock_context = {"plugin_a": {"key": "value"}}
+        captured_local_contexts = []
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            if hook_type == HttpHookType.HTTP_PRE_REQUEST:
+                return PluginResult(continue_processing=True), mock_context
+            if hook_type == HttpHookType.HTTP_POST_REQUEST:
+                captured_local_contexts.append(local_contexts)
+            return PluginResult(continue_processing=True), {}
+
+        app_with_hook_tracking.state.mock_plugin_manager.invoke_hook = mock_invoke_hook
+        # Both hooks registered
+        app_with_hook_tracking.state.mock_plugin_manager.has_hooks_for = MagicMock(return_value=True)
+
+        client = TestClient(app_with_hook_tracking)
+        response = client.get("/test")
+
+        assert response.status_code == 200
+        # POST hook should receive the context_table from PRE hook
+        assert len(captured_local_contexts) == 1
+        assert captured_local_contexts[0] == mock_context
+
+
+class TestHasHooksForPerformance:
+    """Test that has_hooks_for optimization improves performance by skipping payload creation.
+
+    These tests verify that when a hook type has no registered plugins:
+    - The corresponding payload object is not created
+    - invoke_hook is not called for that hook type
+    """
+
+    def test_invoke_hook_not_called_for_pre_when_not_registered(self):
+        """Test that invoke_hook is not called for PRE when no PRE hooks registered."""
+        app = FastAPI()
+
+        invoke_calls = []
+
+        mock_plugin_manager = MagicMock()
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            invoke_calls.append({"hook_type": hook_type, "payload_type": type(payload).__name__})
+            return PluginResult(continue_processing=True), {}
+
+        mock_plugin_manager.invoke_hook = mock_invoke_hook
+
+        # Only POST hook registered
+        def has_hooks_side_effect(hook_type):
+            return hook_type == HttpHookType.HTTP_POST_REQUEST
+
+        mock_plugin_manager.has_hooks_for = MagicMock(side_effect=has_hooks_side_effect)
+
+        app.add_middleware(HttpAuthMiddleware, plugin_manager=mock_plugin_manager)
+
+        @app.get("/test")
+        async def test_endpoint():
+            return {"status": "ok"}
+
+        client = TestClient(app)
+        invoke_calls.clear()
+        response = client.get("/test")
+
+        assert response.status_code == 200
+        # Only POST hook should have been invoked
+        assert len(invoke_calls) == 1
+        assert invoke_calls[0]["hook_type"] == HttpHookType.HTTP_POST_REQUEST
+        assert invoke_calls[0]["payload_type"] == "HttpPostRequestPayload"
+
+    def test_invoke_hook_not_called_for_post_when_not_registered(self):
+        """Test that invoke_hook is not called for POST when no POST hooks registered."""
+        app = FastAPI()
+
+        invoke_calls = []
+
+        mock_plugin_manager = MagicMock()
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            invoke_calls.append({"hook_type": hook_type, "payload_type": type(payload).__name__})
+            return PluginResult(continue_processing=True), {}
+
+        mock_plugin_manager.invoke_hook = mock_invoke_hook
+
+        # Only PRE hook registered
+        def has_hooks_side_effect(hook_type):
+            return hook_type == HttpHookType.HTTP_PRE_REQUEST
+
+        mock_plugin_manager.has_hooks_for = MagicMock(side_effect=has_hooks_side_effect)
+
+        app.add_middleware(HttpAuthMiddleware, plugin_manager=mock_plugin_manager)
+
+        @app.get("/test")
+        async def test_endpoint():
+            return {"status": "ok"}
+
+        client = TestClient(app)
+        invoke_calls.clear()
+        response = client.get("/test")
+
+        assert response.status_code == 200
+        # Only PRE hook should have been invoked
+        assert len(invoke_calls) == 1
+        assert invoke_calls[0]["hook_type"] == HttpHookType.HTTP_PRE_REQUEST
+        assert invoke_calls[0]["payload_type"] == "HttpPreRequestPayload"
+
+    def test_invoke_hook_not_called_at_all_when_none_registered(self):
+        """Test that invoke_hook is not called at all when no hooks are registered."""
+        app = FastAPI()
+
+        invoke_calls = []
+
+        mock_plugin_manager = MagicMock()
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            invoke_calls.append({"hook_type": hook_type, "payload_type": type(payload).__name__})
+            return PluginResult(continue_processing=True), {}
+
+        mock_plugin_manager.invoke_hook = mock_invoke_hook
+
+        # No hooks registered
+        mock_plugin_manager.has_hooks_for = MagicMock(return_value=False)
+
+        app.add_middleware(HttpAuthMiddleware, plugin_manager=mock_plugin_manager)
+
+        @app.get("/test")
+        async def test_endpoint():
+            return {"status": "ok"}
+
+        client = TestClient(app)
+        invoke_calls.clear()
+        response = client.get("/test")
+
+        assert response.status_code == 200
+        # No hooks should have been invoked
+        assert len(invoke_calls) == 0
