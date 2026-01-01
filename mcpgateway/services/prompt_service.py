@@ -16,6 +16,7 @@ It handles:
 
 # Standard
 from datetime import datetime, timezone
+from functools import lru_cache
 import os
 from string import Formatter
 import time
@@ -23,7 +24,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Set, Union
 import uuid
 
 # Third-Party
-from jinja2 import Environment, meta, select_autoescape
+from jinja2 import Environment, meta, select_autoescape, Template
 from sqlalchemy import and_, delete, desc, not_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -50,6 +51,38 @@ from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
+
+# Module-level Jinja environment singleton for template caching
+_JINJA_ENV: Optional[Environment] = None
+
+
+def _get_jinja_env() -> Environment:
+    """Get or create the module-level Jinja environment singleton.
+
+    Returns:
+        Jinja2 Environment with autoescape and trim settings.
+    """
+    global _JINJA_ENV  # pylint: disable=global-statement
+    if _JINJA_ENV is None:
+        _JINJA_ENV = Environment(
+            autoescape=select_autoescape(["html", "xml"]),
+            trim_blocks=True,
+            lstrip_blocks=True,
+        )
+    return _JINJA_ENV
+
+
+@lru_cache(maxsize=256)
+def _compile_jinja_template(template: str) -> Template:
+    """Cache compiled Jinja template by template string.
+
+    Args:
+        template: The template string to compile.
+
+    Returns:
+        Compiled Jinja Template object.
+    """
+    return _get_jinja_env().from_string(template)
 
 
 def _get_registry_cache():
@@ -153,7 +186,8 @@ class PromptService:
             True
         """
         self._event_service = EventService(channel_name="mcpgateway:prompt_events")
-        self._jinja_env = Environment(autoescape=select_autoescape(["html", "xml"]), trim_blocks=True, lstrip_blocks=True)
+        # Use the module-level singleton for template caching
+        self._jinja_env = _get_jinja_env()
         # Initialize plugin manager with env overrides for testability
         env_flag = os.getenv("PLUGINS_ENABLED")
         if env_flag is not None:
@@ -678,6 +712,8 @@ class PromptService:
                                 # Update existing prompt
                                 existing_prompt.description = prompt.description
                                 existing_prompt.template = prompt.template
+                                # Clear template cache to reduce memory growth
+                                _compile_jinja_template.cache_clear()
                                 existing_prompt.argument_schema = argument_schema
                                 existing_prompt.tags = prompt.tags or []
                                 existing_prompt.modified_by = created_by
@@ -1492,6 +1528,8 @@ class PromptService:
             if prompt_update.template is not None:
                 prompt.template = prompt_update.template
                 self._validate_template(prompt.template)
+                # Clear template cache to reduce memory growth
+                _compile_jinja_template.cache_clear()
             if prompt_update.arguments is not None:
                 required_args = self._get_required_arguments(prompt.template)
                 argument_schema = {
@@ -2045,7 +2083,7 @@ class PromptService:
         return variables.union(format_vars)
 
     def _render_template(self, template: str, arguments: Dict[str, str]) -> str:
-        """Render template with arguments.
+        """Render template with arguments using cached compiled templates.
 
         Args:
             template: Template to render
@@ -2067,7 +2105,7 @@ class PromptService:
             'No variables'
         """
         try:
-            jinja_template = self._jinja_env.from_string(template)
+            jinja_template = _compile_jinja_template(template)
             return jinja_template.render(**arguments)
         except Exception:
             try:
