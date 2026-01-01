@@ -29,6 +29,7 @@ from starlette.responses import Response
 from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
 from mcpgateway.instrumentation.sqlalchemy import attach_trace_to_session
+from mcpgateway.middleware.path_filter import should_skip_observability
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService, parse_traceparent
 
 logger = logging.getLogger(__name__)
@@ -74,7 +75,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # Skip health checks and static files to reduce noise
-        if request.url.path in ["/health", "/healthz", "/ready", "/metrics"] or request.url.path.startswith("/static/"):
+        if should_skip_observability(request.url.path):
             return await call_next(request)
 
         # Extract request context

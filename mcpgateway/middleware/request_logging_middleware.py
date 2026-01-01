@@ -26,6 +26,7 @@ from starlette.responses import Response
 
 # First-Party
 from mcpgateway.auth import get_current_user
+from mcpgateway.middleware.path_filter import should_skip_request_logging
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.utils.correlation_id import get_correlation_id
@@ -205,8 +206,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         user_id, user_email = await self._resolve_user_identity(request)
 
         # Skip boundary logging for health checks and static assets
-        skip_paths = ["/health", "/healthz", "/static", "/favicon.ico"]
-        should_log_boundary = self.enable_gateway_logging and not any(path.startswith(skip_path) for skip_path in skip_paths)
+        should_log_boundary = self.enable_gateway_logging and not should_skip_request_logging(path)
 
         # Log gateway request started (optional - disabled by default for performance)
         if should_log_boundary and self.log_request_start:
