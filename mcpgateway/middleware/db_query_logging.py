@@ -35,6 +35,7 @@ from starlette.responses import Response
 
 # First-Party
 from mcpgateway.config import get_settings
+from mcpgateway.middleware.path_filter import should_skip_db_query_logging
 
 logger = logging.getLogger(__name__)
 
@@ -395,7 +396,7 @@ class DBQueryLoggingMiddleware(BaseHTTPMiddleware):
 
         # Skip static files and health checks
         path = request.url.path
-        if path.startswith("/static") or path in ("/health", "/healthz", "/ready"):
+        if should_skip_db_query_logging(path):
             return await call_next(request)
 
         # Create request context
