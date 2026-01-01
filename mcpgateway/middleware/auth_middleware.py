@@ -29,6 +29,7 @@ from starlette.responses import Response
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
+from mcpgateway.middleware.path_filter import should_skip_auth_context
 from mcpgateway.services.security_logger import get_security_logger
 
 logger = logging.getLogger(__name__)
@@ -80,7 +81,7 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
             HTTP response
         """
         # Skip for health checks and static files
-        if request.url.path in ["/health", "/healthz", "/ready", "/metrics"] or request.url.path.startswith("/static/"):
+        if should_skip_auth_context(request.url.path):
             return await call_next(request)
 
         # Try to extract token from multiple sources
@@ -100,12 +101,15 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
         if not token:
             return await call_next(request)
 
+        # Check logging settings once upfront to avoid DB session when not needed
+        log_success = _should_log_auth_success()
+        log_failure = _should_log_auth_failure()
+
         # Try to authenticate and populate user context
-        db = None
+        # Note: get_current_user manages its own DB sessions internally
+        # We only create a DB session here when security logging is enabled
         try:
-            db = SessionLocal()
             credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-            # get_current_user now uses fresh DB sessions internally, no session needed here
             user = await get_current_user(credentials, request=request)
 
             # Note: EmailUser uses 'email' as primary key, not 'id'
@@ -118,42 +122,55 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
             logger.info(f"✓ Authenticated user: {user_email if user_email else user_id}")
 
             # Log successful authentication (only if logging level is "all")
-            if _should_log_auth_success():
-                security_logger.log_authentication_attempt(
-                    user_id=user_id,
-                    user_email=user_email,
-                    auth_method="bearer_token",
-                    success=True,
-                    client_ip=request.client.host if request.client else "unknown",
-                    user_agent=request.headers.get("user-agent"),
-                    db=db,
-                )
+            # DB session created only when needed
+            if log_success:
+                db = SessionLocal()
+                try:
+                    security_logger.log_authentication_attempt(
+                        user_id=user_id,
+                        user_email=user_email,
+                        auth_method="bearer_token",
+                        success=True,
+                        client_ip=request.client.host if request.client else "unknown",
+                        user_agent=request.headers.get("user-agent"),
+                        db=db,
+                    )
+                    db.commit()
+                except Exception as log_error:
+                    logger.debug(f"Failed to log successful auth: {log_error}")
+                finally:
+                    try:
+                        db.close()
+                    except Exception as close_error:
+                        logger.debug(f"Failed to close database session: {close_error}")
 
         except Exception as e:
             # Silently fail - let route handlers enforce auth if needed
             logger.info(f"✗ Auth context extraction failed (continuing as anonymous): {e}")
 
             # Log failed authentication attempt (based on logging level)
-            if _should_log_auth_failure():
-                security_logger.log_authentication_attempt(
-                    user_id="unknown",
-                    user_email=None,
-                    auth_method="bearer_token",
-                    success=False,
-                    client_ip=request.client.host if request.client else "unknown",
-                    user_agent=request.headers.get("user-agent"),
-                    failure_reason=str(e),
-                    db=db if db else None,
-                )
-
-        finally:
-            # Always close database session
-            if db:
+            # DB session created only when needed
+            if log_failure:
+                db = SessionLocal()
                 try:
-                    db.commit()  # End transaction cleanly (security_logger handles its own commits)
-                    db.close()
-                except Exception as close_error:
-                    logger.debug(f"Failed to close database session: {close_error}")
+                    security_logger.log_authentication_attempt(
+                        user_id="unknown",
+                        user_email=None,
+                        auth_method="bearer_token",
+                        success=False,
+                        client_ip=request.client.host if request.client else "unknown",
+                        user_agent=request.headers.get("user-agent"),
+                        failure_reason=str(e),
+                        db=db,
+                    )
+                    db.commit()
+                except Exception as log_error:
+                    logger.debug(f"Failed to log auth failure: {log_error}")
+                finally:
+                    try:
+                        db.close()
+                    except Exception as close_error:
+                        logger.debug(f"Failed to close database session: {close_error}")
 
         # Continue with request
         return await call_next(request)
