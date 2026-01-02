@@ -330,6 +330,9 @@ class SSETransport(Transport):
 
         Returns:
             Message dict if received, None if timeout occurred
+
+        Raises:
+            asyncio.CancelledError: If the operation is cancelled externally
         """
         if timeout is None:
             return await self._message_queue.get()
