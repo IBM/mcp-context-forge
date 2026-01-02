@@ -1,0 +1,69 @@
+[33mcommit c75e7f10f8bc1150a2ba4d62af172cce06e140f6[m
+Author: Mihai Criveti <crivetimihai@gmail.com>
+Date:   Fri Dec 26 11:25:09 2025 +0100
+
+    Postgresql 18 switch and AUDIT_TRAIL_ENABLED flag (#1744)
+    
+    * PostgreSQL 18
+    
+    Signed-off-by: Mihai Criveti <crivetimihai@gmail.com>
+    
+    * PostgreSQL 18 migration and AUDIT_TRAIL_ENABLED flag
+    
+    Signed-off-by: Mihai Criveti <crivetimihai@gmail.com>
+    
+    ---------
+    
+    Signed-off-by: Mihai Criveti <crivetimihai@gmail.com>
+
+[33mcommit 5bede8399aa20b11341e30d9f37fac21ed011c31[m
+Author: Madhav Kandukuri <madhav165@users.noreply.github.com>
+Date:   Thu Nov 13 14:04:54 2025 +0530
+
+    Add optional postgres 18 upgrade to chart (#1431)
+    
+    * Minor change to notes
+    Signed-off-by: Madhav Kandukuri <madhav165@gmail.com>
+    
+    * add minio
+    Signed-off-by: Madhav Kandukuri <madhav165@gmail.com>
+    
+    * remove my-values
+    Signed-off-by: Madhav Kandukuri <madhav165@gmail.com>
+    
+    * Backup to minio and restore from there
+    Signed-off-by: Madhav Kandukuri <madhav165@gmail.com>
+    
+    * Almost there
+    Signed-off-by: Madhav Kandukuri <madhav165@gmail.com>
+    
+    * Removed redundant job
+    Signed-off-by: Madhav Kandukuri <madhav165@gmail.com>
+    
+    * Update postgres version in docker compose
+    Signed-off-by: Madhav Kandukuri <madhav165@gmail.com>
+    
+    * Move file to docs
+    Signed-off-by: Madhav Kandukuri <madhav165@gmail.com>
+
+[33mcommit aa561cb7a4f908f7cee8895ebe1e398a2b7fae4a[m
+Author: Mihai Criveti <crivetimihai@gmail.com>
+Date:   Thu Oct 9 17:48:14 2025 -0400
+
+    Support bundle tool (#1199)
+    
+    * log gathering tool
+    
+    Signed-off-by: Mihai Criveti <crivetimihai@gmail.com>
+    
+    * log gathering tool
+    
+    Signed-off-by: Mihai Criveti <crivetimihai@gmail.com>
+    
+    * Upgrade to postgres 18
+    
+    Signed-off-by: Mihai Criveti <crivetimihai@gmail.com>
+    
+    ---------
+    
+    Signed-off-by: Mihai Criveti <crivetimihai@gmail.com>
