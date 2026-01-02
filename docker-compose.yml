@@ -200,21 +200,24 @@ services:
       - VALIDATION_MIDDLEWARE_ENABLED=true
       - CORRELATION_ID_ENABLED=false
       - OBSERVABILITY_ENABLED=false
-      # Database pool tuning
+      # Database pool tuning for 3000 sustained users
       # With PgBouncer (default): smaller pools since PgBouncer handles connection multiplexing
       # Direct PostgreSQL: larger pools needed, formula: (replicas × workers) × (pool + overflow) < max_connections
       #
       # WITH PgBouncer (default):
       - DB_POOL_SIZE=15
-      - DB_MAX_OVERFLOW=30
+      - DB_MAX_OVERFLOW=5              # Low overflow minimizes pool churn under pressure
       # DIRECT PostgreSQL connection (uncomment if bypassing PgBouncer):
       # - DB_POOL_SIZE=50
       # - DB_MAX_OVERFLOW=100
-      - DB_POOL_TIMEOUT=30
+      - DB_POOL_TIMEOUT=45             # Time to wait for connection before failing
       - DB_POOL_RECYCLE=300
       - DB_POOL_PRE_PING=false
-      # Tool invocation timeout - prevents hung connections
-      - TOOL_TIMEOUT=30
+      # Tool configuration for high-concurrency load testing
+      - TOOL_TIMEOUT=60               # Seconds before tool invocation times out
+      - MAX_TOOL_RETRIES=3            # Retry attempts for failed tool invocations
+      - TOOL_RATE_LIMIT=3000          # Max tool invocations per minute
+      - TOOL_CONCURRENT_LIMIT=100     # Max concurrent tool invocations
       - FEDERATION_TIMEOUT=30
       # Worker and server tuning for high-concurrency load testing
       - GUNICORN_WORKERS=16
@@ -334,13 +337,13 @@ services:
     image: postgres:18
     ports:
       - "5433:5432"      # Expose for baseline load testing (5433 to avoid conflict with local postgres)
-    # Performance tuning for high-load testing
-    # WITH PgBouncer (default): 500 connections sufficient (PgBouncer handles multiplexing)
-    # DIRECT connection mode: increase to 4000 for (2 replicas × 16 workers × 150 pool)
+    # Performance tuning for high-load testing (3000 sustained users)
+    # WITH PgBouncer (default): 700 connections provides headroom for 550 pool + system overhead
+    # DIRECT connection mode: increase to 4000 for (3 replicas × 16 workers × 80 pool)
     command:
       - "postgres"
       - "-c"
-      - "max_connections=500"     # Increase to 4000 if bypassing PgBouncer
+      - "max_connections=700"     # Must exceed PgBouncer MAX_DB_CONNECTIONS (550) + overhead
       - "-c"
       - "shared_buffers=512MB"
       - "-c"
@@ -471,27 +474,30 @@ services:
       # Pool mode: transaction (recommended), session, or statement
       # transaction: connection returned after each transaction (best for web apps)
       - POOL_MODE=transaction
-      # Client-side connection limits (from SQLAlchemy via gateway)
-      # Tuned for 4000 capacity (nginx caps at 3000 for protection)
-      - MAX_CLIENT_CONN=4000           # Max connections from application
-      - DEFAULT_POOL_SIZE=150          # Connections per user/database pair
-      - MIN_POOL_SIZE=20               # Minimum connections to keep open
-      - RESERVE_POOL_SIZE=50           # Extra connections for burst traffic
-      - RESERVE_POOL_TIMEOUT=3         # Seconds before using reserve pool (faster)
-      # Server-side connection limits (to PostgreSQL)
-      - MAX_DB_CONNECTIONS=350         # Max connections to PostgreSQL per database
-      - MAX_USER_CONNECTIONS=350       # Max connections per user
+      # ═══════════════════════════════════════════════════════════════════════════
+      # Connection Pool Tuning for 3000 Sustained Users
+      # PgBouncer handles connection multiplexing - many app connections share fewer DB connections
+      # ═══════════════════════════════════════════════════════════════════════════
+      # Client-side limits (from gateway workers via SQLAlchemy)
+      - MAX_CLIENT_CONN=5000           # Max app connections; must exceed (replicas × workers × pool)
+      - DEFAULT_POOL_SIZE=450          # Shared DB connections; sized for ~70 concurrent tx × 6x headroom
+      - MIN_POOL_SIZE=50               # Pre-warmed connections for instant response to load spikes
+      - RESERVE_POOL_SIZE=100          # Emergency pool for burst traffic beyond DEFAULT_POOL_SIZE
+      - RESERVE_POOL_TIMEOUT=2         # Seconds before tapping reserve pool
+      # Server-side limits (to PostgreSQL)
+      - MAX_DB_CONNECTIONS=550         # Max connections to PostgreSQL; must be < PG max_connections
+      - MAX_USER_CONNECTIONS=550       # Per-user limit; typically equals MAX_DB_CONNECTIONS
       # Connection lifecycle
-      - SERVER_LIFETIME=3600           # Max age of server connection (seconds)
-      - SERVER_IDLE_TIMEOUT=600        # Close idle server connections after (seconds)
-      # Timeout settings for high-concurrency (4000 capacity, 3000 nginx cap)
-      - QUERY_WAIT_TIMEOUT=30          # Fail fast if no connection available in 30s
-      - CLIENT_IDLE_TIMEOUT=300        # Close idle client connections after 5 min
-      - SERVER_CONNECT_TIMEOUT=5       # Timeout for connecting to PostgreSQL
+      - SERVER_LIFETIME=3600           # Recycle server connections after 1 hour (prevents stale state)
+      - SERVER_IDLE_TIMEOUT=300        # Close unused server connections after 5 min
+      # Timeout settings
+      - QUERY_WAIT_TIMEOUT=45          # Max wait for available connection before failing request
+      - CLIENT_IDLE_TIMEOUT=60         # Close idle client connections to free resources quickly
+      - SERVER_CONNECT_TIMEOUT=5       # Timeout for new connections to PostgreSQL
       # Transaction cleanup - critical for avoiding idle-in-transaction buildup
       - SERVER_RESET_QUERY=DISCARD ALL # Reset connection state when returned to pool
       - SERVER_RESET_QUERY_ALWAYS=1    # Always run reset query even after clean transactions
-      - IDLE_TRANSACTION_TIMEOUT=30    # Kill connections idle in transaction > 30s
+      - IDLE_TRANSACTION_TIMEOUT=30    # Kill transactions idle > 30s (prevents connection starvation)
       # Authentication
       - AUTH_TYPE=scram-sha-256        # Match PostgreSQL auth method
     depends_on:
