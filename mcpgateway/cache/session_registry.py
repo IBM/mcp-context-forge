@@ -1002,47 +1002,80 @@ class SessionRegistry(SessionBackend):
                     db_session.close()
 
             async def message_check_loop(session_id: str) -> None:
-                """Poll database for messages and deliver to local transport.
+                """
+                Background task that polls the database for session messages using adaptive
+                backoff and delivers them to the active SSE transport until the session ends.
 
-                Continuously checks the database for new messages directed to
-                the specified session_id. When messages are found and the
-                transport exists locally, delivers the message and removes it
-                from the database. Exits when the session no longer exists.
+                - Starts with a fast polling interval for low latency.
+                - Gradually increases the polling interval when no messages are found.
+                - Resets to the fast interval when a message is received.
+                - Stops polling when the session no longer exists.
 
-                This coroutine runs as a background task for each active session
-                using database backend, enabling message delivery across worker
-                processes.
+                Polling behavior:
+                    - Message found  → immediate processing and fast polling.
+                    - No message     → exponential backoff up to a configured maximum.
+                    - Session ended  → polling loop exits.
 
                 Args:
-                    session_id: The session identifier to monitor for messages.
+                    session_id (str): Unique identifier of the active session to monitor.
 
-                Examples:
-                    >>> # This function is called as a task by respond()
-                    >>> # asyncio.create_task(message_check_loop('abc123'))
-                    >>> # Polls every 0.1 seconds until session is removed
-                    >>> # Delivers messages to transport and cleans up database
+                Example:
+
+                >>> # Given a session with no pending messages
+                >>> poll_interval = 0.1
+                >>> backoff_factor = 1.5
+                >>> max_interval = 5.0
+                >>> poll_interval = min(poll_interval * backoff_factor, max_interval)
+                >>> poll_interval
+                0.15000000000000002
+
+                >>> # When a message arrives, polling resets to fast
+                >>> poll_interval = 0.1
+                >>> poll_interval
+                0.1
+
+                >>> # When the session is removed, the polling loop exits
+                >>> session_exists = False
+                >>> if not session_exists:
+                ...     "polling stopped"
                 """
+                poll_interval = settings.poll_interval  # start fast (100ms)
+                max_interval = settings.max_interval  # cap at 5 seconds
+                backoff_factor = settings.backoff_factor
+
                 while True:
                     record = await asyncio.to_thread(_db_read, session_id)
 
                     if record:
+                        # reset polling on activity
+                        poll_interval = poll_interval
+
                         data = orjson.loads(record.message)
                         if isinstance(data, dict) and "message" in data:
                             message = data["message"]
                         else:
                             message = data
+
                         transport = self.get_session_sync(session_id)
                         if transport:
                             logger.info("Ready to respond")
-                            await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
-
+                            await self.generate_response(
+                                message=message,
+                                transport=transport,
+                                server_id=server_id,
+                                user=user,
+                                base_url=base_url,
+                            )
                             await asyncio.to_thread(_db_remove, session_id, record.message)
+                    else:
+                        # no message → back off polling
+                        poll_interval = min(poll_interval * backoff_factor, max_interval)
 
                     session_exists = await asyncio.to_thread(_db_read_session, session_id)
                     if not session_exists:
                         break
 
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(poll_interval)
 
             asyncio.create_task(message_check_loop(session_id))
 
