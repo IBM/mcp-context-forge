@@ -132,15 +132,28 @@ Profiling under load test with 2500 concurrent users against PostgreSQL backend:
 | `GRANIAN_WORKERS` | auto (CPU cores, max 16) | Number of worker processes |
 | `GRANIAN_RUNTIME_MODE` | auto (mt if >8 workers, else st) | Runtime mode: mt (multi-threaded), st (single-threaded) |
 | `GRANIAN_RUNTIME_THREADS` | 1 | Runtime threads per worker |
-| `GRANIAN_BLOCKING_THREADS` | 1 | Blocking threads per worker |
+| `GRANIAN_BLOCKING_THREADS` | 1 | Blocking threads per worker (must be 1 for ASGI) |
 | `GRANIAN_HTTP` | auto | HTTP version: auto, 1, 2 |
 | `GRANIAN_LOOP` | uvloop | Event loop: uvloop, asyncio, rloop |
-| `GRANIAN_BACKLOG` | 2048 | Connection backlog for high concurrency |
-| `GRANIAN_BACKPRESSURE` | 512 | Max concurrent requests per worker |
+| `GRANIAN_BACKLOG` | 2048 | OS socket backlog for pending connections |
+| `GRANIAN_BACKPRESSURE` | 512 | Max concurrent requests per worker before 503 rejection |
+| `GRANIAN_HTTP1_BUFFER_SIZE` | 524288 | HTTP/1 buffer size in bytes (512KB) |
 | `GRANIAN_RESPAWN_FAILED` | true | Respawn failed workers automatically |
 | `GRANIAN_DEV_MODE` | false | Enable hot reload (requires granian[reload]) |
 | `GRANIAN_LOG_LEVEL` | info | Log level: debug, info, warning, error |
 | `DISABLE_ACCESS_LOG` | true | Disable access logging for performance |
+
+**Backpressure capacity calculation:**
+
+```
+Total capacity = GRANIAN_WORKERS × GRANIAN_BACKPRESSURE
+
+Example: 16 workers × 64 backpressure = 1024 concurrent requests
+- Requests 1-1024: Processed normally
+- Request 1025+: Immediate 503 Service Unavailable (no queuing)
+```
+
+For production with high concurrency, use `GRANIAN_BACKPRESSURE=64` with `GRANIAN_WORKERS=16` for 1024 total capacity.
 
 ### Docker Compose
 
@@ -149,9 +162,12 @@ Profiling under load test with 2500 concurrent users against PostgreSQL backend:
 services:
   gateway:
     environment:
-      - HTTP_SERVER=gunicorn    # Default (Python-based, stable)
-      # - HTTP_SERVER=granian   # Alternative (Rust-based)
-      # Granian-specific settings (only used if HTTP_SERVER=granian)
+      - HTTP_SERVER=granian     # Rust-based with native backpressure
+      # - HTTP_SERVER=gunicorn  # Python-based, stable (default)
+      # Granian backpressure configuration (16 × 64 = 1024 concurrent)
+      - GRANIAN_WORKERS=16
+      - GRANIAN_BACKLOG=4096
+      - GRANIAN_BACKPRESSURE=64
       # - GRANIAN_WORKERS=8
       # - GRANIAN_HTTP=2        # Enable HTTP/2
 ```

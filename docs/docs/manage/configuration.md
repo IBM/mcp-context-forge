@@ -261,20 +261,24 @@ DISABLE_ACCESS_LOG=true ./run-gunicorn.sh
 
 ### Granian Production Server (Alternative)
 
-Granian is a Rust-based HTTP server available as an alternative to Gunicorn. It offers native HTTP/2 support and lower memory usage.
+Granian is a Rust-based HTTP server with native backpressure for overload protection. Under load, excess requests receive immediate 503 responses instead of queuing indefinitely.
 
 ```bash
 # Worker Configuration
 GRANIAN_WORKERS=auto              # Number of workers (auto = CPU cores, max 16)
 GRANIAN_RUNTIME_MODE=auto         # Runtime mode: auto, mt (multi-threaded), st (single-threaded)
 GRANIAN_RUNTIME_THREADS=1         # Runtime threads per worker
-GRANIAN_BLOCKING_THREADS=1        # Blocking threads per worker
+GRANIAN_BLOCKING_THREADS=1        # Blocking threads per worker (must be 1 for ASGI)
+
+# Backpressure Configuration (overload protection)
+GRANIAN_BACKLOG=4096              # OS socket backlog for pending connections
+GRANIAN_BACKPRESSURE=64           # Max concurrent requests per worker before 503
+# Total capacity = WORKERS × BACKPRESSURE (e.g., 16 × 64 = 1024 concurrent requests)
 
 # Performance Options
 GRANIAN_HTTP=auto                 # HTTP version: auto, 1, 2
 GRANIAN_LOOP=uvloop               # Event loop: uvloop, asyncio, rloop
-GRANIAN_BACKLOG=2048              # Connection backlog
-GRANIAN_BACKPRESSURE=512          # Max concurrent requests per worker
+GRANIAN_HTTP1_BUFFER_SIZE=524288  # HTTP/1 buffer size (512KB)
 GRANIAN_RESPAWN_FAILED=true       # Auto-restart failed workers
 GRANIAN_DEV_MODE=false            # Enable hot reload
 DISABLE_ACCESS_LOG=true           # Disable access logs for performance
@@ -299,11 +303,12 @@ docker run -e HTTP_SERVER=granian mcpgateway/mcpgateway
 ```
 
 !!! info "When to use Granian"
-    - Native HTTP/2 without reverse proxy
-    - Lower memory usage (~40MB vs ~80MB per worker)
-    - Simpler deployment for smaller instances
+    - **Load spike protection**: Backpressure rejects excess requests with 503 instead of queuing
+    - **Bursty traffic**: Graceful degradation under unpredictable load
+    - **Native HTTP/2**: Without reverse proxy
+    - **High concurrency**: 1000+ concurrent users
 
-    See [ADR-0025](../architecture/adr/025-granian-http-server.md) for detailed comparison.
+    See [ADR-0025](../architecture/adr/025-granian-http-server.md) for detailed comparison and [Tuning Guide](tuning.md#backpressure-for-overload-protection) for backpressure configuration.
 
 ### Authentication & Security
 
