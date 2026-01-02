@@ -816,6 +816,14 @@ class Settings(BaseSettings):
     log_max_size_mb: int = 1  # Max file size in MB before rotation (default: 1MB)
     log_backup_count: int = 5  # Number of backup files to keep (default: 5)
 
+    # Detailed Request Logging Configuration
+    log_detailed_max_body_size: int = Field(
+        default=16384,  # 16KB - sensible default for request body logging
+        ge=1024,
+        le=1048576,  # Max 1MB
+        description="Maximum request body size to log in detailed mode (bytes). Separate from log_max_size_mb which is for file rotation.",
+    )
+
     # Log Buffer (for in-memory storage in admin UI)
     log_buffer_size_mb: float = 1.0  # Size of in-memory log buffer in MB
 

@@ -13,13 +13,13 @@ debugging information.
 """
 
 # Standard
-import json
 import logging
 import time
-from typing import Callable
+from typing import Callable, Optional
 
 # Third-Party
 from fastapi.security import HTTPAuthorizationCredentials
+import orjson
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
@@ -38,22 +38,26 @@ logger = logging_service.get_logger(__name__)
 # Initialize structured logger for gateway boundary logging
 structured_logger = get_structured_logger("http_gateway")
 
-SENSITIVE_KEYS = {"password", "secret", "token", "apikey", "access_token", "refresh_token", "client_secret", "authorization", "jwt_token"}
+SENSITIVE_KEYS = frozenset({"password", "secret", "token", "apikey", "access_token", "refresh_token", "client_secret", "authorization", "jwt_token"})
 
 
-def mask_sensitive_data(data):
-    """Recursively mask sensitive keys in dict/list payloads.
+def mask_sensitive_data(data, max_depth: int = 10):
+    """Recursively mask sensitive keys in dict/list payloads with depth limit.
 
     Args:
         data: The data structure to mask (dict, list, or other)
+        max_depth: Maximum recursion depth to prevent stack overflow on deeply nested payloads
 
     Returns:
         The data structure with sensitive values masked
     """
+    if max_depth <= 0:
+        return "<nested too deep>"
+
     if isinstance(data, dict):
-        return {k: ("******" if k.lower() in SENSITIVE_KEYS else mask_sensitive_data(v)) for k, v in data.items()}
+        return {k: ("******" if k.lower() in SENSITIVE_KEYS else mask_sensitive_data(v, max_depth - 1)) for k, v in data.items()}
     if isinstance(data, list):
-        return [mask_sensitive_data(i) for i in data]
+        return [mask_sensitive_data(i, max_depth - 1) for i in data]
     return data
 
 
@@ -197,16 +201,34 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         # Track start time for total duration
         start_time = time.time()
 
-        # Get correlation ID and request metadata for boundary logging
-        correlation_id = get_correlation_id()
+        # Get basic request metadata (cheap operations)
         path = request.url.path
         method = request.method
+
+        # Determine logging needs BEFORE expensive operations
+        should_log_boundary = self.enable_gateway_logging and not should_skip_request_logging(path)
+        should_log_detailed = self.log_detailed_requests and not should_skip_request_logging(path)
+
+        # Fast path: if no logging needed at all, skip everything
+        if not should_log_boundary and not should_log_detailed:
+            return await call_next(request)
+
+        # Get correlation ID and additional metadata (only if we're logging)
+        correlation_id = get_correlation_id()
         user_agent = request.headers.get("user-agent", "unknown")
         client_ip = request.client.host if request.client else "unknown"
-        user_id, user_email = await self._resolve_user_identity(request)
 
-        # Skip boundary logging for health checks and static assets
-        should_log_boundary = self.enable_gateway_logging and not should_skip_request_logging(path)
+        # Only resolve user identity if we're actually going to log boundary events
+        # This avoids potential DB queries for skipped paths and detailed-only flows
+        user_id: Optional[str] = None
+        user_email: Optional[str] = None
+        if should_log_boundary:
+            user_id, user_email = await self._resolve_user_identity(request)
+        elif should_log_detailed and hasattr(request.state, "user") and request.state.user is not None:
+            # Detailed logs: only use cached user identity, avoid DB fallback
+            raw_user_id = getattr(request.state.user, "id", None)
+            user_id = str(raw_user_id) if raw_user_id is not None else None
+            user_email = getattr(request.state.user, "email", None)
 
         # Log gateway request started (optional - disabled by default for performance)
         if should_log_boundary and self.log_request_start:
@@ -228,8 +250,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             except Exception as e:
                 logger.warning(f"Failed to log request start: {e}")
 
-        # Skip detailed logging if disabled
-        if not self.log_detailed_requests:
+        # Skip detailed logging if disabled (already checked via should_log_detailed)
+        if not should_log_detailed:
             response = await call_next(request)
 
             # Still log request completed even if detailed logging is disabled
@@ -265,6 +287,89 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         if not logger.isEnabledFor(log_level):
             return await call_next(request)
 
+        # Size-based fast path: skip detailed processing for very large bodies
+        content_length_header = request.headers.get("content-length")
+        if content_length_header:
+            try:
+                content_length = int(content_length_header)
+                # Skip if body is >4x over limit (not worth reading/parsing)
+                if content_length > self.max_body_size * 4:
+                    # Log placeholder without reading body
+                    masked_headers = mask_sensitive_headers(dict(request.headers))
+                    request_id = get_correlation_id()
+                    try:
+                        logger.log(
+                            log_level,
+                            f"📩 Incoming request: {request.method} {request.url.path}\n"
+                            f"Query params: {dict(request.query_params)}\n"
+                            f"Headers: {masked_headers}\n"
+                            f"Body: <body too large: {content_length} bytes>",
+                            extra={"request_id": request_id},
+                        )
+                    except TypeError:
+                        logger.log(
+                            log_level,
+                            f"📩 Incoming request: {request.method} {request.url.path}\n"
+                            f"Query params: {dict(request.query_params)}\n"
+                            f"Headers: {masked_headers}\n"
+                            f"Body: <body too large: {content_length} bytes>",
+                        )
+
+                    # Continue with request processing (boundary logging handled below)
+                    try:
+                        response = await call_next(request)
+                    except Exception as e:
+                        duration_ms = (time.time() - start_time) * 1000
+                        if should_log_boundary:
+                            try:
+                                structured_logger.log(
+                                    level="ERROR",
+                                    message=f"Request failed: {method} {path}",
+                                    component="gateway",
+                                    correlation_id=correlation_id,
+                                    user_email=user_email,
+                                    user_id=user_id,
+                                    operation_type="http_request",
+                                    request_method=method,
+                                    request_path=path,
+                                    user_agent=user_agent,
+                                    client_ip=client_ip,
+                                    duration_ms=duration_ms,
+                                    error=e,
+                                    metadata={"event": "request_failed"},
+                                )
+                            except Exception as log_error:
+                                logger.warning(f"Failed to log request failure: {log_error}")
+                        raise
+
+                    # Log boundary completion for large body requests
+                    if should_log_boundary:
+                        duration_ms = (time.time() - start_time) * 1000
+                        try:
+                            boundary_log_level = "ERROR" if response.status_code >= 500 else "WARNING" if response.status_code >= 400 else "INFO"
+                            structured_logger.log(
+                                level=boundary_log_level,
+                                message=f"Request completed: {method} {path} - {response.status_code}",
+                                component="gateway",
+                                correlation_id=correlation_id,
+                                user_email=user_email,
+                                user_id=user_id,
+                                operation_type="http_request",
+                                request_method=method,
+                                request_path=path,
+                                response_status_code=response.status_code,
+                                user_agent=user_agent,
+                                client_ip=client_ip,
+                                duration_ms=duration_ms,
+                                metadata={"event": "request_completed", "response_time_category": self._categorize_response_time(duration_ms)},
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to log request completion: {e}")
+
+                    return response
+            except ValueError:
+                pass  # Invalid content-length, continue with normal processing
+
         body = b""
         try:
             body = await request.body()
@@ -279,10 +384,11 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             payload = body_to_log.decode("utf-8", errors="ignore").strip()
             if payload:
                 try:
-                    json_payload = json.loads(payload)
+                    json_payload = orjson.loads(payload)
                     payload_to_log = mask_sensitive_data(json_payload)
-                    payload_str = json.dumps(payload_to_log, indent=2)
-                except json.JSONDecodeError:
+                    # Use orjson without indent for performance (compact output)
+                    payload_str = orjson.dumps(payload_to_log).decode()
+                except orjson.JSONDecodeError:
                     # For non-JSON payloads, still mask potential sensitive data
                     payload_str = payload
                     for sensitive_key in SENSITIVE_KEYS:

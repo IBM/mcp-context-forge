@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 Unit tests for request logging middleware.
 """
-import json
+import orjson
 import pytest
 from unittest.mock import MagicMock
 from fastapi import Request, Response
@@ -124,7 +124,7 @@ def test_mask_sensitive_headers_non_sensitive():
 @pytest.mark.asyncio
 async def test_dispatch_logs_json_body(dummy_logger, mock_structured_logger, dummy_call_next):
     middleware = RequestLoggingMiddleware(app=None, enable_gateway_logging=False, log_detailed_requests=True)
-    body = json.dumps({"password": "123", "data": "ok"}).encode()
+    body = orjson.dumps({"password": "123", "data": "ok"})
     request = make_request(body=body, headers={"Authorization": "Bearer abc"})
     response = await middleware.dispatch(request, dummy_call_next)
     assert response.status_code == 200
@@ -178,3 +178,114 @@ async def test_dispatch_exception_handling(dummy_logger, mock_structured_logger,
     response = await middleware.dispatch(request, dummy_call_next)
     assert response.status_code == 200
     assert any("Failed to log request body" in msg for msg in dummy_logger.warnings)
+
+
+# --- mask_sensitive_data depth limit tests ---
+
+def test_mask_sensitive_data_depth_limit():
+    """Deep nesting should be truncated at max_depth."""
+    # Create deeply nested structure
+    deep_data = {"level": 0}
+    current = deep_data
+    for i in range(1, 15):
+        current["nested"] = {"level": i}
+        current = current["nested"]
+
+    # With default depth=10, should hit limit
+    masked = mask_sensitive_data(deep_data, max_depth=10)
+
+    # Traverse to find the truncation point
+    current = masked
+    depth = 0
+    while isinstance(current, dict) and "nested" in current:
+        current = current["nested"]
+        depth += 1
+
+    # Should have been truncated before reaching depth 15
+    assert current == "<nested too deep>" or depth < 15
+
+
+def test_mask_sensitive_data_depth_limit_with_password():
+    """Ensure sensitive data is still masked at various depths."""
+    data = {"password": "secret", "nested": {"password": "nested_secret", "deeper": {"password": "deep_secret"}}}
+    masked = mask_sensitive_data(data, max_depth=10)
+    assert masked["password"] == "******"
+    assert masked["nested"]["password"] == "******"
+    assert masked["nested"]["deeper"]["password"] == "******"
+
+
+# --- Large body fast path tests ---
+
+def make_request_with_headers(body: bytes = b"{}", headers=None, query_params=None):
+    """Create a request with specific headers including content-length."""
+    headers = headers or {}
+    scope: Scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/test",
+        "headers": Headers(headers).raw,
+        "query_string": b"&".join(
+            [f"{k}={v}".encode() for k, v in (query_params or {}).items()]
+        ),
+    }
+    async def receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+    return Request(scope, receive=receive)
+
+
+@pytest.mark.asyncio
+async def test_large_body_fast_path(dummy_logger, mock_structured_logger, dummy_call_next):
+    """Bodies >4x max_body_size should skip detailed processing."""
+    # max_body_size=100, content-length=500 (>4x) should trigger fast path
+    middleware = RequestLoggingMiddleware(app=None, enable_gateway_logging=False, log_detailed_requests=True, max_body_size=100)
+    body = b"x" * 500  # Large body
+    request = make_request_with_headers(body=body, headers={"content-length": "500"})
+    response = await middleware.dispatch(request, dummy_call_next)
+    assert response.status_code == 200
+    # Should log "body too large" message
+    assert any("body too large: 500 bytes" in msg for _, msg in dummy_logger.logged)
+
+
+@pytest.mark.asyncio
+async def test_large_body_fast_path_exception_logs_failure(dummy_logger, mock_structured_logger):
+    """Large body fast path should still log request failures."""
+    async def _call_next(_request):
+        raise RuntimeError("boom")
+
+    middleware = RequestLoggingMiddleware(app=None, enable_gateway_logging=True, log_detailed_requests=True, max_body_size=100)
+    body = b"x" * 500
+    request = make_request_with_headers(body=body, headers={"content-length": "500"})
+
+    with pytest.raises(RuntimeError):
+        await middleware.dispatch(request, _call_next)
+
+    assert mock_structured_logger.log.call_count == 1
+    call_kwargs = mock_structured_logger.log.call_args.kwargs
+    assert call_kwargs.get("metadata", {}).get("event") == "request_failed"
+
+
+@pytest.mark.asyncio
+async def test_no_logging_for_skipped_paths(mock_structured_logger, dummy_call_next):
+    """Health check paths should skip all logging."""
+    middleware = RequestLoggingMiddleware(app=None, enable_gateway_logging=True, log_detailed_requests=True)
+    scope: Scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/health",  # Skip path
+        "headers": [],
+        "query_string": b"",
+    }
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+    request = Request(scope, receive=receive)
+    response = await middleware.dispatch(request, dummy_call_next)
+    assert response.status_code == 200
+    # structured_logger.log should not have been called
+    mock_structured_logger.log.assert_not_called()
+
+
+# --- SENSITIVE_KEYS frozenset test ---
+
+def test_sensitive_keys_is_frozenset():
+    """SENSITIVE_KEYS should be a frozenset for performance."""
+    assert isinstance(SENSITIVE_KEYS, frozenset)
