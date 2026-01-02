@@ -189,6 +189,63 @@ GRANIAN_HTTP=1 make serve
 - `uvloop` provides best performance on Linux/macOS
 - Increase `GRANIAN_BACKLOG` and `GRANIAN_BACKPRESSURE` for high-concurrency workloads
 
+### Backpressure for Overload Protection
+
+Granian's native backpressure prevents unbounded request queuing during overload. When the server reaches capacity, excess requests receive immediate 503 responses instead of waiting in a queue (which can cause memory exhaustion or cascading timeouts).
+
+**How it works:**
+
+```
+Incoming Request
+       │
+       ▼
+┌──────────────────────────────────┐
+│  Granian Worker (1 of N)         │
+│                                  │
+│  current_requests < BACKPRESSURE?│
+│      │                           │
+│      ├── YES → Process request   │
+│      │                           │
+│      └── NO  → Immediate 503     │
+│               (no queuing)       │
+└──────────────────────────────────┘
+```
+
+**Capacity calculation:**
+
+```
+Total capacity = GRANIAN_WORKERS × GRANIAN_BACKPRESSURE
+
+Example with recommended settings:
+  Workers: 16
+  Backpressure: 64
+  Total: 16 × 64 = 1024 concurrent requests
+
+  Requests 1-1024: Processed normally
+  Request 1025+: Immediate 503 Service Unavailable
+```
+
+**Recommended production settings:**
+
+```yaml
+# docker-compose.yml or Kubernetes
+environment:
+  - HTTP_SERVER=granian
+  - GRANIAN_WORKERS=16
+  - GRANIAN_BACKLOG=4096        # OS socket queue for pending connections
+  - GRANIAN_BACKPRESSURE=64     # Per-worker limit (16×64=1024 total)
+```
+
+**Benefits over unbounded queuing:**
+
+| Behavior | Without Backpressure | With Backpressure |
+|----------|---------------------|-------------------|
+| Under overload | Requests queue indefinitely | Excess rejected immediately |
+| Memory usage | Grows unbounded → OOM | Stays bounded |
+| Client experience | Long timeouts, then failure | Fast 503, can retry |
+| Health checks | May timeout (queued) | Always respond quickly |
+| Recovery | Slow (drain queue) | Instant (no queue) |
+
 ### When to Use Granian
 
 | Use Granian when... | Use Gunicorn when... |
