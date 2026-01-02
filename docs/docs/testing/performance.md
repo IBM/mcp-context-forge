@@ -1,6 +1,6 @@
 # Performance Testing
 
-Use this guide to benchmark **MCP Gateway** under load, validate performance improvements, and identify bottlenecks before production deployment.
+Use this guide to benchmark **MCP Gateway** under load, validate performance improvements, and identify bottlenecks before production deployment. For an overview of the high-performance architecture and Rust-powered components that drive MCP Gateway's performance, see the [Performance Architecture Diagram](../architecture/performance-architecture.md).
 
 ---
 
