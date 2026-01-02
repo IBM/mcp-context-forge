@@ -1173,34 +1173,44 @@ GUNICORN_DEV_MODE=false
 
 ### Granian Configuration (Alternative)
 
-Granian is a Rust-based HTTP server providing 20-50% higher throughput:
+Granian is a Rust-based HTTP server with native backpressure for overload protection:
 
 ```bash
 # HTTP server selection
 HTTP_SERVER=granian
 
-# Worker count (auto = CPU count)
+# Worker count (auto = CPU count, max 16)
 GRANIAN_WORKERS=16
 
-# TCP backlog for pending connections (increase for high concurrency)
-GRANIAN_BACKLOG=8192
+# TCP backlog for pending connections
+GRANIAN_BACKLOG=4096
 
-# Backpressure threshold (concurrent requests before queueing)
-GRANIAN_BACKPRESSURE=2048
+# Backpressure: max concurrent requests per worker before 503 rejection
+# Total capacity = WORKERS × BACKPRESSURE = 16 × 64 = 1024 concurrent requests
+GRANIAN_BACKPRESSURE=64
 
 # HTTP/1.1 buffer size (bytes)
 GRANIAN_HTTP1_BUFFER_SIZE=524288
+
+# Auto-restart failed workers
+GRANIAN_RESPAWN_FAILED=true
 ```
 
+**Backpressure behavior:**
+
+- Requests within capacity (≤1024): Processed normally
+- Requests over capacity (>1024): Immediate 503 Service Unavailable
+- No queuing, no memory growth, no cascading timeouts
+
 **When to use Granian:**
-- Maximum throughput requirements
+- Load spike protection (backpressure rejects excess gracefully)
+- Bursty or unpredictable traffic patterns
 - High-concurrency deployments (1000+ concurrent users)
-- CPU-bound workloads
 
 **When to use Gunicorn:**
+- Memory-constrained environments (32% less RAM)
 - Maximum stability and compatibility
-- Standard deployments
-- Debugging and development
+- Standard deployments with predictable traffic
 
 ### Application Tuning
 
@@ -2473,7 +2483,7 @@ MCP Gateway is built on a high-performance foundation:
 - [ ] **Performance**
   - [ ] Select HTTP server: `HTTP_SERVER=gunicorn` (stable) or `granian` (faster)
   - [ ] Tune Gunicorn: `GUNICORN_PRELOAD_APP=true`, `GUNICORN_WORKERS=auto`
-  - [ ] Or tune Granian: `GRANIAN_BACKLOG=8192`, `GRANIAN_BACKPRESSURE=2048`
+  - [ ] Or tune Granian: `GRANIAN_BACKLOG=4096`, `GRANIAN_BACKPRESSURE=64`
   - [ ] Set timeouts: `GUNICORN_TIMEOUT=600`
   - [ ] Configure retries: `RETRY_MAX_ATTEMPTS=3`
   - [ ] Enable compression: `COMPRESSION_ENABLED=true`
