@@ -576,6 +576,8 @@ async def get_user(user_email: str, current_user_ctx: dict = Depends(get_current
 
         return EmailUserResponse.from_email_user(user)
 
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions as-is (401, 403, 404, etc.)
     except Exception as e:
         logger.error(f"Error retrieving user {user_email}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve user")
@@ -633,6 +635,8 @@ async def update_user(user_email: str, user_request: EmailRegistrationRequest, c
 
         return EmailUserResponse.from_email_user(user)
 
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions as-is (401, 403, 404, etc.)
     except Exception as e:
         logger.error(f"Error updating user {user_email}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update user")
@@ -672,6 +676,8 @@ async def delete_user(user_email: str, current_user_ctx: dict = Depends(get_curr
 
         return SuccessResponse(success=True, message=f"User {user_email} has been deleted")
 
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions as-is (401, 403, 404, etc.)
     except Exception as e:
         logger.error(f"Error deleting user {user_email}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete user")
