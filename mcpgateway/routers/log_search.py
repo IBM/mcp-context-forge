@@ -86,7 +86,14 @@ def _deduplicate_metrics(metrics: List[PerformanceMetric]) -> List[PerformanceMe
 
 
 def _expand_component_filters(components: List[str]) -> List[str]:
-    """Expand component filters to include aliases for backward compatibility."""
+    """Expand component filters to include aliases for backward compatibility.
+
+    Args:
+        components: Component filter values from the request
+
+    Returns:
+        List of component values including aliases
+    """
     normalized = {component for component in components if component}
     if "http_gateway" in normalized or "gateway" in normalized:
         normalized.update({"http_gateway", "gateway"})
