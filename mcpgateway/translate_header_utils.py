@@ -113,7 +113,7 @@ def parse_header_mappings(header_mappings: List[str]) -> Dict[str, str]:
         Dictionary mapping header names to environment variable names
 
     Raises:
-        HeaderMappingError: If any mapping is invalid
+        HeaderMappingError: If any mapping is invalid, including case-insensitive duplicates
 
     Examples:
         >>> # Parse valid mappings
@@ -135,8 +135,17 @@ def parse_header_mappings(header_mappings: List[str]) -> Dict[str, str]:
         >>> # Empty list returns empty dict
         >>> parse_header_mappings([])
         {}
+        >>>
+        >>> # Case-insensitive duplicates are rejected
+        >>> try:
+        ...     parse_header_mappings(["Authorization=AUTH1", "authorization=AUTH2"])
+        ... except HeaderMappingError as e:
+        ...     "Case-insensitive duplicate" in str(e)
+        True
     """
     mappings = {}
+    # Track lowercase header names to detect case-insensitive duplicates
+    seen_lowercase: Dict[str, str] = {}
 
     for mapping in header_mappings:
         if "=" not in mapping:
@@ -151,20 +160,130 @@ def parse_header_mappings(header_mappings: List[str]) -> Dict[str, str]:
 
         validate_header_mapping(header_name, env_var_name)
 
+        # Check for exact duplicate
         if header_name in mappings:
             raise HeaderMappingError(f"Duplicate header mapping for '{header_name}'")
 
+        # Check for case-insensitive duplicate (e.g., "Authorization" and "authorization")
+        header_lower = header_name.lower()
+        if header_lower in seen_lowercase:
+            original = seen_lowercase[header_lower]
+            raise HeaderMappingError(f"Case-insensitive duplicate header mapping: '{header_name}' conflicts with '{original}'")
+
+        seen_lowercase[header_lower] = header_name
         mappings[header_name] = env_var_name
 
     return mappings
 
 
-def extract_env_vars_from_headers(request_headers: Dict[str, str], header_mappings: Dict[str, str]) -> Dict[str, str]:
+def normalize_headers(headers: Dict[str, str]) -> Dict[str, str]:
+    """Normalize request headers to lowercase keys for O(1) lookups.
+
+    Args:
+        headers: HTTP request headers with original case
+
+    Returns:
+        Dictionary with lowercase keys mapping to original values
+
+    Examples:
+        >>> normalize_headers({"Authorization": "Bearer token", "X-Api-Key": "key123"})
+        {'authorization': 'Bearer token', 'x-api-key': 'key123'}
+        >>> normalize_headers({})
+        {}
+        >>> normalize_headers({"CONTENT-TYPE": "application/json"})
+        {'content-type': 'application/json'}
+    """
+    return {k.lower(): v for k, v in headers.items()}
+
+
+class NormalizedMappings:
+    """Pre-normalized header mappings for efficient lookups.
+
+    Stores mappings with lowercase header keys for O(1) case-insensitive lookups.
+    Intended to be created once at config load time for repeated use.
+
+    Examples:
+        >>> mappings = NormalizedMappings({"Authorization": "AUTH_TOKEN", "X-Api-Key": "API_KEY"})
+        >>> mappings.get_env_var("authorization")
+        'AUTH_TOKEN'
+        >>> mappings.get_env_var("AUTHORIZATION")
+        'AUTH_TOKEN'
+        >>> mappings.get_env_var("x-api-key")
+        'API_KEY'
+        >>> mappings.get_env_var("unknown") is None
+        True
+        >>> list(mappings)
+        [('authorization', 'AUTH_TOKEN'), ('x-api-key', 'API_KEY')]
+    """
+
+    def __init__(self, header_mappings: Dict[str, str]):
+        """Initialize with header-to-env-var mappings.
+
+        Args:
+            header_mappings: Mapping of header names to environment variable names
+        """
+        # Store with lowercase keys for O(1) case-insensitive lookups
+        self._mappings: Dict[str, str] = {k.lower(): v for k, v in header_mappings.items()}
+
+    def get_env_var(self, header_name: str) -> str | None:
+        """Get environment variable name for a header (case-insensitive).
+
+        Args:
+            header_name: HTTP header name (any case)
+
+        Returns:
+            Environment variable name or None if not mapped
+        """
+        return self._mappings.get(header_name.lower())
+
+    def __iter__(self):
+        """Iterate over (lowercase_header, env_var) pairs.
+
+        Returns:
+            Iterator of (header_name, env_var_name) tuples
+        """
+        return iter(self._mappings.items())
+
+    def __len__(self) -> int:
+        """Return number of mappings.
+
+        Returns:
+            Number of header-to-env-var mappings
+        """
+        return len(self._mappings)
+
+    def values(self):
+        """Return environment variable names (values of the mappings).
+
+        Returns:
+            View of environment variable names
+
+        Examples:
+            >>> mappings = NormalizedMappings({"Authorization": "AUTH", "X-Api-Key": "KEY"})
+            >>> sorted(mappings.values())
+            ['AUTH', 'KEY']
+        """
+        return self._mappings.values()
+
+    def __bool__(self) -> bool:
+        """Return True if there are any mappings.
+
+        Returns:
+            True if mappings exist, False if empty
+        """
+        return bool(self._mappings)
+
+
+def extract_env_vars_from_headers(request_headers: Dict[str, str], header_mappings: Dict[str, str] | NormalizedMappings) -> Dict[str, str]:
     """Extract environment variables from request headers.
+
+    Optimized for O(mappings + headers) complexity by pre-normalizing headers
+    to lowercase for O(1) lookups instead of nested O(mappings × headers) scans.
 
     Args:
         request_headers: HTTP request headers
-        header_mappings: Mapping of header names to environment variable names
+        header_mappings: Mapping of header names to environment variable names,
+                        or a pre-normalized NormalizedMappings instance
 
     Returns:
         Dictionary of environment variable name -> sanitized value
@@ -191,26 +310,36 @@ def extract_env_vars_from_headers(request_headers: Dict[str, str], header_mappin
         >>> # Empty mappings
         >>> extract_env_vars_from_headers({"Header": "value"}, {})
         {}
+        >>>
+        >>> # Using NormalizedMappings for repeated lookups
+        >>> nm = NormalizedMappings({"Authorization": "AUTH"})
+        >>> extract_env_vars_from_headers({"authorization": "token"}, nm)
+        {'AUTH': 'token'}
     """
     env_vars = {}
 
-    for header_name, env_var_name in header_mappings.items():
-        # Case-insensitive header matching
-        header_value = None
-        for req_header, value in request_headers.items():
-            if req_header.lower() == header_name.lower():
-                header_value = value
-                break
+    # Pre-normalize request headers once - O(headers)
+    normalized_headers = normalize_headers(request_headers)
+
+    # Convert to NormalizedMappings if plain dict provided
+    if isinstance(header_mappings, dict):
+        normalized_mappings = NormalizedMappings(header_mappings)
+    else:
+        normalized_mappings = header_mappings
+
+    # O(1) lookup per mapping - O(mappings) total
+    for header_lower, env_var_name in normalized_mappings:
+        header_value = normalized_headers.get(header_lower)
 
         if header_value is not None:
             try:
                 sanitized_value = sanitize_header_value(header_value)
                 if sanitized_value:  # Only add non-empty values
                     env_vars[env_var_name] = sanitized_value
-                    logger.debug(f"Mapped header {header_name} to {env_var_name}")
+                    logger.debug(f"Mapped header {header_lower} to {env_var_name}")
                 else:
-                    logger.warning(f"Header {header_name} value became empty after sanitization")
+                    logger.warning(f"Header {header_lower} value became empty after sanitization")
             except Exception as e:
-                logger.warning(f"Failed to process header {header_name}: {e}")
+                logger.warning(f"Failed to process header {header_lower}: {e}")
 
     return env_vars
