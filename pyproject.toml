@@ -574,7 +574,7 @@ plugins = ["pydantic.mypy"]              # Enable mypy plugin for Pydantic model
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "-ra -q --cov=mcpgateway --ignore=tests/playwright --ignore=tests/migration"
+addopts = "-ra -q --ignore=tests/playwright --ignore=tests/migration"
 testpaths = [ "tests",]
 asyncio_mode = "auto"
 filterwarnings = [

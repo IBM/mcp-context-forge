@@ -58,8 +58,7 @@ from urllib.parse import urlparse
 import uuid
 
 # First-Party
-from mcpgateway.common.config import settings
-from mcpgateway.config import settings as config_settings
+from mcpgateway.config import settings
 
 logger = logging.getLogger(__name__)
 

@@ -278,3 +278,6 @@ mcpgateway/static/vendor/
 # Generated performance test files
 nginx.conf
 docker-compose.perf.yml
+
+/Status
+
