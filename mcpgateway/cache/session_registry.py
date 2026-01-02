@@ -1048,7 +1048,7 @@ class SessionRegistry(SessionBackend):
 
                     if record:
                         # reset polling on activity
-                        poll_interval = poll_interval
+                        poll_interval = settings.poll_interval
 
                         data = orjson.loads(record.message)
                         if isinstance(data, dict) and "message" in data:
