@@ -639,6 +639,146 @@ class TestSingleton:
         assert service.db is mock_db2
 
 
+class TestNetConnectionsCache:
+    """Tests for net_connections caching functionality."""
+
+    @pytest.mark.skipif(not PSUTIL_AVAILABLE, reason="psutil not available")
+    def test_net_connections_disabled_returns_zero(self):
+        """Test that disabled net_connections returns 0."""
+        import mcpgateway.services.performance_service as ps
+
+        service = PerformanceService()
+
+        with patch.object(ps.settings, 'mcpgateway_performance_net_connections_enabled', False):
+            result = service._get_net_connections_cached()
+
+        assert result == 0
+
+    def test_net_connections_without_psutil_returns_zero(self):
+        """Test that without psutil, net_connections returns 0."""
+        import mcpgateway.services.performance_service as ps
+
+        service = PerformanceService()
+
+        with patch.object(ps, 'PSUTIL_AVAILABLE', False):
+            with patch.object(ps, 'psutil', None):
+                result = service._get_net_connections_cached()
+
+        assert result == 0
+
+    @pytest.mark.skipif(not PSUTIL_AVAILABLE, reason="psutil not available")
+    def test_net_connections_cache_returns_cached_value(self):
+        """Test that cache returns cached value within TTL."""
+        import mcpgateway.services.performance_service as ps
+        import time
+
+        service = PerformanceService()
+
+        # Set up cache with a known value
+        ps._net_connections_cache = 42
+        ps._net_connections_cache_time = time.time()  # Just set
+
+        with patch.object(ps.settings, 'mcpgateway_performance_net_connections_enabled', True):
+            with patch.object(ps.settings, 'mcpgateway_performance_net_connections_cache_ttl', 15):
+                result = service._get_net_connections_cached()
+
+        assert result == 42
+
+    @pytest.mark.skipif(not PSUTIL_AVAILABLE, reason="psutil not available")
+    def test_net_connections_cache_refreshes_when_expired(self):
+        """Test that cache refreshes when TTL expires."""
+        import mcpgateway.services.performance_service as ps
+        import time
+        import psutil
+
+        service = PerformanceService()
+
+        # Set up cache as expired (20 seconds ago with 15 second TTL)
+        ps._net_connections_cache = 42
+        ps._net_connections_cache_time = time.time() - 20
+
+        mock_connections = [MagicMock() for _ in range(10)]
+
+        with patch.object(ps.settings, 'mcpgateway_performance_net_connections_enabled', True):
+            with patch.object(ps.settings, 'mcpgateway_performance_net_connections_cache_ttl', 15):
+                with patch.object(psutil, 'net_connections', return_value=mock_connections):
+                    result = service._get_net_connections_cached()
+
+        assert result == 10
+        assert ps._net_connections_cache == 10
+
+    @pytest.mark.skipif(not PSUTIL_AVAILABLE, reason="psutil not available")
+    def test_net_connections_cache_handles_access_denied(self):
+        """Test that cache handles AccessDenied error gracefully."""
+        import mcpgateway.services.performance_service as ps
+        import time
+        import psutil
+
+        service = PerformanceService()
+
+        # Set up cache as expired
+        ps._net_connections_cache = 42
+        ps._net_connections_cache_time = time.time() - 20
+
+        with patch.object(ps.settings, 'mcpgateway_performance_net_connections_enabled', True):
+            with patch.object(ps.settings, 'mcpgateway_performance_net_connections_cache_ttl', 15):
+                with patch.object(psutil, 'net_connections', side_effect=psutil.AccessDenied()):
+                    result = service._get_net_connections_cached()
+
+        # Should return stale cache value on error
+        assert result == 42
+
+    @pytest.mark.skipif(not PSUTIL_AVAILABLE, reason="psutil not available")
+    def test_net_connections_cache_handles_oserror(self):
+        """Test that cache handles OSError gracefully."""
+        import mcpgateway.services.performance_service as ps
+        import time
+        import psutil
+
+        service = PerformanceService()
+
+        # Set up cache as expired with no previous value
+        ps._net_connections_cache = 0
+        ps._net_connections_cache_time = 0
+
+        with patch.object(ps.settings, 'mcpgateway_performance_net_connections_enabled', True):
+            with patch.object(ps.settings, 'mcpgateway_performance_net_connections_cache_ttl', 15):
+                with patch.object(psutil, 'net_connections', side_effect=OSError("Permission denied")):
+                    result = service._get_net_connections_cached()
+
+        # Should return 0 when no stale cache available
+        assert result == 0
+
+    @pytest.mark.skipif(not PSUTIL_AVAILABLE, reason="psutil not available")
+    def test_net_connections_error_throttled(self):
+        """Test that errors are throttled - cache time updated on error."""
+        import mcpgateway.services.performance_service as ps
+        import time
+        import psutil
+
+        service = PerformanceService()
+
+        # Set up cache as expired
+        ps._net_connections_cache = 42
+        ps._net_connections_cache_time = time.time() - 20
+
+        mock_net_connections = MagicMock(side_effect=psutil.AccessDenied())
+
+        with patch.object(ps.settings, 'mcpgateway_performance_net_connections_enabled', True):
+            with patch.object(ps.settings, 'mcpgateway_performance_net_connections_cache_ttl', 15):
+                with patch.object(psutil, 'net_connections', mock_net_connections):
+                    # First call - error occurs, cache time updated
+                    result1 = service._get_net_connections_cached()
+                    # Second call - should use cache (not call psutil again)
+                    result2 = service._get_net_connections_cached()
+
+        # Both should return stale value
+        assert result1 == 42
+        assert result2 == 42
+        # psutil.net_connections should only be called once (throttled on error)
+        assert mock_net_connections.call_count == 1
+
+
 class TestModuleConstants:
     """Tests for module-level constants."""
 
