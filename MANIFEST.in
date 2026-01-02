@@ -67,6 +67,7 @@ recursive-include alembic *.py
 recursive-include infra *.conf
 recursive-include infra *.json
 recursive-include infra *.md
+recursive-include infra *.sh
 recursive-include infra *.yaml
 recursive-include infra *.yml
 include infra/nginx/Dockerfile
