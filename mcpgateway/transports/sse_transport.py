@@ -11,7 +11,8 @@ providing server-to-client streaming with proper session management.
 
 # Standard
 import asyncio
-from typing import Any, AsyncGenerator, Dict
+import logging
+from typing import Any, AsyncGenerator, Dict, Optional
 import uuid
 
 # Third-Party
@@ -27,6 +28,38 @@ from mcpgateway.transports.base import Transport
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+# Pre-computed SSE frame components for performance
+_SSE_EVENT_PREFIX = b"event: "
+_SSE_DATA_PREFIX = b"\r\ndata: "
+_SSE_RETRY_PREFIX = b"\r\nretry: "
+_SSE_FRAME_END = b"\r\n\r\n"
+
+
+def _build_sse_frame(event: bytes, data: bytes, retry: int) -> bytes:
+    """Build SSE frame as bytes to avoid encode/decode overhead.
+
+    Args:
+        event: SSE event type as bytes (e.g., b'message', b'keepalive', b'error')
+        data: JSON data as bytes (from orjson.dumps)
+        retry: Retry timeout in milliseconds
+
+    Returns:
+        Complete SSE frame as bytes
+
+    Note:
+        Uses hardcoded CRLF (\\r\\n) separators matching sse_starlette's
+        ServerSentEvent.DEFAULT_SEPARATOR. If custom separators are ever
+        needed, this function would need to accept a sep parameter.
+
+    Examples:
+        >>> _build_sse_frame(b"message", b'{"test": 1}', 15000)
+        b'event: message\\r\\ndata: {"test": 1}\\r\\nretry: 15000\\r\\n\\r\\n'
+
+        >>> _build_sse_frame(b"keepalive", b"{}", 15000)
+        b'event: keepalive\\r\\ndata: {}\\r\\nretry: 15000\\r\\n\\r\\n'
+    """
+    return _SSE_EVENT_PREFIX + event + _SSE_DATA_PREFIX + data + _SSE_RETRY_PREFIX + str(retry).encode() + _SSE_FRAME_END
 
 
 class SSETransport(Transport):
@@ -112,7 +145,7 @@ class SSETransport(Transport):
         self._client_gone = asyncio.Event()
         self._session_id = str(uuid.uuid4())
 
-        logger.info(f"Creating SSE transport with base_url={self._base_url}, session_id={self._session_id}")
+        logger.info("Creating SSE transport with base_url=%s, session_id=%s", self._base_url, self._session_id)
 
     async def connect(self) -> None:
         """Set up SSE connection.
@@ -128,7 +161,7 @@ class SSETransport(Transport):
             True
         """
         self._connected = True
-        logger.info(f"SSE transport connected: {self._session_id}")
+        logger.info("SSE transport connected: %s", self._session_id)
 
     async def disconnect(self) -> None:
         """Clean up SSE connection.
@@ -155,7 +188,7 @@ class SSETransport(Transport):
         if self._connected:
             self._connected = False
             self._client_gone.set()
-            logger.info(f"SSE transport disconnected: {self._session_id}")
+            logger.info("SSE transport disconnected: %s", self._session_id)
 
     async def send_message(self, message: Dict[str, Any]) -> None:
         """Send a message over SSE.
@@ -212,9 +245,9 @@ class SSETransport(Transport):
 
         try:
             await self._message_queue.put(message)
-            logger.debug(f"Message queued for SSE: {self._session_id}, method={message.get('method', '(response)')}")
+            logger.debug("Message queued for SSE: %s, method=%s", self._session_id, message.get("method", "(response)"))
         except Exception as e:
-            logger.error(f"Failed to queue message: {e}")
+            logger.error("Failed to queue message: %s", e)
             raise
 
     async def receive_message(self) -> AsyncGenerator[Dict[str, Any], None]:
@@ -282,10 +315,48 @@ class SSETransport(Transport):
             while not self._client_gone.is_set():
                 await asyncio.sleep(1.0)
         except asyncio.CancelledError:
-            logger.info(f"SSE receive loop cancelled for session {self._session_id}")
+            logger.info("SSE receive loop cancelled for session %s", self._session_id)
             raise
         finally:
-            logger.info(f"SSE receive loop ended for session {self._session_id}")
+            logger.info("SSE receive loop ended for session %s", self._session_id)
+
+    async def _get_message_with_timeout(self, timeout: Optional[float]) -> Optional[Dict[str, Any]]:
+        """Get message from queue with timeout, returns None on timeout.
+
+        Uses asyncio.wait() to avoid TimeoutError exception overhead.
+
+        Args:
+            timeout: Timeout in seconds, or None for no timeout
+
+        Returns:
+            Message dict if received, None if timeout occurred
+
+        Raises:
+            asyncio.CancelledError: If the operation is cancelled externally
+        """
+        if timeout is None:
+            return await self._message_queue.get()
+
+        get_task = asyncio.create_task(self._message_queue.get())
+        try:
+            done, _ = await asyncio.wait({get_task}, timeout=timeout)
+        except asyncio.CancelledError:
+            get_task.cancel()
+            try:
+                await get_task
+            except asyncio.CancelledError:
+                pass
+            raise
+
+        if get_task in done:
+            return get_task.result()
+
+        # Timeout - cancel pending task, but return the result if it completed in the race window.
+        get_task.cancel()
+        try:
+            return await get_task
+        except asyncio.CancelledError:
+            return None
 
     async def is_connected(self) -> bool:
         """Check if transport is connected.
@@ -338,64 +409,44 @@ class SSETransport(Transport):
             """Generate SSE events.
 
             Yields:
-                SSE event
+                SSE event as bytes (pre-formatted SSE frame)
             """
             # Send the endpoint event first
-            yield {
-                "event": "endpoint",
-                "data": endpoint_url,
-                "retry": settings.sse_retry_timeout,
-            }
+            yield _build_sse_frame(b"endpoint", endpoint_url.encode(), settings.sse_retry_timeout)
 
             # Send keepalive immediately to help establish connection (if enabled)
             if settings.sse_keepalive_enabled:
-                yield {
-                    "event": "keepalive",
-                    "data": "{}",
-                    "retry": settings.sse_retry_timeout,
-                }
+                yield _build_sse_frame(b"keepalive", b"{}", settings.sse_retry_timeout)
 
             try:
                 while not self._client_gone.is_set():
                     try:
-                        # Wait for messages with a timeout for keepalives
-                        timeout = settings.sse_keepalive_interval if settings.sse_keepalive_enabled else None
-                        message = await asyncio.wait_for(
-                            self._message_queue.get(),
-                            timeout=timeout,  # Configurable timeout for keepalives (some tools require more timeout for execution)
-                        )
+                        # Use timeout-based polling only when keepalive is enabled
+                        if not settings.sse_keepalive_enabled:
+                            message = await self._message_queue.get()
+                        else:
+                            message = await self._get_message_with_timeout(settings.sse_keepalive_interval)
 
-                        data = orjson.dumps(message, option=orjson.OPT_SERIALIZE_NUMPY).decode()
+                        if message is not None:
+                            json_bytes = orjson.dumps(message, option=orjson.OPT_SERIALIZE_NUMPY)
 
-                        # logger.info(f"Sending SSE message: {data[:100]}...")
-                        logger.debug(f"Sending SSE message: {data}")
+                            if logger.isEnabledFor(logging.DEBUG):
+                                logger.debug("Sending SSE message: %s", json_bytes.decode())
 
-                        yield {
-                            "event": "message",
-                            "data": data,
-                            "retry": settings.sse_retry_timeout,
-                        }
-                    except asyncio.TimeoutError:
-                        # Send keepalive on timeout (if enabled)
-                        if settings.sse_keepalive_enabled:
-                            yield {
-                                "event": "keepalive",
-                                "data": "{}",
-                                "retry": settings.sse_retry_timeout,
-                            }
+                            yield _build_sse_frame(b"message", json_bytes, settings.sse_retry_timeout)
+                        elif settings.sse_keepalive_enabled:
+                            # Timeout - send keepalive (no exception raised!)
+                            yield _build_sse_frame(b"keepalive", b"{}", settings.sse_retry_timeout)
                     except Exception as e:
-                        logger.error(f"Error processing SSE message: {e}")
-                        yield {
-                            "event": "error",
-                            "data": orjson.dumps({"error": str(e)}).decode(),
-                            "retry": settings.sse_retry_timeout,
-                        }
+                        logger.error("Error processing SSE message: %s", e)
+                        yield _build_sse_frame(b"error", orjson.dumps({"error": str(e)}), settings.sse_retry_timeout)
+
             except asyncio.CancelledError:
-                logger.info(f"SSE event generator cancelled: {self._session_id}")
+                logger.info("SSE event generator cancelled: %s", self._session_id)
             except Exception as e:
-                logger.error(f"SSE event generator error: {e}")
+                logger.error("SSE event generator error: %s", e)
             finally:
-                logger.info(f"SSE event generator completed: {self._session_id}")
+                logger.info("SSE event generator completed: %s", self._session_id)
                 # We intentionally don't set client_gone here to allow queued messages to be processed
 
         return EventSourceResponse(
