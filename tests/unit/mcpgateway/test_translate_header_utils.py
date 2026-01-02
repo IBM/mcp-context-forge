@@ -18,6 +18,8 @@ from mcpgateway.translate_header_utils import (
     sanitize_header_value,
     parse_header_mappings,
     extract_env_vars_from_headers,
+    normalize_headers,
+    NormalizedMappings,
     HeaderMappingError,
     ALLOWED_HEADERS_REGEX,
     MAX_HEADER_VALUE_LENGTH,
@@ -194,6 +196,28 @@ class TestHeaderMappingParsing:
                     "Authorization=API_TOKEN",  # Duplicate
                 ]
             )
+
+    def test_case_insensitive_duplicate_header(self):
+        """Test error handling for case-insensitive duplicate header mappings."""
+        with pytest.raises(HeaderMappingError, match="Case-insensitive duplicate"):
+            parse_header_mappings(
+                [
+                    "Authorization=AUTH1",
+                    "authorization=AUTH2",  # Case-insensitive duplicate
+                ]
+            )
+
+    def test_case_insensitive_duplicate_mixed_case(self):
+        """Test case-insensitive duplicates with various case combinations."""
+        test_cases = [
+            (["X-Api-Key=KEY1", "x-api-key=KEY2"], "x-api-key"),
+            (["Content-Type=TYPE1", "CONTENT-TYPE=TYPE2"], "CONTENT-TYPE"),
+            (["X-Custom=VAR1", "X-CUSTOM=VAR2"], "X-CUSTOM"),
+        ]
+
+        for mappings, conflicting in test_cases:
+            with pytest.raises(HeaderMappingError, match="Case-insensitive duplicate"):
+                parse_header_mappings(mappings)
 
     def test_invalid_format(self):
         """Test error handling for invalid mapping formats."""
@@ -433,10 +457,10 @@ class TestErrorHandling:
 
             extract_env_vars_from_headers(headers, mappings)
 
-            # Should log debug message about successful mapping
+            # Should log debug message about successful mapping (uses lowercase header name)
             mock_logger.debug.assert_called()
             debug_calls = [call[0][0] for call in mock_logger.debug.call_args_list]
-            assert any("Mapped header Authorization to GITHUB_TOKEN" in call for call in debug_calls)
+            assert any("Mapped header authorization to GITHUB_TOKEN" in call for call in debug_calls)
 
     def test_exception_handling_in_extraction(self):
         """Test exception handling during header extraction."""
@@ -451,5 +475,202 @@ class TestErrorHandling:
 
                 # Should log warning and continue processing
                 mock_logger.warning.assert_called()
-                assert "Failed to process header Authorization" in mock_logger.warning.call_args[0][0]
+                assert "Failed to process header authorization" in mock_logger.warning.call_args[0][0]
                 assert env_vars == {}  # Should return empty dict on error
+
+
+class TestNormalizeHeaders:
+    """Test header normalization functionality."""
+
+    def test_basic_normalization(self):
+        """Test basic header normalization to lowercase."""
+        headers = {
+            "Authorization": "Bearer token",
+            "X-Api-Key": "key123",
+            "Content-Type": "application/json",
+        }
+        result = normalize_headers(headers)
+
+        assert result == {
+            "authorization": "Bearer token",
+            "x-api-key": "key123",
+            "content-type": "application/json",
+        }
+
+    def test_empty_headers(self):
+        """Test normalization of empty headers dict."""
+        assert normalize_headers({}) == {}
+
+    def test_already_lowercase(self):
+        """Test headers that are already lowercase."""
+        headers = {"authorization": "token", "x-custom": "value"}
+        result = normalize_headers(headers)
+        assert result == headers
+
+    def test_uppercase_headers(self):
+        """Test all uppercase headers."""
+        headers = {"AUTHORIZATION": "token", "X-CUSTOM-HEADER": "value"}
+        result = normalize_headers(headers)
+        assert result == {"authorization": "token", "x-custom-header": "value"}
+
+
+class TestNormalizedMappings:
+    """Test NormalizedMappings class functionality."""
+
+    def test_basic_creation(self):
+        """Test basic NormalizedMappings creation."""
+        mappings = NormalizedMappings({"Authorization": "AUTH_TOKEN", "X-Api-Key": "API_KEY"})
+        assert len(mappings) == 2
+
+    def test_get_env_var_case_insensitive(self):
+        """Test case-insensitive env var lookup."""
+        mappings = NormalizedMappings({"Authorization": "AUTH_TOKEN"})
+        assert mappings.get_env_var("authorization") == "AUTH_TOKEN"
+        assert mappings.get_env_var("AUTHORIZATION") == "AUTH_TOKEN"
+        assert mappings.get_env_var("Authorization") == "AUTH_TOKEN"
+
+    def test_get_env_var_not_found(self):
+        """Test lookup for non-existent header."""
+        mappings = NormalizedMappings({"Authorization": "AUTH_TOKEN"})
+        assert mappings.get_env_var("X-Unknown") is None
+
+    def test_iteration(self):
+        """Test iterating over normalized mappings."""
+        mappings = NormalizedMappings({"Authorization": "AUTH", "X-Api-Key": "KEY"})
+        items = list(mappings)
+        assert ("authorization", "AUTH") in items
+        assert ("x-api-key", "KEY") in items
+
+    def test_len(self):
+        """Test len() on NormalizedMappings."""
+        assert len(NormalizedMappings({})) == 0
+        assert len(NormalizedMappings({"A": "B"})) == 1
+        assert len(NormalizedMappings({"A": "B", "C": "D"})) == 2
+
+    def test_empty_mappings(self):
+        """Test empty NormalizedMappings."""
+        mappings = NormalizedMappings({})
+        assert len(mappings) == 0
+        assert list(mappings) == []
+        assert mappings.get_env_var("any") is None
+
+
+class TestExtractEnvVarsWithNormalizedMappings:
+    """Test extract_env_vars_from_headers with NormalizedMappings."""
+
+    def test_with_normalized_mappings_instance(self):
+        """Test using NormalizedMappings directly."""
+        headers = {"authorization": "Bearer token", "x-tenant-id": "acme"}
+        mappings = NormalizedMappings({"Authorization": "AUTH", "X-Tenant-Id": "TENANT"})
+
+        result = extract_env_vars_from_headers(headers, mappings)
+
+        assert result == {"AUTH": "Bearer token", "TENANT": "acme"}
+
+    def test_with_dict_mappings(self):
+        """Test using plain dict mappings (backward compatible)."""
+        headers = {"authorization": "Bearer token"}
+        mappings = {"Authorization": "AUTH"}
+
+        result = extract_env_vars_from_headers(headers, mappings)
+
+        assert result == {"AUTH": "Bearer token"}
+
+    def test_reuse_normalized_mappings(self):
+        """Test reusing NormalizedMappings for multiple requests."""
+        # Pre-normalize once
+        mappings = NormalizedMappings({"Authorization": "AUTH", "X-Api-Key": "KEY"})
+
+        # Use for multiple requests
+        result1 = extract_env_vars_from_headers({"authorization": "token1"}, mappings)
+        result2 = extract_env_vars_from_headers({"Authorization": "token2", "X-Api-Key": "key2"}, mappings)
+        result3 = extract_env_vars_from_headers({"x-api-key": "key3"}, mappings)
+
+        assert result1 == {"AUTH": "token1"}
+        assert result2 == {"AUTH": "token2", "KEY": "key2"}
+        assert result3 == {"KEY": "key3"}
+
+
+class TestHeaderExtractionScalability:
+    """Scalability tests verifying correct behavior with large inputs.
+
+    These tests verify the algorithm works correctly at scale without timing assertions.
+    The O(mappings + headers) complexity is verified by the implementation using dict lookups.
+    """
+
+    def test_large_headers_correctness(self):
+        """Verify extraction works correctly with many headers.
+
+        Tests that with 1000 headers, only the mapped ones are extracted.
+        This implicitly tests O(n) behavior - O(n²) would timeout.
+        """
+        # Large header set
+        headers = {f"X-Header-{i}": f"value-{i}" for i in range(1000)}
+
+        # Only map a few headers
+        mappings = {"X-Header-0": "ENV_0", "X-Header-500": "ENV_500", "X-Header-999": "ENV_999"}
+
+        result = extract_env_vars_from_headers(headers, mappings)
+
+        assert len(result) == 3
+        assert result["ENV_0"] == "value-0"
+        assert result["ENV_500"] == "value-500"
+        assert result["ENV_999"] == "value-999"
+
+    def test_large_mappings_correctness(self):
+        """Verify extraction works correctly with many mappings."""
+        # Headers matching all mappings
+        headers = {f"X-Header-{i}": f"value-{i}" for i in range(100)}
+
+        # Many mappings
+        mappings = {f"X-Header-{i}": f"ENV_{i}" for i in range(100)}
+
+        result = extract_env_vars_from_headers(headers, mappings)
+
+        assert len(result) == 100
+        for i in range(100):
+            assert result[f"ENV_{i}"] == f"value-{i}"
+
+    def test_normalized_mappings_equivalence(self):
+        """Verify NormalizedMappings produces identical results to dict mappings."""
+        headers = {f"X-Header-{i}": f"value-{i}" for i in range(50)}
+        raw_mappings = {f"X-Header-{i}": f"ENV_{i}" for i in range(20)}
+        normalized = NormalizedMappings(raw_mappings)
+
+        result_dict = extract_env_vars_from_headers(headers, raw_mappings)
+        result_normalized = extract_env_vars_from_headers(headers, normalized)
+
+        assert result_dict == result_normalized
+        assert len(result_dict) == 20
+
+    def test_worst_case_no_matches(self):
+        """Test correctness when no headers match mappings."""
+        # Headers and mappings have no overlap
+        headers = {f"X-Request-{i}": f"value-{i}" for i in range(500)}
+        mappings = {f"X-Config-{i}": f"ENV_{i}" for i in range(50)}
+
+        result = extract_env_vars_from_headers(headers, mappings)
+        assert result == {}
+
+    def test_all_headers_match(self):
+        """Test correctness when all mapped headers are present."""
+        # All mappings have matching headers
+        headers = {f"X-Header-{i}": f"value-{i}" for i in range(100)}
+        mappings = {f"X-Header-{i}": f"ENV_{i}" for i in range(100)}
+
+        result = extract_env_vars_from_headers(headers, mappings)
+        assert len(result) == 100
+
+    def test_case_insensitive_large_scale(self):
+        """Test case-insensitive matching works at scale."""
+        # Headers with mixed case
+        headers = {f"x-header-{i}": f"value-{i}" for i in range(100)}
+
+        # Mappings with different case
+        mappings = {f"X-Header-{i}": f"ENV_{i}" for i in range(100)}
+
+        result = extract_env_vars_from_headers(headers, mappings)
+
+        assert len(result) == 100
+        for i in range(100):
+            assert result[f"ENV_{i}"] == f"value-{i}"
