@@ -236,7 +236,6 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 structured_logger.log(
                     level="INFO",
                     message=f"Request started: {method} {path}",
-                    component="http_gateway",
                     correlation_id=correlation_id,
                     user_email=user_email,
                     user_id=user_id,
@@ -262,7 +261,6 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     structured_logger.log(
                         level=log_level,
                         message=f"Request completed: {method} {path} - {response.status_code}",
-                        component="http_gateway",
                         correlation_id=correlation_id,
                         user_email=user_email,
                         user_id=user_id,
@@ -325,7 +323,6 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                                 structured_logger.log(
                                     level="ERROR",
                                     message=f"Request failed: {method} {path}",
-                                    component="gateway",
                                     correlation_id=correlation_id,
                                     user_email=user_email,
                                     user_id=user_id,
@@ -350,7 +347,6 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                             structured_logger.log(
                                 level=boundary_log_level,
                                 message=f"Request completed: {method} {path} - {response.status_code}",
-                                component="gateway",
                                 correlation_id=correlation_id,
                                 user_email=user_email,
                                 user_id=user_id,
@@ -453,7 +449,6 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     structured_logger.log(
                         level="ERROR",
                         message=f"Request failed: {method} {path}",
-                        component="gateway",
                         correlation_id=correlation_id,
                         user_email=user_email,
                         user_id=user_id,
@@ -482,7 +477,6 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 structured_logger.log(
                     level=log_level,
                     message=f"Request completed: {method} {path} - {status_code}",
-                    component="gateway",
                     correlation_id=correlation_id,
                     user_email=user_email,
                     user_id=user_id,
