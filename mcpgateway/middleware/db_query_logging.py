@@ -18,7 +18,6 @@ Output files:
 # Standard
 from contextvars import ContextVar
 from datetime import datetime, timezone
-import json
 import logging
 from pathlib import Path
 import re
@@ -27,6 +26,7 @@ import time
 from typing import Any, Dict, List, Optional, Pattern
 
 # Third-Party
+import orjson
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -239,7 +239,7 @@ def _format_json_log(request_data: Dict[str, Any], queries: List[Dict[str, Any]]
         ],
     }
 
-    return json.dumps(log_entry, default=str)
+    return orjson.dumps(log_entry, default=str).decode()
 
 
 def _write_logs(request_data: Dict[str, Any], queries: List[Dict[str, Any]]) -> None:
