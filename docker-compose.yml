@@ -240,6 +240,12 @@ services:
       # Note: GRANIAN_BLOCKING_THREADS must be 1 for ASGI (Granian limitation)
       # Granian workers (auto = CPU count, or set explicit number)
       - GRANIAN_WORKERS=16
+      # HTTP/2: Granian supports native HTTP/2 multiplexing, but not useful here because:
+      # - nginx sits in front and downgrades to HTTP/1.1 for upstream connections
+      # - nginx open-source doesn't support HTTP/2 to backends (only nginx Plus does)
+      # - Internal Docker network is fast enough that HTTP/2 gains are negligible
+      # To use HTTP/2, either bypass nginx or use Granian with TLS directly.
+      # - GRANIAN_HTTP=2
 
       # ═══════════════════════════════════════════════════════════════════════════
       # Execution Metrics Recording
@@ -373,17 +379,17 @@ services:
       - "-c"
       - "effective_io_concurrency=200"
       - "-c"
-      - "max_worker_processes=4"
+      - "max_worker_processes=8"           # Total background workers (must be >= max_parallel_workers)
       - "-c"
-      - "max_parallel_workers_per_gather=2"
+      - "max_parallel_workers_per_gather=4" # Max workers per query's parallel operation
       - "-c"
-      - "max_parallel_workers=4"
+      - "max_parallel_workers=8"            # Total parallel workers available system-wide
       # === HIGH-CONCURRENCY TUNING (3000 users) ===
       # CRITICAL: idle_in_transaction_session_timeout prevents connection starvation
       # Application code now properly closes transactions via get_db() commit-on-success pattern
       # This timeout is a safety net for any edge cases
       - "-c"
-      - "idle_in_transaction_session_timeout=30s"  # Kill stuck transactions after 30s
+      - "idle_in_transaction_session_timeout=60s"  # Kill stuck transactions after 60s
       - "-c"
       - "statement_timeout=60s"            # Kill runaway queries after 60s
       - "-c"
