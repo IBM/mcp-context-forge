@@ -262,6 +262,8 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
             access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
         )  # nosec B106 - OAuth2 token type, not a password
 
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions as-is (401, 403, etc.)
     except Exception as e:
         logger.error(f"Login error for {login_request.email}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Authentication service error")
