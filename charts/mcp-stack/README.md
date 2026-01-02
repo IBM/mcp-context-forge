@@ -95,6 +95,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.LOG_LEVEL | string | `"INFO"` |  |
 | mcpContextForge.config.LOG_MAX_SIZE_MB | string | `"1"` |  |
 | mcpContextForge.config.LOG_REQUESTS | string | `"false"` |  |
+| mcpContextForge.config.LOG_DETAILED_MAX_BODY_SIZE | string | `"16384"` |  |
 | mcpContextForge.config.LOG_ROTATION_ENABLED | string | `"false"` |  |
 | mcpContextForge.config.LOG_TO_FILE | string | `"false"` |  |
 | mcpContextForge.config.MAX_PROMPT_SIZE | string | `"102400"` |  |
