@@ -247,6 +247,24 @@ async def test_large_body_fast_path(dummy_logger, mock_structured_logger, dummy_
 
 
 @pytest.mark.asyncio
+async def test_large_body_fast_path_exception_logs_failure(dummy_logger, mock_structured_logger):
+    """Large body fast path should still log request failures."""
+    async def _call_next(_request):
+        raise RuntimeError("boom")
+
+    middleware = RequestLoggingMiddleware(app=None, enable_gateway_logging=True, log_detailed_requests=True, max_body_size=100)
+    body = b"x" * 500
+    request = make_request_with_headers(body=body, headers={"content-length": "500"})
+
+    with pytest.raises(RuntimeError):
+        await middleware.dispatch(request, _call_next)
+
+    assert mock_structured_logger.log.call_count == 1
+    call_kwargs = mock_structured_logger.log.call_args.kwargs
+    assert call_kwargs.get("metadata", {}).get("event") == "request_failed"
+
+
+@pytest.mark.asyncio
 async def test_no_logging_for_skipped_paths(mock_structured_logger, dummy_call_next):
     """Health check paths should skip all logging."""
     middleware = RequestLoggingMiddleware(app=None, enable_gateway_logging=True, log_detailed_requests=True)

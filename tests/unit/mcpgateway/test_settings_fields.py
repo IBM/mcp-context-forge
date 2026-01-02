@@ -28,6 +28,18 @@ def test_log_level_invalid(level):
         Settings(log_level=level)
 
 
+@pytest.mark.parametrize("size", [1024, 16384, 1048576])
+def test_log_detailed_max_body_size_valid(size):
+    settings = Settings(log_detailed_max_body_size=size, _env_file=None)
+    assert settings.log_detailed_max_body_size == size
+
+
+@pytest.mark.parametrize("size", [0, 512, 1048577])
+def test_log_detailed_max_body_size_invalid(size):
+    with pytest.raises(ValidationError):
+        Settings(log_detailed_max_body_size=size, _env_file=None)
+
+
 @pytest.mark.parametrize("port", [1, 8080, 65535])
 def test_port_valid(port):
     settings = Settings(port=port)

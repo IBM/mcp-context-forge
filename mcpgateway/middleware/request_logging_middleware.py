@@ -316,7 +316,31 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                         )
 
                     # Continue with request processing (boundary logging handled below)
-                    response = await call_next(request)
+                    try:
+                        response = await call_next(request)
+                    except Exception as e:
+                        duration_ms = (time.time() - start_time) * 1000
+                        if should_log_boundary:
+                            try:
+                                structured_logger.log(
+                                    level="ERROR",
+                                    message=f"Request failed: {method} {path}",
+                                    component="gateway",
+                                    correlation_id=correlation_id,
+                                    user_email=user_email,
+                                    user_id=user_id,
+                                    operation_type="http_request",
+                                    request_method=method,
+                                    request_path=path,
+                                    user_agent=user_agent,
+                                    client_ip=client_ip,
+                                    duration_ms=duration_ms,
+                                    error=e,
+                                    metadata={"event": "request_failed"},
+                                )
+                            except Exception as log_error:
+                                logger.warning(f"Failed to log request failure: {log_error}")
+                        raise
 
                     # Log boundary completion for large body requests
                     if should_log_boundary:
@@ -326,7 +350,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                             structured_logger.log(
                                 level=boundary_log_level,
                                 message=f"Request completed: {method} {path} - {response.status_code}",
-                                component="http_gateway",
+                                component="gateway",
                                 correlation_id=correlation_id,
                                 user_email=user_email,
                                 user_id=user_id,

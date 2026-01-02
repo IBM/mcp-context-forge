@@ -283,6 +283,7 @@ mcpContextForge:
     LOG_FORMAT: json                 # json or text format
     LOG_TO_FILE: "false"             # enable file logging
     LOG_REQUESTS: "false"            # enable request payload logging with sensitive data masking
+    LOG_DETAILED_MAX_BODY_SIZE: "16384" # max request body size to log (bytes)
     LOG_FILEMODE: "a+"               # file write mode (append/overwrite)
     LOG_FILE: ""                     # log filename when file logging enabled
     LOG_FOLDER: ""                   # directory for log files

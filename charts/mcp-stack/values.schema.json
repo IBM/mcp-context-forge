@@ -622,6 +622,17 @@
               "description": "Log format",
               "default": "json"
             },
+            "LOG_REQUESTS": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable request payload logging with sensitive data masking",
+              "default": "false"
+            },
+            "LOG_DETAILED_MAX_BODY_SIZE": {
+              "type": "string",
+              "description": "Maximum request body size to log in detailed mode (bytes)",
+              "default": "16384"
+            },
             "TRANSPORT_TYPE": {
               "type": "string",
               "description": "Transport types (comma-separated)",

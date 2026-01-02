@@ -1845,6 +1845,8 @@ MCP Gateway provides flexible logging with **stdout/stderr output by default** a
 | ----------------------- | ---------------------------------- | ----------------- | -------------------------- |
 | `LOG_LEVEL`             | Minimum log level                  | `INFO`            | `DEBUG`...`CRITICAL`       |
 | `LOG_FORMAT`            | Console log format                 | `json`            | `json`, `text`             |
+| `LOG_REQUESTS`          | Enable detailed request logging    | `false`           | `true`, `false`            |
+| `LOG_DETAILED_MAX_BODY_SIZE` | Max request body size to log (bytes) | `16384`       | `1024` - `1048576`         |
 | `LOG_TO_FILE`           | **Enable file logging**            | **`false`**       | **`true`, `false`**        |
 | `LOG_FILE`              | Log filename (when enabled)        | `null`            | `mcpgateway.log`           |
 | `LOG_FOLDER`            | Directory for log files            | `null`            | `logs`, `/var/log/gateway` |
@@ -1860,6 +1862,7 @@ MCP Gateway provides flexible logging with **stdout/stderr output by default** a
 - **Log Rotation**: When `LOG_ROTATION_ENABLED=true`, files rotate at `LOG_MAX_SIZE_MB` with `LOG_BACKUP_COUNT` backup files (e.g., `.log.1`, `.log.2`)
 - **Directory Creation**: Log folder is automatically created if it doesn't exist
 - **Centralized Service**: All modules use the unified `LoggingService` for consistent formatting
+- **Detailed Request Logging**: When `LOG_REQUESTS=true`, payload logging is truncated to `LOG_DETAILED_MAX_BODY_SIZE` and skipped for `/health`, `/healthz`, `/static`, and `/favicon.ico`
 
 **Example Configurations:**
 
@@ -1881,6 +1884,10 @@ LOG_MAX_SIZE_MB=10
 LOG_BACKUP_COUNT=3
 LOG_FOLDER=/var/log/mcpgateway
 LOG_FILE=gateway.log
+
+# Optional: Enable detailed request payload logging (truncated)
+LOG_REQUESTS=true
+LOG_DETAILED_MAX_BODY_SIZE=16384
 ```
 
 **Default Behavior:**
