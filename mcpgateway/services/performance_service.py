@@ -156,6 +156,8 @@ class PerformanceService:
         # Use lock for cache refresh to prevent concurrent expensive calls
         with _net_connections_lock:
             # Double-check after acquiring lock (another thread may have refreshed)
+            # Re-read current time in case we waited on the lock
+            current_time = time.time()
             if current_time - _net_connections_cache_time < cache_ttl:
                 return _net_connections_cache
 
@@ -166,8 +168,8 @@ class PerformanceService:
                 logger.debug("Could not get net_connections: %s", e)
                 # Keep stale cache value on error (don't update _net_connections_cache)
 
-            # Always update cache time to throttle retries on error too
-            _net_connections_cache_time = current_time
+            # Update cache time after the call to anchor TTL to actual refresh time
+            _net_connections_cache_time = time.time()
 
         return _net_connections_cache
 
