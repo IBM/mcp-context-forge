@@ -1331,7 +1331,7 @@ class SecurityValidator:
         # Check for SQL injection patterns (uses precompiled regex list)
         for pattern in _SQL_PATTERNS:
             if pattern.search(value):
-                if getattr(config_settings, "validation_strict", True):
+                if getattr(settings, "validation_strict", True):
                     raise ValueError("Parameter contains SQL injection patterns")
                 # Basic escaping
                 value = value.replace("'", "''").replace('"', '""')
@@ -1356,7 +1356,7 @@ class SecurityValidator:
             >>> SecurityValidator.validate_parameter_length('short', 10)
             'short'
         """
-        max_len = max_length or getattr(config_settings, "max_param_length", 10000)
+        max_len = max_length or getattr(settings, "max_param_length", 10000)
         if len(value) > max_len:
             raise ValueError(f"Parameter exceeds maximum length of {max_len}")
         return value
