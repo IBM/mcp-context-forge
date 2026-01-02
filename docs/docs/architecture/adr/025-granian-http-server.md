@@ -67,6 +67,38 @@ Based on community benchmarks:
 
 **Note:** Actual performance varies by workload. Always benchmark with your specific use case.
 
+### Real-World Performance Comparison (Database-Bound Workload)
+
+Profiling under load test with 2500 concurrent users against PostgreSQL backend:
+
+| Metric | Gunicorn+Uvicorn | Granian | Notes |
+|--------|------------------|---------|-------|
+| **Memory per replica** | ~2.7 GiB | ~4.0 GiB | Gunicorn 32% less |
+| **CPU per replica** | ~740% | ~680% | Granian 8% less |
+| **Throughput (RPS)** | ~2000 | ~2000 | Same (DB bottleneck) |
+| **Backpressure** | ❌ None (queues unbounded) | ✅ Native (rejects excess) | Granian safer under overload |
+| **503 under overload** | No (timeouts instead) | Yes (clean rejection) | Granian fails gracefully |
+
+**Key Insight:** When the bottleneck is the database (not HTTP parsing), both servers achieve similar throughput. The difference is in resource usage and overload behavior:
+
+- **Gunicorn** uses less memory but has no admission control—under extreme load it will queue requests indefinitely, potentially causing OOM or cascading timeouts.
+- **Granian** uses more memory but provides native backpressure—under extreme load it rejects excess requests with immediate 503, protecting system stability.
+
+**Why Granian Uses More Memory:**
+- Multi-threaded Rust runtime (Tokio) overhead
+- Larger HTTP buffers (512KB per connection default)
+- Backpressure queues holding pending requests
+- PyO3 Python-Rust bindings overhead
+
+**Recommendation by Use Case:**
+
+| Scenario | Recommendation |
+|----------|----------------|
+| Memory-constrained environment | Gunicorn (32% less RAM) |
+| Load spike protection needed | Granian (native backpressure) |
+| Predictable traffic patterns | Either (similar performance) |
+| Unpredictable/bursty traffic | Granian (graceful degradation) |
+
 ## Consequences
 
 ### Positive

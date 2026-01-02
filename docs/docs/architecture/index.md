@@ -4,7 +4,7 @@ The **MCP Gateway** (ContextForge) is a production-grade gateway, proxy, and reg
 
 ## High-Level Architecture Summary
 
-**MCP Gateway (ContextForge)** is a comprehensive production-grade gateway built on modern Python technologies with a performance-first approach:
+**MCP Gateway (ContextForge)** is a comprehensive production-grade gateway built on modern Python technologies with a performance-first approach. For a detailed visual diagram of the high-performance components (Rust-powered libraries, async patterns, caching layers, and Kubernetes scaling), see the [Performance Architecture Diagram](performance-architecture.md).
 
 ### Core Technology Stack
 

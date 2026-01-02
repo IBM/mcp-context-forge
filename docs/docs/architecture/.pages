@@ -1,6 +1,7 @@
 nav:
   - Overview: index.md
   - Roadmap: roadmap.md
+  - Performance Architecture: performance-architecture.md
   - Security Features: security-features.md
   - Plugin Framework: plugins.md
   - Export-Import Architecture: export-import-architecture.md

@@ -208,6 +208,33 @@ GRANIAN_HTTP=1 make serve
 
 > **Note**: Always benchmark with your specific workload before switching servers.
 
+### Real-World Performance (Database-Bound Workload)
+
+Under load testing with 2500 concurrent users against PostgreSQL:
+
+| Metric | Gunicorn | Granian | Winner |
+|--------|----------|---------|--------|
+| **Memory per replica** | ~2.7 GiB | ~4.0 GiB | Gunicorn (32% less) |
+| **CPU per replica** | ~740% | ~680% | Granian (8% less) |
+| **Throughput (RPS)** | ~2000 | ~2000 | Tie (DB bottleneck) |
+| **Backpressure** | ❌ None | ✅ Native | Granian |
+| **Overload behavior** | Queues → OOM/timeout | 503 rejection | Granian |
+
+**Key Finding:** When the database is the bottleneck, both servers achieve similar throughput. The main differences are:
+
+- **Memory:** Gunicorn uses 32% less RAM (fork-based model with copy-on-write)
+- **CPU:** Granian uses 8% less CPU (more efficient HTTP parsing in Rust)
+- **Stability:** Granian handles overload gracefully (backpressure), Gunicorn queues indefinitely
+
+**Recommendation:**
+
+| Scenario | Choose |
+|----------|--------|
+| Memory-constrained | Gunicorn |
+| Load spike protection | Granian |
+| Bursty/unpredictable traffic | Granian |
+| Stable traffic patterns | Either |
+
 ---
 
 ## 3 - Container resources
