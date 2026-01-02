@@ -17,6 +17,7 @@ This suite provides complete test coverage for:
 
 # Standard
 import asyncio
+import time
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1082,10 +1083,12 @@ class TestResourceTemplates:
         template = "test://resource/{id}/details/{type}"
         uri = "test://resource/123/details/info"
 
-        with patch("mcpgateway.services.resource_service.parse.parse") as mock_parse:
+        with patch("mcpgateway.services.resource_service.parse.compile") as mock_compile:
+            mock_parser = MagicMock()
             mock_result = MagicMock()
             mock_result.named = {"id": "123", "type": "info"}
-            mock_parse.return_value = mock_result
+            mock_parser.parse.return_value = mock_result
+            mock_compile.return_value = mock_parser
 
             params = resource_service._extract_template_params(uri, template)
 
@@ -1096,8 +1099,10 @@ class TestResourceTemplates:
         template = "test://resource/{id}"
         uri = "other://resource/123"
 
-        with patch("mcpgateway.services.resource_service.parse.parse") as mock_parse:
-            mock_parse.return_value = None
+        with patch("mcpgateway.services.resource_service.parse.compile") as mock_compile:
+            mock_parser = MagicMock()
+            mock_parser.parse.return_value = None
+            mock_compile.return_value = mock_parser
 
             params = resource_service._extract_template_params(uri, template)
 
@@ -1693,6 +1698,123 @@ class TestResourceServiceMetricsExtended:
             assert result[1].name == "resource2"
             assert result[1].execution_count == 7
             assert result[1].success_rate == pytest.approx(71.43, rel=0.01)
+
+
+# --------------------------------------------------------------------------- #
+# Template Caching Tests                                                      #
+# --------------------------------------------------------------------------- #
+
+
+class TestResourceTemplateCaching:
+    """Test caching of compiled regex and parse patterns."""
+
+    def test_build_regex_caching(self):
+        """Verify that _build_regex caches compiled patterns."""
+        service = ResourceService()
+        template = "files://root/{path*}/meta/{id}{?expand,debug}"
+
+        # First call - compiles regex
+        regex1 = service._build_regex(template)
+
+        # Second call - should return cached result
+        regex2 = service._build_regex(template)
+
+        # Verify same object returned (cached)
+        assert regex1 is regex2, "Regex should be cached and return same object"
+
+        # Verify pattern works correctly
+        test_uri = "files://root/some/path/meta/123"
+        assert regex1.match(test_uri) is not None
+
+    def test_compile_parse_pattern_caching(self):
+        """Verify that _compile_parse_pattern caches compiled patterns."""
+        service = ResourceService()
+        template = "file:///{name}/{id}"
+
+        # First call - compiles pattern
+        parser1 = service._compile_parse_pattern(template)
+
+        # Second call - should return cached result
+        parser2 = service._compile_parse_pattern(template)
+
+        # Verify same object returned (cached)
+        assert parser1 is parser2, "Parser should be cached and return same object"
+
+    def test_extract_template_params_uses_cache(self):
+        """Verify that _extract_template_params uses cached parse patterns."""
+        service = ResourceService()
+        template = "file:///{name}/{id}"
+        uri = "file:///test_file/42"
+
+        # Multiple calls should use cached parser
+        params1 = service._extract_template_params(uri, template)
+        params2 = service._extract_template_params(uri, template)
+
+        assert params1 == params2
+        assert params1["name"] == "test_file"
+        assert params1["id"] == "42"
+
+    def test_uri_matches_template_uses_cache(self):
+        """Verify that _uri_matches_template uses cached regex."""
+        service = ResourceService()
+        template = "files://{bucket}/{key*}"
+        uri = "files://mybucket/path/to/file.txt"
+
+        # Multiple calls should use cached regex
+        match1 = service._uri_matches_template(uri, template)
+        match2 = service._uri_matches_template(uri, template)
+
+        assert match1 is True
+        assert match2 is True
+
+    def test_caching_performance_improvement(self):
+        """Verify that caching provides performance benefit."""
+        service = ResourceService()
+        template = "files://root/{path*}/meta/{id}{?expand}"
+
+        # Measure first call (compilation)
+        start = time.perf_counter()
+        for _ in range(100):
+            service._build_regex.__wrapped__(template)  # Call without cache
+        uncached_time = time.perf_counter() - start
+
+        # Clear any existing cache
+        service._build_regex.cache_clear()
+
+        # Measure cached calls
+        start = time.perf_counter()
+        for _ in range(100):
+            service._build_regex(template)  # Uses cache after first call
+        cached_time = time.perf_counter() - start
+
+        # Cached should be significantly faster (at least 2x)
+        assert cached_time < uncached_time / 2, f"Cached ({cached_time:.6f}s) should be at least 2x faster than uncached ({uncached_time:.6f}s)"
+
+    def test_different_templates_cached_separately(self):
+        """Verify that different templates are cached separately."""
+        service = ResourceService()
+        template1 = "files://{bucket}/{key}"
+        template2 = "data://{dataset}/{record}"
+
+        regex1 = service._build_regex(template1)
+        regex2 = service._build_regex(template2)
+
+        # Different templates should produce different regex objects
+        assert regex1 is not regex2
+        assert regex1.pattern != regex2.pattern
+
+    def test_cache_size_limit_respected(self):
+        """Verify that LRU cache limit (256) is respected."""
+        service = ResourceService()
+
+        # Generate more than cache size templates (with valid variable names)
+        for i in range(300):
+            template = f"files://bucket/{{var{i}}}/file"
+            service._build_regex(template)
+
+        # Cache should have evicted oldest entries
+        cache_info = service._build_regex.cache_info()
+        assert cache_info.currsize <= 256, "Cache should respect maxsize limit"
 
 
 if __name__ == "__main__":
