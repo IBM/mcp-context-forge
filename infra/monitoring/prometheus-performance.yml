@@ -1,0 +1,62 @@
+# Prometheus configuration for MCP Gateway stack
+# See: https://prometheus.io/docs/prometheus/latest/configuration/configuration/
+#
+# Usage: docker compose --profile monitoring up -d
+# Access: http://localhost:9090
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # PostgreSQL metrics via postgres_exporter (primary + replica)
+  - job_name: 'postgresql'
+    static_configs:
+      - targets: ['postgres_exporter:9187']
+        labels:
+          role: 'primary'
+          server: 'postgres'
+      - targets: ['postgres_exporter_replica:9187']
+        labels:
+          role: 'replica'
+          server: 'postgres-replica'
+
+  # Redis metrics via redis_exporter
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis_exporter:9121']
+
+  # Nginx metrics via nginx-prometheus-exporter
+  - job_name: 'nginx'
+    static_configs:
+      - targets: ['nginx_exporter:9113']
+
+  # PgBouncer metrics via pgbouncer-exporter
+  - job_name: 'pgbouncer'
+    static_configs:
+      - targets: ['pgbouncer_exporter:9127']
+
+  # Container metrics via cAdvisor (CPU, memory, network, disk I/O)
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+
+  # MCP Gateway application metrics (FastAPI instrumentation)
+  # Endpoint: /metrics/prometheus (Prometheus format with gzip)
+  # Uses DNS discovery to scrape ALL gateway replicas (not just one)
+  - job_name: 'mcpgateway'
+    dns_sd_configs:
+      - names: ['gateway']
+        type: 'A'
+        port: 4444
+        refresh_interval: 30s
+    metrics_path: '/metrics/prometheus'
+    relabel_configs:
+      # Add instance label from discovered IP for per-replica visibility
+      - source_labels: [__address__]
+        target_label: instance

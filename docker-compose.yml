@@ -384,13 +384,6 @@ services:
       - "max_parallel_workers_per_gather=4" # Max workers per query's parallel operation
       - "-c"
       - "max_parallel_workers=8"            # Total parallel workers available system-wide
-      # Parallel query cost thresholds - lower values make planner consider parallelism for smaller queries
-      # Default parallel_tuple_cost=0.1, parallel_setup_cost=1000 - too conservative for fast SSDs
-      # These lower thresholds encourage parallelism but may not help OLTP workloads (small queries)
-      - "-c"
-      - "parallel_tuple_cost=0.01"          # Cost per tuple transferred to parallel worker (default: 0.1)
-      - "-c"
-      - "parallel_setup_cost=100"           # Fixed cost to start parallel worker (default: 1000)
       # === HIGH-CONCURRENCY TUNING (3000 users) ===
       # CRITICAL: idle_in_transaction_session_timeout prevents connection starvation
       # Application code now properly closes transactions via get_db() commit-on-success pattern
