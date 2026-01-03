@@ -623,6 +623,7 @@ class TestPromptService:
 
         # Mock query chain - support pagination methods
         mock_query = MagicMock()
+        mock_query.options.return_value = mock_query  # For joinedload
         mock_query.where.return_value = mock_query
         mock_query.order_by.return_value = mock_query
         mock_query.limit.return_value = mock_query
