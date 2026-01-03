@@ -17,12 +17,14 @@ Key components include:
 Examples:
     >>> # Test module imports
     >>> from mcpgateway.transports.streamablehttp_transport import (
-    ...     EventEntry, InMemoryEventStore, SessionManagerWrapper
+    ...     EventEntry, StreamBuffer, InMemoryEventStore, SessionManagerWrapper
     ... )
     >>>
     >>> # Verify classes are available
     >>> EventEntry.__name__
     'EventEntry'
+    >>> StreamBuffer.__name__
+    'StreamBuffer'
     >>> InMemoryEventStore.__name__
     'InMemoryEventStore'
     >>> SessionManagerWrapper.__name__
@@ -30,7 +32,6 @@ Examples:
 """
 
 # Standard
-from collections import deque
 from contextlib import asynccontextmanager, AsyncExitStack
 import contextvars
 from dataclasses import dataclass
@@ -94,11 +95,13 @@ class EventEntry:
         >>> # Create an event entry
         >>> from mcp.types import JSONRPCMessage
         >>> message = JSONRPCMessage(jsonrpc="2.0", method="test", id=1)
-        >>> entry = EventEntry(event_id="test-123", stream_id="stream-456", message=message)
+        >>> entry = EventEntry(event_id="test-123", stream_id="stream-456", message=message, seq_num=0)
         >>> entry.event_id
         'test-123'
         >>> entry.stream_id
         'stream-456'
+        >>> entry.seq_num
+        0
         >>> # Access message attributes through model_dump() for Pydantic v2
         >>> message_dict = message.model_dump()
         >>> message_dict['jsonrpc']
@@ -112,6 +115,48 @@ class EventEntry:
     event_id: EventId
     stream_id: StreamId
     message: JSONRPCMessage
+    seq_num: int
+
+
+@dataclass
+class StreamBuffer:
+    """
+    Ring buffer for per-stream event storage with O(1) position lookup.
+
+    Tracks sequence numbers to enable efficient replay without scanning.
+    Events are stored at position (seq_num % capacity) in the entries list.
+
+    Examples:
+        >>> # Create a stream buffer with capacity 3
+        >>> buffer = StreamBuffer(entries=[None, None, None])
+        >>> buffer.start_seq
+        0
+        >>> buffer.next_seq
+        0
+        >>> buffer.count
+        0
+        >>> len(buffer)
+        0
+
+        >>> # Simulate adding an entry
+        >>> buffer.next_seq = 1
+        >>> buffer.count = 1
+        >>> len(buffer)
+        1
+    """
+
+    entries: list[EventEntry | None]
+    start_seq: int = 0  # oldest seq still buffered
+    next_seq: int = 0  # seq assigned to next insert
+    count: int = 0
+
+    def __len__(self) -> int:
+        """Return the number of events currently in the buffer.
+
+        Returns:
+            int: The count of events in the buffer.
+        """
+        return self.count
 
 
 class InMemoryEventStore(EventStore):
@@ -121,6 +166,7 @@ class InMemoryEventStore(EventStore):
     where a persistent storage solution would be more appropriate.
 
     This implementation keeps only the last N events per stream for memory efficiency.
+    Uses a ring buffer with per-stream sequence numbers for O(1) event lookup and O(k) replay.
 
     Examples:
         >>> # Create event store with default max events
@@ -171,8 +217,8 @@ class InMemoryEventStore(EventStore):
             25
         """
         self.max_events_per_stream = max_events_per_stream
-        # for maintaining last N events per stream
-        self.streams: dict[StreamId, deque[EventEntry]] = {}
+        # Per-stream ring buffers for O(1) position lookup
+        self.streams: dict[StreamId, StreamBuffer] = {}
         # event_id -> EventEntry for quick lookup
         self.event_index: dict[EventId, EventEntry] = {}
 
@@ -215,14 +261,14 @@ class InMemoryEventStore(EventStore):
             >>> len(store.event_index)
             2
 
-            >>> # Test deque overflow
+            >>> # Test ring buffer overflow
             >>> store2 = InMemoryEventStore(max_events_per_stream=2)
             >>> msg1 = JSONRPCMessage(jsonrpc="2.0", method="m1", id=1)
             >>> msg2 = JSONRPCMessage(jsonrpc="2.0", method="m2", id=2)
             >>> msg3 = JSONRPCMessage(jsonrpc="2.0", method="m3", id=3)
             >>> id1 = asyncio.run(store2.store_event("stream-2", msg1))
             >>> id2 = asyncio.run(store2.store_event("stream-2", msg2))
-            >>> # Now deque is full, adding third will remove first
+            >>> # Now buffer is full, adding third will remove first
             >>> id3 = asyncio.run(store2.store_event("stream-2", msg3))
             >>> len(store2.streams["stream-2"])
             2
@@ -231,21 +277,32 @@ class InMemoryEventStore(EventStore):
             >>> id2 in store2.event_index and id3 in store2.event_index
             True
         """
+        # Get or create ring buffer for this stream
+        buffer = self.streams.get(stream_id)
+        if buffer is None:
+            buffer = StreamBuffer(entries=[None] * self.max_events_per_stream)
+            self.streams[stream_id] = buffer
+
+        # Assign per-stream sequence number
+        seq_num = buffer.next_seq
+        buffer.next_seq += 1
+        idx = seq_num % self.max_events_per_stream
+
+        # Handle eviction if buffer is full
+        if buffer.count == self.max_events_per_stream:
+            evicted = buffer.entries[idx]
+            if evicted is not None:
+                self.event_index.pop(evicted.event_id, None)
+            buffer.start_seq += 1
+        else:
+            if buffer.count == 0:
+                buffer.start_seq = seq_num
+            buffer.count += 1
+
+        # Create and store the new event entry
         event_id = str(uuid4())
-        event_entry = EventEntry(event_id=event_id, stream_id=stream_id, message=message)
-
-        # Get or create deque for this stream
-        if stream_id not in self.streams:
-            self.streams[stream_id] = deque(maxlen=self.max_events_per_stream)
-
-        # If deque is full, the oldest event will be automatically removed
-        # We need to remove it from the event_index as well
-        if len(self.streams[stream_id]) == self.max_events_per_stream:
-            oldest_event = self.streams[stream_id][0]
-            self.event_index.pop(oldest_event.event_id, None)
-
-        # Add new event
-        self.streams[stream_id].append(event_entry)
+        event_entry = EventEntry(event_id=event_id, stream_id=stream_id, message=message, seq_num=seq_num)
+        buffer.entries[idx] = event_entry
         self.event_index[event_id] = event_entry
 
         return event_id
@@ -257,6 +314,9 @@ class InMemoryEventStore(EventStore):
     ) -> Union[StreamId, None]:
         """
         Replays events that occurred after the specified event ID.
+
+        Uses O(1) lookup via event_index and O(k) replay where k is the number
+        of events to replay, avoiding the previous O(n) full scan.
 
         Args:
             last_event_id (EventId): The ID of the last received event. Replay starts after this event.
@@ -295,24 +355,29 @@ class InMemoryEventStore(EventStore):
             >>> result is None
             True
         """
-        if last_event_id not in self.event_index:
+        # O(1) lookup in event_index
+        last_event = self.event_index.get(last_event_id)
+        if last_event is None:
             logger.warning(f"Event ID {last_event_id} not found in store")
             return None
 
-        # Get the stream and find events after the last one
-        last_event = self.event_index[last_event_id]
-        stream_id = last_event.stream_id
-        stream_events = self.streams.get(last_event.stream_id, deque())
+        buffer = self.streams.get(last_event.stream_id)
+        if buffer is None:
+            return None
 
-        # Events in deque are already in chronological order
-        found_last = False
-        for event in stream_events:
-            if found_last:
-                await send_callback(EventMessage(event.message, event.event_id))
-            elif event.event_id == last_event_id:
-                found_last = True
+        # Validate that the event's seq_num is still within the buffer range
+        if last_event.seq_num < buffer.start_seq or last_event.seq_num >= buffer.next_seq:
+            return None
 
-        return stream_id
+        # O(k) replay: iterate from last_event.seq_num + 1 to buffer.next_seq - 1
+        for seq in range(last_event.seq_num + 1, buffer.next_seq):
+            entry = buffer.entries[seq % self.max_events_per_stream]
+            # Guard: skip if slot is empty or has been overwritten by a different seq
+            if entry is None or entry.seq_num != seq:
+                continue
+            await send_callback(EventMessage(entry.message, entry.event_id))
+
+        return last_event.stream_id
 
 
 # ------------------------------ Streamable HTTP Transport ------------------------------
