@@ -1500,8 +1500,8 @@ class ToolService:
                 cached_tools = [ToolRead.model_validate(t) for t in cached["tools"]]
                 return (cached_tools, cached.get("next_cursor"))
 
-        # Build base query with ordering
-        query = select(DbTool).order_by(desc(DbTool.created_at), desc(DbTool.id))
+        # Build base query with ordering and eager load gateway to avoid N+1
+        query = select(DbTool).options(joinedload(DbTool.gateway)).order_by(desc(DbTool.created_at), desc(DbTool.id))
 
         # Apply active/inactive filter
         if not include_inactive:
@@ -1737,7 +1737,8 @@ class ToolService:
         user_teams = await team_service.get_user_teams(user_email)
         team_ids = [team.id for team in user_teams]
 
-        query = select(DbTool)
+        # Eager load gateway to avoid N+1 when accessing gateway_slug
+        query = select(DbTool).options(joinedload(DbTool.gateway))
 
         # Apply active/inactive filter
         if not include_inactive:

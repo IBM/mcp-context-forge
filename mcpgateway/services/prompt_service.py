@@ -27,7 +27,7 @@ import uuid
 from jinja2 import Environment, meta, select_autoescape, Template
 from sqlalchemy import and_, delete, desc, not_, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import joinedload, Session
 
 # First-Party
 from mcpgateway.common.models import Message, PromptResult, Role, TextContent
@@ -968,8 +968,8 @@ class PromptService:
                 cached_prompts = [PromptRead.model_validate(p) for p in cached["prompts"]]
                 return (cached_prompts, cached.get("next_cursor"))
 
-        # Build base query with ordering
-        query = select(DbPrompt).order_by(desc(DbPrompt.created_at), desc(DbPrompt.id))
+        # Build base query with ordering and eager load gateway to avoid N+1
+        query = select(DbPrompt).options(joinedload(DbPrompt.gateway)).order_by(desc(DbPrompt.created_at), desc(DbPrompt.id))
 
         if not include_inactive:
             query = query.where(DbPrompt.enabled)
@@ -1091,7 +1091,8 @@ class PromptService:
         team_ids = [team.id for team in user_teams]
 
         # Build query following existing patterns from list_resources()
-        query = select(DbPrompt)
+        # Eager load gateway to avoid N+1 when accessing gateway_slug
+        query = select(DbPrompt).options(joinedload(DbPrompt.gateway))
 
         # Apply active/inactive filter
         if not include_inactive:
@@ -1180,7 +1181,13 @@ class PromptService:
             >>> result == [prompt_read_obj]
             True
         """
-        query = select(DbPrompt).join(server_prompt_association, DbPrompt.id == server_prompt_association.c.prompt_id).where(server_prompt_association.c.server_id == server_id)
+        # Eager load gateway to avoid N+1 when accessing gateway_slug
+        query = (
+            select(DbPrompt)
+            .options(joinedload(DbPrompt.gateway))
+            .join(server_prompt_association, DbPrompt.id == server_prompt_association.c.prompt_id)
+            .where(server_prompt_association.c.server_id == server_id)
+        )
         if not include_inactive:
             query = query.where(DbPrompt.enabled)
         # Cursor-based pagination logic can be implemented here in the future.
