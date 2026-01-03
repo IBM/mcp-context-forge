@@ -366,7 +366,7 @@ class InMemoryEventStore(EventStore):
             return None
 
         # Validate that the event's seq_num is still within the buffer range
-        if not (buffer.start_seq <= last_event.seq_num < buffer.next_seq):
+        if last_event.seq_num < buffer.start_seq or last_event.seq_num >= buffer.next_seq:
             return None
 
         # O(k) replay: iterate from last_event.seq_num + 1 to buffer.next_seq - 1
