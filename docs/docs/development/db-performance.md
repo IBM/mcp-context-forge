@@ -547,7 +547,9 @@ def setup_query_tracking(engine):
 | `OBSERVABILITY_ENABLED` | `false` | Enable query span tracking |
 | `LOG_LEVEL` | `ERROR` | Set to `DEBUG` for verbose query logs |
 | `SQLALCHEMY_ECHO` | `false` | Print all SQL to stdout (development) |
-| `DB_POOL_SIZE` | `200` | Connection pool size |
+| `DB_POOL_CLASS` | `auto` | Pool class: `auto`, `null` (PgBouncer), `queue` |
+| `DB_POOL_SIZE` | `200` | Connection pool size (QueuePool only) |
+| `DB_POOL_PRE_PING` | `auto` | Validate connections: `auto`, `true`, `false` |
 | `PERFORMANCE_THRESHOLD_DATABASE_QUERY_MS` | `100` | Slow query threshold (ms) |
 
 ---
