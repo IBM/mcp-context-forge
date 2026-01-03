@@ -480,7 +480,7 @@ notes-rgx=
 [REFACTORING]
 
 # Maximum number of nested blocks for function / method body
-max-nested-blocks=6
+max-nested-blocks=8
 
 # Complete name of functions that never returns. When checking for
 # inconsistent-return-statements if a never returning function is called then

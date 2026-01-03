@@ -1,3 +1,4 @@
+.npm-cache
 paper/
 .env.*
 .env.postgres

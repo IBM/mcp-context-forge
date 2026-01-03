@@ -4538,16 +4538,13 @@ async function viewPrompt(promptName) {
                         ? "bg-green-100 text-green-800"
                         : "bg-red-100 text-red-800"
                 }`;
-                statusSpan.textContent = isActive
-                    ? "Active"
-                    : "Inactive";
+                statusSpan.textContent = isActive ? "Active" : "Inactive";
                 statusEl.innerHTML = "";
                 statusEl.appendChild(statusSpan);
             }
 
-            const templateEl = promptDetailsDiv.querySelector(
-                ".prompt-template",
-            );
+            const templateEl =
+                promptDetailsDiv.querySelector(".prompt-template");
             if (templateEl) {
                 templateEl.textContent = prompt.template || "";
             }
@@ -4562,18 +4559,12 @@ async function viewPrompt(promptName) {
             }
 
             if (prompt.metrics) {
-                setText(
-                    ".metric-total",
-                    prompt.metrics.totalExecutions ?? 0,
-                );
+                setText(".metric-total", prompt.metrics.totalExecutions ?? 0);
                 setText(
                     ".metric-success",
                     prompt.metrics.successfulExecutions ?? 0,
                 );
-                setText(
-                    ".metric-failed",
-                    prompt.metrics.failedExecutions ?? 0,
-                );
+                setText(".metric-failed", prompt.metrics.failedExecutions ?? 0);
                 setText(
                     ".metric-failure-rate",
                     prompt.metrics.failureRate ?? 0,
@@ -4616,7 +4607,9 @@ async function viewPrompt(promptName) {
             );
             setText(
                 ".metadata-created-at",
-                createdAt ? new Date(createdAt).toLocaleString() : "Pre-metadata",
+                createdAt
+                    ? new Date(createdAt).toLocaleString()
+                    : "Pre-metadata",
             );
             setText(
                 ".metadata-created-from",
@@ -4643,10 +4636,7 @@ async function viewPrompt(promptName) {
                 prompt.modified_via || prompt.modifiedVia || "N/A",
             );
             setText(".metadata-version", prompt.version || "1");
-            setText(
-                ".metadata-import-batch",
-                prompt.importBatchId || "N/A",
-            );
+            setText(".metadata-import-batch", prompt.importBatchId || "N/A");
 
             // Content already injected via innerHTML; no extra wrapper needed.
         }
@@ -4741,12 +4731,6 @@ async function editPrompt(promptId) {
                 teamInput.value = teamId;
             }
         }
-
-        const promptLabel =
-            prompt.displayName ||
-            prompt.originalName ||
-            prompt.name ||
-            prompt.id;
 
         const nameValidation = validateInputName(prompt.name, "prompt");
         const customNameValidation = validateInputName(
