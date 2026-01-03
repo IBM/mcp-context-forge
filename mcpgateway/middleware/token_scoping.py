@@ -347,7 +347,7 @@ class TokenScopingMiddleware:
         # Default allow for unmatched paths
         return True
 
-    def _check_team_membership(self, payload: dict) -> bool:
+    def _check_team_membership(self, payload: dict, db=None) -> bool:
         """
         Check if user still belongs to teams in the token.
 
@@ -356,6 +356,8 @@ class TokenScopingMiddleware:
 
         Args:
             payload: Decoded JWT payload containing teams
+            db: Optional database session. If provided, caller manages lifecycle.
+                If None, creates and manages its own session.
 
         Returns:
             bool: True if team membership is valid, False otherwise
@@ -379,7 +381,11 @@ class TokenScopingMiddleware:
         # First-Party
         from mcpgateway.db import EmailTeamMember, get_db  # pylint: disable=import-outside-toplevel
 
-        db = next(get_db())
+        # Track if we own the session (and thus must clean it up)
+        owns_session = db is None
+        if owns_session:
+            db = next(get_db())
+
         try:
             for team in teams:
                 # Extract team ID from dict or use string directly (backward compatibility)
@@ -395,15 +401,14 @@ class TokenScopingMiddleware:
 
             return True
         finally:
-            # Ensure close() always runs even if commit() fails
-            # Without this nested try/finally, a commit() failure (e.g., PgBouncer timeout)
-            # would skip close(), leaving the connection in "idle in transaction" state
-            try:
-                db.commit()  # Commit read-only transaction to avoid implicit rollback
-            finally:
-                db.close()
+            # Only commit/close if we created the session
+            if owns_session:
+                try:
+                    db.commit()  # Commit read-only transaction to avoid implicit rollback
+                finally:
+                    db.close()
 
-    def _check_resource_team_ownership(self, request_path: str, token_teams: list) -> bool:  # pylint: disable=too-many-return-statements
+    def _check_resource_team_ownership(self, request_path: str, token_teams: list, db=None) -> bool:  # pylint: disable=too-many-return-statements
         """
         Check if the requested resource is accessible by the token.
 
@@ -428,6 +433,8 @@ class TokenScopingMiddleware:
         Args:
             request_path: The request path/URL
             token_teams: List of team IDs from the token (empty list = public-only token)
+            db: Optional database session. If provided, caller manages lifecycle.
+                If None, creates and manages its own session.
 
         Returns:
             bool: True if resource access is allowed, False otherwise
@@ -473,7 +480,11 @@ class TokenScopingMiddleware:
         # First-Party
         from mcpgateway.db import get_db, Prompt, Resource, Server, Tool  # pylint: disable=import-outside-toplevel
 
-        db = next(get_db())
+        # Track if we own the session (and thus must clean it up)
+        owns_session = db is None
+        if owns_session:
+            db = next(get_db())
+
         try:
             # Check Virtual Servers
             if resource_type == "server":
@@ -662,13 +673,12 @@ class TokenScopingMiddleware:
             # Fail securely - deny access on error
             return False
         finally:
-            # Ensure close() always runs even if commit() fails
-            # Without this nested try/finally, a commit() failure (e.g., PgBouncer timeout)
-            # would skip close(), leaving the connection in "idle in transaction" state
-            try:
-                db.commit()  # Commit read-only transaction to avoid implicit rollback
-            finally:
-                db.close()
+            # Only commit/close if we created the session
+            if owns_session:
+                try:
+                    db.commit()  # Commit read-only transaction to avoid implicit rollback
+                finally:
+                    db.close()
 
     async def __call__(self, request: Request, call_next):
         """Middleware function to check token scoping including team-level validation.
@@ -710,16 +720,41 @@ class TokenScopingMiddleware:
             if not payload:
                 return await call_next(request)
 
-            # TEAM VALIDATION: Check team membership
-            if not self._check_team_membership(payload):
-                logger.warning("Token rejected: User no longer member of associated team(s)")
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User is no longer a member of the associated team")
-
-            # TEAM VALIDATION: Check resource team ownership
+            # TEAM VALIDATION: Use single DB session for both team checks
+            # This reduces connection pool overhead from 2 sessions to 1 for resource endpoints
             token_teams = payload.get("teams", [])
-            if not self._check_resource_team_ownership(request.url.path, token_teams):
-                logger.warning(f"Access denied: Resource does not belong to token's teams {token_teams}")
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: You do not have permission to access this resource using the current token")
+            needs_db_session = bool(token_teams)  # Only need DB if token has teams
+
+            if needs_db_session:
+                # First-Party
+                from mcpgateway.db import get_db  # pylint: disable=import-outside-toplevel
+
+                db = next(get_db())
+                try:
+                    # Check team membership with shared session
+                    if not self._check_team_membership(payload, db=db):
+                        logger.warning("Token rejected: User no longer member of associated team(s)")
+                        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User is no longer a member of the associated team")
+
+                    # Check resource team ownership with shared session
+                    if not self._check_resource_team_ownership(request.url.path, token_teams, db=db):
+                        logger.warning(f"Access denied: Resource does not belong to token's teams {token_teams}")
+                        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: You do not have permission to access this resource using the current token")
+                finally:
+                    # Ensure session cleanup even if checks raise exceptions
+                    try:
+                        db.commit()
+                    finally:
+                        db.close()
+            else:
+                # Public-only token: no team membership check needed, but still check resource ownership
+                if not self._check_team_membership(payload):
+                    logger.warning("Token rejected: User no longer member of associated team(s)")
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User is no longer a member of the associated team")
+
+                if not self._check_resource_team_ownership(request.url.path, token_teams):
+                    logger.warning(f"Access denied: Resource does not belong to token's teams {token_teams}")
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: You do not have permission to access this resource using the current token")
 
             # Extract scopes from payload
             scopes = payload.get("scopes", {})
