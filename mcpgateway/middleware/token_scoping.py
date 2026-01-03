@@ -24,7 +24,7 @@ from fastapi.security import HTTPBearer
 from mcpgateway.db import Permissions
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.orjson_response import ORJSONResponse
-from mcpgateway.utils.verify_credentials import verify_jwt_token
+from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
 
 # Security scheme
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -121,8 +121,8 @@ class TokenScopingMiddleware:
         token = auth_header.split(" ", 1)[1]
 
         try:
-            # Use the centralized verify_jwt_token function for consistent JWT validation
-            payload = await verify_jwt_token(token)
+            # Use the centralized verify_jwt_token_cached function for consistent JWT validation
+            payload = await verify_jwt_token_cached(token, request)
             return payload
         except HTTPException:
             # Token validation failed (expired, invalid, etc.)
