@@ -140,7 +140,6 @@ class TestStreamableHTTPReplayPerformance:
                 event_ids.append(eid)
 
             # Measure lookup time for middle event
-            target_id = event_ids[n // 2]
             sent: List[EventMessage] = []
 
             async def collector(msg):

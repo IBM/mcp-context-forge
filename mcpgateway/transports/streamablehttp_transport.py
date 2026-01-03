@@ -151,7 +151,11 @@ class StreamBuffer:
     count: int = 0
 
     def __len__(self) -> int:
-        """Return the number of events currently in the buffer."""
+        """Return the number of events currently in the buffer.
+
+        Returns:
+            int: The count of events in the buffer.
+        """
         return self.count
 
 
