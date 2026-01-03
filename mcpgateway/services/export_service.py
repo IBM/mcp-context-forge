@@ -21,7 +21,7 @@ import logging
 from typing import Any, cast, Dict, List, Optional, TypedDict
 
 # Third-Party
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -553,7 +553,10 @@ class ExportService:
         for prompt in prompts:
             input_schema: Dict[str, Any] = {"type": "object", "properties": {}, "required": []}
             prompt_data: Dict[str, Any] = {
-                "name": prompt.name,
+                "name": getattr(prompt, "original_name", None) or prompt.name,
+                "original_name": getattr(prompt, "original_name", None) or prompt.name,
+                "custom_name": getattr(prompt, "custom_name", None) or getattr(prompt, "original_name", None) or prompt.name,
+                "display_name": getattr(prompt, "display_name", None) or getattr(prompt, "custom_name", None) or getattr(prompt, "original_name", None) or prompt.name,
                 "template": prompt.template,
                 "description": prompt.description,
                 "input_schema": input_schema,
@@ -899,13 +902,13 @@ class ExportService:
         return exported_servers
 
     async def _export_selected_prompts(self, db: Session, prompt_names: List[str]) -> List[Dict[str, Any]]:
-        """Export specific prompts by their names using batch queries.
+        """Export specific prompts by their identifiers using batch queries.
 
         Uses a single batch query instead of fetching all prompts N times.
 
         Args:
             db: Database session
-            prompt_names: List of prompt names to export
+            prompt_names: List of prompt IDs or names to export
 
         Returns:
             List of exported prompt dictionaries
@@ -914,7 +917,7 @@ class ExportService:
             return []
 
         # Batch query for selected prompts only
-        db_prompts = db.execute(select(DbPrompt).where(DbPrompt.name.in_(prompt_names))).scalars().all()
+        db_prompts = db.execute(select(DbPrompt).where(or_(DbPrompt.id.in_(prompt_names), DbPrompt.name.in_(prompt_names)))).scalars().all()
 
         exported_prompts = []
         for db_prompt in db_prompts:
@@ -924,12 +927,15 @@ class ExportService:
                 input_schema = db_prompt.argument_schema
 
             prompt_data: Dict[str, Any] = {
-                "name": db_prompt.name,
+                "name": db_prompt.original_name or db_prompt.name,
+                "original_name": db_prompt.original_name or db_prompt.name,
+                "custom_name": db_prompt.custom_name or db_prompt.original_name or db_prompt.name,
+                "display_name": db_prompt.display_name or db_prompt.custom_name or db_prompt.original_name or db_prompt.name,
                 "template": db_prompt.template,
                 "description": db_prompt.description,
                 "input_schema": input_schema,
                 "tags": db_prompt.tags or [],
-                "is_active": db_prompt.is_active,
+                "is_active": getattr(db_prompt, "enabled", getattr(db_prompt, "is_active", False)),
             }
 
             exported_prompts.append(prompt_data)

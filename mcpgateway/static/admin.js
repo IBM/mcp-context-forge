@@ -4336,6 +4336,11 @@ async function viewPrompt(promptName) {
         }
 
         const prompt = await response.json();
+        const promptLabel =
+            prompt.displayName ||
+            prompt.originalName ||
+            prompt.name ||
+            prompt.id;
 
         const promptDetailsDiv = safeGetElement("prompt-details");
         if (promptDetailsDiv) {
@@ -4346,7 +4351,7 @@ async function viewPrompt(promptName) {
 
             // Basic info fields
             const fields = [
-                { label: "Name", value: prompt.name },
+                { label: "Name", value: promptLabel },
                 { label: "Description", value: prompt.description || "N/A" },
                 { label: "Visibility", value: prompt.visibility || "private" },
             ];
@@ -4667,8 +4672,14 @@ async function editPrompt(promptId) {
             }
         }
 
+        const promptLabel =
+            prompt.displayName ||
+            prompt.originalName ||
+            prompt.name ||
+            prompt.id;
+
         // Validate prompt name
-        const nameValidation = validateInputName(prompt.name, "prompt");
+        const nameValidation = validateInputName(promptLabel, "prompt");
 
         const nameField = safeGetElement("edit-prompt-name");
         const descField = safeGetElement("edit-prompt-description");
@@ -12563,8 +12574,13 @@ async function testPrompt(promptId) {
             const titleElement = safeGetElement("prompt-test-modal-title");
             const descElement = safeGetElement("prompt-test-modal-description");
 
+            const promptLabel =
+                prompt.displayName ||
+                prompt.originalName ||
+                prompt.name ||
+                promptId;
             if (titleElement) {
-                titleElement.textContent = `Test Prompt: ${prompt.name || promptId}`;
+                titleElement.textContent = `Test Prompt: ${promptLabel}`;
             }
             if (descElement) {
                 if (prompt.description) {
@@ -24131,7 +24147,13 @@ async function serverSidePromptSearch(searchTerm) {
         if (data.prompts && data.prompts.length > 0) {
             let searchResultsHtml = "";
             data.prompts.forEach((prompt) => {
-                const displayName = prompt.name || prompt.id;
+                const displayName =
+                    prompt.displayName ||
+                    prompt.display_name ||
+                    prompt.originalName ||
+                    prompt.original_name ||
+                    prompt.name ||
+                    prompt.id;
                 searchResultsHtml += `
                     <label
                         class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-purple-50 dark:hover:bg-purple-900 rounded-md p-1 prompt-item"
@@ -25019,7 +25041,13 @@ async function serverSideEditPromptsSearch(searchTerm) {
             // Create HTML for search results
             let searchResultsHtml = "";
             data.prompts.forEach((prompt) => {
-                const name = prompt.name || prompt.id;
+                const name =
+                    prompt.displayName ||
+                    prompt.display_name ||
+                    prompt.originalName ||
+                    prompt.original_name ||
+                    prompt.name ||
+                    prompt.id;
 
                 searchResultsHtml += `
                     <label

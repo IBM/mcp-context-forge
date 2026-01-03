@@ -1197,7 +1197,8 @@ class TestPromptAPIs:
 
         assert response.status_code == 200
         result = response.json()
-        assert result["name"] == prompt_data["prompt"]["name"]
+        assert result["name"] == "code-analysis"
+        assert result["originalName"] == prompt_data["prompt"]["name"]
         assert len(result["arguments"]) == 3
         assert result["arguments"][0]["required"] is True
         # API might be setting all arguments as required=True by default

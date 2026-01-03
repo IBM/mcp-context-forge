@@ -1763,8 +1763,8 @@ async def test_register_prompts_bulk_conflict_skip():
     assert result["created"] >= 1
     rows = db.execute(select(DbPrompt)).scalars().all()
     # Two or more prompts expected (original + new)
-    assert any(p.name == "dup_prompt" for p in rows)
-    assert any(p.name == "new_prompt" for p in rows)
+    assert any(p.original_name == "dup_prompt" for p in rows)
+    assert any(p.original_name == "new_prompt" for p in rows)
 
 
 @pytest.mark.asyncio

@@ -1371,7 +1371,16 @@ class ImportService:
             for prop_name, prop_data in properties.items():
                 arguments.append({"name": prop_name, "description": prop_data.get("description", ""), "required": prop_name in required_fields})
 
-        return PromptCreate(name=prompt_data["name"], template=prompt_data["template"], description=prompt_data.get("description"), arguments=arguments, tags=prompt_data.get("tags", []))
+        original_name = prompt_data.get("original_name") or prompt_data["name"]
+        return PromptCreate(
+            name=original_name,
+            custom_name=prompt_data.get("custom_name"),
+            display_name=prompt_data.get("display_name"),
+            template=prompt_data["template"],
+            description=prompt_data.get("description"),
+            arguments=arguments,
+            tags=prompt_data.get("tags", []),
+        )
 
     def _convert_to_prompt_update(self, prompt_data: Dict[str, Any]) -> PromptUpdate:
         """Convert import data to PromptUpdate schema.
@@ -1391,8 +1400,15 @@ class ImportService:
             for prop_name, prop_data in properties.items():
                 arguments.append({"name": prop_name, "description": prop_data.get("description", ""), "required": prop_name in required_fields})
 
+        original_name = prompt_data.get("original_name") or prompt_data.get("name")
         return PromptUpdate(
-            name=prompt_data.get("name"), template=prompt_data.get("template"), description=prompt_data.get("description"), arguments=arguments if arguments else None, tags=prompt_data.get("tags")
+            name=original_name,
+            custom_name=prompt_data.get("custom_name"),
+            display_name=prompt_data.get("display_name"),
+            template=prompt_data.get("template"),
+            description=prompt_data.get("description"),
+            arguments=arguments if arguments else None,
+            tags=prompt_data.get("tags"),
         )
 
     def _convert_to_resource_create(self, resource_data: Dict[str, Any]) -> ResourceCreate:

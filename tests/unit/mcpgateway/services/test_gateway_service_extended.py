@@ -814,6 +814,7 @@ class TestGatewayServiceExtended:
         # Mock existing prompt in database
         existing_prompt = MagicMock()
         existing_prompt.name = "test_prompt"
+        existing_prompt.original_name = "test_prompt"
         existing_prompt.description = "Old description"
         existing_prompt.template = "Old template"
         existing_prompt.visibility = "private"
@@ -1258,12 +1259,14 @@ class TestGatewayServiceExtended:
         # Mock existing prompts in database
         existing_prompt1 = MagicMock()
         existing_prompt1.name = "keep_prompt"
+        existing_prompt1.original_name = "keep_prompt"
         existing_prompt1.description = "Keep this prompt"
         existing_prompt1.template = "Keep template"
         existing_prompt1.visibility = "private"
 
         existing_prompt3 = MagicMock()
         existing_prompt3.name = "update_prompt"
+        existing_prompt3.original_name = "update_prompt"
         existing_prompt3.description = "Old description"
         existing_prompt3.template = "Old template"
         existing_prompt3.visibility = "private"

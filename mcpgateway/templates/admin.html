@@ -10503,7 +10503,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
       window.promptMapping = {};
       {% for prompt in prompts %}
-      window.promptMapping["{{ prompt.id }}"] = "{{ prompt.name }}";
+      window.promptMapping["{{ prompt.id }}"] = "{{ prompt.displayName or prompt.originalName or prompt.name }}";
       {% endfor %}
 
       window.ROOT_PATH = {{ root_path | tojson }};

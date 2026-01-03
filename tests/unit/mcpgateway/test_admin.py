@@ -971,6 +971,10 @@ class TestAdminPromptRoutes:
         mock_get_prompt_details.return_value = {
             "id": "ca627760127d409080fdefc309147e08",
             "name": "test-prompt",
+            "original_name": "test-prompt",
+            "custom_name": "test-prompt",
+            "custom_name_slug": "test-prompt",
+            "display_name": "Test Prompt",
             "template": "Test {{var}}",
             "description": "Test prompt",
             "arguments": [{"name": "var", "type": "string"}],

@@ -764,6 +764,9 @@ async def test_export_prompts_with_arguments(export_service, mock_db):
 
     mock_prompt = MagicMock()
     mock_prompt.name = "test_prompt"
+    mock_prompt.original_name = "test_prompt"
+    mock_prompt.custom_name = "test_prompt"
+    mock_prompt.display_name = "Test Prompt"
     mock_prompt.template = "Process {{user_input}} with {{context}}"
     mock_prompt.description = "Test prompt"
     mock_prompt.arguments = [mock_arg1, mock_arg2]
@@ -935,6 +938,10 @@ async def test_export_selective_all_entity_types(export_service, mock_db):
     sample_prompt = PromptRead(
         id="ca627760127d409080fdefc309147e08",
         name="test_prompt",
+        original_name="test_prompt",
+        custom_name="test_prompt",
+        custom_name_slug="test-prompt",
+        display_name="Test Prompt",
         template="Test template",
         description="Test prompt",
         arguments=[],
@@ -1105,6 +1112,10 @@ async def test_export_selected_prompts(export_service, mock_db):
     sample_prompt = PromptRead(
         id="ca627760127d409080fdefc309147e08",
         name="test_prompt",
+        original_name="test_prompt",
+        custom_name="test_prompt",
+        custom_name_slug="test-prompt",
+        display_name="Test Prompt",
         template="Test template",
         description="Test prompt",
         arguments=[],
