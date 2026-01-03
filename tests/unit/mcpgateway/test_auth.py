@@ -110,7 +110,7 @@ class TestGetCurrentUser:
             updated_at=datetime.now(timezone.utc),
         )
 
-        with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(return_value=jwt_payload)):
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
             with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
                 with patch("mcpgateway.auth._get_personal_team_sync", return_value="team_123"):
                     user = await get_current_user(credentials=credentials)
@@ -137,7 +137,7 @@ class TestGetCurrentUser:
             updated_at=datetime.now(timezone.utc),
         )
 
-        with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(return_value=jwt_payload)):
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
             with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
                 with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
                     user = await get_current_user(credentials=credentials)
@@ -152,7 +152,7 @@ class TestGetCurrentUser:
         # Mock JWT verification without email/sub
         jwt_payload = {"exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
 
-        with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(return_value=jwt_payload)):
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
             with pytest.raises(HTTPException) as exc_info:
                 await get_current_user(credentials=credentials)
 
@@ -166,7 +166,7 @@ class TestGetCurrentUser:
 
         jwt_payload = {"sub": "test@example.com", "jti": "token_id_123", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
 
-        with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(return_value=jwt_payload)):
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
             with patch("mcpgateway.auth._check_token_revoked_sync", return_value=True):
                 with pytest.raises(HTTPException) as exc_info:
                     await get_current_user(credentials=credentials)
@@ -194,7 +194,7 @@ class TestGetCurrentUser:
 
         caplog.set_level(logging.WARNING)
 
-        with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(return_value=jwt_payload)):
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
             with patch("mcpgateway.auth._check_token_revoked_sync", side_effect=Exception("Database error")):
                 with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
                     with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
@@ -208,7 +208,7 @@ class TestGetCurrentUser:
         """Test that expired JWT token raises 401."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="expired_jwt")
 
-        with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(side_effect=HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired"))):
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(side_effect=HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired"))):
             with pytest.raises(HTTPException) as exc_info:
                 await get_current_user(credentials=credentials)
 
@@ -233,7 +233,7 @@ class TestGetCurrentUser:
         )
 
         # JWT fails, fallback to API token
-        with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(side_effect=Exception("Invalid JWT"))):
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(side_effect=Exception("Invalid JWT"))):
             with patch("mcpgateway.auth._lookup_api_token_sync", return_value={"user_email": "api_user@example.com", "jti": "api_token_jti"}):
                 with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
                     user = await get_current_user(credentials=credentials)
@@ -246,7 +246,7 @@ class TestGetCurrentUser:
         api_token_value = "expired_api_token"
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=api_token_value)
 
-        with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(side_effect=Exception("Invalid JWT"))):
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(side_effect=Exception("Invalid JWT"))):
             with patch("mcpgateway.auth._lookup_api_token_sync", return_value={"expired": True}):
                 with pytest.raises(HTTPException) as exc_info:
                     await get_current_user(credentials=credentials)
@@ -260,7 +260,7 @@ class TestGetCurrentUser:
         api_token_value = "revoked_api_token"
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=api_token_value)
 
-        with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(side_effect=Exception("Invalid JWT"))):
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(side_effect=Exception("Invalid JWT"))):
             with patch("mcpgateway.auth._lookup_api_token_sync", return_value={"revoked": True}):
                 with pytest.raises(HTTPException) as exc_info:
                     await get_current_user(credentials=credentials)
@@ -273,7 +273,7 @@ class TestGetCurrentUser:
         """Test that non-existent API token raises 401."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="nonexistent_token")
 
-        with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(side_effect=Exception("Invalid JWT"))):
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(side_effect=Exception("Invalid JWT"))):
             with patch("mcpgateway.auth._lookup_api_token_sync", return_value=None):
                 with pytest.raises(HTTPException) as exc_info:
                     await get_current_user(credentials=credentials)
@@ -286,7 +286,7 @@ class TestGetCurrentUser:
         """Test that database error during API token lookup raises 401."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="token_causing_db_error")
 
-        with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(side_effect=Exception("Invalid JWT"))):
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(side_effect=Exception("Invalid JWT"))):
             with patch("mcpgateway.auth._lookup_api_token_sync", side_effect=Exception("Database connection error")):
                 with pytest.raises(HTTPException) as exc_info:
                     await get_current_user(credentials=credentials)
@@ -301,7 +301,7 @@ class TestGetCurrentUser:
 
         jwt_payload = {"sub": "nonexistent@example.com", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
 
-        with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(return_value=jwt_payload)):
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
             with patch("mcpgateway.auth._get_user_by_email_sync", return_value=None):
                 with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
                     with pytest.raises(HTTPException) as exc_info:
@@ -317,7 +317,7 @@ class TestGetCurrentUser:
 
         jwt_payload = {"sub": "admin@example.com", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
 
-        with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(return_value=jwt_payload)):
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
             with patch("mcpgateway.auth._get_user_by_email_sync", return_value=None):  # User not in DB
                 with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
                     with patch("mcpgateway.config.settings.platform_admin_email", "admin@example.com"):
@@ -347,7 +347,7 @@ class TestGetCurrentUser:
             updated_at=datetime.now(timezone.utc),
         )
 
-        with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(return_value=jwt_payload)):
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
             with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
                 with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
                     with pytest.raises(HTTPException) as exc_info:
@@ -376,7 +376,7 @@ class TestGetCurrentUser:
 
         caplog.set_level(logging.DEBUG)
 
-        with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(return_value=jwt_payload)):
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
             with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
                 with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
                     await get_current_user(credentials=credentials)
@@ -412,7 +412,7 @@ class TestAuthHooksOptimization:
         mock_pm.invoke_hook = AsyncMock()
 
         with patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm):
-            with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
                 with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
                     with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
                         user = await get_current_user(credentials=credentials)
@@ -458,7 +458,7 @@ class TestAuthHooksOptimization:
         mock_pm.invoke_hook = AsyncMock(return_value=(mock_plugin_result, None))
 
         with patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm):
-            with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
                 with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
                     with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
                         user = await get_current_user(credentials=credentials)
@@ -492,7 +492,7 @@ class TestAuthHooksOptimization:
 
         # Plugin manager returns None
         with patch("mcpgateway.auth.get_plugin_manager", return_value=None):
-            with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
                 with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
                     with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
                         user = await get_current_user(credentials=credentials)

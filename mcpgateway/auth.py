@@ -28,7 +28,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, fresh_db_session, SessionLocal
 from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError
 from mcpgateway.utils.correlation_id import get_correlation_id
-from mcpgateway.utils.verify_credentials import verify_jwt_token
+from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
 
 # Security scheme
 security = HTTPBearer(auto_error=False)
@@ -536,9 +536,9 @@ async def get_current_user(
     email = None
 
     try:
-        # Try JWT token first using the centralized verify_jwt_token function
+        # Try JWT token first using the centralized verify_jwt_token_cached function
         logger.debug("Attempting JWT token validation")
-        payload = await verify_jwt_token(credentials.credentials)
+        payload = await verify_jwt_token_cached(credentials.credentials, request)
 
         logger.debug("JWT token validated successfully")
         # Extract user identifier (support both new and legacy token formats)

@@ -14,7 +14,7 @@ from typing import Optional
 from fastapi import HTTPException, Request
 
 # First-Party
-from mcpgateway.utils.verify_credentials import verify_jwt_token
+from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
 
 
 async def extract_token_scopes_from_request(request: Request) -> Optional[dict]:
@@ -61,8 +61,8 @@ async def extract_token_scopes_from_request(request: Request) -> Optional[dict]:
     token = auth_header.split(" ", 1)[1]
 
     try:
-        # Use the centralized verify_jwt_token function for consistent JWT validation
-        payload = await verify_jwt_token(token)
+        # Use the centralized verify_jwt_token_cached function for consistent JWT validation
+        payload = await verify_jwt_token_cached(token, request)
         return payload.get("scopes")
     except HTTPException:
         # Token validation failed (expired, invalid, etc.)

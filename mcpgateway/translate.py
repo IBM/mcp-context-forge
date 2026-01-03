@@ -1022,7 +1022,12 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
     # Dynamic environment variable injection
     p.add_argument("--enable-dynamic-env", action="store_true", help="Enable dynamic environment variable injection from HTTP headers")
-    p.add_argument("--header-to-env", action="append", default=[], help="Map HTTP header to environment variable (format: HEADER=ENV_VAR, can be used multiple times). Case-insensitive duplicates are rejected (e.g., Authorization and authorization cannot both be mapped).")
+    p.add_argument(
+        "--header-to-env",
+        action="append",
+        default=[],
+        help="Map HTTP header to environment variable (format: HEADER=ENV_VAR, can be used multiple times). Case-insensitive duplicates are rejected (e.g., Authorization and authorization cannot both be mapped).",
+    )
 
     # For streamable HTTP mode
     p.add_argument(

@@ -321,3 +321,28 @@ def clear_metrics_cache():
         metrics_cache.invalidate()
     except ImportError:
         pass
+
+
+@pytest.fixture(autouse=True)
+def clear_jwt_cache_between_tests():
+    """Ensure JWT caches are cleared between tests for isolation.
+
+    This fixture runs automatically before and after each test to prevent
+    cached JWT configuration from leaking between tests that mock different
+    settings.
+    """
+    try:
+        from mcpgateway.utils.jwt_config_helper import clear_jwt_caches
+
+        clear_jwt_caches()
+    except ImportError:
+        pass  # Module not available
+
+    yield
+
+    try:
+        from mcpgateway.utils.jwt_config_helper import clear_jwt_caches
+
+        clear_jwt_caches()
+    except ImportError:
+        pass

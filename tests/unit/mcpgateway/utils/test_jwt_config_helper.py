@@ -116,3 +116,77 @@ def test_secretstr_handling_hmac(mock_settings: Any):
     with patch("mcpgateway.utils.jwt_config_helper.settings", mock_settings):
         result = get_jwt_private_key_or_secret()
         assert result == "secret_from_pydantic"
+
+
+# ---------------------------------------------------------------------------
+# Cache behavior tests
+# ---------------------------------------------------------------------------
+
+def test_validate_jwt_algo_and_keys_is_cached(mock_settings: Any):
+    """Verify that validation is only performed once."""
+    from mcpgateway.utils.jwt_config_helper import clear_jwt_caches
+    clear_jwt_caches()
+
+    with patch("mcpgateway.utils.jwt_config_helper.settings", mock_settings):
+        # First call should validate
+        validate_jwt_algo_and_keys()
+
+        # Change settings to invalid - should NOT raise because cached
+        mock_settings.jwt_secret_key = ""
+
+        # This should still succeed (cached)
+        validate_jwt_algo_and_keys()
+
+
+def test_clear_jwt_caches_resets_validation(mock_settings: Any):
+    """Verify that clear_jwt_caches() forces revalidation."""
+    from mcpgateway.utils.jwt_config_helper import clear_jwt_caches
+
+    with patch("mcpgateway.utils.jwt_config_helper.settings", mock_settings):
+        validate_jwt_algo_and_keys()
+
+        # Clear cache
+        clear_jwt_caches()
+
+        # Change to invalid
+        mock_settings.jwt_secret_key = ""
+
+        # Now it should raise
+        with pytest.raises(JWTConfigurationError):
+            validate_jwt_algo_and_keys()
+
+
+def test_get_jwt_public_key_or_secret_is_cached(mock_settings: Any):
+    """Verify that key retrieval is cached."""
+    from mcpgateway.utils.jwt_config_helper import clear_jwt_caches
+    clear_jwt_caches()
+
+    mock_settings.jwt_algorithm = "HS256"
+    mock_settings.jwt_secret_key = "original_secret"
+
+    with patch("mcpgateway.utils.jwt_config_helper.settings", mock_settings):
+        result1 = get_jwt_public_key_or_secret()
+        assert result1 == "original_secret"
+
+        # Change secret - should return cached value
+        mock_settings.jwt_secret_key = "new_secret"
+        result2 = get_jwt_public_key_or_secret()
+        assert result2 == "original_secret"  # Still cached
+
+
+def test_get_jwt_private_key_or_secret_is_cached(mock_settings: Any):
+    """Verify that private key retrieval is cached."""
+    from mcpgateway.utils.jwt_config_helper import clear_jwt_caches
+    clear_jwt_caches()
+
+    mock_settings.jwt_algorithm = "HS256"
+    mock_settings.jwt_secret_key = "original_private_secret"
+
+    with patch("mcpgateway.utils.jwt_config_helper.settings", mock_settings):
+        result1 = get_jwt_private_key_or_secret()
+        assert result1 == "original_private_secret"
+
+        # Change secret - should return cached value
+        mock_settings.jwt_secret_key = "new_private_secret"
+        result2 = get_jwt_private_key_or_secret()
+        assert result2 == "original_private_secret"  # Still cached
