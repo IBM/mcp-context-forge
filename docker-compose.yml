@@ -210,19 +210,24 @@ services:
       - VALIDATION_MIDDLEWARE_ENABLED=true
       - CORRELATION_ID_ENABLED=false
       - OBSERVABILITY_ENABLED=false
-      # Database pool tuning for 3000 sustained users
-      # With PgBouncer (default): smaller pools since PgBouncer handles connection multiplexing
-      # Direct PostgreSQL: larger pools needed, formula: (replicas × workers) × (pool + overflow) < max_connections
+      # ═══════════════════════════════════════════════════════════════════════════
+      # Database Connection Pool Configuration
+      # ═══════════════════════════════════════════════════════════════════════════
+      # Pool class options:
+      #   - "null": NullPool - no application pooling, PgBouncer handles all pooling (recommended)
+      #   - "queue": QueuePool - application-side pooling (use with direct PostgreSQL)
+      #   - "auto": Automatic - NullPool if PgBouncer detected in URL, else QueuePool
       #
-      # WITH PgBouncer (default):
-      - DB_POOL_SIZE=20
-      - DB_MAX_OVERFLOW=10             # Low overflow minimizes pool churn under pressure
-      # DIRECT PostgreSQL connection (uncomment if bypassing PgBouncer):
-      # - DB_POOL_SIZE=50
-      # - DB_MAX_OVERFLOW=100
+      # WITH PgBouncer (default in docker-compose):
+      # Option A: NullPool - safest, eliminates stale connection errors, ~10% slower
+      # - DB_POOL_CLASS=null
+      # Option B: QueuePool + pre_ping - better performance, validates before use
+      - DB_POOL_CLASS=queue
+      - DB_POOL_PRE_PING=true          # Validate connections before use (SELECT 1)
+      - DB_POOL_SIZE=20                # Pool size per worker
+      - DB_MAX_OVERFLOW=10             # Extra connections under load
       - DB_POOL_TIMEOUT=60             # Time to wait for connection before failing
-      - DB_POOL_RECYCLE=120            # Recycle before PgBouncer CLIENT_IDLE_TIMEOUT
-      - DB_POOL_PRE_PING=false
+      - DB_POOL_RECYCLE=60             # Recycle before PgBouncer CLIENT_IDLE_TIMEOUT (half of 120s)
       # Tool configuration for high-concurrency load testing
       - TOOL_TIMEOUT=60               # Seconds before tool invocation times out
       - MAX_TOOL_RETRIES=3            # Retry attempts for failed tool invocations
