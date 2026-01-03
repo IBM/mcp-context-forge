@@ -20,7 +20,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 import httpx
 from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import selectinload, Session
 
 # First-Party
 from mcpgateway.config import settings
@@ -731,8 +731,17 @@ class ServerService:
                 cached_servers = [ServerRead.model_validate(s) for s in cached["servers"]]
                 return (cached_servers, cached.get("next_cursor"))
 
-        # Build base query with ordering
-        query = select(DbServer).order_by(desc(DbServer.created_at), desc(DbServer.id))
+        # Build base query with ordering and eager load relationships to avoid N+1
+        query = (
+            select(DbServer)
+            .options(
+                selectinload(DbServer.tools),
+                selectinload(DbServer.resources),
+                selectinload(DbServer.prompts),
+                selectinload(DbServer.a2a_agents),
+            )
+            .order_by(desc(DbServer.created_at), desc(DbServer.id))
+        )
 
         # Apply active/inactive filter
         if not include_inactive:
@@ -855,7 +864,13 @@ class ServerService:
         user_teams = await team_service.get_user_teams(user_email)
         team_ids = [team.id for team in user_teams]
 
-        query = select(DbServer)
+        # Eager load relationships to avoid N+1 queries
+        query = select(DbServer).options(
+            selectinload(DbServer.tools),
+            selectinload(DbServer.resources),
+            selectinload(DbServer.prompts),
+            selectinload(DbServer.a2a_agents),
+        )
 
         # Apply active/inactive filter
         if not include_inactive:

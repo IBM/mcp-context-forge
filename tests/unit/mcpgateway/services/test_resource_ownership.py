@@ -156,9 +156,14 @@ class TestGatewayServiceOwnership:
         mock_gateway.id = "gateway-1"
         mock_gateway.owner_email = "owner@example.com"
         mock_gateway.name = "Test Gateway"
+        mock_gateway.tools = []
+        mock_gateway.resources = []
+        mock_gateway.prompts = []
 
-        # Gateway service uses db.get() not db.execute()
-        mock_db_session.get.return_value = mock_gateway
+        # Gateway service uses db.execute(select().options().where()) for eager loading
+        mock_execute_result = MagicMock()
+        mock_execute_result.scalar_one_or_none.return_value = mock_gateway
+        mock_db_session.execute.return_value = mock_execute_result
 
         with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
@@ -175,9 +180,14 @@ class TestGatewayServiceOwnership:
         mock_gateway = MagicMock(spec=Gateway)
         mock_gateway.id = "gateway-1"
         mock_gateway.owner_email = "owner@example.com"
+        mock_gateway.tools = []
+        mock_gateway.resources = []
+        mock_gateway.prompts = []
 
-        # Gateway service uses db.get() not db.execute()
-        mock_db_session.get.return_value = mock_gateway
+        # Gateway service uses db.execute(select().options().where()) for eager loading
+        mock_execute_result = MagicMock()
+        mock_execute_result.scalar_one_or_none.return_value = mock_gateway
+        mock_db_session.execute.return_value = mock_execute_result
 
         with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
@@ -370,9 +380,14 @@ class TestUpdateOperationsOwnership:
         mock_gateway = MagicMock(spec=Gateway)
         mock_gateway.id = "gateway-1"
         mock_gateway.owner_email = "owner@example.com"
+        mock_gateway.tools = []
+        mock_gateway.resources = []
+        mock_gateway.prompts = []
 
-        # Gateway service uses db.get() not db.execute()
-        mock_db_session.get.return_value = mock_gateway
+        # Gateway service uses db.execute(select().options().where()) for eager loading
+        mock_execute_result = MagicMock()
+        mock_execute_result.scalar_one_or_none.return_value = mock_gateway
+        mock_db_session.execute.return_value = mock_execute_result
 
         gateway_update = GatewayUpdate(name="Updated Name")
 
@@ -400,9 +415,14 @@ class TestTeamAdminSpecialCase:
         mock_gateway.owner_email = "member@example.com"
         mock_gateway.team_id = "team-123"
         mock_gateway.name = "Team Gateway"
+        mock_gateway.tools = []
+        mock_gateway.resources = []
+        mock_gateway.prompts = []
 
-        # Gateway service uses db.get() not db.execute()
-        mock_db_session.get.return_value = mock_gateway
+        # Gateway service uses db.execute(select().options().where()) for eager loading
+        mock_execute_result = MagicMock()
+        mock_execute_result.scalar_one_or_none.return_value = mock_gateway
+        mock_db_session.execute.return_value = mock_execute_result
 
         with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value

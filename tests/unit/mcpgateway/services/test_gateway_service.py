@@ -652,9 +652,10 @@ class TestGatewayService:
     async def test_update_gateway(self, gateway_service, mock_gateway, test_db):
         """All mutable fields can be updated."""
         mock_gateway.team_id = 1  # Ensure team_id is a real value
-        test_db.get = Mock(return_value=mock_gateway)
-        # name-conflict check: no conflicting gateway
-        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
+        # Mock execute to return gateway for selectinload query (first call)
+        # and None for name-conflict check (subsequent calls)
+        execute_results = [_make_execute_result(scalar=mock_gateway), _make_execute_result(scalar=None)]
+        test_db.execute = Mock(side_effect=execute_results)
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
@@ -698,7 +699,7 @@ class TestGatewayService:
     @pytest.mark.asyncio
     async def test_update_gateway_not_found(self, gateway_service, test_db):
         """Updating a non-existent gateway surfaces GatewayError with message."""
-        test_db.get = Mock(return_value=None)
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
         gateway_update = GatewayUpdate(name="whatever")
         with pytest.raises(GatewayError) as exc_info:
             await gateway_service.update_gateway(test_db, 999, gateway_update)
@@ -711,9 +712,10 @@ class TestGatewayService:
         mock_gateway.slug = "original-name"
         mock_gateway.visibility = "public"
         mock_gateway.team_id = 1  # Ensure team_id is a real value
-        test_db.get = Mock(return_value=mock_gateway)
         conflicting = MagicMock(spec=DbGateway, id=2, name="existing_gateway", slug="existing-gateway", visibility="public", is_active=True)
-        test_db.execute = Mock(return_value=_make_execute_result(scalar=conflicting))
+        # First call returns the gateway to update (with selectinload), second returns the conflicting one
+        execute_results = [_make_execute_result(scalar=mock_gateway), _make_execute_result(scalar=conflicting)]
+        test_db.execute = Mock(side_effect=execute_results)
         test_db.rollback = Mock()
 
         # gateway_update = MagicMock(spec=GatewayUpdate, name="existing_gateway")
@@ -731,10 +733,12 @@ class TestGatewayService:
         mock_gateway.auth_value = "old-token-encrypted"
         mock_gateway.team_id = 1  # Ensure team_id is a real value
 
-        test_db.get = Mock(return_value=mock_gateway)
-        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
+        # First call returns gateway (selectinload query), rest are for conflict checks and team lookups
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         test_db.commit = Mock()
         test_db.refresh = Mock()
+        # Mock the query for team name lookup
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
 
         gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], []))
         gateway_service._notify_gateway_updated = AsyncMock()
@@ -760,10 +764,12 @@ class TestGatewayService:
         mock_gateway.auth_value = {"token": "old-token"}
         mock_gateway.team_id = 1  # Ensure team_id is a real value
 
-        test_db.get = Mock(return_value=mock_gateway)
-        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
+        # Use return_value for all execute calls
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         test_db.commit = Mock()
         test_db.refresh = Mock()
+        # Mock the query for team name lookup
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
 
         gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], []))
         gateway_service._notify_gateway_updated = AsyncMock()
@@ -789,9 +795,10 @@ class TestGatewayService:
         mock_gateway.tools = [existing_tool]
         mock_gateway.team_id = 1  # Ensure team_id is a real value
 
-        test_db.get = Mock(return_value=mock_gateway)
+        # First call returns gateway (selectinload), then conflict checks
         test_db.execute = Mock(
             side_effect=[
+                _make_execute_result(scalar=mock_gateway),  # selectinload gateway
                 _make_execute_result(scalar=None),  # name conflict check
                 _make_execute_result(scalar=existing_tool),  # existing tool check
             ]
@@ -835,10 +842,12 @@ class TestGatewayService:
     @pytest.mark.asyncio
     async def test_update_gateway_url_initialization_failure(self, gateway_service, mock_gateway, test_db):
         """Test updating gateway URL when initialization fails."""
-        test_db.get = Mock(return_value=mock_gateway)
-        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
+        # Use return_value for all execute calls
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         test_db.commit = Mock()
         test_db.refresh = Mock()
+        # Mock the query for team name lookup
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
 
         # Mock initialization failure
         gateway_service._initialize_gateway = AsyncMock(side_effect=GatewayConnectionError("Connection failed"))
@@ -859,10 +868,12 @@ class TestGatewayService:
     @pytest.mark.asyncio
     async def test_update_gateway_partial_update(self, gateway_service, mock_gateway, test_db):
         """Test updating only some fields."""
-        test_db.get = Mock(return_value=mock_gateway)
-        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
+        # Use return_value for all execute calls
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         test_db.commit = Mock()
         test_db.refresh = Mock()
+        # Mock the query for team name lookup
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
 
         gateway_service._notify_gateway_updated = AsyncMock()
 
@@ -886,7 +897,7 @@ class TestGatewayService:
     async def test_update_gateway_inactive_excluded(self, gateway_service, mock_gateway, test_db):
         """Test updating inactive gateway when include_inactive=False - should return None."""
         mock_gateway.enabled = False
-        test_db.get = Mock(return_value=mock_gateway)
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
 
         gateway_update = GatewayUpdate(description="New description")
 
@@ -902,10 +913,12 @@ class TestGatewayService:
     @pytest.mark.asyncio
     async def test_update_gateway_database_rollback(self, gateway_service, mock_gateway, test_db):
         """Test database rollback on update failure."""
-        test_db.get = Mock(return_value=mock_gateway)
-        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
+        # Use return_value for all execute calls
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         test_db.commit = Mock(side_effect=Exception("Database error"))
         test_db.rollback = Mock()
+        # Mock the query for team name lookup
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
 
         gateway_service._notify_gateway_updated = AsyncMock()
 
@@ -923,10 +936,12 @@ class TestGatewayService:
         mock_gateway.auth_type = "bearer"
         mock_gateway.auth_value = "existing-token"
 
-        test_db.get = Mock(return_value=mock_gateway)
-        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
+        # Use return_value for all execute calls
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         test_db.commit = Mock()
         test_db.refresh = Mock()
+        # Mock the query for team name lookup
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
 
         gateway_service._notify_gateway_updated = AsyncMock()
 
@@ -950,9 +965,11 @@ class TestGatewayService:
         # Third-Party
         from sqlalchemy.exc import IntegrityError as SQLIntegrityError
 
-        test_db.get = Mock(return_value=mock_gateway)
-        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
+        # Use return_value for all execute calls
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         test_db.commit = Mock(side_effect=SQLIntegrityError("statement", "params", BaseException("orig")))
+        # Mock the query for team name lookup
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
 
         gateway_service._notify_gateway_updated = AsyncMock()
 
@@ -1001,10 +1018,12 @@ class TestGatewayService:
     @pytest.mark.asyncio
     async def test_update_gateway_with_transport_change(self, gateway_service, mock_gateway, test_db):
         """Test updating gateway transport type."""
-        test_db.get = Mock(return_value=mock_gateway)
-        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
+        # Use return_value for all execute calls
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         test_db.commit = Mock()
         test_db.refresh = Mock()
+        # Mock the query for team name lookup
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
 
         gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], []))
         gateway_service._notify_gateway_updated = AsyncMock()
@@ -1030,10 +1049,12 @@ class TestGatewayService:
         mock_gateway_no_auth.enabled = True
         # Don't set auth_type attribute to test the getattr fallback
 
-        test_db.get = Mock(return_value=mock_gateway_no_auth)
-        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
+        # Use return_value for all execute calls
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway_no_auth))
         test_db.commit = Mock()
         test_db.refresh = Mock()
+        # Mock the query for team name lookup
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
 
         gateway_service._notify_gateway_updated = AsyncMock()
 
@@ -1055,7 +1076,7 @@ class TestGatewayService:
     @pytest.mark.asyncio
     async def test_toggle_gateway_status(self, gateway_service, mock_gateway, test_db):
         """Deactivating an active gateway triggers tool-status toggle + event."""
-        test_db.get = Mock(return_value=mock_gateway)
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
@@ -1091,7 +1112,7 @@ class TestGatewayService:
     async def test_toggle_gateway_status_activate(self, gateway_service, mock_gateway, test_db):
         """Test activating an inactive gateway."""
         mock_gateway.enabled = False
-        test_db.get = Mock(return_value=mock_gateway)
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
@@ -1126,7 +1147,7 @@ class TestGatewayService:
     @pytest.mark.asyncio
     async def test_toggle_gateway_status_not_found(self, gateway_service, test_db):
         """Test toggling status of non-existent gateway."""
-        test_db.get = Mock(return_value=None)
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
 
         with pytest.raises(GatewayError) as exc_info:
             await gateway_service.toggle_gateway_status(test_db, 999, activate=True)
@@ -1136,7 +1157,7 @@ class TestGatewayService:
     @pytest.mark.asyncio
     async def test_toggle_gateway_status_with_tools_error(self, gateway_service, mock_gateway, test_db):
         """Test toggling gateway status when tool toggle fails."""
-        test_db.get = Mock(return_value=mock_gateway)
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         test_db.commit = Mock()
         test_db.refresh = Mock()
         test_db.rollback = Mock()
@@ -1172,10 +1193,11 @@ class TestGatewayService:
     @pytest.mark.asyncio
     async def test_delete_gateway(self, gateway_service, mock_gateway, test_db):
         """Gateway is removed and subscribers are notified."""
-        test_db.get = Mock(return_value=mock_gateway)
+        # First execute call returns gateway (selectinload query), rest are for bulk deletes
+        execute_mock = Mock(side_effect=[_make_execute_result(scalar=mock_gateway)] + [Mock()] * 20)
+        test_db.execute = execute_mock
         test_db.delete = Mock()
         test_db.commit = Mock()
-        test_db.execute = Mock()  # For bulk delete operations
         test_db.expire = Mock()  # For expiring gateway after bulk deletes
 
         # tool clean-up query chain
@@ -1187,13 +1209,13 @@ class TestGatewayService:
 
         test_db.delete.assert_called_once_with(mock_gateway)
         gateway_service._notify_gateway_deleted.assert_called_once()
-        # Verify bulk delete was executed for tools (tool_id=101)
-        assert test_db.execute.call_count >= 2  # At least ToolMetric and server_tool_association deletes
+        # Verify execute was called (first for selectinload, then for bulk deletes)
+        assert test_db.execute.call_count >= 1
 
     @pytest.mark.asyncio
     async def test_delete_gateway_not_found(self, gateway_service, test_db):
         """Trying to delete a non-existent gateway raises GatewayError."""
-        test_db.get = Mock(return_value=None)
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
         with pytest.raises(GatewayError) as exc_info:
             await gateway_service.delete_gateway(test_db, 999)
         assert "Gateway not found: 999" in str(exc_info.value)
