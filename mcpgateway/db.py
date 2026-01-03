@@ -3779,7 +3779,7 @@ def update_tool_names_on_gateway_update(_mapper, connection, target):
     if not get_history(target, "name").has_changes():
         return
 
-    print(f"Gateway name changed for ID {target.id}. Issuing bulk update for tools.")
+    logger.info("Gateway name changed for ID %s. Issuing bulk update for tools.", target.id)
 
     # 2. Get a reference to the underlying database table for Tools
     tools_table = Tool.__table__
@@ -3814,7 +3814,7 @@ def update_prompt_names_on_gateway_update(_mapper, connection, target):
     if not get_history(target, "name").has_changes():
         return
 
-    print(f"Gateway name changed for ID {target.id}. Issuing bulk update for prompts.")
+    logger.info("Gateway name changed for ID %s. Issuing bulk update for prompts.", target.id)
 
     prompts_table = Prompt.__table__
     new_gateway_slug = slugify(target.name)

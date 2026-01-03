@@ -1549,10 +1549,7 @@ class PromptService:
             candidate_custom_name = prompt.custom_name
 
             if prompt_update.name is not None:
-                if prompt.gateway_id:
-                    candidate_custom_name = prompt_update.custom_name or prompt_update.name
-                else:
-                    candidate_custom_name = prompt_update.custom_name or prompt_update.name
+                candidate_custom_name = prompt_update.custom_name or prompt_update.name
             elif prompt_update.custom_name is not None:
                 candidate_custom_name = prompt_update.custom_name
 
