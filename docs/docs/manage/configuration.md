@@ -182,12 +182,24 @@ DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp          # MariaD
 DATABASE_URL=postgresql+psycopg://postgres:changeme@localhost:5432/mcp  # PostgreSQL
 
 # Connection pool settings (optional)
-DB_POOL_SIZE=200
-DB_MAX_OVERFLOW=5
-DB_POOL_TIMEOUT=60
-DB_POOL_RECYCLE=3600
-DB_MAX_RETRIES=5
-DB_RETRY_INTERVAL_MS=2000
+DB_POOL_SIZE=200                   # Pool size (QueuePool only)
+DB_MAX_OVERFLOW=5                  # Max overflow connections (QueuePool only)
+DB_POOL_TIMEOUT=60                 # Wait timeout for connection
+DB_POOL_RECYCLE=3600               # Recycle connections after N seconds
+DB_MAX_RETRIES=5                   # Retry attempts on connection failure
+DB_RETRY_INTERVAL_MS=2000          # Delay between retries
+
+# Connection pool class selection
+# - "auto": NullPool with PgBouncer, QueuePool otherwise (default)
+# - "null": Always NullPool (recommended with PgBouncer)
+# - "queue": Always QueuePool (application-side pooling)
+DB_POOL_CLASS=auto
+
+# Pre-ping connections before checkout (validates connection is alive)
+# - "auto": Enabled for non-PgBouncer setups (default)
+# - "true": Always enable (adds SELECT 1 overhead but catches stale connections)
+# - "false": Always disable
+DB_POOL_PRE_PING=auto
 
 # psycopg3 auto-prepared statements (PostgreSQL only)
 # Queries executed N+ times are prepared server-side for performance
@@ -855,10 +867,12 @@ spec:
 
 ```bash
 # Database connection pool
-DB_POOL_SIZE=200
-DB_MAX_OVERFLOW=5
-DB_POOL_TIMEOUT=60
-DB_POOL_RECYCLE=3600
+DB_POOL_CLASS=auto               # auto, null (PgBouncer), or queue
+DB_POOL_SIZE=200                 # Pool size (QueuePool only)
+DB_MAX_OVERFLOW=5                # Overflow connections (QueuePool only)
+DB_POOL_TIMEOUT=60               # Connection wait timeout
+DB_POOL_RECYCLE=3600             # Recycle connections (seconds)
+DB_POOL_PRE_PING=auto            # Validate connections: auto, true, false
 
 # Tool execution
 TOOL_TIMEOUT=120

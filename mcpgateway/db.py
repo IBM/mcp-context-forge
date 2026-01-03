@@ -40,7 +40,7 @@ from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import DeclarativeBase, joinedload, Mapped, mapped_column, relationship, Session, sessionmaker
 from sqlalchemy.orm.attributes import get_history
-from sqlalchemy.pool import QueuePool
+from sqlalchemy.pool import NullPool, QueuePool
 
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
@@ -176,12 +176,50 @@ def build_engine() -> Engine:
             echo=_sqlalchemy_echo,
         )
 
-    # Other databases support full pooling configuration
-    # Disable pool_pre_ping when using PgBouncer - it handles connection health
-    # and pre_ping contributes to idle-in-transaction issues in transaction mode
-    use_pre_ping = "pgbouncer" not in settings.database_url.lower()
-    if not use_pre_ping:
-        logger.info("PgBouncer detected - disabling pool_pre_ping (PgBouncer handles connection health)")
+    # Determine if PgBouncer is in use (detected via URL or explicit config)
+    is_pgbouncer = "pgbouncer" in settings.database_url.lower()
+
+    # Determine pool class based on configuration
+    # - "auto": NullPool with PgBouncer (recommended), QueuePool otherwise
+    # - "null": Always NullPool (delegate pooling to PgBouncer/external pooler)
+    # - "queue": Always QueuePool (application-side pooling)
+    use_null_pool = False
+    if settings.db_pool_class == "null":
+        use_null_pool = True
+        logger.info("Using NullPool (explicit configuration)")
+    elif settings.db_pool_class == "auto" and is_pgbouncer:
+        use_null_pool = True
+        logger.info("PgBouncer detected - using NullPool (recommended: let PgBouncer handle pooling)")
+    elif settings.db_pool_class == "queue":
+        logger.info("Using QueuePool (explicit configuration)")
+    else:
+        logger.info("Using QueuePool with pool_size=%s, max_overflow=%s", settings.db_pool_size, settings.db_max_overflow)
+
+    # Determine pre_ping setting
+    # - "auto": Enabled for non-PgBouncer with QueuePool, disabled otherwise
+    # - "true": Always enable (validates connections, catches stale connections)
+    # - "false": Always disable
+    if settings.db_pool_pre_ping == "true":
+        use_pre_ping = True
+        logger.info("pool_pre_ping enabled (explicit configuration)")
+    elif settings.db_pool_pre_ping == "false":
+        use_pre_ping = False
+        logger.info("pool_pre_ping disabled (explicit configuration)")
+    else:  # "auto"
+        # With NullPool, pre_ping is not needed (no pooled connections to validate)
+        # With QueuePool + PgBouncer, pre_ping helps detect stale connections
+        use_pre_ping = not use_null_pool and not is_pgbouncer
+        if is_pgbouncer and not use_null_pool:
+            logger.info("PgBouncer with QueuePool - consider enabling DB_POOL_PRE_PING=true to detect stale connections")
+
+    # Build engine with appropriate pool configuration
+    if use_null_pool:
+        return create_engine(
+            settings.database_url,
+            poolclass=NullPool,
+            connect_args=connect_args,
+            echo=_sqlalchemy_echo,
+        )
 
     return create_engine(
         settings.database_url,
@@ -191,7 +229,6 @@ def build_engine() -> Engine:
         pool_timeout=settings.db_pool_timeout,
         pool_recycle=settings.db_pool_recycle,
         connect_args=connect_args,
-        # Log all SQL queries when SQLALCHEMY_ECHO=true (useful for N+1 detection)
         echo=_sqlalchemy_echo,
     )
 
@@ -492,6 +529,8 @@ def handle_pool_error(exception_context):
         "query_wait_timeout",
         "server_login_retry",
         "client_login_timeout",
+        "client_idle_timeout",
+        "idle_transaction_timeout",
         "server closed the connection unexpectedly",
         "connection reset by peer",
         "connection timed out",

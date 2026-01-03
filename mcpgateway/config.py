@@ -1190,6 +1190,24 @@ class Settings(BaseSettings):
     # Default of 5 balances memory usage with query performance.
     db_prepare_threshold: int = Field(default=5, ge=0, le=100, description="psycopg3 prepare_threshold for auto-prepared statements")
 
+    # Connection pool class: "auto" (default), "null", or "queue"
+    # - "auto": Uses NullPool when PgBouncer detected, QueuePool otherwise
+    # - "null": Always use NullPool (recommended with PgBouncer - lets PgBouncer handle pooling)
+    # - "queue": Always use QueuePool (application-side pooling)
+    db_pool_class: Literal["auto", "null", "queue"] = Field(
+        default="auto",
+        description="Connection pool class: auto (NullPool with PgBouncer), null, or queue",
+    )
+
+    # Pre-ping connections before checkout (validates connection is alive)
+    # - "auto": Enabled for non-PgBouncer, disabled for PgBouncer (default)
+    # - "true": Always enable (adds SELECT 1 overhead but catches stale connections)
+    # - "false": Always disable
+    db_pool_pre_ping: Literal["auto", "true", "false"] = Field(
+        default="auto",
+        description="Pre-ping connections: auto, true, or false",
+    )
+
     # Cache
     cache_type: Literal["redis", "memory", "none", "database"] = "database"  # memory or redis or database
     redis_url: Optional[str] = "redis://localhost:6379/0"
