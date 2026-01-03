@@ -335,6 +335,7 @@ class PromptService:
             "custom_name": custom_name,
             "custom_name_slug": custom_name_slug,
             "display_name": display_name,
+            "gateway_slug": getattr(db_prompt, "gateway_slug", None),
             "description": db_prompt.description,
             "template": db_prompt.template,
             "arguments": arguments_list,
@@ -377,7 +378,15 @@ class PromptService:
         return team.name if team else None
 
     def _compute_prompt_name(self, custom_name: str, gateway: Optional[Any] = None) -> str:
-        """Compute the stored prompt name from custom_name and gateway context."""
+        """Compute the stored prompt name from custom_name and gateway context.
+
+        Args:
+            custom_name: Prompt name to slugify and store.
+            gateway: Optional gateway for namespacing.
+
+        Returns:
+            The stored prompt name with gateway prefix when applicable.
+        """
         name_slug = slugify(custom_name)
         if gateway:
             gateway_slug = slugify(gateway.name)

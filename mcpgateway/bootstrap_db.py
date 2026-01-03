@@ -60,7 +60,16 @@ logger = logging_service.get_logger(__name__)
 
 
 def _column_exists(inspector, table_name: str, column_name: str) -> bool:
-    """Return True if a column exists on a table, False otherwise."""
+    """Check whether a table has a specific column.
+
+    Args:
+        inspector: SQLAlchemy inspector for the active connection.
+        table_name: Table name to inspect.
+        column_name: Column name to check.
+
+    Returns:
+        True if the column exists, otherwise False.
+    """
     try:
         return any(col["name"] == column_name for col in inspector.get_columns(table_name))
     except Exception:
@@ -68,7 +77,14 @@ def _column_exists(inspector, table_name: str, column_name: str) -> bool:
 
 
 def _schema_looks_current(inspector) -> bool:
-    """Best-effort check for unversioned databases that already match current schema."""
+    """Best-effort check for unversioned databases that already match current schema.
+
+    Args:
+        inspector: SQLAlchemy inspector for the active connection.
+
+    Returns:
+        True when expected columns exist for a recent schema version.
+    """
     return (
         _column_exists(inspector, "tools", "display_name")
         and _column_exists(inspector, "gateways", "oauth_config")

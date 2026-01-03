@@ -3311,6 +3311,25 @@ class Prompt(Base):
         Index("idx_prompts_created_at_id", "created_at", "id"),
     )
 
+    @hybrid_property
+    def gateway_slug(self) -> Optional[str]:
+        """Return the related gateway's slug if available.
+
+        Returns:
+            Optional[str]: Gateway slug or None when no gateway is attached.
+        """
+        return self.gateway.slug if self.gateway else None
+
+    @gateway_slug.expression
+    @classmethod
+    def gateway_slug(cls) -> Any:
+        """SQL expression to select current gateway slug for this prompt.
+
+        Returns:
+            Any: SQLAlchemy scalar subquery selecting the gateway slug.
+        """
+        return select(Gateway.slug).where(Gateway.id == cls.gateway_id).scalar_subquery()
+
     def validate_arguments(self, args: Dict[str, str]) -> None:
         """
         Validate prompt arguments against the argument schema.
@@ -3785,7 +3804,13 @@ def update_tool_names_on_gateway_update(_mapper, connection, target):
 
 @event.listens_for(Gateway, "after_update")
 def update_prompt_names_on_gateway_update(_mapper, connection, target):
-    """Update prompt names when a gateway name changes."""
+    """Update prompt names when a gateway name changes.
+
+    Args:
+        _mapper: SQLAlchemy mapper for the Gateway model.
+        connection: Database connection for the update transaction.
+        target: Gateway instance being updated.
+    """
     if not get_history(target, "name").has_changes():
         return
 
@@ -5448,6 +5473,11 @@ def set_prompt_name_and_slug(mapper, connection, target):  # pylint: disable=unu
     - Sets display_name to custom_name if not provided.
     - Calculates custom_name_slug from custom_name.
     - Updates name to gateway_slug + separator + custom_name_slug.
+
+    Args:
+        mapper: SQLAlchemy mapper for the Prompt model.
+        connection: Database connection for the insert/update.
+        target: Prompt instance being inserted or updated.
     """
     if not target.original_name:
         target.original_name = target.name

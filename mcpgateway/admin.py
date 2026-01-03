@@ -9246,7 +9246,8 @@ async def admin_edit_prompt(
     try:
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
         prompt = PromptUpdate(
-            display_name=str(form.get("display_name") or form.get("name")),
+            custom_name=str(form.get("customName") or form.get("name")),
+            display_name=str(form.get("displayName") or form.get("display_name") or form.get("name")),
             description=str(form.get("description")),
             template=str(form["template"]),
             arguments=arguments,

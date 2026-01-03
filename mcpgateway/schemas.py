@@ -2094,7 +2094,14 @@ class PromptCreate(BaseModelWithConfigDict):
     @field_validator("custom_name")
     @classmethod
     def validate_custom_name(cls, v: Optional[str]) -> Optional[str]:
-        """Ensure custom prompt names follow MCP naming conventions."""
+        """Ensure custom prompt names follow MCP naming conventions.
+
+        Args:
+            v: Custom prompt name to validate.
+
+        Returns:
+            The validated custom name or None.
+        """
         if v is None:
             return v
         return SecurityValidator.validate_name(v, "Prompt name")
@@ -2102,7 +2109,14 @@ class PromptCreate(BaseModelWithConfigDict):
     @field_validator("display_name")
     @classmethod
     def validate_display_name(cls, v: Optional[str]) -> Optional[str]:
-        """Ensure display names render safely in UI."""
+        """Ensure display names render safely in UI.
+
+        Args:
+            v: Display name to validate.
+
+        Returns:
+            The validated display name or None.
+        """
         if v is None:
             return v
         return SecurityValidator.sanitize_display_text(v, "Prompt display name")
@@ -2247,7 +2261,14 @@ class PromptUpdate(BaseModelWithConfigDict):
     @field_validator("custom_name")
     @classmethod
     def validate_custom_name(cls, v: Optional[str]) -> Optional[str]:
-        """Ensure custom prompt names follow MCP naming conventions."""
+        """Ensure custom prompt names follow MCP naming conventions.
+
+        Args:
+            v: Custom prompt name to validate.
+
+        Returns:
+            The validated custom name or None.
+        """
         if v is None:
             return v
         return SecurityValidator.validate_name(v, "Prompt name")
@@ -2255,7 +2276,14 @@ class PromptUpdate(BaseModelWithConfigDict):
     @field_validator("display_name")
     @classmethod
     def validate_display_name(cls, v: Optional[str]) -> Optional[str]:
-        """Ensure display names render safely in UI."""
+        """Ensure display names render safely in UI.
+
+        Args:
+            v: Display name to validate.
+
+        Returns:
+            The validated display name or None.
+        """
         if v is None:
             return v
         return SecurityValidator.sanitize_display_text(v, "Prompt display name")
@@ -2339,6 +2367,7 @@ class PromptRead(BaseModelWithConfigDict):
     custom_name: str
     custom_name_slug: str
     display_name: Optional[str] = Field(None, description="Display name for the prompt (shown in UI)")
+    gateway_slug: Optional[str] = None
     description: Optional[str]
     template: str
     arguments: List[PromptArgument]
