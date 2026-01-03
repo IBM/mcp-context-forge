@@ -219,19 +219,15 @@ services:
       #   - "auto": Automatic - NullPool if PgBouncer detected in URL, else QueuePool
       #
       # WITH PgBouncer (default in docker-compose):
-      # NullPool eliminates stale connection errors (client_idle_timeout) by letting
-      # PgBouncer manage all connection lifecycle. Each request gets a fresh connection.
-      - DB_POOL_CLASS=null
-      # Pool size/overflow only apply when using QueuePool (ignored with NullPool)
-      - DB_POOL_SIZE=20
-      - DB_MAX_OVERFLOW=10
-      # DIRECT PostgreSQL connection (uncomment if bypassing PgBouncer):
-      # - DB_POOL_CLASS=queue
-      # - DB_POOL_SIZE=50
-      # - DB_MAX_OVERFLOW=100
-      # - DB_POOL_PRE_PING=true        # Validate connections before use
+      # Option A: NullPool - safest, eliminates stale connection errors, ~10% slower
+      # - DB_POOL_CLASS=null
+      # Option B: QueuePool + pre_ping - better performance, validates before use
+      - DB_POOL_CLASS=queue
+      - DB_POOL_PRE_PING=true          # Validate connections before use (SELECT 1)
+      - DB_POOL_SIZE=20                # Pool size per worker
+      - DB_MAX_OVERFLOW=10             # Extra connections under load
       - DB_POOL_TIMEOUT=60             # Time to wait for connection before failing
-      - DB_POOL_RECYCLE=120            # Recycle before PgBouncer CLIENT_IDLE_TIMEOUT
+      - DB_POOL_RECYCLE=60             # Recycle before PgBouncer CLIENT_IDLE_TIMEOUT (half of 120s)
       # Tool configuration for high-concurrency load testing
       - TOOL_TIMEOUT=60               # Seconds before tool invocation times out
       - MAX_TOOL_RETRIES=3            # Retry attempts for failed tool invocations
