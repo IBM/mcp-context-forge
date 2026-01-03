@@ -13473,8 +13473,11 @@ async def get_observability_stats(request: Request, hours: int = Query(24, ge=1,
 
         return request.app.state.templates.TemplateResponse("observability_stats.html", {"request": request, "stats": stats})
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
-        db.close()
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
 
 
 @admin_router.get("/observability/traces", response_class=HTMLResponse)
@@ -13568,8 +13571,11 @@ async def get_observability_traces(
         root_path = request.scope.get("root_path", "")
         return request.app.state.templates.TemplateResponse("observability_traces_list.html", {"request": request, "traces": traces, "root_path": root_path})
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
-        db.close()
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
 
 
 @admin_router.get("/observability/trace/{trace_id}", response_class=HTMLResponse)
@@ -13597,8 +13603,11 @@ async def get_observability_trace_detail(request: Request, trace_id: str, _user=
         root_path = request.scope.get("root_path", "")
         return request.app.state.templates.TemplateResponse("observability_trace_detail.html", {"request": request, "trace": trace, "root_path": root_path})
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
-        db.close()
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
 
 
 @admin_router.post("/observability/queries", response_model=dict)
@@ -13644,8 +13653,11 @@ async def save_observability_query(
         LOGGER.error(f"Failed to save query: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
-        db.close()
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
 
 
 @admin_router.get("/observability/queries", response_model=list)
@@ -13688,8 +13700,11 @@ async def list_observability_queries(request: Request, user=Depends(get_current_
             for q in queries
         ]
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
-        db.close()
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
 
 
 @admin_router.get("/observability/queries/{query_id}", response_model=dict)
@@ -13731,8 +13746,11 @@ async def get_observability_query(request: Request, query_id: int, user=Depends(
             "use_count": query.use_count,
         }
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
-        db.close()
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
 
 
 @admin_router.put("/observability/queries/{query_id}", response_model=dict)
@@ -13800,8 +13818,11 @@ async def update_observability_query(
         LOGGER.error(f"Failed to update query: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
-        db.close()
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
 
 
 @admin_router.delete("/observability/queries/{query_id}", status_code=204)
@@ -13829,8 +13850,11 @@ async def delete_observability_query(request: Request, query_id: int, user=Depen
         db.delete(query)
         db.commit()
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
-        db.close()
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
 
 
 @admin_router.post("/observability/queries/{query_id}/use", response_model=dict)
@@ -13875,8 +13899,11 @@ async def track_query_usage(request: Request, query_id: int, user=Depends(get_cu
         LOGGER.error(f"Failed to track query usage: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
-        db.close()
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
 
 
 @admin_router.get("/observability/metrics/percentiles", response_model=dict)
@@ -13913,8 +13940,11 @@ async def get_latency_percentiles(
         LOGGER.error(f"Failed to calculate latency percentiles: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
-        db.close()
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
 
 
 def _get_latency_percentiles_postgresql(db: Session, cutoff_time: datetime, interval_minutes: int) -> dict:
@@ -14076,8 +14106,11 @@ async def get_timeseries_metrics(
         LOGGER.error(f"Failed to calculate timeseries metrics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
-        db.close()
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
 
 
 def _get_timeseries_metrics_postgresql(db: Session, cutoff_time: datetime, interval_minutes: int) -> dict:
@@ -14423,8 +14456,11 @@ async def get_top_slow_endpoints(
         LOGGER.error(f"Failed to get top slow endpoints: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
-        db.close()
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
 
 
 @admin_router.get("/observability/metrics/top-volume", response_model=dict)
@@ -14484,8 +14520,11 @@ async def get_top_volume_endpoints(
         LOGGER.error(f"Failed to get top volume endpoints: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
-        db.close()
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
 
 
 @admin_router.get("/observability/metrics/top-errors", response_model=dict)
@@ -14548,8 +14587,11 @@ async def get_top_error_endpoints(
         LOGGER.error(f"Failed to get top error endpoints: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
-        db.close()
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
 
 
 @admin_router.get("/observability/metrics/heatmap", response_model=dict)
@@ -14591,8 +14633,11 @@ async def get_latency_heatmap(
         LOGGER.error(f"Failed to generate latency heatmap: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
-        db.close()
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
 
 
 @admin_router.get("/observability/tools/usage", response_model=dict)
@@ -14655,8 +14700,11 @@ async def get_tool_usage(
         LOGGER.error(f"Failed to get tool usage statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
-        db.close()
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
 
 
 @admin_router.get("/observability/tools/performance", response_model=dict)
@@ -14748,8 +14796,11 @@ async def get_tool_performance(
         LOGGER.error(f"Failed to get tool performance metrics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
-        db.close()
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
 
 
 @admin_router.get("/observability/tools/errors", response_model=dict)
@@ -14811,8 +14862,11 @@ async def get_tool_errors(
         LOGGER.error(f"Failed to get tool error statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
-        db.close()
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
 
 
 @admin_router.get("/observability/tools/chains", response_model=dict)
@@ -14882,8 +14936,11 @@ async def get_tool_chains(
         LOGGER.error(f"Failed to get tool chain statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
-        db.close()
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
 
 
 @admin_router.get("/observability/tools/partial", response_class=HTMLResponse)
@@ -14975,8 +15032,11 @@ async def get_prompt_usage(
         LOGGER.error(f"Failed to get prompt usage statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
-        db.close()
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
 
 
 @admin_router.get("/observability/prompts/performance", response_model=dict)
@@ -15068,8 +15128,11 @@ async def get_prompt_performance(
         LOGGER.error(f"Failed to get prompt performance metrics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
-        db.close()
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
 
 
 @admin_router.get("/observability/prompts/errors", response_model=dict)
@@ -15123,8 +15186,11 @@ async def get_prompts_errors(
 
         return {"prompts": prompts_data, "time_range_hours": hours}
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
-        db.close()
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
 
 
 @admin_router.get("/observability/prompts/partial", response_class=HTMLResponse)
@@ -15216,8 +15282,11 @@ async def get_resource_usage(
         LOGGER.error(f"Failed to get resource usage statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
-        db.close()
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
 
 
 @admin_router.get("/observability/resources/performance", response_model=dict)
@@ -15309,8 +15378,11 @@ async def get_resource_performance(
         LOGGER.error(f"Failed to get resource performance metrics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
-        db.close()
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
 
 
 @admin_router.get("/observability/resources/errors", response_model=dict)
@@ -15364,8 +15436,11 @@ async def get_resources_errors(
 
         return {"resources": resources_data, "time_range_hours": hours}
     finally:
-        db.commit()  # Commit read-only transaction to avoid implicit rollback
-        db.close()
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
 
 
 @admin_router.get("/observability/resources/partial", response_class=HTMLResponse)

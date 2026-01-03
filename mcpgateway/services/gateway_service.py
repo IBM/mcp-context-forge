@@ -2644,8 +2644,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 else:
                                     raise GatewayConnectionError(f"No valid OAuth token for user {app_user_email} and gateway {gateway.name}")
                             finally:
-                                db.commit()  # End read-only transaction cleanly before returning to pool
-                                db.close()
+                                # Ensure close() always runs even if commit() fails
+                                # Without this nested try/finally, a commit() failure (e.g., PgBouncer timeout)
+                                # would skip close(), leaving the connection in "idle in transaction" state
+                                try:
+                                    db.commit()  # End read-only transaction cleanly before returning to pool
+                                finally:
+                                    db.close()
                     except Exception as oauth_error:
                         raise GatewayConnectionError(f"Failed to obtain OAuth token for gateway {gateway.name}: {oauth_error}")
                 else:

@@ -331,8 +331,13 @@ def bootstrap_sso_providers() -> None:
         db.rollback()  # Rollback on error
         print(f"❌ Failed to bootstrap SSO providers: {e}")
     finally:
-        db.commit()  # Commit transaction to avoid implicit rollback
-        db.close()
+        # Ensure close() always runs even if commit() fails
+        # Without this nested try/finally, a commit() failure would skip close(),
+        # leaving the connection in "idle in transaction" state
+        try:
+            db.commit()  # Commit transaction to avoid implicit rollback
+        finally:
+            db.close()
 
 
 if __name__ == "__main__":
