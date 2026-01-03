@@ -201,3 +201,35 @@ class TestGatewayResourcesPrompts:
             # Verify the methods were called despite failure
             mock_session_instance.list_resources.assert_called_once()
             mock_session_instance.list_prompts.assert_called_once()
+
+    def test_update_or_create_prompts_matches_original_name(self):
+        """Ensure gateway prompt sync matches by original_name, not prefixed name."""
+        service = GatewayService()
+        gateway = MagicMock()
+        gateway.id = "gw-1"
+        gateway.visibility = "public"
+
+        prompt = MagicMock()
+        prompt.name = "Greeting"
+        prompt.description = "New description"
+        prompt.template = "Hello!"
+
+        existing_prompt = MagicMock()
+        existing_prompt.original_name = "Greeting"
+        existing_prompt.name = "gw-1__greeting"
+        existing_prompt.description = "Old description"
+        existing_prompt.template = ""
+        existing_prompt.visibility = "public"
+
+        result = MagicMock()
+        scalars = MagicMock()
+        scalars.all.return_value = [existing_prompt]
+        result.scalars.return_value = scalars
+
+        db = MagicMock()
+        db.execute.return_value = result
+
+        prompts_to_add = service._update_or_create_prompts(db, [prompt], gateway, "update")
+
+        assert prompts_to_add == []
+        assert existing_prompt.description == "New description"

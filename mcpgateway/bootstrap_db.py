@@ -59,6 +59,39 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 
+def _column_exists(inspector, table_name: str, column_name: str) -> bool:
+    """Check whether a table has a specific column.
+
+    Args:
+        inspector: SQLAlchemy inspector for the active connection.
+        table_name: Table name to inspect.
+        column_name: Column name to check.
+
+    Returns:
+        True if the column exists, otherwise False.
+    """
+    try:
+        return any(col["name"] == column_name for col in inspector.get_columns(table_name))
+    except Exception:
+        return False
+
+
+def _schema_looks_current(inspector) -> bool:
+    """Best-effort check for unversioned databases that already match current schema.
+
+    Args:
+        inspector: SQLAlchemy inspector for the active connection.
+
+    Returns:
+        True when expected columns exist for a recent schema version.
+    """
+    return (
+        _column_exists(inspector, "tools", "display_name")
+        and _column_exists(inspector, "gateways", "oauth_config")
+        and _column_exists(inspector, "prompts", "custom_name")
+    )
+
+
 @contextmanager
 def advisory_lock(conn: Connection):
     """
@@ -413,8 +446,9 @@ async def main() -> None:
                 cfg.set_main_option("sqlalchemy.url", escaped_url)
 
                 insp = inspect(conn)
+                table_names = insp.get_table_names()
 
-                if "gateways" not in insp.get_table_names():
+                if "gateways" not in table_names:
                     logger.info("Empty DB detected - creating baseline schema")
                     # Apply MariaDB compatibility fixes if needed
                     if settings.database_url.startswith(("mariadb", "mysql")):
@@ -429,8 +463,20 @@ async def main() -> None:
                     Base.metadata.create_all(bind=conn)
                     command.stamp(cfg, "head")
                 else:
-                    logger.info("Running Alembic migrations to ensure schema is up to date")
-                    command.upgrade(cfg, "head")
+                    versions: list[str] = []
+                    if "alembic_version" in table_names:
+                        try:
+                            rows = conn.execute(text("SELECT version_num FROM alembic_version")).fetchall()
+                            versions = [row[0] for row in rows if row[0]]
+                        except Exception as exc:
+                            logger.warning("Failed to read alembic_version table: %s", exc)
+
+                    if not versions and _schema_looks_current(insp):
+                        logger.warning("Existing database has no Alembic revision rows; stamping head to avoid reapplying migrations")
+                        command.stamp(cfg, "head")
+                    else:
+                        logger.info("Running Alembic migrations to ensure schema is up to date")
+                        command.upgrade(cfg, "head")
 
                 # Post-upgrade normalization passes (inside lock to be safe)
                 updated = normalize_team_visibility(conn)

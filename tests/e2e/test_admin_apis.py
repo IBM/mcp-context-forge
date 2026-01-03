@@ -507,13 +507,15 @@ class TestAdminPromptAPIs:
         prompts = resp_json["data"] if isinstance(resp_json, dict) and "data" in resp_json else resp_json
         assert len(prompts) == 1
         prompt = prompts[0]
-        assert prompt["name"] == "test_admin_prompt"
+        assert prompt["name"] == "test-admin-prompt"
+        assert prompt["originalName"] == "test_admin_prompt"
         prompt_id = prompt["id"]
 
         # Get individual prompt
         response = await client.get(f"/admin/prompts/{prompt_id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
-        assert response.json()["name"] == "test_admin_prompt"
+        assert response.json()["name"] == "test-admin-prompt"
+        assert response.json()["originalName"] == "test_admin_prompt"
 
         # Edit prompt
         edit_data = {

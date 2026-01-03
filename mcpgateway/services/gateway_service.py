@@ -825,6 +825,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             db_prompts = [
                 DbPrompt(
                     name=prompt.name,
+                    original_name=prompt.name,
+                    custom_name=prompt.name,
+                    display_name=prompt.name,
                     description=prompt.description,
                     template=prompt.template if hasattr(prompt, "template") else "",
                     argument_schema={},  # Use argument_schema instead of arguments
@@ -1141,7 +1144,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
 
             # Bulk delete prompts that are no longer available from the gateway
-            stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.name not in new_prompt_names]
+            stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.original_name not in new_prompt_names]
             if stale_prompt_ids:
                 # Delete child records first to avoid FK constraint violations
                 for i in range(0, len(stale_prompt_ids), 500):
@@ -1158,7 +1161,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Update gateway relationships to reflect deletions
             gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]
             gateway.resources = [resource for resource in gateway.resources if resource.uri in new_resource_uris]
-            gateway.prompts = [prompt for prompt in gateway.prompts if prompt.name in new_prompt_names]
+            gateway.prompts = [prompt for prompt in gateway.prompts if prompt.original_name in new_prompt_names]
 
             # Log cleanup results
             tools_removed = len(stale_tool_ids)
@@ -1757,7 +1760,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
 
                     # Bulk delete prompts that are no longer available from the gateway
-                    stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.name not in new_prompt_names]
+                    stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.original_name not in new_prompt_names]
                     if stale_prompt_ids:
                         # Delete child records first to avoid FK constraint violations
                         for i in range(0, len(stale_prompt_ids), 500):
@@ -1774,7 +1777,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     gateway.capabilities = capabilities
                     gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
                     gateway.resources = [resource for resource in gateway.resources if resource.uri in new_resource_uris]  # keep only still-valid rows
-                    gateway.prompts = [prompt for prompt in gateway.prompts if prompt.name in new_prompt_names]  # keep only still-valid rows
+                    gateway.prompts = [prompt for prompt in gateway.prompts if prompt.original_name in new_prompt_names]  # keep only still-valid rows
 
                     # Log cleanup results
                     tools_removed = len(stale_tool_ids)
@@ -2149,7 +2152,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
 
                         # Bulk delete prompts that are no longer available from the gateway
-                        stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.name not in new_prompt_names]
+                        stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.original_name not in new_prompt_names]
                         if stale_prompt_ids:
                             # Delete child records first to avoid FK constraint violations
                             for i in range(0, len(stale_prompt_ids), 500):
@@ -2166,7 +2169,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         gateway.capabilities = capabilities
                         gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
                         gateway.resources = [resource for resource in gateway.resources if resource.uri in new_resource_uris]  # keep only still-valid rows
-                        gateway.prompts = [prompt for prompt in gateway.prompts if prompt.name in new_prompt_names]  # keep only still-valid rows
+                        gateway.prompts = [prompt for prompt in gateway.prompts if prompt.original_name in new_prompt_names]  # keep only still-valid rows
 
                         # Log cleanup results
                         tools_removed = len(stale_tool_ids)
@@ -3960,9 +3963,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         if not prompt_names:
             return []
 
-        existing_prompts_query = select(DbPrompt).where(DbPrompt.gateway_id == gateway.id, DbPrompt.name.in_(prompt_names))
+        existing_prompts_query = select(DbPrompt).where(DbPrompt.gateway_id == gateway.id, DbPrompt.original_name.in_(prompt_names))
         existing_prompts = db.execute(existing_prompts_query).scalars().all()
-        existing_prompts_map = {prompt.name: prompt for prompt in existing_prompts}
+        existing_prompts_map = {prompt.original_name: prompt for prompt in existing_prompts}
 
         for prompt in prompts:
             if prompt is None:
@@ -3993,6 +3996,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     # Create new prompt if it doesn't exist
                     db_prompt = DbPrompt(
                         name=prompt.name,
+                        original_name=prompt.name,
+                        custom_name=prompt.name,
+                        display_name=prompt.name,
                         description=prompt.description,
                         template=prompt.template if hasattr(prompt, "template") else "",
                         argument_schema={},  # Use argument_schema instead of arguments
@@ -4001,6 +4007,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         created_via=created_via,
                         visibility=gateway.visibility,
                     )
+                    db_prompt.gateway = gateway
                     prompts_to_add.append(db_prompt)
                     logger.debug(f"Created new prompt: {prompt.name}")
             except Exception as e:

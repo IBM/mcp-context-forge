@@ -404,6 +404,88 @@ def test_update_tool_names_on_gateway_update(monkeypatch):
     assert hasattr(dummy_connection, "executed")
 
 
+def test_set_prompt_name_and_slug(monkeypatch):
+    class DummyGateway:
+        name = "Gateway A"
+
+    class DummyPrompt:
+        original_name = "Greeting"
+        custom_name = None
+        custom_name_slug = ""
+        display_name = None
+        name = ""
+        gateway = DummyGateway()
+
+    monkeypatch.setattr(db, "slugify", lambda name: name.lower().replace(" ", "-"))
+    monkeypatch.setattr(db.settings, "gateway_tool_name_separator", "__")
+
+    prompt = DummyPrompt()
+    db.set_prompt_name_and_slug(None, None, prompt)
+
+    assert prompt.custom_name == "Greeting"
+    assert prompt.custom_name_slug == "greeting"
+    assert prompt.display_name == "Greeting"
+    assert prompt.name == "gateway-a__greeting"
+
+
+def test_set_prompt_name_and_slug_two_gateways(monkeypatch):
+    class DummyGatewayA:
+        name = "Gateway A"
+
+    class DummyGatewayB:
+        name = "Gateway B"
+
+    class DummyPrompt:
+        def __init__(self, gateway):
+            self.original_name = "Greeting"
+            self.custom_name = None
+            self.custom_name_slug = ""
+            self.display_name = None
+            self.name = ""
+            self.gateway = gateway
+
+    monkeypatch.setattr(db, "slugify", lambda name: name.lower().replace(" ", "-"))
+    monkeypatch.setattr(db.settings, "gateway_tool_name_separator", "__")
+
+    prompt_a = DummyPrompt(DummyGatewayA())
+    prompt_b = DummyPrompt(DummyGatewayB())
+
+    db.set_prompt_name_and_slug(None, None, prompt_a)
+    db.set_prompt_name_and_slug(None, None, prompt_b)
+
+    assert prompt_a.name == "gateway-a__greeting"
+    assert prompt_b.name == "gateway-b__greeting"
+    assert prompt_a.name != prompt_b.name
+
+
+def test_update_prompt_names_on_gateway_update(monkeypatch):
+    class DummyGateway:
+        id = "gwid"
+        name = "GatewayName"
+
+    class DummyConnection:
+        def execute(self, stmt):
+            self.executed = True
+
+    class DummyMapper:
+        pass
+
+    monkeypatch.setattr(db.Prompt, "__table__", MagicMock())
+    monkeypatch.setattr(db, "slugify", lambda name: "slug")
+    monkeypatch.setattr(db.settings, "gateway_tool_name_separator", "-")
+    dummy_gateway = DummyGateway()
+    dummy_connection = DummyConnection()
+    dummy_mapper = DummyMapper()
+
+    class DummyHistory:
+        def has_changes(self):
+            return True
+
+    monkeypatch.setattr(db, "get_history", lambda target, name: DummyHistory())
+    db.update_prompt_names_on_gateway_update(dummy_mapper, dummy_connection, dummy_gateway)
+    assert hasattr(dummy_connection, "executed")
+
+
 # --- SessionRecord and SessionMessageRecord ---
 def test_session_record_and_message_record():
     session = db.SessionRecord()

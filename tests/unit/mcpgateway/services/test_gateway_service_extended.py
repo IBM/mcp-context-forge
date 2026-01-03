@@ -814,6 +814,7 @@ class TestGatewayServiceExtended:
         # Mock existing prompt in database
         existing_prompt = MagicMock()
         existing_prompt.name = "test_prompt"
+        existing_prompt.original_name = "test_prompt"
         existing_prompt.description = "Old description"
         existing_prompt.template = "Old template"
         existing_prompt.visibility = "private"
@@ -1258,12 +1259,14 @@ class TestGatewayServiceExtended:
         # Mock existing prompts in database
         existing_prompt1 = MagicMock()
         existing_prompt1.name = "keep_prompt"
+        existing_prompt1.original_name = "keep_prompt"
         existing_prompt1.description = "Keep this prompt"
         existing_prompt1.template = "Keep template"
         existing_prompt1.visibility = "private"
 
         existing_prompt3 = MagicMock()
         existing_prompt3.name = "update_prompt"
+        existing_prompt3.original_name = "update_prompt"
         existing_prompt3.description = "Old description"
         existing_prompt3.template = "Old template"
         existing_prompt3.visibility = "private"
@@ -1309,6 +1312,63 @@ class TestGatewayServiceExtended:
         assert existing_prompt3.description == "Updated description"
         assert existing_prompt3.template == "Updated template"
         assert existing_prompt3.visibility == "public"  # Updated from gateway
+
+    @pytest.mark.asyncio
+    async def test_fetch_tools_after_oauth_prompt_stale_removal_uses_original_name(self):
+        """Ensure stale cleanup matches prompts by original_name, not prefixed name."""
+        service = GatewayService()
+        mock_db = MagicMock()
+
+        existing_prompt = MagicMock()
+        existing_prompt.id = "prompt-1"
+        existing_prompt.name = "gateway-a__greeting"
+        existing_prompt.original_name = "greeting"
+        existing_prompt.description = "Old"
+        existing_prompt.template = "Old"
+        existing_prompt.visibility = "public"
+
+        gateway = MagicMock()
+        gateway.id = "gw-1"
+        gateway.name = "Gateway A"
+        gateway.url = "http://example.com"
+        gateway.transport = "SSE"
+        gateway.oauth_config = {"grant_type": "authorization_code"}
+        gateway.tools = []
+        gateway.resources = []
+        gateway.prompts = [existing_prompt]
+        gateway.visibility = "public"
+        gateway.capabilities = {}
+        gateway.last_seen = None
+
+        mock_db.execute.return_value = _make_execute_result(scalar=gateway)
+        mock_db.expire = MagicMock()
+        mock_db.add_all = MagicMock()
+        mock_db.flush = MagicMock()
+        mock_db.commit = MagicMock()
+
+        prompt_from_server = MagicMock()
+        prompt_from_server.name = "greeting"
+        prompt_from_server.description = "Greeting"
+        prompt_from_server.template = "Hello {{name}}"
+
+        with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_token_storage:
+            mock_token_storage.return_value.get_user_token = AsyncMock(return_value="token")
+            with (
+                patch.object(
+                    service,
+                    "_connect_to_sse_server_without_validation",
+                    new=AsyncMock(return_value=({}, [], [], [prompt_from_server])),
+                ),
+                patch.object(service, "_update_or_create_tools", return_value=[]),
+                patch.object(service, "_update_or_create_resources", return_value=[]),
+                patch.object(service, "_update_or_create_prompts", return_value=[]),
+            ):
+                await service.fetch_tools_after_oauth(
+                    mock_db, gateway.id, "user@example.com"
+                )
+
+        assert existing_prompt in gateway.prompts
+        assert len(gateway.prompts) == 1
 
     @pytest.mark.asyncio
     async def test_helper_methods_complete_removal_scenario(self):

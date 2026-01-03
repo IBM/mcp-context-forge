@@ -1992,6 +1992,10 @@ async def admin_list_prompts(
         >>> mock_prompt = PromptRead(
         ...     id="ca627760127d409080fdefc309147e08",
         ...     name="Test Prompt",
+        ...     original_name="Test Prompt",
+        ...     custom_name="Test Prompt",
+        ...     custom_name_slug="test-prompt",
+        ...     display_name="Test Prompt",
         ...     description="A test prompt",
         ...     template="Hello {{name}}!",
         ...     arguments=[{"name": "name", "type": "string"}],
@@ -6580,7 +6584,7 @@ async def admin_search_prompts(
     user_teams = await team_service.get_user_teams(user_email)
     team_ids = [t.id for t in user_teams]
 
-    query = select(DbPrompt.id, DbPrompt.name, DbPrompt.description)
+    query = select(DbPrompt.id, DbPrompt.original_name, DbPrompt.display_name, DbPrompt.description)
 
     # Apply gateway filter if provided
     if gateway_id:
@@ -6607,21 +6611,34 @@ async def admin_search_prompts(
 
     query = query.where(or_(*access_conditions))
 
-    search_conditions = [func.lower(DbPrompt.name).contains(search_query), func.lower(coalesce(DbPrompt.description, "")).contains(search_query)]
+    search_conditions = [
+        func.lower(DbPrompt.original_name).contains(search_query),
+        func.lower(coalesce(DbPrompt.display_name, "")).contains(search_query),
+        func.lower(coalesce(DbPrompt.description, "")).contains(search_query),
+    ]
     query = query.where(or_(*search_conditions))
 
     query = query.order_by(
         case(
-            (func.lower(DbPrompt.name).startswith(search_query), 1),
+            (func.lower(DbPrompt.original_name).startswith(search_query), 1),
+            (func.lower(coalesce(DbPrompt.display_name, "")).startswith(search_query), 1),
             else_=2,
         ),
-        func.lower(DbPrompt.name),
+        func.lower(DbPrompt.original_name),
     ).limit(limit)
 
     results = db.execute(query).all()
     prompts = []
     for row in results:
-        prompts.append({"id": row.id, "name": row.name, "description": row.description})
+        prompts.append(
+            {
+                "id": row.id,
+                "name": row.original_name,
+                "original_name": row.original_name,
+                "display_name": row.display_name,
+                "description": row.description,
+            }
+        )
 
     return {"prompts": prompts, "count": len(prompts)}
 
@@ -8960,6 +8977,10 @@ async def admin_get_prompt(prompt_id: str, db: Session = Depends(get_db), user=D
         >>> mock_prompt_details = {
         ...     "id": "ca627760127d409080fdefc309147e08",
         ...     "name": prompt_name,
+        ...     "original_name": prompt_name,
+        ...     "custom_name": prompt_name,
+        ...     "custom_name_slug": "test-prompt",
+        ...     "display_name": "Test Prompt",
         ...     "description": "A test prompt",
         ...     "template": "Hello {{name}}!",
         ...     "arguments": [{"name": "name", "type": "string"}],
@@ -9088,6 +9109,7 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
         arguments = orjson.loads(args_json)
         prompt = PromptCreate(
             name=str(form["name"]),
+            display_name=str(form.get("display_name") or form["name"]),
             description=str(form.get("description")),
             template=str(form["template"]),
             arguments=arguments,
@@ -9224,7 +9246,8 @@ async def admin_edit_prompt(
     try:
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
         prompt = PromptUpdate(
-            name=str(form["name"]),
+            custom_name=str(form.get("customName") or form.get("name")),
+            display_name=str(form.get("displayName") or form.get("display_name") or form.get("name")),
             description=str(form.get("description")),
             template=str(form["template"]),
             arguments=arguments,

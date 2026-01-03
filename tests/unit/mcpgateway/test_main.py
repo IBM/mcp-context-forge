@@ -134,6 +134,10 @@ MOCK_RESOURCE_READ = {
 MOCK_PROMPT_READ = {
     "id": "ca627760127d409080fdefc309147e08",
     "name": "test_prompt",
+    "original_name": "test_prompt",
+    "custom_name": "test_prompt",
+    "custom_name_slug": "test-prompt",
+    "display_name": "Test Prompt",
     "description": "A test prompt",
     "template": "Hello {name}",
     "arguments": [],

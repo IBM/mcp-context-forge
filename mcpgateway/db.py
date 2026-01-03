@@ -655,6 +655,50 @@ def _refresh_tool_names_batched(session: Session, batch_size: int) -> None:
         last_id = tools[-1].id
 
 
+def _refresh_prompt_names_batched(session: Session, batch_size: int) -> None:
+    """Refresh prompt names in batches with eager-loaded gateways.
+
+    Uses joinedload(Prompt.gateway) to avoid N+1 queries when accessing the
+    gateway relationship while regenerating prompt names.
+
+    Args:
+        session: Active SQLAlchemy session.
+        batch_size: Maximum number of rows to process per batch.
+    """
+    last_id: Optional[str] = None
+    separator = settings.gateway_tool_name_separator
+
+    while True:
+        stmt = select(Prompt).options(joinedload(Prompt.gateway)).order_by(Prompt.id).limit(batch_size)
+        if last_id is not None:
+            stmt = stmt.where(Prompt.id > last_id)
+
+        prompts = session.execute(stmt).scalars().all()
+        if not prompts:
+            break
+
+        updated = False
+        for prompt in prompts:
+            name_slug_source = getattr(prompt, "custom_name_slug", None) or prompt.original_name
+            name_slug = slugify(name_slug_source)
+
+            if prompt.gateway:
+                gateway_slug = slugify(prompt.gateway.name)
+                new_name = f"{gateway_slug}{separator}{name_slug}"
+            else:
+                new_name = name_slug
+
+            if prompt.name != new_name:
+                prompt.name = new_name
+                updated = True
+
+        if updated:
+            session.commit()
+
+        session.expire_all()
+        last_id = prompts[-1].id
+
+
 def refresh_slugs_on_startup(batch_size: Optional[int] = None) -> None:
     """Refresh slugs for all gateways and tool names on startup.
 
@@ -685,6 +729,12 @@ def refresh_slugs_on_startup(batch_size: Optional[int] = None) -> None:
             except (OperationalError, ProgrammingError) as e:
                 # Table doesn't exist yet - expected on fresh database
                 logger.info("Tool table not found, skipping tool name refresh: %s", e)
+
+            try:
+                _refresh_prompt_names_batched(session, effective_batch_size)
+            except (OperationalError, ProgrammingError) as e:
+                # Table doesn't exist yet - expected on fresh database
+                logger.info("Prompt table not found, skipping prompt name refresh: %s", e)
 
     except SQLAlchemyError as e:
         logger.warning("Failed to refresh slugs on startup (database error): %s", e)
@@ -3212,6 +3262,10 @@ class Prompt(Base):
     __tablename__ = "prompts"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    original_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    custom_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    custom_name_slug: Mapped[str] = mapped_column(String(255), nullable=False)
+    display_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     template: Mapped[str] = mapped_column(Text)
@@ -3253,8 +3307,28 @@ class Prompt(Base):
 
     __table_args__ = (
         UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_prompt"),
+        UniqueConstraint("gateway_id", "original_name", name="uq_gateway_id__original_name_prompt"),
         Index("idx_prompts_created_at_id", "created_at", "id"),
     )
+
+    @hybrid_property
+    def gateway_slug(self) -> Optional[str]:
+        """Return the related gateway's slug if available.
+
+        Returns:
+            Optional[str]: Gateway slug or None when no gateway is attached.
+        """
+        return self.gateway.slug if self.gateway else None
+
+    @gateway_slug.expression
+    @classmethod
+    def gateway_slug(cls) -> Any:
+        """SQL expression to select current gateway slug for this prompt.
+
+        Returns:
+            Any: SQLAlchemy scalar subquery selecting the gateway slug.
+        """
+        return select(Gateway.slug).where(Gateway.id == cls.gateway_id).scalar_subquery()
 
     def validate_arguments(self, args: Dict[str, str]) -> None:
         """
@@ -3705,7 +3779,7 @@ def update_tool_names_on_gateway_update(_mapper, connection, target):
     if not get_history(target, "name").has_changes():
         return
 
-    print(f"Gateway name changed for ID {target.id}. Issuing bulk update for tools.")
+    logger.info("Gateway name changed for ID %s. Issuing bulk update for tools.", target.id)
 
     # 2. Get a reference to the underlying database table for Tools
     tools_table = Tool.__table__
@@ -3725,6 +3799,35 @@ def update_tool_names_on_gateway_update(_mapper, connection, target):
     )
 
     # 5. Execute the statement using the connection from the ongoing transaction.
+    connection.execute(stmt)
+
+
+@event.listens_for(Gateway, "after_update")
+def update_prompt_names_on_gateway_update(_mapper, connection, target):
+    """Update prompt names when a gateway name changes.
+
+    Args:
+        _mapper: SQLAlchemy mapper for the Gateway model.
+        connection: Database connection for the update transaction.
+        target: Gateway instance being updated.
+    """
+    if not get_history(target, "name").has_changes():
+        return
+
+    logger.info("Gateway name changed for ID %s. Issuing bulk update for prompts.", target.id)
+
+    prompts_table = Prompt.__table__
+    new_gateway_slug = slugify(target.name)
+    separator = settings.gateway_tool_name_separator
+
+    stmt = (
+        cast(Any, prompts_table)
+        .update()
+        .where(prompts_table.c.gateway_id == target.id)
+        .values(name=new_gateway_slug + separator + prompts_table.c.custom_name_slug)
+        .execution_options(synchronize_session=False)
+    )
+
     connection.execute(stmt)
 
 
@@ -5352,6 +5455,37 @@ def set_custom_name_and_slug(mapper, connection, target):  # pylint: disable=unu
     # Always update custom_name_slug from custom_name
     target.custom_name_slug = slugify(target.custom_name)
     # Update name field
+    gateway_slug = slugify(target.gateway.name) if target.gateway else ""
+    if gateway_slug:
+        sep = settings.gateway_tool_name_separator
+        target.name = f"{gateway_slug}{sep}{target.custom_name_slug}"
+    else:
+        target.name = target.custom_name_slug
+
+
+@event.listens_for(Prompt, "before_insert")
+@event.listens_for(Prompt, "before_update")
+def set_prompt_name_and_slug(mapper, connection, target):  # pylint: disable=unused-argument
+    """Set name fields for Prompt before insert/update.
+
+    - Sets original_name from name if missing (legacy compatibility).
+    - Sets custom_name to original_name if not provided.
+    - Sets display_name to custom_name if not provided.
+    - Calculates custom_name_slug from custom_name.
+    - Updates name to gateway_slug + separator + custom_name_slug.
+
+    Args:
+        mapper: SQLAlchemy mapper for the Prompt model.
+        connection: Database connection for the insert/update.
+        target: Prompt instance being inserted or updated.
+    """
+    if not target.original_name:
+        target.original_name = target.name
+    if not target.custom_name:
+        target.custom_name = target.original_name
+    if not target.display_name:
+        target.display_name = target.custom_name
+    target.custom_name_slug = slugify(target.custom_name)
     gateway_slug = slugify(target.gateway.name) if target.gateway else ""
     if gateway_slug:
         sep = settings.gateway_tool_name_separator

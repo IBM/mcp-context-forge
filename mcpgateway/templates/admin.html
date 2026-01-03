@@ -4142,6 +4142,18 @@
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Display Name</label
+                >
+                <input
+                  type="text"
+                  name="display_name"
+                  placeholder="Custom display name for your UI"
+                  class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                />
+              </div>
+              <div>
+                <label
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Description</label
                 >
                 <textarea
@@ -8266,7 +8278,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                 Prompt Details
               </h3>
               <div
-                class="mt-4 space-y-4 bg-white dark:bg-gray-400"
+                class="mt-4 space-y-4 bg-white dark:bg-gray-900"
                 id="prompt-details"
               ></div>
             </div>
@@ -8308,16 +8320,40 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               <div class="mt-4">
                 <form id="edit-prompt-form" method="POST">
                   <div class="grid grid-cols-1 gap-6">
+                    <input type="hidden" name="name" id="edit-prompt-name" />
                     <div>
-                      <label class="block text-sm font-medium text-gray-700"
+                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300"
                         >Name</label
                       >
                       <input
                         type="text"
-                        name="name"
+                        name="customName"
                         required
-                        id="edit-prompt-name"
-                        class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                        id="edit-prompt-custom-name"
+                        class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      />
+                    </div>
+                    <div>
+                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                        >Technical Name</label
+                      >
+                      <input
+                        type="text"
+                        id="edit-prompt-technical-name"
+                        readonly
+                        class="mt-1 px-1.5 block w-full rounded-md border border-gray-200 dark:border-gray-700 shadow-sm bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                        >Display Name</label
+                      >
+                      <input
+                        type="text"
+                        name="displayName"
+                        id="edit-prompt-display-name"
+                        placeholder="Custom display name for your UI"
+                        class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       />
                     </div>
                     <div>
@@ -10503,7 +10539,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
       window.promptMapping = {};
       {% for prompt in prompts %}
-      window.promptMapping["{{ prompt.id }}"] = "{{ prompt.name }}";
+      window.promptMapping["{{ prompt.id }}"] = "{{ prompt.displayName or prompt.originalName or prompt.name }}";
       {% endfor %}
 
       window.ROOT_PATH = {{ root_path | tojson }};
