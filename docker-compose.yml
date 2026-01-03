@@ -124,19 +124,19 @@ services:
       - REDIS_HEALTH_CHECK_INTERVAL=30
       # Auth Cache Configuration (reduces DB queries per auth request from 3-4 to 0-1)
       - AUTH_CACHE_ENABLED=true
-      - AUTH_CACHE_USER_TTL=60
+      - AUTH_CACHE_USER_TTL=300
       - AUTH_CACHE_REVOCATION_TTL=30
-      - AUTH_CACHE_TEAM_TTL=60
-      - AUTH_CACHE_ROLE_TTL=60
+      - AUTH_CACHE_TEAM_TTL=300
+      - AUTH_CACHE_ROLE_TTL=300
       - AUTH_CACHE_BATCH_QUERIES=true
       # Registry Cache Configuration (reduces DB queries for list endpoints)
       - REGISTRY_CACHE_ENABLED=true
-      - REGISTRY_CACHE_TOOLS_TTL=20
-      - REGISTRY_CACHE_PROMPTS_TTL=15
-      - REGISTRY_CACHE_RESOURCES_TTL=15
-      - REGISTRY_CACHE_AGENTS_TTL=20
-      - REGISTRY_CACHE_SERVERS_TTL=20
-      - REGISTRY_CACHE_GATEWAYS_TTL=20
+      - REGISTRY_CACHE_TOOLS_TTL=60
+      - REGISTRY_CACHE_PROMPTS_TTL=60
+      - REGISTRY_CACHE_RESOURCES_TTL=60
+      - REGISTRY_CACHE_AGENTS_TTL=60
+      - REGISTRY_CACHE_SERVERS_TTL=60
+      - REGISTRY_CACHE_GATEWAYS_TTL=60
       - REGISTRY_CACHE_CATALOG_TTL=300
       # Admin Stats Cache Configuration (reduces aggregate queries for dashboard)
       - ADMIN_STATS_CACHE_ENABLED=true
@@ -215,13 +215,13 @@ services:
       # Direct PostgreSQL: larger pools needed, formula: (replicas × workers) × (pool + overflow) < max_connections
       #
       # WITH PgBouncer (default):
-      - DB_POOL_SIZE=15
-      - DB_MAX_OVERFLOW=5              # Low overflow minimizes pool churn under pressure
+      - DB_POOL_SIZE=20
+      - DB_MAX_OVERFLOW=10             # Low overflow minimizes pool churn under pressure
       # DIRECT PostgreSQL connection (uncomment if bypassing PgBouncer):
       # - DB_POOL_SIZE=50
       # - DB_MAX_OVERFLOW=100
-      - DB_POOL_TIMEOUT=45             # Time to wait for connection before failing
-      - DB_POOL_RECYCLE=300
+      - DB_POOL_TIMEOUT=60             # Time to wait for connection before failing
+      - DB_POOL_RECYCLE=120            # Recycle before PgBouncer CLIENT_IDLE_TIMEOUT
       - DB_POOL_PRE_PING=false
       # Tool configuration for high-concurrency load testing
       - TOOL_TIMEOUT=60               # Seconds before tool invocation times out
@@ -359,12 +359,12 @@ services:
     ports:
       - "5433:5432"      # Expose for baseline load testing (5433 to avoid conflict with local postgres)
     # Performance tuning for high-load testing (3000 sustained users)
-    # WITH PgBouncer (default): 700 connections provides headroom for 550 pool + system overhead
+    # WITH PgBouncer (default): 800 connections provides headroom for 700 pool + system overhead
     # DIRECT connection mode: increase to 4000 for (3 replicas × 16 workers × 80 pool)
     command:
       - "postgres"
       - "-c"
-      - "max_connections=700"     # Must exceed PgBouncer MAX_DB_CONNECTIONS (550) + overhead
+      - "max_connections=800"     # Must exceed PgBouncer MAX_DB_CONNECTIONS (700) + overhead
       - "-c"
       - "shared_buffers=512MB"
       - "-c"
@@ -392,9 +392,9 @@ services:
       # Application code now properly closes transactions via get_db() commit-on-success pattern
       # This timeout is a safety net for any edge cases
       - "-c"
-      - "idle_in_transaction_session_timeout=60s"  # Kill stuck transactions after 60s
+      - "idle_in_transaction_session_timeout=120s"  # Kill stuck transactions after 120s (aligned with PgBouncer)
       - "-c"
-      - "statement_timeout=60s"            # Kill runaway queries after 60s
+      - "statement_timeout=120s"           # Kill runaway queries after 120s
       - "-c"
       - "synchronous_commit=off"           # Async WAL writes (2-10x faster commits)
       - "-c"
@@ -501,24 +501,24 @@ services:
       # ═══════════════════════════════════════════════════════════════════════════
       # Client-side limits (from gateway workers via SQLAlchemy)
       - MAX_CLIENT_CONN=5000           # Max app connections; must exceed (replicas × workers × pool)
-      - DEFAULT_POOL_SIZE=450          # Shared DB connections; sized for ~70 concurrent tx × 6x headroom
-      - MIN_POOL_SIZE=50               # Pre-warmed connections for instant response to load spikes
-      - RESERVE_POOL_SIZE=100          # Emergency pool for burst traffic beyond DEFAULT_POOL_SIZE
+      - DEFAULT_POOL_SIZE=600          # Shared DB connections; sized for ~70 concurrent tx × 8x headroom
+      - MIN_POOL_SIZE=100              # Pre-warmed connections for instant response to load spikes
+      - RESERVE_POOL_SIZE=150          # Emergency pool for burst traffic beyond DEFAULT_POOL_SIZE
       - RESERVE_POOL_TIMEOUT=2         # Seconds before tapping reserve pool
       # Server-side limits (to PostgreSQL)
-      - MAX_DB_CONNECTIONS=550         # Max connections to PostgreSQL; must be < PG max_connections
-      - MAX_USER_CONNECTIONS=550       # Per-user limit; typically equals MAX_DB_CONNECTIONS
+      - MAX_DB_CONNECTIONS=700         # Max connections to PostgreSQL; must be < PG max_connections
+      - MAX_USER_CONNECTIONS=700       # Per-user limit; typically equals MAX_DB_CONNECTIONS
       # Connection lifecycle
       - SERVER_LIFETIME=3600           # Recycle server connections after 1 hour (prevents stale state)
-      - SERVER_IDLE_TIMEOUT=300        # Close unused server connections after 5 min
+      - SERVER_IDLE_TIMEOUT=600        # Close unused server connections after 10 min
       # Timeout settings
-      - QUERY_WAIT_TIMEOUT=45          # Max wait for available connection before failing request
-      - CLIENT_IDLE_TIMEOUT=60         # Close idle client connections to free resources quickly
+      - QUERY_WAIT_TIMEOUT=60          # Max wait for available connection before failing request
+      - CLIENT_IDLE_TIMEOUT=300        # Close idle client connections (aligned with pool_recycle)
       - SERVER_CONNECT_TIMEOUT=5       # Timeout for new connections to PostgreSQL
       # Transaction cleanup - critical for avoiding idle-in-transaction buildup
       - SERVER_RESET_QUERY=DISCARD ALL # Reset connection state when returned to pool
       - SERVER_RESET_QUERY_ALWAYS=1    # Always run reset query even after clean transactions
-      - IDLE_TRANSACTION_TIMEOUT=30    # Kill transactions idle > 30s (prevents connection starvation)
+      - IDLE_TRANSACTION_TIMEOUT=120   # Kill transactions idle > 120s (prevents connection starvation)
       # Authentication
       - AUTH_TYPE=scram-sha-256        # Match PostgreSQL auth method
     depends_on:
