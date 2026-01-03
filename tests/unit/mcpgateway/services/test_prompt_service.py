@@ -99,6 +99,10 @@ def _build_db_prompt(
     p = MagicMock(spec=DbPrompt)
     p.id = pid
     p.name = name
+    p.original_name = name
+    p.custom_name = name
+    p.custom_name_slug = name
+    p.display_name = name
     p.description = desc
     p.template = template
     p.argument_schema = {"properties": {"name": {"type": "string"}}, "required": ["name"]}
@@ -106,6 +110,11 @@ def _build_db_prompt(
     p.is_active = is_active
     # New model uses `enabled` — keep both attributes for backward compatibility in tests
     p.enabled = is_active
+    p.visibility = "public"
+    p.team_id = None
+    p.owner_email = "owner@example.com"
+    p.gateway_id = None
+    p.gateway = None
     p.metrics = metrics or []
     # validate_arguments: accept anything
     p.validate_arguments = Mock()
@@ -211,6 +220,17 @@ class TestPromptService:
                 assert "409" in msg or "already exists" in msg or "Failed to register prompt" in msg
 
     @pytest.mark.asyncio
+    async def test_register_prompt_slug_conflict(self, prompt_service, test_db):
+        """Slug collisions should be detected as name conflicts."""
+        existing = _build_db_prompt(name="hello-world")
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=existing))
+
+        pc = PromptCreate(name="Hello World", description="", template="X", arguments=[])
+
+        with pytest.raises(PromptError):
+            await prompt_service.register_prompt(test_db, pc)
+
+    @pytest.mark.asyncio
     async def test_register_prompt_template_validation_error(self, prompt_service, test_db):
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
         test_db.add, test_db.commit, test_db.refresh = Mock(), Mock(), Mock()
@@ -262,6 +282,20 @@ class TestPromptService:
         assert msg.content.text == "Hello, Alice!"
 
     @pytest.mark.asyncio
+    async def test_get_prompt_by_name(self, prompt_service, test_db):
+        """Prompt lookup falls back to name when ID lookup misses."""
+        db_prompt = _build_db_prompt(template="Hello!")
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=None),  # active by id
+                _make_execute_result(scalar=db_prompt),  # active by name
+            ]
+        )
+
+        result = await prompt_service.get_prompt(test_db, "gateway__greeting", {})
+        assert result.messages[0].content.text == "Hello!"
+
+    @pytest.mark.asyncio
     async def test_get_prompt_not_found(self, prompt_service, test_db):
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
 
@@ -273,8 +307,9 @@ class TestPromptService:
         inactive = _build_db_prompt(is_active=False)
         test_db.execute = Mock(
             side_effect=[
-                _make_execute_result(scalar=None),  # active
-                _make_execute_result(scalar=inactive),  # inactive
+                _make_execute_result(scalar=None),  # active by id
+                _make_execute_result(scalar=None),  # active by name
+                _make_execute_result(scalar=inactive),  # inactive by id
             ]
         )
         with pytest.raises(PromptNotFoundError) as exc_info:
@@ -312,6 +347,8 @@ class TestPromptService:
     @pytest.mark.asyncio
     async def test_update_prompt_success(self, prompt_service, test_db):
         existing = _build_db_prompt()
+        existing.team_id = "team-123"
+        test_db.get = Mock(return_value=existing)
         test_db.execute = Mock(
             side_effect=[  # first call = find existing, second = conflict check
                 _make_execute_result(scalar=existing),
@@ -334,21 +371,20 @@ class TestPromptService:
     @pytest.mark.asyncio
     async def test_update_prompt_name_conflict(self, prompt_service, test_db):
         existing = _build_db_prompt()
+        test_db.get = Mock(return_value=existing)
         test_db.execute = Mock(
             side_effect=[
                 _make_execute_result(scalar=existing),
                 _make_execute_result(scalar=None),
             ]
         )
-        test_db.commit = Mock(side_effect=IntegrityError("UNIQUE constraint failed: prompt.name", None, BaseException(None)))
         upd = PromptUpdate(name="other")
-        with pytest.raises(IntegrityError) as exc_info:
+        with pytest.raises(PromptError):
             await prompt_service.update_prompt(test_db, 1, upd)
-        msg = str(exc_info.value).lower()
-        assert "unique constraint" in msg or "already exists" in msg or "failed to update prompt" in msg
 
     @pytest.mark.asyncio
     async def test_update_prompt_not_found(self, prompt_service, test_db):
+        test_db.get = Mock(return_value=None)
         test_db.execute = Mock(
             side_effect=[
                 _make_execute_result(scalar=None),  # active
@@ -363,20 +399,18 @@ class TestPromptService:
     @pytest.mark.asyncio
     async def test_update_prompt_inactive(self, prompt_service, test_db):
         inactive = _build_db_prompt(is_active=False)
-        test_db.execute = Mock(
-            side_effect=[
-                _make_execute_result(scalar=None),  # active
-                _make_execute_result(scalar=inactive),  # inactive
-            ]
-        )
+        test_db.get = Mock(return_value=inactive)
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        prompt_service._notify_prompt_updated = AsyncMock()
         upd = PromptUpdate(description="desc")
-        with pytest.raises(PromptError) as exc_info:
-            await prompt_service.update_prompt(test_db, 1, upd)
-        assert "inactive" in str(exc_info.value) or "Failed to update prompt" in str(exc_info.value)
+        res = await prompt_service.update_prompt(test_db, 1, upd)
+        assert res["description"] == "desc"
 
     @pytest.mark.asyncio
     async def test_update_prompt_exception(self, prompt_service, test_db):
         existing = _build_db_prompt()
+        test_db.get = Mock(return_value=existing)
         test_db.execute = Mock(side_effect=[_make_execute_result(scalar=existing), _make_execute_result(scalar=None)])
         test_db.commit = Mock(side_effect=Exception("fail"))
         upd = PromptUpdate(description="desc")

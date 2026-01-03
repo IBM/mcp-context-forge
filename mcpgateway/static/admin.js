@@ -4336,244 +4336,309 @@ async function viewPrompt(promptName) {
         }
 
         const prompt = await response.json();
+        const promptLabel =
+            prompt.displayName ||
+            prompt.originalName ||
+            prompt.name ||
+            prompt.id;
+        const gatewayLabel = prompt.gatewaySlug || "Local";
 
         const promptDetailsDiv = safeGetElement("prompt-details");
         if (promptDetailsDiv) {
-            // Create safe display container
-            const container = document.createElement("div");
-            container.className =
-                "space-y-2 dark:bg-gray-900 dark:text-gray-100";
+            const safeHTML = `
+        <div class="grid grid-cols-2 gap-6 mb-6">
+          <div class="space-y-3">
+            <div>
+              <span class="font-medium text-gray-700 dark:text-gray-300">Display Name:</span>
+              <div class="mt-1 prompt-display-name font-medium"></div>
+            </div>
+            <div>
+              <span class="font-medium text-gray-700 dark:text-gray-300">Technical Name:</span>
+              <div class="mt-1 prompt-name text-sm font-mono"></div>
+            </div>
+            <div>
+              <span class="font-medium text-gray-700 dark:text-gray-300">Original Name:</span>
+              <div class="mt-1 prompt-original-name text-sm font-mono"></div>
+            </div>
+            <div>
+              <span class="font-medium text-gray-700 dark:text-gray-300">Custom Name:</span>
+              <div class="mt-1 prompt-custom-name text-sm font-mono"></div>
+            </div>
+            <div>
+              <span class="font-medium text-gray-700 dark:text-gray-300">Gateway Name:</span>
+              <div class="mt-1 prompt-gateway text-sm"></div>
+            </div>
+            <div>
+              <span class="font-medium text-gray-700 dark:text-gray-300">Visibility:</span>
+              <div class="mt-1 prompt-visibility text-sm"></div>
+            </div>
+          </div>
+          <div class="space-y-3">
+            <div>
+              <span class="font-medium text-gray-700 dark:text-gray-300">Description:</span>
+              <div class="mt-1 prompt-description text-sm"></div>
+            </div>
+            <div>
+              <span class="font-medium text-gray-700 dark:text-gray-300">Tags:</span>
+              <div class="mt-1 prompt-tags text-sm"></div>
+            </div>
+            <div>
+              <span class="font-medium text-gray-700 dark:text-gray-300">Status:</span>
+              <div class="mt-1 prompt-status text-sm"></div>
+            </div>
+          </div>
+        </div>
 
-            // Basic info fields
-            const fields = [
-                { label: "Name", value: prompt.name },
-                { label: "Description", value: prompt.description || "N/A" },
-                { label: "Visibility", value: prompt.visibility || "private" },
-            ];
+        <div class="space-y-4">
+          <div>
+            <strong class="text-gray-700 dark:text-gray-300">Template:</strong>
+            <pre class="mt-1 bg-gray-100 p-3 rounded text-xs dark:bg-gray-800 dark:text-gray-200 prompt-template overflow-x-auto"></pre>
+          </div>
+          <div>
+            <strong class="text-gray-700 dark:text-gray-300">Arguments:</strong>
+            <pre class="mt-1 bg-gray-100 p-3 rounded text-xs dark:bg-gray-800 dark:text-gray-200 prompt-arguments overflow-x-auto"></pre>
+          </div>
+        </div>
 
-            fields.forEach((field) => {
-                const p = document.createElement("p");
-                const strong = document.createElement("strong");
-                strong.textContent = field.label + ": ";
-                p.appendChild(strong);
-                p.appendChild(document.createTextNode(field.value));
-                container.appendChild(p);
-            });
+        <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-600">
+          <strong class="text-gray-700 dark:text-gray-300">Metrics:</strong>
+          <div class="grid grid-cols-2 gap-4 mt-3 text-sm">
+            <div class="space-y-2">
+              <div class="flex justify-between">
+                <span class="text-gray-600 dark:text-gray-400">Total Executions:</span>
+                <span class="metric-total font-medium"></span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-gray-600 dark:text-gray-400">Successful Executions:</span>
+                <span class="metric-success font-medium text-green-600"></span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-gray-600 dark:text-gray-400">Failed Executions:</span>
+                <span class="metric-failed font-medium text-red-600"></span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-gray-600 dark:text-gray-400">Failure Rate:</span>
+                <span class="metric-failure-rate font-medium"></span>
+              </div>
+            </div>
+            <div class="space-y-2">
+              <div class="flex justify-between">
+                <span class="text-gray-600 dark:text-gray-400">Min Response Time:</span>
+                <span class="metric-min-time font-medium"></span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-gray-600 dark:text-gray-400">Max Response Time:</span>
+                <span class="metric-max-time font-medium"></span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-gray-600 dark:text-gray-400">Average Response Time:</span>
+                <span class="metric-avg-time font-medium"></span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-gray-600 dark:text-gray-400">Last Execution Time:</span>
+                <span class="metric-last-time font-medium"></span>
+              </div>
+            </div>
+          </div>
+        </div>
 
-            // Tags section
-            const tagsP = document.createElement("p");
-            const tagsStrong = document.createElement("strong");
-            tagsStrong.textContent = "Tags: ";
-            tagsP.appendChild(tagsStrong);
+        <div class="mt-6 border-t pt-4">
+          <strong>Metadata:</strong>
+          <div class="grid grid-cols-2 gap-4 mt-2 text-sm">
+            <div>
+              <span class="font-medium text-gray-600 dark:text-gray-400">Created By:</span>
+              <span class="ml-2 metadata-created-by"></span>
+            </div>
+            <div>
+              <span class="font-medium text-gray-600 dark:text-gray-400">Created At:</span>
+              <span class="ml-2 metadata-created-at"></span>
+            </div>
+            <div>
+              <span class="font-medium text-gray-600 dark:text-gray-400">Created From IP:</span>
+              <span class="ml-2 metadata-created-from"></span>
+            </div>
+            <div>
+              <span class="font-medium text-gray-600 dark:text-gray-400">Created Via:</span>
+              <span class="ml-2 metadata-created-via"></span>
+            </div>
+            <div>
+              <span class="font-medium text-gray-600 dark:text-gray-400">Last Modified By:</span>
+              <span class="ml-2 metadata-modified-by"></span>
+            </div>
+            <div>
+              <span class="font-medium text-gray-600 dark:text-gray-400">Last Modified At:</span>
+              <span class="ml-2 metadata-modified-at"></span>
+            </div>
+            <div>
+              <span class="font-medium text-gray-600 dark:text-gray-400">Modified From IP:</span>
+              <span class="ml-2 metadata-modified-from"></span>
+            </div>
+            <div>
+              <span class="font-medium text-gray-600 dark:text-gray-400">Modified Via:</span>
+              <span class="ml-2 metadata-modified-via"></span>
+            </div>
+            <div>
+              <span class="font-medium text-gray-600 dark:text-gray-400">Version:</span>
+              <span class="ml-2 metadata-version"></span>
+            </div>
+            <div>
+              <span class="font-medium text-gray-600 dark:text-gray-400">Import Batch:</span>
+              <span class="ml-2 metadata-import-batch"></span>
+            </div>
+          </div>
+        </div>
+      `;
 
-            if (prompt.tags && prompt.tags.length > 0) {
-                prompt.tags.forEach((tag) => {
-                    const tagSpan = document.createElement("span");
-                    tagSpan.className =
-                        "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1 dark:bg-blue-900 dark:text-blue-200";
-                    const raw =
-                        typeof tag === "object" && tag !== null
-                            ? tag.id || tag.label
-                            : tag;
-                    tagSpan.textContent = raw;
-                    tagsP.appendChild(tagSpan);
-                });
-            } else {
-                tagsP.appendChild(document.createTextNode("None"));
+            promptDetailsDiv.innerHTML = safeHTML;
+
+            const setText = (selector, value) => {
+                const el = promptDetailsDiv.querySelector(selector);
+                if (el) {
+                    el.textContent = value;
+                }
+            };
+
+            setText(".prompt-display-name", promptLabel);
+            setText(".prompt-name", prompt.name || "N/A");
+            setText(".prompt-original-name", prompt.originalName || "N/A");
+            setText(".prompt-custom-name", prompt.customName || "N/A");
+            setText(".prompt-gateway", gatewayLabel);
+            setText(".prompt-visibility", prompt.visibility || "private");
+            setText(".prompt-description", prompt.description || "N/A");
+
+            const tagsEl = promptDetailsDiv.querySelector(".prompt-tags");
+            if (tagsEl) {
+                tagsEl.innerHTML = "";
+                if (prompt.tags && prompt.tags.length > 0) {
+                    prompt.tags.forEach((tag) => {
+                        const tagSpan = document.createElement("span");
+                        tagSpan.className =
+                            "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1 dark:bg-blue-900 dark:text-blue-200";
+                        const raw =
+                            typeof tag === "object" && tag !== null
+                                ? tag.id || tag.label
+                                : tag;
+                        tagSpan.textContent = raw;
+                        tagsEl.appendChild(tagSpan);
+                    });
+                } else {
+                    tagsEl.textContent = "None";
+                }
             }
-            container.appendChild(tagsP);
 
-            // Status
-            const statusP = document.createElement("p");
-            const statusStrong = document.createElement("strong");
-            statusStrong.textContent = "Status: ";
-            statusP.appendChild(statusStrong);
+            const statusEl = promptDetailsDiv.querySelector(".prompt-status");
+            if (statusEl) {
+                const isActive =
+                    prompt.enabled !== undefined
+                        ? prompt.enabled
+                        : prompt.isActive;
+                const statusSpan = document.createElement("span");
+                statusSpan.className = `px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                    isActive
+                        ? "bg-green-100 text-green-800"
+                        : "bg-red-100 text-red-800"
+                }`;
+                statusSpan.textContent = isActive ? "Active" : "Inactive";
+                statusEl.innerHTML = "";
+                statusEl.appendChild(statusSpan);
+            }
 
-            const statusSpan = document.createElement("span");
-            statusSpan.className = `px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                prompt.isActive
-                    ? "bg-green-100 text-green-800"
-                    : "bg-red-100 text-red-800"
-            }`;
-            statusSpan.textContent = prompt.isActive ? "Active" : "Inactive";
-            statusP.appendChild(statusSpan);
-            container.appendChild(statusP);
+            const templateEl =
+                promptDetailsDiv.querySelector(".prompt-template");
+            if (templateEl) {
+                templateEl.textContent = prompt.template || "";
+            }
 
-            // Template display
-            const templateDiv = document.createElement("div");
-            const templateStrong = document.createElement("strong");
-            templateStrong.textContent = "Template:";
-            templateDiv.appendChild(templateStrong);
+            const argsEl = promptDetailsDiv.querySelector(".prompt-arguments");
+            if (argsEl) {
+                argsEl.textContent = JSON.stringify(
+                    prompt.arguments || {},
+                    null,
+                    2,
+                );
+            }
 
-            const templatePre = document.createElement("pre");
-            templatePre.className =
-                "mt-1 bg-gray-100 p-2 rounded overflow-auto max-h-80 dark:bg-gray-800 dark:text-gray-100";
-            templatePre.textContent = prompt.template || "";
-            templateDiv.appendChild(templatePre);
-            container.appendChild(templateDiv);
-
-            // Arguments display
-            const argsDiv = document.createElement("div");
-            const argsStrong = document.createElement("strong");
-            argsStrong.textContent = "Arguments:";
-            argsDiv.appendChild(argsStrong);
-
-            const argsPre = document.createElement("pre");
-            argsPre.className =
-                "mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100";
-            argsPre.textContent = JSON.stringify(
-                prompt.arguments || {},
-                null,
-                2,
-            );
-            argsDiv.appendChild(argsPre);
-            container.appendChild(argsDiv);
-
-            // Metrics
             if (prompt.metrics) {
-                const metricsDiv = document.createElement("div");
-                const metricsStrong = document.createElement("strong");
-                metricsStrong.textContent = "Metrics:";
-                metricsDiv.appendChild(metricsStrong);
-
-                const metricsList = document.createElement("ul");
-                metricsList.className = "list-disc list-inside ml-4";
-
-                const metricsData = [
-                    {
-                        label: "Total Executions",
-                        value: prompt.metrics.totalExecutions ?? 0,
-                    },
-                    {
-                        label: "Successful Executions",
-                        value: prompt.metrics.successfulExecutions ?? 0,
-                    },
-                    {
-                        label: "Failed Executions",
-                        value: prompt.metrics.failedExecutions ?? 0,
-                    },
-                    {
-                        label: "Failure Rate",
-                        value: prompt.metrics.failureRate ?? 0,
-                    },
-                    {
-                        label: "Min Response Time",
-                        value: prompt.metrics.minResponseTime ?? "N/A",
-                    },
-                    {
-                        label: "Max Response Time",
-                        value: prompt.metrics.maxResponseTime ?? "N/A",
-                    },
-                    {
-                        label: "Average Response Time",
-                        value: prompt.metrics.avgResponseTime ?? "N/A",
-                    },
-                    {
-                        label: "Last Execution Time",
-                        value: prompt.metrics.lastExecutionTime ?? "N/A",
-                    },
-                ];
-
-                metricsData.forEach((metric) => {
-                    const li = document.createElement("li");
-                    li.textContent = `${metric.label}: ${metric.value}`;
-                    metricsList.appendChild(li);
-                });
-
-                metricsDiv.appendChild(metricsList);
-                container.appendChild(metricsDiv);
+                setText(".metric-total", prompt.metrics.totalExecutions ?? 0);
+                setText(
+                    ".metric-success",
+                    prompt.metrics.successfulExecutions ?? 0,
+                );
+                setText(".metric-failed", prompt.metrics.failedExecutions ?? 0);
+                setText(
+                    ".metric-failure-rate",
+                    prompt.metrics.failureRate ?? 0,
+                );
+                setText(
+                    ".metric-min-time",
+                    prompt.metrics.minResponseTime ?? "N/A",
+                );
+                setText(
+                    ".metric-max-time",
+                    prompt.metrics.maxResponseTime ?? "N/A",
+                );
+                setText(
+                    ".metric-avg-time",
+                    prompt.metrics.avgResponseTime ?? "N/A",
+                );
+                setText(
+                    ".metric-last-time",
+                    prompt.metrics.lastExecutionTime ?? "N/A",
+                );
+            } else {
+                [
+                    ".metric-total",
+                    ".metric-success",
+                    ".metric-failed",
+                    ".metric-failure-rate",
+                    ".metric-min-time",
+                    ".metric-max-time",
+                    ".metric-avg-time",
+                    ".metric-last-time",
+                ].forEach((selector) => setText(selector, "N/A"));
             }
 
-            // Add metadata section
-            const metadataDiv = document.createElement("div");
-            metadataDiv.className = "mt-6 border-t pt-4";
+            const createdAt = prompt.created_at || prompt.createdAt;
+            const updatedAt = prompt.updated_at || prompt.updatedAt;
 
-            const metadataTitle = document.createElement("strong");
-            metadataTitle.textContent = "Metadata:";
-            metadataDiv.appendChild(metadataTitle);
+            setText(
+                ".metadata-created-by",
+                prompt.created_by || prompt.createdBy || "Legacy Entity",
+            );
+            setText(
+                ".metadata-created-at",
+                createdAt
+                    ? new Date(createdAt).toLocaleString()
+                    : "Pre-metadata",
+            );
+            setText(
+                ".metadata-created-from",
+                prompt.created_from_ip || prompt.createdFromIp || "Unknown",
+            );
+            setText(
+                ".metadata-created-via",
+                prompt.created_via || prompt.createdVia || "Unknown",
+            );
+            setText(
+                ".metadata-modified-by",
+                prompt.modified_by || prompt.modifiedBy || "N/A",
+            );
+            setText(
+                ".metadata-modified-at",
+                updatedAt ? new Date(updatedAt).toLocaleString() : "N/A",
+            );
+            setText(
+                ".metadata-modified-from",
+                prompt.modified_from_ip || prompt.modifiedFromIp || "N/A",
+            );
+            setText(
+                ".metadata-modified-via",
+                prompt.modified_via || prompt.modifiedVia || "N/A",
+            );
+            setText(".metadata-version", prompt.version || "1");
+            setText(".metadata-import-batch", prompt.importBatchId || "N/A");
 
-            const metadataGrid = document.createElement("div");
-            metadataGrid.className = "grid grid-cols-2 gap-4 mt-2 text-sm";
-
-            const metadataFields = [
-                {
-                    label: "Created By",
-                    value:
-                        prompt.created_by ||
-                        prompt.createdBy ||
-                        "Legacy Entity",
-                },
-                {
-                    label: "Created At",
-                    value:
-                        prompt.created_at || prompt.createdAt
-                            ? new Date(
-                                  prompt.created_at || prompt.createdAt,
-                              ).toLocaleString()
-                            : "Pre-metadata",
-                },
-                {
-                    label: "Created From IP",
-                    value:
-                        prompt.created_from_ip ||
-                        prompt.createdFromIp ||
-                        "Unknown",
-                },
-                {
-                    label: "Created Via",
-                    value: prompt.created_via || prompt.createdVia || "Unknown",
-                },
-                {
-                    label: "Last Modified By",
-                    value: prompt.modified_by || prompt.modifiedBy || "N/A",
-                },
-                {
-                    label: "Last Modified At",
-                    value:
-                        prompt.updated_at || prompt.updatedAt
-                            ? new Date(
-                                  prompt.updated_at || prompt.updatedAt,
-                              ).toLocaleString()
-                            : "N/A",
-                },
-                {
-                    label: "Modified From IP",
-                    value:
-                        prompt.modified_from_ip ||
-                        prompt.modifiedFromIp ||
-                        "N/A",
-                },
-                {
-                    label: "Modified Via",
-                    value: prompt.modified_via || prompt.modifiedVia || "N/A",
-                },
-                { label: "Version", value: prompt.version || "1" },
-                { label: "Import Batch", value: prompt.importBatchId || "N/A" },
-            ];
-
-            metadataFields.forEach((field) => {
-                const fieldDiv = document.createElement("div");
-
-                const labelSpan = document.createElement("span");
-                labelSpan.className =
-                    "font-medium text-gray-600 dark:text-gray-400";
-                labelSpan.textContent = field.label + ":";
-
-                const valueSpan = document.createElement("span");
-                valueSpan.className = "ml-2";
-                valueSpan.textContent = field.value;
-
-                fieldDiv.appendChild(labelSpan);
-                fieldDiv.appendChild(valueSpan);
-                metadataGrid.appendChild(fieldDiv);
-            });
-
-            metadataDiv.appendChild(metadataGrid);
-            container.appendChild(metadataDiv);
-
-            // Replace content safely
-            promptDetailsDiv.innerHTML = "";
-            promptDetailsDiv.appendChild(container);
+            // Content already injected via innerHTML; no extra wrapper needed.
         }
 
         openModal("prompt-modal");
@@ -4667,16 +4732,31 @@ async function editPrompt(promptId) {
             }
         }
 
-        // Validate prompt name
         const nameValidation = validateInputName(prompt.name, "prompt");
+        const customNameValidation = validateInputName(
+            prompt.customName || prompt.originalName || prompt.name,
+            "prompt",
+        );
 
         const nameField = safeGetElement("edit-prompt-name");
+        const customNameField = safeGetElement("edit-prompt-custom-name");
+        const displayNameField = safeGetElement("edit-prompt-display-name");
+        const technicalNameField = safeGetElement("edit-prompt-technical-name");
         const descField = safeGetElement("edit-prompt-description");
         const templateField = safeGetElement("edit-prompt-template");
         const argsField = safeGetElement("edit-prompt-arguments");
 
         if (nameField && nameValidation.valid) {
             nameField.value = nameValidation.value;
+        }
+        if (technicalNameField) {
+            technicalNameField.value = prompt.name || "N/A";
+        }
+        if (customNameField && customNameValidation.valid) {
+            customNameField.value = customNameValidation.value;
+        }
+        if (displayNameField) {
+            displayNameField.value = prompt.displayName || "";
         }
         if (descField) {
             descField.value = prompt.description || "";
@@ -12563,8 +12643,13 @@ async function testPrompt(promptId) {
             const titleElement = safeGetElement("prompt-test-modal-title");
             const descElement = safeGetElement("prompt-test-modal-description");
 
+            const promptLabel =
+                prompt.displayName ||
+                prompt.originalName ||
+                prompt.name ||
+                promptId;
             if (titleElement) {
-                titleElement.textContent = `Test Prompt: ${prompt.name || promptId}`;
+                titleElement.textContent = `Test Prompt: ${promptLabel}`;
             }
             if (descElement) {
                 if (prompt.description) {
@@ -24131,7 +24216,13 @@ async function serverSidePromptSearch(searchTerm) {
         if (data.prompts && data.prompts.length > 0) {
             let searchResultsHtml = "";
             data.prompts.forEach((prompt) => {
-                const displayName = prompt.name || prompt.id;
+                const displayName =
+                    prompt.displayName ||
+                    prompt.display_name ||
+                    prompt.originalName ||
+                    prompt.original_name ||
+                    prompt.name ||
+                    prompt.id;
                 searchResultsHtml += `
                     <label
                         class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-purple-50 dark:hover:bg-purple-900 rounded-md p-1 prompt-item"
@@ -25019,7 +25110,13 @@ async function serverSideEditPromptsSearch(searchTerm) {
             // Create HTML for search results
             let searchResultsHtml = "";
             data.prompts.forEach((prompt) => {
-                const name = prompt.name || prompt.id;
+                const name =
+                    prompt.displayName ||
+                    prompt.display_name ||
+                    prompt.originalName ||
+                    prompt.original_name ||
+                    prompt.name ||
+                    prompt.id;
 
                 searchResultsHtml += `
                     <label

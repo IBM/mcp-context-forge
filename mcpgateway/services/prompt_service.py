@@ -45,6 +45,7 @@ from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batche
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
@@ -322,9 +323,19 @@ class PromptService:
         else:
             metrics_dict = None
 
+        original_name = getattr(db_prompt, "original_name", None) or db_prompt.name
+        custom_name = getattr(db_prompt, "custom_name", None) or original_name
+        custom_name_slug = getattr(db_prompt, "custom_name_slug", None) or slugify(custom_name)
+        display_name = getattr(db_prompt, "display_name", None) or custom_name
+
         prompt_dict = {
             "id": db_prompt.id,
             "name": db_prompt.name,
+            "original_name": original_name,
+            "custom_name": custom_name,
+            "custom_name_slug": custom_name_slug,
+            "display_name": display_name,
+            "gateway_slug": getattr(db_prompt, "gateway_slug", None),
             "description": db_prompt.description,
             "template": db_prompt.template,
             "arguments": arguments_list,
@@ -365,6 +376,22 @@ class PromptService:
         team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
         db.commit()  # Release transaction to avoid idle-in-transaction
         return team.name if team else None
+
+    def _compute_prompt_name(self, custom_name: str, gateway: Optional[Any] = None) -> str:
+        """Compute the stored prompt name from custom_name and gateway context.
+
+        Args:
+            custom_name: Prompt name to slugify and store.
+            gateway: Optional gateway for namespacing.
+
+        Returns:
+            The stored prompt name with gateway prefix when applicable.
+        """
+        name_slug = slugify(custom_name)
+        if gateway:
+            gateway_slug = slugify(gateway.name)
+            return f"{gateway_slug}{settings.gateway_tool_name_separator}{name_slug}"
+        return name_slug
 
     async def register_prompt(
         self,
@@ -440,9 +467,16 @@ class PromptService:
                     schema["description"] = arg.description
                 argument_schema["properties"][arg.name] = schema
 
+            custom_name = prompt.custom_name or prompt.name
+            display_name = prompt.display_name or custom_name
+            computed_name = self._compute_prompt_name(custom_name)
+
             # Create DB model
             db_prompt = DbPrompt(
-                name=prompt.name,
+                name=computed_name,
+                original_name=prompt.name,
+                custom_name=custom_name,
+                display_name=display_name,
                 description=prompt.description,
                 template=prompt.template,
                 argument_schema=argument_schema,
@@ -463,14 +497,14 @@ class PromptService:
             # Check for existing server with the same name
             if visibility.lower() == "public":
                 # Check for existing public prompt with the same name
-                existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt.name, DbPrompt.visibility == "public")).scalar_one_or_none()
+                existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == computed_name, DbPrompt.visibility == "public")).scalar_one_or_none()
                 if existing_prompt:
-                    raise PromptNameConflictError(prompt.name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
+                    raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
             elif visibility.lower() == "team":
                 # Check for existing team prompt with the same name
-                existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt.name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id)).scalar_one_or_none()
+                existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == computed_name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id)).scalar_one_or_none()
                 if existing_prompt:
-                    raise PromptNameConflictError(prompt.name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
+                    raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
 
             # Add to DB
             db.add(db_prompt)
@@ -660,7 +694,10 @@ class PromptService:
 
             try:
                 # Batch check for existing prompts to detect conflicts
-                prompt_names = [prompt.name for prompt in chunk]
+                prompt_names = []
+                for prompt in chunk:
+                    custom_name = getattr(prompt, "custom_name", None) or prompt.name
+                    prompt_names.append(self._compute_prompt_name(custom_name))
 
                 if visibility.lower() == "public":
                     existing_prompts_query = select(DbPrompt).where(DbPrompt.name.in_(prompt_names), DbPrompt.visibility == "public")
@@ -701,7 +738,11 @@ class PromptService:
                         prompt_owner_email = owner_email or getattr(prompt, "owner_email", None) or created_by
                         prompt_visibility = visibility if visibility is not None else getattr(prompt, "visibility", "public")
 
-                        existing_prompt = existing_prompts_map.get(prompt.name)
+                        custom_name = getattr(prompt, "custom_name", None) or prompt.name
+                        display_name = getattr(prompt, "display_name", None) or custom_name
+                        computed_name = self._compute_prompt_name(custom_name)
+
+                        existing_prompt = existing_prompts_map.get(computed_name)
 
                         if existing_prompt:
                             # Handle conflict based on strategy
@@ -716,6 +757,10 @@ class PromptService:
                                 _compile_jinja_template.cache_clear()
                                 existing_prompt.argument_schema = argument_schema
                                 existing_prompt.tags = prompt.tags or []
+                                if getattr(prompt, "custom_name", None) is not None:
+                                    existing_prompt.custom_name = custom_name
+                                if getattr(prompt, "display_name", None) is not None:
+                                    existing_prompt.display_name = display_name
                                 existing_prompt.modified_by = created_by
                                 existing_prompt.modified_from_ip = created_from_ip
                                 existing_prompt.modified_via = created_via
@@ -728,8 +773,14 @@ class PromptService:
                             elif conflict_strategy == "rename":
                                 # Create with renamed prompt
                                 new_name = f"{prompt.name}_imported_{int(datetime.now().timestamp())}"
+                                new_custom_name = new_name
+                                new_display_name = new_name
+                                computed_name = self._compute_prompt_name(new_custom_name)
                                 db_prompt = DbPrompt(
-                                    name=new_name,
+                                    name=computed_name,
+                                    original_name=prompt.name,
+                                    custom_name=new_custom_name,
+                                    display_name=new_display_name,
                                     description=prompt.description,
                                     template=prompt.template,
                                     argument_schema=argument_schema,
@@ -754,7 +805,10 @@ class PromptService:
                         else:
                             # Create new prompt
                             db_prompt = DbPrompt(
-                                name=prompt.name,
+                                name=computed_name,
+                                original_name=prompt.name,
+                                custom_name=custom_name,
+                                display_name=display_name,
                                 description=prompt.description,
                                 template=prompt.template,
                                 argument_schema=argument_schema,
@@ -1262,9 +1316,6 @@ class PromptService:
             },
         ) as span:
             try:
-                # Determine how to look up the prompt
-                prompt_name = None
-
                 # Check if any prompt hooks are registered to avoid unnecessary context creation
                 has_pre_fetch = self._plugin_manager and self._plugin_manager.has_hooks_for(PromptHookType.PROMPT_PRE_FETCH)
                 has_post_fetch = self._plugin_manager and self._plugin_manager.has_hooks_for(PromptHookType.PROMPT_POST_FETCH)
@@ -1303,22 +1354,17 @@ class PromptService:
                         payload = pre_result.modified_payload
                         arguments = payload.args
 
-                # Find prompt by ID or name
-                if prompt_id is not None:
-                    prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id).where(DbPrompt.enabled)).scalar_one_or_none()
-                    search_key = prompt_id
-                else:
-                    # Look up by name (active prompts only)
-                    # Note: Team/owner scoping could be added here when user context is available
-                    prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_name).where(DbPrompt.enabled)).scalar_one_or_none()
-                    search_key = prompt_name
+                # Find prompt by ID first, then by name (active prompts only)
+                search_key = str(prompt_id)
+                prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id).where(DbPrompt.enabled)).scalar_one_or_none()
+                if not prompt:
+                    prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_id).where(DbPrompt.enabled)).scalar_one_or_none()
 
                 if not prompt:
                     # Check if an inactive prompt exists
-                    if prompt_id is not None:
-                        inactive_prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id).where(not_(DbPrompt.enabled))).scalar_one_or_none()
-                    else:
-                        inactive_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_name).where(not_(DbPrompt.enabled))).scalar_one_or_none()
+                    inactive_prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id).where(not_(DbPrompt.enabled))).scalar_one_or_none()
+                    if not inactive_prompt:
+                        inactive_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_id).where(not_(DbPrompt.enabled))).scalar_one_or_none()
 
                     if inactive_prompt:
                         raise PromptNotFoundError(f"Prompt '{search_key}' exists but is inactive")
@@ -1496,21 +1542,36 @@ class PromptService:
             if not prompt:
                 raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
 
-            # # Check for name conflict if name is being changed and visibility is public
-            if prompt_update.name and prompt_update.name != prompt.name:
-                visibility = prompt_update.visibility or prompt.visibility
-                team_id = prompt_update.team_id or prompt.team_id
+            visibility = prompt_update.visibility or prompt.visibility
+            team_id = prompt_update.team_id or prompt.team_id
+            owner_email = prompt_update.owner_email or prompt.owner_email or user_email
+
+            candidate_custom_name = prompt.custom_name
+
+            if prompt_update.name is not None:
+                candidate_custom_name = prompt_update.custom_name or prompt_update.name
+            elif prompt_update.custom_name is not None:
+                candidate_custom_name = prompt_update.custom_name
+
+            computed_name = self._compute_prompt_name(candidate_custom_name, prompt.gateway)
+            if computed_name != prompt.name:
                 if visibility.lower() == "public":
-                    # Check for existing public prompts with the same name
-                    existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_update.name, DbPrompt.visibility == "public")).scalar_one_or_none()
+                    existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == computed_name, DbPrompt.visibility == "public", DbPrompt.id != prompt.id)).scalar_one_or_none()
                     if existing_prompt:
-                        raise PromptNameConflictError(prompt_update.name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
+                        raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
                 elif visibility.lower() == "team" and team_id:
-                    # Check for existing team prompt with the same name
-                    existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_update.name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id)).scalar_one_or_none()
+                    existing_prompt = db.execute(
+                        select(DbPrompt).where(DbPrompt.name == computed_name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id, DbPrompt.id != prompt.id)
+                    ).scalar_one_or_none()
                     logger.info(f"Existing prompt check result: {existing_prompt}")
                     if existing_prompt:
-                        raise PromptNameConflictError(prompt_update.name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
+                        raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
+                elif visibility.lower() == "private":
+                    existing_prompt = db.execute(
+                        select(DbPrompt).where(DbPrompt.name == computed_name, DbPrompt.visibility == "private", DbPrompt.owner_email == owner_email, DbPrompt.id != prompt.id)
+                    ).scalar_one_or_none()
+                    if existing_prompt:
+                        raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
 
             # Check ownership if user_email provided
             if user_email:
@@ -1522,7 +1583,16 @@ class PromptService:
                     raise PermissionError("Only the owner can update this prompt")
 
             if prompt_update.name is not None:
-                prompt.name = prompt_update.name
+                if prompt.gateway_id:
+                    prompt.custom_name = prompt_update.custom_name or prompt_update.name
+                else:
+                    prompt.original_name = prompt_update.name
+                    if prompt_update.custom_name is None:
+                        prompt.custom_name = prompt_update.name
+            if prompt_update.custom_name is not None:
+                prompt.custom_name = prompt_update.custom_name
+            if prompt_update.display_name is not None:
+                prompt.display_name = prompt_update.display_name
             if prompt_update.description is not None:
                 prompt.description = prompt_update.description
             if prompt_update.template is not None:

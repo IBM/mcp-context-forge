@@ -3,6 +3,7 @@
   <thead class="bg-gray-50 dark:bg-gray-700">
     <tr>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-12">S. No.</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-36">Gateway Name</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Name</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Description</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-20">Tags</th>
@@ -15,9 +16,16 @@
   </thead>
   <tbody id="prompts-table-body" class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
 {% for prompt in data %}
+{% set prompt_label = prompt.displayName or prompt.originalName or prompt.name or prompt.id %}
+{% set prompt_gateway = prompt.gatewaySlug or 'Local' %}
+{% set prompt_tech_name = prompt.name or prompt.originalName or prompt.id %}
 <tr>
     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 w-12 dark:text-gray-100">{{ (pagination.page - 1) * pagination.per_page + loop.index }}</td>
-    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">{{ prompt.name }}</td>
+    <td class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300 w-36">{{ prompt_gateway }}</td>
+    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
+      <div>{{ prompt_label }}</div>
+      <div class="text-xs text-gray-500 dark:text-gray-400 font-mono">{{ prompt_tech_name }}</div>
+    </td>
     <td class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300">{% set clean_desc = (prompt.description or "") | replace('\n', ' ') | replace('\r', ' ') %} {% set refactor_desc = clean_desc | striptags | trim | escape %} {% if refactor_desc | length is greaterthan 220 %} {{ refactor_desc[:400] + "..." }} {% else %} {{ refactor_desc }} {% endif %}</td>
     <td class="px-6 py-4 whitespace-nowrap">{% if prompt.tags %} {% for tag in prompt.tags %}<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1">{{ tag.id }}</span>{% endfor %} {% else %}<span class="text-gray-500 dark:text-gray-300 text-xs">None</span>{% endif %}</td>
   <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 w-20">{{ prompt.owner_email }}</td>
@@ -45,7 +53,7 @@
             <input type="hidden" name="activate" value="{{ 'false' if prompt.enabled else 'true' }}" />
             <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md {% if prompt.enabled %}text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20{% else %}text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20{% endif %}">{% if prompt.enabled %}Deactivate{% else %}Activate{% endif %}</button>
           </form>
-          <form method="POST" action="{{ root_path }}/admin/prompts/{{ prompt.id }}/delete" class="contents" onsubmit="return handleDeleteSubmit(event, 'prompt', '{{ prompt.name }}', 'prompts')">
+          <form method="POST" action="{{ root_path }}/admin/prompts/{{ prompt.id }}/delete" class="contents" onsubmit="return handleDeleteSubmit(event, 'prompt', '{{ prompt_label }}', 'prompts')">
             <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors">Delete</button>
           </form>
         </div>
