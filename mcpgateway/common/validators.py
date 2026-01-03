@@ -1085,14 +1085,24 @@ class SecurityValidator:
                 ...     {'9': {'10': 'end'}}}}}}}}}}
                 >>> SecurityValidator.validate_json_depth(deep_10)
 
+            At new default limit (30) – allowed: ::
+
+                >>> deep_30 = {'1': {'2': {'3': {'4': {'5': {'6': {'7': {'8':
+                ...     {'9': {'10': {'11': {'12': {'13': {'14': {'15': {'16':
+                ...     {'17': {'18': {'19': {'20': {'21': {'22': {'23': {'24':
+                ...     {'25': {'26': {'27': {'28': {'29': {'30': 'end'}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+                >>> SecurityValidator.validate_json_depth(deep_30)
+
             One level deeper – rejected: ::
 
-                >>> deep_11 = {'1': {'2': {'3': {'4': {'5': {'6': {'7': {'8':
-                ...     {'9': {'10': {'11': 'end'}}}}}}}}}}}
-                >>> SecurityValidator.validate_json_depth(deep_11)
+                >>> deep_31 = {'1': {'2': {'3': {'4': {'5': {'6': {'7': {'8':
+                ...     {'9': {'10': {'11': {'12': {'13': {'14': {'15': {'16':
+                ...     {'17': {'18': {'19': {'20': {'21': {'22': {'23': {'24':
+                ...     {'25': {'26': {'27': {'28': {'29': {'30': {'31': 'end'}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+                >>> SecurityValidator.validate_json_depth(deep_31)
                 Traceback (most recent call last):
                     ...
-                ValueError: JSON structure exceeds maximum depth of 10
+                ValueError: JSON structure exceeds maximum depth of 30
         """
         if max_depth is None:
             max_depth = cls.MAX_JSON_DEPTH
