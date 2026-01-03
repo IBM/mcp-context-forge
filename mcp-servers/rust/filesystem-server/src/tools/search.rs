@@ -3,6 +3,7 @@ use tokio::fs;
 
 pub async fn list_directory(path: &str) -> Result<Vec<String>> {
     // List content of a folder and return the files and folders inside alfabetically
+    tracing::info!("Running list directory for {}", path);
     let mut entries = fs::read_dir(path)
         .await
         .context(format!("Failed to read directory: {}", path))?;
