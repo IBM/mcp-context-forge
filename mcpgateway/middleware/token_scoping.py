@@ -395,8 +395,13 @@ class TokenScopingMiddleware:
 
             return True
         finally:
-            db.commit()  # Commit read-only transaction to avoid implicit rollback
-            db.close()
+            # Ensure close() always runs even if commit() fails
+            # Without this nested try/finally, a commit() failure (e.g., PgBouncer timeout)
+            # would skip close(), leaving the connection in "idle in transaction" state
+            try:
+                db.commit()  # Commit read-only transaction to avoid implicit rollback
+            finally:
+                db.close()
 
     def _check_resource_team_ownership(self, request_path: str, token_teams: list) -> bool:  # pylint: disable=too-many-return-statements
         """
@@ -657,8 +662,13 @@ class TokenScopingMiddleware:
             # Fail securely - deny access on error
             return False
         finally:
-            db.commit()  # Commit read-only transaction to avoid implicit rollback
-            db.close()
+            # Ensure close() always runs even if commit() fails
+            # Without this nested try/finally, a commit() failure (e.g., PgBouncer timeout)
+            # would skip close(), leaving the connection in "idle in transaction" state
+            try:
+                db.commit()  # Commit read-only transaction to avoid implicit rollback
+            finally:
+                db.close()
 
     async def __call__(self, request: Request, call_next):
         """Middleware function to check token scoping including team-level validation.

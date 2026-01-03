@@ -59,7 +59,7 @@ from mcp.client.streamable_http import streamablehttp_client
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import selectinload, Session
 
 try:
     # Third-Party - check if redis is available
@@ -1061,8 +1061,16 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             GatewayConnectionError: If connection or OAuth fails
         """
         try:
-            # Get the gateway
-            gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+            # Get the gateway with eager loading for sync operations to avoid N+1 queries
+            gateway = db.execute(
+                select(DbGateway)
+                .options(
+                    selectinload(DbGateway.tools),
+                    selectinload(DbGateway.resources),
+                    selectinload(DbGateway.prompts),
+                )
+                .where(DbGateway.id == gateway_id)
+            ).scalar_one_or_none()
 
             if not gateway:
                 raise ValueError(f"Gateway {gateway_id} not found")
@@ -1520,8 +1528,16 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             ValidationError: If validation fails
         """
         try:  # pylint: disable=too-many-nested-blocks
-            # Find gateway
-            gateway = db.get(DbGateway, gateway_id)
+            # Find gateway with eager loading for sync operations to avoid N+1 queries
+            gateway = db.execute(
+                select(DbGateway)
+                .options(
+                    selectinload(DbGateway.tools),
+                    selectinload(DbGateway.resources),
+                    selectinload(DbGateway.prompts),
+                )
+                .where(DbGateway.id == gateway_id)
+            ).scalar_one_or_none()
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
@@ -2078,7 +2094,16 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             PermissionError: If user doesn't own the agent.
         """
         try:
-            gateway = db.get(DbGateway, gateway_id)
+            # Get gateway with eager loading for sync operations to avoid N+1 queries
+            gateway = db.execute(
+                select(DbGateway)
+                .options(
+                    selectinload(DbGateway.tools),
+                    selectinload(DbGateway.resources),
+                    selectinload(DbGateway.prompts),
+                )
+                .where(DbGateway.id == gateway_id)
+            ).scalar_one_or_none()
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
@@ -2365,8 +2390,16 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             ...     pass
         """
         try:
-            # Find gateway
-            gateway = db.get(DbGateway, gateway_id)
+            # Find gateway with eager loading for deletion to avoid N+1 queries
+            gateway = db.execute(
+                select(DbGateway)
+                .options(
+                    selectinload(DbGateway.tools),
+                    selectinload(DbGateway.resources),
+                    selectinload(DbGateway.prompts),
+                )
+                .where(DbGateway.id == gateway_id)
+            ).scalar_one_or_none()
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
@@ -2611,8 +2644,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 else:
                                     raise GatewayConnectionError(f"No valid OAuth token for user {app_user_email} and gateway {gateway.name}")
                             finally:
-                                db.commit()  # End read-only transaction cleanly before returning to pool
-                                db.close()
+                                # Ensure close() always runs even if commit() fails
+                                # Without this nested try/finally, a commit() failure (e.g., PgBouncer timeout)
+                                # would skip close(), leaving the connection in "idle in transaction" state
+                                try:
+                                    db.commit()  # End read-only transaction cleanly before returning to pool
+                                finally:
+                                    db.close()
                     except Exception as oauth_error:
                         raise GatewayConnectionError(f"Failed to obtain OAuth token for gateway {gateway.name}: {oauth_error}")
                 else:

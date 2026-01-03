@@ -1138,6 +1138,7 @@ class TestServerService:
 
         # Mock query chain
         mock_query = MagicMock()
+        mock_query.options.return_value = mock_query  # For selectinload
         mock_query.where.return_value = mock_query
         mock_query.order_by.return_value = mock_query
         mock_query.limit.return_value = mock_query
