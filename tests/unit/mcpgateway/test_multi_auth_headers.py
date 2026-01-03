@@ -315,12 +315,13 @@ class TestMultiAuthHeaders:
         gateway_db_obj.version = 1
 
         mock_db = MagicMock()
-        mock_db.get.return_value = gateway_db_obj
-        mock_db.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+        # First execute call returns gateway (selectinload query), subsequent calls return None (conflict checks)
+        mock_db.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=gateway_db_obj))
         mock_db.add_all = MagicMock()
         mock_db.delete = MagicMock()
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
+        mock_db.query = MagicMock(return_value=MagicMock(filter=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))))
 
         monkeypatch.setattr(service, "_initialize_gateway", AsyncMock(return_value=({}, [], [], [])))
         monkeypatch.setattr(service, "_update_or_create_tools", MagicMock(return_value=[]))
