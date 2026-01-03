@@ -381,7 +381,11 @@ class AuthCache:
                 self._context_cache.pop(key, None)
 
             self._user_cache.pop(email, None)
-            self._team_cache.pop(email, None)
+
+            # Clear team membership cache entries (keys are email:team_ids)
+            team_keys_to_remove = [k for k in self._team_cache if k.startswith(f"{email}:")]
+            for key in team_keys_to_remove:
+                self._team_cache.pop(key, None)
 
         # Clear Redis
         redis = await self._get_redis_client()
@@ -395,6 +399,10 @@ class AuthCache:
                 # Delete context keys (pattern match)
                 pattern = self._get_redis_key("ctx", f"{email}:*")
                 async for key in redis.scan_iter(match=pattern):
+                    await redis.delete(key)
+                # Delete membership keys (pattern match)
+                membership_pattern = self._get_redis_key("membership", f"{email}:*")
+                async for key in redis.scan_iter(match=membership_pattern):
                     await redis.delete(key)
 
                 # Publish invalidation for other workers
@@ -765,6 +773,200 @@ class AuthCache:
             except Exception as e:
                 logger.warning(f"AuthCache Redis invalidate_user_teams failed: {e}")
 
+    # =========================================================================
+    # Team Membership Validation Cache
+    # =========================================================================
+    # Used by TokenScopingMiddleware to cache email_team_members lookups.
+    # This prevents repeated DB queries for the same user+teams combination.
+
+    def get_team_membership_valid_sync(self, user_email: str, team_ids: List[str]) -> Optional[bool]:
+        """Get cached team membership validation result (synchronous).
+
+        This is the synchronous version used by token_scoping middleware.
+        Returns None on cache miss (caller should check DB).
+
+        Args:
+            user_email: User email
+            team_ids: List of team IDs to validate membership for
+
+        Returns:
+            - None: Cache miss (caller should query DB)
+            - True: User is valid member of all teams (cached)
+            - False: User is NOT a valid member of all teams (cached)
+
+        Examples:
+            >>> cache = AuthCache()
+            >>> result = cache.get_team_membership_valid_sync("test@example.com", ["team-1"])
+            >>> result is None  # Cache miss
+            True
+        """
+        if not self._enabled or not team_ids:
+            return None
+
+        # Create cache key from user + sorted team IDs
+        sorted_teams = ":".join(sorted(team_ids))
+        cache_key = f"{user_email}:{sorted_teams}"
+
+        # Check in-memory cache only (sync version)
+        entry = self._team_cache.get(cache_key)
+        if entry and not entry.is_expired():
+            self._hit_count += 1
+            return entry.value
+
+        self._miss_count += 1
+        return None
+
+    def set_team_membership_valid_sync(self, user_email: str, team_ids: List[str], valid: bool) -> None:
+        """Store team membership validation result in cache (synchronous).
+
+        Args:
+            user_email: User email
+            team_ids: List of team IDs that were validated
+            valid: Whether user is a valid member of all teams
+
+        Examples:
+            >>> cache = AuthCache()
+            >>> cache.set_team_membership_valid_sync("test@example.com", ["team-1"], True)
+        """
+        if not self._enabled or not team_ids:
+            return
+
+        # Create cache key from user + sorted team IDs
+        sorted_teams = ":".join(sorted(team_ids))
+        cache_key = f"{user_email}:{sorted_teams}"
+
+        # Store in in-memory cache
+        with self._lock:
+            self._team_cache[cache_key] = CacheEntry(
+                value=valid,
+                expiry=time.time() + self._team_ttl,
+            )
+
+    async def get_team_membership_valid(self, user_email: str, team_ids: List[str]) -> Optional[bool]:
+        """Get cached team membership validation result (async).
+
+        Returns None on cache miss (caller should check DB).
+
+        Args:
+            user_email: User email
+            team_ids: List of team IDs to validate membership for
+
+        Returns:
+            - None: Cache miss (caller should query DB)
+            - True: User is valid member of all teams (cached)
+            - False: User is NOT a valid member of all teams (cached)
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AuthCache()
+            >>> result = asyncio.run(cache.get_team_membership_valid("test@example.com", ["team-1"]))
+            >>> result is None  # Cache miss
+            True
+        """
+        if not self._enabled or not team_ids:
+            return None
+
+        # Create cache key from user + sorted team IDs
+        sorted_teams = ":".join(sorted(team_ids))
+        cache_key = f"{user_email}:{sorted_teams}"
+
+        # Try Redis first
+        redis = await self._get_redis_client()
+        if redis:
+            try:
+                redis_key = self._get_redis_key("membership", cache_key)
+                data = await redis.get(redis_key)
+                if data is not None:
+                    self._hit_count += 1
+                    self._redis_hit_count += 1
+                    # Stored as "1" for True, "0" for False
+                    decoded = data.decode() if isinstance(data, bytes) else data
+                    return decoded == "1"
+                self._redis_miss_count += 1
+            except Exception as e:
+                logger.warning(f"AuthCache Redis get_team_membership_valid failed: {e}")
+
+        # Fall back to in-memory cache
+        entry = self._team_cache.get(cache_key)
+        if entry and not entry.is_expired():
+            self._hit_count += 1
+            return entry.value
+
+        self._miss_count += 1
+        return None
+
+    async def set_team_membership_valid(self, user_email: str, team_ids: List[str], valid: bool) -> None:
+        """Store team membership validation result in cache (async).
+
+        Args:
+            user_email: User email
+            team_ids: List of team IDs that were validated
+            valid: Whether user is a valid member of all teams
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AuthCache()
+            >>> asyncio.run(cache.set_team_membership_valid("test@example.com", ["team-1"], True))
+        """
+        if not self._enabled or not team_ids:
+            return
+
+        # Create cache key from user + sorted team IDs
+        sorted_teams = ":".join(sorted(team_ids))
+        cache_key = f"{user_email}:{sorted_teams}"
+
+        # Store in Redis
+        redis = await self._get_redis_client()
+        if redis:
+            try:
+                redis_key = self._get_redis_key("membership", cache_key)
+                # Store as "1" for True, "0" for False
+                await redis.setex(redis_key, self._team_ttl, "1" if valid else "0")
+            except Exception as e:
+                logger.warning(f"AuthCache Redis set_team_membership_valid failed: {e}")
+
+        # Store in in-memory cache
+        with self._lock:
+            self._team_cache[cache_key] = CacheEntry(
+                value=valid,
+                expiry=time.time() + self._team_ttl,
+            )
+
+    async def invalidate_team_membership(self, user_email: str) -> None:
+        """Invalidate team membership cache for a user.
+
+        Call this when a user's team membership changes (add/remove member,
+        role change, deactivation).
+
+        Args:
+            user_email: User email whose membership cache should be invalidated
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AuthCache()
+            >>> asyncio.run(cache.invalidate_team_membership("test@example.com"))
+        """
+        logger.debug(f"AuthCache: Invalidating team membership cache for {user_email}")
+
+        # Clear in-memory cache entries for this user
+        with self._lock:
+            keys_to_remove = [k for k in self._team_cache if k.startswith(f"{user_email}:")]
+            for key in keys_to_remove:
+                self._team_cache.pop(key, None)
+
+        # Clear Redis
+        redis = await self._get_redis_client()
+        if redis:
+            try:
+                # Pattern match all membership keys for this user
+                pattern = self._get_redis_key("membership", f"{user_email}:*")
+                async for key in redis.scan_iter(match=pattern):
+                    await redis.delete(key)
+                # Publish invalidation for other workers
+                await redis.publish("mcpgw:auth:invalidate", f"membership:{user_email}")
+            except Exception as e:
+                logger.warning(f"AuthCache Redis invalidate_team_membership failed: {e}")
+
     async def is_token_revoked(self, jti: str) -> Optional[bool]:
         """Check if a token is revoked (cached check only).
 
@@ -913,6 +1115,7 @@ class AuthCache:
             "context_cache_size": len(self._context_cache),
             "role_cache_size": len(self._role_cache),
             "teams_list_cache_size": len(self._teams_list_cache),
+            "team_membership_cache_size": len(self._team_cache),
             "user_ttl": self._user_ttl,
             "revocation_ttl": self._revocation_ttl,
             "team_ttl": self._team_ttl,

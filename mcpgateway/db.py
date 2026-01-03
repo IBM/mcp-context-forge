@@ -1453,6 +1453,8 @@ class EmailTeam(Base):
     def get_member_count(self) -> int:
         """Get the current number of team members.
 
+        Uses direct SQL COUNT to avoid loading all members into memory.
+
         Returns:
             int: Number of active team members
 
@@ -1461,10 +1463,23 @@ class EmailTeam(Base):
             >>> team.get_member_count()
             0
         """
-        return len([m for m in self.members if m.is_active])
+        # Third-Party
+        from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
+
+        session = object_session(self)
+        if session is None:
+            # Fallback for detached objects (e.g., in doctests)
+            return len([m for m in self.members if m.is_active])
+
+        count = session.query(func.count(EmailTeamMember.id)).filter(  # pylint: disable=not-callable
+            EmailTeamMember.team_id == self.id, EmailTeamMember.is_active.is_(True)
+        ).scalar()
+        return count or 0
 
     def is_member(self, user_email: str) -> bool:
         """Check if a user is a member of this team.
+
+        Uses direct SQL EXISTS to avoid loading all members into memory.
 
         Args:
             user_email: Email address to check
@@ -1477,10 +1492,21 @@ class EmailTeam(Base):
             >>> team.is_member("admin@example.com")
             False
         """
-        return any(m.user_email == user_email and m.is_active for m in self.members)
+        # Third-Party
+        from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
+
+        session = object_session(self)
+        if session is None:
+            # Fallback for detached objects (e.g., in doctests)
+            return any(m.user_email == user_email and m.is_active for m in self.members)
+
+        exists = session.query(EmailTeamMember.id).filter(EmailTeamMember.team_id == self.id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)).first()
+        return exists is not None
 
     def get_member_role(self, user_email: str) -> Optional[str]:
         """Get the role of a user in this team.
+
+        Uses direct SQL query to avoid loading all members into memory.
 
         Args:
             user_email: Email address to check
@@ -1492,10 +1518,19 @@ class EmailTeam(Base):
             >>> team = EmailTeam(name="Test Team", slug="test-team", created_by="admin@example.com")
             >>> team.get_member_role("admin@example.com")
         """
-        for member in self.members:
-            if member.user_email == user_email and member.is_active:
-                return member.role
-        return None
+        # Third-Party
+        from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
+
+        session = object_session(self)
+        if session is None:
+            # Fallback for detached objects (e.g., in doctests)
+            for member in self.members:
+                if member.user_email == user_email and member.is_active:
+                    return member.role
+            return None
+
+        member = session.query(EmailTeamMember.role).filter(EmailTeamMember.team_id == self.id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)).first()
+        return member[0] if member else None
 
 
 class EmailTeamMember(Base):

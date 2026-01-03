@@ -352,7 +352,12 @@ class TokenScopingMiddleware:
         Check if user still belongs to teams in the token.
 
         For public-only tokens (no teams), always returns True.
-        For team-scoped tokens, validates membership.
+        For team-scoped tokens, validates membership with caching.
+
+        Uses in-memory cache (per gateway instance, 60s TTL) to avoid repeated
+        email_team_members queries for the same user+teams combination.
+        Note: Sync path uses in-memory only for performance; Redis is not
+        consulted to avoid async overhead in the hot path.
 
         Args:
             payload: Decoded JWT payload containing teams
@@ -375,8 +380,23 @@ class TokenScopingMiddleware:
             logger.warning("Token missing user email")
             return False
 
+        # Extract team IDs from token (handles both dict and string formats)
+        team_ids = [team["id"] if isinstance(team, dict) else team for team in teams]
+
+        # First-Party
+        from mcpgateway.cache.auth_cache import get_auth_cache  # pylint: disable=import-outside-toplevel
+
+        # Check cache first (synchronous in-memory lookup)
+        auth_cache = get_auth_cache()
+        cached_result = auth_cache.get_team_membership_valid_sync(user_email, team_ids)
+        if cached_result is not None:
+            if not cached_result:
+                logger.warning(f"Token invalid (cached): User {user_email} no longer member of teams")
+            return cached_result
+
+        # Cache miss - query database
         # Third-Party
-        from sqlalchemy import and_, select  # pylint: disable=import-outside-toplevel
+        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
 
         # First-Party
         from mcpgateway.db import EmailTeamMember, get_db  # pylint: disable=import-outside-toplevel
@@ -387,18 +407,31 @@ class TokenScopingMiddleware:
             db = next(get_db())
 
         try:
-            for team in teams:
-                # Extract team ID from dict or use string directly (backward compatibility)
-                team_id = team["id"] if isinstance(team, dict) else team
+            # Single query for all teams (fixes N+1 pattern)
+            memberships = (
+                db.execute(
+                    select(EmailTeamMember.team_id).where(
+                        EmailTeamMember.team_id.in_(team_ids),
+                        EmailTeamMember.user_email == user_email,
+                        EmailTeamMember.is_active.is_(True),
+                    )
+                )
+                .scalars()
+                .all()
+            )
 
-                membership = db.execute(
-                    select(EmailTeamMember).where(and_(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active))
-                ).scalar_one_or_none()
+            # Check if user is member of ALL teams in token
+            valid_team_ids = set(memberships)
+            missing_teams = set(team_ids) - valid_team_ids
 
-                if not membership:
-                    logger.warning(f"Token invalid: User {user_email} no longer member of team {team_id}")
-                    return False
+            if missing_teams:
+                logger.warning(f"Token invalid: User {user_email} no longer member of teams: {missing_teams}")
+                # Cache negative result
+                auth_cache.set_team_membership_valid_sync(user_email, team_ids, False)
+                return False
 
+            # Cache positive result
+            auth_cache.set_team_membership_valid_sync(user_email, team_ids, True)
             return True
         finally:
             # Only commit/close if we created the session

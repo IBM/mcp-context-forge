@@ -837,6 +837,20 @@ class EmailAuthService:
             self.db.delete(user)
             self.db.commit()
 
+            # Invalidate all auth caches for deleted user
+            try:
+                # Standard
+                import asyncio  # pylint: disable=import-outside-toplevel
+
+                # First-Party
+                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+                asyncio.create_task(auth_cache.invalidate_user(email))
+                asyncio.create_task(auth_cache.invalidate_user_teams(email))
+                asyncio.create_task(auth_cache.invalidate_team_membership(email))
+            except Exception as cache_error:
+                logger.debug(f"Failed to invalidate cache on user delete: {cache_error}")
+
             logger.info(f"User {email} deleted permanently")
             return True
 

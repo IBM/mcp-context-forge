@@ -401,10 +401,11 @@ class TeamManagementService:
 
                 asyncio.create_task(auth_cache.invalidate_team_roles(team_id))
                 asyncio.create_task(admin_stats_cache.invalidate_teams())
-                # Also invalidate team cache and teams list cache for each member
+                # Also invalidate team cache, teams list cache, and team membership cache for each member
                 for membership in memberships:
                     asyncio.create_task(auth_cache.invalidate_team(membership.user_email))
                     asyncio.create_task(auth_cache.invalidate_user_teams(membership.user_email))
+                    asyncio.create_task(auth_cache.invalidate_team_membership(membership.user_email))
             except Exception as cache_error:
                 logger.debug(f"Failed to invalidate caches on team delete: {cache_error}")
 
@@ -499,6 +500,7 @@ class TeamManagementService:
                 asyncio.create_task(auth_cache.invalidate_team(user_email))
                 asyncio.create_task(auth_cache.invalidate_user_role(user_email, team_id))
                 asyncio.create_task(auth_cache.invalidate_user_teams(user_email))
+                asyncio.create_task(auth_cache.invalidate_team_membership(user_email))
                 asyncio.create_task(admin_stats_cache.invalidate_teams())
             except Exception as cache_error:
                 logger.debug(f"Failed to invalidate cache on team add: {cache_error}")
@@ -571,6 +573,7 @@ class TeamManagementService:
                 asyncio.create_task(auth_cache.invalidate_team(user_email))
                 asyncio.create_task(auth_cache.invalidate_user_role(user_email, team_id))
                 asyncio.create_task(auth_cache.invalidate_user_teams(user_email))
+                asyncio.create_task(auth_cache.invalidate_team_membership(user_email))
             except Exception as cache_error:
                 logger.debug(f"Failed to invalidate cache on team remove: {cache_error}")
 
@@ -1076,6 +1079,7 @@ class TeamManagementService:
                 asyncio.create_task(auth_cache.invalidate_team(join_request.user_email))
                 asyncio.create_task(auth_cache.invalidate_user_role(join_request.user_email, join_request.team_id))
                 asyncio.create_task(auth_cache.invalidate_user_teams(join_request.user_email))
+                asyncio.create_task(auth_cache.invalidate_team_membership(join_request.user_email))
                 asyncio.create_task(admin_stats_cache.invalidate_teams())
             except Exception as cache_error:
                 logger.debug(f"Failed to invalidate caches on join approval: {cache_error}")
