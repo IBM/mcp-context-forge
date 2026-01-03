@@ -24,6 +24,8 @@ Library:
 Doctest examples
 ----------------
 >>> from mcpgateway.utils import create_jwt_token as jwt_util
+>>> from mcpgateway.utils.jwt_config_helper import clear_jwt_caches
+>>> clear_jwt_caches()
 >>> jwt_util.settings.jwt_secret_key = 'secret'
 >>> jwt_util.settings.jwt_algorithm = 'HS256'
 >>> token = jwt_util._create_jwt_token({'sub': 'alice'}, expires_in_minutes=1, secret='secret', algorithm='HS256')
@@ -171,6 +173,8 @@ async def create_jwt_token(
 
     Doctest:
     >>> from mcpgateway.utils import create_jwt_token as jwt_util
+    >>> from mcpgateway.utils.jwt_config_helper import clear_jwt_caches
+    >>> clear_jwt_caches()
     >>> jwt_util.settings.jwt_secret_key = 'secret'
     >>> jwt_util.settings.jwt_algorithm = 'HS256'
     >>> import asyncio

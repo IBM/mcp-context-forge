@@ -4,11 +4,13 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-JWT Configuration Helper Utilities.
+JWT Configuration Helper Utilities with caching.
 This module provides JWT configuration validation and key retrieval functions.
+Configuration is validated once and cached for performance.
 """
 
 # Standard
+from functools import lru_cache
 from pathlib import Path
 
 # First-Party
@@ -28,28 +30,39 @@ class JWTConfigurationError(Exception):
     """
 
 
+@lru_cache(maxsize=1)
+def _get_validated_config() -> str:
+    """Validate and cache JWT configuration at first call.
+
+    Returns:
+        The validated algorithm string.
+
+    Raises:
+        JWTConfigurationError: If configuration is invalid
+    """
+    algorithm = settings.jwt_algorithm
+
+    if algorithm.startswith("HS"):
+        secret_key = settings.jwt_secret_key.get_secret_value() if hasattr(settings.jwt_secret_key, "get_secret_value") else settings.jwt_secret_key
+        if not secret_key:
+            raise JWTConfigurationError(f"JWT algorithm {algorithm} requires jwt_secret_key to be set")
+    else:
+        _validate_asymmetric_keys(algorithm)
+
+    return algorithm
+
+
 def validate_jwt_algo_and_keys() -> None:
     """Validate JWT algorithm and key configuration.
 
-    Checks that the JWT configuration is valid:
-    - For HMAC algorithms: jwt_secret_key must be set
-    - For asymmetric algorithms: key files must exist and be readable
+    This function is cached after first successful call. Subsequent calls
+    are no-ops. Use clear_jwt_caches() to reset if configuration changes.
 
     Raises:
         JWTConfigurationError: If configuration is invalid
         FileNotFoundError: If key files don't exist
     """
-    algorithm = settings.jwt_algorithm
-
-    # HMAC algorithms (symmetric)
-    if algorithm.startswith("HS"):
-        # Handle SecretStr type from Pydantic v2
-        secret_key = settings.jwt_secret_key.get_secret_value() if hasattr(settings.jwt_secret_key, "get_secret_value") else settings.jwt_secret_key
-        if not secret_key:
-            raise JWTConfigurationError(f"JWT algorithm {algorithm} requires jwt_secret_key to be set")
-    # All other algorithms are asymmetric
-    else:
-        _validate_asymmetric_keys(algorithm)
+    _get_validated_config()
 
 
 def _validate_asymmetric_keys(algorithm: str) -> None:
@@ -81,8 +94,9 @@ def _validate_asymmetric_keys(algorithm: str) -> None:
         raise JWTConfigurationError(f"JWT private key path is invalid: {private_key_path}")
 
 
+@lru_cache(maxsize=1)
 def get_jwt_private_key_or_secret() -> str:
-    """Get signing key based on configured algorithm.
+    """Get signing key based on configured algorithm (cached).
 
     Returns secret key for HMAC algorithms or private key content for asymmetric algorithms.
 
@@ -108,8 +122,9 @@ def get_jwt_private_key_or_secret() -> str:
         return f.read()
 
 
+@lru_cache(maxsize=1)
 def get_jwt_public_key_or_secret() -> str:
-    """Get verification key based on configured algorithm.
+    """Get verification key based on configured algorithm (cached).
 
     Returns secret key for HMAC algorithms or public key content for asymmetric algorithms.
 
@@ -133,3 +148,18 @@ def get_jwt_public_key_or_secret() -> str:
         path = Path.cwd() / path
     with open(path, "r") as f:
         return f.read()
+
+
+def clear_jwt_caches() -> None:
+    """Clear all JWT-related caches.
+
+    Call this function:
+    - In test fixtures to ensure test isolation
+    - After config reload (if runtime config changes are supported)
+    - After key rotation (if keys are rotated at runtime)
+
+    Note: In production, JWT config/key changes require application restart.
+    """
+    _get_validated_config.cache_clear()
+    get_jwt_public_key_or_secret.cache_clear()
+    get_jwt_private_key_or_secret.cache_clear()
