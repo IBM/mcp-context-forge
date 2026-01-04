@@ -1951,6 +1951,54 @@ class TestToolService:
             assert call_kwargs["error_message"] == "HTTP error"
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_error_exception_group_unwrapping(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Test that ExceptionGroup errors are unwrapped to show root cause.
+
+        MCP SDK uses TaskGroup which wraps exceptions in ExceptionGroup. When such
+        errors occur, the error message should show the actual root cause error
+        (e.g., "Connection refused") rather than the unhelpful "unhandled errors
+        in a TaskGroup (1 sub-exception)" message.
+
+        See GitHub issue #1902.
+        """
+        # Configure tool
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_value = None
+
+        # Mock DB to return the tool and GlobalConfig
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        # Create a nested ExceptionGroup simulating MCP SDK TaskGroup behavior
+        root_cause_error = ConnectionRefusedError("Connection refused by upstream MCP server")
+        inner_group = ExceptionGroup("inner task group", [root_cause_error])
+        outer_group = ExceptionGroup("unhandled errors in a TaskGroup (1 sub-exception)", [inner_group])
+
+        # Mock HTTP client to raise an ExceptionGroup
+        tool_service._http_client.request.side_effect = outer_group
+
+        # Mock metrics buffer service and decode_auth
+        mock_metrics_buffer = Mock()
+        with (
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+        ):
+            # Should raise ToolInvocationError with the unwrapped root cause message
+            with pytest.raises(ToolInvocationError) as exc_info:
+                await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+            # The error message should contain the root cause, not the ExceptionGroup wrapper
+            error_str = str(exc_info.value)
+            assert "Connection refused by upstream MCP server" in error_str
+            assert "unhandled errors in a TaskGroup" not in error_str
+
+            # Verify metrics recorded with root cause error message
+            mock_metrics_buffer.record_tool_metric.assert_called_once()
+            call_kwargs = mock_metrics_buffer.record_tool_metric.call_args[1]
+            assert call_kwargs["success"] is False
+            assert "Connection refused by upstream MCP server" in call_kwargs["error_message"]
+
+    @pytest.mark.asyncio
     async def test_reset_metrics(self, tool_service, test_db):
         """Test resetting metrics."""
         # Mock DB operations
