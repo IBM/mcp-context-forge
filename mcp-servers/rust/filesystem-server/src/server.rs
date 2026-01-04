@@ -1,4 +1,4 @@
-use crate::tools::search;
+use crate::tools::{search, read};
 use rmcp::ErrorData as McpError;
 use rmcp::{
     ServerHandler,
@@ -32,6 +32,12 @@ pub struct SearchFolderParameters {
         description = "List of glob patterns used to exclude files or directories from the search"
     )]
     exclude_pattern: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ReadFileParameters {
+    #[schemars(description = "Filepath for reading a file")]
+    path: String,
 }
 
 #[tool_router] // Macro that generates the tool router
@@ -87,6 +93,32 @@ impl FilesystemServer {
 
         Ok(CallToolResult::success(vec![content]))
     }
+
+    #[tool(description = "Read a file from a given filepath")]
+    async fn read_file(
+        &self,
+        Parameters(ReadFileParameters {
+            path,
+        }): Parameters<ReadFileParameters>,
+    ) -> Result<CallToolResult, McpError> {
+        let files_found = read::read_file(&path)
+            .await
+            .map_err(|e| {
+                McpError::internal_error(
+                    format!("Error searching directory '{}': {}", path, e),
+                    None,
+                )
+            })?;
+
+        let content = Content::json(&files_found).map_err(|e| {
+            McpError::internal_error(
+                format!("Error converting directory entries to JSON: {}", e),
+                None,
+            )
+        })?;
+
+        Ok(CallToolResult::success(vec![content]))
+    }
 }
 
 #[tool_handler] // Macro that will generate a tool handler
@@ -104,6 +136,7 @@ impl ServerHandler for FilesystemServer {
         The available actions are:
         - list_directory: List files and subdirectories in a directory
         - search_files: Recursively search for files under a directory matching glob patterns
+        - read_file: Read a file from a given filepath
         "
                 .to_string(),
             ),
