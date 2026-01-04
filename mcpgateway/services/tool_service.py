@@ -485,9 +485,14 @@ class ToolService:
         tool_dict = tool.__dict__.copy()
         tool_dict.pop("_sa_instance_state", None)
 
-        tool_dict["metrics"] = tool.metrics_summary if include_metrics else None
-
-        tool_dict["execution_count"] = tool.execution_count if include_metrics else None
+        # Compute metrics in a single pass (matches server/resource/prompt service pattern)
+        if include_metrics:
+            metrics = tool.metrics_summary  # Single-pass computation
+            tool_dict["metrics"] = metrics
+            tool_dict["execution_count"] = metrics["total_executions"]
+        else:
+            tool_dict["metrics"] = None
+            tool_dict["execution_count"] = None
 
         tool_dict["request_type"] = tool.request_type
         tool_dict["annotations"] = tool.annotations or {}
