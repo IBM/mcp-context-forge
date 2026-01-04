@@ -13,7 +13,6 @@ import time
 from typing import Any, Dict, Optional
 
 # Third-Party
-import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 import yaml
@@ -473,10 +472,13 @@ class CatalogService:
             error = None
 
             try:
-                async with httpx.AsyncClient(verify=not settings.skip_ssl_verify) as client:
-                    # Try a simple GET request with short timeout
-                    response = await client.get(server_data["url"], timeout=5.0, follow_redirects=True)
-                    is_available = response.status_code < 500
+                # First-Party
+                from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
+
+                client = await get_http_client()
+                # Try a simple GET request with short timeout
+                response = await client.get(server_data["url"], timeout=5.0, follow_redirects=True)
+                is_available = response.status_code < 500
             except Exception as e:
                 error = str(e)
                 is_available = False

@@ -3074,15 +3074,29 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 Returns:
                     httpx.AsyncClient: Configured HTTPX async client
                 """
+                # First-Party
+                from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
+
                 return httpx.AsyncClient(
-                    verify=ssl_context if ssl_context else True,
+                    verify=ssl_context if ssl_context else get_default_verify(),
                     follow_redirects=True,
                     headers=headers,
-                    timeout=timeout or httpx.Timeout(30.0),
+                    timeout=timeout if timeout else get_http_timeout(),
                     auth=auth,
+                    limits=httpx.Limits(
+                        max_connections=settings.httpx_max_connections,
+                        max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                        keepalive_expiry=settings.httpx_keepalive_expiry,
+                    ),
                 )
 
-            async with httpx.AsyncClient(verify=ssl_context if ssl_context else True) as client:
+            # Use isolated client for gateway health checks (each gateway may have custom CA cert)
+            # First-Party
+            from mcpgateway.services.http_client_service import get_isolated_http_client  # pylint: disable=import-outside-toplevel
+
+            # Use admin timeout for health checks (fail fast, don't wait 120s for slow upstreams)
+            # Pass ssl_context if present, otherwise let get_isolated_http_client use skip_ssl_verify setting
+            async with get_isolated_http_client(timeout=settings.httpx_admin_read_timeout, verify=ssl_context) as client:
                 logger.debug(f"Checking health of gateway: {gateway_name} ({gateway_url})")
                 try:
                     # Handle different authentication types
@@ -4278,16 +4292,24 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             Returns:
                 httpx.AsyncClient: Configured HTTPX async client
             """
+            # First-Party
+            from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
+
             if ca_certificate:
                 ctx = self.create_ssl_context(ca_certificate)
             else:
                 ctx = None
             return httpx.AsyncClient(
-                verify=ctx if ctx else True,
+                verify=ctx if ctx else get_default_verify(),
                 follow_redirects=True,
                 headers=headers,
-                timeout=timeout or httpx.Timeout(30.0),
+                timeout=timeout if timeout else get_http_timeout(),
                 auth=auth,
+                limits=httpx.Limits(
+                    max_connections=settings.httpx_max_connections,
+                    max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                    keepalive_expiry=settings.httpx_keepalive_expiry,
+                ),
             )
 
         # Use async with for both sse_client and ClientSession
@@ -4419,16 +4441,24 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             Returns:
                 httpx.AsyncClient: Configured HTTPX async client
             """
+            # First-Party
+            from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
+
             if ca_certificate:
                 ctx = self.create_ssl_context(ca_certificate)
             else:
                 ctx = None
             return httpx.AsyncClient(
-                verify=ctx if ctx else True,
+                verify=ctx if ctx else get_default_verify(),
                 follow_redirects=True,
                 headers=headers,
-                timeout=timeout or httpx.Timeout(30.0),
+                timeout=timeout if timeout else get_http_timeout(),
                 auth=auth,
+                limits=httpx.Limits(
+                    max_connections=settings.httpx_max_connections,
+                    max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                    keepalive_expiry=settings.httpx_keepalive_expiry,
+                ),
             )
 
         async with streamablehttp_client(url=server_url, headers=authentication, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):

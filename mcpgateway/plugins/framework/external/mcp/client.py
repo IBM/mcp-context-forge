@@ -26,6 +26,7 @@ import orjson
 
 # First-Party
 from mcpgateway.common.models import TransportType
+from mcpgateway.config import settings
 from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
 from mcpgateway.plugins.framework.constants import CONTEXT, ERROR, GET_PLUGIN_CONFIG, HOOK_TYPE, IGNORE_CONFIG_EXTERNAL, INVOKE_HOOK, NAME, PAYLOAD, PLUGIN_NAME, PYTHON, PYTHON_SUFFIX, RESULT
 from mcpgateway.plugins.framework.errors import convert_exception_to_error, PluginError
@@ -154,14 +155,26 @@ class ExternalPlugin(Plugin):
                 PluginError: If TLS configuration fails.
             """
 
+            # First-Party
+            from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
+
             kwargs: dict[str, Any] = {"follow_redirects": True}
             if headers:
                 kwargs["headers"] = headers
-            kwargs["timeout"] = timeout or httpx.Timeout(30.0)
+            kwargs["timeout"] = timeout if timeout else get_http_timeout()
             if auth is not None:
                 kwargs["auth"] = auth
 
+            # Add connection pool limits
+            kwargs["limits"] = httpx.Limits(
+                max_connections=settings.httpx_max_connections,
+                max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                keepalive_expiry=settings.httpx_keepalive_expiry,
+            )
+
             if not tls_config:
+                # Use skip_ssl_verify setting when no custom TLS config
+                kwargs["verify"] = get_default_verify()
                 return httpx.AsyncClient(**kwargs)
 
             # Create SSL context using the utility function

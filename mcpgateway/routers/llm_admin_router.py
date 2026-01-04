@@ -708,51 +708,54 @@ async def fetch_provider_models(
             headers["Authorization"] = f"Bearer {api_key}"
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(url, headers=headers)
-            response.raise_for_status()
-            data = response.json()
+        # First-Party
+        from mcpgateway.services.http_client_service import get_admin_timeout, get_http_client  # pylint: disable=import-outside-toplevel
 
-            # Parse models based on provider type
-            models = []
-            if "data" in data:
-                # OpenAI-compatible format
-                for model in data["data"]:
-                    model_id = model.get("id", "")
+        client = await get_http_client()
+        response = await client.get(url, headers=headers, timeout=get_admin_timeout())
+        response.raise_for_status()
+        data = response.json()
+
+        # Parse models based on provider type
+        models = []
+        if "data" in data:
+            # OpenAI-compatible format
+            for model in data["data"]:
+                model_id = model.get("id", "")
+                models.append(
+                    {
+                        "id": model_id,
+                        "name": model.get("name", model_id),
+                        "owned_by": model.get("owned_by", provider.provider_type),
+                        "created": model.get("created"),
+                    }
+                )
+        elif "models" in data:
+            # Ollama native format or Cohere format
+            for model in data["models"]:
+                if isinstance(model, dict):
+                    model_id = model.get("name", model.get("id", ""))
                     models.append(
                         {
                             "id": model_id,
-                            "name": model.get("name", model_id),
-                            "owned_by": model.get("owned_by", provider.provider_type),
-                            "created": model.get("created"),
+                            "name": model_id,
+                            "owned_by": provider.provider_type,
                         }
                     )
-            elif "models" in data:
-                # Ollama native format or Cohere format
-                for model in data["models"]:
-                    if isinstance(model, dict):
-                        model_id = model.get("name", model.get("id", ""))
-                        models.append(
-                            {
-                                "id": model_id,
-                                "name": model_id,
-                                "owned_by": provider.provider_type,
-                            }
-                        )
-                    else:
-                        models.append(
-                            {
-                                "id": str(model),
-                                "name": str(model),
-                                "owned_by": provider.provider_type,
-                            }
-                        )
+                else:
+                    models.append(
+                        {
+                            "id": str(model),
+                            "name": str(model),
+                            "owned_by": provider.provider_type,
+                        }
+                    )
 
-            return {
-                "success": True,
-                "models": models,
-                "count": len(models),
-            }
+        return {
+            "success": True,
+            "models": models,
+            "count": len(models),
+        }
 
     except httpx.HTTPStatusError as e:
         return {

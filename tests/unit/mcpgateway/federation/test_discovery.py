@@ -27,6 +27,10 @@ class DummySettings:
     federation_peers = []
     basic_auth_user = "user"
     basic_auth_password = "pass"
+    # HTTPX connection pool settings
+    httpx_max_connections = 100
+    httpx_max_keepalive_connections = 50
+    httpx_keepalive_expiry = 30.0
 
 
 @patch("mcpgateway.federation.discovery.settings", new=DummySettings)

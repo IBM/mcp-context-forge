@@ -508,6 +508,48 @@ When `ADMIN_STATS_CACHE_ENABLED=true` (default), admin dashboard statistics are 
 
 See [ADR-029](../architecture/adr/029-registry-admin-stats-caching.md) for implementation details.
 
+### HTTPX Client Connection Pool
+
+MCP Gateway uses HTTP client connection pooling for outbound requests, providing ~20x better performance than per-request clients by reusing TCP connections. These settings affect federation, health checks, A2A agent calls, SSO, MCP server connections, and catalog operations.
+
+!!! note "Shared vs Factory Clients"
+    Most requests use a shared singleton client for optimal connection reuse. SSE/streaming MCP connections use factory-created clients with the same settings, as they require dedicated long-lived connections for proper lifecycle management.
+
+```bash
+# Connection Pool Limits
+HTTPX_MAX_CONNECTIONS=200              # Total connections in pool (10-1000, default: 200)
+HTTPX_MAX_KEEPALIVE_CONNECTIONS=100    # Keepalive connections (1-500, default: 100)
+HTTPX_KEEPALIVE_EXPIRY=30.0            # Idle connection expiry in seconds (5.0-300.0)
+
+# Timeout Configuration
+HTTPX_CONNECT_TIMEOUT=5.0              # TCP connection timeout in seconds (default: 5, fast for LAN)
+HTTPX_READ_TIMEOUT=120.0               # Response read timeout in seconds (default: 120, high for slow tools)
+HTTPX_WRITE_TIMEOUT=30.0               # Request write timeout in seconds (default: 30)
+HTTPX_POOL_TIMEOUT=10.0                # Wait for available connection in seconds (default: 10, fail fast)
+
+# Protocol Configuration
+HTTPX_HTTP2_ENABLED=false              # Enable HTTP/2 (requires server support)
+
+# Admin Operations Timeout
+HTTPX_ADMIN_READ_TIMEOUT=30.0          # Admin UI operations timeout (default: 30, fail fast)
+```
+
+**Sizing Guidelines:**
+
+| Deployment Size | `HTTPX_MAX_CONNECTIONS` | `HTTPX_MAX_KEEPALIVE_CONNECTIONS` | Notes |
+|----------------|------------------------|----------------------------------|-------|
+| Development    | 50                     | 25                               | Minimal footprint |
+| Production     | 200                    | 100                              | Default, handles typical load |
+| High-traffic   | 300-500                | 150-250                          | Heavy federation/A2A usage |
+
+**Formula:** `HTTPX_MAX_CONNECTIONS = concurrent_outbound_requests × 1.5`
+
+!!! tip "Connection Pool vs Per-Request Clients"
+    The shared connection pool eliminates TCP handshake and TLS negotiation overhead for each request. In benchmarks, this provides ~20x improvement in throughput compared to creating a new client per request.
+
+!!! warning "HTTP/2 Support"
+    HTTP/2 (`HTTPX_HTTP2_ENABLED=true`) enables multiplexing over a single connection but requires upstream servers to support HTTP/2. Leave disabled unless all upstream services support HTTP/2.
+
 ### Logging Settings
 
 ```bash

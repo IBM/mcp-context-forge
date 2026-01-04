@@ -23,6 +23,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
@@ -185,7 +186,19 @@ class ContentModerationPlugin(Plugin):
         """
         super().__init__(config)
         self._cfg = ContentModerationConfig(**(config.config or {}))
-        self._client = httpx.AsyncClient()
+        self._client = httpx.AsyncClient(
+            limits=httpx.Limits(
+                max_connections=settings.httpx_max_connections,
+                max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                keepalive_expiry=settings.httpx_keepalive_expiry,
+            ),
+            timeout=httpx.Timeout(
+                connect=settings.httpx_connect_timeout,
+                read=settings.httpx_read_timeout,
+                write=settings.httpx_write_timeout,
+                pool=settings.httpx_pool_timeout,
+            ),
+        )
         self._cache: Dict[str, ModerationResult] = {} if self._cfg.enable_caching else None
 
     async def _get_cache_key(self, text: str, provider: ModerationProvider) -> str:

@@ -44,27 +44,30 @@ async def discover_keycloak_endpoints(base_url: str, realm: str, timeout: int = 
     well_known_url = f"{base_url}/realms/{realm}/.well-known/openid-configuration"
 
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            logger.info(f"Discovering Keycloak endpoints from {well_known_url}")
-            response = await client.get(well_known_url)
-            response.raise_for_status()
-            config = response.json()
+        # First-Party
+        from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
 
-            endpoints = {
-                "authorization_url": config.get("authorization_endpoint"),
-                "token_url": config.get("token_endpoint"),
-                "userinfo_url": config.get("userinfo_endpoint"),
-                "issuer": config.get("issuer"),
-                "jwks_uri": config.get("jwks_uri"),
-            }
+        client = await get_http_client()
+        logger.info(f"Discovering Keycloak endpoints from {well_known_url}")
+        response = await client.get(well_known_url, timeout=timeout)
+        response.raise_for_status()
+        config = response.json()
 
-            # Validate that all required endpoints are present
-            if not all(endpoints.values()):
-                logger.error(f"Incomplete OIDC configuration from {well_known_url}")
-                return None
+        endpoints = {
+            "authorization_url": config.get("authorization_endpoint"),
+            "token_url": config.get("token_endpoint"),
+            "userinfo_url": config.get("userinfo_endpoint"),
+            "issuer": config.get("issuer"),
+            "jwks_uri": config.get("jwks_uri"),
+        }
 
-            logger.info(f"Successfully discovered Keycloak endpoints for realm '{realm}'")
-            return endpoints
+        # Validate that all required endpoints are present
+        if not all(endpoints.values()):
+            logger.error(f"Incomplete OIDC configuration from {well_known_url}")
+            return None
+
+        logger.info(f"Successfully discovered Keycloak endpoints for realm '{realm}'")
+        return endpoints
 
     except httpx.HTTPError as e:
         logger.error(f"Failed to discover Keycloak endpoints from {well_known_url}: {e}")
@@ -90,7 +93,18 @@ def discover_keycloak_endpoints_sync(base_url: str, realm: str, timeout: int = 1
     well_known_url = f"{base_url}/realms/{realm}/.well-known/openid-configuration"
 
     try:
-        with httpx.Client(timeout=timeout) as client:
+        # First-Party
+        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+        with httpx.Client(
+            timeout=timeout,
+            limits=httpx.Limits(
+                max_connections=settings.httpx_max_connections,
+                max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                keepalive_expiry=settings.httpx_keepalive_expiry,
+            ),
+            verify=not settings.skip_ssl_verify,
+        ) as client:
             logger.info(f"Discovering Keycloak endpoints from {well_known_url}")
             response = client.get(well_known_url)
             response.raise_for_status()
