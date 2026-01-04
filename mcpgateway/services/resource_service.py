@@ -1403,11 +1403,14 @@ class ResourceService:
                         Returns:
                             httpx.AsyncClient: Configured HTTPX async client
                         """
+                        # First-Party
+                        from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
+
                         return httpx.AsyncClient(
-                            verify=ssl_context if ssl_context else True,  # pylint: disable=cell-var-from-loop
+                            verify=ssl_context if ssl_context else get_default_verify(),  # pylint: disable=cell-var-from-loop
                             follow_redirects=True,
                             headers=headers,
-                            timeout=timeout or httpx.Timeout(30.0),
+                            timeout=timeout if timeout else get_http_timeout(),
                             auth=auth,
                             limits=httpx.Limits(
                                 max_connections=settings.httpx_max_connections,

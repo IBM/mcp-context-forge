@@ -255,11 +255,27 @@ def get_admin_timeout() -> httpx.Timeout:
     )
 
 
+def get_default_verify() -> bool:
+    """
+    Get the default SSL verification setting based on skip_ssl_verify config.
+
+    Use this when creating factory clients that should respect the global
+    skip_ssl_verify setting when no custom SSL context is provided.
+
+    Returns:
+        bool: True if SSL should be verified, False if skip_ssl_verify is enabled.
+    """
+    # First-Party
+    from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+    return not settings.skip_ssl_verify
+
+
 @asynccontextmanager
 async def get_isolated_http_client(
     timeout: Optional[float] = None,
     headers: Optional[dict[str, str]] = None,
-    verify: bool | ssl.SSLContext = True,
+    verify: Optional[bool | ssl.SSLContext] = None,
     auth: Optional[httpx.Auth] = None,
     http2: Optional[bool] = None,
 ) -> AsyncIterator[httpx.AsyncClient]:
@@ -275,7 +291,8 @@ async def get_isolated_http_client(
     Args:
         timeout: Optional read timeout override (seconds).
         headers: Optional default headers for all requests.
-        verify: SSL verification setting (True, False, or SSLContext).
+        verify: SSL verification setting (True, False, SSLContext, or None).
+                If None, uses skip_ssl_verify setting to determine default.
         auth: Optional authentication handler.
         http2: Override HTTP/2 setting (default: use settings).
 
@@ -292,11 +309,14 @@ async def get_isolated_http_client(
     limits = get_http_limits()
     timeout_config = get_http_timeout(read_timeout=timeout)
 
+    # Use skip_ssl_verify setting if no explicit verify value provided
+    effective_verify: bool | ssl.SSLContext = verify if verify is not None else get_default_verify()
+
     async with httpx.AsyncClient(
         limits=limits,
         timeout=timeout_config,
         headers=headers,
-        verify=verify,
+        verify=effective_verify,
         auth=auth,
         http2=http2 if http2 is not None else settings.httpx_http2_enabled,
         follow_redirects=True,

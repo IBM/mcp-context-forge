@@ -2512,15 +2512,18 @@ class ToolService:
                                 valid = validate_signature(gateway_ca_cert.encode(), gateway_ca_cert_sig, public_key_pem)
                             else:
                                 valid = True
+                        # First-Party
+                        from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
+
                         if valid:
                             ctx = create_ssl_context(gateway_ca_cert)
                         else:
                             ctx = None
                         return httpx.AsyncClient(
-                            verify=ctx if ctx else True,
+                            verify=ctx if ctx else get_default_verify(),
                             follow_redirects=True,
                             headers=headers,
-                            timeout=timeout or httpx.Timeout(30.0),
+                            timeout=timeout if timeout else get_http_timeout(),
                             auth=auth,
                             limits=httpx.Limits(
                                 max_connections=settings.httpx_max_connections,

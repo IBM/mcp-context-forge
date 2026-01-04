@@ -510,7 +510,10 @@ See [ADR-029](../architecture/adr/029-registry-admin-stats-caching.md) for imple
 
 ### HTTPX Client Connection Pool
 
-MCP Gateway uses a shared HTTP client for all outbound requests, providing ~20x better performance than per-request clients by reusing TCP connections. This affects federation, health checks, A2A agent calls, SSO, and catalog operations.
+MCP Gateway uses HTTP client connection pooling for outbound requests, providing ~20x better performance than per-request clients by reusing TCP connections. These settings affect federation, health checks, A2A agent calls, SSO, MCP server connections, and catalog operations.
+
+!!! note "Shared vs Factory Clients"
+    Most requests use a shared singleton client for optimal connection reuse. SSE/streaming MCP connections use factory-created clients with the same settings, as they require dedicated long-lived connections for proper lifecycle management.
 
 ```bash
 # Connection Pool Limits

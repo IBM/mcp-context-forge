@@ -155,10 +155,13 @@ class ExternalPlugin(Plugin):
                 PluginError: If TLS configuration fails.
             """
 
+            # First-Party
+            from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
+
             kwargs: dict[str, Any] = {"follow_redirects": True}
             if headers:
                 kwargs["headers"] = headers
-            kwargs["timeout"] = timeout or httpx.Timeout(30.0)
+            kwargs["timeout"] = timeout if timeout else get_http_timeout()
             if auth is not None:
                 kwargs["auth"] = auth
 
@@ -170,6 +173,8 @@ class ExternalPlugin(Plugin):
             )
 
             if not tls_config:
+                # Use skip_ssl_verify setting when no custom TLS config
+                kwargs["verify"] = get_default_verify()
                 return httpx.AsyncClient(**kwargs)
 
             # Create SSL context using the utility function
