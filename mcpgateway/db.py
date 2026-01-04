@@ -2887,6 +2887,9 @@ class Tool(Base):
         When metrics are already loaded, computes from memory in O(n).
         When not loaded, uses a single SQL query with conditional aggregation.
 
+        Note: For bulk operations, use metrics_summary which computes all fields
+        in a single pass, or ensure metrics are preloaded via selectinload.
+
         Returns:
             tuple[int, int, int]: (total, successful, failed) counts.
         """
