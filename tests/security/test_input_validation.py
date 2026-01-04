@@ -175,22 +175,82 @@ class TestSecurityValidation:
     ]
 
     # Deep Nesting Vectors
+    # Note: VALIDATION_MAX_JSON_DEPTH default is 30 (increased from 10 for complex APIs like Notion)
+    # These payloads exceed that limit with 35 levels of nesting
     DEEP_NESTING_PAYLOADS = [
-        {"a": {"b": {"c": {"d": {"e": {"f": {"g": {"h": {"i": {"j": {"k": "too deep"}}}}}}}}}}},
-        [[[[[[[[[[["too deep"]]]]]]]]]]],
+        {"a": {"b": {"c": {"d": {"e": {"f": {"g": {"h": {"i": {"j": {"k": {"l": {"m": {"n": {"o": {"p": {"q": {"r": {"s": {"t": {"u": {"v": {"w": {"x": {"y": {"z": {"aa": {"bb": {"cc": {"dd": {"ee": {"ff": {"gg": {"hh": {"ii": "too deep"}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}},
+        [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[["too deep"]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]],
         json.dumps(
             {
-                "level": 1,
-                "next": {
-                    "level": 2,
-                    "next": {
-                        "level": 3,
-                        "next": {
-                            "level": 4,
-                            "next": {"level": 5, "next": {"level": 6, "next": {"level": 7, "next": {"level": 8, "next": {"level": 9, "next": {"level": 10, "next": {"level": 11, "next": {}}}}}}}},
-                        },
-                    },
-                },
+                "level": 1, "next": {
+                    "level": 2, "next": {
+                        "level": 3, "next": {
+                            "level": 4, "next": {
+                                "level": 5, "next": {
+                                    "level": 6, "next": {
+                                        "level": 7, "next": {
+                                            "level": 8, "next": {
+                                                "level": 9, "next": {
+                                                    "level": 10, "next": {
+                                                        "level": 11, "next": {
+                                                            "level": 12, "next": {
+                                                                "level": 13, "next": {
+                                                                    "level": 14, "next": {
+                                                                        "level": 15, "next": {
+                                                                            "level": 16, "next": {
+                                                                                "level": 17, "next": {
+                                                                                    "level": 18, "next": {
+                                                                                        "level": 19, "next": {
+                                                                                            "level": 20, "next": {
+                                                                                                "level": 21, "next": {
+                                                                                                    "level": 22, "next": {
+                                                                                                        "level": 23, "next": {
+                                                                                                            "level": 24, "next": {
+                                                                                                                "level": 25, "next": {
+                                                                                                                    "level": 26, "next": {
+                                                                                                                        "level": 27, "next": {
+                                                                                                                            "level": 28, "next": {
+                                                                                                                                "level": 29, "next": {
+                                                                                                                                    "level": 30, "next": {
+                                                                                                                                        "level": 31, "next": {
+                                                                                                                                            "level": 32, "next": {
+                                                                                                                                                "level": 33, "next": {
+                                                                                                                                                    "level": 34, "next": {
+                                                                                                                                                        "level": 35, "next": {}
+                                                                                                                                                    }
+                                                                                                                                                }
+                                                                                                                                            }
+                                                                                                                                        }
+                                                                                                                                    }
+                                                                                                                                }
+                                                                                                                            }
+                                                                                                                        }
+                                                                                                                    }
+                                                                                                                }
+                                                                                                            }
+                                                                                                        }
+                                                                                                    }
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         ),
     ]
