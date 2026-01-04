@@ -1132,13 +1132,14 @@ class SessionRegistry(SessionBackend):
                 poll_interval = settings.poll_interval  # start fast (100ms)
                 max_interval = settings.max_interval  # cap at 5 seconds
                 backoff_factor = settings.backoff_factor
-
+                i = 1
                 while True:
-
+                    print(f"Polling ---> {i}")
                     session, record = await asyncio.to_thread(_db_read_session_and_message, session_id)
 
                     # session gone → stop polling
                     if not session:
+                        print(f"Polling Stopped---> {i}")
                         break
 
                     if record:
@@ -1167,6 +1168,7 @@ class SessionRegistry(SessionBackend):
                         # update polling interval with backoff factor
                         poll_interval = min(poll_interval * backoff_factor, max_interval)
 
+                    i = i + 1
                     await asyncio.sleep(poll_interval)
 
             asyncio.create_task(message_check_loop(session_id))
