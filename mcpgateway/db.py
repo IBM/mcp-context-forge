@@ -2929,8 +2929,6 @@ class Tool(Base):
     def execution_count(self) -> int:
         """Number of ToolMetric records associated with this tool instance.
 
-        Uses cached counts from _get_metric_counts for efficiency.
-
         Returns:
             int: Count of ToolMetric records for this tool.
         """
@@ -2950,8 +2948,6 @@ class Tool(Base):
     def successful_executions(self) -> int:
         """Count of successful tool executions.
 
-        Uses cached counts from _get_metric_counts for efficiency.
-
         Returns:
             int: The count of successful tool executions.
         """
@@ -2961,8 +2957,6 @@ class Tool(Base):
     def failed_executions(self) -> int:
         """Count of failed tool executions.
 
-        Uses cached counts from _get_metric_counts for efficiency.
-
         Returns:
             int: The count of failed tool executions.
         """
@@ -2971,8 +2965,6 @@ class Tool(Base):
     @property
     def failure_rate(self) -> float:
         """Failure rate as a float between 0 and 1.
-
-        Uses cached counts from _get_metric_counts for efficiency.
 
         Returns:
             float: The failure rate as a value between 0 and 1.

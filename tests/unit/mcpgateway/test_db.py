@@ -64,6 +64,74 @@ def test_tool_metrics_properties_empty():
     assert tool.last_execution_time is None
 
 
+def test_tool_get_metric_counts_with_loaded_metrics():
+    """Test _get_metric_counts returns correct tuple when metrics are loaded."""
+    now = datetime.now(timezone.utc)
+    metrics = [
+        db.ToolMetric(response_time=1.0, is_success=True, timestamp=now),
+        db.ToolMetric(response_time=2.0, is_success=True, timestamp=now),
+        db.ToolMetric(response_time=3.0, is_success=False, timestamp=now),
+    ]
+    tool = make_tool_with_metrics(metrics)
+    total, successful, failed = tool._get_metric_counts()
+    assert total == 3
+    assert successful == 2
+    assert failed == 1
+
+
+def test_tool_get_metric_counts_detached_returns_zeros():
+    """Test _get_metric_counts returns (0, 0, 0) for detached object without session."""
+    tool = db.Tool()
+    # Don't set metrics - simulates detached object
+    total, successful, failed = tool._get_metric_counts()
+    assert total == 0
+    assert successful == 0
+    assert failed == 0
+
+
+def test_tool_metrics_summary_all_fields():
+    """Test metrics_summary returns all expected fields with correct values."""
+    now = datetime.now(timezone.utc)
+    metrics = [
+        db.ToolMetric(response_time=1.0, is_success=True, timestamp=now),
+        db.ToolMetric(response_time=3.0, is_success=False, timestamp=now + timedelta(seconds=1)),
+    ]
+    tool = make_tool_with_metrics(metrics)
+    summary = tool.metrics_summary
+    assert summary["total_executions"] == 2
+    assert summary["successful_executions"] == 1
+    assert summary["failed_executions"] == 1
+    assert summary["failure_rate"] == 0.5
+    assert summary["min_response_time"] == 1.0
+    assert summary["max_response_time"] == 3.0
+    assert summary["avg_response_time"] == 2.0
+    assert summary["last_execution_time"] == now + timedelta(seconds=1)
+
+
+def test_tool_metrics_summary_empty():
+    """Test metrics_summary returns zeros/None for empty metrics."""
+    tool = db.Tool()
+    tool.metrics = []
+    summary = tool.metrics_summary
+    assert summary["total_executions"] == 0
+    assert summary["successful_executions"] == 0
+    assert summary["failed_executions"] == 0
+    assert summary["failure_rate"] == 0.0
+    assert summary["min_response_time"] is None
+    assert summary["max_response_time"] is None
+    assert summary["avg_response_time"] is None
+    assert summary["last_execution_time"] is None
+
+
+def test_tool_metrics_summary_detached():
+    """Test metrics_summary returns zeros/None for detached object without session."""
+    tool = db.Tool()
+    # Don't set metrics - simulates detached object without session
+    summary = tool.metrics_summary
+    assert summary["total_executions"] == 0
+    assert summary["failure_rate"] == 0.0
+
+
 # --- Resource metrics properties ---
 def make_resource_with_metrics(metrics):
     resource = db.Resource()
@@ -507,19 +575,23 @@ def test_session_record_and_message_record():
 
 # --- extract_json_field ---
 def test_extract_json_field_sqlite(monkeypatch):
+    # Third-Party
     from sqlalchemy import Column, String
     from sqlalchemy.dialects import sqlite
+
     col = Column("attributes", String)
     monkeypatch.setattr(db, "backend", "sqlite")
     expr = db.extract_json_field(col, '$."tool.name"')
     compiled = str(expr.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
     assert "json_extract" in compiled
-    assert "$.\"tool.name\"" in compiled
+    assert '$."tool.name"' in compiled
 
 
 def test_extract_json_field_postgresql(monkeypatch):
+    # Third-Party
     from sqlalchemy import Column, String
     from sqlalchemy.dialects import postgresql
+
     col = Column("attributes", String)
     monkeypatch.setattr(db, "backend", "postgresql")
     expr = db.extract_json_field(col, '$."tool.name"')
