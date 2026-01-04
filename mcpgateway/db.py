@@ -3404,6 +3404,96 @@ class Resource(Base):
             return None
         return max(m.timestamp for m in self.metrics)
 
+    @property
+    def metrics_summary(self) -> Dict[str, Any]:
+        """Aggregated metrics for the resource.
+
+        When metrics are loaded: computes all values from memory in a single pass.
+        When not loaded: uses a single SQL query with aggregation for all fields.
+
+        Returns:
+            Dict[str, Any]: Dictionary containing aggregated metrics:
+                - total_executions, successful_executions, failed_executions
+                - failure_rate, min/max/avg_response_time, last_execution_time
+        """
+        if self._metrics_loaded():
+            total = 0
+            successful = 0
+            min_rt: Optional[float] = None
+            max_rt: Optional[float] = None
+            sum_rt = 0.0
+            last_time: Optional[datetime] = None
+
+            for m in self.metrics:
+                total += 1
+                if m.is_success:
+                    successful += 1
+                rt = m.response_time
+                if min_rt is None or rt < min_rt:
+                    min_rt = rt
+                if max_rt is None or rt > max_rt:
+                    max_rt = rt
+                sum_rt += rt
+                if last_time is None or m.timestamp > last_time:
+                    last_time = m.timestamp
+
+            failed = total - successful
+            return {
+                "total_executions": total,
+                "successful_executions": successful,
+                "failed_executions": failed,
+                "failure_rate": failed / total if total > 0 else 0.0,
+                "min_response_time": min_rt,
+                "max_response_time": max_rt,
+                "avg_response_time": sum_rt / total if total > 0 else None,
+                "last_execution_time": last_time,
+            }
+
+        # Third-Party
+        from sqlalchemy import case  # pylint: disable=import-outside-toplevel
+        from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
+
+        session = object_session(self)
+        if session is None:
+            return {
+                "total_executions": 0,
+                "successful_executions": 0,
+                "failed_executions": 0,
+                "failure_rate": 0.0,
+                "min_response_time": None,
+                "max_response_time": None,
+                "avg_response_time": None,
+                "last_execution_time": None,
+            }
+
+        result = (
+            session.query(
+                func.count(ResourceMetric.id),  # pylint: disable=not-callable
+                func.sum(case((ResourceMetric.is_success.is_(True), 1), else_=0)),
+                func.min(ResourceMetric.response_time),  # pylint: disable=not-callable
+                func.max(ResourceMetric.response_time),  # pylint: disable=not-callable
+                func.avg(ResourceMetric.response_time),  # pylint: disable=not-callable
+                func.max(ResourceMetric.timestamp),  # pylint: disable=not-callable
+            )
+            .filter(ResourceMetric.resource_id == self.id)
+            .one()
+        )
+
+        total = result[0] or 0
+        successful = result[1] or 0
+        failed = total - successful
+
+        return {
+            "total_executions": total,
+            "successful_executions": successful,
+            "failed_executions": failed,
+            "failure_rate": failed / total if total > 0 else 0.0,
+            "min_response_time": result[2],
+            "max_response_time": result[3],
+            "avg_response_time": float(result[4]) if result[4] is not None else None,
+            "last_execution_time": result[5],
+        }
+
     # Team scoping fields for resource organization
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -3724,6 +3814,96 @@ class Prompt(Base):
             return None
         return max(m.timestamp for m in self.metrics)
 
+    @property
+    def metrics_summary(self) -> Dict[str, Any]:
+        """Aggregated metrics for the prompt.
+
+        When metrics are loaded: computes all values from memory in a single pass.
+        When not loaded: uses a single SQL query with aggregation for all fields.
+
+        Returns:
+            Dict[str, Any]: Dictionary containing aggregated metrics:
+                - total_executions, successful_executions, failed_executions
+                - failure_rate, min/max/avg_response_time, last_execution_time
+        """
+        if self._metrics_loaded():
+            total = 0
+            successful = 0
+            min_rt: Optional[float] = None
+            max_rt: Optional[float] = None
+            sum_rt = 0.0
+            last_time: Optional[datetime] = None
+
+            for m in self.metrics:
+                total += 1
+                if m.is_success:
+                    successful += 1
+                rt = m.response_time
+                if min_rt is None or rt < min_rt:
+                    min_rt = rt
+                if max_rt is None or rt > max_rt:
+                    max_rt = rt
+                sum_rt += rt
+                if last_time is None or m.timestamp > last_time:
+                    last_time = m.timestamp
+
+            failed = total - successful
+            return {
+                "total_executions": total,
+                "successful_executions": successful,
+                "failed_executions": failed,
+                "failure_rate": failed / total if total > 0 else 0.0,
+                "min_response_time": min_rt,
+                "max_response_time": max_rt,
+                "avg_response_time": sum_rt / total if total > 0 else None,
+                "last_execution_time": last_time,
+            }
+
+        # Third-Party
+        from sqlalchemy import case  # pylint: disable=import-outside-toplevel
+        from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
+
+        session = object_session(self)
+        if session is None:
+            return {
+                "total_executions": 0,
+                "successful_executions": 0,
+                "failed_executions": 0,
+                "failure_rate": 0.0,
+                "min_response_time": None,
+                "max_response_time": None,
+                "avg_response_time": None,
+                "last_execution_time": None,
+            }
+
+        result = (
+            session.query(
+                func.count(PromptMetric.id),  # pylint: disable=not-callable
+                func.sum(case((PromptMetric.is_success.is_(True), 1), else_=0)),
+                func.min(PromptMetric.response_time),  # pylint: disable=not-callable
+                func.max(PromptMetric.response_time),  # pylint: disable=not-callable
+                func.avg(PromptMetric.response_time),  # pylint: disable=not-callable
+                func.max(PromptMetric.timestamp),  # pylint: disable=not-callable
+            )
+            .filter(PromptMetric.prompt_id == self.id)
+            .one()
+        )
+
+        total = result[0] or 0
+        successful = result[1] or 0
+        failed = total - successful
+
+        return {
+            "total_executions": total,
+            "successful_executions": successful,
+            "failed_executions": failed,
+            "failure_rate": failed / total if total > 0 else 0.0,
+            "min_response_time": result[2],
+            "max_response_time": result[3],
+            "avg_response_time": float(result[4]) if result[4] is not None else None,
+            "last_execution_time": result[5],
+        }
+
 
 class Server(Base):
     """
@@ -3938,6 +4118,96 @@ class Server(Base):
         if not self.metrics:
             return None
         return max(m.timestamp for m in self.metrics)
+
+    @property
+    def metrics_summary(self) -> Dict[str, Any]:
+        """Aggregated metrics for the server.
+
+        When metrics are loaded: computes all values from memory in a single pass.
+        When not loaded: uses a single SQL query with aggregation for all fields.
+
+        Returns:
+            Dict[str, Any]: Dictionary containing aggregated metrics:
+                - total_executions, successful_executions, failed_executions
+                - failure_rate, min/max/avg_response_time, last_execution_time
+        """
+        if self._metrics_loaded():
+            total = 0
+            successful = 0
+            min_rt: Optional[float] = None
+            max_rt: Optional[float] = None
+            sum_rt = 0.0
+            last_time: Optional[datetime] = None
+
+            for m in self.metrics:
+                total += 1
+                if m.is_success:
+                    successful += 1
+                rt = m.response_time
+                if min_rt is None or rt < min_rt:
+                    min_rt = rt
+                if max_rt is None or rt > max_rt:
+                    max_rt = rt
+                sum_rt += rt
+                if last_time is None or m.timestamp > last_time:
+                    last_time = m.timestamp
+
+            failed = total - successful
+            return {
+                "total_executions": total,
+                "successful_executions": successful,
+                "failed_executions": failed,
+                "failure_rate": failed / total if total > 0 else 0.0,
+                "min_response_time": min_rt,
+                "max_response_time": max_rt,
+                "avg_response_time": sum_rt / total if total > 0 else None,
+                "last_execution_time": last_time,
+            }
+
+        # Third-Party
+        from sqlalchemy import case  # pylint: disable=import-outside-toplevel
+        from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
+
+        session = object_session(self)
+        if session is None:
+            return {
+                "total_executions": 0,
+                "successful_executions": 0,
+                "failed_executions": 0,
+                "failure_rate": 0.0,
+                "min_response_time": None,
+                "max_response_time": None,
+                "avg_response_time": None,
+                "last_execution_time": None,
+            }
+
+        result = (
+            session.query(
+                func.count(ServerMetric.id),  # pylint: disable=not-callable
+                func.sum(case((ServerMetric.is_success.is_(True), 1), else_=0)),
+                func.min(ServerMetric.response_time),  # pylint: disable=not-callable
+                func.max(ServerMetric.response_time),  # pylint: disable=not-callable
+                func.avg(ServerMetric.response_time),  # pylint: disable=not-callable
+                func.max(ServerMetric.timestamp),  # pylint: disable=not-callable
+            )
+            .filter(ServerMetric.server_id == self.id)
+            .one()
+        )
+
+        total = result[0] or 0
+        successful = result[1] or 0
+        failed = total - successful
+
+        return {
+            "total_executions": total,
+            "successful_executions": successful,
+            "failed_executions": failed,
+            "failure_rate": failed / total if total > 0 else 0.0,
+            "min_response_time": result[2],
+            "max_response_time": result[3],
+            "avg_response_time": float(result[4]) if result[4] is not None else None,
+            "last_execution_time": result[5],
+        }
 
     # Team scoping fields for resource organization
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
