@@ -1,4 +1,4 @@
-use crate::tools::{info, read, search};
+use crate::tools::{info, read, search, write};
 use rmcp::ErrorData as McpError;
 use rmcp::{
     ServerHandler,
@@ -52,6 +52,16 @@ pub struct GetFileInfoParameters {
     path: String,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct CreateFileParameters {
+    #[schemars(description = "Path for the new file")]
+    path: String,
+    #[schemars(description = "content for the new file")]
+    content: String,
+}
+
+
+// SERVER ROUTER
 #[tool_router]
 impl FilesystemServer {
     pub fn new() -> Self {
@@ -126,6 +136,25 @@ impl FilesystemServer {
         Ok(CallToolResult::success(vec![content]))
     }
 
+    #[tool(description = "Create or ovewrite a file")]
+    async fn write_file(
+        &self,
+        Parameters(CreateFileParameters { path, content}): Parameters<CreateFileParameters>,
+    ) -> Result<CallToolResult, McpError> {
+        let result = write::write_file(&path, content).await.map_err(|e| {
+            McpError::internal_error(format!("Error writing file'{}': {}", path, e), None)
+        })?;
+
+        let content = Content::json(&result).map_err(|e| {
+            McpError::internal_error(
+                format!("Error converting file content to JSON: {}", e),
+                None,
+            )
+        })?;
+
+        Ok(CallToolResult::success(vec![content]))
+    }
+
     #[tool(description = "Read several files from a list of filepaths")]
     async fn read_multiple_files(
         &self,
@@ -188,6 +217,7 @@ impl ServerHandler for FilesystemServer {
         - read_file: Read a file from a given filepath
         - read_multiple_files: Read several files from a list of filepaths
         - get_file_info: Return metadata for a given file path, including size, permissions, creation time, and last modified time
+        - write_file: Create or ovewrite a file
         "
                 .to_string(),
             ),
