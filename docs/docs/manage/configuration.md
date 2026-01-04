@@ -508,6 +508,52 @@ When `ADMIN_STATS_CACHE_ENABLED=true` (default), admin dashboard statistics are 
 
 See [ADR-029](../architecture/adr/029-registry-admin-stats-caching.md) for implementation details.
 
+### Session Registry Polling (Database Backend)
+
+When using `CACHE_TYPE=database`, sessions poll the database to check for incoming messages. Adaptive backoff reduces database load by ~90% during idle periods while maintaining responsiveness when messages arrive.
+
+```bash
+# Adaptive backoff polling configuration
+POLL_INTERVAL=1.0          # Initial polling interval in seconds (default: 1.0)
+MAX_INTERVAL=5.0           # Maximum polling interval cap in seconds (default: 5.0)
+BACKOFF_FACTOR=1.5         # Multiplier for exponential backoff (default: 1.5)
+```
+
+**How Adaptive Backoff Works:**
+
+1. Polling starts at `POLL_INTERVAL` (1.0s by default)
+2. When no message is found, interval increases by `BACKOFF_FACTOR` (1.5×)
+3. Interval continues growing until it reaches `MAX_INTERVAL` (5.0s cap)
+4. When a message arrives, interval immediately resets to `POLL_INTERVAL`
+
+**Example Progression:**
+
+```
+1.0s → 1.5s → 2.25s → 3.375s → 5.0s (capped) → 5.0s → ...
+         ↓ message arrives
+         1.0s (reset)
+```
+
+**Tuning Guide:**
+
+| Use Case | POLL_INTERVAL | MAX_INTERVAL | BACKOFF_FACTOR |
+|----------|---------------|--------------|----------------|
+| Real-time (<1s latency) | 0.1-0.5 | 2.0-5.0 | 1.5 |
+| Standard (default) | 1.0 | 5.0 | 1.5 |
+| Batch workloads | 1.0-2.0 | 10.0-30.0 | 2.0 |
+| Minimal DB load | 2.0 | 30.0 | 2.0 |
+
+**Per-Session Database Impact:**
+
+| Configuration | Idle Queries/Min | Active Queries/Min |
+|---------------|------------------|-------------------|
+| Default (1.0s/5.0s) | 12 | 60 |
+| Aggressive (0.1s/2.0s) | 30-600 | 600 |
+| Conservative (2.0s/30.0s) | 2 | 30 |
+
+!!! tip "Redis Eliminates Polling"
+    With `CACHE_TYPE=redis`, sessions use Redis Pub/Sub for instant message delivery with zero polling overhead. Redis is recommended for production deployments with many concurrent sessions.
+
 ### HTTPX Client Connection Pool
 
 MCP Gateway uses HTTP client connection pooling for outbound requests, providing ~20x better performance than per-request clients by reusing TCP connections. These settings affect federation, health checks, A2A agent calls, SSO, MCP server connections, and catalog operations.
