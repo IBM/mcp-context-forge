@@ -1409,6 +1409,11 @@ class ResourceService:
                             headers=headers,
                             timeout=timeout or httpx.Timeout(30.0),
                             auth=auth,
+                            limits=httpx.Limits(
+                                max_connections=settings.httpx_max_connections,
+                                max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                                keepalive_expiry=settings.httpx_keepalive_expiry,
+                            ),
                         )
 
                     try:

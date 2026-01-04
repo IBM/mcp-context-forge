@@ -153,7 +153,15 @@ class ServerService:
             True
         """
         self._event_subscribers: List[asyncio.Queue] = []
-        self._http_client = httpx.AsyncClient(timeout=settings.federation_timeout, verify=not settings.skip_ssl_verify)
+        self._http_client = httpx.AsyncClient(
+            timeout=settings.federation_timeout,
+            verify=not settings.skip_ssl_verify,
+            limits=httpx.Limits(
+                max_connections=settings.httpx_max_connections,
+                max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                keepalive_expiry=settings.httpx_keepalive_expiry,
+            ),
+        )
         self._structured_logger = get_structured_logger("server_service")
         self._audit_trail = get_audit_trail_service()
         self._performance_tracker = get_performance_tracker()

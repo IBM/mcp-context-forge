@@ -3080,9 +3080,18 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     headers=headers,
                     timeout=timeout or httpx.Timeout(30.0),
                     auth=auth,
+                    limits=httpx.Limits(
+                        max_connections=settings.httpx_max_connections,
+                        max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                        keepalive_expiry=settings.httpx_keepalive_expiry,
+                    ),
                 )
 
-            async with httpx.AsyncClient(verify=ssl_context if ssl_context else True) as client:
+            # Use isolated client for gateway health checks (each gateway may have custom CA cert)
+            # First-Party
+            from mcpgateway.services.http_client_service import get_isolated_http_client  # pylint: disable=import-outside-toplevel
+
+            async with get_isolated_http_client(verify=ssl_context if ssl_context else True) as client:
                 logger.debug(f"Checking health of gateway: {gateway_name} ({gateway_url})")
                 try:
                     # Handle different authentication types
@@ -4288,6 +4297,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 headers=headers,
                 timeout=timeout or httpx.Timeout(30.0),
                 auth=auth,
+                limits=httpx.Limits(
+                    max_connections=settings.httpx_max_connections,
+                    max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                    keepalive_expiry=settings.httpx_keepalive_expiry,
+                ),
             )
 
         # Use async with for both sse_client and ClientSession
@@ -4429,6 +4443,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 headers=headers,
                 timeout=timeout or httpx.Timeout(30.0),
                 auth=auth,
+                limits=httpx.Limits(
+                    max_connections=settings.httpx_max_connections,
+                    max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                    keepalive_expiry=settings.httpx_keepalive_expiry,
+                ),
             )
 
         async with streamablehttp_client(url=server_url, headers=authentication, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):

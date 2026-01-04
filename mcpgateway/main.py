@@ -447,6 +447,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # Initialize Redis client early (shared pool for all services)
     await get_redis_client()
 
+    # Initialize shared HTTP client (connection pool for all outbound requests)
+    # First-Party
+    from mcpgateway.services.http_client_service import SharedHttpClient  # pylint: disable=import-outside-toplevel
+
+    await SharedHttpClient.get_instance()
+
     # Initialize LLM chat router Redis client
     # First-Party
     from mcpgateway.routers.llmchat_router import init_redis as init_llmchat_redis  # pylint: disable=import-outside-toplevel
@@ -666,6 +672,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             services_to_shutdown.insert(2, metrics_cleanup_service)
 
         await shutdown_services(services_to_shutdown)
+
+        # Shutdown shared HTTP client (after services, before Redis)
+        await SharedHttpClient.shutdown()
 
         # Close Redis client last (after all services that use it)
         await close_redis_client()

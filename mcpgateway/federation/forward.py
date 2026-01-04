@@ -98,7 +98,15 @@ class ForwardingService:
             >>> service._gateway_tools
             {}
         """
-        self._http_client = httpx.AsyncClient(timeout=settings.federation_timeout, verify=not settings.skip_ssl_verify)
+        self._http_client = httpx.AsyncClient(
+            timeout=settings.federation_timeout,
+            verify=not settings.skip_ssl_verify,
+            limits=httpx.Limits(
+                max_connections=settings.httpx_max_connections,
+                max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                keepalive_expiry=settings.httpx_keepalive_expiry,
+            ),
+        )
 
         # Track active requests
         self._active_requests: Dict[str, asyncio.Task] = {}

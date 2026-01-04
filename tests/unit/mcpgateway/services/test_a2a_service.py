@@ -308,16 +308,16 @@ class TestA2AAgentService:
 
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
-    @patch("httpx.AsyncClient")
-    async def test_invoke_agent_success(self, mock_client_class, mock_fresh_db, mock_metrics_buffer_fn, service, mock_db, sample_db_agent):
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_invoke_agent_success(self, mock_get_client, mock_fresh_db, mock_metrics_buffer_fn, service, mock_db, sample_db_agent):
         """Test successful agent invocation."""
-        # Mock HTTP client
+        # Mock HTTP client (shared client pattern)
         mock_client = AsyncMock()
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"response": "Test response", "status": "success"}
         mock_client.post.return_value = mock_response
-        mock_client_class.return_value.__aenter__.return_value = mock_client
+        mock_get_client.return_value = mock_client
 
         # Mock database operations
         service.get_agent_by_name = AsyncMock(
@@ -368,16 +368,16 @@ class TestA2AAgentService:
 
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
-    @patch("httpx.AsyncClient")
-    async def test_invoke_agent_http_error(self, mock_client_class, mock_fresh_db, mock_metrics_buffer_fn, service, mock_db, sample_db_agent):
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_invoke_agent_http_error(self, mock_get_client, mock_fresh_db, mock_metrics_buffer_fn, service, mock_db, sample_db_agent):
         """Test agent invocation with HTTP error."""
-        # Mock HTTP client with error response
+        # Mock HTTP client with error response (shared client pattern)
         mock_client = AsyncMock()
         mock_response = MagicMock()
         mock_response.status_code = 500
         mock_response.text = "Internal Server Error"
         mock_client.post.return_value = mock_response
-        mock_client_class.return_value.__aenter__.return_value = mock_client
+        mock_get_client.return_value = mock_client
 
         # Mock database operations
         service.get_agent_by_name = AsyncMock(

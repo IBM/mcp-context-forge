@@ -761,6 +761,55 @@ class Settings(BaseSettings):
     retry_max_delay: int = 60  # seconds
     retry_jitter_max: float = 0.5  # fraction of base delay
 
+    # HTTPX Client Configuration (for shared singleton client)
+    # See: https://www.python-httpx.org/advanced/#pool-limits
+    httpx_max_connections: int = Field(
+        default=100,
+        ge=10,
+        le=1000,
+        description="Maximum total concurrent HTTP connections (global, not per-host)",
+    )
+    httpx_max_keepalive_connections: int = Field(
+        default=50,
+        ge=1,
+        le=500,
+        description="Maximum idle keepalive connections to retain (global, not per-host)",
+    )
+    httpx_keepalive_expiry: float = Field(
+        default=30.0,
+        ge=5.0,
+        le=300.0,
+        description="Seconds before idle keepalive connections are closed",
+    )
+    httpx_connect_timeout: float = Field(
+        default=10.0,
+        ge=1.0,
+        le=60.0,
+        description="Timeout in seconds for establishing new connections",
+    )
+    httpx_read_timeout: float = Field(
+        default=30.0,
+        ge=1.0,
+        le=600.0,
+        description="Timeout in seconds for reading response data",
+    )
+    httpx_write_timeout: float = Field(
+        default=30.0,
+        ge=1.0,
+        le=600.0,
+        description="Timeout in seconds for writing request data",
+    )
+    httpx_pool_timeout: float = Field(
+        default=30.0,
+        ge=1.0,
+        le=120.0,
+        description="Timeout in seconds waiting for a connection from the pool",
+    )
+    httpx_http2_enabled: bool = Field(
+        default=False,
+        description="Enable HTTP/2 (requires h2 package; no benefit observed in localhost benchmarks)",
+    )
+
     @field_validator("allowed_origins", mode="before")
     @classmethod
     def _parse_allowed_origins(cls, v: Any) -> Set[str]:

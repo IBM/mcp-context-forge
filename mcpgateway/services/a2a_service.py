@@ -16,7 +16,6 @@ from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 # Third-Party
-import httpx
 from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -1086,73 +1085,76 @@ class A2AAgentService:
                 # Use custom A2A format
                 request_data = {"interaction_type": interaction_type, "parameters": parameters, "protocol_version": agent_protocol_version}
 
-            # Make HTTP request to the agent endpoint
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                headers = {"Content-Type": "application/json"}
+            # Make HTTP request to the agent endpoint using shared HTTP client
+            # First-Party
+            from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
 
-                # Add authentication if configured
-                if auth_token_value:
-                    headers["Authorization"] = f"Bearer {auth_token_value}"
+            client = await get_http_client()
+            headers = {"Content-Type": "application/json"}
 
-                # Add correlation ID to outbound headers for distributed tracing
-                correlation_id = get_correlation_id()
-                if correlation_id:
-                    headers["X-Correlation-ID"] = correlation_id
+            # Add authentication if configured
+            if auth_token_value:
+                headers["Authorization"] = f"Bearer {auth_token_value}"
 
-                # Log A2A external call start
-                call_start_time = datetime.now(timezone.utc)
+            # Add correlation ID to outbound headers for distributed tracing
+            correlation_id = get_correlation_id()
+            if correlation_id:
+                headers["X-Correlation-ID"] = correlation_id
+
+            # Log A2A external call start
+            call_start_time = datetime.now(timezone.utc)
+            structured_logger.log(
+                level="INFO",
+                message=f"A2A external call started: {agent_name}",
+                component="a2a_service",
+                user_id=user_id,
+                user_email=user_email,
+                correlation_id=correlation_id,
+                metadata={
+                    "event": "a2a_call_started",
+                    "agent_name": agent_name,
+                    "agent_id": agent_id,
+                    "endpoint_url": agent_endpoint_url,
+                    "interaction_type": interaction_type,
+                    "protocol_version": agent_protocol_version,
+                },
+            )
+
+            http_response = await client.post(agent_endpoint_url, json=request_data, headers=headers)
+            call_duration_ms = (datetime.now(timezone.utc) - call_start_time).total_seconds() * 1000
+
+            if http_response.status_code == 200:
+                response = http_response.json()
+                success = True
+
+                # Log successful A2A call
                 structured_logger.log(
                     level="INFO",
-                    message=f"A2A external call started: {agent_name}",
+                    message=f"A2A external call completed: {agent_name}",
                     component="a2a_service",
                     user_id=user_id,
                     user_email=user_email,
                     correlation_id=correlation_id,
-                    metadata={
-                        "event": "a2a_call_started",
-                        "agent_name": agent_name,
-                        "agent_id": agent_id,
-                        "endpoint_url": agent_endpoint_url,
-                        "interaction_type": interaction_type,
-                        "protocol_version": agent_protocol_version,
-                    },
+                    duration_ms=call_duration_ms,
+                    metadata={"event": "a2a_call_completed", "agent_name": agent_name, "agent_id": agent_id, "status_code": http_response.status_code, "success": True},
+                )
+            else:
+                error_message = f"HTTP {http_response.status_code}: {http_response.text}"
+
+                # Log failed A2A call
+                structured_logger.log(
+                    level="ERROR",
+                    message=f"A2A external call failed: {agent_name}",
+                    component="a2a_service",
+                    user_id=user_id,
+                    user_email=user_email,
+                    correlation_id=correlation_id,
+                    duration_ms=call_duration_ms,
+                    error_details={"error_type": "A2AHTTPError", "error_message": error_message},
+                    metadata={"event": "a2a_call_failed", "agent_name": agent_name, "agent_id": agent_id, "status_code": http_response.status_code},
                 )
 
-                http_response = await client.post(agent_endpoint_url, json=request_data, headers=headers)
-                call_duration_ms = (datetime.now(timezone.utc) - call_start_time).total_seconds() * 1000
-
-                if http_response.status_code == 200:
-                    response = http_response.json()
-                    success = True
-
-                    # Log successful A2A call
-                    structured_logger.log(
-                        level="INFO",
-                        message=f"A2A external call completed: {agent_name}",
-                        component="a2a_service",
-                        user_id=user_id,
-                        user_email=user_email,
-                        correlation_id=correlation_id,
-                        duration_ms=call_duration_ms,
-                        metadata={"event": "a2a_call_completed", "agent_name": agent_name, "agent_id": agent_id, "status_code": http_response.status_code, "success": True},
-                    )
-                else:
-                    error_message = f"HTTP {http_response.status_code}: {http_response.text}"
-
-                    # Log failed A2A call
-                    structured_logger.log(
-                        level="ERROR",
-                        message=f"A2A external call failed: {agent_name}",
-                        component="a2a_service",
-                        user_id=user_id,
-                        user_email=user_email,
-                        correlation_id=correlation_id,
-                        duration_ms=call_duration_ms,
-                        error_details={"error_type": "A2AHTTPError", "error_message": error_message},
-                        metadata={"event": "a2a_call_failed", "agent_name": agent_name, "agent_id": agent_id, "status_code": http_response.status_code},
-                    )
-
-                    raise A2AAgentError(error_message)
+                raise A2AAgentError(error_message)
 
         except A2AAgentError:
             # Re-raise A2AAgentError without wrapping

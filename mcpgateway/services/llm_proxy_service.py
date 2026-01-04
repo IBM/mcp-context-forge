@@ -70,7 +70,14 @@ class LLMProxyService:
     async def initialize(self) -> None:
         """Initialize the proxy service and HTTP client."""
         if not self._initialized:
-            self._client = httpx.AsyncClient(timeout=httpx.Timeout(settings.llm_request_timeout, connect=30.0))
+            self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(settings.llm_request_timeout, connect=30.0),
+                limits=httpx.Limits(
+                    max_connections=settings.httpx_max_connections,
+                    max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                    keepalive_expiry=settings.httpx_keepalive_expiry,
+                ),
+            )
             logger.info("Initialized LLM Proxy Service")
             self._initialized = True
 

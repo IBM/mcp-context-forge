@@ -508,6 +508,42 @@ When `ADMIN_STATS_CACHE_ENABLED=true` (default), admin dashboard statistics are 
 
 See [ADR-029](../architecture/adr/029-registry-admin-stats-caching.md) for implementation details.
 
+### HTTPX Client Connection Pool
+
+MCP Gateway uses a shared HTTP client for all outbound requests, providing ~20x better performance than per-request clients by reusing TCP connections. This affects federation, health checks, A2A agent calls, SSO, and catalog operations.
+
+```bash
+# Connection Pool Limits
+HTTPX_MAX_CONNECTIONS=100              # Total connections in pool (10-1000, default: 100)
+HTTPX_MAX_KEEPALIVE_CONNECTIONS=50     # Keepalive connections (1-500, default: 50)
+HTTPX_KEEPALIVE_EXPIRY=30.0            # Idle connection expiry in seconds (5.0-300.0)
+
+# Timeout Configuration
+HTTPX_CONNECT_TIMEOUT=10.0             # TCP connection timeout in seconds (1.0-60.0)
+HTTPX_READ_TIMEOUT=30.0                # Response read timeout in seconds (1.0-600.0)
+HTTPX_WRITE_TIMEOUT=30.0               # Request write timeout in seconds (1.0-600.0)
+HTTPX_POOL_TIMEOUT=30.0                # Wait for available connection in seconds (1.0-120.0)
+
+# Protocol Configuration
+HTTPX_HTTP2_ENABLED=false              # Enable HTTP/2 (requires server support)
+```
+
+**Sizing Guidelines:**
+
+| Deployment Size | `HTTPX_MAX_CONNECTIONS` | `HTTPX_MAX_KEEPALIVE_CONNECTIONS` | Notes |
+|----------------|------------------------|----------------------------------|-------|
+| Development    | 20                     | 10                               | Minimal footprint |
+| Production     | 100                    | 50                               | Default, handles typical load |
+| High-traffic   | 200-500                | 100-250                          | Heavy federation/A2A usage |
+
+**Formula:** `HTTPX_MAX_CONNECTIONS = concurrent_outbound_requests × 1.5`
+
+!!! tip "Connection Pool vs Per-Request Clients"
+    The shared connection pool eliminates TCP handshake and TLS negotiation overhead for each request. In benchmarks, this provides ~20x improvement in throughput compared to creating a new client per request.
+
+!!! warning "HTTP/2 Support"
+    HTTP/2 (`HTTPX_HTTP2_ENABLED=true`) enables multiplexing over a single connection but requires upstream servers to support HTTP/2. Leave disabled unless all upstream services support HTTP/2.
+
 ### Logging Settings
 
 ```bash

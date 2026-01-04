@@ -26,6 +26,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
@@ -128,7 +129,19 @@ class WebhookNotificationPlugin(Plugin):
         """
         super().__init__(config)
         self._cfg = WebhookNotificationConfig(**(config.config or {}))
-        self._client = httpx.AsyncClient()
+        self._client = httpx.AsyncClient(
+            limits=httpx.Limits(
+                max_connections=settings.httpx_max_connections,
+                max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                keepalive_expiry=settings.httpx_keepalive_expiry,
+            ),
+            timeout=httpx.Timeout(
+                connect=settings.httpx_connect_timeout,
+                read=settings.httpx_read_timeout,
+                write=settings.httpx_write_timeout,
+                pool=settings.httpx_pool_timeout,
+            ),
+        )
 
     async def _render_template(self, template: str, context: Dict[str, Any]) -> str:
         """Render a Jinja2-style template with the given context.
