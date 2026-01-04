@@ -66,7 +66,7 @@ class TestSecurityValidator:
 
     def test_validate_sql_parameter_dangerous_strict(self):
         """Test dangerous SQL parameter in strict mode."""
-        with patch("mcpgateway.common.validators.config_settings") as mock_settings:
+        with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.validation_strict = True
             with pytest.raises(ValueError, match="SQL injection"):
                 SecurityValidator.validate_sql_parameter("'; DROP TABLE users; --")
@@ -81,13 +81,15 @@ class TestSecurityValidator:
         result = SecurityValidator.validate_path("plugin://my-plugin/resource")
         assert result == "plugin://my-plugin/resource"
 
+    @pytest.mark.skip(reason="Path depth validation is in ValidationMiddleware, not SecurityValidator - needs dedicated middleware test")
     def test_validate_path_depth_limit(self):
-        """Test path depth validation."""
-        # This test requires mocking settings.max_path_depth
-        with patch("mcpgateway.config.settings") as mock_settings:
-            mock_settings.max_path_depth = 3
-            # Deep path should be rejected by middleware
-            # (actual implementation in ValidationMiddleware.validate_resource_path)
+        """Test path depth validation.
+
+        Note: Path depth checking is implemented in ValidationMiddleware.validate_resource_path,
+        which uses settings from mcpgateway.config. This test would need to mock the middleware
+        rather than SecurityValidator.
+        """
+        pass
 
     def test_allowed_roots_configuration(self):
         """Test allowed roots configuration."""
@@ -219,7 +221,7 @@ class TestValidationMiddleware:
     @pytest.mark.asyncio
     async def test_sql_injection_prevention(self):
         """Test SQL injection prevention."""
-        with patch("mcpgateway.common.validators.config_settings") as mock_settings:
+        with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.validation_strict = True
 
             # Test SQL injection patterns
@@ -235,7 +237,7 @@ class TestValidationMiddleware:
     @pytest.mark.asyncio
     async def test_sql_injection_block_comments(self):
         """Test SQL injection prevention for block comments."""
-        with patch("mcpgateway.common.validators.config_settings") as mock_settings:
+        with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.validation_strict = True
 
             # Block comments should be detected
@@ -265,7 +267,7 @@ class TestValidationMiddleware:
             assert result == value, f"False positive for '{value}'"
 
         # These SHOULD raise - actual SQL keywords
-        with patch("mcpgateway.common.validators.config_settings") as mock_settings:
+        with patch("mcpgateway.common.validators.settings") as mock_settings:
             mock_settings.validation_strict = True
 
             dangerous_values = [

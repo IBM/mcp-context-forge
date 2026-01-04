@@ -208,7 +208,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.VALIDATION_IDENTIFIER_PATTERN | string | `"^[a-zA-Z0-9_\\-\\.]+$"` |  |
 | mcpContextForge.config.VALIDATION_MAX_CONTENT_LENGTH | string | `"1048576"` |  |
 | mcpContextForge.config.VALIDATION_MAX_DESCRIPTION_LENGTH | string | `"8192"` |  |
-| mcpContextForge.config.VALIDATION_MAX_JSON_DEPTH | string | `"10"` |  |
+| mcpContextForge.config.VALIDATION_MAX_JSON_DEPTH | string | `"30"` |  |
 | mcpContextForge.config.VALIDATION_MAX_METHOD_LENGTH | string | `"128"` |  |
 | mcpContextForge.config.VALIDATION_MAX_NAME_LENGTH | string | `"255"` |  |
 | mcpContextForge.config.VALIDATION_MAX_REQUESTS_PER_MINUTE | string | `"60"` |  |

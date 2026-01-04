@@ -486,7 +486,7 @@ mcpContextForge:
     VALIDATION_MAX_DESCRIPTION_LENGTH: "8192" # maximum length for descriptions (8KB)
     VALIDATION_MAX_TEMPLATE_LENGTH: "65536" # maximum length for templates (64KB)
     VALIDATION_MAX_CONTENT_LENGTH: "1048576" # maximum length for content (1MB)
-    VALIDATION_MAX_JSON_DEPTH: "10" # maximum JSON nesting depth
+    VALIDATION_MAX_JSON_DEPTH: "30" # maximum JSON nesting depth
     VALIDATION_MAX_URL_LENGTH: "2048" # maximum URL length
     VALIDATION_MAX_RPC_PARAM_SIZE: "262144" # maximum RPC parameter size (256KB)
     VALIDATION_MAX_METHOD_LENGTH: "128" # maximum method name length
