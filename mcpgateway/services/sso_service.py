@@ -22,7 +22,6 @@ from typing import Any, Dict, List, Optional, Tuple
 import urllib.parse
 
 # Third-Party
-import httpx
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
@@ -457,12 +456,15 @@ class SSOService:
             "code_verifier": auth_session.code_verifier,
         }
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(provider.token_url, data=token_params, headers={"Accept": "application/json"})
+        # First-Party
+        from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
 
-            if response.status_code == 200:
-                return response.json()
-            logger.error(f"Token exchange failed for {provider.name}: HTTP {response.status_code} - {response.text}")
+        client = await get_http_client()
+        response = await client.post(provider.token_url, data=token_params, headers={"Accept": "application/json"})
+
+        if response.status_code == 200:
+            return response.json()
+        logger.error(f"Token exchange failed for {provider.name}: HTTP {response.status_code} - {response.text}")
 
         return None
 
@@ -476,29 +478,32 @@ class SSOService:
         Returns:
             User info dict or None if failed
         """
-        async with httpx.AsyncClient() as client:
-            response = await client.get(provider.userinfo_url, headers={"Authorization": f"Bearer {access_token}"})
+        # First-Party
+        from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
 
-            if response.status_code == 200:
-                user_data = response.json()
+        client = await get_http_client()
+        response = await client.get(provider.userinfo_url, headers={"Authorization": f"Bearer {access_token}"})
 
-                # For GitHub, also fetch organizations if admin assignment is configured
-                if provider.id == "github" and settings.sso_github_admin_orgs:
-                    try:
-                        orgs_response = await client.get("https://api.github.com/user/orgs", headers={"Authorization": f"Bearer {access_token}"})
-                        if orgs_response.status_code == 200:
-                            orgs_data = orgs_response.json()
-                            user_data["organizations"] = [org["login"] for org in orgs_data]
-                        else:
-                            logger.warning(f"Failed to fetch GitHub organizations: HTTP {orgs_response.status_code}")
-                            user_data["organizations"] = []
-                    except Exception as e:
-                        logger.warning(f"Error fetching GitHub organizations: {e}")
+        if response.status_code == 200:
+            user_data = response.json()
+
+            # For GitHub, also fetch organizations if admin assignment is configured
+            if provider.id == "github" and settings.sso_github_admin_orgs:
+                try:
+                    orgs_response = await client.get("https://api.github.com/user/orgs", headers={"Authorization": f"Bearer {access_token}"})
+                    if orgs_response.status_code == 200:
+                        orgs_data = orgs_response.json()
+                        user_data["organizations"] = [org["login"] for org in orgs_data]
+                    else:
+                        logger.warning(f"Failed to fetch GitHub organizations: HTTP {orgs_response.status_code}")
                         user_data["organizations"] = []
+                except Exception as e:
+                    logger.warning(f"Error fetching GitHub organizations: {e}")
+                    user_data["organizations"] = []
 
-                # Normalize user info across providers
-                return self._normalize_user_info(provider, user_data)
-            logger.error(f"User info request failed for {provider.name}: HTTP {response.status_code} - {response.text}")
+            # Normalize user info across providers
+            return self._normalize_user_info(provider, user_data)
+        logger.error(f"User info request failed for {provider.name}: HTTP {response.status_code} - {response.text}")
 
         return None
 

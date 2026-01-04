@@ -2512,16 +2512,24 @@ class ToolService:
                                 valid = validate_signature(gateway_ca_cert.encode(), gateway_ca_cert_sig, public_key_pem)
                             else:
                                 valid = True
+                        # First-Party
+                        from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
+
                         if valid:
                             ctx = create_ssl_context(gateway_ca_cert)
                         else:
                             ctx = None
                         return httpx.AsyncClient(
-                            verify=ctx if ctx else True,
+                            verify=ctx if ctx else get_default_verify(),
                             follow_redirects=True,
                             headers=headers,
-                            timeout=timeout or httpx.Timeout(30.0),
+                            timeout=timeout if timeout else get_http_timeout(),
                             auth=auth,
+                            limits=httpx.Limits(
+                                max_connections=settings.httpx_max_connections,
+                                max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                                keepalive_expiry=settings.httpx_keepalive_expiry,
+                            ),
                         )
 
                     async def connect_to_sse_server(server_url: str, headers: dict = headers):
@@ -3494,19 +3502,22 @@ class ToolService:
             logger.info(f"invoke tool Using custom A2A format for A2A agent '{parameters}'")
             request_data = {"interaction_type": parameters.get("interaction_type", "query"), "parameters": params, "protocol_version": agent.protocol_version}
         logger.info(f"invoke tool request_data prepared: {request_data}")
-        # Make HTTP request to the agent endpoint
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            headers = {"Content-Type": "application/json"}
+        # Make HTTP request to the agent endpoint using shared HTTP client
+        # First-Party
+        from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
 
-            # Add authentication if configured
-            if agent.auth_type == "api_key" and agent.auth_value:
-                headers["Authorization"] = f"Bearer {agent.auth_value}"
-            elif agent.auth_type == "bearer" and agent.auth_value:
-                headers["Authorization"] = f"Bearer {agent.auth_value}"
+        client = await get_http_client()
+        headers = {"Content-Type": "application/json"}
 
-            http_response = await client.post(agent.endpoint_url, json=request_data, headers=headers)
+        # Add authentication if configured
+        if agent.auth_type == "api_key" and agent.auth_value:
+            headers["Authorization"] = f"Bearer {agent.auth_value}"
+        elif agent.auth_type == "bearer" and agent.auth_value:
+            headers["Authorization"] = f"Bearer {agent.auth_value}"
 
-            if http_response.status_code == 200:
-                return http_response.json()
+        http_response = await client.post(agent.endpoint_url, json=request_data, headers=headers)
 
-            raise Exception(f"HTTP {http_response.status_code}: {http_response.text}")
+        if http_response.status_code == 200:
+            return http_response.json()
+
+        raise Exception(f"HTTP {http_response.status_code}: {http_response.text}")

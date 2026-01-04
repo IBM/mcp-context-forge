@@ -395,7 +395,12 @@ class Settings(BaseSettings):
     mcpgateway_elicitation_max_concurrent: int = Field(default=100, description="Maximum concurrent elicitation requests")
 
     # Security
-    skip_ssl_verify: bool = False
+    skip_ssl_verify: bool = Field(
+        default=False,
+        description="Skip SSL certificate verification for ALL outbound HTTPS requests "
+        "(federation, MCP servers, LLM providers, A2A agents). "
+        "WARNING: Only enable in dev environments with self-signed certificates.",
+    )
     cors_enabled: bool = True
 
     # Environment
@@ -760,6 +765,62 @@ class Settings(BaseSettings):
     retry_base_delay: float = 1.0  # seconds
     retry_max_delay: int = 60  # seconds
     retry_jitter_max: float = 0.5  # fraction of base delay
+
+    # HTTPX Client Configuration (for shared singleton client)
+    # See: https://www.python-httpx.org/advanced/#pool-limits
+    # Formula: max_connections = expected_concurrent_outbound_requests × 1.5
+    httpx_max_connections: int = Field(
+        default=200,
+        ge=10,
+        le=1000,
+        description="Maximum total concurrent HTTP connections (global, not per-host). " "Increase for high-traffic deployments with many outbound calls.",
+    )
+    httpx_max_keepalive_connections: int = Field(
+        default=100,
+        ge=1,
+        le=500,
+        description="Maximum idle keepalive connections to retain (typically 50% of max_connections)",
+    )
+    httpx_keepalive_expiry: float = Field(
+        default=30.0,
+        ge=5.0,
+        le=300.0,
+        description="Seconds before idle keepalive connections are closed",
+    )
+    httpx_connect_timeout: float = Field(
+        default=5.0,
+        ge=1.0,
+        le=60.0,
+        description="Timeout in seconds for establishing new connections (5s for LAN, increase for WAN)",
+    )
+    httpx_read_timeout: float = Field(
+        default=120.0,
+        ge=1.0,
+        le=600.0,
+        description="Timeout in seconds for reading response data (set high for slow MCP tool calls)",
+    )
+    httpx_write_timeout: float = Field(
+        default=30.0,
+        ge=1.0,
+        le=600.0,
+        description="Timeout in seconds for writing request data",
+    )
+    httpx_pool_timeout: float = Field(
+        default=10.0,
+        ge=1.0,
+        le=120.0,
+        description="Timeout in seconds waiting for a connection from the pool (fail fast on exhaustion)",
+    )
+    httpx_http2_enabled: bool = Field(
+        default=False,
+        description="Enable HTTP/2 (requires h2 package; enable only if upstreams support HTTP/2)",
+    )
+    httpx_admin_read_timeout: float = Field(
+        default=30.0,
+        ge=1.0,
+        le=120.0,
+        description="Read timeout for admin UI operations (model fetching, health checks). " "Shorter than httpx_read_timeout to fail fast on admin pages.",
+    )
 
     @field_validator("allowed_origins", mode="before")
     @classmethod

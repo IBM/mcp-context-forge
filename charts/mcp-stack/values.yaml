@@ -399,6 +399,19 @@ mcpContextForge:
     RETRY_MAX_DELAY: "60"            # maximum delay between retries (seconds)
     RETRY_JITTER_MAX: "0.5"          # maximum jitter fraction of base delay
 
+    # ─ HTTPX Client Connection Pool ─
+    # Shared HTTP client for all outbound requests (federation, health checks,
+    # A2A, SSO, catalog). Provides ~20x better performance than per-request clients.
+    HTTPX_MAX_CONNECTIONS: "200"           # total connections in pool (10-1000)
+    HTTPX_MAX_KEEPALIVE_CONNECTIONS: "100" # keepalive connections (1-500)
+    HTTPX_KEEPALIVE_EXPIRY: "30.0"         # idle connection expiry in seconds (5.0-300.0)
+    HTTPX_CONNECT_TIMEOUT: "5.0"           # TCP connection timeout in seconds (1.0-60.0)
+    HTTPX_READ_TIMEOUT: "120.0"            # response read timeout in seconds (high for slow tools)
+    HTTPX_WRITE_TIMEOUT: "30.0"            # request write timeout in seconds (1.0-600.0)
+    HTTPX_POOL_TIMEOUT: "10.0"             # wait for available connection in seconds (1.0-120.0)
+    HTTPX_HTTP2_ENABLED: "false"           # HTTP/2 support (requires server support)
+    HTTPX_ADMIN_READ_TIMEOUT: "30.0"       # Admin UI/health check timeout in seconds
+
     # ─ Well-Known URI Configuration ─
     WELL_KNOWN_ENABLED: "true"       # enable well-known URI endpoints
     WELL_KNOWN_ROBOTS_TXT: |

@@ -221,11 +221,13 @@ class ResilientHttpClient:
         >>> client.base_backoff
         2.0
 
-        >>> # Test client_args parameter
+        >>> # Test client_args parameter (limits added by default)
         >>> args = {"timeout": 30.0}
         >>> client = ResilientHttpClient(client_args=args)
-        >>> client.client_args
-        {'timeout': 30.0}
+        >>> client.client_args["timeout"]
+        30.0
+        >>> "limits" in client.client_args
+        True
     """
 
     def __init__(
@@ -260,16 +262,25 @@ class ResilientHttpClient:
             >>> client.base_backoff
             5.0
 
-            >>> # Test client_args handling
+            >>> # Test client_args handling (default limits added)
             >>> client = ResilientHttpClient(client_args=None)
-            >>> client.client_args
-            {}
+            >>> "limits" in client.client_args
+            True
         """
         self.max_retries = max_retries
         self.base_backoff = base_backoff
         self.max_delay = max_delay
         self.jitter_max = jitter_max
         self.client_args = client_args or {}
+
+        # Add default httpx.Limits if not provided for connection pooling
+        if "limits" not in self.client_args:
+            self.client_args["limits"] = httpx.Limits(
+                max_connections=settings.httpx_max_connections,
+                max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                keepalive_expiry=settings.httpx_keepalive_expiry,
+            )
+
         self.client = httpx.AsyncClient(**self.client_args)
 
     async def _sleep_with_jitter(self, base: float, jitter_range: float):

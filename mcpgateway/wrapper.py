@@ -619,7 +619,16 @@ async def main_async(settings: Settings) -> None:
         pool=settings.response_timeout,
     )
 
-    client_args = {"timeout": httpx_timeout, "http2": True}
+    # Get SSL verify setting from global config (with fallback for standalone usage)
+    try:
+        # First-Party
+        from mcpgateway.config import settings as global_settings  # pylint: disable=import-outside-toplevel
+
+        ssl_verify = not global_settings.skip_ssl_verify
+    except ImportError:
+        ssl_verify = True  # Default to verifying SSL when config unavailable
+
+    client_args = {"timeout": httpx_timeout, "http2": True, "verify": ssl_verify}
     resilient = ResilientHttpClient(
         max_retries=5,
         base_backoff=0.25,
