@@ -5,7 +5,12 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.100"
-rmcp = { version = "0.12.0", features = ["transport-io", "uuid"] }
+axum = "0.8.8"
+clap = { version = "4.5.54", features = ["derive"] }
+futures = "0.3.31"
+globset = "0.4.18"
+ignore = "0.4.25"
+rmcp = { version = "0.12.0", features = ["transport-io", "uuid", "transport-streamable-http-server"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 tokio = { version = "1.49.0", features = ["full"] }
@@ -14,7 +19,7 @@ tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 
 
 [dev-dependencies]
-tokio-test = "0.4"
+tokio-test = "0.4.5"
 tempfile = "3"
 
 [profile.release]

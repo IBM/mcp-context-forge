@@ -1,8 +1,11 @@
-USER_ID := "550e8400-e29b-41d4-a716-446655440001"
-
 release:
-  cargo build --release
+    cargo build --release
 
-# Test with MCP inspector
-mcp-test: release
-  npx @modelcontextprotocol/inspector -e USER_ID={{ USER_ID }} ./target/release/filesystem-server
+run:
+    cargo run -- --roots tmp & npx @modelcontextprotocol/inspector >/dev/null 2>&1
+
+mcp-stdio: release
+    npx @modelcontextprotocol/inspector ./target/release/filesystem-server
+
+mcp-http: run
+
