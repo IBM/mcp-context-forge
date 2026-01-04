@@ -64,6 +64,136 @@ def test_tool_metrics_properties_empty():
     assert tool.last_execution_time is None
 
 
+def test_tool_get_metric_counts_with_loaded_metrics():
+    """Test _get_metric_counts returns correct tuple when metrics are loaded."""
+    now = datetime.now(timezone.utc)
+    metrics = [
+        db.ToolMetric(response_time=1.0, is_success=True, timestamp=now),
+        db.ToolMetric(response_time=2.0, is_success=True, timestamp=now),
+        db.ToolMetric(response_time=3.0, is_success=False, timestamp=now),
+    ]
+    tool = make_tool_with_metrics(metrics)
+    total, successful, failed = tool._get_metric_counts()
+    assert total == 3
+    assert successful == 2
+    assert failed == 1
+
+
+def test_tool_get_metric_counts_detached_returns_zeros():
+    """Test _get_metric_counts returns (0, 0, 0) for detached object without session."""
+    tool = db.Tool()
+    # Don't set metrics - simulates detached object
+    total, successful, failed = tool._get_metric_counts()
+    assert total == 0
+    assert successful == 0
+    assert failed == 0
+
+
+def test_tool_metrics_summary_all_fields():
+    """Test metrics_summary returns all expected fields with correct values."""
+    now = datetime.now(timezone.utc)
+    metrics = [
+        db.ToolMetric(response_time=1.0, is_success=True, timestamp=now),
+        db.ToolMetric(response_time=3.0, is_success=False, timestamp=now + timedelta(seconds=1)),
+    ]
+    tool = make_tool_with_metrics(metrics)
+    summary = tool.metrics_summary
+    assert summary["total_executions"] == 2
+    assert summary["successful_executions"] == 1
+    assert summary["failed_executions"] == 1
+    assert summary["failure_rate"] == 0.5
+    assert summary["min_response_time"] == 1.0
+    assert summary["max_response_time"] == 3.0
+    assert summary["avg_response_time"] == 2.0
+    assert summary["last_execution_time"] == now + timedelta(seconds=1)
+
+
+def test_tool_metrics_summary_empty():
+    """Test metrics_summary returns zeros/None for empty metrics."""
+    tool = db.Tool()
+    tool.metrics = []
+    summary = tool.metrics_summary
+    assert summary["total_executions"] == 0
+    assert summary["successful_executions"] == 0
+    assert summary["failed_executions"] == 0
+    assert summary["failure_rate"] == 0.0
+    assert summary["min_response_time"] is None
+    assert summary["max_response_time"] is None
+    assert summary["avg_response_time"] is None
+    assert summary["last_execution_time"] is None
+
+
+def test_tool_metrics_summary_detached():
+    """Test metrics_summary returns zeros/None for detached object without session."""
+    tool = db.Tool()
+    # Don't set metrics - simulates detached object without session
+    summary = tool.metrics_summary
+    assert summary["total_executions"] == 0
+    assert summary["failure_rate"] == 0.0
+
+
+def test_tool_get_metric_counts_sql_path(monkeypatch):
+    """Test _get_metric_counts uses SQL aggregation when metrics not loaded but session exists."""
+    tool = db.Tool()
+    tool.id = "test-tool-id"
+
+    # Mock the session and query result
+    mock_result = MagicMock()
+    mock_result.__iter__ = lambda self: iter([(10, 7)])  # total=10, successful=7
+    mock_result.__getitem__ = lambda self, i: [10, 7][i]
+
+    mock_query = MagicMock()
+    mock_query.filter.return_value = mock_query
+    mock_query.one.return_value = mock_result
+
+    mock_session = MagicMock()
+    mock_session.query.return_value = mock_query
+
+    # Patch object_session where it's imported (in sqlalchemy.orm)
+    monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
+
+    # Call _get_metric_counts - should use SQL path
+    total, successful, failed = tool._get_metric_counts()
+
+    assert total == 10
+    assert successful == 7
+    assert failed == 3  # 10 - 7
+    mock_session.query.assert_called_once()
+
+
+def test_tool_metrics_summary_sql_path(monkeypatch):
+    """Test metrics_summary uses SQL aggregation when metrics not loaded but session exists."""
+    tool = db.Tool()
+    tool.id = "test-tool-id"
+
+    # Mock the session and query result for full aggregation
+    # (count, sum_success, min_rt, max_rt, avg_rt, max_timestamp)
+    mock_timestamp = datetime.now(timezone.utc)
+    mock_result = MagicMock()
+    mock_result.__getitem__ = lambda self, i: [5, 3, 1.0, 5.0, 2.5, mock_timestamp][i]
+
+    mock_query = MagicMock()
+    mock_query.filter.return_value = mock_query
+    mock_query.one.return_value = mock_result
+
+    mock_session = MagicMock()
+    mock_session.query.return_value = mock_query
+
+    # Patch object_session where it's imported (in sqlalchemy.orm)
+    monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
+
+    summary = tool.metrics_summary
+
+    assert summary["total_executions"] == 5
+    assert summary["successful_executions"] == 3
+    assert summary["failed_executions"] == 2
+    assert summary["failure_rate"] == 0.4
+    assert summary["min_response_time"] == 1.0
+    assert summary["max_response_time"] == 5.0
+    assert summary["avg_response_time"] == 2.5
+    assert summary["last_execution_time"] == mock_timestamp
+
+
 # --- Resource metrics properties ---
 def make_resource_with_metrics(metrics):
     resource = db.Resource()
@@ -99,6 +229,62 @@ def test_resource_metrics_properties_empty():
     assert resource.max_response_time is None
     assert resource.avg_response_time is None
     assert resource.last_execution_time is None
+
+
+def test_resource_get_metric_counts_sql_path(monkeypatch):
+    """Test _get_metric_counts uses SQL aggregation when metrics not loaded but session exists."""
+    resource = db.Resource()
+    resource.id = "test-resource-id"
+
+    mock_result = MagicMock()
+    mock_result.__iter__ = lambda self: iter([(8, 5)])
+    mock_result.__getitem__ = lambda self, i: [8, 5][i]
+
+    mock_query = MagicMock()
+    mock_query.filter.return_value = mock_query
+    mock_query.one.return_value = mock_result
+
+    mock_session = MagicMock()
+    mock_session.query.return_value = mock_query
+
+    monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
+
+    total, successful, failed = resource._get_metric_counts()
+
+    assert total == 8
+    assert successful == 5
+    assert failed == 3
+    mock_session.query.assert_called_once()
+
+
+def test_resource_metrics_summary_sql_path(monkeypatch):
+    """Test metrics_summary uses SQL aggregation when metrics not loaded but session exists."""
+    resource = db.Resource()
+    resource.id = "test-resource-id"
+
+    mock_timestamp = datetime.now(timezone.utc)
+    mock_result = MagicMock()
+    mock_result.__getitem__ = lambda self, i: [6, 4, 0.5, 3.0, 1.5, mock_timestamp][i]
+
+    mock_query = MagicMock()
+    mock_query.filter.return_value = mock_query
+    mock_query.one.return_value = mock_result
+
+    mock_session = MagicMock()
+    mock_session.query.return_value = mock_query
+
+    monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
+
+    summary = resource.metrics_summary
+
+    assert summary["total_executions"] == 6
+    assert summary["successful_executions"] == 4
+    assert summary["failed_executions"] == 2
+    assert summary["failure_rate"] == pytest.approx(0.333, rel=0.01)
+    assert summary["min_response_time"] == 0.5
+    assert summary["max_response_time"] == 3.0
+    assert summary["avg_response_time"] == 1.5
+    assert summary["last_execution_time"] == mock_timestamp
 
 
 # --- Prompt metrics properties ---
@@ -138,6 +324,62 @@ def test_prompt_metrics_properties_empty():
     assert prompt.last_execution_time is None
 
 
+def test_prompt_get_metric_counts_sql_path(monkeypatch):
+    """Test _get_metric_counts uses SQL aggregation when metrics not loaded but session exists."""
+    prompt = db.Prompt()
+    prompt.id = "test-prompt-id"
+
+    mock_result = MagicMock()
+    mock_result.__iter__ = lambda self: iter([(12, 9)])
+    mock_result.__getitem__ = lambda self, i: [12, 9][i]
+
+    mock_query = MagicMock()
+    mock_query.filter.return_value = mock_query
+    mock_query.one.return_value = mock_result
+
+    mock_session = MagicMock()
+    mock_session.query.return_value = mock_query
+
+    monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
+
+    total, successful, failed = prompt._get_metric_counts()
+
+    assert total == 12
+    assert successful == 9
+    assert failed == 3
+    mock_session.query.assert_called_once()
+
+
+def test_prompt_metrics_summary_sql_path(monkeypatch):
+    """Test metrics_summary uses SQL aggregation when metrics not loaded but session exists."""
+    prompt = db.Prompt()
+    prompt.id = "test-prompt-id"
+
+    mock_timestamp = datetime.now(timezone.utc)
+    mock_result = MagicMock()
+    mock_result.__getitem__ = lambda self, i: [10, 8, 0.2, 4.0, 2.0, mock_timestamp][i]
+
+    mock_query = MagicMock()
+    mock_query.filter.return_value = mock_query
+    mock_query.one.return_value = mock_result
+
+    mock_session = MagicMock()
+    mock_session.query.return_value = mock_query
+
+    monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
+
+    summary = prompt.metrics_summary
+
+    assert summary["total_executions"] == 10
+    assert summary["successful_executions"] == 8
+    assert summary["failed_executions"] == 2
+    assert summary["failure_rate"] == 0.2
+    assert summary["min_response_time"] == 0.2
+    assert summary["max_response_time"] == 4.0
+    assert summary["avg_response_time"] == 2.0
+    assert summary["last_execution_time"] == mock_timestamp
+
+
 # --- Server metrics properties ---
 def make_server_with_metrics(metrics):
     server = db.Server()
@@ -173,6 +415,62 @@ def test_server_metrics_properties_empty():
     assert server.max_response_time is None
     assert server.avg_response_time is None
     assert server.last_execution_time is None
+
+
+def test_server_get_metric_counts_sql_path(monkeypatch):
+    """Test _get_metric_counts uses SQL aggregation when metrics not loaded but session exists."""
+    server = db.Server()
+    server.id = "test-server-id"
+
+    mock_result = MagicMock()
+    mock_result.__iter__ = lambda self: iter([(15, 12)])
+    mock_result.__getitem__ = lambda self, i: [15, 12][i]
+
+    mock_query = MagicMock()
+    mock_query.filter.return_value = mock_query
+    mock_query.one.return_value = mock_result
+
+    mock_session = MagicMock()
+    mock_session.query.return_value = mock_query
+
+    monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
+
+    total, successful, failed = server._get_metric_counts()
+
+    assert total == 15
+    assert successful == 12
+    assert failed == 3
+    mock_session.query.assert_called_once()
+
+
+def test_server_metrics_summary_sql_path(monkeypatch):
+    """Test metrics_summary uses SQL aggregation when metrics not loaded but session exists."""
+    server = db.Server()
+    server.id = "test-server-id"
+
+    mock_timestamp = datetime.now(timezone.utc)
+    mock_result = MagicMock()
+    mock_result.__getitem__ = lambda self, i: [20, 18, 0.1, 6.0, 3.0, mock_timestamp][i]
+
+    mock_query = MagicMock()
+    mock_query.filter.return_value = mock_query
+    mock_query.one.return_value = mock_result
+
+    mock_session = MagicMock()
+    mock_session.query.return_value = mock_query
+
+    monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
+
+    summary = server.metrics_summary
+
+    assert summary["total_executions"] == 20
+    assert summary["successful_executions"] == 18
+    assert summary["failed_executions"] == 2
+    assert summary["failure_rate"] == 0.1
+    assert summary["min_response_time"] == 0.1
+    assert summary["max_response_time"] == 6.0
+    assert summary["avg_response_time"] == 3.0
+    assert summary["last_execution_time"] == mock_timestamp
 
 
 # --- Resource content property ---
@@ -507,19 +805,23 @@ def test_session_record_and_message_record():
 
 # --- extract_json_field ---
 def test_extract_json_field_sqlite(monkeypatch):
+    # Third-Party
     from sqlalchemy import Column, String
     from sqlalchemy.dialects import sqlite
+
     col = Column("attributes", String)
     monkeypatch.setattr(db, "backend", "sqlite")
     expr = db.extract_json_field(col, '$."tool.name"')
     compiled = str(expr.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
     assert "json_extract" in compiled
-    assert "$.\"tool.name\"" in compiled
+    assert '$."tool.name"' in compiled
 
 
 def test_extract_json_field_postgresql(monkeypatch):
+    # Third-Party
     from sqlalchemy import Column, String
     from sqlalchemy.dialects import postgresql
+
     col = Column("attributes", String)
     monkeypatch.setattr(db, "backend", "postgresql")
     expr = db.extract_json_field(col, '$."tool.name"')
