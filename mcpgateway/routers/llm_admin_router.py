@@ -709,10 +709,10 @@ async def fetch_provider_models(
 
     try:
         # First-Party
-        from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.http_client_service import get_admin_timeout, get_http_client  # pylint: disable=import-outside-toplevel
 
         client = await get_http_client()
-        response = await client.get(url, headers=headers)
+        response = await client.get(url, headers=headers, timeout=get_admin_timeout())
         response.raise_for_status()
         data = response.json()
 

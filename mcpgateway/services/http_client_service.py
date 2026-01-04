@@ -27,14 +27,15 @@ Usage:
         response = await client.get("https://example.com/api")
 
 Configuration (environment variables):
-    HTTPX_MAX_CONNECTIONS: Maximum concurrent connections (default: 100)
-    HTTPX_MAX_KEEPALIVE_CONNECTIONS: Idle connections to retain (default: 50)
+    HTTPX_MAX_CONNECTIONS: Maximum concurrent connections (default: 200)
+    HTTPX_MAX_KEEPALIVE_CONNECTIONS: Idle connections to retain (default: 100)
     HTTPX_KEEPALIVE_EXPIRY: Idle connection timeout in seconds (default: 30)
-    HTTPX_CONNECT_TIMEOUT: Connection timeout in seconds (default: 10)
-    HTTPX_READ_TIMEOUT: Read timeout in seconds (default: 30)
+    HTTPX_CONNECT_TIMEOUT: Connection timeout in seconds (default: 5)
+    HTTPX_READ_TIMEOUT: Read timeout in seconds (default: 120, high for slow MCP tools)
     HTTPX_WRITE_TIMEOUT: Write timeout in seconds (default: 30)
-    HTTPX_POOL_TIMEOUT: Pool wait timeout in seconds (default: 30)
+    HTTPX_POOL_TIMEOUT: Pool wait timeout in seconds (default: 10)
     HTTPX_HTTP2_ENABLED: Enable HTTP/2 (default: false)
+    HTTPX_ADMIN_READ_TIMEOUT: Read timeout for admin operations (default: 30)
 """
 
 # Future
@@ -228,6 +229,27 @@ def get_http_timeout(
     return httpx.Timeout(
         connect=connect_timeout or settings.httpx_connect_timeout,
         read=read_timeout or settings.httpx_read_timeout,
+        write=settings.httpx_write_timeout,
+        pool=settings.httpx_pool_timeout,
+    )
+
+
+def get_admin_timeout() -> httpx.Timeout:
+    """
+    Get a shorter timeout for admin UI operations.
+
+    Use this for operations where fast failure is preferred over waiting for slow
+    upstreams (e.g., model list fetching, health checks, admin page data).
+
+    Returns:
+        httpx.Timeout: Timeout configured for admin operations (shorter read timeout).
+    """
+    # First-Party
+    from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+    return httpx.Timeout(
+        connect=settings.httpx_connect_timeout,
+        read=settings.httpx_admin_read_timeout,
         write=settings.httpx_write_timeout,
         pool=settings.httpx_pool_timeout,
     )

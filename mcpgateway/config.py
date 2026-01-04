@@ -395,7 +395,12 @@ class Settings(BaseSettings):
     mcpgateway_elicitation_max_concurrent: int = Field(default=100, description="Maximum concurrent elicitation requests")
 
     # Security
-    skip_ssl_verify: bool = False
+    skip_ssl_verify: bool = Field(
+        default=False,
+        description="Skip SSL certificate verification for ALL outbound HTTPS requests "
+        "(federation, MCP servers, LLM providers, A2A agents). "
+        "WARNING: Only enable in dev environments with self-signed certificates.",
+    )
     cors_enabled: bool = True
 
     # Environment
@@ -809,6 +814,13 @@ class Settings(BaseSettings):
     httpx_http2_enabled: bool = Field(
         default=False,
         description="Enable HTTP/2 (requires h2 package; enable only if upstreams support HTTP/2)",
+    )
+    httpx_admin_read_timeout: float = Field(
+        default=30.0,
+        ge=1.0,
+        le=120.0,
+        description="Read timeout for admin UI operations (model fetching, health checks). "
+        "Shorter than httpx_read_timeout to fail fast on admin pages.",
     )
 
     @field_validator("allowed_origins", mode="before")

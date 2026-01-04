@@ -526,6 +526,9 @@ HTTPX_POOL_TIMEOUT=10.0                # Wait for available connection in second
 
 # Protocol Configuration
 HTTPX_HTTP2_ENABLED=false              # Enable HTTP/2 (requires server support)
+
+# Admin Operations Timeout
+HTTPX_ADMIN_READ_TIMEOUT=30.0          # Admin UI operations timeout (default: 30, fail fast)
 ```
 
 **Sizing Guidelines:**

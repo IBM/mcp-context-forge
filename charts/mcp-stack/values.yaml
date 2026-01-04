@@ -410,6 +410,7 @@ mcpContextForge:
     HTTPX_WRITE_TIMEOUT: "30.0"            # request write timeout in seconds (1.0-600.0)
     HTTPX_POOL_TIMEOUT: "10.0"             # wait for available connection in seconds (1.0-120.0)
     HTTPX_HTTP2_ENABLED: "false"           # HTTP/2 support (requires server support)
+    HTTPX_ADMIN_READ_TIMEOUT: "30.0"       # Admin UI/health check timeout in seconds
 
     # ─ Well-Known URI Configuration ─
     WELL_KNOWN_ENABLED: "true"       # enable well-known URI endpoints

@@ -247,6 +247,7 @@ services:
       - HTTPX_WRITE_TIMEOUT=30.0            # Request write timeout (seconds)
       - HTTPX_POOL_TIMEOUT=10.0             # Wait for available connection (seconds)
       - HTTPX_HTTP2_ENABLED=false           # HTTP/2 support (requires server support)
+      - HTTPX_ADMIN_READ_TIMEOUT=30.0       # Admin UI/health check timeout (seconds)
       # Worker and server tuning for high-concurrency load testing
       - GUNICORN_WORKERS=16
       # ═══════════════════════════════════════════════════════════════════════════

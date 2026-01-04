@@ -3091,7 +3091,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # First-Party
             from mcpgateway.services.http_client_service import get_isolated_http_client  # pylint: disable=import-outside-toplevel
 
-            async with get_isolated_http_client(verify=ssl_context if ssl_context else True) as client:
+            # Use admin timeout for health checks (fail fast, don't wait 120s for slow upstreams)
+            async with get_isolated_http_client(timeout=settings.httpx_admin_read_timeout, verify=ssl_context if ssl_context else True) as client:
                 logger.debug(f"Checking health of gateway: {gateway_name} ({gateway_url})")
                 try:
                     # Handle different authentication types
