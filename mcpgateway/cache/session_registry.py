@@ -968,6 +968,78 @@ class SessionRegistry(SessionBackend):
                 finally:
                     db_session.close()
 
+            def _db_read_session_and_message(
+                session_id: str,
+            ) -> tuple[SessionRecord | None, SessionMessageRecord | None]:
+                """
+                Check whether a session exists and retrieve its next pending message
+                in a single database query.
+
+                This function performs a LEFT OUTER JOIN between SessionRecord and
+                SessionMessageRecord to determine:
+
+                - Whether the session still exists
+                - Whether there is a pending message for the session (FIFO order)
+
+                It is used by the database-backed message polling loop to reduce
+                database load by collapsing multiple reads into a single query.
+
+                Messages are returned in FIFO order based on the message primary key.
+
+                This function is designed to be run in a thread executor to avoid
+                blocking the async event loop during database access.
+
+                Args:
+                    session_id: The session identifier to look up.
+
+                Returns:
+                    Tuple[SessionRecord | None, SessionMessageRecord | None]:
+
+                    - (None, None)
+                        The session does not exist.
+
+                    - (SessionRecord, None)
+                        The session exists but has no pending messages.
+
+                    - (SessionRecord, SessionMessageRecord)
+                        The session exists and has a pending message.
+
+                Raises:
+                    Exception: Any database error is re-raised after rollback.
+
+                Examples:
+                    >>> # This function is called internally by message_check_loop()
+                    >>> # Session exists and has a pending message
+                    >>> # Returns (SessionRecord, SessionMessageRecord)
+
+                    >>> # Session exists but has no pending messages
+                    >>> # Returns (SessionRecord, None)
+
+                    >>> # Session has been removed
+                    >>> # Returns (None, None)
+                """
+                db_session = next(get_db())
+                try:
+                    result = (
+                        db_session.query(SessionRecord, SessionMessageRecord)
+                        .outerjoin(
+                            SessionMessageRecord,
+                            SessionMessageRecord.session_id == SessionRecord.session_id,
+                        )
+                        .filter(SessionRecord.session_id == session_id)
+                        .order_by(SessionMessageRecord.id.asc())
+                        .first()
+                    )
+                    if not result:
+                        return None, None
+                    session, message = result
+                    return session, message
+                except Exception as ex:
+                    db_session.rollback()
+                    raise ex
+                finally:
+                    db_session.close()
+
             def _db_remove(session_id: str, message: str) -> None:
                 """Remove processed message from the database.
 
@@ -1003,25 +1075,31 @@ class SessionRegistry(SessionBackend):
 
             async def message_check_loop(session_id: str) -> None:
                 """
-                Background task that polls the database for session messages using adaptive
-                backoff and delivers them to the active SSE transport until the session ends.
+                Background task that polls the database for messages belonging to a session
+                using adaptive polling with exponential backoff.
 
-                - Starts with a fast polling interval for low latency.
-                - Gradually increases the polling interval when no messages are found.
-                - Resets to the fast interval when a message is received.
-                - Stops polling when the session no longer exists.
+                The loop continues until the session is removed from the database.
 
-                Polling behavior:
-                    - Message found  → immediate processing and fast polling.
-                    - No message     → exponential backoff up to a configured maximum.
-                    - Session ended  → polling loop exits.
+                Behavior:
+                    - Starts with a fast polling interval for low-latency message delivery.
+                    - When no message is found, the polling interval increases exponentially
+                    (up to a configured maximum) to reduce database load.
+                    - When a message is received, the polling interval is immediately reset
+                    to the fast interval.
+                    - The loop exits as soon as the session no longer exists.
+
+                Polling rules:
+                    - Message found  → process message, reset polling interval.
+                    - No message     → increase polling interval (backoff).
+                    - Session gone   → stop polling immediately.
 
                 Args:
-                    session_id (str): Unique identifier of the active session to monitor.
+                    session_id (str): Unique identifier of the session to monitor.
 
-                Example:
+                Examples
+                --------
+                Adaptive backoff when no messages are present:
 
-                >>> # Given a session with no pending messages
                 >>> poll_interval = 0.1
                 >>> backoff_factor = 1.5
                 >>> max_interval = 5.0
@@ -1029,26 +1107,42 @@ class SessionRegistry(SessionBackend):
                 >>> poll_interval
                 0.15000000000000002
 
-                >>> # When a message arrives, polling resets to fast
+                Backoff continues until the maximum interval is reached:
+
+                >>> poll_interval = 4.0
+                >>> poll_interval = min(poll_interval * 1.5, 5.0)
+                >>> poll_interval
+                5.0
+
+                Polling interval resets immediately when a message arrives:
+
+                >>> poll_interval = 2.0
                 >>> poll_interval = 0.1
                 >>> poll_interval
                 0.1
 
-                >>> # When the session is removed, the polling loop exits
+                Session termination stops polling:
+
                 >>> session_exists = False
                 >>> if not session_exists:
                 ...     "polling stopped"
+                'polling stopped'
                 """
+
                 poll_interval = settings.poll_interval  # start fast (100ms)
                 max_interval = settings.max_interval  # cap at 5 seconds
                 backoff_factor = settings.backoff_factor
 
                 while True:
-                    record = await asyncio.to_thread(_db_read, session_id)
+
+                    session, record = await asyncio.to_thread(_db_read_session_and_message, session_id)
+
+                    # session gone → stop polling
+                    if not session:
+                        break
 
                     if record:
-                        # reset polling on activity
-                        poll_interval = settings.poll_interval
+                        poll_interval = settings.poll_interval  # reset on activity
 
                         data = orjson.loads(record.message)
                         if isinstance(data, dict) and "message" in data:
@@ -1066,14 +1160,12 @@ class SessionRegistry(SessionBackend):
                                 user=user,
                                 base_url=base_url,
                             )
+
                             await asyncio.to_thread(_db_remove, session_id, record.message)
                     else:
-                        # no message → back off polling
+                        # no message → backoff
+                        # update polling interval with backoff factor
                         poll_interval = min(poll_interval * backoff_factor, max_interval)
-
-                    session_exists = await asyncio.to_thread(_db_read_session, session_id)
-                    if not session_exists:
-                        break
 
                     await asyncio.sleep(poll_interval)
 
