@@ -29,7 +29,7 @@ pub async fn search_files(
             Ok(entry) => {
                 let file_type = entry.file_type();
                 if file_type.map(|ft| ft.is_file()).unwrap_or(false) {
-                    let file_name = &entry.file_name().to_string_lossy().to_string();
+                    let file_name = &entry.file_name().to_string_lossy().to_string().to_lowercase();
                     // Match *.rs and exclude files with "test" in name
                     if patterns.include.is_match(file_name) && !patterns.exclude.is_match(file_name)
                     {
@@ -57,12 +57,12 @@ fn build_patterns(pattern: &str, exclude_patterns: Vec<String>) -> Result<Patter
     let mut exclude_builder = GlobSetBuilder::new();
 
     include_builder.add(
-        Glob::new(pattern).with_context(|| format!("invalid include glob pattern: '{pattern}'"))?,
+        Glob::new(&pattern.to_lowercase()).with_context(|| format!("invalid include glob pattern: '{pattern}'"))?,
     );
 
     for exclude in exclude_patterns {
         exclude_builder.add(
-            Glob::new(&exclude)
+            Glob::new(&exclude.to_lowercase())
                 .with_context(|| format!("invalid exclude glob pattern: '{exclude}'"))?,
         );
     }
