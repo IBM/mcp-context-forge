@@ -819,8 +819,7 @@ class Settings(BaseSettings):
         default=30.0,
         ge=1.0,
         le=120.0,
-        description="Read timeout for admin UI operations (model fetching, health checks). "
-        "Shorter than httpx_read_timeout to fail fast on admin pages.",
+        description="Read timeout for admin UI operations (model fetching, health checks). " "Shorter than httpx_read_timeout to fail fast on admin pages.",
     )
 
     @field_validator("allowed_origins", mode="before")

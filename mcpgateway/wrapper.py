@@ -619,7 +619,7 @@ async def main_async(settings: Settings) -> None:
         pool=settings.response_timeout,
     )
 
-    client_args = {"timeout": httpx_timeout, "http2": True}
+    client_args = {"timeout": httpx_timeout, "http2": True, "verify": not settings.skip_ssl_verify}
     resilient = ResilientHttpClient(
         max_retries=5,
         base_backoff=0.25,

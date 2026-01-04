@@ -77,6 +77,7 @@ class LLMProxyService:
                     max_keepalive_connections=settings.httpx_max_keepalive_connections,
                     keepalive_expiry=settings.httpx_keepalive_expiry,
                 ),
+                verify=not settings.skip_ssl_verify,
             )
             logger.info("Initialized LLM Proxy Service")
             self._initialized = True

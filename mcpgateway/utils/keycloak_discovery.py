@@ -103,6 +103,7 @@ def discover_keycloak_endpoints_sync(base_url: str, realm: str, timeout: int = 1
                 max_keepalive_connections=settings.httpx_max_keepalive_connections,
                 keepalive_expiry=settings.httpx_keepalive_expiry,
             ),
+            verify=not settings.skip_ssl_verify,
         ) as client:
             logger.info(f"Discovering Keycloak endpoints from {well_known_url}")
             response = client.get(well_known_url)
