@@ -514,15 +514,15 @@ MCP Gateway uses a shared HTTP client for all outbound requests, providing ~20x 
 
 ```bash
 # Connection Pool Limits
-HTTPX_MAX_CONNECTIONS=100              # Total connections in pool (10-1000, default: 100)
-HTTPX_MAX_KEEPALIVE_CONNECTIONS=50     # Keepalive connections (1-500, default: 50)
+HTTPX_MAX_CONNECTIONS=200              # Total connections in pool (10-1000, default: 200)
+HTTPX_MAX_KEEPALIVE_CONNECTIONS=100    # Keepalive connections (1-500, default: 100)
 HTTPX_KEEPALIVE_EXPIRY=30.0            # Idle connection expiry in seconds (5.0-300.0)
 
 # Timeout Configuration
-HTTPX_CONNECT_TIMEOUT=10.0             # TCP connection timeout in seconds (1.0-60.0)
-HTTPX_READ_TIMEOUT=30.0                # Response read timeout in seconds (1.0-600.0)
-HTTPX_WRITE_TIMEOUT=30.0               # Request write timeout in seconds (1.0-600.0)
-HTTPX_POOL_TIMEOUT=30.0                # Wait for available connection in seconds (1.0-120.0)
+HTTPX_CONNECT_TIMEOUT=5.0              # TCP connection timeout in seconds (default: 5, fast for LAN)
+HTTPX_READ_TIMEOUT=120.0               # Response read timeout in seconds (default: 120, high for slow tools)
+HTTPX_WRITE_TIMEOUT=30.0               # Request write timeout in seconds (default: 30)
+HTTPX_POOL_TIMEOUT=10.0                # Wait for available connection in seconds (default: 10, fail fast)
 
 # Protocol Configuration
 HTTPX_HTTP2_ENABLED=false              # Enable HTTP/2 (requires server support)
@@ -532,9 +532,9 @@ HTTPX_HTTP2_ENABLED=false              # Enable HTTP/2 (requires server support)
 
 | Deployment Size | `HTTPX_MAX_CONNECTIONS` | `HTTPX_MAX_KEEPALIVE_CONNECTIONS` | Notes |
 |----------------|------------------------|----------------------------------|-------|
-| Development    | 20                     | 10                               | Minimal footprint |
-| Production     | 100                    | 50                               | Default, handles typical load |
-| High-traffic   | 200-500                | 100-250                          | Heavy federation/A2A usage |
+| Development    | 50                     | 25                               | Minimal footprint |
+| Production     | 200                    | 100                              | Default, handles typical load |
+| High-traffic   | 300-500                | 150-250                          | Heavy federation/A2A usage |
 
 **Formula:** `HTTPX_MAX_CONNECTIONS = concurrent_outbound_requests × 1.5`
 

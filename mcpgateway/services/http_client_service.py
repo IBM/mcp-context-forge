@@ -101,6 +101,7 @@ class SharedHttpClient:
         Reads configuration from settings and creates the shared AsyncClient.
         """
         # Import here to avoid circular imports
+        # First-Party
         from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
 
         limits = httpx.Limits(
@@ -195,6 +196,7 @@ def get_http_limits() -> httpx.Limits:
     Returns:
         httpx.Limits: Configured limits from settings.
     """
+    # First-Party
     from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
 
     return httpx.Limits(
@@ -220,6 +222,7 @@ def get_http_timeout(
     Returns:
         httpx.Timeout: Configured timeout from settings with optional overrides.
     """
+    # First-Party
     from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
 
     return httpx.Timeout(
@@ -261,6 +264,7 @@ async def get_isolated_http_client(
         async with get_isolated_http_client(verify=custom_ssl_context) as client:
             response = await client.get("https://example.com/api")
     """
+    # First-Party
     from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
 
     limits = get_http_limits()
