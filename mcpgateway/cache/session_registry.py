@@ -898,70 +898,72 @@ class SessionRegistry(SessionBackend):
 
         elif self._backend == "database":
 
-            def _db_read_session(session_id: str) -> SessionRecord | None:
-                """Check if session still exists in the database.
+            def _db_read_session_and_message(
+                session_id: str,
+            ) -> tuple[SessionRecord | None, SessionMessageRecord | None]:
+                """
+                Check whether a session exists and retrieve its next pending message
+                in a single database query.
 
-                Queries the SessionRecord table to verify that the session
-                is still active. Used in the message polling loop to determine
-                when to stop checking for messages.
+                This function performs a LEFT OUTER JOIN between SessionRecord and
+                SessionMessageRecord to determine:
 
-                This inner function is designed to be run in a thread executor
-                to avoid blocking the async event loop during database reads.
+                - Whether the session still exists
+                - Whether there is a pending message for the session (FIFO order)
+
+                It is used by the database-backed message polling loop to reduce
+                database load by collapsing multiple reads into a single query.
+
+                Messages are returned in FIFO order based on the message primary key.
+
+                This function is designed to be run in a thread executor to avoid
+                blocking the async event loop during database access.
 
                 Args:
                     session_id: The session identifier to look up.
 
                 Returns:
-                    SessionRecord: The session record if found, None otherwise.
+                    Tuple[SessionRecord | None, SessionMessageRecord | None]:
+
+                    - (None, None)
+                        The session does not exist.
+
+                    - (SessionRecord, None)
+                        The session exists but has no pending messages.
+
+                    - (SessionRecord, SessionMessageRecord)
+                        The session exists and has a pending message.
 
                 Raises:
                     Exception: Any database error is re-raised after rollback.
 
                 Examples:
                     >>> # This function is called internally by message_check_loop()
-                    >>> # Returns SessionRecord object if session exists
-                    >>> # Returns None if session has been removed
+                    >>> # Session exists and has a pending message
+                    >>> # Returns (SessionRecord, SessionMessageRecord)
+
+                    >>> # Session exists but has no pending messages
+                    >>> # Returns (SessionRecord, None)
+
+                    >>> # Session has been removed
+                    >>> # Returns (None, None)
                 """
                 db_session = next(get_db())
                 try:
-                    # Delete sessions that haven't been accessed for TTL seconds
-                    result = db_session.query(SessionRecord).filter_by(session_id=session_id).first()
-                    return result
-                except Exception as ex:
-                    db_session.rollback()
-                    raise ex
-                finally:
-                    db_session.close()
-
-            def _db_read(session_id: str) -> SessionMessageRecord | None:
-                """Read pending message for a session from the database.
-
-                Retrieves the first (oldest) unprocessed message for the given
-                session_id from the SessionMessageRecord table. Messages are
-                processed in FIFO order.
-
-                This inner function is designed to be run in a thread executor
-                to avoid blocking the async event loop during database queries.
-
-                Args:
-                    session_id: The session identifier to read messages for.
-
-                Returns:
-                    SessionMessageRecord: The oldest message record if found, None otherwise.
-
-                Raises:
-                    Exception: Any database error is re-raised after rollback.
-
-                Examples:
-                    >>> # This function is called internally by message_check_loop()
-                    >>> # Returns SessionMessageRecord with message data
-                    >>> # Returns None if no pending messages
-                """
-                db_session = next(get_db())
-                try:
-                    # Delete sessions that haven't been accessed for TTL seconds
-                    result = db_session.query(SessionMessageRecord).filter_by(session_id=session_id).first()
-                    return result
+                    result = (
+                        db_session.query(SessionRecord, SessionMessageRecord)
+                        .outerjoin(
+                            SessionMessageRecord,
+                            SessionMessageRecord.session_id == SessionRecord.session_id,
+                        )
+                        .filter(SessionRecord.session_id == session_id)
+                        .order_by(SessionMessageRecord.id.asc())
+                        .first()
+                    )
+                    if not result:
+                        return None, None
+                    session, message = result
+                    return session, message
                 except Exception as ex:
                     db_session.rollback()
                     raise ex
@@ -1002,47 +1004,99 @@ class SessionRegistry(SessionBackend):
                     db_session.close()
 
             async def message_check_loop(session_id: str) -> None:
-                """Poll database for messages and deliver to local transport.
+                """
+                Background task that polls the database for messages belonging to a session
+                using adaptive polling with exponential backoff.
 
-                Continuously checks the database for new messages directed to
-                the specified session_id. When messages are found and the
-                transport exists locally, delivers the message and removes it
-                from the database. Exits when the session no longer exists.
+                The loop continues until the session is removed from the database.
 
-                This coroutine runs as a background task for each active session
-                using database backend, enabling message delivery across worker
-                processes.
+                Behavior:
+                    - Starts with a fast polling interval for low-latency message delivery.
+                    - When no message is found, the polling interval increases exponentially
+                    (up to a configured maximum) to reduce database load.
+                    - When a message is received, the polling interval is immediately reset
+                    to the fast interval.
+                    - The loop exits as soon as the session no longer exists.
+
+                Polling rules:
+                    - Message found  → process message, reset polling interval.
+                    - No message     → increase polling interval (backoff).
+                    - Session gone   → stop polling immediately.
 
                 Args:
-                    session_id: The session identifier to monitor for messages.
+                    session_id (str): Unique identifier of the session to monitor.
 
-                Examples:
-                    >>> # This function is called as a task by respond()
-                    >>> # asyncio.create_task(message_check_loop('abc123'))
-                    >>> # Polls every 0.1 seconds until session is removed
-                    >>> # Delivers messages to transport and cleans up database
+                Examples
+                --------
+                Adaptive backoff when no messages are present:
+
+                >>> poll_interval = 0.1
+                >>> backoff_factor = 1.5
+                >>> max_interval = 5.0
+                >>> poll_interval = min(poll_interval * backoff_factor, max_interval)
+                >>> poll_interval
+                0.15000000000000002
+
+                Backoff continues until the maximum interval is reached:
+
+                >>> poll_interval = 4.0
+                >>> poll_interval = min(poll_interval * 1.5, 5.0)
+                >>> poll_interval
+                5.0
+
+                Polling interval resets immediately when a message arrives:
+
+                >>> poll_interval = 2.0
+                >>> poll_interval = 0.1
+                >>> poll_interval
+                0.1
+
+                Session termination stops polling:
+
+                >>> session_exists = False
+                >>> if not session_exists:
+                ...     "polling stopped"
+                'polling stopped'
                 """
+
+                poll_interval = settings.poll_interval  # start fast
+                max_interval = settings.max_interval  # cap at configured maximum
+                backoff_factor = settings.backoff_factor
                 while True:
-                    record = await asyncio.to_thread(_db_read, session_id)
+                    session, record = await asyncio.to_thread(_db_read_session_and_message, session_id)
+
+                    # session gone → stop polling
+                    if not session:
+                        logger.debug("Session %s no longer exists, stopping poll loop", session_id)
+                        break
 
                     if record:
+                        poll_interval = settings.poll_interval  # reset on activity
+
                         data = orjson.loads(record.message)
                         if isinstance(data, dict) and "message" in data:
                             message = data["message"]
                         else:
                             message = data
+
                         transport = self.get_session_sync(session_id)
                         if transport:
                             logger.info("Ready to respond")
-                            await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
+                            await self.generate_response(
+                                message=message,
+                                transport=transport,
+                                server_id=server_id,
+                                user=user,
+                                base_url=base_url,
+                            )
 
                             await asyncio.to_thread(_db_remove, session_id, record.message)
+                    else:
+                        # no message → backoff
+                        # update polling interval with backoff factor
+                        poll_interval = min(poll_interval * backoff_factor, max_interval)
 
-                    session_exists = await asyncio.to_thread(_db_read_session, session_id)
-                    if not session_exists:
-                        break
-
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(poll_interval)
 
             asyncio.create_task(message_check_loop(session_id))
 
