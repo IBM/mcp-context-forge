@@ -1471,9 +1471,7 @@ class EmailTeam(Base):
             # Fallback for detached objects (e.g., in doctests)
             return len([m for m in self.members if m.is_active])
 
-        count = session.query(func.count(EmailTeamMember.id)).filter(  # pylint: disable=not-callable
-            EmailTeamMember.team_id == self.id, EmailTeamMember.is_active.is_(True)
-        ).scalar()
+        count = session.query(func.count(EmailTeamMember.id)).filter(EmailTeamMember.team_id == self.id, EmailTeamMember.is_active.is_(True)).scalar()  # pylint: disable=not-callable
         return count or 0
 
     def is_member(self, user_email: str) -> bool:
@@ -2875,14 +2873,69 @@ class Tool(Base):
         """
         return select(Gateway.slug).where(Gateway.id == cls.gateway_id).scalar_subquery()
 
+    def _metrics_loaded(self) -> bool:
+        """Check if metrics relationship is loaded without triggering lazy load.
+
+        Returns:
+            bool: True if metrics are loaded, False otherwise.
+        """
+        return "metrics" in sa_inspect(self).dict
+
+    def _get_metric_counts(self) -> tuple[int, int, int]:
+        """Get total, successful, and failed metric counts in a single operation.
+
+        When metrics are already loaded, computes from memory in O(n).
+        When not loaded, uses a single SQL query with conditional aggregation.
+
+        Note: For bulk operations, use metrics_summary which computes all fields
+        in a single pass, or ensure metrics are preloaded via selectinload.
+
+        Returns:
+            tuple[int, int, int]: (total, successful, failed) counts.
+        """
+        # If metrics are loaded, compute from memory in a single pass
+        if self._metrics_loaded():
+            total = 0
+            successful = 0
+            for m in self.metrics:
+                total += 1
+                if m.is_success:
+                    successful += 1
+            return (total, successful, total - successful)
+
+        # Use single SQL query with conditional aggregation
+        # Third-Party
+        from sqlalchemy import case  # pylint: disable=import-outside-toplevel
+        from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
+
+        session = object_session(self)
+        if session is None:
+            return (0, 0, 0)
+
+        result = (
+            session.query(
+                func.count(ToolMetric.id),  # pylint: disable=not-callable
+                func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)),
+            )
+            .filter(ToolMetric.tool_id == self.id)
+            .one()
+        )
+
+        total = result[0] or 0
+        successful = result[1] or 0
+        return (total, successful, total - successful)
+
     @hybrid_property
     def execution_count(self) -> int:
         """Number of ToolMetric records associated with this tool instance.
 
+        Note: Each property access may trigger a SQL query if metrics aren't loaded.
+        For reading multiple metric fields, use metrics_summary or preload metrics.
+
         Returns:
             int: Count of ToolMetric records for this tool.
         """
-        return len(getattr(self, "metrics", []))
+        return self._get_metric_counts()[0]
 
     @execution_count.expression
     @classmethod
@@ -2892,70 +2945,44 @@ class Tool(Base):
         Returns:
             Any: SQLAlchemy labeled count expression for tool metrics.
         """
-        return select(func.count(ToolMetric.id)).where(ToolMetric.tool_id == cls.id).label("execution_count")  # pylint: disable=not-callable
-
-    def _metrics_loaded(self) -> bool:
-        """Check if metrics relationship is loaded without triggering lazy load.
-
-        Returns:
-            bool: True if metrics are loaded, False otherwise.
-        """
-        return "metrics" in sa_inspect(self).dict
+        return select(func.count(ToolMetric.id)).where(ToolMetric.tool_id == cls.id).correlate(cls).scalar_subquery().label("execution_count")  # pylint: disable=not-callable
 
     @property
     def successful_executions(self) -> int:
-        """
-        Returns the count of successful tool executions,
-        computed from the associated ToolMetric records.
-        Returns 0 if metrics are not loaded (avoids lazy loading).
+        """Count of successful tool executions.
 
         Returns:
             int: The count of successful tool executions.
         """
-        if not self._metrics_loaded():
-            return 0
-        return sum(1 for m in self.metrics if m.is_success)
+        return self._get_metric_counts()[1]
 
     @property
     def failed_executions(self) -> int:
-        """
-        Returns the count of failed tool executions,
-        computed from the associated ToolMetric records.
-        Returns 0 if metrics are not loaded (avoids lazy loading).
+        """Count of failed tool executions.
 
         Returns:
             int: The count of failed tool executions.
         """
-        if not self._metrics_loaded():
-            return 0
-        return sum(1 for m in self.metrics if not m.is_success)
+        return self._get_metric_counts()[2]
 
     @property
     def failure_rate(self) -> float:
-        """
-        Returns the failure rate (as a float between 0 and 1) computed as:
-            (failed executions) / (total executions).
-        Returns 0.0 if there are no executions or metrics are not loaded.
+        """Failure rate as a float between 0 and 1.
 
         Returns:
             float: The failure rate as a value between 0 and 1.
         """
-        if not self._metrics_loaded():
-            return 0.0
-        total: int = self.execution_count
-        # execution_count is a @hybrid_property, not a callable here
-        if total == 0:  # pylint: disable=comparison-with-callable
-            return 0.0
-        return self.failed_executions / total
+        total, _, failed = self._get_metric_counts()
+        return failed / total if total > 0 else 0.0
 
     @property
     def min_response_time(self) -> Optional[float]:
-        """
-        Returns the minimum response time among all tool executions.
-        Returns None if no executions exist or metrics are not loaded.
+        """Minimum response time among all tool executions.
+
+        Returns None if metrics are not loaded (use metrics_summary for SQL fallback).
 
         Returns:
-            Optional[float]: The minimum response time, or None if no executions exist.
+            Optional[float]: The minimum response time, or None.
         """
         if not self._metrics_loaded():
             return None
@@ -2964,12 +2991,12 @@ class Tool(Base):
 
     @property
     def max_response_time(self) -> Optional[float]:
-        """
-        Returns the maximum response time among all tool executions.
-        Returns None if no executions exist or metrics are not loaded.
+        """Maximum response time among all tool executions.
+
+        Returns None if metrics are not loaded (use metrics_summary for SQL fallback).
 
         Returns:
-            Optional[float]: The maximum response time, or None if no executions exist.
+            Optional[float]: The maximum response time, or None.
         """
         if not self._metrics_loaded():
             return None
@@ -2978,12 +3005,12 @@ class Tool(Base):
 
     @property
     def avg_response_time(self) -> Optional[float]:
-        """
-        Returns the average response time among all tool executions.
-        Returns None if no executions exist or metrics are not loaded.
+        """Average response time among all tool executions.
+
+        Returns None if metrics are not loaded (use metrics_summary for SQL fallback).
 
         Returns:
-            Optional[float]: The average response time, or None if no executions exist.
+            Optional[float]: The average response time, or None.
         """
         if not self._metrics_loaded():
             return None
@@ -2992,12 +3019,12 @@ class Tool(Base):
 
     @property
     def last_execution_time(self) -> Optional[datetime]:
-        """
-        Returns the timestamp of the most recent tool execution.
-        Returns None if no executions exist or metrics are not loaded.
+        """Timestamp of the most recent tool execution.
+
+        Returns None if metrics are not loaded (use metrics_summary for SQL fallback).
 
         Returns:
-            Optional[datetime]: The timestamp of the most recent execution, or None if no executions exist.
+            Optional[datetime]: The timestamp of the most recent execution, or None.
         """
         if not self._metrics_loaded():
             return None
@@ -3007,29 +3034,94 @@ class Tool(Base):
 
     @property
     def metrics_summary(self) -> Dict[str, Any]:
-        """
-        Returns aggregated metrics for the tool as a dictionary with the following keys:
-            - total_executions: Total number of invocations.
-            - successful_executions: Number of successful invocations.
-            - failed_executions: Number of failed invocations.
-            - failure_rate: Failure rate (failed/total) or 0.0 if no invocations.
-            - min_response_time: Minimum response time (or None if no invocations).
-            - max_response_time: Maximum response time (or None if no invocations).
-            - avg_response_time: Average response time (or None if no invocations).
-            - last_execution_time: Timestamp of the most recent invocation (or None).
+        """Aggregated metrics for the tool.
+
+        When metrics are loaded: computes all values from memory in a single pass.
+        When not loaded: uses a single SQL query with aggregation for all fields.
 
         Returns:
-            Dict[str, Any]: Dictionary containing the aggregated metrics.
+            Dict[str, Any]: Dictionary containing aggregated metrics:
+                - total_executions, successful_executions, failed_executions
+                - failure_rate, min/max/avg_response_time, last_execution_time
         """
+        # If metrics are loaded, compute everything in a single pass
+        if self._metrics_loaded():
+            total = 0
+            successful = 0
+            min_rt: Optional[float] = None
+            max_rt: Optional[float] = None
+            sum_rt = 0.0
+            last_time: Optional[datetime] = None
+
+            for m in self.metrics:
+                total += 1
+                if m.is_success:
+                    successful += 1
+                rt = m.response_time
+                if min_rt is None or rt < min_rt:
+                    min_rt = rt
+                if max_rt is None or rt > max_rt:
+                    max_rt = rt
+                sum_rt += rt
+                if last_time is None or m.timestamp > last_time:
+                    last_time = m.timestamp
+
+            failed = total - successful
+            return {
+                "total_executions": total,
+                "successful_executions": successful,
+                "failed_executions": failed,
+                "failure_rate": failed / total if total > 0 else 0.0,
+                "min_response_time": min_rt,
+                "max_response_time": max_rt,
+                "avg_response_time": sum_rt / total if total > 0 else None,
+                "last_execution_time": last_time,
+            }
+
+        # Use single SQL query with full aggregation
+        # Third-Party
+        from sqlalchemy import case  # pylint: disable=import-outside-toplevel
+        from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
+
+        session = object_session(self)
+        if session is None:
+            return {
+                "total_executions": 0,
+                "successful_executions": 0,
+                "failed_executions": 0,
+                "failure_rate": 0.0,
+                "min_response_time": None,
+                "max_response_time": None,
+                "avg_response_time": None,
+                "last_execution_time": None,
+            }
+
+        result = (
+            session.query(
+                func.count(ToolMetric.id),  # pylint: disable=not-callable
+                func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)),
+                func.min(ToolMetric.response_time),  # pylint: disable=not-callable
+                func.max(ToolMetric.response_time),  # pylint: disable=not-callable
+                func.avg(ToolMetric.response_time),  # pylint: disable=not-callable
+                func.max(ToolMetric.timestamp),  # pylint: disable=not-callable
+            )
+            .filter(ToolMetric.tool_id == self.id)
+            .one()
+        )
+
+        total = result[0] or 0
+        successful = result[1] or 0
+        failed = total - successful
+
         return {
-            "total_executions": self.execution_count,
-            "successful_executions": self.successful_executions,
-            "failed_executions": self.failed_executions,
-            "failure_rate": self.failure_rate,
-            "min_response_time": self.min_response_time,
-            "max_response_time": self.max_response_time,
-            "avg_response_time": self.avg_response_time,
-            "last_execution_time": self.last_execution_time,
+            "total_executions": total,
+            "successful_executions": successful,
+            "failed_executions": failed,
+            "failure_rate": failed / total if total > 0 else 0.0,
+            "min_response_time": result[2],
+            "max_response_time": result[3],
+            "avg_response_time": float(result[4]) if result[4] is not None else None,
+            "last_execution_time": result[5],
         }
 
 
@@ -3161,73 +3253,102 @@ class Resource(Base):
         """
         return "metrics" in sa_inspect(self).dict
 
-    @property
-    def execution_count(self) -> int:
-        """
-        Returns the number of times the resource has been invoked,
-        calculated from the associated ResourceMetric records.
-        Returns 0 if metrics are not loaded (avoids lazy loading).
+    def _get_metric_counts(self) -> tuple[int, int, int]:
+        """Get total, successful, and failed metric counts in a single operation.
+
+        When metrics are already loaded, computes from memory in O(n).
+        When not loaded, uses a single SQL query with conditional aggregation.
 
         Returns:
-            int: The total count of resource invocations.
+            tuple[int, int, int]: (total, successful, failed) counts.
         """
-        if not self._metrics_loaded():
-            return 0
-        return len(self.metrics)
+        if self._metrics_loaded():
+            total = 0
+            successful = 0
+            for m in self.metrics:
+                total += 1
+                if m.is_success:
+                    successful += 1
+            return (total, successful, total - successful)
+
+        # Third-Party
+        from sqlalchemy import case  # pylint: disable=import-outside-toplevel
+        from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
+
+        session = object_session(self)
+        if session is None:
+            return (0, 0, 0)
+
+        result = (
+            session.query(
+                func.count(ResourceMetric.id),  # pylint: disable=not-callable
+                func.sum(case((ResourceMetric.is_success.is_(True), 1), else_=0)),
+            )
+            .filter(ResourceMetric.resource_id == self.id)
+            .one()
+        )
+
+        total = result[0] or 0
+        successful = result[1] or 0
+        return (total, successful, total - successful)
+
+    @hybrid_property
+    def execution_count(self) -> int:
+        """Number of ResourceMetric records associated with this resource instance.
+
+        Returns:
+            int: Count of ResourceMetric records for this resource.
+        """
+        return self._get_metric_counts()[0]
+
+    @execution_count.expression
+    @classmethod
+    def execution_count(cls) -> Any:
+        """SQL expression that counts ResourceMetric rows for this resource.
+
+        Returns:
+            Any: SQLAlchemy labeled count expression for resource metrics.
+        """
+        return select(func.count(ResourceMetric.id)).where(ResourceMetric.resource_id == cls.id).correlate(cls).scalar_subquery().label("execution_count")  # pylint: disable=not-callable
 
     @property
     def successful_executions(self) -> int:
-        """
-        Returns the count of successful resource invocations,
-        computed from the associated ResourceMetric records.
-        Returns 0 if metrics are not loaded (avoids lazy loading).
+        """Count of successful resource invocations.
 
         Returns:
             int: The count of successful resource invocations.
         """
-        if not self._metrics_loaded():
-            return 0
-        return sum(1 for m in self.metrics if m.is_success)
+        return self._get_metric_counts()[1]
 
     @property
     def failed_executions(self) -> int:
-        """
-        Returns the count of failed resource invocations,
-        computed from the associated ResourceMetric records.
-        Returns 0 if metrics are not loaded (avoids lazy loading).
+        """Count of failed resource invocations.
 
         Returns:
             int: The count of failed resource invocations.
         """
-        if not self._metrics_loaded():
-            return 0
-        return sum(1 for m in self.metrics if not m.is_success)
+        return self._get_metric_counts()[2]
 
     @property
     def failure_rate(self) -> float:
-        """
-        Returns the failure rate (as a float between 0 and 1) computed as:
-            (failed invocations) / (total invocations).
-        Returns 0.0 if there are no invocations or metrics are not loaded.
+        """Failure rate as a float between 0 and 1.
 
         Returns:
             float: The failure rate as a value between 0 and 1.
         """
-        if not self._metrics_loaded():
-            return 0.0
-        total: int = self.execution_count
-        if total == 0:
-            return 0.0
-        return self.failed_executions / total
+        total, _, failed = self._get_metric_counts()
+        return failed / total if total > 0 else 0.0
 
     @property
     def min_response_time(self) -> Optional[float]:
-        """
-        Returns the minimum response time among all resource invocations.
-        Returns None if no invocations exist or metrics are not loaded.
+        """Minimum response time among all resource invocations.
+
+        Returns None if metrics are not loaded. Note: counts may be non-zero
+        (via SQL) while timing is None. Use service layer converters for
+        consistent metrics, or preload metrics via selectinload.
 
         Returns:
-            Optional[float]: The minimum response time, or None if no invocations exist.
+            Optional[float]: The minimum response time, or None.
         """
         if not self._metrics_loaded():
             return None
@@ -3236,12 +3357,14 @@ class Resource(Base):
 
     @property
     def max_response_time(self) -> Optional[float]:
-        """
-        Returns the maximum response time among all resource invocations.
-        Returns None if no invocations exist or metrics are not loaded.
+        """Maximum response time among all resource invocations.
+
+        Returns None if metrics are not loaded. Note: counts may be non-zero
+        (via SQL) while timing is None. Use service layer converters for
+        consistent metrics, or preload metrics via selectinload.
 
         Returns:
-            Optional[float]: The maximum response time, or None if no invocations exist.
+            Optional[float]: The maximum response time, or None.
         """
         if not self._metrics_loaded():
             return None
@@ -3250,12 +3373,14 @@ class Resource(Base):
 
     @property
     def avg_response_time(self) -> Optional[float]:
-        """
-        Returns the average response time among all resource invocations.
-        Returns None if no invocations exist or metrics are not loaded.
+        """Average response time among all resource invocations.
+
+        Returns None if metrics are not loaded. Note: counts may be non-zero
+        (via SQL) while timing is None. Use service layer converters for
+        consistent metrics, or preload metrics via selectinload.
 
         Returns:
-            Optional[float]: The average response time, or None if no invocations exist.
+            Optional[float]: The average response time, or None.
         """
         if not self._metrics_loaded():
             return None
@@ -3264,18 +3389,110 @@ class Resource(Base):
 
     @property
     def last_execution_time(self) -> Optional[datetime]:
-        """
-        Returns the timestamp of the most recent resource invocation.
-        Returns None if no invocations exist or metrics are not loaded.
+        """Timestamp of the most recent resource invocation.
+
+        Returns None if metrics are not loaded. Note: counts may be non-zero
+        (via SQL) while timing is None. Use service layer converters for
+        consistent metrics, or preload metrics via selectinload.
 
         Returns:
-            Optional[datetime]: The timestamp of the most recent invocation, or None if no invocations exist.
+            Optional[datetime]: The timestamp of the most recent invocation, or None.
         """
         if not self._metrics_loaded():
             return None
         if not self.metrics:
             return None
         return max(m.timestamp for m in self.metrics)
+
+    @property
+    def metrics_summary(self) -> Dict[str, Any]:
+        """Aggregated metrics for the resource.
+
+        When metrics are loaded: computes all values from memory in a single pass.
+        When not loaded: uses a single SQL query with aggregation for all fields.
+
+        Returns:
+            Dict[str, Any]: Dictionary containing aggregated metrics:
+                - total_executions, successful_executions, failed_executions
+                - failure_rate, min/max/avg_response_time, last_execution_time
+        """
+        if self._metrics_loaded():
+            total = 0
+            successful = 0
+            min_rt: Optional[float] = None
+            max_rt: Optional[float] = None
+            sum_rt = 0.0
+            last_time: Optional[datetime] = None
+
+            for m in self.metrics:
+                total += 1
+                if m.is_success:
+                    successful += 1
+                rt = m.response_time
+                if min_rt is None or rt < min_rt:
+                    min_rt = rt
+                if max_rt is None or rt > max_rt:
+                    max_rt = rt
+                sum_rt += rt
+                if last_time is None or m.timestamp > last_time:
+                    last_time = m.timestamp
+
+            failed = total - successful
+            return {
+                "total_executions": total,
+                "successful_executions": successful,
+                "failed_executions": failed,
+                "failure_rate": failed / total if total > 0 else 0.0,
+                "min_response_time": min_rt,
+                "max_response_time": max_rt,
+                "avg_response_time": sum_rt / total if total > 0 else None,
+                "last_execution_time": last_time,
+            }
+
+        # Third-Party
+        from sqlalchemy import case  # pylint: disable=import-outside-toplevel
+        from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
+
+        session = object_session(self)
+        if session is None:
+            return {
+                "total_executions": 0,
+                "successful_executions": 0,
+                "failed_executions": 0,
+                "failure_rate": 0.0,
+                "min_response_time": None,
+                "max_response_time": None,
+                "avg_response_time": None,
+                "last_execution_time": None,
+            }
+
+        result = (
+            session.query(
+                func.count(ResourceMetric.id),  # pylint: disable=not-callable
+                func.sum(case((ResourceMetric.is_success.is_(True), 1), else_=0)),
+                func.min(ResourceMetric.response_time),  # pylint: disable=not-callable
+                func.max(ResourceMetric.response_time),  # pylint: disable=not-callable
+                func.avg(ResourceMetric.response_time),  # pylint: disable=not-callable
+                func.max(ResourceMetric.timestamp),  # pylint: disable=not-callable
+            )
+            .filter(ResourceMetric.resource_id == self.id)
+            .one()
+        )
+
+        total = result[0] or 0
+        successful = result[1] or 0
+        failed = total - successful
+
+        return {
+            "total_executions": total,
+            "successful_executions": successful,
+            "failed_executions": failed,
+            "failure_rate": failed / total if total > 0 else 0.0,
+            "min_response_time": result[2],
+            "max_response_time": result[3],
+            "avg_response_time": float(result[4]) if result[4] is not None else None,
+            "last_execution_time": result[5],
+        }
 
     # Team scoping fields for resource organization
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
@@ -3446,73 +3663,102 @@ class Prompt(Base):
         """
         return "metrics" in sa_inspect(self).dict
 
-    @property
-    def execution_count(self) -> int:
-        """
-        Returns the number of times the prompt has been invoked,
-        calculated from the associated PromptMetric records.
-        Returns 0 if metrics are not loaded (avoids lazy loading).
+    def _get_metric_counts(self) -> tuple[int, int, int]:
+        """Get total, successful, and failed metric counts in a single operation.
+
+        When metrics are already loaded, computes from memory in O(n).
+        When not loaded, uses a single SQL query with conditional aggregation.
 
         Returns:
-            int: The total count of prompt invocations.
+            tuple[int, int, int]: (total, successful, failed) counts.
         """
-        if not self._metrics_loaded():
-            return 0
-        return len(self.metrics)
+        if self._metrics_loaded():
+            total = 0
+            successful = 0
+            for m in self.metrics:
+                total += 1
+                if m.is_success:
+                    successful += 1
+            return (total, successful, total - successful)
+
+        # Third-Party
+        from sqlalchemy import case  # pylint: disable=import-outside-toplevel
+        from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
+
+        session = object_session(self)
+        if session is None:
+            return (0, 0, 0)
+
+        result = (
+            session.query(
+                func.count(PromptMetric.id),  # pylint: disable=not-callable
+                func.sum(case((PromptMetric.is_success.is_(True), 1), else_=0)),
+            )
+            .filter(PromptMetric.prompt_id == self.id)
+            .one()
+        )
+
+        total = result[0] or 0
+        successful = result[1] or 0
+        return (total, successful, total - successful)
+
+    @hybrid_property
+    def execution_count(self) -> int:
+        """Number of PromptMetric records associated with this prompt instance.
+
+        Returns:
+            int: Count of PromptMetric records for this prompt.
+        """
+        return self._get_metric_counts()[0]
+
+    @execution_count.expression
+    @classmethod
+    def execution_count(cls) -> Any:
+        """SQL expression that counts PromptMetric rows for this prompt.
+
+        Returns:
+            Any: SQLAlchemy labeled count expression for prompt metrics.
+        """
+        return select(func.count(PromptMetric.id)).where(PromptMetric.prompt_id == cls.id).correlate(cls).scalar_subquery().label("execution_count")  # pylint: disable=not-callable
 
     @property
     def successful_executions(self) -> int:
-        """
-        Returns the count of successful prompt invocations,
-        computed from the associated PromptMetric records.
-        Returns 0 if metrics are not loaded (avoids lazy loading).
+        """Count of successful prompt invocations.
 
         Returns:
             int: The count of successful prompt invocations.
         """
-        if not self._metrics_loaded():
-            return 0
-        return sum(1 for m in self.metrics if m.is_success)
+        return self._get_metric_counts()[1]
 
     @property
     def failed_executions(self) -> int:
-        """
-        Returns the count of failed prompt invocations,
-        computed from the associated PromptMetric records.
-        Returns 0 if metrics are not loaded (avoids lazy loading).
+        """Count of failed prompt invocations.
 
         Returns:
             int: The count of failed prompt invocations.
         """
-        if not self._metrics_loaded():
-            return 0
-        return sum(1 for m in self.metrics if not m.is_success)
+        return self._get_metric_counts()[2]
 
     @property
     def failure_rate(self) -> float:
-        """
-        Returns the failure rate (as a float between 0 and 1) computed as:
-            (failed invocations) / (total invocations).
-        Returns 0.0 if there are no invocations or metrics are not loaded.
+        """Failure rate as a float between 0 and 1.
 
         Returns:
             float: The failure rate as a value between 0 and 1.
         """
-        if not self._metrics_loaded():
-            return 0.0
-        total: int = self.execution_count
-        if total == 0:
-            return 0.0
-        return self.failed_executions / total
+        total, _, failed = self._get_metric_counts()
+        return failed / total if total > 0 else 0.0
 
     @property
     def min_response_time(self) -> Optional[float]:
-        """
-        Returns the minimum response time among all prompt invocations.
-        Returns None if no invocations exist or metrics are not loaded.
+        """Minimum response time among all prompt invocations.
+
+        Returns None if metrics are not loaded. Note: counts may be non-zero
+        (via SQL) while timing is None. Use service layer converters for
+        consistent metrics, or preload metrics via selectinload.
 
         Returns:
-            Optional[float]: The minimum response time, or None if no invocations exist.
+            Optional[float]: The minimum response time, or None.
         """
         if not self._metrics_loaded():
             return None
@@ -3521,12 +3767,14 @@ class Prompt(Base):
 
     @property
     def max_response_time(self) -> Optional[float]:
-        """
-        Returns the maximum response time among all prompt invocations.
-        Returns None if no invocations exist or metrics are not loaded.
+        """Maximum response time among all prompt invocations.
+
+        Returns None if metrics are not loaded. Note: counts may be non-zero
+        (via SQL) while timing is None. Use service layer converters for
+        consistent metrics, or preload metrics via selectinload.
 
         Returns:
-            Optional[float]: The maximum response time, or None if no invocations exist.
+            Optional[float]: The maximum response time, or None.
         """
         if not self._metrics_loaded():
             return None
@@ -3535,12 +3783,14 @@ class Prompt(Base):
 
     @property
     def avg_response_time(self) -> Optional[float]:
-        """
-        Returns the average response time among all prompt invocations.
-        Returns None if no invocations exist or metrics are not loaded.
+        """Average response time among all prompt invocations.
+
+        Returns None if metrics are not loaded. Note: counts may be non-zero
+        (via SQL) while timing is None. Use service layer converters for
+        consistent metrics, or preload metrics via selectinload.
 
         Returns:
-            Optional[float]: The average response time, or None if no invocations exist.
+            Optional[float]: The average response time, or None.
         """
         if not self._metrics_loaded():
             return None
@@ -3549,9 +3799,11 @@ class Prompt(Base):
 
     @property
     def last_execution_time(self) -> Optional[datetime]:
-        """
-        Returns the timestamp of the most recent prompt invocation.
-        Returns None if no invocations exist or metrics are not loaded.
+        """Timestamp of the most recent prompt invocation.
+
+        Returns None if metrics are not loaded. Note: counts may be non-zero
+        (via SQL) while timing is None. Use service layer converters for
+        consistent metrics, or preload metrics via selectinload.
 
         Returns:
             Optional[datetime]: The timestamp of the most recent invocation, or None if no invocations exist.
@@ -3561,6 +3813,96 @@ class Prompt(Base):
         if not self.metrics:
             return None
         return max(m.timestamp for m in self.metrics)
+
+    @property
+    def metrics_summary(self) -> Dict[str, Any]:
+        """Aggregated metrics for the prompt.
+
+        When metrics are loaded: computes all values from memory in a single pass.
+        When not loaded: uses a single SQL query with aggregation for all fields.
+
+        Returns:
+            Dict[str, Any]: Dictionary containing aggregated metrics:
+                - total_executions, successful_executions, failed_executions
+                - failure_rate, min/max/avg_response_time, last_execution_time
+        """
+        if self._metrics_loaded():
+            total = 0
+            successful = 0
+            min_rt: Optional[float] = None
+            max_rt: Optional[float] = None
+            sum_rt = 0.0
+            last_time: Optional[datetime] = None
+
+            for m in self.metrics:
+                total += 1
+                if m.is_success:
+                    successful += 1
+                rt = m.response_time
+                if min_rt is None or rt < min_rt:
+                    min_rt = rt
+                if max_rt is None or rt > max_rt:
+                    max_rt = rt
+                sum_rt += rt
+                if last_time is None or m.timestamp > last_time:
+                    last_time = m.timestamp
+
+            failed = total - successful
+            return {
+                "total_executions": total,
+                "successful_executions": successful,
+                "failed_executions": failed,
+                "failure_rate": failed / total if total > 0 else 0.0,
+                "min_response_time": min_rt,
+                "max_response_time": max_rt,
+                "avg_response_time": sum_rt / total if total > 0 else None,
+                "last_execution_time": last_time,
+            }
+
+        # Third-Party
+        from sqlalchemy import case  # pylint: disable=import-outside-toplevel
+        from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
+
+        session = object_session(self)
+        if session is None:
+            return {
+                "total_executions": 0,
+                "successful_executions": 0,
+                "failed_executions": 0,
+                "failure_rate": 0.0,
+                "min_response_time": None,
+                "max_response_time": None,
+                "avg_response_time": None,
+                "last_execution_time": None,
+            }
+
+        result = (
+            session.query(
+                func.count(PromptMetric.id),  # pylint: disable=not-callable
+                func.sum(case((PromptMetric.is_success.is_(True), 1), else_=0)),
+                func.min(PromptMetric.response_time),  # pylint: disable=not-callable
+                func.max(PromptMetric.response_time),  # pylint: disable=not-callable
+                func.avg(PromptMetric.response_time),  # pylint: disable=not-callable
+                func.max(PromptMetric.timestamp),  # pylint: disable=not-callable
+            )
+            .filter(PromptMetric.prompt_id == self.id)
+            .one()
+        )
+
+        total = result[0] or 0
+        successful = result[1] or 0
+        failed = total - successful
+
+        return {
+            "total_executions": total,
+            "successful_executions": successful,
+            "failed_executions": failed,
+            "failure_rate": failed / total if total > 0 else 0.0,
+            "min_response_time": result[2],
+            "max_response_time": result[3],
+            "avg_response_time": float(result[4]) if result[4] is not None else None,
+            "last_execution_time": result[5],
+        }
 
 
 class Server(Base):
@@ -3626,73 +3968,102 @@ class Server(Base):
         """
         return "metrics" in sa_inspect(self).dict
 
-    @property
-    def execution_count(self) -> int:
-        """
-        Returns the number of times the server has been invoked,
-        calculated from the associated ServerMetric records.
-        Returns 0 if metrics are not loaded (avoids lazy loading).
+    def _get_metric_counts(self) -> tuple[int, int, int]:
+        """Get total, successful, and failed metric counts in a single operation.
+
+        When metrics are already loaded, computes from memory in O(n).
+        When not loaded, uses a single SQL query with conditional aggregation.
 
         Returns:
-            int: The total count of server invocations.
+            tuple[int, int, int]: (total, successful, failed) counts.
         """
-        if not self._metrics_loaded():
-            return 0
-        return len(self.metrics)
+        if self._metrics_loaded():
+            total = 0
+            successful = 0
+            for m in self.metrics:
+                total += 1
+                if m.is_success:
+                    successful += 1
+            return (total, successful, total - successful)
+
+        # Third-Party
+        from sqlalchemy import case  # pylint: disable=import-outside-toplevel
+        from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
+
+        session = object_session(self)
+        if session is None:
+            return (0, 0, 0)
+
+        result = (
+            session.query(
+                func.count(ServerMetric.id),  # pylint: disable=not-callable
+                func.sum(case((ServerMetric.is_success.is_(True), 1), else_=0)),
+            )
+            .filter(ServerMetric.server_id == self.id)
+            .one()
+        )
+
+        total = result[0] or 0
+        successful = result[1] or 0
+        return (total, successful, total - successful)
+
+    @hybrid_property
+    def execution_count(self) -> int:
+        """Number of ServerMetric records associated with this server instance.
+
+        Returns:
+            int: Count of ServerMetric records for this server.
+        """
+        return self._get_metric_counts()[0]
+
+    @execution_count.expression
+    @classmethod
+    def execution_count(cls) -> Any:
+        """SQL expression that counts ServerMetric rows for this server.
+
+        Returns:
+            Any: SQLAlchemy labeled count expression for server metrics.
+        """
+        return select(func.count(ServerMetric.id)).where(ServerMetric.server_id == cls.id).correlate(cls).scalar_subquery().label("execution_count")  # pylint: disable=not-callable
 
     @property
     def successful_executions(self) -> int:
-        """
-        Returns the count of successful server invocations,
-        computed from the associated ServerMetric records.
-        Returns 0 if metrics are not loaded (avoids lazy loading).
+        """Count of successful server invocations.
 
         Returns:
             int: The count of successful server invocations.
         """
-        if not self._metrics_loaded():
-            return 0
-        return sum(1 for m in self.metrics if m.is_success)
+        return self._get_metric_counts()[1]
 
     @property
     def failed_executions(self) -> int:
-        """
-        Returns the count of failed server invocations,
-        computed from the associated ServerMetric records.
-        Returns 0 if metrics are not loaded (avoids lazy loading).
+        """Count of failed server invocations.
 
         Returns:
             int: The count of failed server invocations.
         """
-        if not self._metrics_loaded():
-            return 0
-        return sum(1 for m in self.metrics if not m.is_success)
+        return self._get_metric_counts()[2]
 
     @property
     def failure_rate(self) -> float:
-        """
-        Returns the failure rate (as a float between 0 and 1) computed as:
-            (failed invocations) / (total invocations).
-        Returns 0.0 if there are no invocations or metrics are not loaded.
+        """Failure rate as a float between 0 and 1.
 
         Returns:
             float: The failure rate as a value between 0 and 1.
         """
-        if not self._metrics_loaded():
-            return 0.0
-        total: int = self.execution_count
-        if total == 0:
-            return 0.0
-        return self.failed_executions / total
+        total, _, failed = self._get_metric_counts()
+        return failed / total if total > 0 else 0.0
 
     @property
     def min_response_time(self) -> Optional[float]:
-        """
-        Returns the minimum response time among all server invocations.
-        Returns None if no invocations exist or metrics are not loaded.
+        """Minimum response time among all server invocations.
+
+        Returns None if metrics are not loaded. Note: counts may be non-zero
+        (via SQL) while timing is None. Use service layer converters for
+        consistent metrics, or preload metrics via selectinload.
 
         Returns:
-            Optional[float]: The minimum response time, or None if no invocations exist.
+            Optional[float]: The minimum response time, or None.
         """
         if not self._metrics_loaded():
             return None
@@ -3701,12 +4072,14 @@ class Server(Base):
 
     @property
     def max_response_time(self) -> Optional[float]:
-        """
-        Returns the maximum response time among all server invocations.
-        Returns None if no invocations exist or metrics are not loaded.
+        """Maximum response time among all server invocations.
+
+        Returns None if metrics are not loaded. Note: counts may be non-zero
+        (via SQL) while timing is None. Use service layer converters for
+        consistent metrics, or preload metrics via selectinload.
 
         Returns:
-            Optional[float]: The maximum response time, or None if no invocations exist.
+            Optional[float]: The maximum response time, or None.
         """
         if not self._metrics_loaded():
             return None
@@ -3715,12 +4088,14 @@ class Server(Base):
 
     @property
     def avg_response_time(self) -> Optional[float]:
-        """
-        Returns the average response time among all server invocations.
-        Returns None if no invocations exist or metrics are not loaded.
+        """Average response time among all server invocations.
+
+        Returns None if metrics are not loaded. Note: counts may be non-zero
+        (via SQL) while timing is None. Use service layer converters for
+        consistent metrics, or preload metrics via selectinload.
 
         Returns:
-            Optional[float]: The average response time, or None if no invocations exist.
+            Optional[float]: The average response time, or None.
         """
         if not self._metrics_loaded():
             return None
@@ -3729,18 +4104,110 @@ class Server(Base):
 
     @property
     def last_execution_time(self) -> Optional[datetime]:
-        """
-        Returns the timestamp of the most recent server invocation.
-        Returns None if no invocations exist or metrics are not loaded.
+        """Timestamp of the most recent server invocation.
+
+        Returns None if metrics are not loaded. Note: counts may be non-zero
+        (via SQL) while timing is None. Use service layer converters for
+        consistent metrics, or preload metrics via selectinload.
 
         Returns:
-            Optional[datetime]: The timestamp of the most recent invocation, or None if no invocations exist.
+            Optional[datetime]: The timestamp of the most recent invocation, or None.
         """
         if not self._metrics_loaded():
             return None
         if not self.metrics:
             return None
         return max(m.timestamp for m in self.metrics)
+
+    @property
+    def metrics_summary(self) -> Dict[str, Any]:
+        """Aggregated metrics for the server.
+
+        When metrics are loaded: computes all values from memory in a single pass.
+        When not loaded: uses a single SQL query with aggregation for all fields.
+
+        Returns:
+            Dict[str, Any]: Dictionary containing aggregated metrics:
+                - total_executions, successful_executions, failed_executions
+                - failure_rate, min/max/avg_response_time, last_execution_time
+        """
+        if self._metrics_loaded():
+            total = 0
+            successful = 0
+            min_rt: Optional[float] = None
+            max_rt: Optional[float] = None
+            sum_rt = 0.0
+            last_time: Optional[datetime] = None
+
+            for m in self.metrics:
+                total += 1
+                if m.is_success:
+                    successful += 1
+                rt = m.response_time
+                if min_rt is None or rt < min_rt:
+                    min_rt = rt
+                if max_rt is None or rt > max_rt:
+                    max_rt = rt
+                sum_rt += rt
+                if last_time is None or m.timestamp > last_time:
+                    last_time = m.timestamp
+
+            failed = total - successful
+            return {
+                "total_executions": total,
+                "successful_executions": successful,
+                "failed_executions": failed,
+                "failure_rate": failed / total if total > 0 else 0.0,
+                "min_response_time": min_rt,
+                "max_response_time": max_rt,
+                "avg_response_time": sum_rt / total if total > 0 else None,
+                "last_execution_time": last_time,
+            }
+
+        # Third-Party
+        from sqlalchemy import case  # pylint: disable=import-outside-toplevel
+        from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
+
+        session = object_session(self)
+        if session is None:
+            return {
+                "total_executions": 0,
+                "successful_executions": 0,
+                "failed_executions": 0,
+                "failure_rate": 0.0,
+                "min_response_time": None,
+                "max_response_time": None,
+                "avg_response_time": None,
+                "last_execution_time": None,
+            }
+
+        result = (
+            session.query(
+                func.count(ServerMetric.id),  # pylint: disable=not-callable
+                func.sum(case((ServerMetric.is_success.is_(True), 1), else_=0)),
+                func.min(ServerMetric.response_time),  # pylint: disable=not-callable
+                func.max(ServerMetric.response_time),  # pylint: disable=not-callable
+                func.avg(ServerMetric.response_time),  # pylint: disable=not-callable
+                func.max(ServerMetric.timestamp),  # pylint: disable=not-callable
+            )
+            .filter(ServerMetric.server_id == self.id)
+            .one()
+        )
+
+        total = result[0] or 0
+        successful = result[1] or 0
+        failed = total - successful
+
+        return {
+            "total_executions": total,
+            "successful_executions": successful,
+            "failed_executions": failed,
+            "failure_rate": failed / total if total > 0 else 0.0,
+            "min_response_time": result[2],
+            "max_response_time": result[3],
+            "avg_response_time": float(result[4]) if result[4] is not None else None,
+            "last_execution_time": result[5],
+        }
 
     # Team scoping fields for resource organization
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
