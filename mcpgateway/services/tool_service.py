@@ -2580,7 +2580,13 @@ class ToolService:
                             )
 
                             return tool_call_result
-                        except Exception as e:
+                        except BaseException as e:
+                            # Extract root cause from ExceptionGroup (Python 3.11+)
+                            # MCP SDK uses TaskGroup which wraps exceptions in ExceptionGroup
+                            root_cause = e
+                            if isinstance(e, BaseExceptionGroup):
+                                while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:
+                                    root_cause = root_cause.exceptions[0]
                             # Log failed MCP call (using local variables)
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
                             structured_logger.log(
@@ -2589,7 +2595,7 @@ class ToolService:
                                 component="tool_service",
                                 correlation_id=correlation_id,
                                 duration_ms=mcp_duration_ms,
-                                error_details={"error_type": type(e).__name__, "error_message": str(e)},
+                                error_details={"error_type": type(root_cause).__name__, "error_message": str(root_cause)},
                                 metadata={"event": "mcp_call_failed", "tool_name": tool_name_original, "tool_id": tool_id, "transport": "sse"},
                             )
                             raise
@@ -2642,7 +2648,13 @@ class ToolService:
                             )
 
                             return tool_call_result
-                        except Exception as e:
+                        except BaseException as e:
+                            # Extract root cause from ExceptionGroup (Python 3.11+)
+                            # MCP SDK uses TaskGroup which wraps exceptions in ExceptionGroup
+                            root_cause = e
+                            if isinstance(e, BaseExceptionGroup):
+                                while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:
+                                    root_cause = root_cause.exceptions[0]
                             # Log failed MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
                             structured_logger.log(
@@ -2651,7 +2663,7 @@ class ToolService:
                                 component="tool_service",
                                 correlation_id=correlation_id,
                                 duration_ms=mcp_duration_ms,
-                                error_details={"error_type": type(e).__name__, "error_message": str(e)},
+                                error_details={"error_type": type(root_cause).__name__, "error_message": str(root_cause)},
                                 metadata={"event": "mcp_call_failed", "tool_name": tool_name_original, "tool_id": tool_id, "transport": "streamablehttp"},
                             )
                             raise
@@ -2726,12 +2738,18 @@ class ToolService:
                 return tool_result
             except (PluginError, PluginViolationError):
                 raise
-            except Exception as e:
-                error_message = str(e)
+            except BaseException as e:
+                # Extract root cause from ExceptionGroup (Python 3.11+)
+                # MCP SDK uses TaskGroup which wraps exceptions in ExceptionGroup
+                root_cause = e
+                if isinstance(e, BaseExceptionGroup):
+                    while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:
+                        root_cause = root_cause.exceptions[0]
+                error_message = str(root_cause)
                 # Set span error status
                 if span:
                     span.set_attribute("error", True)
-                    span.set_attribute("error.message", str(e))
+                    span.set_attribute("error.message", error_message)
                 raise ToolInvocationError(f"Tool invocation failed: {error_message}")
             finally:
                 # Calculate duration
