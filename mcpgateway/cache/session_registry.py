@@ -898,76 +898,6 @@ class SessionRegistry(SessionBackend):
 
         elif self._backend == "database":
 
-            def _db_read_session(session_id: str) -> SessionRecord | None:
-                """Check if session still exists in the database.
-
-                Queries the SessionRecord table to verify that the session
-                is still active. Used in the message polling loop to determine
-                when to stop checking for messages.
-
-                This inner function is designed to be run in a thread executor
-                to avoid blocking the async event loop during database reads.
-
-                Args:
-                    session_id: The session identifier to look up.
-
-                Returns:
-                    SessionRecord: The session record if found, None otherwise.
-
-                Raises:
-                    Exception: Any database error is re-raised after rollback.
-
-                Examples:
-                    >>> # This function is called internally by message_check_loop()
-                    >>> # Returns SessionRecord object if session exists
-                    >>> # Returns None if session has been removed
-                """
-                db_session = next(get_db())
-                try:
-                    # Delete sessions that haven't been accessed for TTL seconds
-                    result = db_session.query(SessionRecord).filter_by(session_id=session_id).first()
-                    return result
-                except Exception as ex:
-                    db_session.rollback()
-                    raise ex
-                finally:
-                    db_session.close()
-
-            def _db_read(session_id: str) -> SessionMessageRecord | None:
-                """Read pending message for a session from the database.
-
-                Retrieves the first (oldest) unprocessed message for the given
-                session_id from the SessionMessageRecord table. Messages are
-                processed in FIFO order.
-
-                This inner function is designed to be run in a thread executor
-                to avoid blocking the async event loop during database queries.
-
-                Args:
-                    session_id: The session identifier to read messages for.
-
-                Returns:
-                    SessionMessageRecord: The oldest message record if found, None otherwise.
-
-                Raises:
-                    Exception: Any database error is re-raised after rollback.
-
-                Examples:
-                    >>> # This function is called internally by message_check_loop()
-                    >>> # Returns SessionMessageRecord with message data
-                    >>> # Returns None if no pending messages
-                """
-                db_session = next(get_db())
-                try:
-                    # Delete sessions that haven't been accessed for TTL seconds
-                    result = db_session.query(SessionMessageRecord).filter_by(session_id=session_id).first()
-                    return result
-                except Exception as ex:
-                    db_session.rollback()
-                    raise ex
-                finally:
-                    db_session.close()
-
             def _db_read_session_and_message(
                 session_id: str,
             ) -> tuple[SessionRecord | None, SessionMessageRecord | None]:
@@ -1129,17 +1059,15 @@ class SessionRegistry(SessionBackend):
                 'polling stopped'
                 """
 
-                poll_interval = settings.poll_interval  # start fast (100ms)
-                max_interval = settings.max_interval  # cap at 5 seconds
+                poll_interval = settings.poll_interval  # start fast
+                max_interval = settings.max_interval  # cap at configured maximum
                 backoff_factor = settings.backoff_factor
-                i = 1
                 while True:
-                    print(f"Polling ---> {i}")
                     session, record = await asyncio.to_thread(_db_read_session_and_message, session_id)
 
                     # session gone → stop polling
                     if not session:
-                        print(f"Polling Stopped---> {i}")
+                        logger.debug("Session %s no longer exists, stopping poll loop", session_id)
                         break
 
                     if record:
@@ -1168,7 +1096,6 @@ class SessionRegistry(SessionBackend):
                         # update polling interval with backoff factor
                         poll_interval = min(poll_interval * backoff_factor, max_interval)
 
-                    i = i + 1
                     await asyncio.sleep(poll_interval)
 
             asyncio.create_task(message_check_loop(session_id))

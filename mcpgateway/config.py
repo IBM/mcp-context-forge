@@ -466,7 +466,7 @@ class Settings(BaseSettings):
     toolops_enabled: bool = Field(default=False, description="Enable ToolOps feature")
 
     # database-backed polling settings for session message delivery
-    poll_interval: float = Field(default=0.1, description="Initial polling interval in seconds for checking new session messages")
+    poll_interval: float = Field(default=1.0, description="Initial polling interval in seconds for checking new session messages")
     max_interval: float = Field(default=5.0, description="Maximum polling interval in seconds when the session is idle")
     backoff_factor: float = Field(default=1.5, description="Multiplier used to gradually increase the polling interval during inactivity")
 
