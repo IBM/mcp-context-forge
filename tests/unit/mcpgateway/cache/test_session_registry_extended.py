@@ -316,81 +316,32 @@ class TestDatabaseBackendRespond:
 
     @pytest.mark.asyncio
     async def test_database_respond_message_check_loop(self, monkeypatch, mock_sse_transport):
-        """Test Database backend respond method with message polling."""
-        mock_db_session = Mock()
+        """Test database backend respond method with unified session+message polling."""
+
         call_count = 0
 
         def mock_get_db():
-            yield mock_db_session
+            yield Mock()
 
-        def mock_db_read(session_id):
+        def mock_db_read_session_and_message(session_id):
             nonlocal call_count
             call_count += 1
+
             if call_count == 1:
-                # Return a message on first call
-                mock_record = Mock()
-                mock_record.message = json.dumps({"method": "ping", "id": 1})
-                return mock_record
+                # Session exists and has a message
+                mock_session = Mock()
+                mock_message = Mock()
+                mock_message.message = json.dumps({"method": "ping", "id": 1})
+                return mock_session, mock_message
+
+            elif call_count == 2:
+                # Session exists but no messages
+                mock_session = Mock()
+                return mock_session, None
+
             else:
-                # No message on subsequent calls
-                return None
-
-        def mock_db_read_session(session_id):
-            if call_count < 3:  # Session exists for first few calls
-                return Mock()  # Non-None session record
-            else:
-                return None  # Session doesn't exist, break loop
-
-        def mock_db_remove(session_id, message):
-            pass  # Mock message removal
-
-        with patch("mcpgateway.cache.session_registry.SQLALCHEMY_AVAILABLE", True):
-            with patch("mcpgateway.cache.session_registry.get_db", mock_get_db):
-                with patch("asyncio.to_thread") as mock_to_thread:
-                    # Map asyncio.to_thread calls to appropriate functions
-                    def side_effect(func, *args):
-                        if func.__name__ == "_db_read":
-                            return mock_db_read(*args)
-                        elif func.__name__ == "_db_read_session":
-                            return mock_db_read_session(*args)
-                        elif func.__name__ == "_db_remove":
-                            return mock_db_remove(*args)
-                        else:
-                            return func(*args)
-
-                    mock_to_thread.side_effect = side_effect
-
-                    registry = SessionRegistry(backend="database", database_url="sqlite:///test.db")
-
-                    await registry.add_session("test_session", mock_sse_transport)
-
-                    # Mock generate_response to track calls
-                    with patch.object(registry, "generate_response", new_callable=AsyncMock) as mock_gen:
-                        # Start respond - this will create the message_check_loop task
-                        await registry.respond(server_id=None, user={"token": "test"}, session_id="test_session", base_url="http://localhost")
-
-                        # Give some time for the background task to run
-                        await asyncio.sleep(0.2)
-
-                        # Verify generate_response was called
-                        mock_gen.assert_called()
-
-    @pytest.mark.asyncio
-    async def test_database_respond_ready_to_respond_logging(self, monkeypatch, caplog, mock_sse_transport):
-        """Test database respond logs 'Ready to respond'."""
-        mock_db_session = Mock()
-
-        def mock_get_db():
-            yield mock_db_session
-
-        def mock_db_read(session_id):
-            # Return a message
-            mock_record = Mock()
-            mock_record.message = json.dumps({"method": "ping", "id": 1})
-            return mock_record
-
-        def mock_db_read_session(session_id):
-            return None  # Session doesn't exist, break loop immediately
+                # Session removed → loop exits
+                return None, None
 
         def mock_db_remove(session_id, message):
             pass
@@ -400,80 +351,166 @@ class TestDatabaseBackendRespond:
                 with patch("asyncio.to_thread") as mock_to_thread:
 
                     def side_effect(func, *args):
-                        if func.__name__ == "_db_read":
-                            return mock_db_read(*args)
-                        elif func.__name__ == "_db_read_session":
-                            return mock_db_read_session(*args)
+                        if func.__name__ == "_db_read_session_and_message":
+                            return mock_db_read_session_and_message(*args)
                         elif func.__name__ == "_db_remove":
                             return mock_db_remove(*args)
-                        else:
-                            return func(*args)
+                        return func(*args)
 
                     mock_to_thread.side_effect = side_effect
 
-                    registry = SessionRegistry(backend="database", database_url="sqlite:///test.db")
+                    registry = SessionRegistry(
+                        backend="database",
+                        database_url="sqlite:///test.db",
+                    )
 
                     await registry.add_session("test_session", mock_sse_transport)
 
-                    # Mock generate_response
-                    with patch.object(registry, "generate_response", new_callable=AsyncMock):
-                        await registry.respond(server_id=None, user={"token": "test"}, session_id="test_session", base_url="http://localhost")
+                    with patch.object(
+                        registry, "generate_response", new_callable=AsyncMock
+                    ) as mock_gen:
 
-                        # Give time for background task
-                        await asyncio.sleep(0.1)
+                        await registry.respond(
+                            server_id=None,
+                            user={"token": "test"},
+                            session_id="test_session",
+                            base_url="http://localhost",
+                        )
 
-                        # Should log "Ready to respond"
-                        assert "Ready to respond" in caplog.text
+                        # Allow background task to run
+                        await asyncio.sleep(0.3)
 
+                        # Assert message was processed
+                        mock_gen.assert_called_once()
+
+    
     @pytest.mark.asyncio
-    async def test_database_respond_message_remove_logging(self, monkeypatch, caplog, mock_sse_transport):
-        """Test database message removal logs correctly."""
-        mock_db_session = Mock()
+    async def test_database_respond_ready_to_respond_logging(self, monkeypatch, caplog, mock_sse_transport):
+        """Test database respond logs 'Ready to respond'."""
+        call_count = 0
 
         def mock_get_db():
-            yield mock_db_session
+            yield Mock()
 
-        def mock_db_remove_with_logging(session_id, message):
-            # Simulate the actual function that logs
-            logger = logging.getLogger("mcpgateway.cache.session_registry")
-            logger.info("Removed message from mcp_messages table")
+        def mock_db_read_session_and_message(session_id):
+            nonlocal call_count
+            call_count += 1
 
-        def mock_db_read(session_id):
-            mock_record = Mock()
-            mock_record.message = json.dumps({"method": "ping", "id": 1})
-            return mock_record
+            if call_count == 1:
+                # Session exists and has a message
+                mock_session = Mock()
+                mock_message = Mock()
+                mock_message.message = json.dumps({"method": "ping", "id": 1})
+                return mock_session, mock_message
 
-        def mock_db_read_session(session_id):
-            return None  # Break loop after first iteration
+            # Second poll → session gone → exit loop
+            return None, None
+
+        def mock_db_remove(session_id, message):
+            pass
 
         with patch("mcpgateway.cache.session_registry.SQLALCHEMY_AVAILABLE", True):
             with patch("mcpgateway.cache.session_registry.get_db", mock_get_db):
                 with patch("asyncio.to_thread") as mock_to_thread:
 
                     def side_effect(func, *args):
-                        if func.__name__ == "_db_read":
-                            return mock_db_read(*args)
-                        elif func.__name__ == "_db_read_session":
-                            return mock_db_read_session(*args)
+                        if func.__name__ == "_db_read_session_and_message":
+                            return mock_db_read_session_and_message(*args)
                         elif func.__name__ == "_db_remove":
-                            return mock_db_remove_with_logging(*args)
-                        else:
-                            return func(*args)
+                            return mock_db_remove(*args)
+                        return func(*args)
 
                     mock_to_thread.side_effect = side_effect
 
-                    registry = SessionRegistry(backend="database", database_url="sqlite:///test.db")
+                    registry = SessionRegistry(
+                        backend="database",
+                        database_url="sqlite:///test.db",
+                    )
 
                     await registry.add_session("test_session", mock_sse_transport)
 
-                    with patch.object(registry, "generate_response", new_callable=AsyncMock):
-                        await registry.respond(server_id=None, user={"token": "test"}, session_id="test_session", base_url="http://localhost")
+                    # Mock generate_response to avoid side effects
+                    with patch.object(
+                        registry, "generate_response", new_callable=AsyncMock
+                    ):
+                        await registry.respond(
+                            server_id=None,
+                            user={"token": "test"},
+                            session_id="test_session",
+                            base_url="http://localhost",
+                        )
 
-                        await asyncio.sleep(0.1)
+                        # Allow background polling loop to run
+                        await asyncio.sleep(0.2)
 
-                        # Should log message removal
+                        # Assert log output
+                        assert "Ready to respond" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_database_respond_message_remove_logging(
+        self, monkeypatch, caplog, mock_sse_transport
+    ):
+        """Test database message removal logs correctly."""
+
+        call_count = 0
+
+        def mock_get_db():
+            yield Mock()
+
+        def mock_db_read_session_and_message(session_id):
+            nonlocal call_count
+            call_count += 1
+
+            if call_count == 1:
+                # Session exists and has a message
+                mock_session = Mock()
+                mock_message = Mock()
+                mock_message.message = json.dumps({"method": "ping", "id": 1})
+                return mock_session, mock_message
+
+            # Second poll → session gone → exit loop
+            return None, None
+
+        def mock_db_remove_with_logging(session_id, message):
+            # Simulate real logging behavior of _db_remove
+            logger = logging.getLogger("mcpgateway.cache.session_registry")
+            logger.info("Removed message from mcp_messages table")
+
+        with patch("mcpgateway.cache.session_registry.SQLALCHEMY_AVAILABLE", True):
+            with patch("mcpgateway.cache.session_registry.get_db", mock_get_db):
+                with patch("asyncio.to_thread") as mock_to_thread:
+
+                    def side_effect(func, *args):
+                        if func.__name__ == "_db_read_session_and_message":
+                            return mock_db_read_session_and_message(*args)
+                        elif func.__name__ == "_db_remove":
+                            return mock_db_remove_with_logging(*args)
+                        return func(*args)
+
+                    mock_to_thread.side_effect = side_effect
+
+                    registry = SessionRegistry(
+                        backend="database",
+                        database_url="sqlite:///test.db",
+                    )
+
+                    await registry.add_session("test_session", mock_sse_transport)
+
+                    with patch.object(
+                        registry, "generate_response", new_callable=AsyncMock
+                    ):
+                        await registry.respond(
+                            server_id=None,
+                            user={"token": "test"},
+                            session_id="test_session",
+                            base_url="http://localhost",
+                        )
+
+                        # Allow background task to process message
+                        await asyncio.sleep(0.2)
+
+                        # Assert message removal log
                         assert "Removed message from mcp_messages table" in caplog.text
-
 
 class TestDatabaseCleanupTask:
     """Test database cleanup task functionality."""
