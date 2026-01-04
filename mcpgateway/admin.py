@@ -2441,18 +2441,23 @@ async def admin_ui(
             team_service = TeamManagementService(db)
             if user_email and "@" in user_email:
                 raw_teams = await team_service.get_user_teams(user_email)
+
+                # Batch fetch all data in 2 queries instead of 2N queries (N+1 elimination)
+                team_ids = [str(team.id) for team in raw_teams]
+                member_counts = await team_service.get_member_counts_batch_cached(team_ids)
+                user_roles = team_service.get_user_roles_batch(user_email, team_ids)
+
                 user_teams = []
                 for team in raw_teams:
                     try:
-                        # Get the user's role in this team
-                        user_role = await team_service.get_user_role_in_team(user_email, team.id)
+                        team_id = str(team.id) if team.id else ""
                         team_dict = {
-                            "id": str(team.id) if team.id else "",
+                            "id": team_id,
                             "name": str(team.name) if team.name else "",
                             "type": str(getattr(team, "type", "organization")),
                             "is_personal": bool(getattr(team, "is_personal", False)),
-                            "member_count": team.get_member_count() if hasattr(team, "get_member_count") else 0,
-                            "role": user_role or "member",
+                            "member_count": member_counts.get(team_id, 0),
+                            "role": user_roles.get(team_id) or "member",
                         }
                         user_teams.append(team_dict)
                     except Exception as team_error:
@@ -3308,22 +3313,30 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
     # Get public teams user can join
     public_teams = await team_service.discover_public_teams(current_user.email)
 
+    # Batch fetch ALL data upfront - 3 queries instead of 3N queries (N+1 elimination)
+    user_team_ids = [str(t.id) for t in user_teams]
+    public_team_ids = [str(t.id) for t in public_teams]
+    all_team_ids = user_team_ids + public_team_ids
+
+    member_counts = await team_service.get_member_counts_batch_cached(all_team_ids)
+    user_roles = team_service.get_user_roles_batch(current_user.email, user_team_ids)
+    pending_requests = team_service.get_pending_join_requests_batch(current_user.email, public_team_ids)
+
     # Combine teams with relationship information
     all_teams = []
 
     # Add user's teams (owned and member)
     for team in user_teams:
-        user_role = await team_service.get_user_role_in_team(current_user.email, team.id)
+        team_id = str(team.id)
+        user_role = user_roles.get(team_id)
         relationship = "owner" if user_role == "owner" else "member"
-        all_teams.append({"team": team, "relationship": relationship, "member_count": team.get_member_count()})
+        all_teams.append({"team": team, "relationship": relationship, "member_count": member_counts.get(team_id, 0)})
 
-    # Add public teams user can join - check for pending requests
+    # Add public teams user can join
     for team in public_teams:
-        # Check if user has a pending join request
-        user_requests = await team_service.get_user_join_requests(current_user.email, team.id)
-        pending_request = next((req for req in user_requests if req.status == "pending"), None)
-
-        relationship_data = {"team": team, "relationship": "join", "member_count": team.get_member_count(), "pending_request": pending_request}
+        team_id = str(team.id)
+        pending_request = pending_requests.get(team_id)
+        relationship_data = {"team": team, "relationship": "join", "member_count": member_counts.get(team_id, 0), "pending_request": pending_request}
         all_teams.append(relationship_data)
 
     # Generate HTML for unified team view
@@ -3504,10 +3517,14 @@ async def admin_list_teams(
         else:
             teams = await team_service.get_user_teams(current_user.email)
 
+        # Batch fetch member counts with caching (N+1 elimination)
+        team_ids = [str(team.id) for team in teams]
+        member_counts = await team_service.get_member_counts_batch_cached(team_ids)
+
         # Generate HTML for teams (traditional view)
         teams_html = ""
         for team in teams:
-            member_count = team.get_member_count()
+            member_count = member_counts.get(str(team.id), 0)
             teams_html += f"""
                 <div id="team-card-{team.id}" class="border border-gray-200 dark:border-gray-600 rounded-lg p-4 mb-4">
                     <div class="flex justify-between items-start">
