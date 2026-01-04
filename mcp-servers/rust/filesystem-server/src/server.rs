@@ -1,4 +1,4 @@
-use crate::tools::{search, read};
+use crate::tools::{info, read, search};
 use rmcp::ErrorData as McpError;
 use rmcp::{
     ServerHandler,
@@ -37,6 +37,12 @@ pub struct SearchFolderParameters {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ReadFileParameters {
     #[schemars(description = "Filepath for reading a file")]
+    path: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GetFileInfoParameters {
+    #[schemars(description = "Filepath for get file info of")]
     path: String,
 }
 
@@ -97,22 +103,36 @@ impl FilesystemServer {
     #[tool(description = "Read a file from a given filepath")]
     async fn read_file(
         &self,
-        Parameters(ReadFileParameters {
-            path,
-        }): Parameters<ReadFileParameters>,
+        Parameters(ReadFileParameters { path }): Parameters<ReadFileParameters>,
     ) -> Result<CallToolResult, McpError> {
-        let files_found = read::read_file(&path)
-            .await
-            .map_err(|e| {
-                McpError::internal_error(
-                    format!("Error searching directory '{}': {}", path, e),
-                    None,
-                )
-            })?;
+        let files_found = read::read_file(&path).await.map_err(|e| {
+            McpError::internal_error(format!("Error searching directory '{}': {}", path, e), None)
+        })?;
 
         let content = Content::json(&files_found).map_err(|e| {
             McpError::internal_error(
                 format!("Error converting directory entries to JSON: {}", e),
+                None,
+            )
+        })?;
+
+        Ok(CallToolResult::success(vec![content]))
+    }
+
+    #[tool(
+        description = "Return metadata for a given file path, including size, permissions, creation time, and last modified time"
+    )]
+    async fn get_file_info(
+        &self,
+        Parameters(GetFileInfoParameters { path }): Parameters<GetFileInfoParameters>,
+    ) -> Result<CallToolResult, McpError> {
+        let files_found = info::get_file_info(&path).await.map_err(|e| {
+            McpError::internal_error(format!("Error getting file info '{}': {}", path, e), None)
+        })?;
+
+        let content = Content::json(&files_found).map_err(|e| {
+            McpError::internal_error(
+                format!("Error converting file metadata to JSON: {}", e),
                 None,
             )
         })?;
@@ -137,6 +157,7 @@ impl ServerHandler for FilesystemServer {
         - list_directory: List files and subdirectories in a directory
         - search_files: Recursively search for files under a directory matching glob patterns
         - read_file: Read a file from a given filepath
+        - get_file_info: Return metadata for a given file path, including size, permissions, creation time, and last modified time
         "
                 .to_string(),
             ),

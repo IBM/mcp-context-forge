@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.100"
 axum = "0.8.8"
+chrono = "0.4.42"
 clap = { version = "4.5.54", features = ["derive"] }
 futures = "0.3.31"
 globset = "0.4.18"
