@@ -2929,6 +2929,9 @@ class Tool(Base):
     def execution_count(self) -> int:
         """Number of ToolMetric records associated with this tool instance.
 
+        Note: Each property access may trigger a SQL query if metrics aren't loaded.
+        For reading multiple metric fields, use metrics_summary or preload metrics.
+
         Returns:
             int: Count of ToolMetric records for this tool.
         """
@@ -3340,7 +3343,9 @@ class Resource(Base):
     def min_response_time(self) -> Optional[float]:
         """Minimum response time among all resource invocations.
 
-        Returns None if metrics are not loaded.
+        Returns None if metrics are not loaded. Note: counts may be non-zero
+        (via SQL) while timing is None. Use service layer converters for
+        consistent metrics, or preload metrics via selectinload.
 
         Returns:
             Optional[float]: The minimum response time, or None.
@@ -3354,7 +3359,9 @@ class Resource(Base):
     def max_response_time(self) -> Optional[float]:
         """Maximum response time among all resource invocations.
 
-        Returns None if metrics are not loaded.
+        Returns None if metrics are not loaded. Note: counts may be non-zero
+        (via SQL) while timing is None. Use service layer converters for
+        consistent metrics, or preload metrics via selectinload.
 
         Returns:
             Optional[float]: The maximum response time, or None.
@@ -3368,7 +3375,9 @@ class Resource(Base):
     def avg_response_time(self) -> Optional[float]:
         """Average response time among all resource invocations.
 
-        Returns None if metrics are not loaded.
+        Returns None if metrics are not loaded. Note: counts may be non-zero
+        (via SQL) while timing is None. Use service layer converters for
+        consistent metrics, or preload metrics via selectinload.
 
         Returns:
             Optional[float]: The average response time, or None.
@@ -3382,7 +3391,9 @@ class Resource(Base):
     def last_execution_time(self) -> Optional[datetime]:
         """Timestamp of the most recent resource invocation.
 
-        Returns None if metrics are not loaded.
+        Returns None if metrics are not loaded. Note: counts may be non-zero
+        (via SQL) while timing is None. Use service layer converters for
+        consistent metrics, or preload metrics via selectinload.
 
         Returns:
             Optional[datetime]: The timestamp of the most recent invocation, or None.
@@ -3652,7 +3663,9 @@ class Prompt(Base):
     def min_response_time(self) -> Optional[float]:
         """Minimum response time among all prompt invocations.
 
-        Returns None if metrics are not loaded.
+        Returns None if metrics are not loaded. Note: counts may be non-zero
+        (via SQL) while timing is None. Use service layer converters for
+        consistent metrics, or preload metrics via selectinload.
 
         Returns:
             Optional[float]: The minimum response time, or None.
@@ -3666,7 +3679,9 @@ class Prompt(Base):
     def max_response_time(self) -> Optional[float]:
         """Maximum response time among all prompt invocations.
 
-        Returns None if metrics are not loaded.
+        Returns None if metrics are not loaded. Note: counts may be non-zero
+        (via SQL) while timing is None. Use service layer converters for
+        consistent metrics, or preload metrics via selectinload.
 
         Returns:
             Optional[float]: The maximum response time, or None.
@@ -3680,7 +3695,9 @@ class Prompt(Base):
     def avg_response_time(self) -> Optional[float]:
         """Average response time among all prompt invocations.
 
-        Returns None if metrics are not loaded.
+        Returns None if metrics are not loaded. Note: counts may be non-zero
+        (via SQL) while timing is None. Use service layer converters for
+        consistent metrics, or preload metrics via selectinload.
 
         Returns:
             Optional[float]: The average response time, or None.
@@ -3694,7 +3711,9 @@ class Prompt(Base):
     def last_execution_time(self) -> Optional[datetime]:
         """Timestamp of the most recent prompt invocation.
 
-        Returns None if metrics are not loaded.
+        Returns None if metrics are not loaded. Note: counts may be non-zero
+        (via SQL) while timing is None. Use service layer converters for
+        consistent metrics, or preload metrics via selectinload.
 
         Returns:
             Optional[datetime]: The timestamp of the most recent invocation, or None if no invocations exist.
@@ -3859,7 +3878,9 @@ class Server(Base):
     def min_response_time(self) -> Optional[float]:
         """Minimum response time among all server invocations.
 
-        Returns None if metrics are not loaded.
+        Returns None if metrics are not loaded. Note: counts may be non-zero
+        (via SQL) while timing is None. Use service layer converters for
+        consistent metrics, or preload metrics via selectinload.
 
         Returns:
             Optional[float]: The minimum response time, or None.
@@ -3873,7 +3894,9 @@ class Server(Base):
     def max_response_time(self) -> Optional[float]:
         """Maximum response time among all server invocations.
 
-        Returns None if metrics are not loaded.
+        Returns None if metrics are not loaded. Note: counts may be non-zero
+        (via SQL) while timing is None. Use service layer converters for
+        consistent metrics, or preload metrics via selectinload.
 
         Returns:
             Optional[float]: The maximum response time, or None.
@@ -3887,7 +3910,9 @@ class Server(Base):
     def avg_response_time(self) -> Optional[float]:
         """Average response time among all server invocations.
 
-        Returns None if metrics are not loaded.
+        Returns None if metrics are not loaded. Note: counts may be non-zero
+        (via SQL) while timing is None. Use service layer converters for
+        consistent metrics, or preload metrics via selectinload.
 
         Returns:
             Optional[float]: The average response time, or None.
@@ -3901,7 +3926,9 @@ class Server(Base):
     def last_execution_time(self) -> Optional[datetime]:
         """Timestamp of the most recent server invocation.
 
-        Returns None if metrics are not loaded.
+        Returns None if metrics are not loaded. Note: counts may be non-zero
+        (via SQL) while timing is None. Use service layer converters for
+        consistent metrics, or preload metrics via selectinload.
 
         Returns:
             Optional[datetime]: The timestamp of the most recent invocation, or None.

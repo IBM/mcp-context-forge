@@ -132,6 +132,68 @@ def test_tool_metrics_summary_detached():
     assert summary["failure_rate"] == 0.0
 
 
+def test_tool_get_metric_counts_sql_path(monkeypatch):
+    """Test _get_metric_counts uses SQL aggregation when metrics not loaded but session exists."""
+    tool = db.Tool()
+    tool.id = "test-tool-id"
+
+    # Mock the session and query result
+    mock_result = MagicMock()
+    mock_result.__iter__ = lambda self: iter([(10, 7)])  # total=10, successful=7
+    mock_result.__getitem__ = lambda self, i: [10, 7][i]
+
+    mock_query = MagicMock()
+    mock_query.filter.return_value = mock_query
+    mock_query.one.return_value = mock_result
+
+    mock_session = MagicMock()
+    mock_session.query.return_value = mock_query
+
+    # Patch object_session where it's imported (in sqlalchemy.orm)
+    monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
+
+    # Call _get_metric_counts - should use SQL path
+    total, successful, failed = tool._get_metric_counts()
+
+    assert total == 10
+    assert successful == 7
+    assert failed == 3  # 10 - 7
+    mock_session.query.assert_called_once()
+
+
+def test_tool_metrics_summary_sql_path(monkeypatch):
+    """Test metrics_summary uses SQL aggregation when metrics not loaded but session exists."""
+    tool = db.Tool()
+    tool.id = "test-tool-id"
+
+    # Mock the session and query result for full aggregation
+    # (count, sum_success, min_rt, max_rt, avg_rt, max_timestamp)
+    mock_timestamp = datetime.now(timezone.utc)
+    mock_result = MagicMock()
+    mock_result.__getitem__ = lambda self, i: [5, 3, 1.0, 5.0, 2.5, mock_timestamp][i]
+
+    mock_query = MagicMock()
+    mock_query.filter.return_value = mock_query
+    mock_query.one.return_value = mock_result
+
+    mock_session = MagicMock()
+    mock_session.query.return_value = mock_query
+
+    # Patch object_session where it's imported (in sqlalchemy.orm)
+    monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
+
+    summary = tool.metrics_summary
+
+    assert summary["total_executions"] == 5
+    assert summary["successful_executions"] == 3
+    assert summary["failed_executions"] == 2
+    assert summary["failure_rate"] == 0.4
+    assert summary["min_response_time"] == 1.0
+    assert summary["max_response_time"] == 5.0
+    assert summary["avg_response_time"] == 2.5
+    assert summary["last_execution_time"] == mock_timestamp
+
+
 # --- Resource metrics properties ---
 def make_resource_with_metrics(metrics):
     resource = db.Resource()
