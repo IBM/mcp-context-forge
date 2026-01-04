@@ -124,6 +124,8 @@ prune llms
 # Development and CI/CD artifacts
 prune .github
 prune .hypothesis
+prune bn-private-collab
+exclude .gitmodules
 prune .benchmarks
 prune .claude
 prune todo
