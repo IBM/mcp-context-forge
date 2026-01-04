@@ -1841,7 +1841,7 @@ This release represents a true community effort with contributions from develope
   ```bash
   VALIDATION_MAX_NAME_LENGTH=255
   VALIDATION_MAX_DESCRIPTION_LENGTH=4096
-  VALIDATION_MAX_JSON_DEPTH=10
+  VALIDATION_MAX_JSON_DEPTH=30
   VALIDATION_ALLOWED_URL_SCHEMES=["http://", "https://", "ws://", "wss://"]
   ```
 

@@ -1655,7 +1655,7 @@
       "type": "integer"
     },
     "validation_max_json_depth": {
-      "default": 10,
+      "default": 30,
       "title": "Validation Max Json Depth",
       "type": "integer"
     },
