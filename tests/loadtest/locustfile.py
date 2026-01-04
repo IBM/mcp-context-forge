@@ -550,6 +550,42 @@ class BaseUser(FastHttpUser):
         response.success()
         return True
 
+    def _validate_jsonrpc_response(self, response, allowed_codes: list[int] | None = None):
+        """Validate response is successful JSON-RPC (no error field).
+
+        JSON-RPC 2.0 errors are returned with HTTP 200 but contain an "error" field.
+        This method detects such errors and marks them as failures in Locust.
+
+        Args:
+            response: The response object from catch_response=True context
+            allowed_codes: List of acceptable status codes (default: [200])
+
+        Returns:
+            bool: True if response is valid JSON-RPC success, False otherwise
+        """
+        allowed = allowed_codes or [200]
+        if response.status_code not in allowed:
+            response.failure(f"Expected {allowed}, got {response.status_code}")
+            return False
+        try:
+            data = response.json()
+            if data is None:
+                response.failure("Response JSON is null")
+                return False
+            # Check for JSON-RPC error field
+            if "error" in data:
+                error_obj = data["error"]
+                error_code = error_obj.get("code", "unknown")
+                error_msg = error_obj.get("message", "Unknown error")
+                error_data = str(error_obj.get("data", ""))[:100]
+                response.failure(f"JSON-RPC error [{error_code}]: {error_msg} - {error_data}")
+                return False
+        except Exception as e:
+            response.failure(f"Invalid JSON: {e}")
+            return False
+        response.success()
+        return True
+
 
 class HealthCheckUser(BaseUser):
     """User that only performs health checks.
@@ -954,7 +990,10 @@ class MCPJsonRpcUser(BaseUser):
     wait_time = between(0.2, 1.0)
 
     def _rpc_request(self, payload: dict, name: str):
-        """Make an RPC request with proper error handling."""
+        """Make an RPC request with proper error handling.
+
+        Uses JSON-RPC validation to detect errors returned with HTTP 200.
+        """
         with self.client.post(
             "/rpc",
             json=payload,
@@ -962,7 +1001,7 @@ class MCPJsonRpcUser(BaseUser):
             name=name,
             catch_response=True,
         ) as response:
-            self._validate_json_response(response)
+            self._validate_jsonrpc_response(response)
 
     @task(10)
     @tag("mcp", "rpc", "tools")
@@ -1384,8 +1423,7 @@ class StressTestUser(BaseUser):
             name="/rpc ping [stress]",
             catch_response=True,
         ) as response:
-            # 200=Success, 502=Bad Gateway (MCP server unreachable)
-            self._validate_status(response)
+            self._validate_jsonrpc_response(response)
 
 
 class FastTimeUser(BaseUser):
@@ -1402,7 +1440,10 @@ class FastTimeUser(BaseUser):
     wait_time = between(0.1, 0.5)
 
     def _rpc_request(self, payload: dict, name: str):
-        """Make an RPC request with proper error handling."""
+        """Make an RPC request with proper error handling.
+
+        Uses JSON-RPC validation to detect errors returned with HTTP 200.
+        """
         with self.client.post(
             "/rpc",
             json=payload,
@@ -1410,8 +1451,7 @@ class FastTimeUser(BaseUser):
             name=name,
             catch_response=True,
         ) as response:
-            # 200=Success, 502=Bad Gateway (MCP server unreachable)
-            self._validate_status(response)
+            self._validate_jsonrpc_response(response)
 
     @task(10)
     @tag("mcp", "fasttime", "tools")
@@ -1521,8 +1561,7 @@ class RealisticUser(BaseUser):
             name="/rpc tools/list",
             catch_response=True,
         ) as response:
-            # 200=Success, 502=Bad Gateway (MCP server unreachable)
-            self._validate_status(response)
+            self._validate_jsonrpc_response(response)
 
     @task(8)
     @tag("realistic", "admin")
