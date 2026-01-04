@@ -58,8 +58,7 @@ from urllib.parse import urlparse
 import uuid
 
 # First-Party
-from mcpgateway.common.config import settings
-from mcpgateway.config import settings as config_settings
+from mcpgateway.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -1086,14 +1085,24 @@ class SecurityValidator:
                 ...     {'9': {'10': 'end'}}}}}}}}}}
                 >>> SecurityValidator.validate_json_depth(deep_10)
 
+            At new default limit (30) – allowed: ::
+
+                >>> deep_30 = {'1': {'2': {'3': {'4': {'5': {'6': {'7': {'8':
+                ...     {'9': {'10': {'11': {'12': {'13': {'14': {'15': {'16':
+                ...     {'17': {'18': {'19': {'20': {'21': {'22': {'23': {'24':
+                ...     {'25': {'26': {'27': {'28': {'29': {'30': 'end'}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+                >>> SecurityValidator.validate_json_depth(deep_30)
+
             One level deeper – rejected: ::
 
-                >>> deep_11 = {'1': {'2': {'3': {'4': {'5': {'6': {'7': {'8':
-                ...     {'9': {'10': {'11': 'end'}}}}}}}}}}}
-                >>> SecurityValidator.validate_json_depth(deep_11)
+                >>> deep_31 = {'1': {'2': {'3': {'4': {'5': {'6': {'7': {'8':
+                ...     {'9': {'10': {'11': {'12': {'13': {'14': {'15': {'16':
+                ...     {'17': {'18': {'19': {'20': {'21': {'22': {'23': {'24':
+                ...     {'25': {'26': {'27': {'28': {'29': {'30': {'31': 'end'}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+                >>> SecurityValidator.validate_json_depth(deep_31)
                 Traceback (most recent call last):
                     ...
-                ValueError: JSON structure exceeds maximum depth of 10
+                ValueError: JSON structure exceeds maximum depth of 30
         """
         if max_depth is None:
             max_depth = cls.MAX_JSON_DEPTH
@@ -1332,7 +1341,7 @@ class SecurityValidator:
         # Check for SQL injection patterns (uses precompiled regex list)
         for pattern in _SQL_PATTERNS:
             if pattern.search(value):
-                if getattr(config_settings, "validation_strict", True):
+                if getattr(settings, "validation_strict", True):
                     raise ValueError("Parameter contains SQL injection patterns")
                 # Basic escaping
                 value = value.replace("'", "''").replace('"', '""')
@@ -1357,7 +1366,7 @@ class SecurityValidator:
             >>> SecurityValidator.validate_parameter_length('short', 10)
             'short'
         """
-        max_len = max_length or getattr(config_settings, "max_param_length", 10000)
+        max_len = max_length or getattr(settings, "max_param_length", 10000)
         if len(value) > max_len:
             raise ValueError(f"Parameter exceeds maximum length of {max_len}")
         return value

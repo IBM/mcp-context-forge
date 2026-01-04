@@ -66,7 +66,7 @@ class TestSecurityValidator:
 
     def test_validate_sql_parameter_dangerous_strict(self):
         """Test dangerous SQL parameter in strict mode."""
-        with patch("mcpgateway.common.validators.config_settings") as mock_settings:
+        with patch("mcpgateway.config.settings") as mock_settings:
             mock_settings.validation_strict = True
             with pytest.raises(ValueError, match="SQL injection"):
                 SecurityValidator.validate_sql_parameter("'; DROP TABLE users; --")
@@ -219,7 +219,7 @@ class TestValidationMiddleware:
     @pytest.mark.asyncio
     async def test_sql_injection_prevention(self):
         """Test SQL injection prevention."""
-        with patch("mcpgateway.common.validators.config_settings") as mock_settings:
+        with patch("mcpgateway.config.settings") as mock_settings:
             mock_settings.validation_strict = True
 
             # Test SQL injection patterns
@@ -235,7 +235,7 @@ class TestValidationMiddleware:
     @pytest.mark.asyncio
     async def test_sql_injection_block_comments(self):
         """Test SQL injection prevention for block comments."""
-        with patch("mcpgateway.common.validators.config_settings") as mock_settings:
+        with patch("mcpgateway.config.settings") as mock_settings:
             mock_settings.validation_strict = True
 
             # Block comments should be detected
@@ -265,7 +265,7 @@ class TestValidationMiddleware:
             assert result == value, f"False positive for '{value}'"
 
         # These SHOULD raise - actual SQL keywords
-        with patch("mcpgateway.common.validators.config_settings") as mock_settings:
+        with patch("mcpgateway.config.settings") as mock_settings:
             mock_settings.validation_strict = True
 
             dangerous_values = [
