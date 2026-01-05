@@ -12,7 +12,7 @@ import base64
 import asyncio
 from contextlib import asynccontextmanager
 import logging
-from unittest.mock import ANY, AsyncMock, call, MagicMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
 import pytest
@@ -31,6 +31,7 @@ from mcpgateway.services.tool_service import (
     TextContent,
     ToolError,
     ToolInvocationError,
+    ToolNameConflictError,
     ToolNotFoundError,
     ToolResult,
     ToolService,
@@ -199,6 +200,7 @@ def mock_tool(mock_gateway):
     tool.custom_name_slug = "test-tool"
     tool.display_name = None
     tool.tags = []
+    tool.team = None
 
     # Set up metrics
     tool.metrics = []
@@ -222,9 +224,6 @@ def mock_tool(mock_gateway):
     }
 
     return tool
-
-
-from mcpgateway.services.tool_service import ToolNameConflictError
 
 
 class TestToolService:
@@ -812,12 +811,9 @@ class TestToolService:
     @pytest.mark.asyncio
     async def test_list_server_tools_active_only(self):
         mock_db = Mock()
-        mock_tool = Mock(enabled=True, team_id=None)
-        mock_row = MagicMock()
-        mock_row.__getitem__ = lambda self, idx: mock_tool if idx == 0 else None
-        mock_row.team_name = None
+        mock_tool = Mock(enabled=True, team_id=None, team=None)
 
-        mock_db.execute.return_value.all.return_value = [mock_row]
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_tool]
 
         service = ToolService()
         service.convert_tool_to_read = Mock(return_value="converted_tool")
@@ -830,18 +826,10 @@ class TestToolService:
     @pytest.mark.asyncio
     async def test_list_server_tools_include_inactive(self):
         mock_db = Mock()
-        active_tool = Mock(enabled=True, reachable=True, team_id=None)
-        inactive_tool = Mock(enabled=False, reachable=True, team_id=None)
+        active_tool = Mock(enabled=True, reachable=True, team_id=None, team=None)
+        inactive_tool = Mock(enabled=False, reachable=True, team_id=None, team=None)
 
-        active_row = MagicMock()
-        active_row.__getitem__ = lambda self, idx: active_tool if idx == 0 else None
-        active_row.team_name = None
-
-        inactive_row = MagicMock()
-        inactive_row.__getitem__ = lambda self, idx: inactive_tool if idx == 0 else None
-        inactive_row.team_name = None
-
-        mock_db.execute.return_value.all.return_value = [active_row, inactive_row]
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [active_tool, inactive_tool]
 
         service = ToolService()
         service.convert_tool_to_read = Mock(side_effect=["active_converted", "inactive_converted"])
@@ -850,6 +838,44 @@ class TestToolService:
 
         assert tools == ["active_converted", "inactive_converted"]
         assert service.convert_tool_to_read.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_list_server_tools_includes_team_name(self):
+        """Test that list_server_tools properly populates team name via email_team relationship.
+
+        This test guards against regressions if the joinedload strategy is changed.
+        """
+        mock_db = Mock()
+        # Mock a tool with an active team relationship
+        mock_email_team = Mock()
+        mock_email_team.name = "Engineering Team"
+        mock_tool = Mock(
+            enabled=True,
+            team_id="team-123",
+            email_team=mock_email_team,
+        )
+        # The team property should return the team name from email_team
+        mock_tool.team = mock_email_team.name
+
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_tool]
+
+        service = ToolService()
+        # Use a mock that captures the tool's team value
+        captured_tools = []
+
+        def capture_tool(tool, include_metrics=False, include_auth=False):
+            captured_tools.append({"team": tool.team, "team_id": tool.team_id})
+            return "converted_tool"
+
+        service.convert_tool_to_read = Mock(side_effect=capture_tool)
+
+        tools = await service.list_server_tools(mock_db, server_id="server123", include_inactive=False)
+
+        assert tools == ["converted_tool"]
+        # Verify the tool's team was accessible during conversion
+        assert len(captured_tools) == 1
+        assert captured_tools[0]["team"] == "Engineering Team"
+        assert captured_tools[0]["team_id"] == "team-123"
 
     @pytest.mark.asyncio
     async def test_get_tool(self, tool_service, mock_tool, test_db):
@@ -1635,7 +1661,7 @@ class TestToolService:
             url="http://fake-mcp:8080/mcp",
             enabled=True,
             reachable=True,
-            auth_type="bearer",  #  ←← attribute your error complained about
+            auth_type="bearer",  # attribute your error complained about
             auth_value="Bearer abc123",
             capabilities={"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
             transport="STREAMABLEHTTP",
@@ -1738,7 +1764,7 @@ class TestToolService:
             url="http://fake-mcp:8080/sse",
             enabled=True,
             reachable=True,
-            auth_type="bearer",  #  ←← attribute your error complained about
+            auth_type="bearer",  # attribute your error complained about
             auth_value="Bearer abc123",
             capabilities={"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
             transport="STREAMABLEHTTP",
@@ -1769,8 +1795,6 @@ class TestToolService:
             return m
 
         test_db.execute = Mock(side_effect=execute_side_effect)
-
-        expected_result = ToolResult(content=[TextContent(type="text", text="")])
 
         with (
             patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
@@ -1849,8 +1873,6 @@ class TestToolService:
         mock_tool.auth_value = basic_auth_value
         mock_tool.url = "http://example.com/sse"
 
-        payload = {"param": "value"}
-
         # Mock DB to return the tool
         mock_scalar_1 = Mock()
         mock_scalar_1.scalar_one_or_none.return_value = mock_tool
@@ -1918,7 +1940,7 @@ class TestToolService:
             # ------------------------------------------------------------------
             # 4.  Act
             # ------------------------------------------------------------------
-            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+            await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
         session_mock.initialize.assert_awaited_once()
         session_mock.call_tool.assert_awaited_once_with("test_tool", {"param": "value"})
@@ -2449,7 +2471,7 @@ class TestToolService:
             patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
         ):
-            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+            await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
         # Verify OAuth was called
         tool_service.oauth_manager.get_access_token.assert_called_once_with(mock_gateway.oauth_config)
@@ -2488,7 +2510,7 @@ class TestToolService:
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=mock_passthrough),
             patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "success with headers"}),
         ):
-            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=request_headers)
+            await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=request_headers)
 
         # Verify passthrough headers were used
         tool_service._http_client.request.assert_called_once()
@@ -2542,7 +2564,7 @@ class TestToolService:
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=mock_passthrough),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
         ):
-            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=request_headers)
+            await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=request_headers)
 
         # Verify MCP session was initialized and tool called
         session_mock.initialize.assert_awaited_once()

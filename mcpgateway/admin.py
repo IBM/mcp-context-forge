@@ -5810,8 +5810,8 @@ async def admin_tools_partial_html(
     user_teams = await team_service.get_user_teams(user_email)
     team_ids = [team.id for team in user_teams]
 
-    # Build query
-    query = select(DbTool)
+    # Build query with eager loading for email_team to avoid N+1 queries
+    query = select(DbTool).options(joinedload(DbTool.email_team))
 
     # Apply gateway filter if provided. Support special sentinel 'null' to
     # request tools with NULL gateway_id (e.g., RestTool/no gateway).
@@ -5878,17 +5878,7 @@ async def admin_tools_partial_html(
     pagination = paginated_result["pagination"]
     links = paginated_result["links"]
 
-    # Batch fetch team names for the tools to avoid N+1 queries
-    team_ids_set = {t.team_id for t in tools_db if t.team_id}
-    team_map = {}
-    if team_ids_set:
-        teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids_set), EmailTeam.is_active.is_(True))).all()
-        team_map = {team.id: team.name for team in teams}
-
-    # Apply team names to DB objects before conversion
-    for t in tools_db:
-        t.team = team_map.get(t.team_id) if t.team_id else None
-
+    # Team names are loaded via joinedload(DbTool.email_team) in the query
     # Batch convert to Pydantic models using tool service
     # This eliminates the N+1 query problem from calling get_tool() in a loop
     tools_pydantic = [tool_service.convert_tool_to_read(t, include_metrics=False, include_auth=False) for t in tools_db]
