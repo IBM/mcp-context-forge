@@ -824,6 +824,42 @@ monitoring-clean:                          ## Stop and remove all monitoring dat
 	@echo "✅ Monitoring stack stopped and volumes removed."
 
 # =============================================================================
+# help: 🧪 TESTING STACK (Rust fast-test-server)
+# help: testing-up            - Start testing stack (fast_test_server + auto-registration)
+# help: testing-down          - Stop testing stack
+# help: testing-status        - Show status of testing services
+# help: testing-logs          - Show testing stack logs
+
+testing-up:                                ## Start testing stack (fast_test_server + registration)
+	@echo "🧪 Starting testing stack (fast_test_server)..."
+	$(COMPOSE_CMD_MONITOR) --profile testing up -d
+	@echo ""
+	@echo "✅ Testing stack started!"
+	@echo ""
+	@echo "   🦀 Fast Test Server: http://localhost:9080"
+	@echo "      • MCP endpoint:  http://localhost:9080/mcp"
+	@echo "      • REST echo:     http://localhost:9080/api/echo"
+	@echo "      • REST time:     http://localhost:9080/api/time"
+	@echo "      • Health:        http://localhost:9080/health"
+	@echo ""
+	@echo "   📝 Registered as 'fast_test' gateway in MCP Gateway"
+	@echo ""
+	@echo "   Run load test: cd mcp-servers/rust/fast-test-server && make locust-mcp"
+
+testing-down:                              ## Stop testing stack
+	@echo "🧪 Stopping testing stack..."
+	$(COMPOSE_CMD_MONITOR) --profile testing down
+	@echo "✅ Testing stack stopped."
+
+testing-status:                            ## Show status of testing services
+	@echo "🧪 Testing stack status:"
+	@$(COMPOSE_CMD_MONITOR) ps | grep -E "(fast_test)" || \
+		echo "   No testing services running. Start with 'make testing-up'"
+
+testing-logs:                              ## Show testing stack logs
+	$(COMPOSE_CMD_MONITOR) --profile testing logs -f --tail=100
+
+# =============================================================================
 # 🚀 PERFORMANCE TESTING STACK - High-capacity configuration
 # =============================================================================
 # help: 🚀 PERFORMANCE TESTING STACK

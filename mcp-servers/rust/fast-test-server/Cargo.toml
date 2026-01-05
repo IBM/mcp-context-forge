@@ -1,0 +1,46 @@
+[package]
+name = "fast-test-server"
+version = "0.1.0"
+edition = "2021"
+description = "Ultra-fast MCP test server with echo and time tools"
+license = "Apache-2.0"
+authors = ["MCP Gateway Contributors"]
+
+[dependencies]
+# MCP protocol implementation
+rmcp = { version = "0.12", features = [
+    "server",
+    "macros",
+    "transport-streamable-http-server",
+    "axum",
+] }
+
+# Async runtime
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+
+# Web framework
+axum = "0.8"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Schema generation (re-exported via rmcp with server feature)
+schemars = "0.8"
+
+# Error handling
+anyhow = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+strip = true

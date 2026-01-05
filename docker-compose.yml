@@ -1,6 +1,16 @@
 #version: "3.9"          # Supported by both podman-compose and Docker Compose v2+
 
 ###############################################################################
+#  HOST SYSTEM TUNING FOR LOAD TESTING (run before docker compose up)
+#  See docs/docs/testing/performance.md for full details
+#
+#  One-liner (TCP + VM + I/O tuning):
+#  sudo sysctl -w net.core.somaxconn=65535 net.core.netdev_max_backlog=65535 net.ipv4.tcp_max_syn_backlog=65535 net.ipv4.tcp_tw_reuse=2 net.ipv4.tcp_fin_timeout=15 net.ipv4.ip_local_port_range="1024 65535" vm.swappiness=10 fs.aio-max-nr=1048576
+#
+#  Make persistent: sudo tee /etc/sysctl.d/99-mcp-loadtest.conf (see docs)
+###############################################################################
+
+###############################################################################
 #  NETWORKS + VOLUMES - declared first so they can be referenced later
 ###############################################################################
 networks:
@@ -282,7 +292,7 @@ services:
       # Disable when using external observability to improve performance.
       # Set to true if you need per-operation metrics in the database.
       # Note: Does NOT affect log aggregation (METRICS_AGGREGATION_ENABLED) or Prometheus.
-      - DB_METRICS_RECORDING_ENABLED=true
+      - DB_METRICS_RECORDING_ENABLED=false
 
       # ═══════════════════════════════════════════════════════════════════════════
       # Metrics Configuration
@@ -309,6 +319,16 @@ services:
       # - OTEL_TRACES_EXPORTER=${OTEL_TRACES_EXPORTER:-otlp}
       # - OTEL_METRICS_EXPORTER=${OTEL_METRICS_EXPORTER:-otlp}
       # - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=docker,service.namespace=mcp}
+
+    # TCP kernel tuning for high-concurrency MCP tool invocations
+    # Each tool call creates a new connection → many TIME_WAIT sockets
+    sysctls:
+      - net.ipv4.tcp_fin_timeout=15          # Faster cleanup of FIN_WAIT2 sockets (default: 60)
+      - net.ipv4.ip_local_port_range=1024 65535  # More ephemeral ports (default: 32768-60999)
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
 
     depends_on:          # Default stack: PgBouncer + Redis (PgBouncer depends on Postgres)
       pgbouncer:
@@ -1213,6 +1233,115 @@ services:
         echo "Token written to /tmp/gateway-token.txt"
 
         echo "✅ Setup complete!"
+
+  ###############################################################################
+  # Fast Test Server - Ultra-fast Rust MCP server for performance testing
+  # Provides: echo, get_system_time, get_stats tools via MCP Streamable HTTP
+  # Also exposes REST API endpoints for baseline comparison
+  # Usage: docker compose --profile testing up -d
+  ###############################################################################
+  fast_test_server:
+    build:
+      context: ./mcp-servers/rust/fast-test-server
+      dockerfile: Containerfile
+    image: mcpgateway/fast-test-server:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "9080:9080"    # Port 9080 (avoids conflict with nginx on 8080)
+    environment:
+      - BIND_ADDRESS=0.0.0.0:9080
+      - RUST_LOG=info
+    # TCP kernel tuning for high-concurrency load testing
+    sysctls:
+      - net.ipv4.tcp_fin_timeout=15          # Faster cleanup of FIN_WAIT2 sockets
+      - net.ipv4.ip_local_port_range=1024 65535  # More ephemeral ports
+      - net.core.somaxconn=65535             # Max listen backlog
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 128M
+    profiles: ["testing"]
+
+  ###############################################################################
+  # Auto-registration service - registers fast_test_server with gateway
+  ###############################################################################
+  register_fast_test:
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    networks: [mcpnet]
+    depends_on:
+      gateway:
+        condition: service_healthy
+      fast_test_server:
+        condition: service_healthy
+    environment:
+      - JWT_SECRET_KEY=my-test-key
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Registering fast_test_server with gateway..."
+
+        # Generate JWT token
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+
+        # Register using Python
+        python3 -c "
+        import urllib.request
+        import json
+        import os
+        import time
+
+        token = os.environ.get('MCPGATEWAY_BEARER_TOKEN', '')
+
+        def api_request(method, path, data=None):
+            url = f'http://gateway:4444{path}'
+            req = urllib.request.Request(url, method=method)
+            req.add_header('Authorization', f'Bearer {token}')
+            req.add_header('Content-Type', 'application/json')
+            if data:
+                req.data = json.dumps(data).encode('utf-8')
+            with urllib.request.urlopen(req) as response:
+                return json.loads(response.read().decode('utf-8'))
+
+        # Delete existing gateway if present
+        try:
+            gateways = api_request('GET', '/gateways')
+            for gw in gateways:
+                if gw.get('name') == 'fast_test':
+                    print(f'Deleting existing gateway {gw[\"id\"]}...')
+                    api_request('DELETE', f'/gateways/{gw[\"id\"]}')
+        except Exception as e:
+            print(f'Note: {e}')
+
+        # Register the gateway
+        try:
+            result = api_request('POST', '/gateways', {
+                'name': 'fast_test',
+                'url': 'http://fast_test_server:9080/mcp',
+                'transport': 'STREAMABLEHTTP'
+            })
+            print(f'✅ Registered fast_test_server: {result.get(\"id\", \"unknown\")}')
+        except Exception as e:
+            print(f'❌ Registration failed: {e}')
+            exit(1)
+        "
+        echo "✅ Registration complete!"
+    profiles: ["testing"]
 
   ###############################################################################
   # Hashicorp Terraform MCP Server
