@@ -6269,14 +6269,13 @@ async def admin_gateways_partial_html(
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
-    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
-    """Return paginated prompts HTML partials for the admin UI.
+    """Return paginated gateways HTML partials for the admin UI.
 
     This HTMX endpoint returns only the partial HTML used by the admin UI for
-    prompts. It supports three render modes:
+    gateways. It supports three render modes:
 
     - default: full table partial (rows + controls)
     - ``render="controls"``: return only pagination controls
@@ -6286,9 +6285,8 @@ async def admin_gateways_partial_html(
         request (Request): FastAPI request object used by the template engine.
         page (int): Page number (1-indexed).
         per_page (int): Number of items per page (bounded by settings).
-        include_inactive (bool): If True, include inactive prompts in results.
+        include_inactive (bool): If True, include inactive gateways in results.
         render (Optional[str]): Render mode; one of None, "controls", "selector".
-        gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
@@ -6296,9 +6294,9 @@ async def admin_gateways_partial_html(
         Union[HTMLResponse, TemplateResponse]: A rendered template response
         containing either the table partial, pagination controls, or selector
         items depending on ``render``. The response contains JSON-serializable
-        encoded prompt data when templates expect it.
+        encoded gateway data when templates expect it.
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested prompts HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render}, gateway_id={gateway_id})")
+    LOGGER.debug(f"User {get_user_email(user)} requested gateways HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render}, gateway_id={gateway_id})")
     # Normalize per_page within configured bounds
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
 
@@ -6311,22 +6309,6 @@ async def admin_gateways_partial_html(
 
     # Build base query
     query = select(DbPrompt)
-
-    # Apply gateway filter if provided
-    if gateway_id:
-        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
-        if gateway_ids:
-            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
-            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
-            if non_null_ids and null_requested:
-                query = query.where(or_(DbPrompt.gateway_id.in_(non_null_ids), DbPrompt.gateway_id.is_(None)))
-                LOGGER.debug(f"Filtering prompts by gateway IDs (including NULL): {non_null_ids} + NULL")
-            elif null_requested:
-                query = query.where(DbPrompt.gateway_id.is_(None))
-                LOGGER.debug("Filtering prompts by NULL gateway_id (RestTool)")
-            else:
-                query = query.where(DbPrompt.gateway_id.in_(non_null_ids))
-                LOGGER.debug(f"Filtering prompts by gateway IDs: {non_null_ids}")
 
     if not include_inactive:
         query = query.where(DbPrompt.enabled.is_(True))
@@ -6346,8 +6328,6 @@ async def admin_gateways_partial_html(
     query_params = {}
     if include_inactive:
         query_params["include_inactive"] = "true"
-    if gateway_id:
-        query_params["gateway_id"] = gateway_id
 
     # Use unified pagination function
     paginated_result = await paginate_query(
@@ -6361,27 +6341,27 @@ async def admin_gateways_partial_html(
         use_cursor_threshold=False,  # Disable auto-cursor switching for UI
     )
 
-    # Extract paginated prompts (DbPrompt objects)
-    prompts_db = paginated_result["data"]
+    # Extract paginated gateways (DbPrompt objects)
+    gateways_db = paginated_result["data"]
     pagination = paginated_result["pagination"]
     links = paginated_result["links"]
 
-    # Batch fetch team names for the prompts to avoid N+1 queries
-    team_ids_set = {p.team_id for p in prompts_db if p.team_id}
+    # Batch fetch team names for the gateways to avoid N+1 queries
+    team_ids_set = {p.team_id for p in gateways_db if p.team_id}
     team_map = {}
     if team_ids_set:
         teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids_set), EmailTeam.is_active.is_(True))).all()
         team_map = {team.id: team.name for team in teams}
 
     # Apply team names to DB objects before conversion
-    for p in prompts_db:
+    for p in gateways_db:
         p.team = team_map.get(p.team_id) if p.team_id else None
 
-    # Batch convert to Pydantic models using prompt service
-    # This eliminates the N+1 query problem from calling get_prompt_details() in a loop
-    prompts_pydantic = [prompt_service.convert_prompt_to_read(p, include_metrics=False) for p in prompts_db]
+    # Batch convert to Pydantic models using gateway service
+    # This eliminates the N+1 query problem from calling get_gateway_details() in a loop
+    gateways_pydantic = [gateway_service.convert_gateway_to_read(p, include_metrics=False) for p in gateways_db]
 
-    data = jsonable_encoder(prompts_pydantic)
+    data = jsonable_encoder(gateways_pydantic)
     base_url = f"{settings.app_root_path}/admin/gateways/partial"
 
     if render == "controls":
@@ -6405,8 +6385,7 @@ async def admin_gateways_partial_html(
                 "request": request,
                 "data": data,
                 "pagination": pagination.model_dump(),
-                "root_path": request.scope.get("root_path", ""),
-                "gateway_id": gateway_id,
+                "root_path": request.scope.get("root_path", "")
             },
         )
 
@@ -6426,7 +6405,6 @@ async def admin_gateways_partial_html(
 @admin_router.get("/gateways/ids", response_class=JSONResponse)
 async def admin_get_all_gateways_ids(
     include_inactive: bool = False,
-    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -6437,7 +6415,6 @@ async def admin_get_all_gateways_ids(
 
     Args:
         include_inactive (bool): When True include prompts that are inactive.
-        gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated. Accepts the literal value 'null' to indicate NULL gateway_id (local prompts).
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -6452,22 +6429,6 @@ async def admin_get_all_gateways_ids(
     team_ids = [t.id for t in user_teams]
 
     query = select(DbGateway.id)
-
-    # Apply optional gateway/server scoping
-    if gateway_id:
-        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
-        if gateway_ids:
-            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
-            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
-            if non_null_ids and null_requested:
-                query = query.where(or_(DbGateway.id.in_(non_null_ids), DbGateway.id.is_(None)))
-                LOGGER.debug(f"Filtering gateways by gateway IDs (including NULL): {non_null_ids} + NULL")
-            elif null_requested:
-                query = query.where(DbGateway.id.is_(None))
-                LOGGER.debug("Filtering gateways by NULL gateway_id (RestTool)")
-            else:
-                query = query.where(DbGateway.id.in_(non_null_ids))
-                LOGGER.debug(f"Filtering gateways by gateway IDs: {non_null_ids}")
 
     if not include_inactive:
         query = query.where(DbGateway.enabled.is_(True))
@@ -6485,7 +6446,6 @@ async def admin_search_gateways(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
     limit: int = Query(100, ge=1, le=1000),
-    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -6499,7 +6459,6 @@ async def admin_search_gateways(
         q (str): Search query string.
         include_inactive (bool): When True include gateways that are inactive.
         limit (int): Maximum number of results to return (bounded by the query parameter).
-        gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -6518,22 +6477,6 @@ async def admin_search_gateways(
     team_ids = [t.id for t in user_teams]
 
     query = select(DbGateway.id, DbGateway.original_name, DbGateway.display_name, DbGateway.description)
-
-    # Apply gateway filter if provided
-    if gateway_id:
-        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
-        if gateway_ids:
-            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
-            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
-            if non_null_ids and null_requested:
-                query = query.where(or_(DbGateway.gateway_id.in_(non_null_ids), DbGateway.gateway_id.is_(None)))
-                LOGGER.debug(f"Filtering prompt search by gateway IDs (including NULL): {non_null_ids} + NULL")
-            elif null_requested:
-                query = query.where(DbGateway.gateway_id.is_(None))
-                LOGGER.debug("Filtering prompt search by NULL gateway_id")
-            else:
-                query = query.where(DbGateway.gateway_id.in_(non_null_ids))
-                LOGGER.debug(f"Filtering prompt search by gateway IDs: {non_null_ids}")
 
     if not include_inactive:
         query = query.where(DbGateway.enabled.is_(True))
@@ -6583,14 +6526,13 @@ async def admin_servers_partial_html(
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
-    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
-    """Return paginated prompts HTML partials for the admin UI.
+    """Return paginated servers HTML partials for the admin UI.
 
     This HTMX endpoint returns only the partial HTML used by the admin UI for
-    prompts. It supports three render modes:
+    servers. It supports three render modes:
 
     - default: full table partial (rows + controls)
     - ``render="controls"``: return only pagination controls
@@ -6600,9 +6542,8 @@ async def admin_servers_partial_html(
         request (Request): FastAPI request object used by the template engine.
         page (int): Page number (1-indexed).
         per_page (int): Number of items per page (bounded by settings).
-        include_inactive (bool): If True, include inactive prompts in results.
+        include_inactive (bool): If True, include inactive servers in results.
         render (Optional[str]): Render mode; one of None, "controls", "selector".
-        gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
@@ -6610,9 +6551,9 @@ async def admin_servers_partial_html(
         Union[HTMLResponse, TemplateResponse]: A rendered template response
         containing either the table partial, pagination controls, or selector
         items depending on ``render``. The response contains JSON-serializable
-        encoded prompt data when templates expect it.
+        encoded server data when templates expect it.
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested prompts HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render}, gateway_id={gateway_id})")
+    LOGGER.debug(f"User {get_user_email(user)} requested servers HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render}, gateway_id={gateway_id})")
     # Normalize per_page within configured bounds
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
 
@@ -6624,37 +6565,21 @@ async def admin_servers_partial_html(
     team_ids = [t.id for t in user_teams]
 
     # Build base query
-    query = select(DbPrompt)
-
-    # Apply gateway filter if provided
-    if gateway_id:
-        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
-        if gateway_ids:
-            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
-            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
-            if non_null_ids and null_requested:
-                query = query.where(or_(DbPrompt.gateway_id.in_(non_null_ids), DbPrompt.gateway_id.is_(None)))
-                LOGGER.debug(f"Filtering prompts by gateway IDs (including NULL): {non_null_ids} + NULL")
-            elif null_requested:
-                query = query.where(DbPrompt.gateway_id.is_(None))
-                LOGGER.debug("Filtering prompts by NULL gateway_id (RestTool)")
-            else:
-                query = query.where(DbPrompt.gateway_id.in_(non_null_ids))
-                LOGGER.debug(f"Filtering prompts by gateway IDs: {non_null_ids}")
+    query = select(DbServer)
 
     if not include_inactive:
-        query = query.where(DbPrompt.enabled.is_(True))
+        query = query.where(DbServer.enabled.is_(True))
 
     # Access conditions: owner, team, public
-    access_conditions = [DbPrompt.owner_email == user_email]
+    access_conditions = [DbServer.owner_email == user_email]
     if team_ids:
-        access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
-    access_conditions.append(DbPrompt.visibility == "public")
+        access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
+    access_conditions.append(DbServer.visibility == "public")
 
     query = query.where(or_(*access_conditions))
 
     # Apply pagination ordering for cursor support
-    query = query.order_by(desc(DbPrompt.created_at), desc(DbPrompt.id))
+    query = query.order_by(desc(DbServer.created_at), desc(DbServer.id))
 
     # Build query params for pagination links
     query_params = {}
@@ -6675,27 +6600,27 @@ async def admin_servers_partial_html(
         use_cursor_threshold=False,  # Disable auto-cursor switching for UI
     )
 
-    # Extract paginated prompts (DbPrompt objects)
-    prompts_db = paginated_result["data"]
+    # Extract paginated servers (DbServer objects)
+    servers_db = paginated_result["data"]
     pagination = paginated_result["pagination"]
     links = paginated_result["links"]
 
-    # Batch fetch team names for the prompts to avoid N+1 queries
-    team_ids_set = {p.team_id for p in prompts_db if p.team_id}
+    # Batch fetch team names for the servers to avoid N+1 queries
+    team_ids_set = {p.team_id for p in servers_db if p.team_id}
     team_map = {}
     if team_ids_set:
         teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids_set), EmailTeam.is_active.is_(True))).all()
         team_map = {team.id: team.name for team in teams}
 
     # Apply team names to DB objects before conversion
-    for p in prompts_db:
+    for p in servers_db:
         p.team = team_map.get(p.team_id) if p.team_id else None
 
-    # Batch convert to Pydantic models using prompt service
-    # This eliminates the N+1 query problem from calling get_prompt_details() in a loop
-    prompts_pydantic = [prompt_service.convert_prompt_to_read(p, include_metrics=False) for p in prompts_db]
+    # Batch convert to Pydantic models using server service
+    # This eliminates the N+1 query problem from calling get_server_details() in a loop
+    servers_pydantic = [server_service.convert_server_to_read(p, include_metrics=False) for p in servers_db]
 
-    data = jsonable_encoder(prompts_pydantic)
+    data = jsonable_encoder(servers_pydantic)
     base_url = f"{settings.app_root_path}/admin/servers/partial"
 
     if render == "controls":
@@ -6720,7 +6645,6 @@ async def admin_servers_partial_html(
                 "data": data,
                 "pagination": pagination.model_dump(),
                 "root_path": request.scope.get("root_path", ""),
-                "gateway_id": gateway_id,
             },
         )
 
@@ -6740,7 +6664,6 @@ async def admin_servers_partial_html(
 @admin_router.get("/servers/ids", response_class=JSONResponse)
 async def admin_get_all_server_ids(
     include_inactive: bool = False,
-    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -6751,7 +6674,6 @@ async def admin_get_all_server_ids(
 
     Args:
         include_inactive (bool): When True include servers that are inactive.
-        gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated. Accepts the literal value 'null' to indicate NULL gateway_id (local servers).
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -6766,22 +6688,6 @@ async def admin_get_all_server_ids(
     team_ids = [t.id for t in user_teams]
 
     query = select(DbServer.id)
-
-    # Apply optional gateway/server scoping
-    if gateway_id:
-        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
-        if gateway_ids:
-            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
-            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
-            if non_null_ids and null_requested:
-                query = query.where(or_(DbServer.gateway_id.in_(non_null_ids), DbServer.gateway_id.is_(None)))
-                LOGGER.debug(f"Filtering servers by gateway IDs (including NULL): {non_null_ids} + NULL")
-            elif null_requested:
-                query = query.where(DbServer.gateway_id.is_(None))
-                LOGGER.debug("Filtering servers by NULL gateway_id (RestTool)")
-            else:
-                query = query.where(DbServer.gateway_id.in_(non_null_ids))
-                LOGGER.debug(f"Filtering servers by gateway IDs: {non_null_ids}")
 
     if not include_inactive:
         query = query.where(DbServer.enabled.is_(True))
@@ -6800,7 +6706,6 @@ async def admin_search_servers(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
     limit: int = Query(100, ge=1, le=1000),
-    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -6814,7 +6719,6 @@ async def admin_search_servers(
         q (str): Search query string.
         include_inactive (bool): When True include servers that are inactive.
         limit (int): Maximum number of results to return (bounded by the query parameter).
-        gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -6833,22 +6737,6 @@ async def admin_search_servers(
     team_ids = [t.id for t in user_teams]
 
     query = select(DbServer.id, DbServer.original_name, DbServer.display_name, DbServer.description)
-
-    # Apply gateway filter if provided
-    if gateway_id:
-        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
-        if gateway_ids:
-            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
-            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
-            if non_null_ids and null_requested:
-                query = query.where(or_(DbServer.gateway_id.in_(non_null_ids), DbServer.gateway_id.is_(None)))
-                LOGGER.debug(f"Filtering prompt search by gateway IDs (including NULL): {non_null_ids} + NULL")
-            elif null_requested:
-                query = query.where(DbServer.gateway_id.is_(None))
-                LOGGER.debug("Filtering prompt search by NULL gateway_id")
-            else:
-                query = query.where(DbServer.gateway_id.in_(non_null_ids))
-                LOGGER.debug(f"Filtering prompt search by gateway IDs: {non_null_ids}")
 
     if not include_inactive:
         query = query.where(DbServer.enabled.is_(True))
@@ -7350,7 +7238,7 @@ async def admin_search_prompts(
     return {"prompts": prompts, "count": len(prompts)}
 
 @admin_router.get("/a2a/partial", response_class=HTMLResponse)
-async def admin_prompts_partial_html(
+async def admin_a2a_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
@@ -7360,10 +7248,10 @@ async def admin_prompts_partial_html(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
-    """Return paginated prompts HTML partials for the admin UI.
+    """Return paginated a2a agents HTML partials for the admin UI.
 
     This HTMX endpoint returns only the partial HTML used by the admin UI for
-    prompts. It supports three render modes:
+    a2a agents. It supports three render modes:
 
     - default: full table partial (rows + controls)
     - ``render="controls"``: return only pagination controls
@@ -7373,7 +7261,7 @@ async def admin_prompts_partial_html(
         request (Request): FastAPI request object used by the template engine.
         page (int): Page number (1-indexed).
         per_page (int): Number of items per page (bounded by settings).
-        include_inactive (bool): If True, include inactive prompts in results.
+        include_inactive (bool): If True, include inactive a2a agents in results.
         render (Optional[str]): Render mode; one of None, "controls", "selector".
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         db (Session): Database session (dependency-injected).
@@ -7383,9 +7271,9 @@ async def admin_prompts_partial_html(
         Union[HTMLResponse, TemplateResponse]: A rendered template response
         containing either the table partial, pagination controls, or selector
         items depending on ``render``. The response contains JSON-serializable
-        encoded prompt data when templates expect it.
+        encoded a2a agent data when templates expect it.
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested prompts HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render}, gateway_id={gateway_id})")
+    LOGGER.debug(f"User {get_user_email(user)} requested a2a_agents HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render}, gateway_id={gateway_id})")
     # Normalize per_page within configured bounds
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
 
@@ -7397,7 +7285,7 @@ async def admin_prompts_partial_html(
     team_ids = [t.id for t in user_teams]
 
     # Build base query
-    query = select(DbPrompt)
+    query = select(DbA2AAgent)
 
     # Apply gateway filter if provided
     if gateway_id:
@@ -7406,28 +7294,28 @@ async def admin_prompts_partial_html(
             null_requested = any(gid.lower() == "null" for gid in gateway_ids)
             non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
             if non_null_ids and null_requested:
-                query = query.where(or_(DbPrompt.gateway_id.in_(non_null_ids), DbPrompt.gateway_id.is_(None)))
-                LOGGER.debug(f"Filtering prompts by gateway IDs (including NULL): {non_null_ids} + NULL")
+                query = query.where(or_(DbA2AAgent.gateway_id.in_(non_null_ids), DbA2AAgent.gateway_id.is_(None)))
+                LOGGER.debug(f"Filtering a2a_agents by gateway IDs (including NULL): {non_null_ids} + NULL")
             elif null_requested:
-                query = query.where(DbPrompt.gateway_id.is_(None))
-                LOGGER.debug("Filtering prompts by NULL gateway_id (RestTool)")
+                query = query.where(DbA2AAgent.gateway_id.is_(None))
+                LOGGER.debug("Filtering a2a_agents by NULL gateway_id (RestTool)")
             else:
-                query = query.where(DbPrompt.gateway_id.in_(non_null_ids))
-                LOGGER.debug(f"Filtering prompts by gateway IDs: {non_null_ids}")
+                query = query.where(DbA2AAgent.gateway_id.in_(non_null_ids))
+                LOGGER.debug(f"Filtering a2a_agents by gateway IDs: {non_null_ids}")
 
     if not include_inactive:
-        query = query.where(DbPrompt.enabled.is_(True))
+        query = query.where(DbA2AAgent.enabled.is_(True))
 
     # Access conditions: owner, team, public
-    access_conditions = [DbPrompt.owner_email == user_email]
+    access_conditions = [DbA2AAgent.owner_email == user_email]
     if team_ids:
-        access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
-    access_conditions.append(DbPrompt.visibility == "public")
+        access_conditions.append(and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])))
+    access_conditions.append(DbA2AAgent.visibility == "public")
 
     query = query.where(or_(*access_conditions))
 
     # Apply pagination ordering for cursor support
-    query = query.order_by(desc(DbPrompt.created_at), desc(DbPrompt.id))
+    query = query.order_by(desc(DbA2AAgent.created_at), desc(DbA2AAgent.id))
 
     # Build query params for pagination links
     query_params = {}
@@ -7443,33 +7331,33 @@ async def admin_prompts_partial_html(
         page=page,
         per_page=per_page,
         cursor=None,  # HTMX partials use page-based navigation
-        base_url=f"{settings.app_root_path}/admin/prompts/partial",
+        base_url=f"{settings.app_root_path}/admin/a2a/partial",
         query_params=query_params,
         use_cursor_threshold=False,  # Disable auto-cursor switching for UI
     )
 
-    # Extract paginated prompts (DbPrompt objects)
-    prompts_db = paginated_result["data"]
+    # Extract paginated a2a_agents (DbA2AAgent objects)
+    a2a_agents_db = paginated_result["data"]
     pagination = paginated_result["pagination"]
     links = paginated_result["links"]
 
-    # Batch fetch team names for the prompts to avoid N+1 queries
-    team_ids_set = {p.team_id for p in prompts_db if p.team_id}
+    # Batch fetch team names for the a2a_agents to avoid N+1 queries
+    team_ids_set = {p.team_id for p in a2a_agents_db if p.team_id}
     team_map = {}
     if team_ids_set:
         teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids_set), EmailTeam.is_active.is_(True))).all()
         team_map = {team.id: team.name for team in teams}
 
     # Apply team names to DB objects before conversion
-    for p in prompts_db:
+    for p in a2a_agents_db:
         p.team = team_map.get(p.team_id) if p.team_id else None
 
-    # Batch convert to Pydantic models using prompt service
-    # This eliminates the N+1 query problem from calling get_prompt_details() in a loop
-    prompts_pydantic = [prompt_service.convert_prompt_to_read(p, include_metrics=False) for p in prompts_db]
+    # Batch convert to Pydantic models using a2a service
+    # This eliminates the N+1 query problem from calling get_a2a_details() in a loop
+    a2a_agents_pydantic = [a2a_service.convert_agent_to_read(p, include_metrics=False) for p in a2a_agents_db]
 
-    data = jsonable_encoder(prompts_pydantic)
-    base_url = f"{settings.app_root_path}/admin/prompts/partial"
+    data = jsonable_encoder(a2a_agents_pydantic)
+    base_url = f"{settings.app_root_path}/admin/a2a/partial"
 
     if render == "controls":
         return request.app.state.templates.TemplateResponse(
@@ -7478,8 +7366,8 @@ async def admin_prompts_partial_html(
                 "request": request,
                 "pagination": pagination.model_dump(),
                 "base_url": base_url,
-                "hx_target": "#prompts-table-body",
-                "hx_indicator": "#prompts-loading",
+                "hx_target": "#a2a-agents-table-body",
+                "hx_indicator": "#a2a-agents-loading",
                 "query_params": query_params,
                 "root_path": request.scope.get("root_path", ""),
             },
@@ -7487,7 +7375,7 @@ async def admin_prompts_partial_html(
 
     if render == "selector":
         return request.app.state.templates.TemplateResponse(
-            "prompts_selector_items.html",
+            "a2a_agents_selector_items.html",
             {
                 "request": request,
                 "data": data,
@@ -7498,7 +7386,7 @@ async def admin_prompts_partial_html(
         )
 
     return request.app.state.templates.TemplateResponse(
-        "prompts_partial.html",
+        "a2a_agents_partial.html",
         {
             "request": request,
             "data": data,
@@ -7511,13 +7399,13 @@ async def admin_prompts_partial_html(
 
 
 @admin_router.get("/a2a/ids", response_class=JSONResponse)
-async def admin_get_all_server_ids(
+async def admin_get_all_agent_ids(
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
-    """Return all server IDs accessible to the current user (select-all helper).
+    """Return all agent IDs accessible to the current user (select-all helper).
 
     This endpoint is used by UI "Select All" helpers to fetch only the IDs
     of a2a agents the requesting user can access (owner, team, or public).
@@ -7530,7 +7418,7 @@ async def admin_get_all_server_ids(
 
     Returns:
         dict: A dictionary containing two keys:
-            - "server_ids": List[str] of accessible server IDs.
+            - "agent_ids": List[str] of accessible agent IDs.
             - "count": int number of IDs returned.
     """
     user_email = get_user_email(user)
@@ -7540,7 +7428,7 @@ async def admin_get_all_server_ids(
 
     query = select(DbA2AAgent.id)
 
-    # Apply optional gateway/server scoping
+    # Apply optional gateway scoping
     if gateway_id:
         gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
         if gateway_ids:
@@ -7564,8 +7452,9 @@ async def admin_get_all_server_ids(
         access_conditions.append(and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])))
 
     query = query.where(or_(*access_conditions))
-    server_ids = [row[0] for row in db.execute(query).all()]
-    return {"server_ids": server_ids, "count": len(server_ids)}
+    agent_ids = [row[0] for row in db.execute(query).all()]
+    return {"agent_ids": agent_ids, "count": len(agent_ids)}
+
 
 @admin_router.get("/a2a/search", response_class=JSONResponse)
 async def admin_search_a2a_agents(
@@ -7592,13 +7481,13 @@ async def admin_search_a2a_agents(
 
     Returns:
         dict: A dictionary containing:
-            - "a2a_agents": List[dict] where each dict has keys "id", "name", "description".
+            - "agents": List[dict] where each dict has keys "id", "name", "description".
             - "count": int number of matched a2a agents returned.
     """
     user_email = get_user_email(user)
     search_query = q.strip().lower()
     if not search_query:
-        return {"a2a_agents": [], "count": 0}
+        return {"agents": [], "count": 0}
 
     team_service = TeamManagementService(db)
     user_teams = await team_service.get_user_teams(user_email)
@@ -7648,9 +7537,9 @@ async def admin_search_a2a_agents(
     ).limit(limit)
 
     results = db.execute(query).all()
-    a2a_agents = []
+    agents = []
     for row in results:
-        a2a_agents.append(
+        agents.append(
             {
                 "id": row.id,
                 "name": row.original_name,
@@ -7660,7 +7549,7 @@ async def admin_search_a2a_agents(
             }
         )
 
-    return {"a2a_agents": a2a_agents, "count": len(a2a_agents)}
+    return {"agents": agents, "count": len(agents)}
 
 
 @admin_router.get("/tools/{tool_id}", response_model=ToolRead)
