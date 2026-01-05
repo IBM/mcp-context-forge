@@ -72,12 +72,20 @@ class PooledSession:
 
     @property
     def age_seconds(self) -> float:
-        """Return session age in seconds."""
+        """Return session age in seconds.
+
+        Returns:
+            float: Session age in seconds since creation.
+        """
         return time.time() - self.created_at
 
     @property
     def idle_seconds(self) -> float:
-        """Return seconds since last use."""
+        """Return seconds since last use.
+
+        Returns:
+            float: Seconds since last use of this session.
+        """
         return time.time() - self.last_used
 
 
@@ -228,11 +236,21 @@ class MCPSessionPool:
         self._closed = False
 
     async def __aenter__(self) -> "MCPSessionPool":
-        """Async context manager entry."""
+        """Async context manager entry.
+
+        Returns:
+            MCPSessionPool: This pool instance.
+        """
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        """Async context manager exit - closes all sessions."""
+        """Async context manager exit - closes all sessions.
+
+        Args:
+            exc_type: Exception type if an exception was raised.
+            exc_val: Exception value if an exception was raised.
+            exc_tb: Exception traceback if an exception was raised.
+        """
         await self.close_all()
 
     def _compute_identity_hash(self, headers: Optional[Dict[str, str]]) -> str:
@@ -280,19 +298,21 @@ class MCPSessionPool:
         identity_string = "|".join(identity_parts)
         return hashlib.sha256(identity_string.encode()).hexdigest()
 
-    def _make_pool_key(self, url: str, headers: Optional[Dict[str, str]], transport_type: TransportType) -> PoolKey:
+    def _make_pool_key(  # noqa: DAR101, DAR201
+        self, url: str, headers: Optional[Dict[str, str]], transport_type: TransportType
+    ) -> PoolKey:
         """Create composite pool key from URL, identity, and transport type."""
         identity_hash = self._compute_identity_hash(headers)
         return (url, identity_hash, transport_type.value)
 
-    async def _get_or_create_lock(self, pool_key: PoolKey) -> asyncio.Lock:
+    async def _get_or_create_lock(self, pool_key: PoolKey) -> asyncio.Lock:  # noqa: DAR101, DAR201
         """Get or create a lock for the given pool key (thread-safe)."""
         async with self._global_lock:
             if pool_key not in self._locks:
                 self._locks[pool_key] = asyncio.Lock()
             return self._locks[pool_key]
 
-    async def _get_or_create_pool(self, pool_key: PoolKey) -> asyncio.Queue[PooledSession]:
+    async def _get_or_create_pool(self, pool_key: PoolKey) -> asyncio.Queue[PooledSession]:  # noqa: DAR101, DAR201
         """Get or create a pool queue for the given key (thread-safe)."""
         async with self._global_lock:
             if pool_key not in self._pools:
@@ -301,7 +321,7 @@ class MCPSessionPool:
                 self._semaphores[pool_key] = asyncio.Semaphore(self._max_sessions)
             return self._pools[pool_key]
 
-    def _is_circuit_open(self, url: str) -> bool:
+    def _is_circuit_open(self, url: str) -> bool:  # noqa: DAR101, DAR201
         """Check if circuit breaker is open for a URL."""
         if url not in self._circuit_open_until:
             return False
@@ -313,7 +333,7 @@ class MCPSessionPool:
             return False
         return True
 
-    def _record_failure(self, url: str) -> None:
+    def _record_failure(self, url: str) -> None:  # noqa: DAR101
         """Record a failure and potentially trip circuit breaker."""
         self._failures[url] = self._failures.get(url, 0) + 1
         if self._failures[url] >= self._circuit_breaker_threshold:
@@ -321,11 +341,11 @@ class MCPSessionPool:
             self._circuit_breaker_trips += 1
             logger.warning(f"Circuit breaker opened for {url} after {self._failures[url]} failures. " f"Will reset in {self._circuit_breaker_reset}s")
 
-    def _record_success(self, url: str) -> None:
+    def _record_success(self, url: str) -> None:  # noqa: DAR101
         """Record a success, resetting failure count."""
         self._failures[url] = 0
 
-    async def acquire(
+    async def acquire(  # noqa: DAR401
         self,
         url: str,
         headers: Optional[Dict[str, str]] = None,
@@ -820,7 +840,7 @@ def get_mcp_session_pool() -> MCPSessionPool:
     return _mcp_session_pool
 
 
-def init_mcp_session_pool(
+def init_mcp_session_pool(  # noqa: DAR101
     max_sessions_per_key: int = 10,
     session_ttl_seconds: float = 300.0,
     health_check_interval_seconds: float = 60.0,

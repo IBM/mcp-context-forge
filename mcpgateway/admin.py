@@ -852,6 +852,7 @@ async def get_mcp_session_pool_metrics(
     pool effectiveness and diagnosing connection issues.
 
     Args:
+        request: HTTP request object (required by rate_limit decorator)
         _user: Authenticated user
 
     Returns:

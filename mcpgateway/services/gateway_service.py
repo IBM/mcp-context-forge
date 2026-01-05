@@ -3189,7 +3189,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 headers=headers,
                                 transport_type=TransportType.STREAMABLE_HTTP,
                                 httpx_client_factory=get_httpx_client_factory,
-                            ) as pooled:
+                            ) as _pooled:  # noqa: F841 - session used implicitly for health check
                                 # Session is already initialized by pool
                                 pass
                         else:
