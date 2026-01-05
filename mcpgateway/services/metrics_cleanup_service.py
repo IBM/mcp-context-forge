@@ -44,6 +44,7 @@ from mcpgateway.db import (
     ToolMetricsHourly,
 )
 from mcpgateway.services.metrics_rollup_service import get_metrics_rollup_service_if_initialized
+from mcpgateway.services import task_scheduler, Priority
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +198,7 @@ class MetricsCleanupService:
 
         if self._cleanup_task is None or self._cleanup_task.done():
             self._shutdown_event.clear()
-            self._cleanup_task = asyncio.create_task(self._cleanup_loop())
+            self._cleanup_task = task_scheduler.schedule(self._cleanup_loop, Priority.NORMAL)
             logger.info("MetricsCleanupService background task started")
 
     async def shutdown(self) -> None:
