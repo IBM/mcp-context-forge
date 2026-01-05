@@ -7375,7 +7375,7 @@ async def admin_a2a_partial_html(
 
     if render == "selector":
         return request.app.state.templates.TemplateResponse(
-            "a2a_agents_selector_items.html",
+            "agents_selector_items.html",
             {
                 "request": request,
                 "data": data,
@@ -7386,7 +7386,7 @@ async def admin_a2a_partial_html(
         )
 
     return request.app.state.templates.TemplateResponse(
-        "a2a_agents_partial.html",
+        "agents_partial.html",
         {
             "request": request,
             "data": data,
