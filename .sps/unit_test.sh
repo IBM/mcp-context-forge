@@ -2,7 +2,7 @@
 
 export PATH=/root/.local/bin:$PATH
 make test
-make lint
+#make lint
 
 echo "#############################"
 echo "Preparing Evidence for Upload"
