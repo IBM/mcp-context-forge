@@ -15755,9 +15755,14 @@ function setupSelectorSearch() {
  */
 function filterServerTable(searchText) {
     try {
-        const tbody = document.querySelector(
-            'tbody[data-testid="server-list"]',
-        );
+        // Try to find the table using multiple strategies
+        let tbody = document.querySelector("#servers-table-body");
+
+        // Fallback to data-testid selector for backward compatibility
+        if (!tbody) {
+            tbody = document.querySelector('tbody[data-testid="server-list"]');
+        }
+
         if (!tbody) {
             console.warn("Server table not found");
             return;

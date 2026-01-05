@@ -361,7 +361,7 @@ class A2AAgentService:
                 },
             )
 
-            return self.convert_agent_to_read(db=db, db_agent=new_agent)
+            return self.convert_agent_to_read(new_agent, db=db)
 
         except A2AAgentNameConflictError as ie:
             db.rollback()
@@ -524,7 +524,7 @@ class A2AAgentService:
         result = []
         for s in a2a_agents_db:
             s.team = team_map.get(s.team_id) if s.team_id else None
-            result.append(self.convert_agent_to_read(db=db, db_agent=s, include_metrics=False, team_map=team_map))
+            result.append(self.convert_agent_to_read(s, include_metrics=False, db=db, team_map=team_map))
 
         # Return appropriate format based on pagination type
         if page is not None:
@@ -631,7 +631,7 @@ class A2AAgentService:
         db.commit()  # Release transaction to avoid idle-in-transaction
 
         # Skip metrics to avoid N+1 queries in list operations
-        return [self.convert_agent_to_read(db=db, db_agent=agent, include_metrics=False, team_map=team_map) for agent in agents]
+        return [self.convert_agent_to_read(agent, include_metrics=False, db=db, team_map=team_map) for agent in agents]
 
     async def get_agent(self, db: Session, agent_id: str, include_inactive: bool = True) -> A2AAgentRead:
         """Retrieve an A2A agent by ID.
@@ -699,7 +699,7 @@ class A2AAgentService:
             >>> db.get.return_value = agent_mock
 
             >>> # Mock convert_agent_to_read to simplify test
-            >>> service.convert_agent_to_read = lambda db, db_agent: 'agent_read'
+            >>> service.convert_agent_to_read = lambda db_agent, **kwargs: 'agent_read'
 
             >>> # Test with active agent
             >>> result = asyncio.run(service.get_agent(db, 'agent_id'))
@@ -729,7 +729,7 @@ class A2AAgentService:
             raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
 
         # ✅ Delegate conversion and masking to convert_agent_to_read()
-        return self.convert_agent_to_read(db=db, db_agent=agent)
+        return self.convert_agent_to_read(agent, db=db)
 
     async def get_agent_by_name(self, db: Session, agent_name: str) -> A2AAgentRead:
         """Retrieve an A2A agent by name.
@@ -750,7 +750,7 @@ class A2AAgentService:
         if not agent:
             raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
 
-        return self.convert_agent_to_read(db=db, db_agent=agent)
+        return self.convert_agent_to_read(agent, db=db)
 
     async def update_agent(
         self,
@@ -865,7 +865,7 @@ class A2AAgentService:
             await admin_stats_cache.invalidate_tags()
 
             logger.info(f"Updated A2A agent: {agent.name} (ID: {agent.id})")
-            return self.convert_agent_to_read(db=db, db_agent=agent)
+            return self.convert_agent_to_read(agent, db=db)
         except PermissionError:
             db.rollback()
             raise
@@ -944,7 +944,7 @@ class A2AAgentService:
             },
         )
 
-        return self.convert_agent_to_read(db=db, db_agent=agent)
+        return self.convert_agent_to_read(agent, db=db)
 
     async def delete_agent(self, db: Session, agent_id: str, user_email: Optional[str] = None, purge_metrics: bool = False) -> None:
         """Delete an A2A agent.
@@ -1292,14 +1292,15 @@ class A2AAgentService:
             agent.auth_value = encode_auth(agent.auth_value)
         return agent
 
-    def convert_agent_to_read(self, db: Session, db_agent: DbA2AAgent, include_metrics: bool = False, team_map: Optional[Dict[str, str]] = None) -> A2AAgentRead:
+    def convert_agent_to_read(self, db_agent: DbA2AAgent, include_metrics: bool = False, db: Optional[Session] = None, team_map: Optional[Dict[str, str]] = None) -> A2AAgentRead:
         """Convert database model to schema.
 
         Args:
-            db (Session): Database session.
             db_agent (DbA2AAgent): Database agent model.
             include_metrics (bool): Whether to include metrics in the result. Defaults to False.
                 Set to False for list operations to avoid N+1 query issues.
+            db (Optional[Session]): Database session. Only required if team name is not pre-populated
+                on the db_agent object and team_map is not provided.
             team_map (Optional[Dict[str, str]]): Pre-fetched team_id -> team_name mapping.
                 If provided, avoids N+1 queries for team name lookups in list operations.
 
@@ -1314,13 +1315,17 @@ class A2AAgentService:
         if not db_agent:
             raise A2AAgentNotFoundError("Agent not found")
 
-        # Use pre-fetched team map if available, otherwise query individually
-        team_id = getattr(db_agent, "team_id", None)
-        if team_map is not None and team_id:
-            team_name = team_map.get(team_id)
-        else:
-            team_name = self._get_team_name(db, team_id)
-        setattr(db_agent, "team", team_name)
+        # Check if team attribute already exists (pre-populated in batch operations)
+        # Otherwise use pre-fetched team map if available, otherwise query individually
+        if not hasattr(db_agent, "team") or db_agent.team is None:
+            team_id = getattr(db_agent, "team_id", None)
+            if team_map is not None and team_id:
+                team_name = team_map.get(team_id)
+            elif db is not None:
+                team_name = self._get_team_name(db, team_id)
+            else:
+                team_name = None
+            setattr(db_agent, "team", team_name)
 
         # Compute metrics only if requested (avoids N+1 queries in list operations)
         if include_metrics:

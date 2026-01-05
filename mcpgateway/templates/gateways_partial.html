@@ -2,36 +2,63 @@
 <table id="gateways-table" class="min-w-full divide-y divide-gray-200">
   <thead class="bg-gray-50 dark:bg-gray-700">
     <tr>
-      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-12">S. No.</th>
-      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-36">Gateway Name</th>
-      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Name</th>
-      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Description</th>
-      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-20">Tags</th>
-      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-20">Owner</th>
-      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-20">Team</th>
-      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-16">Visibility</th>
-      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-12">Status</th>
-      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Actions</th>
+      <th class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">S. No.</th>
+      <th class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Name</th>
+      <th class="px-2 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider w-24">URL</th>
+      <th class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Tags</th>
+      <th class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Status</th>
+      <th class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Last Seen</th>
+      <th class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Owner</th>
+      <th class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Team</th>
+      <th class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Visibility</th>
+      <th class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Actions</th>
     </tr>
   </thead>
   <tbody id="gateways-table-body" class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
 {% for gateway in data %}
-{% set gateway_label = gateway.displayName or gateway.originalName or gateway.name or gateway.id %}
-{% set gateway_gateway = gateway.gatewaySlug or 'Local' %}
-{% set gateway_tech_name = gateway.name or gateway.originalName or gateway.id %}
-<tr>
-    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 w-12 dark:text-gray-100">{{ (pagination.page - 1) * pagination.per_page + loop.index }}</td>
-    <td class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300 w-36">{{ gateway_gateway }}</td>
-    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
-      <div>{{ gateway_label }}</div>
-      <div class="text-xs text-gray-500 dark:text-gray-400 font-mono">{{ gateway_tech_name }}</div>
+{% set gateway_label = gateway.name or gateway.id %}
+<tr id="gateway-row-{{ gateway.id }}">
+    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">{{ (pagination.page - 1) * pagination.per_page + loop.index }}</td>
+    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">{{ gateway.name }}</td>
+    <td class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300 w-24 max-w-xs">{{ gateway.url }}</td>
+    <td class="px-6 py-4 whitespace-nowrap">
+      {% if gateway.tags %}
+        {% for tag in gateway.tags %}
+        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1">
+          {% if tag is mapping %}{{ tag.id }}{% else %}{{ tag }}{% endif %}
+        </span>
+        {% endfor %}
+      {% else %}
+        <span class="text-gray-500 dark:text-gray-300 text-xs">None</span>
+      {% endif %}
     </td>
-    <td class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300">{% set clean_desc = (gateway.description or "") | replace('\n', ' ') | replace('\r', ' ') %} {% set refactor_desc = clean_desc | striptags | trim | escape %} {% if refactor_desc | length is greaterthan 220 %} {{ refactor_desc[:400] + "..." }} {% else %} {{ refactor_desc }} {% endif %}</td>
-    <td class="px-6 py-4 whitespace-nowrap">{% if gateway.tags %} {% for tag in gateway.tags %}<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1">{{ tag.id }}</span>{% endfor %} {% else %}<span class="text-gray-500 dark:text-gray-300 text-xs">None</span>{% endif %}</td>
-  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 w-20">{{ gateway.owner_email }}</td>
-  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 w-20">{% if gateway.team %}{{ gateway.team }}{% else %}<span class="text-gray-400 dark:text-gray-600 text-xs">None</span>{% endif %}</td>
-    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 w-16">{% if gateway.visibility == 'public' %}<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">🌍 Public</span>{% elif gateway.visibility == 'team' %}<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">👥 Team</span>{% else %}<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800">🔒 Private</span>{% endif %}</td>
-  <td class="px-6 py-4 whitespace-nowrap text-sm w-12"><div class="relative group">{% set enabled = gateway.enabled %}<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full {% if enabled %}bg-green-100 text-green-800{% else %}bg-red-100 text-red-800{% endif %}">{% if enabled %}Active{% else %}Inactive{% endif %}</span></div></td>
+    <td class="px-6 py-4 whitespace-nowrap text-sm">
+      {% if gateway.enabled %}
+      <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">Active</span>
+      {% else %}
+      <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">Inactive</span>
+      {% endif %}
+    </td>
+    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">
+      {% if gateway.last_seen %}{{ gateway.last_seen.strftime('%Y-%m-%d %H:%M:%S') }}{% else %}Never{% endif %}
+    </td>
+    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">
+      {% if gateway.owner_email %}{{ gateway.owner_email }}{% else %}<span class="text-gray-400">N/A</span>{% endif %}
+    </td>
+    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">
+      {% if gateway.team %}{{ gateway.team }}{% else %}<span class="text-gray-400 dark:text-gray-600 text-xs">None</span>{% endif %}
+    </td>
+    <td class="px-6 py-4 whitespace-nowrap">
+      {% if gateway.visibility == 'private' %}
+      <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800">🔒 Private</span>
+      {% elif gateway.visibility == 'team' %}
+      <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">👥 Team</span>
+      {% elif gateway.visibility == 'public' %}
+      <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">🌍 Public</span>
+      {% else %}
+      <span class="text-gray-500 dark:text-gray-300 text-xs">N/A</span>
+      {% endif %}
+    </td>
     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
       <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
         <!-- Row 1: Test -->

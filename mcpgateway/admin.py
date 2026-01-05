@@ -6296,7 +6296,7 @@ async def admin_gateways_partial_html(
         items depending on ``render``. The response contains JSON-serializable
         encoded gateway data when templates expect it.
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested gateways HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render}, gateway_id={gateway_id})")
+    LOGGER.debug(f"User {get_user_email(user)} requested gateways HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render})")
     # Normalize per_page within configured bounds
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
 
@@ -6308,21 +6308,21 @@ async def admin_gateways_partial_html(
     team_ids = [t.id for t in user_teams]
 
     # Build base query
-    query = select(DbPrompt)
+    query = select(DbGateway)
 
     if not include_inactive:
-        query = query.where(DbPrompt.enabled.is_(True))
+        query = query.where(DbGateway.enabled.is_(True))
 
     # Access conditions: owner, team, public
-    access_conditions = [DbPrompt.owner_email == user_email]
+    access_conditions = [DbGateway.owner_email == user_email]
     if team_ids:
-        access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
-    access_conditions.append(DbPrompt.visibility == "public")
+        access_conditions.append(and_(DbGateway.team_id.in_(team_ids), DbGateway.visibility.in_(["team", "public"])))
+    access_conditions.append(DbGateway.visibility == "public")
 
     query = query.where(or_(*access_conditions))
 
     # Apply pagination ordering for cursor support
-    query = query.order_by(desc(DbPrompt.created_at), desc(DbPrompt.id))
+    query = query.order_by(desc(DbGateway.created_at), desc(DbGateway.id))
 
     # Build query params for pagination links
     query_params = {}
@@ -6341,7 +6341,7 @@ async def admin_gateways_partial_html(
         use_cursor_threshold=False,  # Disable auto-cursor switching for UI
     )
 
-    # Extract paginated gateways (DbPrompt objects)
+    # Extract paginated gateways (DbGateway objects)
     gateways_db = paginated_result["data"]
     pagination = paginated_result["pagination"]
     links = paginated_result["links"]
@@ -6359,7 +6359,7 @@ async def admin_gateways_partial_html(
 
     # Batch convert to Pydantic models using gateway service
     # This eliminates the N+1 query problem from calling get_gateway_details() in a loop
-    gateways_pydantic = [gateway_service.convert_gateway_to_read(p, include_metrics=False) for p in gateways_db]
+    gateways_pydantic = [gateway_service.convert_gateway_to_read(p) for p in gateways_db]
 
     data = jsonable_encoder(gateways_pydantic)
     base_url = f"{settings.app_root_path}/admin/gateways/partial"
@@ -6553,7 +6553,7 @@ async def admin_servers_partial_html(
         items depending on ``render``. The response contains JSON-serializable
         encoded server data when templates expect it.
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested servers HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render}, gateway_id={gateway_id})")
+    LOGGER.debug(f"User {get_user_email(user)} requested servers HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render})")
     # Normalize per_page within configured bounds
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
 
@@ -6585,8 +6585,6 @@ async def admin_servers_partial_html(
     query_params = {}
     if include_inactive:
         query_params["include_inactive"] = "true"
-    if gateway_id:
-        query_params["gateway_id"] = gateway_id
 
     # Use unified pagination function
     paginated_result = await paginate_query(
