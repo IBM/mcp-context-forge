@@ -1,4 +1,6 @@
 #!/bin/bash
+
+export PATH=/root/.local/bin:$PATH
 make test
 make lint
 
