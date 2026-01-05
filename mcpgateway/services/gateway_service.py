@@ -505,11 +505,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             is_leader = await self._redis_client.set(self._leader_key, self._instance_id, ex=self._leader_ttl, nx=True)
             if is_leader:
                 logger.info("Acquired Redis leadership. Starting health check and heartbeat tasks.")
-                self._health_check_task = asyncio.create_task(self._run_health_checks(user_email))
-                self._leader_heartbeat_task = asyncio.create_task(self._run_leader_heartbeat())
+                from mcpgateway.services import task_scheduler, Priority
+
+                self._health_check_task = task_scheduler.schedule(lambda: self._run_health_checks(user_email), Priority.CRITICAL)
+                self._leader_heartbeat_task = task_scheduler.schedule(self._run_leader_heartbeat, Priority.HIGH)
         else:
             # Always create the health check task in filelock mode; leader check is handled inside.
-            self._health_check_task = asyncio.create_task(self._run_health_checks(user_email))
+            from mcpgateway.services import task_scheduler, Priority
+            self._health_check_task = task_scheduler.schedule(lambda: self._run_health_checks(user_email), Priority.CRITICAL)
 
     async def shutdown(self) -> None:
         """Shutdown the service.

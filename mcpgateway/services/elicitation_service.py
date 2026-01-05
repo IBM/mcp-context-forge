@@ -19,6 +19,7 @@ from uuid import uuid4
 
 # First-Party
 from mcpgateway.common.models import ElicitResult
+from mcpgateway.services import task_scheduler, Priority
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,7 @@ class ElicitationService:
     async def start(self):
         """Start background cleanup task."""
         if self._cleanup_task is None or self._cleanup_task.done():
-            self._cleanup_task = asyncio.create_task(self._cleanup_loop())
+            self._cleanup_task = task_scheduler.schedule(self._cleanup_loop, Priority.NORMAL)
             logger.info("Elicitation cleanup task started")
 
     async def shutdown(self):

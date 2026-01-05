@@ -57,6 +57,7 @@ from typing import Any, Optional
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services import task_scheduler, Priority
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -136,7 +137,7 @@ class ResourceCache:
         """Initialize cache service."""
         logger.info("Initializing resource cache")
         # Start cleanup task
-        asyncio.create_task(self._cleanup_loop())
+        self._cleanup_task = task_scheduler.schedule(self._cleanup_loop, Priority.NORMAL)
 
     async def shutdown(self) -> None:
         """Shutdown cache service."""

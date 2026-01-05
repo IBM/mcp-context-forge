@@ -54,6 +54,7 @@ from mcpgateway.db import (
 )
 
 logger = logging.getLogger(__name__)
+from mcpgateway.services import task_scheduler, Priority
 
 
 @dataclass
@@ -216,7 +217,7 @@ class MetricsRollupService:
 
         if self._rollup_task is None or self._rollup_task.done():
             self._shutdown_event.clear()
-            self._rollup_task = asyncio.create_task(self._rollup_loop())
+            self._rollup_task = task_scheduler.schedule(self._rollup_loop, Priority.NORMAL)
             logger.info("MetricsRollupService background task started")
 
     async def shutdown(self) -> None:

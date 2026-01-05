@@ -23,6 +23,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import A2AAgentMetric, fresh_db_session, PromptMetric, ResourceMetric, ServerMetric, ToolMetric
 
 logger = logging.getLogger(__name__)
+from mcpgateway.services import task_scheduler, Priority
 
 
 @dataclass
@@ -146,7 +147,7 @@ class MetricsBufferService:
 
         if self._flush_task is None or self._flush_task.done():
             self._shutdown_event.clear()
-            self._flush_task = asyncio.create_task(self._flush_loop())
+            self._flush_task = task_scheduler.schedule(self._flush_loop, Priority.NORMAL)
             logger.info("MetricsBufferService flush task started")
 
     async def shutdown(self) -> None:
