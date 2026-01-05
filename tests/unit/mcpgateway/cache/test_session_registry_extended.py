@@ -383,7 +383,7 @@ class TestDatabaseBackendRespond:
                         # Assert message was processed
                         mock_gen.assert_called_once()
 
-    
+
     @pytest.mark.asyncio
     async def test_database_respond_ready_to_respond_logging(self, monkeypatch, caplog, mock_sse_transport):
         """Test database respond logs 'Ready to respond'."""

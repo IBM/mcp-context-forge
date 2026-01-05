@@ -829,3 +829,178 @@ class TestTeamManagementService:
 
         # Verify the filter chain was called
         mock_db.query.return_value.filter.assert_called()
+
+    # =========================================================================
+    # Batch Query Methods Tests (N+1 Query Elimination - Issue #1892)
+    # =========================================================================
+
+    def test_get_member_counts_batch_empty_list(self, service):
+        """Test get_member_counts_batch returns empty dict for empty list."""
+        result = service.get_member_counts_batch([])
+        assert result == {}
+
+    def test_get_member_counts_batch_single_team(self, service, mock_db):
+        """Test get_member_counts_batch with single team."""
+        # Create a mock result row
+        mock_row = MagicMock()
+        mock_row.team_id = "team-123"
+        mock_row.count = 5
+
+        mock_db.query.return_value.filter.return_value.group_by.return_value.all.return_value = [mock_row]
+
+        result = service.get_member_counts_batch(["team-123"])
+
+        assert result == {"team-123": 5}
+        mock_db.commit.assert_called_once()
+
+    def test_get_member_counts_batch_multiple_teams(self, service, mock_db):
+        """Test get_member_counts_batch with multiple teams."""
+        # Create mock result rows
+        mock_rows = []
+        for i, (team_id, count) in enumerate([("team-1", 3), ("team-2", 7)]):
+            row = MagicMock()
+            row.team_id = team_id
+            row.count = count
+            mock_rows.append(row)
+
+        mock_db.query.return_value.filter.return_value.group_by.return_value.all.return_value = mock_rows
+
+        result = service.get_member_counts_batch(["team-1", "team-2", "team-3"])
+
+        assert result == {"team-1": 3, "team-2": 7, "team-3": 0}  # team-3 defaults to 0
+
+    def test_get_member_counts_batch_database_error(self, service, mock_db):
+        """Test get_member_counts_batch handles database error."""
+        mock_db.query.side_effect = Exception("Database error")
+
+        with pytest.raises(Exception, match="Database error"):
+            service.get_member_counts_batch(["team-123"])
+
+        mock_db.rollback.assert_called_once()
+
+    def test_get_user_roles_batch_empty_list(self, service):
+        """Test get_user_roles_batch returns empty dict for empty list."""
+        result = service.get_user_roles_batch("user@example.com", [])
+        assert result == {}
+
+    def test_get_user_roles_batch_with_memberships(self, service, mock_db):
+        """Test get_user_roles_batch with mixed memberships."""
+        # Create mock result rows
+        mock_rows = []
+        for team_id, role in [("team-1", "owner"), ("team-2", "member")]:
+            row = MagicMock()
+            row.team_id = team_id
+            row.role = role
+            mock_rows.append(row)
+
+        mock_db.query.return_value.filter.return_value.all.return_value = mock_rows
+
+        result = service.get_user_roles_batch("user@example.com", ["team-1", "team-2", "team-3"])
+
+        assert result == {"team-1": "owner", "team-2": "member", "team-3": None}
+
+    def test_get_user_roles_batch_database_error(self, service, mock_db):
+        """Test get_user_roles_batch handles database error."""
+        mock_db.query.side_effect = Exception("Database error")
+
+        with pytest.raises(Exception, match="Database error"):
+            service.get_user_roles_batch("user@example.com", ["team-123"])
+
+        mock_db.rollback.assert_called_once()
+
+    def test_get_pending_join_requests_batch_empty_list(self, service):
+        """Test get_pending_join_requests_batch returns empty dict for empty list."""
+        result = service.get_pending_join_requests_batch("user@example.com", [])
+        assert result == {}
+
+    def test_get_pending_join_requests_batch_with_requests(self, service, mock_db):
+        """Test get_pending_join_requests_batch with pending requests."""
+        # First-Party
+        from mcpgateway.db import EmailTeamJoinRequest
+
+        mock_request = MagicMock(spec=EmailTeamJoinRequest)
+        mock_request.team_id = "team-1"
+
+        mock_db.query.return_value.filter.return_value.all.return_value = [mock_request]
+
+        result = service.get_pending_join_requests_batch("user@example.com", ["team-1", "team-2"])
+
+        assert result["team-1"] == mock_request
+        assert result["team-2"] is None
+
+    def test_get_pending_join_requests_batch_database_error(self, service, mock_db):
+        """Test get_pending_join_requests_batch handles database error."""
+        mock_db.query.side_effect = Exception("Database error")
+
+        with pytest.raises(Exception, match="Database error"):
+            service.get_pending_join_requests_batch("user@example.com", ["team-123"])
+
+        mock_db.rollback.assert_called_once()
+
+    # =========================================================================
+    # Cached Batch Methods Tests
+    # =========================================================================
+
+    @pytest.mark.asyncio
+    async def test_get_member_counts_batch_cached_empty_list(self, service):
+        """Test get_member_counts_batch_cached returns empty dict for empty list."""
+        result = await service.get_member_counts_batch_cached([])
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_get_member_counts_batch_cached_disabled(self, service, mock_db):
+        """Test get_member_counts_batch_cached falls back to sync when caching disabled."""
+        mock_row = MagicMock()
+        mock_row.team_id = "team-123"
+        mock_row.count = 5
+        mock_db.query.return_value.filter.return_value.group_by.return_value.all.return_value = [mock_row]
+
+        with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+            mock_settings.team_member_count_cache_enabled = False
+            mock_settings.team_member_count_cache_ttl = 300
+
+            result = await service.get_member_counts_batch_cached(["team-123"])
+
+            assert result == {"team-123": 5}
+
+    @pytest.mark.asyncio
+    async def test_get_member_counts_batch_cached_redis_unavailable(self, service, mock_db):
+        """Test get_member_counts_batch_cached handles Redis unavailable."""
+        mock_row = MagicMock()
+        mock_row.team_id = "team-123"
+        mock_row.count = 5
+        mock_db.query.return_value.filter.return_value.group_by.return_value.all.return_value = [mock_row]
+
+        with (
+            patch("mcpgateway.services.team_management_service.settings") as mock_settings,
+            patch("mcpgateway.utils.redis_client.get_redis_client", return_value=None),
+        ):
+            mock_settings.team_member_count_cache_enabled = True
+            mock_settings.team_member_count_cache_ttl = 300
+            mock_settings.cache_prefix = "mcpgw:"
+
+            result = await service.get_member_counts_batch_cached(["team-123"])
+
+            assert result == {"team-123": 5}
+
+    @pytest.mark.asyncio
+    async def test_invalidate_team_member_count_cache_disabled(self, service):
+        """Test invalidate_team_member_count_cache is no-op when caching disabled."""
+        with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+            mock_settings.team_member_count_cache_enabled = False
+
+            # Should not raise any exception
+            await service.invalidate_team_member_count_cache("team-123")
+
+    @pytest.mark.asyncio
+    async def test_invalidate_team_member_count_cache_redis_unavailable(self, service):
+        """Test invalidate_team_member_count_cache handles Redis unavailable."""
+        with (
+            patch("mcpgateway.services.team_management_service.settings") as mock_settings,
+            patch("mcpgateway.utils.redis_client.get_redis_client", return_value=None),
+        ):
+            mock_settings.team_member_count_cache_enabled = True
+            mock_settings.cache_prefix = "mcpgw:"
+
+            # Should not raise any exception
+            await service.invalidate_team_member_count_cache("team-123")

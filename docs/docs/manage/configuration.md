@@ -508,6 +508,22 @@ When `ADMIN_STATS_CACHE_ENABLED=true` (default), admin dashboard statistics are 
 
 See [ADR-029](../architecture/adr/029-registry-admin-stats-caching.md) for implementation details.
 
+#### Team Member Count Cache
+
+```bash
+# Team member count cache (reduces N+1 queries in admin UI)
+TEAM_MEMBER_COUNT_CACHE_ENABLED=true  # Enable team member count caching
+TEAM_MEMBER_COUNT_CACHE_TTL=300       # Cache TTL in seconds (30-3600)
+```
+
+When `TEAM_MEMBER_COUNT_CACHE_ENABLED=true` (default), team member counts are cached in Redis:
+
+- **Member counts**: Cached for `TEAM_MEMBER_COUNT_CACHE_TTL` seconds (default: 300)
+
+Cache is automatically invalidated when team members are added, removed, or their `is_active` status changes.
+
+**Performance Note**: This cache eliminates N+1 query patterns in the admin UI team listings, reducing `/admin/` P95 latency from ~14s to <500ms under load.
+
 ### Session Registry Polling (Database Backend)
 
 When using `CACHE_TYPE=database`, sessions poll the database to check for incoming messages. Adaptive backoff reduces database load by ~90% during idle periods while maintaining responsiveness when messages arrive.
