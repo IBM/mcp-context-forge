@@ -149,6 +149,10 @@ async def list_teams(
             total = len(user_teams)
             teams = user_teams[skip : skip + limit]
 
+        # Batch fetch member counts with caching (N+1 elimination)
+        team_ids = [str(team.id) for team in teams]
+        member_counts = await service.get_member_counts_batch_cached(team_ids)
+
         team_responses = [
             TeamResponse(
                 id=team.id,
@@ -159,7 +163,7 @@ async def list_teams(
                 is_personal=team.is_personal,
                 visibility=team.visibility,
                 max_members=team.max_members,
-                member_count=team.get_member_count(),
+                member_count=member_counts.get(str(team.id), 0),
                 created_at=team.created_at,
                 updated_at=team.updated_at,
                 is_active=team.is_active,
@@ -668,6 +672,10 @@ async def discover_public_teams(
         # Get public teams where user is not already a member
         public_teams = await team_service.discover_public_teams(current_user_ctx["email"], skip=skip, limit=limit)
 
+        # Batch fetch member counts with caching (N+1 elimination)
+        team_ids = [str(team.id) for team in public_teams]
+        member_counts = await team_service.get_member_counts_batch_cached(team_ids)
+
         discovery_responses = []
         for team in public_teams:
             discovery_responses.append(
@@ -675,7 +683,7 @@ async def discover_public_teams(
                     id=team.id,
                     name=team.name,
                     description=team.description,
-                    member_count=team.get_member_count(),
+                    member_count=member_counts.get(str(team.id), 0),
                     created_at=team.created_at,
                     is_joinable=True,  # All returned teams are joinable
                 )

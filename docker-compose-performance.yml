@@ -146,6 +146,9 @@ services:
       - ADMIN_STATS_CACHE_TAGS_TTL=120
       - ADMIN_STATS_CACHE_PLUGINS_TTL=120
       - ADMIN_STATS_CACHE_PERFORMANCE_TTL=60
+      # Team member count cache (reduces N+1 queries)
+      - TEAM_MEMBER_COUNT_CACHE_ENABLED=true
+      - TEAM_MEMBER_COUNT_CACHE_TTL=300
       # MCP Server Health Check
       # Interval in seconds between health checks (default: 300)
       - HEALTH_CHECK_INTERVAL=300
