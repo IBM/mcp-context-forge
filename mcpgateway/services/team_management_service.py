@@ -1235,7 +1235,7 @@ class TeamManagementService:
         try:
             # Single query for all teams
             results = (
-                self.db.query(EmailTeamMember.team_id, func.count(EmailTeamMember.id).label("count"))
+                self.db.query(EmailTeamMember.team_id, func.count(EmailTeamMember.id).label("count"))  # pylint: disable=not-callable
                 .filter(EmailTeamMember.team_id.in_(team_ids), EmailTeamMember.is_active.is_(True))
                 .group_by(EmailTeamMember.team_id)
                 .all()
@@ -1322,7 +1322,14 @@ class TeamManagementService:
     # ==================================================================================
 
     def _get_member_count_cache_key(self, team_id: str) -> str:
-        """Build cache key using settings.cache_prefix for consistency."""
+        """Build cache key using settings.cache_prefix for consistency.
+
+        Args:
+            team_id: Team UUID to build cache key for
+
+        Returns:
+            Cache key string in format "{prefix}team:member_count:{team_id}"
+        """
         cache_prefix = getattr(settings, "cache_prefix", "mcpgw:")
         return f"{cache_prefix}team:member_count:{team_id}"
 
@@ -1338,6 +1345,9 @@ class TeamManagementService:
 
         Returns:
             Dict mapping team_id to member count
+
+        Raises:
+            Exception: Re-raises any database errors after rollback
         """
         if not team_ids:
             return {}
@@ -1383,7 +1393,7 @@ class TeamManagementService:
         if cache_misses:
             try:
                 db_results = (
-                    self.db.query(EmailTeamMember.team_id, func.count(EmailTeamMember.id).label("count"))
+                    self.db.query(EmailTeamMember.team_id, func.count(EmailTeamMember.id).label("count"))  # pylint: disable=not-callable
                     .filter(EmailTeamMember.team_id.in_(cache_misses), EmailTeamMember.is_active.is_(True))
                     .group_by(EmailTeamMember.team_id)
                     .all()

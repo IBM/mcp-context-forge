@@ -28,7 +28,15 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def _index_exists(table_name: str, index_name: str) -> bool:
-    """Check if an index already exists."""
+    """Check if an index already exists.
+
+    Args:
+        table_name: Name of the table to check
+        index_name: Name of the index to look for
+
+    Returns:
+        True if the index exists, False otherwise
+    """
     conn = op.get_bind()
     inspector = inspect(conn)
     try:
