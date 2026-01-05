@@ -84,8 +84,9 @@ ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that 
     * 10.16. [Health Checks](#health-checks)
     * 10.17. [Database](#database)
     * 10.18. [Cache Backend](#cache-backend)
-    * 10.19. [Plugin Configuration](#plugin-configuration)
-    * 10.20. [Development](#development)
+    * 10.19. [Metrics Aggregation Cache](#metrics-aggregation-cache)
+    * 10.20. [Plugin Configuration](#plugin-configuration)
+    * 10.21. [Development](#development)
 * 11. [Running](#running)
     * 11.1. [Makefile](#makefile)
     * 11.2. [Script helper](#script-helper)
@@ -2158,6 +2159,15 @@ Automatic management of metrics data to prevent unbounded table growth and maint
 | `REDIS_LEADER_HEARTBEAT_INTERVAL` | Heartbeat (secs)   | `5`      | int > 0                  |
 
 > 🧠 `none` disables caching entirely. Use `memory` for dev, `database` for local persistence, or `redis` for distributed caching across multiple instances.
+
+### Metrics Aggregation Cache
+
+| Setting                     | Description                           | Default | Options    |
+| --------------------------- | ------------------------------------- | ------- | ---------- |
+| `METRICS_CACHE_ENABLED`     | Enable metrics query caching          | `true`  | bool       |
+| `METRICS_CACHE_TTL_SECONDS` | Cache TTL (seconds)                   | `60`    | int (1-300)|
+
+> ⚡ **Performance**: Caches aggregate metrics queries to reduce full table scans. Under high load (3000+ users), setting TTL to 60-120 seconds can reduce database scans by 6-12×. See [Issue #1906](https://github.com/IBM/mcp-context-forge/issues/1906).
 
 ### Database Management
 

@@ -233,6 +233,10 @@ mcpContextForge:
     TEAM_MEMBER_COUNT_CACHE_ENABLED: "true"  # Enable team member count caching
     TEAM_MEMBER_COUNT_CACHE_TTL: "300"       # Cache TTL in seconds (30-3600)
 
+    # Metrics aggregation cache (reduces full table scans, see #1906)
+    METRICS_CACHE_ENABLED: "true"            # Enable metrics query caching
+    METRICS_CACHE_TTL_SECONDS: "60"          # Cache TTL in seconds (1-300)
+
     # ─ Protocol & feature toggles ─
     PROTOCOL_VERSION: 2025-03-26
     MCPGATEWAY_UI_ENABLED: "true"    # toggle Admin UI

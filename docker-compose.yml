@@ -148,6 +148,9 @@ services:
       # Team member count cache (reduces N+1 queries)
       - TEAM_MEMBER_COUNT_CACHE_ENABLED=true
       - TEAM_MEMBER_COUNT_CACHE_TTL=300
+      # Metrics aggregation cache (reduces full table scans, see #1906)
+      - METRICS_CACHE_ENABLED=true
+      - METRICS_CACHE_TTL_SECONDS=120
       # MCP Server Health Check
       # Interval in seconds between health checks (default: 300)
       - HEALTH_CHECK_INTERVAL=300

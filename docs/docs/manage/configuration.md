@@ -524,6 +524,23 @@ Cache is automatically invalidated when team members are added, removed, or thei
 
 **Performance Note**: This cache eliminates N+1 query patterns in the admin UI team listings, reducing `/admin/` P95 latency from ~14s to <500ms under load.
 
+#### Metrics Aggregation Cache
+
+```bash
+# Metrics aggregation cache (reduces full table scans, see #1906)
+METRICS_CACHE_ENABLED=true       # Enable metrics query caching (default: true)
+METRICS_CACHE_TTL_SECONDS=60     # Cache TTL in seconds (1-300, default: 60)
+```
+
+When `METRICS_CACHE_ENABLED=true` (default), aggregate metrics queries are cached in memory:
+
+- **Aggregated metrics**: Cached for `METRICS_CACHE_TTL_SECONDS` seconds (default: 60)
+- **Top performers**: Cached separately with the same TTL
+
+Cache is automatically invalidated when metrics are recorded.
+
+**Performance Note**: This cache reduces full table scans on metrics tables. Under high load (3000+ users), increasing TTL to 60-120 seconds can reduce sequential scans by 6-12×. See [Issue #1906](https://github.com/IBM/mcp-context-forge/issues/1906) for details.
+
 ### Session Registry Polling (Database Backend)
 
 When using `CACHE_TYPE=database`, sessions poll the database to check for incoming messages. Adaptive backoff reduces database load by ~90% during idle periods while maintaining responsiveness when messages arrive.

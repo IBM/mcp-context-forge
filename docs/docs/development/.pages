@@ -10,3 +10,5 @@ nav:
   - developer-workstation.md
   - doctest-coverage.md
   - module-documentation.md
+  - db-performance.md
+  - profiling.md
