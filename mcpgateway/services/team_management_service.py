@@ -1310,8 +1310,8 @@ class TeamManagementService:
             self.db.commit()  # Release transaction to avoid idle-in-transaction
 
             # Build result dict - only one pending request per team expected
-            requests = {str(req.team_id): req for req in results}
-            return {tid: requests.get(tid) for tid in team_ids}
+            pending_reqs = {str(req.team_id): req for req in results}
+            return {tid: pending_reqs.get(tid) for tid in team_ids}
         except Exception as e:
             self.db.rollback()
             logger.error(f"Failed to get pending join requests for {user_email}: {e}")

@@ -87,5 +87,5 @@ def downgrade() -> None:
     else:
         try:
             op.drop_index("idx_email_team_members_team_active_count", "email_team_members")
-        except Exception:
-            pass  # Index may not exist
+        except Exception:  # nosec B110 - Index may not exist during downgrade
+            pass
