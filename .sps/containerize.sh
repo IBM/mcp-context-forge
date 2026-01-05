@@ -44,7 +44,7 @@ source $WORKSPACE/$PIPELINE_CONFIG_REPO_PATH/scripts/utilities/go_utils.sh
 source $WORKSPACE/$PIPELINE_CONFIG_REPO_PATH/scripts/utilities/github_utils.sh
 source $WORKSPACE/$PIPELINE_CONFIG_REPO_PATH/scripts/utilities/logger.sh
 
-
+docker tag mcpgateway/mcpgateway:latest "${IMAGE}"
 docker push "${IMAGE}"
 
 DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "${IMAGE}" | awk -F@ '{print $2}')"
