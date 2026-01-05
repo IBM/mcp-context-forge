@@ -61,6 +61,9 @@ from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload, Session
 
+# First-Party
+from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
+
 try:
     # Third-Party - check if redis is available
     # Third-Party
@@ -3170,14 +3173,34 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             if span:
                                 span.set_attribute("http.status_code", response.status_code)
                     elif (gateway_transport).lower() == "streamablehttp":
-                        async with streamablehttp_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=get_httpx_client_factory) as (
-                            read_stream,
-                            write_stream,
-                            _get_session_id,
-                        ):
-                            async with ClientSession(read_stream, write_stream) as session:
-                                # Initialize the session
-                                response = await session.initialize()
+                        # Use session pool if enabled for faster health checks
+                        use_pool = False
+                        if settings.mcp_session_pool_enabled:
+                            try:
+                                pool = get_mcp_session_pool()
+                                use_pool = True
+                            except RuntimeError:
+                                # Pool not initialized (e.g., in tests), fall back to per-call sessions
+                                pass
+
+                        if use_pool:
+                            async with pool.session(
+                                url=gateway_url,
+                                headers=headers,
+                                transport_type=TransportType.STREAMABLE_HTTP,
+                                httpx_client_factory=get_httpx_client_factory,
+                            ) as pooled:
+                                # Session is already initialized by pool
+                                pass
+                        else:
+                            async with streamablehttp_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=get_httpx_client_factory) as (
+                                read_stream,
+                                write_stream,
+                                _get_session_id,
+                            ):
+                                async with ClientSession(read_stream, write_stream) as session:
+                                    # Initialize the session
+                                    response = await session.initialize()
 
                     # Reactivate gateway if it was previously inactive and health check passed now
                     if gateway_enabled and not gateway_reachable:

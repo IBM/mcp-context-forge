@@ -1219,6 +1219,24 @@ class Settings(BaseSettings):
     tool_rate_limit: int = 100  # requests per minute
     tool_concurrent_limit: int = 10
 
+    # MCP Session Pool - reduces per-request latency from ~20ms to ~1-2ms
+    mcp_session_pool_enabled: bool = True
+    mcp_session_pool_max_per_key: int = 10  # Max sessions per (URL, identity, transport)
+    mcp_session_pool_ttl: float = 300.0  # Session TTL in seconds
+    mcp_session_pool_health_check_interval: float = 60.0  # Idle time before health check
+    mcp_session_pool_acquire_timeout: float = 30.0  # Timeout waiting for session slot
+    mcp_session_pool_create_timeout: float = 30.0  # Timeout creating new session
+    mcp_session_pool_circuit_breaker_threshold: int = 5  # Failures before circuit opens
+    mcp_session_pool_circuit_breaker_reset: float = 60.0  # Seconds before circuit resets
+    mcp_session_pool_idle_eviction: float = 600.0  # Evict idle pool keys after this time
+    mcp_session_pool_identity_headers: List[str] = [
+        "authorization",
+        "x-tenant-id",
+        "x-user-id",
+        "x-api-key",
+        "cookie",
+    ]
+
     # Prompts
     prompt_cache_size: int = 100
     max_prompt_size: int = 100 * 1024  # 100KB
