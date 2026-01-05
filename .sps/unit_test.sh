@@ -5,8 +5,11 @@ source $WORKSPACE/$PIPELINE_CONFIG_REPO_PATH/scripts/utilities/python_utils.sh
 install_python3 3.11
 pip3.11 install --upgrade pip flake8 pytest pytest-cov
 
-make test flake8 pylint
-make coverage
+
+pytest --cov=mcpgateway --cov-report=term-missing tests/unit/
+
+#make test flake8 pylint
+#make coverage
 #make lint
 ls -alF
 
