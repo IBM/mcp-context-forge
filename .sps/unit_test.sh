@@ -6,6 +6,7 @@ install_python3 3.11
 pip3.11 install --upgrade pip flake8
 
 make test
+make coverage
 #make lint
 ls -alF
 
