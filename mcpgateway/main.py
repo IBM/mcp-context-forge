@@ -458,16 +458,23 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # First-Party
         from mcpgateway.services.mcp_session_pool import init_mcp_session_pool  # pylint: disable=import-outside-toplevel
 
+        # Auto-align pool health check interval to min of pool and gateway settings
+        effective_health_check_interval = min(
+            settings.health_check_interval,
+            settings.mcp_session_pool_health_check_interval,
+        )
         init_mcp_session_pool(
             max_sessions_per_key=settings.mcp_session_pool_max_per_key,
             session_ttl_seconds=settings.mcp_session_pool_ttl,
-            health_check_interval_seconds=settings.mcp_session_pool_health_check_interval,
+            health_check_interval_seconds=effective_health_check_interval,
             acquire_timeout_seconds=settings.mcp_session_pool_acquire_timeout,
             session_create_timeout_seconds=settings.mcp_session_pool_create_timeout,
             circuit_breaker_threshold=settings.mcp_session_pool_circuit_breaker_threshold,
             circuit_breaker_reset_seconds=settings.mcp_session_pool_circuit_breaker_reset,
             identity_headers=frozenset(settings.mcp_session_pool_identity_headers),
             idle_pool_eviction_seconds=settings.mcp_session_pool_idle_eviction,
+            # Use gateway health_check_timeout for transport timeout consistency
+            default_transport_timeout_seconds=float(settings.health_check_timeout),
         )
         logger.info("MCP session pool initialized")
 

@@ -35,5 +35,7 @@ This page tracks all significant design decisions made for the MCP Gateway proje
 | 0028  | Authentication Data Caching | Accepted | Performance | 2025-01-15 |
 | 0029  | Registry and Admin Stats Caching | Accepted | Performance | 2025-01-15 |
 | 0030  | Metrics Cleanup and Rollup | Accepted | Performance | 2025-01-15 |
+| 0031  | Parallel Session Cleanup with asyncio.gather() | Accepted | Performance | 2025-01-15 |
+| 0032  | MCP Session Pool for Connection Reuse | Accepted | Performance | 2025-01-05 |
 
 > ✳️ Add new decisions chronologically and link to them from this table.

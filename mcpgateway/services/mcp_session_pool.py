@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 MCP Session Pool Implementation.
 
@@ -14,9 +15,11 @@ Security:
     - Cross-tenant data leakage
     - Authentication bypass
 
-Copyright (c) 2025 MCP Gateway Authors.
-SPDX-License-Identifier: MIT
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 """
+
 # flake8: noqa: DAR101, DAR201, DAR401
 
 # Future
@@ -191,6 +194,7 @@ class MCPSessionPool:
         identity_headers: Optional[frozenset[str]] = None,
         identity_extractor: Optional[IdentityExtractor] = None,
         idle_pool_eviction_seconds: float = 600.0,
+        default_transport_timeout_seconds: float = 5.0,
     ):
         """
         Initialize the session pool.
@@ -208,6 +212,7 @@ class MCPSessionPool:
                                Use this when tokens rotate frequently (e.g., short-lived JWTs).
                                Should return a stable user/tenant ID string.
             idle_pool_eviction_seconds: Evict empty pool keys after this many seconds of no use.
+            default_transport_timeout_seconds: Default timeout for transport connections.
         """
         # Configuration
         self._max_sessions = max_sessions_per_key
@@ -220,6 +225,7 @@ class MCPSessionPool:
         self._identity_headers = identity_headers or self.DEFAULT_IDENTITY_HEADERS
         self._identity_extractor = identity_extractor
         self._idle_pool_eviction = idle_pool_eviction_seconds
+        self._default_transport_timeout = default_transport_timeout_seconds
 
         # State - protected by _global_lock for creation, per-key locks for access
         self._global_lock = asyncio.Lock()
@@ -312,9 +318,7 @@ class MCPSessionPool:
         identity_string = "|".join(identity_parts)
         return hashlib.sha256(identity_string.encode()).hexdigest()
 
-    def _make_pool_key(
-        self, url: str, headers: Optional[Dict[str, str]], transport_type: TransportType
-    ) -> PoolKey:
+    def _make_pool_key(self, url: str, headers: Optional[Dict[str, str]], transport_type: TransportType) -> PoolKey:
         """Create composite pool key from URL, identity, and transport type."""
         identity_hash = self._compute_identity_hash(headers)
         return (url, identity_hash, transport_type.value)
@@ -365,6 +369,7 @@ class MCPSessionPool:
         headers: Optional[Dict[str, str]] = None,
         transport_type: TransportType = TransportType.STREAMABLE_HTTP,
         httpx_client_factory: Optional[HttpxClientFactory] = None,
+        timeout: Optional[float] = None,
     ) -> PooledSession:
         """
         Acquire a session for the given URL, identity, and transport type.
@@ -378,6 +383,7 @@ class MCPSessionPool:
             transport_type: The transport type (SSE or STREAMABLE_HTTP).
             httpx_client_factory: Optional factory for creating httpx clients
                                   (for custom SSL/timeout configuration).
+            timeout: Optional timeout in seconds for transport connection.
 
         Returns:
             PooledSession ready for use.
@@ -392,6 +398,9 @@ class MCPSessionPool:
 
         if self._is_circuit_open(url):
             raise RuntimeError(f"Circuit breaker open for {url}")
+
+        # Use default timeout if not provided
+        effective_timeout = timeout if timeout is not None else self._default_transport_timeout
 
         pool_key = self._make_pool_key(url, headers, transport_type)
         pool = await self._get_or_create_pool(pool_key)
@@ -447,7 +456,7 @@ class MCPSessionPool:
         # Create new session (semaphore acquired)
         try:
             pooled = await asyncio.wait_for(
-                self._create_session(url, headers, transport_type, httpx_client_factory),
+                self._create_session(url, headers, transport_type, httpx_client_factory, effective_timeout),
                 timeout=self._session_create_timeout,
             )
             self._misses += 1
@@ -618,7 +627,7 @@ class MCPSessionPool:
         if pooled.idle_seconds > self._health_check_interval:
             try:
                 # Use list_tools as a lightweight health check
-                await asyncio.wait_for(pooled.session.list_tools(), timeout=5.0)
+                await asyncio.wait_for(pooled.session.list_tools(), timeout=self._default_transport_timeout)
                 return True
             except Exception as e:
                 logger.debug(f"Health check failed: {e}")
@@ -633,6 +642,7 @@ class MCPSessionPool:
         headers: Optional[Dict[str, str]],
         transport_type: TransportType,
         httpx_client_factory: Optional[HttpxClientFactory],
+        timeout: Optional[float] = None,
     ) -> PooledSession:
         """
         Create a new initialized MCP session.
@@ -642,6 +652,7 @@ class MCPSessionPool:
             headers: Request headers.
             transport_type: Transport type to use.
             httpx_client_factory: Optional factory for httpx clients.
+            timeout: Optional timeout in seconds for transport connection.
 
         Returns:
             Initialized PooledSession.
@@ -664,17 +675,17 @@ class MCPSessionPool:
             # Create transport context
             if transport_type == TransportType.SSE:
                 if httpx_client_factory:
-                    transport_ctx = sse_client(url=url, headers=merged_headers, httpx_client_factory=httpx_client_factory)
+                    transport_ctx = sse_client(url=url, headers=merged_headers, httpx_client_factory=httpx_client_factory, timeout=timeout)
                 else:
-                    transport_ctx = sse_client(url=url, headers=merged_headers)
+                    transport_ctx = sse_client(url=url, headers=merged_headers, timeout=timeout)
                 # pylint: disable=unnecessary-dunder-call,no-member
                 streams = await transport_ctx.__aenter__()  # Must call directly for manual lifecycle management
                 read_stream, write_stream = streams[0], streams[1]
             else:  # STREAMABLE_HTTP
                 if httpx_client_factory:
-                    transport_ctx = streamablehttp_client(url=url, headers=merged_headers, httpx_client_factory=httpx_client_factory)
+                    transport_ctx = streamablehttp_client(url=url, headers=merged_headers, httpx_client_factory=httpx_client_factory, timeout=timeout)
                 else:
-                    transport_ctx = streamablehttp_client(url=url, headers=merged_headers)
+                    transport_ctx = streamablehttp_client(url=url, headers=merged_headers, timeout=timeout)
                 # pylint: disable=unnecessary-dunder-call,no-member
                 read_stream, write_stream, _ = await transport_ctx.__aenter__()  # Must call directly for manual lifecycle management
 
@@ -815,6 +826,7 @@ class MCPSessionPool:
         headers: Optional[Dict[str, str]] = None,
         transport_type: TransportType = TransportType.STREAMABLE_HTTP,
         httpx_client_factory: Optional[HttpxClientFactory] = None,
+        timeout: Optional[float] = None,
     ) -> "AsyncIterator[PooledSession]":
         """
         Context manager for acquiring and releasing a session.
@@ -828,11 +840,12 @@ class MCPSessionPool:
             headers: Request headers.
             transport_type: Transport type to use.
             httpx_client_factory: Optional factory for httpx clients.
+            timeout: Optional timeout in seconds for transport connection.
 
         Yields:
             PooledSession ready for use.
         """
-        pooled = await self.acquire(url, headers, transport_type, httpx_client_factory)
+        pooled = await self.acquire(url, headers, transport_type, httpx_client_factory, timeout)
         try:
             yield pooled
         finally:
@@ -868,6 +881,7 @@ def init_mcp_session_pool(
     identity_headers: Optional[frozenset[str]] = None,
     identity_extractor: Optional[IdentityExtractor] = None,
     idle_pool_eviction_seconds: float = 600.0,
+    default_transport_timeout_seconds: float = 5.0,
 ) -> MCPSessionPool:
     """Initialize the global MCP session pool.
 
@@ -889,6 +903,7 @@ def init_mcp_session_pool(
         identity_headers=identity_headers,
         identity_extractor=identity_extractor,
         idle_pool_eviction_seconds=idle_pool_eviction_seconds,
+        default_transport_timeout_seconds=default_transport_timeout_seconds,
     )
     logger.info("MCP session pool initialized")
     return _mcp_session_pool

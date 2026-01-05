@@ -3188,9 +3188,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 headers=headers,
                                 transport_type=TransportType.STREAMABLE_HTTP,
                                 httpx_client_factory=get_httpx_client_factory,
-                            ) as _pooled:  # noqa: F841 - session used implicitly for health check
-                                # Session is already initialized by pool
-                                pass
+                            ) as pooled:
+                                # Optional explicit RPC verification (off by default for performance).
+                                # Pool's internal staleness check handles health via _validate_session.
+                                if settings.mcp_session_pool_explicit_health_rpc:
+                                    await asyncio.wait_for(
+                                        pooled.session.list_tools(),
+                                        timeout=settings.health_check_timeout,
+                                    )
                         else:
                             async with streamablehttp_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=get_httpx_client_factory) as (
                                 read_stream,
