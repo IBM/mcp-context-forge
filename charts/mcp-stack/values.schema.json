@@ -846,6 +846,18 @@
             "REDIS_URL": {
               "type": "string",
               "description": "Redis URL override"
+            },
+            "METRICS_CACHE_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable metrics aggregation query caching (reduces full table scans)",
+              "default": "true"
+            },
+            "METRICS_CACHE_TTL_SECONDS": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,2}$",
+              "description": "TTL for cached metrics in seconds (1-300, default: 60)",
+              "default": "60"
             }
           },
           "additionalProperties": true

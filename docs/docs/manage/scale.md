@@ -1278,14 +1278,15 @@ METRICS_BUFFER_MAX_SIZE=1000
 
 ### Metrics Cache Configuration
 
-Cache aggregate metrics queries:
+Cache aggregate metrics queries to reduce full table scans (see [Issue #1906](https://github.com/IBM/mcp-context-forge/issues/1906)):
 
 ```bash
 # Enable metrics query caching (default: true)
 METRICS_CACHE_ENABLED=true
 
-# TTL for cached metrics in seconds (default: 10)
-METRICS_CACHE_TTL_SECONDS=10
+# TTL for cached metrics in seconds (default: 60, recommended: 60-300)
+# Higher values significantly reduce database load under high traffic
+METRICS_CACHE_TTL_SECONDS=60
 ```
 
 ### Application-Level Caching
