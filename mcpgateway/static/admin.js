@@ -15932,7 +15932,14 @@ function filterPromptsTable(searchText) {
  */
 function filterA2AAgentsTable(searchText) {
     try {
-        const tbody = document.querySelector("#a2a-agents-panel tbody");
+        // Try to find the table using multiple strategies
+        let tbody = document.querySelector("#agents-table tbody");
+
+        // Fallback to panel selector for backward compatibility
+        if (!tbody) {
+            tbody = document.querySelector("#a2a-agents-panel tbody");
+        }
+
         if (!tbody) {
             console.warn("A2A Agents table body not found");
             return;
