@@ -35,7 +35,7 @@ IMAGE_NAME="$(get_env app-name)"
 BUILD_DATE="$(date +%Y%m%d%H%M%S)"
 IMAGE_TAG="${IMAGE_PREFIX}_$(cat /config/git-commit)_${BUILD_DATE}"
 IMAGE_TAG=${IMAGE_TAG////_}
-IMAGE_BASE ="${REGISTRY_URL}/${IMAGE_NAME}"
+IMAGE_BASE="${REGISTRY_URL}/${IMAGE_NAME}"
 IMAGE="${IMAGE_BASE}:${IMAGE_TAG}"
 
 make container-build
