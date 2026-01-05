@@ -7399,8 +7399,8 @@ async def admin_toggle_tool(
         >>> form_data_activate = FormData([("activate", "true"), ("is_inactive_checked", "false")])
         >>> mock_request_activate = MagicMock(spec=Request, scope={"root_path": ""})
         >>> mock_request_activate.form = AsyncMock(return_value=form_data_activate)
-        >>> original_toggle_tool_status = tool_service.toggle_tool_status
-        >>> tool_service.toggle_tool_status = AsyncMock()
+        >>> original_set_tool_status = tool_service.set_tool_status
+        >>> tool_service.set_tool_status = AsyncMock()
         >>>
         >>> async def test_admin_toggle_tool_activate():
         ...     result = await admin_toggle_tool(tool_id, mock_request_activate, mock_db, mock_user)
@@ -7437,7 +7437,7 @@ async def admin_toggle_tool(
         >>> form_data_error = FormData([("activate", "true")])
         >>> mock_request_error = MagicMock(spec=Request, scope={"root_path": ""})
         >>> mock_request_error.form = AsyncMock(return_value=form_data_error)
-        >>> tool_service.toggle_tool_status = AsyncMock(side_effect=Exception("Toggle failed"))
+        >>> tool_service.set_tool_status = AsyncMock(side_effect=Exception("Toggle failed"))
         >>>
         >>> async def test_admin_toggle_tool_exception():
         ...     result = await admin_toggle_tool(tool_id, mock_request_error, mock_db, mock_user)
@@ -7454,7 +7454,7 @@ async def admin_toggle_tool(
         True
         >>>
         >>> # Restore original method
-        >>> tool_service.toggle_tool_status = original_toggle_tool_status
+        >>> tool_service.set_tool_status = original_set_tool_status
     """
     error_message = None
     user_email = get_user_email(user)
@@ -7463,7 +7463,7 @@ async def admin_toggle_tool(
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
-        await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate, user_email=user_email)
+        await tool_service.set_tool_status(db, tool_id, activate, reachable=activate, user_email=user_email)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} toggling tools {tool_id}: {e}")
         error_message = str(e)

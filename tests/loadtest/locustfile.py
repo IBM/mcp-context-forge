@@ -1229,8 +1229,8 @@ class WriteAPIUser(BaseUser):
 
     @task(2)
     @tag("api", "write", "toggle")
-    def toggle_tool_status(self):
-        """Toggle a tool's enabled status."""
+    def set_tool_status(self):
+        """Set a tool's enabled status."""
         if TOOL_IDS:
             tool_id = random.choice(TOOL_IDS)
             with self.client.post(

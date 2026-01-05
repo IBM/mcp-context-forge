@@ -2003,9 +2003,9 @@ class ToolService:
             )
             raise ToolError(f"Failed to delete tool: {str(e)}")
 
-    async def toggle_tool_status(self, db: Session, tool_id: str, activate: bool, reachable: bool, user_email: Optional[str] = None, skip_cache_invalidation: bool = False) -> ToolRead:
+    async def set_tool_status(self, db: Session, tool_id: str, activate: bool, reachable: bool, user_email: Optional[str] = None, skip_cache_invalidation: bool = False) -> ToolRead:
         """
-        Toggle the activation status of a tool.
+        Set the activation status of a tool.
 
         Args:
             db (Session): The SQLAlchemy database session.
@@ -2038,37 +2038,32 @@ class ToolService:
             >>> service.convert_tool_to_read = MagicMock(return_value='tool_read')
             >>> ToolRead.model_validate = MagicMock(return_value='tool_read')
             >>> import asyncio
-            >>> asyncio.run(service.toggle_tool_status(db, 'tool_id', True, True))
+            >>> asyncio.run(service.set_tool_status(db, 'tool_id', True, True))
             'tool_read'
         """
         try:
-            tool = db.get(DbTool, tool_id)
-            if not tool:
-                raise ToolNotFoundError(f"Tool not found: {tool_id}")
+            tool_is_modified = False
+            with db.begin():
+                tool = db.get(DbTool, tool_id, with_for_update={"key_share": True})
+                if not tool:
+                    raise ToolNotFoundError(f"Tool not found: {tool_id}")
 
-            if user_email:
-                # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+                if user_email:
+                    # First-Party
+                    from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
 
-                permission_service = PermissionService(db)
-                if not await permission_service.check_resource_ownership(user_email, tool):
-                    raise PermissionError("Only the owner can activate the Tool" if activate else "Only the owner can deactivate the Tool")
+                    permission_service = PermissionService(db)
+                    if not await permission_service.check_resource_ownership(user_email, tool):
+                        raise PermissionError("Only the owner can activate the Tool" if activate else "Only the owner can deactivate the Tool")
 
-            is_activated = is_reachable = False
-            if tool.enabled != activate:
                 tool.enabled = activate
-                is_activated = True
-
-            if tool.reachable != reachable:
                 tool.reachable = reachable
-                is_reachable = True
 
-            if is_activated or is_reachable:
-                tool.updated_at = datetime.now(timezone.utc)
+                if db.is_modified(tool):
+                    tool_is_modified = True
+                    tool.updated_at = datetime.now(timezone.utc)
 
-                db.commit()
-                db.refresh(tool)
-
+            if tool_is_modified:
                 # Invalidate cache after status change (skip for batch operations)
                 if not skip_cache_invalidation:
                     cache = _get_registry_cache()
@@ -2089,7 +2084,7 @@ class ToolService:
                 # Structured logging: Audit trail for tool status toggle
                 audit_trail.log_action(
                     user_id=user_email or "system",
-                    action="toggle_tool_status",
+                    action="set_tool_status",
                     resource_type="tool",
                     resource_id=tool.id,
                     resource_name=tool.name,
@@ -2342,7 +2337,11 @@ class ToolService:
                     # Use cached passthrough headers (no DB query needed)
                     if request_headers:
                         headers = compute_passthrough_headers_cached(
-                            request_headers, headers, passthrough_allowed, gateway_auth_type=None, gateway_passthrough_headers=None  # REST tools don't use gateway auth here
+                            request_headers,
+                            headers,
+                            passthrough_allowed,
+                            gateway_auth_type=None,
+                            gateway_passthrough_headers=None,  # REST tools don't use gateway auth here
                         )
 
                     if self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE):

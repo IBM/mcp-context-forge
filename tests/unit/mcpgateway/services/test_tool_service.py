@@ -12,7 +12,7 @@ import base64
 import asyncio
 from contextlib import asynccontextmanager
 import logging
-from unittest.mock import ANY, AsyncMock, call, MagicMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
 import pytest
@@ -37,6 +37,7 @@ from mcpgateway.services.tool_service import (
 )
 from mcpgateway.utils.services_auth import encode_auth
 from mcpgateway.utils.pagination import decode_cursor
+from mcpgateway.services.tool_service import ToolNameConflictError
 
 
 @pytest.fixture(autouse=True)
@@ -213,9 +214,6 @@ def mock_tool(mock_gateway):
     }
 
     return tool
-
-
-from mcpgateway.services.tool_service import ToolNameConflictError
 
 
 class TestToolService:
@@ -956,12 +954,14 @@ class TestToolService:
         assert "Tool not found: 999" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_toggle_tool_status(self, tool_service, mock_tool, test_db):
-        """Test toggling tool active status."""
+    async def test_set_tool_status(self, tool_service, mock_tool, test_db):
+        """Test setting tool active status."""
         # Mock DB get to return tool
         test_db.get = Mock(return_value=mock_tool)
-        test_db.commit = Mock()
-        test_db.refresh = Mock()
+        # Mock begin() context manager for transaction handling
+        test_db.begin = Mock(return_value=MagicMock(__enter__=Mock(), __exit__=Mock(return_value=False)))
+        # Mock is_modified to return True (tool status changed)
+        test_db.is_modified = Mock(return_value=True)
 
         # Mock notification methods
         tool_service._notify_tool_activated = AsyncMock()
@@ -1004,12 +1004,11 @@ class TestToolService:
         tool_service.convert_tool_to_read = Mock(return_value=tool_read)
 
         # Deactivate the tool (it's active by default)
-        result = await tool_service.toggle_tool_status(test_db, 1, activate=False, reachable=True)
+        result = await tool_service.set_tool_status(test_db, 1, activate=False, reachable=True)
 
         # Verify DB operations
-        test_db.get.assert_called_once_with(DbTool, 1)
-        test_db.commit.assert_called_once()
-        test_db.refresh.assert_called_once()
+        test_db.get.assert_called_once_with(DbTool, 1, with_for_update={"key_share": True})
+        test_db.begin.assert_called_once()
 
         # Verify properties were updated
         assert mock_tool.enabled is False
@@ -1022,36 +1021,39 @@ class TestToolService:
         assert result == tool_read
 
     @pytest.mark.asyncio
-    async def test_toggle_tool_status_not_found(self, tool_service, test_db):
-        """Test toggling tool active status."""
+    async def test_set_tool_status_not_found(self, tool_service, test_db):
+        """Test setting tool active status when tool not found."""
         # Mock DB get to return tool
         test_db.get = Mock(return_value=None)
-        test_db.commit = Mock()
-        test_db.refresh = Mock()
+        # Mock begin() context manager for transaction handling
+        test_db.begin = Mock(return_value=MagicMock(__enter__=Mock(), __exit__=Mock(return_value=False)))
 
         with pytest.raises(ToolError) as exc:
-            await tool_service.toggle_tool_status(test_db, "1", activate=False, reachable=True)
+            await tool_service.set_tool_status(test_db, "1", activate=False, reachable=True)
 
         assert "Tool not found: 1" in str(exc.value)
 
         # Verify DB operations
-        test_db.get.assert_called_once_with(DbTool, "1")
+        test_db.get.assert_called_once_with(DbTool, "1", with_for_update={"key_share": True})
 
     @pytest.mark.asyncio
-    async def test_toggle_tool_status_activate_tool(self, tool_service, test_db, mock_tool, monkeypatch):
-        """Test toggling tool active status."""
+    async def test_set_tool_status_activate_tool(self, tool_service, test_db, mock_tool, monkeypatch):
+        """Test setting tool active status to activate."""
         # Mock DB get to return tool
         mock_tool.enabled = False
         test_db.get = Mock(return_value=mock_tool)
-        test_db.commit = Mock()
-        test_db.refresh = Mock()
+        # Mock begin() context manager for transaction handling
+        test_db.begin = Mock(return_value=MagicMock(__enter__=Mock(), __exit__=Mock(return_value=False)))
+        # Mock is_modified to return True (tool status changed)
+        test_db.is_modified = Mock(return_value=True)
 
         tool_service._notify_tool_activated = AsyncMock()
 
-        result = await tool_service.toggle_tool_status(test_db, "1", activate=True, reachable=True)
+        result = await tool_service.set_tool_status(test_db, "1", activate=True, reachable=True)
 
         # Verify DB operations
-        test_db.get.assert_called_once_with(DbTool, "1")
+        test_db.get.assert_called_once_with(DbTool, "1", with_for_update={"key_share": True})
+        test_db.begin.assert_called_once()
 
         tool_service._notify_tool_activated.assert_called_once_with(mock_tool)
 
@@ -1112,12 +1114,14 @@ class TestToolService:
         assert q.empty()
 
     @pytest.mark.asyncio
-    async def test_toggle_tool_status_no_change(self, tool_service, mock_tool, test_db):
-        """Test toggling tool active status."""
+    async def test_set_tool_status_no_change(self, tool_service, mock_tool, test_db):
+        """Test setting tool status when no change is needed."""
         # Mock DB get to return tool
         test_db.get = Mock(return_value=mock_tool)
-        test_db.commit = Mock()
-        test_db.refresh = Mock()
+        # Mock begin() context manager for transaction handling
+        test_db.begin = Mock(return_value=MagicMock(__enter__=Mock(), __exit__=Mock(return_value=False)))
+        # Mock is_modified to return False (no change)
+        test_db.is_modified = Mock(return_value=False)
 
         # Mock notification methods
         tool_service._notify_tool_activated = AsyncMock()
@@ -1159,18 +1163,17 @@ class TestToolService:
         )
         tool_service.convert_tool_to_read = Mock(return_value=tool_read)
 
-        # Deactivate the tool (it's active by default)
-        result = await tool_service.toggle_tool_status(test_db, 1, activate=True, reachable=True)
+        # Keep the tool active (it's active by default)
+        result = await tool_service.set_tool_status(test_db, 1, activate=True, reachable=True)
 
         # Verify DB operations
-        test_db.get.assert_called_once_with(DbTool, 1)
-        test_db.commit.assert_not_called()
-        test_db.refresh.assert_not_called()
+        test_db.get.assert_called_once_with(DbTool, 1, with_for_update={"key_share": True})
+        test_db.begin.assert_called_once()
 
         # Verify properties were updated
         assert mock_tool.enabled is True
 
-        # Verify notification
+        # Verify notification - no change means no notifications
         tool_service._notify_tool_deactivated.assert_not_called()
         tool_service._notify_tool_activated.assert_not_called()
 
@@ -1626,7 +1629,7 @@ class TestToolService:
             url="http://fake-mcp:8080/mcp",
             enabled=True,
             reachable=True,
-            auth_type="bearer",  #  ←← attribute your error complained about
+            auth_type="bearer",  # attribute your error complained about
             auth_value="Bearer abc123",
             capabilities={"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
             transport="STREAMABLEHTTP",
@@ -1729,7 +1732,7 @@ class TestToolService:
             url="http://fake-mcp:8080/sse",
             enabled=True,
             reachable=True,
-            auth_type="bearer",  #  ←← attribute your error complained about
+            auth_type="bearer",  # attribute your error complained about
             auth_value="Bearer abc123",
             capabilities={"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
             transport="STREAMABLEHTTP",
@@ -1760,8 +1763,6 @@ class TestToolService:
             return m
 
         test_db.execute = Mock(side_effect=execute_side_effect)
-
-        expected_result = ToolResult(content=[TextContent(type="text", text="")])
 
         with (
             patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
@@ -1840,8 +1841,6 @@ class TestToolService:
         mock_tool.auth_value = basic_auth_value
         mock_tool.url = "http://example.com/sse"
 
-        payload = {"param": "value"}
-
         # Mock DB to return the tool
         mock_scalar_1 = Mock()
         mock_scalar_1.scalar_one_or_none.return_value = mock_tool
@@ -1904,7 +1903,7 @@ class TestToolService:
             # ------------------------------------------------------------------
             # 4.  Act
             # ------------------------------------------------------------------
-            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+            await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
         session_mock.initialize.assert_awaited_once()
         session_mock.call_tool.assert_awaited_once_with("test_tool", {"param": "value"})
@@ -2435,7 +2434,7 @@ class TestToolService:
             patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
         ):
-            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+            await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
         # Verify OAuth was called
         tool_service.oauth_manager.get_access_token.assert_called_once_with(mock_gateway.oauth_config)
@@ -2474,7 +2473,7 @@ class TestToolService:
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=mock_passthrough),
             patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "success with headers"}),
         ):
-            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=request_headers)
+            await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=request_headers)
 
         # Verify passthrough headers were used
         tool_service._http_client.request.assert_called_once()
@@ -2528,7 +2527,7 @@ class TestToolService:
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=mock_passthrough),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
         ):
-            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=request_headers)
+            await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=request_headers)
 
         # Verify MCP session was initialized and tool called
         session_mock.initialize.assert_awaited_once()

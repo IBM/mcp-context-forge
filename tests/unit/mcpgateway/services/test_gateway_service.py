@@ -15,12 +15,10 @@ enough behaviour to satisfy the code paths under test.
 from __future__ import annotations
 
 # Standard
-import asyncio
 from typing import TypeVar
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
-import httpx
 import pytest
 from url_normalize import url_normalize
 
@@ -70,8 +68,7 @@ def _make_execute_result(*, scalar: _R | None = None, scalars_list: list[_R] | N
 @pytest.fixture(autouse=True)
 def mock_logging_services():
     """Mock audit_trail and structured_logger to prevent database writes during tests."""
-    with patch("mcpgateway.services.gateway_service.audit_trail") as mock_audit, \
-         patch("mcpgateway.services.gateway_service.structured_logger") as mock_logger:
+    with patch("mcpgateway.services.gateway_service.audit_trail") as mock_audit, patch("mcpgateway.services.gateway_service.structured_logger") as mock_logger:
         mock_audit.log_action = MagicMock(return_value=None)
         mock_logger.log = MagicMock(return_value=None)
         yield {"audit_trail": mock_audit, "structured_logger": mock_logger}
@@ -1080,7 +1077,7 @@ class TestGatewayService:
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
-        # Return one tool so toggle_tool_status gets called
+        # Return one tool so set_tool_status gets called
         query_proxy = MagicMock()
         filter_proxy = MagicMock()
         filter_proxy.all.return_value = [MagicMock(id=101)]
@@ -1093,7 +1090,7 @@ class TestGatewayService:
         gateway_service._initialize_gateway = AsyncMock(return_value=({"prompts": {}}, [], [], []))
 
         tool_service_stub = MagicMock()
-        tool_service_stub.toggle_tool_status = AsyncMock()
+        tool_service_stub.set_tool_status = AsyncMock()
         gateway_service.tool_service = tool_service_stub
 
         # Patch model_validate to return a mock with .masked()
@@ -1105,7 +1102,7 @@ class TestGatewayService:
 
         assert mock_gateway.enabled is False
         gateway_service._notify_gateway_deactivated.assert_called_once()
-        assert tool_service_stub.toggle_tool_status.called
+        assert tool_service_stub.set_tool_status.called
         assert result == mock_gateway_read
 
     @pytest.mark.asyncio
@@ -1116,7 +1113,7 @@ class TestGatewayService:
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
-        # Return one tool so toggle_tool_status gets called
+        # Return one tool so set_tool_status gets called
         query_proxy = MagicMock()
         filter_proxy = MagicMock()
         filter_proxy.all.return_value = [MagicMock(id=101)]
@@ -1129,7 +1126,7 @@ class TestGatewayService:
         gateway_service._initialize_gateway = AsyncMock(return_value=({"prompts": {}}, [], [], []))
 
         tool_service_stub = MagicMock()
-        tool_service_stub.toggle_tool_status = AsyncMock()
+        tool_service_stub.set_tool_status = AsyncMock()
         gateway_service.tool_service = tool_service_stub
 
         # Patch model_validate to return a mock with .masked()
@@ -1141,7 +1138,7 @@ class TestGatewayService:
 
         assert mock_gateway.enabled is True
         gateway_service._notify_gateway_activated.assert_called_once()
-        assert tool_service_stub.toggle_tool_status.called
+        assert tool_service_stub.set_tool_status.called
         assert result == mock_gateway_read
 
     @pytest.mark.asyncio
@@ -1162,7 +1159,7 @@ class TestGatewayService:
         test_db.refresh = Mock()
         test_db.rollback = Mock()
 
-        # Return one tool so toggle_tool_status gets called
+        # Return one tool so set_tool_status gets called
         query_proxy = MagicMock()
         filter_proxy = MagicMock()
         filter_proxy.all.return_value = [MagicMock(id=101)]
@@ -1173,9 +1170,9 @@ class TestGatewayService:
         gateway_service._notify_gateway_deactivated = AsyncMock()
         gateway_service._initialize_gateway = AsyncMock(return_value=({"prompts": {}}, [], [], []))
 
-        # Make tool toggle fail
+        # Make tool status update fail
         tool_service_stub = MagicMock()
-        tool_service_stub.toggle_tool_status = AsyncMock(side_effect=Exception("Tool toggle failed"))
+        tool_service_stub.set_tool_status = AsyncMock(side_effect=Exception("Tool toggle failed"))
         gateway_service.tool_service = tool_service_stub
 
         # The toggle_gateway_status method will catch the exception and raise GatewayError

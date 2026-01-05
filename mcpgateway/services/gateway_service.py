@@ -2253,13 +2253,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 tools = db.query(DbTool).filter(DbTool.gateway_id == gateway_id).all()
 
-                # Toggle tools with skip_cache_invalidation=True to avoid N invalidations
+                # Set tool status with skip_cache_invalidation=True to avoid N invalidations
                 if only_update_reachable:
                     for tool in tools:
-                        await self.tool_service.toggle_tool_status(db, tool.id, tool.enabled, reachable, skip_cache_invalidation=True)
+                        await self.tool_service.set_tool_status(db, tool.id, tool.enabled, reachable, skip_cache_invalidation=True)
                 else:
                     for tool in tools:
-                        await self.tool_service.toggle_tool_status(db, tool.id, activate, reachable, skip_cache_invalidation=True)
+                        await self.tool_service.set_tool_status(db, tool.id, activate, reachable, skip_cache_invalidation=True)
 
                 # Invalidate tools cache once after all tool status changes
                 if tools:
