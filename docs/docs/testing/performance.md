@@ -107,6 +107,108 @@ For runtime tuning details, see [Gateway Tuning Guide](../manage/tuning.md).
 
 ---
 
+## 🔧 Host TCP Tuning for Load Testing
+
+When running high-concurrency load tests (500+ concurrent users), the default Linux TCP settings may cause connection failures. Each MCP tool invocation creates a new TCP connection, which enters TIME_WAIT state after closing. This can exhaust ephemeral ports.
+
+### Check Current Settings
+
+```bash
+# View current TCP settings
+sysctl net.core.somaxconn \
+       net.core.netdev_max_backlog \
+       net.ipv4.tcp_max_syn_backlog \
+       net.ipv4.tcp_tw_reuse \
+       net.ipv4.tcp_fin_timeout \
+       net.ipv4.ip_local_port_range
+```
+
+### Recommended Settings
+
+#### TCP/Network Settings
+
+| Setting | Default | Recommended | Purpose |
+|---------|---------|-------------|---------|
+| `net.core.somaxconn` | 4096 | 65535 | Max listen queue depth |
+| `net.core.netdev_max_backlog` | 1000 | 65535 | Max packets queued for processing |
+| `net.ipv4.tcp_max_syn_backlog` | 1024 | 65535 | Max SYN requests queued |
+| `net.ipv4.tcp_tw_reuse` | 0 | 2 | Reuse TIME_WAIT sockets |
+| `net.ipv4.tcp_fin_timeout` | 60 | 15 | Faster TIME_WAIT cleanup |
+| `net.ipv4.ip_local_port_range` | 32768-60999 | 1024-65535 | More ephemeral ports |
+
+#### Memory/VM Settings
+
+| Setting | Default | Recommended | Purpose |
+|---------|---------|-------------|---------|
+| `vm.swappiness` | 60 | 10 | Keep more data in RAM (better for databases) |
+| `fs.aio-max-nr` | 65536 | 1048576 | Async I/O requests (high disk throughput) |
+| `fs.file-max` | varies | 1000000+ | System-wide file descriptor limit |
+
+#### File Descriptor Limits
+
+Check your current limits with `ulimit -n`. For load testing, ensure:
+- Soft limit: 65535+
+- Hard limit: 65535+
+
+Edit `/etc/security/limits.conf` if needed:
+```
+*    soft    nofile    65535
+*    hard    nofile    65535
+```
+
+### Apply Settings (One-liner)
+
+```bash
+# Apply all tuning for load testing (requires root)
+sudo sysctl -w net.core.somaxconn=65535 \
+               net.core.netdev_max_backlog=65535 \
+               net.ipv4.tcp_max_syn_backlog=65535 \
+               net.ipv4.tcp_tw_reuse=2 \
+               net.ipv4.tcp_fin_timeout=15 \
+               net.ipv4.ip_local_port_range="1024 65535" \
+               vm.swappiness=10 \
+               fs.aio-max-nr=1048576
+```
+
+### Make Persistent
+
+To persist across reboots, create `/etc/sysctl.d/99-mcp-loadtest.conf`:
+
+```bash
+cat << 'EOF' | sudo tee /etc/sysctl.d/99-mcp-loadtest.conf
+# MCP Gateway Load Testing TCP/System Tuning
+# See: docs/docs/testing/performance.md
+
+# TCP connection handling
+net.core.somaxconn = 65535
+net.core.netdev_max_backlog = 65535
+net.ipv4.tcp_max_syn_backlog = 65535
+net.ipv4.tcp_tw_reuse = 2
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.ip_local_port_range = 1024 65535
+
+# Memory/VM tuning for database workloads
+vm.swappiness = 10
+
+# Async I/O for high disk throughput
+fs.aio-max-nr = 1048576
+EOF
+
+sudo sysctl --system
+```
+
+### Why This Matters
+
+Without tuning, you may see errors like:
+
+- `All connection attempts failed` - ephemeral port exhaustion
+- `Connection refused` - listen backlog overflow
+- High failure rates at 500+ concurrent users
+
+The docker-compose.yml includes per-container TCP tuning via `sysctls`, but host-level settings provide the foundation.
+
+---
+
 ## 🚀 JSON Serialization Performance: orjson
 
 MCP Gateway uses **orjson** for high-performance JSON serialization, providing **5-6x faster serialization** and **1.5-2x faster deserialization** compared to Python's standard library `json` module.
