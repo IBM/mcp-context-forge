@@ -2195,33 +2195,33 @@ async def admin_list_gateways(
     }
 
 
-@admin_router.get("/gateways/ids")
-async def admin_list_gateway_ids(
-    include_inactive: bool = False,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-) -> Dict[str, Any]:
-    """
-    Return a JSON object containing a list of all gateway IDs.
+# @admin_router.get("/gateways/ids")
+# async def admin_list_gateway_ids(
+#     include_inactive: bool = False,
+#     db: Session = Depends(get_db),
+#     user=Depends(get_current_user_with_permissions),
+# ) -> Dict[str, Any]:
+#     """
+#     Return a JSON object containing a list of all gateway IDs.
 
-    This endpoint is used by the admin UI to support the "Select All" action
-    for gateways. It returns a simple JSON payload with a single key
-    `gateway_ids` containing an array of gateway identifiers.
+#     This endpoint is used by the admin UI to support the "Select All" action
+#     for gateways. It returns a simple JSON payload with a single key
+#     `gateway_ids` containing an array of gateway identifiers.
 
-    Args:
-        include_inactive (bool): Whether to include inactive gateways in the results.
-        db (Session): Database session dependency.
-        user: Authenticated user dependency.
+#     Args:
+#         include_inactive (bool): Whether to include inactive gateways in the results.
+#         db (Session): Database session dependency.
+#         user: Authenticated user dependency.
 
-    Returns:
-        Dict[str, Any]: JSON object containing the `gateway_ids` list and metadata.
-    """
-    user_email = get_user_email(user)
-    LOGGER.debug(f"User {user_email} requested gateway ids list")
-    gateways, _ = await gateway_service.list_gateways(db, include_inactive=include_inactive, user_email=user_email, limit=0)
-    ids = [str(g.id) for g in gateways]
-    LOGGER.info(f"Gateway IDs retrieved: {ids}")
-    return {"gateway_ids": ids}
+#     Returns:
+#         Dict[str, Any]: JSON object containing the `gateway_ids` list and metadata.
+#     """
+#     user_email = get_user_email(user)
+#     LOGGER.debug(f"User {user_email} requested gateway ids list")
+#     gateways, _ = await gateway_service.list_gateways(db, include_inactive=include_inactive, user_email=user_email, limit=0)
+#     ids = [str(g.id) for g in gateways]
+#     LOGGER.info(f"Gateway IDs retrieved: {ids}")
+#     return {"gateway_ids": ids}
 
 
 @admin_router.post("/gateways/{gateway_id}/toggle")
@@ -6480,6 +6480,102 @@ async def admin_get_all_gateways_ids(
     gateway_ids = [row[0] for row in db.execute(query).all()]
     return {"gateway_ids": gateway_ids, "count": len(gateway_ids)}
 
+@admin_router.get("/gateways/search", response_class=JSONResponse)
+async def admin_search_gateways(
+    q: str = Query("", description="Search query"),
+    include_inactive: bool = False,
+    limit: int = Query(100, ge=1, le=1000),
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Search gateways by name or description for selector search.
+
+    Performs a case-insensitive search over prompt names and descriptions
+    and returns a limited list of matching gateways suitable for selector
+    UIs (id, name, description).
+
+    Args:
+        q (str): Search query string.
+        include_inactive (bool): When True include gateways that are inactive.
+        limit (int): Maximum number of results to return (bounded by the query parameter).
+        gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
+        db (Session): Database session (injected dependency).
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        dict: A dictionary containing:
+            - "gateways": List[dict] where each dict has keys "id", "name", "description".
+            - "count": int number of matched gateways returned.
+    """
+    user_email = get_user_email(user)
+    search_query = q.strip().lower()
+    if not search_query:
+        return {"gateways": [], "count": 0}
+
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    query = select(DbGateway.id, DbGateway.original_name, DbGateway.display_name, DbGateway.description)
+
+    # Apply gateway filter if provided
+    if gateway_id:
+        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
+        if gateway_ids:
+            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
+            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
+            if non_null_ids and null_requested:
+                query = query.where(or_(DbGateway.gateway_id.in_(non_null_ids), DbGateway.gateway_id.is_(None)))
+                LOGGER.debug(f"Filtering prompt search by gateway IDs (including NULL): {non_null_ids} + NULL")
+            elif null_requested:
+                query = query.where(DbGateway.gateway_id.is_(None))
+                LOGGER.debug("Filtering prompt search by NULL gateway_id")
+            else:
+                query = query.where(DbGateway.gateway_id.in_(non_null_ids))
+                LOGGER.debug(f"Filtering prompt search by gateway IDs: {non_null_ids}")
+
+    if not include_inactive:
+        query = query.where(DbGateway.enabled.is_(True))
+
+    access_conditions = [DbGateway.owner_email == user_email, DbGateway.visibility == "public"]
+    if team_ids:
+        access_conditions.append(and_(DbGateway.team_id.in_(team_ids), DbGateway.visibility.in_(["team", "public"])))
+
+    query = query.where(or_(*access_conditions))
+
+    search_conditions = [
+        func.lower(DbGateway.original_name).contains(search_query),
+        func.lower(coalesce(DbGateway.display_name, "")).contains(search_query),
+        func.lower(coalesce(DbGateway.description, "")).contains(search_query),
+    ]
+    query = query.where(or_(*search_conditions))
+
+    query = query.order_by(
+        case(
+            (func.lower(DbGateway.original_name).startswith(search_query), 1),
+            (func.lower(coalesce(DbGateway.display_name, "")).startswith(search_query), 1),
+            else_=2,
+        ),
+        func.lower(DbGateway.original_name),
+    ).limit(limit)
+
+    results = db.execute(query).all()
+    gateways = []
+    for row in results:
+        gateways.append(
+            {
+                "id": row.id,
+                "name": row.original_name,
+                "original_name": row.original_name,
+                "display_name": row.display_name,
+                "description": row.description,
+            }
+        )
+
+    return {"gateways": gateways, "count": len(gateways)}
+
+
 @admin_router.get("/servers/partial", response_class=HTMLResponse)
 async def admin_servers_partial_html(
     request: Request,
@@ -6697,6 +6793,102 @@ async def admin_get_all_server_ids(
     query = query.where(or_(*access_conditions))
     server_ids = [row[0] for row in db.execute(query).all()]
     return {"server_ids": server_ids, "count": len(server_ids)}
+
+
+@admin_router.get("/servers/search", response_class=JSONResponse)
+async def admin_search_servers(
+    q: str = Query("", description="Search query"),
+    include_inactive: bool = False,
+    limit: int = Query(100, ge=1, le=1000),
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Search servers by name or description for selector search.
+
+    Performs a case-insensitive search over prompt names and descriptions
+    and returns a limited list of matching servers suitable for selector
+    UIs (id, name, description).
+
+    Args:
+        q (str): Search query string.
+        include_inactive (bool): When True include servers that are inactive.
+        limit (int): Maximum number of results to return (bounded by the query parameter).
+        gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
+        db (Session): Database session (injected dependency).
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        dict: A dictionary containing:
+            - "servers": List[dict] where each dict has keys "id", "name", "description".
+            - "count": int number of matched servers returned.
+    """
+    user_email = get_user_email(user)
+    search_query = q.strip().lower()
+    if not search_query:
+        return {"servers": [], "count": 0}
+
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    query = select(DbServer.id, DbServer.original_name, DbServer.display_name, DbServer.description)
+
+    # Apply gateway filter if provided
+    if gateway_id:
+        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
+        if gateway_ids:
+            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
+            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
+            if non_null_ids and null_requested:
+                query = query.where(or_(DbServer.gateway_id.in_(non_null_ids), DbServer.gateway_id.is_(None)))
+                LOGGER.debug(f"Filtering prompt search by gateway IDs (including NULL): {non_null_ids} + NULL")
+            elif null_requested:
+                query = query.where(DbServer.gateway_id.is_(None))
+                LOGGER.debug("Filtering prompt search by NULL gateway_id")
+            else:
+                query = query.where(DbServer.gateway_id.in_(non_null_ids))
+                LOGGER.debug(f"Filtering prompt search by gateway IDs: {non_null_ids}")
+
+    if not include_inactive:
+        query = query.where(DbServer.enabled.is_(True))
+
+    access_conditions = [DbServer.owner_email == user_email, DbServer.visibility == "public"]
+    if team_ids:
+        access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
+
+    query = query.where(or_(*access_conditions))
+
+    search_conditions = [
+        func.lower(DbServer.original_name).contains(search_query),
+        func.lower(coalesce(DbServer.display_name, "")).contains(search_query),
+        func.lower(coalesce(DbServer.description, "")).contains(search_query),
+    ]
+    query = query.where(or_(*search_conditions))
+
+    query = query.order_by(
+        case(
+            (func.lower(DbServer.original_name).startswith(search_query), 1),
+            (func.lower(coalesce(DbServer.display_name, "")).startswith(search_query), 1),
+            else_=2,
+        ),
+        func.lower(DbServer.original_name),
+    ).limit(limit)
+
+    results = db.execute(query).all()
+    servers = []
+    for row in results:
+        servers.append(
+            {
+                "id": row.id,
+                "name": row.original_name,
+                "original_name": row.original_name,
+                "display_name": row.display_name,
+                "description": row.description,
+            }
+        )
+
+    return {"servers": servers, "count": len(servers)}
 
 
 @admin_router.get("/resources/partial", response_class=HTMLResponse)
@@ -7374,6 +7566,101 @@ async def admin_get_all_server_ids(
     query = query.where(or_(*access_conditions))
     server_ids = [row[0] for row in db.execute(query).all()]
     return {"server_ids": server_ids, "count": len(server_ids)}
+
+@admin_router.get("/a2a/search", response_class=JSONResponse)
+async def admin_search_a2a_agents(
+    q: str = Query("", description="Search query"),
+    include_inactive: bool = False,
+    limit: int = Query(100, ge=1, le=1000),
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Search a2a agents by name or description for selector search.
+
+    Performs a case-insensitive search over prompt names and descriptions
+    and returns a limited list of matching a2a agents suitable for selector
+    UIs (id, name, description).
+
+    Args:
+        q (str): Search query string.
+        include_inactive (bool): When True include a2a agents that are inactive.
+        limit (int): Maximum number of results to return (bounded by the query parameter).
+        gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
+        db (Session): Database session (injected dependency).
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        dict: A dictionary containing:
+            - "a2a_agents": List[dict] where each dict has keys "id", "name", "description".
+            - "count": int number of matched a2a agents returned.
+    """
+    user_email = get_user_email(user)
+    search_query = q.strip().lower()
+    if not search_query:
+        return {"a2a_agents": [], "count": 0}
+
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    query = select(DbA2AAgent.id, DbA2AAgent.original_name, DbA2AAgent.display_name, DbA2AAgent.description)
+
+    # Apply gateway filter if provided
+    if gateway_id:
+        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
+        if gateway_ids:
+            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
+            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
+            if non_null_ids and null_requested:
+                query = query.where(or_(DbA2AAgent.gateway_id.in_(non_null_ids), DbA2AAgent.gateway_id.is_(None)))
+                LOGGER.debug(f"Filtering prompt search by gateway IDs (including NULL): {non_null_ids} + NULL")
+            elif null_requested:
+                query = query.where(DbA2AAgent.gateway_id.is_(None))
+                LOGGER.debug("Filtering prompt search by NULL gateway_id")
+            else:
+                query = query.where(DbA2AAgent.gateway_id.in_(non_null_ids))
+                LOGGER.debug(f"Filtering prompt search by gateway IDs: {non_null_ids}")
+
+    if not include_inactive:
+        query = query.where(DbA2AAgent.enabled.is_(True))
+
+    access_conditions = [DbA2AAgent.owner_email == user_email, DbA2AAgent.visibility == "public"]
+    if team_ids:
+        access_conditions.append(and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])))
+
+    query = query.where(or_(*access_conditions))
+
+    search_conditions = [
+        func.lower(DbA2AAgent.original_name).contains(search_query),
+        func.lower(coalesce(DbA2AAgent.display_name, "")).contains(search_query),
+        func.lower(coalesce(DbA2AAgent.description, "")).contains(search_query),
+    ]
+    query = query.where(or_(*search_conditions))
+
+    query = query.order_by(
+        case(
+            (func.lower(DbA2AAgent.original_name).startswith(search_query), 1),
+            (func.lower(coalesce(DbA2AAgent.display_name, "")).startswith(search_query), 1),
+            else_=2,
+        ),
+        func.lower(DbA2AAgent.original_name),
+    ).limit(limit)
+
+    results = db.execute(query).all()
+    a2a_agents = []
+    for row in results:
+        a2a_agents.append(
+            {
+                "id": row.id,
+                "name": row.original_name,
+                "original_name": row.original_name,
+                "display_name": row.display_name,
+                "description": row.description,
+            }
+        )
+
+    return {"a2a_agents": a2a_agents, "count": len(a2a_agents)}
 
 
 @admin_router.get("/tools/{tool_id}", response_model=ToolRead)
