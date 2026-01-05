@@ -89,6 +89,19 @@ class PooledSession:
         """
         return time.time() - self.last_used
 
+    @property
+    def is_closed(self) -> bool:
+        """Return whether this session has been closed.
+
+        Returns:
+            bool: True if session is closed, False otherwise.
+        """
+        return self._closed
+
+    def mark_closed(self) -> None:
+        """Mark this session as closed."""
+        self._closed = True
+
 
 # Type aliases
 # Pool key includes transport type to prevent returning wrong transport for same URL
@@ -458,7 +471,7 @@ class MCPSessionPool:
         Args:
             pooled: The session to release.
         """
-        if pooled._closed:
+        if pooled.is_closed:
             logger.warning("Attempted to release already-closed session")
             return
 
@@ -593,7 +606,7 @@ class MCPSessionPool:
         Returns:
             True if session is valid, False otherwise.
         """
-        if pooled._closed:
+        if pooled.is_closed:
             return False
 
         # Check TTL
@@ -654,18 +667,21 @@ class MCPSessionPool:
                     transport_ctx = sse_client(url=url, headers=merged_headers, httpx_client_factory=httpx_client_factory)
                 else:
                     transport_ctx = sse_client(url=url, headers=merged_headers)
-                streams = await transport_ctx.__aenter__()
+                # pylint: disable=unnecessary-dunder-call,no-member
+                streams = await transport_ctx.__aenter__()  # Must call directly for manual lifecycle management
                 read_stream, write_stream = streams[0], streams[1]
             else:  # STREAMABLE_HTTP
                 if httpx_client_factory:
                     transport_ctx = streamablehttp_client(url=url, headers=merged_headers, httpx_client_factory=httpx_client_factory)
                 else:
                     transport_ctx = streamablehttp_client(url=url, headers=merged_headers)
-                read_stream, write_stream, _ = await transport_ctx.__aenter__()
+                # pylint: disable=unnecessary-dunder-call,no-member
+                read_stream, write_stream, _ = await transport_ctx.__aenter__()  # Must call directly for manual lifecycle management
 
             # Create and initialize session
             session = ClientSession(read_stream, write_stream)
-            await session.__aenter__()
+            # pylint: disable=unnecessary-dunder-call
+            await session.__aenter__()  # Must call directly for manual lifecycle management
             await session.initialize()
 
             logger.info(f"Created new MCP session for {url} (transport={transport_type.value})")
@@ -693,12 +709,12 @@ class MCPSessionPool:
             if not success:
                 if session is not None:
                     try:
-                        await session.__aexit__(None, None, None)
+                        await session.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
                     except Exception:  # nosec B110 - Best effort cleanup on connection failure
                         pass
                 if transport_ctx is not None:
                     try:
-                        await transport_ctx.__aexit__(None, None, None)
+                        await transport_ctx.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
                     except Exception:  # nosec B110 - Best effort cleanup on connection failure
                         pass
 
@@ -709,18 +725,18 @@ class MCPSessionPool:
         Args:
             pooled: The session to close.
         """
-        if pooled._closed:
+        if pooled.is_closed:
             return
 
-        pooled._closed = True
+        pooled.mark_closed()
 
         try:
-            await pooled.session.__aexit__(None, None, None)
+            await pooled.session.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
         except Exception as e:
             logger.debug(f"Error closing session: {e}")
 
         try:
-            await pooled.transport_context.__aexit__(None, None, None)
+            await pooled.transport_context.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
         except Exception as e:
             logger.debug(f"Error closing transport: {e}")
 
@@ -861,7 +877,7 @@ def init_mcp_session_pool(
     Returns:
         The initialized MCPSessionPool instance.
     """
-    global _mcp_session_pool
+    global _mcp_session_pool  # pylint: disable=global-statement
     _mcp_session_pool = MCPSessionPool(
         max_sessions_per_key=max_sessions_per_key,
         session_ttl_seconds=session_ttl_seconds,
@@ -880,7 +896,7 @@ def init_mcp_session_pool(
 
 async def close_mcp_session_pool() -> None:
     """Close the global MCP session pool."""
-    global _mcp_session_pool
+    global _mcp_session_pool  # pylint: disable=global-statement
     if _mcp_session_pool is not None:
         await _mcp_session_pool.close_all()
         _mcp_session_pool = None

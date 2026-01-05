@@ -61,9 +61,6 @@ from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload, Session
 
-# First-Party
-from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
-
 try:
     # Third-Party - check if redis is available
     # Third-Party
@@ -93,6 +90,7 @@ from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, Prompt
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
@@ -3175,6 +3173,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     elif (gateway_transport).lower() == "streamablehttp":
                         # Use session pool if enabled for faster health checks
                         use_pool = False
+                        pool = None
                         if settings.mcp_session_pool_enabled:
                             try:
                                 pool = get_mcp_session_pool()
@@ -3183,7 +3182,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 # Pool not initialized (e.g., in tests), fall back to per-call sessions
                                 pass
 
-                        if use_pool:
+                        if use_pool and pool is not None:
                             async with pool.session(
                                 url=gateway_url,
                                 headers=headers,

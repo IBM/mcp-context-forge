@@ -1531,6 +1531,7 @@ class ResourceService:
                             try:
                                 # Use session pool if enabled for 10-20x latency improvement
                                 use_pool = False
+                                pool = None
                                 if settings.mcp_session_pool_enabled:
                                     try:
                                         pool = get_mcp_session_pool()
@@ -1539,7 +1540,7 @@ class ResourceService:
                                         # Pool not initialized (e.g., in tests), fall back to per-call sessions
                                         pass
 
-                                if use_pool:
+                                if use_pool and pool is not None:
                                     async with pool.session(
                                         url=server_url,
                                         headers=authentication,
@@ -1602,6 +1603,7 @@ class ResourceService:
                             try:
                                 # Use session pool if enabled for 10-20x latency improvement
                                 use_pool = False
+                                pool = None
                                 if settings.mcp_session_pool_enabled:
                                     try:
                                         pool = get_mcp_session_pool()
@@ -1610,7 +1612,7 @@ class ResourceService:
                                         # Pool not initialized (e.g., in tests), fall back to per-call sessions
                                         pass
 
-                                if use_pool:
+                                if use_pool and pool is not None:
                                     async with pool.session(
                                         url=server_url,
                                         headers=authentication,
