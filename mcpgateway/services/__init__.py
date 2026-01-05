@@ -21,6 +21,12 @@ logger = logging.getLogger("mcpgateway.task_scheduler")
 
 
 class Priority(IntEnum):
+    """Priority levels for scheduled background tasks.
+
+    Lower numeric value means higher scheduling priority (CRITICAL=0 runs
+    before HIGH=1, etc.).
+    """
+
     CRITICAL = 0
     HIGH = 1
     NORMAL = 2
@@ -77,15 +83,13 @@ class TaskScheduler:
                         result = await coro
                         if not fut.done():
                             fut.set_result(result)
-                    except asyncio.CancelledError:
-                        raise
                     except Exception:
                         if not fut.done():
                             fut.set_exception(Exception("Background task failed"))
                         logger.exception("Background task failed")
 
             # Schedule all drained items; concurrency is controlled by semaphore inside _run_item.
-            for prio, cnt, func, fut in items:
+            for _prio, _cnt, func, fut in items:
                 asyncio.create_task(_run_item(func, fut))
 
     def schedule(self, func: "Callable[[], Awaitable]", priority: Priority = Priority.NORMAL) -> asyncio.Task:
@@ -113,12 +117,16 @@ class TaskScheduler:
 
 
 # Create a module-level scheduler instance with a small default concurrency.
+
 task_scheduler = TaskScheduler(max_concurrent=3)
 
-from mcpgateway.services.gateway_service import GatewayError, GatewayService
-from mcpgateway.services.prompt_service import PromptError, PromptService
-from mcpgateway.services.resource_service import ResourceError, ResourceService
-from mcpgateway.services.tool_service import ToolError, ToolService
+# The following imports expose service classes at package-level for convenience.
+# They are intentionally placed after the scheduler definition to avoid import
+# cycles at module import time. Silence pylint's import-position complaint.
+from mcpgateway.services.gateway_service import GatewayError, GatewayService  # pylint: disable=wrong-import-position
+from mcpgateway.services.prompt_service import PromptError, PromptService  # pylint: disable=wrong-import-position
+from mcpgateway.services.resource_service import ResourceError, ResourceService  # pylint: disable=wrong-import-position
+from mcpgateway.services.tool_service import ToolError, ToolService  # pylint: disable=wrong-import-position
 
 __all__ = [
     "ToolService",
