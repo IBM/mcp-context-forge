@@ -20,32 +20,6 @@
 
 set -euo pipefail
 
-make container-build
-exit 0
-
-source $WORKSPACE/$PIPELINE_CONFIG_REPO_PATH/scripts/utilities/go_utils.sh
-source $WORKSPACE/$PIPELINE_CONFIG_REPO_PATH/scripts/utilities/github_utils.sh
-source $WORKSPACE/$PIPELINE_CONFIG_REPO_PATH/scripts/utilities/logger.sh
-
-function discoverDockerfile() {
-
-    local rootPath="./Dockerfile"
-    local dockerPath="./docker/Dockerfile"
-    local _result
-
-    if [ -f $rootPath ]; then
-        _result=$rootPath
-    elif [ -f $dockerPath ]; then
-        _result=$dockerPath
-    else
-        _result="$(get_env dockerfile-path "")"
-    fi
-
-    eval "$1=\$_result"
-}
-
-onepipeline_scripts_path="${WORKSPACE}/${PIPELINE_CONFIG_REPO_PATH}/scripts"
-
 echo "pipeline_namespace: $(get_env pipeline_namespace)"
 
 # Retrive pipeline name and set the image tag prefix
@@ -61,19 +35,16 @@ IMAGE_NAME="$(get_env app-name)"
 BUILD_DATE="$(date +%Y%m%d%H%M%S)"
 IMAGE_TAG="${IMAGE_PREFIX}_$(cat /config/git-commit)_${BUILD_DATE}"
 IMAGE_TAG=${IMAGE_TAG////_}
-IMAGE="${REGISTRY_URL}/${IMAGE_NAME}:${IMAGE_TAG}"
+IMAGE_BASE ="${REGISTRY_URL}/${IMAGE_NAME}"
+IMAGE="${IMAGE_BASE}:${IMAGE_TAG}"
 
-DOCKER_BUILD_ARGS="-t $IMAGE"
+make container-build
 
-discoverDockerfile dockerfile
-if [ -z "$dockerfile" ]; then
-    log_error "no Dockerfile identified. Exiting"
-    exit 1
-fi
+source $WORKSPACE/$PIPELINE_CONFIG_REPO_PATH/scripts/utilities/go_utils.sh
+source $WORKSPACE/$PIPELINE_CONFIG_REPO_PATH/scripts/utilities/github_utils.sh
+source $WORKSPACE/$PIPELINE_CONFIG_REPO_PATH/scripts/utilities/logger.sh
 
-alias python='python3.12'
 
-docker build $DOCKER_BUILD_ARGS -f $dockerfile .
 docker push "${IMAGE}"
 
 DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "${IMAGE}" | awk -F@ '{print $2}')"
