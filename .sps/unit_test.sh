@@ -6,8 +6,8 @@ install_python3 3.11
 pip3.11 install --upgrade pip flake8
 
 
-#make test
-#make lint
+make test
+make lint
 
 echo "#############################"
 echo "Preparing Evidence for Upload"
