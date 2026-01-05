@@ -1879,6 +1879,11 @@ class TestToolService:
 
         test_db.execute = Mock(side_effect=execute_side_effect)
 
+        # Mock db.query() for global_config_cache which uses legacy query API
+        mock_query = Mock()
+        mock_query.first.return_value = None  # No global config
+        test_db.query = Mock(return_value=mock_query)
+
         expected_result = ToolResult(content=[TextContent(type="text", text="MCP response")])
 
         session_mock = AsyncMock()

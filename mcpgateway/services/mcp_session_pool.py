@@ -17,6 +17,7 @@ Security:
 Copyright (c) 2025 MCP Gateway Authors.
 SPDX-License-Identifier: MIT
 """
+# flake8: noqa: DAR101, DAR201, DAR401
 
 # Future
 from __future__ import annotations
@@ -298,21 +299,21 @@ class MCPSessionPool:
         identity_string = "|".join(identity_parts)
         return hashlib.sha256(identity_string.encode()).hexdigest()
 
-    def _make_pool_key(  # noqa: DAR101, DAR201
+    def _make_pool_key(
         self, url: str, headers: Optional[Dict[str, str]], transport_type: TransportType
     ) -> PoolKey:
         """Create composite pool key from URL, identity, and transport type."""
         identity_hash = self._compute_identity_hash(headers)
         return (url, identity_hash, transport_type.value)
 
-    async def _get_or_create_lock(self, pool_key: PoolKey) -> asyncio.Lock:  # noqa: DAR101, DAR201
+    async def _get_or_create_lock(self, pool_key: PoolKey) -> asyncio.Lock:
         """Get or create a lock for the given pool key (thread-safe)."""
         async with self._global_lock:
             if pool_key not in self._locks:
                 self._locks[pool_key] = asyncio.Lock()
             return self._locks[pool_key]
 
-    async def _get_or_create_pool(self, pool_key: PoolKey) -> asyncio.Queue[PooledSession]:  # noqa: DAR101, DAR201
+    async def _get_or_create_pool(self, pool_key: PoolKey) -> asyncio.Queue[PooledSession]:
         """Get or create a pool queue for the given key (thread-safe)."""
         async with self._global_lock:
             if pool_key not in self._pools:
@@ -321,7 +322,7 @@ class MCPSessionPool:
                 self._semaphores[pool_key] = asyncio.Semaphore(self._max_sessions)
             return self._pools[pool_key]
 
-    def _is_circuit_open(self, url: str) -> bool:  # noqa: DAR101, DAR201
+    def _is_circuit_open(self, url: str) -> bool:
         """Check if circuit breaker is open for a URL."""
         if url not in self._circuit_open_until:
             return False
@@ -333,7 +334,7 @@ class MCPSessionPool:
             return False
         return True
 
-    def _record_failure(self, url: str) -> None:  # noqa: DAR101
+    def _record_failure(self, url: str) -> None:
         """Record a failure and potentially trip circuit breaker."""
         self._failures[url] = self._failures.get(url, 0) + 1
         if self._failures[url] >= self._circuit_breaker_threshold:
@@ -341,11 +342,11 @@ class MCPSessionPool:
             self._circuit_breaker_trips += 1
             logger.warning(f"Circuit breaker opened for {url} after {self._failures[url]} failures. " f"Will reset in {self._circuit_breaker_reset}s")
 
-    def _record_success(self, url: str) -> None:  # noqa: DAR101
+    def _record_success(self, url: str) -> None:
         """Record a success, resetting failure count."""
         self._failures[url] = 0
 
-    async def acquire(  # noqa: DAR401
+    async def acquire(
         self,
         url: str,
         headers: Optional[Dict[str, str]] = None,
@@ -840,7 +841,7 @@ def get_mcp_session_pool() -> MCPSessionPool:
     return _mcp_session_pool
 
 
-def init_mcp_session_pool(  # noqa: DAR101
+def init_mcp_session_pool(
     max_sessions_per_key: int = 10,
     session_ttl_seconds: float = 300.0,
     health_check_interval_seconds: float = 60.0,
