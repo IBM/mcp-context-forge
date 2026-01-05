@@ -7,6 +7,7 @@ pip3.11 install --upgrade pip flake8
 
 make test
 #make lint
+ls -alF
 
 echo "#############################"
 echo "Preparing Evidence for Upload"
