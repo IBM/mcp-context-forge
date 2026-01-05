@@ -5294,6 +5294,17 @@ def get_db() -> Generator[Session, Any, None]:
     finally:
         db.close()
 
+def get_for_update(db: Session, model, id, skip_locked: bool = True):
+    """Get entity with row lock for update operations."""
+    if db.bind.dialect.name != "postgresql":
+        # SQLite doesn't support FOR UPDATE, fall back to regular get
+        return db.get(model, id)
+
+    return db.execute(
+        select(model)
+        .where(model.id == id)
+        .with_for_update(skip_locked=skip_locked)
+    ).scalar_one_or_none()
 
 @contextmanager
 def fresh_db_session() -> Generator[Session, Any, None]:
