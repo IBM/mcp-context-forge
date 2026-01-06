@@ -1,4 +1,4 @@
-use anyhow::{Result};
+use anyhow::{Context, Result};
 use std::path::Path;
 use tokio::fs;
 use uuid::Uuid;
@@ -23,10 +23,11 @@ pub async fn write_file(path: &str, content: String) -> Result<()> {
         let _ = fs::remove_file(&temp_name).await;
         anyhow::bail!("Failed to rename temp file: {}", e);
     }
-
     Ok(())
 }
 
-// pub async fn create_directory(path: &str) -> Result<()> {
-//     Ok(())
-// }
+pub async fn create_directory(path: &str) -> Result<()> {
+    tracing::info!("Running create_directory '{}'", path);
+    fs::create_dir_all(path).await.with_context(|| format!("Could not create dir {}", path))?;
+    Ok(())
+}
