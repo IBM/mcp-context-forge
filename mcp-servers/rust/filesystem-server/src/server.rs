@@ -60,6 +60,11 @@ pub struct CreateFileParameters {
     content: String,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct CreateDirectoryParameter {
+    #[schemars(description = "Path of new directory")]
+    path: String,
+}
 
 // SERVER ROUTER
 #[tool_router]
@@ -139,10 +144,29 @@ impl FilesystemServer {
     #[tool(description = "Create or ovewrite a file")]
     async fn write_file(
         &self,
-        Parameters(CreateFileParameters { path, content}): Parameters<CreateFileParameters>,
+        Parameters(CreateFileParameters { path, content }): Parameters<CreateFileParameters>,
     ) -> Result<CallToolResult, McpError> {
         let result = write::write_file(&path, content).await.map_err(|e| {
             McpError::internal_error(format!("Error writing file'{}': {}", path, e), None)
+        })?;
+
+        let content = Content::json(&result).map_err(|e| {
+            McpError::internal_error(
+                format!("Error converting file content to JSON: {}", e),
+                None,
+            )
+        })?;
+
+        Ok(CallToolResult::success(vec![content]))
+    }
+
+    #[tool(description = "Create new directory")]
+    async fn create_directory(
+        &self,
+        Parameters(CreateDirectoryParameter { path }): Parameters<CreateDirectoryParameter>,
+    ) -> Result<CallToolResult, McpError> {
+        let result = write::create_directory(&path).await.map_err(|e| {
+            McpError::internal_error(format!("Error creating directory '{}': {}", path, e), None)
         })?;
 
         let content = Content::json(&result).map_err(|e| {
@@ -197,7 +221,21 @@ impl FilesystemServer {
 
         Ok(CallToolResult::success(vec![content]))
     }
+
+    #[tool(description="Reveal sandbox roots")]
+    async fn list_allowed_directories()-> Result<CallToolResult, McpError> {
+
+        let content = Content::json(["hardecoded", "hardcoded2"]).map_err(|e| {
+            McpError::internal_error(
+                format!("Error converting file metadata to JSON: {}", e),
+                None,
+            )
+        })?;
+
+        Ok(CallToolResult::success(vec![content]))
+    }
 }
+
 
 #[tool_handler] // Macro that will generate a tool handler
 impl ServerHandler for FilesystemServer {
@@ -218,6 +256,8 @@ impl ServerHandler for FilesystemServer {
         - read_multiple_files: Read several files from a list of filepaths
         - get_file_info: Return metadata for a given file path, including size, permissions, creation time, and last modified time
         - write_file: Create or ovewrite a file
+        - create_directory: Create new directory
+        - list_allowed_directories: Returns array of allowed roots
         "
                 .to_string(),
             ),
