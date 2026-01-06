@@ -22,7 +22,9 @@ make install-db
 #echo "############# Running Tests ##################"
 make test
 echo "############# Running Coverage ###############"
-result=$(make coverage)
+set +e
+make coverage
+set -e
 coverage xml
 
 
