@@ -15713,6 +15713,123 @@ async def get_tool_usage(
             db.close()
 
 
+def _get_span_entity_performance(
+    db: Session,
+    cutoff_time: datetime,
+    cutoff_time_naive: datetime,
+    span_names: List[str],
+    json_key: str,
+    result_key: str,
+    limit: int = 20,
+) -> List[dict]:
+    """Shared helper to compute performance metrics for spans grouped by a JSON attribute.
+
+    Returns a list of dicts with the entity key named by `result_key` and metrics.
+    Uses PostgreSQL `percentile_cont` when available, otherwise falls back to Python aggregation.
+    """
+    dialect_name = db.get_bind().dialect.name
+
+    if dialect_name == "postgresql":
+        names_sql = ",".join(f"'{n}'" for n in span_names)
+        stats_sql = text(
+            f"""
+            SELECT
+                (attributes->> '{json_key}') AS entity,
+                COUNT(*) AS count,
+                AVG(duration_ms) AS avg_duration_ms,
+                MIN(duration_ms) AS min_duration_ms,
+                MAX(duration_ms) AS max_duration_ms,
+                percentile_cont(0.50) WITHIN GROUP (ORDER BY duration_ms) AS p50,
+                percentile_cont(0.90) WITHIN GROUP (ORDER BY duration_ms) AS p90,
+                percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) AS p95,
+                percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms) AS p99
+            FROM observability_spans
+            WHERE name IN ({names_sql})
+              AND start_time >= :cutoff_time
+              AND duration_ms IS NOT NULL
+              AND (attributes->> '{json_key}') IS NOT NULL
+            GROUP BY entity
+            ORDER BY avg_duration_ms DESC
+            LIMIT :limit
+            """
+        )
+
+        results = db.execute(stats_sql, {"cutoff_time": cutoff_time, "limit": limit}).fetchall()
+
+        items: List[dict] = []
+        for row in results:
+            items.append(
+                {
+                    result_key: row.entity,
+                    "count": int(row.count) if row.count is not None else 0,
+                    "avg_duration_ms": round(float(row.avg_duration_ms), 2) if row.avg_duration_ms is not None else 0,
+                    "min_duration_ms": round(float(row.min_duration_ms), 2) if row.min_duration_ms is not None else 0,
+                    "max_duration_ms": round(float(row.max_duration_ms), 2) if row.max_duration_ms is not None else 0,
+                    "p50": round(float(row.p50), 2) if row.p50 is not None else 0,
+                    "p90": round(float(row.p90), 2) if row.p90 is not None else 0,
+                    "p95": round(float(row.p95), 2) if row.p95 is not None else 0,
+                    "p99": round(float(row.p99), 2) if row.p99 is not None else 0,
+                }
+            )
+
+        return items
+
+    # Fallback: Python aggregation (SQLite or other DBs)
+    spans = (
+        db.query(
+            extract_json_field(ObservabilitySpan.attributes, f'$."{json_key}"').label("entity"),
+            ObservabilitySpan.duration_ms,
+        )
+        .filter(
+            ObservabilitySpan.name.in_(span_names),
+            ObservabilitySpan.start_time >= cutoff_time_naive,
+            ObservabilitySpan.duration_ms.isnot(None),
+            extract_json_field(ObservabilitySpan.attributes, f'$."{json_key}"').isnot(None),
+        )
+        .all()
+    )
+
+    durations_by_entity: Dict[str, List[float]] = defaultdict(list)
+    for span in spans:
+        durations_by_entity[span.entity].append(span.duration_ms)
+
+    def percentile(data: List[float], p: float) -> float:
+        if not data:
+            return 0.0
+        n = len(data)
+        if n == 1:
+            return data[0]
+        k = p * (n - 1)
+        f = int(k)
+        c = k - f
+        if f + 1 < n:
+            return data[f] + c * (data[f + 1] - data[f])
+        return data[f]
+
+    items: List[dict] = []
+    for entity, durations in durations_by_entity.items():
+        durations_sorted = sorted(durations)
+        n = len(durations_sorted)
+        if n == 0:
+            continue
+        items.append(
+            {
+                result_key: entity,
+                "count": n,
+                "avg_duration_ms": round(sum(durations) / n, 2),
+                "min_duration_ms": round(min(durations), 2),
+                "max_duration_ms": round(max(durations), 2),
+                "p50": round(percentile(durations_sorted, 0.50), 2),
+                "p90": round(percentile(durations_sorted, 0.90), 2),
+                "p95": round(percentile(durations_sorted, 0.95), 2),
+                "p99": round(percentile(durations_sorted, 0.99), 2),
+            }
+        )
+
+    items.sort(key=lambda x: x.get("avg_duration_ms", 0), reverse=True)
+    return items
+
+
 @admin_router.get("/observability/tools/performance", response_model=dict)
 async def get_tool_performance(
     request: Request,  # pylint: disable=unused-argument
@@ -15739,72 +15856,23 @@ async def get_tool_performance(
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
         cutoff_time_naive = cutoff_time.replace(tzinfo=None)
 
-        # First, get all tool invocations with durations
-        tool_spans = (
-            db.query(
-                extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),
-                ObservabilitySpan.duration_ms,
-            )
-            .filter(
-                ObservabilitySpan.name == "tool.invoke",
-                ObservabilitySpan.start_time >= cutoff_time_naive,
-                ObservabilitySpan.duration_ms.isnot(None),
-                extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),
-            )
-            .all()
+        items = _get_span_entity_performance(
+            db=db,
+            cutoff_time=cutoff_time,
+            cutoff_time_naive=cutoff_time_naive,
+            span_names=["tool.invoke"],
+            json_key="tool.name",
+            result_key="tool_name",
+            limit=limit,
         )
 
-        # Group by tool name and calculate percentiles
-        tool_durations = defaultdict(list)
-        for span in tool_spans:
-            tool_durations[span.tool_name].append(span.duration_ms)
-
-        # Calculate metrics for each tool
-        tools_data = []
-        for tool_name, durations in tool_durations.items():
-            durations_sorted = sorted(durations)
-            n = len(durations_sorted)
-
-            if n == 0:
-                continue
-
-            # Calculate percentiles
-            def percentile(data, p):
-                if not data:
-                    return 0
-                k = (len(data) - 1) * p
-                f = int(k)
-                c = min(f + 1, len(data) - 1)
-                if f == c:
-                    return data[f]
-                return data[f] * (c - k) + data[c] * (k - f)
-
-            tools_data.append(
-                {
-                    "tool_name": tool_name,
-                    "count": n,
-                    "avg_duration_ms": round(sum(durations) / n, 2),
-                    "min_duration_ms": round(min(durations), 2),
-                    "max_duration_ms": round(max(durations), 2),
-                    "p50": round(percentile(durations_sorted, 0.50), 2),
-                    "p90": round(percentile(durations_sorted, 0.90), 2),
-                    "p95": round(percentile(durations_sorted, 0.95), 2),
-                    "p99": round(percentile(durations_sorted, 0.99), 2),
-                }
-            )
-
-        # Sort by average duration descending and limit
-        tools_data.sort(key=lambda x: x["avg_duration_ms"], reverse=True)
-        tools = tools_data[:limit]
-
-        return {"tools": tools, "time_range_hours": hours}
+        return {"tools": items, "time_range_hours": hours}
     except Exception as e:
         LOGGER.error(f"Failed to get tool performance metrics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        # Ensure close() always runs even if commit() fails
         try:
-            db.commit()  # Commit read-only transaction to avoid implicit rollback
+            db.commit()
         finally:
             db.close()
 
@@ -16071,72 +16139,23 @@ async def get_prompt_performance(
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
         cutoff_time_naive = cutoff_time.replace(tzinfo=None)
 
-        # First, get all prompt renders with durations
-        prompt_spans = (
-            db.query(
-                extract_json_field(ObservabilitySpan.attributes, '$."prompt.id"').label("prompt_id"),
-                ObservabilitySpan.duration_ms,
-            )
-            .filter(
-                ObservabilitySpan.name.in_(["prompt.get", "prompts.get", "prompt.render"]),
-                ObservabilitySpan.start_time >= cutoff_time_naive,
-                ObservabilitySpan.duration_ms.isnot(None),
-                extract_json_field(ObservabilitySpan.attributes, '$."prompt.id"').isnot(None),
-            )
-            .all()
+        items = _get_span_entity_performance(
+            db=db,
+            cutoff_time=cutoff_time,
+            cutoff_time_naive=cutoff_time_naive,
+            span_names=["prompt.get", "prompts.get", "prompt.render"],
+            json_key="prompt.id",
+            result_key="prompt_id",
+            limit=limit,
         )
 
-        # Group by prompt id and calculate percentiles
-        prompt_durations = defaultdict(list)
-        for span in prompt_spans:
-            prompt_durations[span.prompt_id].append(span.duration_ms)
-
-        # Calculate metrics for each prompt
-        prompts_data = []
-        for prompt_id, durations in prompt_durations.items():
-            durations_sorted = sorted(durations)
-            n = len(durations_sorted)
-
-            if n == 0:
-                continue
-
-            # Calculate percentiles
-            def percentile(data, p):
-                if not data:
-                    return 0
-                k = (len(data) - 1) * p
-                f = int(k)
-                c = min(f + 1, len(data) - 1)
-                if f == c:
-                    return data[f]
-                return data[f] * (c - k) + data[c] * (k - f)
-
-            prompts_data.append(
-                {
-                    "prompt_id": prompt_id,
-                    "count": n,
-                    "avg_duration_ms": round(sum(durations) / n, 2),
-                    "min_duration_ms": round(min(durations), 2),
-                    "max_duration_ms": round(max(durations), 2),
-                    "p50": round(percentile(durations_sorted, 0.50), 2),
-                    "p90": round(percentile(durations_sorted, 0.90), 2),
-                    "p95": round(percentile(durations_sorted, 0.95), 2),
-                    "p99": round(percentile(durations_sorted, 0.99), 2),
-                }
-            )
-
-        # Sort by average duration descending and limit
-        prompts_data.sort(key=lambda x: x["avg_duration_ms"], reverse=True)
-        prompts = prompts_data[:limit]
-
-        return {"prompts": prompts, "time_range_hours": hours}
+        return {"prompts": items, "time_range_hours": hours}
     except Exception as e:
         LOGGER.error(f"Failed to get prompt performance metrics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        # Ensure close() always runs even if commit() fails
         try:
-            db.commit()  # Commit read-only transaction to avoid implicit rollback
+            db.commit()
         finally:
             db.close()
 
@@ -16309,79 +16328,30 @@ async def get_resource_performance(
         hours: Number of hours to look back (1-168)
         limit: Maximum number of resources to return (5-100)
         _user: Authenticated user (required by dependency)
-
-    Returns:
-        dict: Resource performance metrics
-
-    Raises:
-        HTTPException: 500 if calculation fails
-    """
     db = next(get_db())
     try:
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
         cutoff_time_naive = cutoff_time.replace(tzinfo=None)
 
-        # First, get all resource reads with durations
-        resource_spans = (
-            db.query(
-                extract_json_field(ObservabilitySpan.attributes, '$."resource.uri"').label("resource_uri"),
-                ObservabilitySpan.duration_ms,
-            )
-            .filter(
-                ObservabilitySpan.name.in_(["resource.read", "resources.read", "resource.fetch"]),
-                ObservabilitySpan.start_time >= cutoff_time_naive,
-                ObservabilitySpan.duration_ms.isnot(None),
-                extract_json_field(ObservabilitySpan.attributes, '$."resource.uri"').isnot(None),
-            )
-            .all()
+        items = _get_span_entity_performance(
+            db=db,
+            cutoff_time=cutoff_time,
+            cutoff_time_naive=cutoff_time_naive,
+            span_names=["resource.read", "resources.read", "resource.fetch"],
+            json_key="resource.uri",
+            result_key="resource_uri",
+            limit=limit,
         )
 
-        # Group by resource URI and calculate percentiles
-        resource_durations = defaultdict(list)
-        for span in resource_spans:
-            resource_durations[span.resource_uri].append(span.duration_ms)
-
-        # Calculate metrics for each resource
-        resources_data = []
-        for resource_uri, durations in resource_durations.items():
-            durations_sorted = sorted(durations)
-            n = len(durations_sorted)
-
-            if n == 0:
-                continue
-
-            # Calculate percentiles
-            def percentile(data, p):
-                if not data:
-                    return 0
-                k = (len(data) - 1) * p
-                f = int(k)
-                c = min(f + 1, len(data) - 1)
-                if f == c:
-                    return data[f]
-                return data[f] * (c - k) + data[c] * (k - f)
-
-            resources_data.append(
-                {
-                    "resource_uri": resource_uri,
-                    "count": n,
-                    "avg_duration_ms": round(sum(durations) / n, 2),
-                    "min_duration_ms": round(min(durations), 2),
-                    "max_duration_ms": round(max(durations), 2),
-                    "p50": round(percentile(durations_sorted, 0.50), 2),
-                    "p90": round(percentile(durations_sorted, 0.90), 2),
-                    "p95": round(percentile(durations_sorted, 0.95), 2),
-                    "p99": round(percentile(durations_sorted, 0.99), 2),
-                }
-            )
-
-        # Sort by average duration descending and limit
-        resources_data.sort(key=lambda x: x["avg_duration_ms"], reverse=True)
-        resources = resources_data[:limit]
-
-        return {"resources": resources, "time_range_hours": hours}
+        return {"resources": items, "time_range_hours": hours}
     except Exception as e:
         LOGGER.error(f"Failed to get resource performance metrics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        try:
+            db.commit()
+        finally:
+            db.close()
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         # Ensure close() always runs even if commit() fails
