@@ -39,6 +39,7 @@ class TestMCPSessionPoolInit:
         assert pool._circuit_breaker_threshold == 5
         assert pool._circuit_breaker_reset == 60.0
         assert pool._idle_pool_eviction == 600.0
+        assert pool._default_transport_timeout == 5.0  # Default transport timeout
         assert pool._closed is False
 
     def test_init_custom_values(self):
@@ -69,6 +70,94 @@ class TestMCPSessionPoolInit:
         pool = MCPSessionPool(identity_headers=custom_headers)
 
         assert pool._identity_headers == custom_headers
+
+    def test_init_custom_transport_timeout(self):
+        """Test pool initialization with custom transport timeout (timeout consolidation)."""
+        pool = MCPSessionPool(default_transport_timeout_seconds=10.0)
+
+        assert pool._default_transport_timeout == 10.0
+
+    @pytest.mark.asyncio
+    async def test_init_transport_timeout_passed_through_init_mcp_session_pool(self):
+        """Test that default_transport_timeout_seconds is passed through init_mcp_session_pool()."""
+        try:
+            # Initialize with custom timeout
+            pool = init_mcp_session_pool(default_transport_timeout_seconds=7.5)
+
+            assert pool._default_transport_timeout == 7.5
+        finally:
+            # Always cleanup to prevent leaking global pool into other tests
+            await close_mcp_session_pool()
+
+
+class TestValidateSession:
+    """Tests for session validation and health checks."""
+
+    @pytest.fixture
+    def pool(self):
+        # Use short health check interval so sessions become stale quickly
+        return MCPSessionPool(
+            health_check_interval_seconds=0.01,  # 10ms
+            default_transport_timeout_seconds=3.0,  # Custom timeout
+        )
+
+    @pytest.mark.asyncio
+    async def test_validate_session_uses_configurable_timeout(self, pool):
+        """Test that _validate_session uses _default_transport_timeout (not hardcoded 5.0)."""
+        mock_session = MagicMock()
+        mock_list_tools = AsyncMock(return_value=[])
+        mock_session.list_tools = mock_list_tools
+
+        pooled = PooledSession(
+            session=mock_session,
+            transport_context=MagicMock(),
+            url="http://test:8080",
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
+            created_at=time.time(),
+            last_used=time.time() - 1,  # Make it stale (> health_check_interval)
+        )
+
+        # Patch asyncio.wait_for to capture the timeout argument
+        captured_timeout = None
+
+        async def capture_wait_for(coro, timeout):
+            nonlocal captured_timeout
+            captured_timeout = timeout
+            return await coro
+
+        with patch('mcpgateway.services.mcp_session_pool.asyncio.wait_for', side_effect=capture_wait_for):
+            result = await pool._validate_session(pooled)
+
+        # Should have used the configurable timeout (3.0), not hardcoded 5.0
+        assert captured_timeout == 3.0
+        assert result is True
+        # Verify list_tools() was actually awaited (health check executed)
+        mock_list_tools.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_validate_session_health_check_timeout_failure(self, pool):
+        """Test that health check failures due to timeout are handled correctly."""
+        mock_session = MagicMock()
+        mock_list_tools = AsyncMock(side_effect=asyncio.TimeoutError())
+        mock_session.list_tools = mock_list_tools
+
+        pooled = PooledSession(
+            session=mock_session,
+            transport_context=MagicMock(),
+            url="http://test:8080",
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
+            created_at=time.time(),
+            last_used=time.time() - 1,  # Make it stale
+        )
+
+        result = await pool._validate_session(pooled)
+
+        assert result is False
+        assert pool._health_check_failures == 1
 
 
 class TestIdentityHashing:
@@ -121,6 +210,83 @@ class TestIdentityHashing:
 
         assert hash1 != hash2
         assert hash1 != "anonymous"
+
+    def test_tenant_header_isolation(self, pool):
+        """X-Tenant-ID creates separate identity hashes (tenant isolation)."""
+        # Same auth but different tenant
+        tenant_a_hash = pool._compute_identity_hash({
+            "Authorization": "Bearer shared-token",
+            "X-Tenant-ID": "tenant-a",
+        })
+        tenant_b_hash = pool._compute_identity_hash({
+            "Authorization": "Bearer shared-token",
+            "X-Tenant-ID": "tenant-b",
+        })
+
+        assert tenant_a_hash != tenant_b_hash
+        assert tenant_a_hash != "anonymous"
+        assert tenant_b_hash != "anonymous"
+
+    def test_combined_identity_headers(self, pool):
+        """Auth + Tenant + User combined correctly for isolation."""
+        full_identity = pool._compute_identity_hash({
+            "Authorization": "Bearer token",
+            "X-Tenant-ID": "tenant-1",
+            "X-User-ID": "user-123",
+        })
+        # Same auth, same tenant, different user
+        diff_user = pool._compute_identity_hash({
+            "Authorization": "Bearer token",
+            "X-Tenant-ID": "tenant-1",
+            "X-User-ID": "user-456",
+        })
+        # Same auth, different tenant, same user
+        diff_tenant = pool._compute_identity_hash({
+            "Authorization": "Bearer token",
+            "X-Tenant-ID": "tenant-2",
+            "X-User-ID": "user-123",
+        })
+
+        assert full_identity != diff_user
+        assert full_identity != diff_tenant
+        assert diff_user != diff_tenant
+
+    @pytest.mark.asyncio
+    async def test_pool_key_determinism_under_concurrent_calls(self, pool):
+        """Pool key generation is deterministic: same identity always produces same key.
+
+        Note: This tests _make_pool_key determinism, not concurrent acquire/release
+        session isolation. For full concurrent session isolation tests, see
+        tests/integration/test_mcp_session_pool_integration.py::TestConcurrentAccess.
+        """
+        results = []
+
+        async def get_pool_key(headers, task_id):
+            key = pool._make_pool_key("http://test:8080", headers, TransportType.STREAMABLE_HTTP)
+            results.append((task_id, key))
+            return key
+
+        # Simulate concurrent requests from different users
+        await asyncio.gather(
+            get_pool_key({"Authorization": "Bearer user-1"}, 1),
+            get_pool_key({"Authorization": "Bearer user-2"}, 2),
+            get_pool_key({"Authorization": "Bearer user-3"}, 3),
+            get_pool_key({"Authorization": "Bearer user-1"}, 4),  # Same as task 1
+            get_pool_key({"Authorization": "Bearer user-2"}, 5),  # Same as task 2
+        )
+
+        # Verify results
+        assert len(results) == 5
+        task_keys = {task_id: key for task_id, key in results}
+
+        # Same user should get same key (determinism)
+        assert task_keys[1] == task_keys[4]
+        assert task_keys[2] == task_keys[5]
+
+        # Different users should get different keys (isolation)
+        assert task_keys[1] != task_keys[2]
+        assert task_keys[1] != task_keys[3]
+        assert task_keys[2] != task_keys[3]
 
 
 class TestIdentityExtractor:
