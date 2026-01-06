@@ -19,7 +19,6 @@ Environment variables:
 - SKIP_SSL_VERIFY: Disable SSL verification (default: False)
 - AUTH_REQUIRED: Require authentication (default: True)
 - TRANSPORT_TYPE: Transport mechanisms (default: "all")
-- FEDERATION_ENABLED: Enable gateway federation (default: True)
 - DOCS_ALLOW_BASIC_AUTH: Allow basic auth for docs (default: False)
 - FEDERATION_DISCOVERY: Enable auto-discovery (default: False)
 - FEDERATION_PEERS: List of peer gateway URLs (default: [])
@@ -682,10 +681,6 @@ class Settings(BaseSettings):
         if self.debug and not self.dev_mode:
             logger.warning("🐛 SECURITY WARNING: Debug mode is enabled in non-dev mode. This may leak sensitive information! Set DEBUG=false for production.")
 
-        # Warn about federation without auth
-        if self.federation_enabled and not self.auth_required:
-            logger.warning("🌐 SECURITY WARNING: Federation is enabled without authentication. This may expose your gateway to unauthorized access.")
-
         return self
 
     def get_security_warnings(self) -> List[str]:
@@ -1097,7 +1092,6 @@ class Settings(BaseSettings):
     sse_keepalive_interval: int = 30  # seconds between keepalive events
 
     # Federation
-    federation_enabled: bool = True
     federation_discovery: bool = False
 
     # For federation_peers strip out quotes to ensure we're passing valid JSON via env

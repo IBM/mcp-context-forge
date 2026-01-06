@@ -16,7 +16,7 @@ Manual configuration (e.g. hardcoded peer IPs) is error-prone and brittle in dyn
 
 The codebase includes a `DiscoveryService` and federation settings such as:
 
-- `FEDERATION_ENABLED`
+- `FEDERATION_ENABLED`  NOTE: DEPRECATED NOW
 - `FEDERATION_DISCOVERY`
 - `DISCOVERY_INTERVAL_SECONDS`
 
@@ -49,6 +49,6 @@ Static peer configuration is still supported for restricted networks.
 
 ## Status
 
-Auto-discovery is implemented using `zeroconf`, and federation is active when `FEDERATION_ENABLED=true`.
+Auto-discovery is implemented using `zeroconf`, and federation is active when `FEDERATION_ENABLED=true`. NOTE: DEPRECATED NOW
 
 Current feature is early pre-alpha and may not work correctly.

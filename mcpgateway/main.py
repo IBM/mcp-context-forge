@@ -790,9 +790,6 @@ def validate_security_configuration():
     if settings.basic_auth_password.get_secret_value() == "changeme" and settings.mcpgateway_ui_enabled:  # nosec B105 - checking for default value
         critical_issues.append("Admin UI enabled with default password. Set BASIC_AUTH_PASSWORD environment variable!")
 
-    if not settings.auth_required and settings.federation_enabled and not settings.dev_mode:
-        critical_issues.append("Federation enabled without authentication in non-dev mode. This is a critical security risk!")
-
     log_critical_issues(critical_issues)
 
     log_security_recommendations(security_status)
