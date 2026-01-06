@@ -390,7 +390,7 @@ mcpContextForge:
 
     # ─ Health checks ─
     HEALTH_CHECK_INTERVAL: "60"      # seconds between peer health checks
-    HEALTH_CHECK_TIMEOUT: "10"       # request timeout per health check
+    HEALTH_CHECK_TIMEOUT: "5"        # request timeout per health check (also used for pool transport timeout)
     GATEWAY_HEALTH_CHECK_TIMEOUT: "5.0" # per-check timeout to bound total time of one gateway health check
     UNHEALTHY_THRESHOLD: "3"         # failed checks before peer marked unhealthy
     GATEWAY_VALIDATION_TIMEOUT: "5"  # gateway URL validation timeout (seconds)
