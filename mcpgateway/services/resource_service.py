@@ -2371,7 +2371,7 @@ class ResourceService:
                 team_id = resource_update.team_id or resource.team_id
                 if visibility.lower() == "public":
                     # Check for existing public resources with the same uri
-                    existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource_update.uri, DbResource.visibility == "public",DbResource.id != resource_id if resource_id else True)).scalar_one_or_none()
+                    existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource_update.uri, DbResource.visibility == "public",DbResource.id != resource_id if resource_id else True).with_for_update()).scalar_one_or_none()
                     if existing_resource:
                         raise ResourceURIConflictError(resource_update.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
                 elif visibility.lower() == "team" and team_id:

@@ -1105,12 +1105,12 @@ class ServerService:
                 team_id = server_update.team_id or server.team_id
                 if visibility.lower() == "public":
                     # Check for existing public server with the same name
-                    existing_server = db.execute(select(DbServer).where(DbServer.name == server_update.name, DbServer.visibility == "public")).scalar_one_or_none()
+                    existing_server = db.execute(select(DbServer).where(DbServer.name == server_update.name, DbServer.visibility == "public", DbServer.id != server.id).with_for_update()).scalar_one_or_none()
                     if existing_server:
                         raise ServerNameConflictError(server_update.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
                 elif visibility.lower() == "team" and team_id:
                     # Check for existing team server with the same name
-                    existing_server = db.execute(select(DbServer).where(DbServer.name == server_update.name, DbServer.visibility == "team", DbServer.team_id == team_id)).scalar_one_or_none()
+                    existing_server = db.execute(select(DbServer).where(DbServer.name == server_update.name, DbServer.visibility == "team", DbServer.team_id == team_id, DbServer.id != server.id).with_for_update()).scalar_one_or_none()
                     if existing_server:
                         raise ServerNameConflictError(server_update.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
 
