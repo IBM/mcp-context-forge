@@ -2,11 +2,14 @@
 Performance benchmark test for PostgreSQL percentile_cont optimization.
 
 This test compares the performance of:
-1. PostgreSQL native percentile_cont (optimized)
-2. Python-based percentile calculation (fallback for SQLite)
+1. PostgreSQL native percentile_cont (optimized) - when USE_POSTGRESDB_PERCENTILES=True
+2. Python-based percentile calculation (fallback for SQLite or when USE_POSTGRESDB_PERCENTILES=False)
 
 Tests the get_tool_performance, get_prompt_performance, and get_resource_performance
 endpoints with varying data volumes to measure the performance improvement.
+
+The USE_POSTGRESDB_PERCENTILES configuration variable controls whether PostgreSQL uses
+native percentile_cont functions (5-10x faster) or falls back to Python calculations.
 """
 
 import time
@@ -19,10 +22,23 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from mcpgateway.db import Base, ObservabilitySpan, ObservabilityTrace, get_db
 from mcpgateway.admin import _get_span_entity_performance
+from mcpgateway.config import settings
 
 
 class TestPostgreSQLPercentilePerformance:
-    """Test suite for PostgreSQL percentile_cont performance optimization."""
+    """Test suite for PostgreSQL percentile_cont performance optimization.
+    
+    This test suite validates the USE_POSTGRESDB_PERCENTILES configuration variable
+    which controls whether PostgreSQL uses native percentile_cont functions (faster)
+    or falls back to Python-based percentile calculations (compatible with SQLite).
+    
+    Tests include:
+    - Performance comparison between SQLite (Python) and PostgreSQL (native)
+    - Verification that USE_POSTGRESDB_PERCENTILES=True uses native percentile_cont
+    - Verification that USE_POSTGRESDB_PERCENTILES=False uses Python percentiles
+    - Accuracy validation of percentile calculations
+    - Concurrent query performance testing
+    """
 
     @pytest.fixture(scope="function")
     def sqlite_engine(self, tmp_path):
@@ -226,6 +242,9 @@ class TestPostgreSQLPercentilePerformance:
     ):
         """Compare tool performance query between SQLite and PostgreSQL.
 
+        This test verifies that PostgreSQL with USE_POSTGRESDB_PERCENTILES=True
+        (using native percentile_cont) is faster than SQLite (using Python percentiles).
+
         Args:
             sqlite_engine: SQLite database engine
             postgresql_engine: PostgreSQL database engine
@@ -256,13 +275,13 @@ class TestPostgreSQLPercentilePerformance:
         finally:
             sqlite_session.close()
 
-        # Test PostgreSQL (native percentile_cont)
+        # Test PostgreSQL (native percentile_cont when USE_POSTGRESDB_PERCENTILES=True)
         PostgreSQLSession = sessionmaker(bind=postgresql_engine)
         pg_session = PostgreSQLSession()
         try:
             self.generate_span_data(pg_session, "tool", num_entities, spans_per_entity)
             pg_time, pg_results = self.measure_query_performance(pg_session, "tool")
-            print(f"\n🚀 PostgreSQL (percentile_cont):")
+            print(f"\n🚀 PostgreSQL (percentile_cont, USE_POSTGRESDB_PERCENTILES={settings.use_postgresdb_percentiles}):")
             print(f"   Average query time: {pg_time:.2f} ms")
             print(f"   Results returned: {len(pg_results)}")
             if pg_results:
@@ -530,6 +549,98 @@ class TestPostgreSQLPercentilePerformance:
 
         finally:
             pass
+
+    def test_use_postgresdb_percentiles_toggle(self, postgresql_engine):
+        """Test that USE_POSTGRESDB_PERCENTILES configuration controls percentile calculation method.
+
+        This test verifies:
+        1. When USE_POSTGRESDB_PERCENTILES=True, PostgreSQL uses native percentile_cont
+        2. When USE_POSTGRESDB_PERCENTILES=False, PostgreSQL falls back to Python percentiles
+        3. Both methods produce similar results but native is faster
+
+        Args:
+            postgresql_engine: PostgreSQL database engine
+        """
+        print(f"\n{'='*80}")
+        print("Testing USE_POSTGRESDB_PERCENTILES configuration toggle")
+        print(f"{'='*80}")
+
+        num_entities = 50
+        spans_per_entity = 200
+        total_spans = num_entities * spans_per_entity
+
+        PostgreSQLSession = sessionmaker(bind=postgresql_engine)
+        session = PostgreSQLSession()
+        
+        try:
+            # Generate test data once
+            self.generate_span_data(session, "tool", num_entities, spans_per_entity)
+            
+            # Store original setting
+            original_setting = settings.use_postgresdb_percentiles
+            
+            # Test with USE_POSTGRESDB_PERCENTILES=True (native percentile_cont)
+            settings.use_postgresdb_percentiles = True
+            print(f"\n🚀 Testing with USE_POSTGRESDB_PERCENTILES=True (native percentile_cont)")
+            native_time, native_results = self.measure_query_performance(session, "tool")
+            print(f"   Average query time: {native_time:.2f} ms")
+            print(f"   Results returned: {len(native_results)}")
+            if native_results:
+                print(f"   Sample result: {native_results[0]}")
+            
+            # Test with USE_POSTGRESDB_PERCENTILES=False (Python percentiles)
+            settings.use_postgresdb_percentiles = False
+            print(f"\n📊 Testing with USE_POSTGRESDB_PERCENTILES=False (Python percentiles)")
+            python_time, python_results = self.measure_query_performance(session, "tool")
+            print(f"   Average query time: {python_time:.2f} ms")
+            print(f"   Results returned: {len(python_results)}")
+            if python_results:
+                print(f"   Sample result: {python_results[0]}")
+            
+            # Restore original setting
+            settings.use_postgresdb_percentiles = original_setting
+            
+            # Calculate performance difference
+            if python_time > 0:
+                speedup = python_time / native_time
+                improvement_pct = ((python_time - native_time) / python_time) * 100
+                print(f"\n✨ Performance Comparison:")
+                print(f"   Native percentile_cont speedup: {speedup:.2f}x faster")
+                print(f"   Time saved: {improvement_pct:.1f}%")
+                print(f"   Absolute difference: {python_time - native_time:.2f} ms")
+            
+            # Verify both methods return results
+            assert len(native_results) > 0, "Native method should return results"
+            assert len(python_results) > 0, "Python method should return results"
+            
+            # Verify results are similar (percentiles should be close)
+            if native_results and python_results:
+                native_first = native_results[0]
+                python_first = python_results[0]
+                
+                # Count should match exactly
+                assert native_first["count"] == python_first["count"], \
+                    f"Count mismatch: Native={native_first['count']}, Python={python_first['count']}"
+                
+                # Percentiles should be close (within 5%)
+                for metric in ["p50", "p90", "p95", "p99"]:
+                    native_val = native_first[metric]
+                    python_val = python_first[metric]
+                    if native_val > 0:
+                        diff_pct = abs(native_val - python_val) / native_val * 100
+                        assert diff_pct < 5, \
+                            f"{metric} differs by {diff_pct:.1f}% (Native: {native_val}, Python: {python_val})"
+                
+                print(f"\n✅ Both methods produce similar results (within 5% tolerance)")
+            
+            # Native should be faster for this dataset size
+            assert native_time < python_time, \
+                f"Native percentile_cont should be faster than Python percentiles for {total_spans:,} spans"
+            
+            print(f"\n✅ USE_POSTGRESDB_PERCENTILES configuration works correctly!")
+            
+        finally:
+            session.close()
 
 
 if __name__ == "__main__":
