@@ -471,8 +471,8 @@ Empty pool keys are evicted after `idle_pool_eviction_seconds` (default 600s) to
 Environment variables:
 
 ```bash
-# Enable/disable pool (default: true)
-MCP_SESSION_POOL_ENABLED=true
+# Enable/disable pool (default: false - enable explicitly after testing)
+MCP_SESSION_POOL_ENABLED=true  # Recommended for production
 
 # Max sessions per (URL, identity, transport) - default: 10
 MCP_SESSION_POOL_MAX_PER_KEY=10
@@ -605,4 +605,10 @@ With default configuration, `Authorization` is part of the identity hash. Token 
 
 ## Status
 
-Implemented and enabled by default. Provides 10-20x latency improvement for tool calls with session reuse.
+Implemented and **disabled by default** for safety. Enable explicitly after testing:
+
+```bash
+MCP_SESSION_POOL_ENABLED=true
+```
+
+Provides 10-20x latency improvement for tool calls with session reuse.

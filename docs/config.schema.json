@@ -2254,7 +2254,7 @@
       "type": "integer"
     },
     "mcp_session_pool_enabled": {
-      "default": true,
+      "default": false,
       "title": "Mcp Session Pool Enabled",
       "type": "boolean"
     },

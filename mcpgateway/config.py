@@ -1220,7 +1220,8 @@ class Settings(BaseSettings):
     tool_concurrent_limit: int = 10
 
     # MCP Session Pool - reduces per-request latency from ~20ms to ~1-2ms
-    mcp_session_pool_enabled: bool = True
+    # Disabled by default for safety. Enable explicitly in production after testing.
+    mcp_session_pool_enabled: bool = False
     mcp_session_pool_max_per_key: int = 10  # Max sessions per (URL, identity, transport)
     mcp_session_pool_ttl: float = 300.0  # Session TTL in seconds
     mcp_session_pool_health_check_interval: float = 60.0  # Idle time before health check (aligned with health_check_interval)

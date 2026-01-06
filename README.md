@@ -2173,7 +2173,7 @@ Automatic management of metrics data to prevent unbounded table growth and maint
 
 | Setting                                   | Description                                        | Default | Options     |
 | ----------------------------------------- | -------------------------------------------------- | ------- | ----------- |
-| `MCP_SESSION_POOL_ENABLED`                | Enable session pooling (10-20x latency improvement)| `true`  | bool        |
+| `MCP_SESSION_POOL_ENABLED`                | Enable session pooling (10-20x latency improvement)| `false` | bool        |
 | `MCP_SESSION_POOL_MAX_PER_KEY`            | Max sessions per (URL, identity, transport)        | `10`    | int (1-100) |
 | `MCP_SESSION_POOL_TTL`                    | Session TTL before forced close (seconds)          | `300`   | float       |
 | `MCP_SESSION_POOL_TRANSPORT_TIMEOUT`      | Timeout for all HTTP operations (seconds)          | `30`    | float       |

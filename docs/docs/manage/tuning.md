@@ -381,6 +381,12 @@ hey -n 10000 -c 200 \
 
 The MCP session pool maintains persistent connections to upstream MCP servers, providing **10-20x latency improvement** for repeated tool calls from the same user.
 
+!!! note "Disabled by Default"
+    Session pooling is disabled by default for safety. Enable it explicitly after testing in your environment:
+    ```bash
+    MCP_SESSION_POOL_ENABLED=true
+    ```
+
 ### When to Enable Pooling
 
 | Enable pooling when... | Avoid or tighten isolation when... |
@@ -393,7 +399,7 @@ The MCP session pool maintains persistent connections to upstream MCP servers, p
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MCP_SESSION_POOL_ENABLED` | `true` | Enable/disable session pooling |
+| `MCP_SESSION_POOL_ENABLED` | `false` | Enable/disable session pooling |
 | `MCP_SESSION_POOL_MAX_PER_KEY` | `10` | Max sessions per (URL, identity, transport) |
 | `MCP_SESSION_POOL_TTL` | `300.0` | Session TTL before forced close (seconds) |
 | `MCP_SESSION_POOL_TRANSPORT_TIMEOUT` | `30.0` | Timeout for all HTTP operations (seconds) |
