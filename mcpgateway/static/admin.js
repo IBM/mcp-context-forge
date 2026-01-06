@@ -6789,13 +6789,38 @@ function showTab(tabName) {
                     updateTeamScopingWarning();
                 }
 
+                if (tabName === "catalog") {
+                    // Load servers list if not already loaded
+                    console.log("🔍 Catalog tab activated");
+                    const serversList = safeGetElement("servers-table");
+                    console.log("🔍 servers-table element:", serversList);
+                    if (serversList) {
+                        const hasLoadingMessage = serversList.innerHTML.includes("Loading servers...");
+                        console.log("🔍 Has loading message:", hasLoadingMessage);
+                        if (hasLoadingMessage) {
+                            // Trigger HTMX load manually if HTMX is available
+                            if (window.htmx && window.htmx.trigger) {
+                                console.log("🔍 Triggering HTMX load for servers");
+                                window.htmx.trigger(serversList, "load");
+                            }
+                        }
+                    }
+                }
+
                 if (tabName === "a2a-agents") {
                     // Load A2A agents list if not already loaded
-                    const agentsList = safeGetElement("a2a-agents-list");
-                    if (agentsList && agentsList.innerHTML.trim() === "") {
-                        // Trigger HTMX load manually if HTMX is available
-                        if (window.htmx && window.htmx.trigger) {
-                            window.htmx.trigger(agentsList, "load");
+                    console.log("🔍 A2A Agents tab activated");
+                    const agentsList = safeGetElement("agents-table");
+                    console.log("🔍 agents-table element:", agentsList);
+                    if (agentsList) {
+                        const hasLoadingMessage = agentsList.innerHTML.includes("Loading agents...");
+                        console.log("🔍 Has loading message:", hasLoadingMessage);
+                        if (hasLoadingMessage) {
+                            // Trigger HTMX load manually if HTMX is available
+                            if (window.htmx && window.htmx.trigger) {
+                                console.log("🔍 Triggering HTMX load for agents");
+                                window.htmx.trigger(agentsList, "load");
+                            }
                         }
                     }
                 }
@@ -6866,15 +6891,14 @@ function showTab(tabName) {
                 }
 
                 if (tabName === "gateways") {
-                    // Reload gateways list to show any newly registered servers
-                    const gatewaysSection = safeGetElement("gateways-panel");
-                    if (gatewaysSection) {
-                        const gatewaysTbody =
-                            gatewaysSection.querySelector("tbody");
-                        if (gatewaysTbody) {
-                            // Trigger HTMX reload if available
+                    // Load gateways list if not already loaded
+                    const gatewaysList = safeGetElement("gateways-table");
+                    if (gatewaysList) {
+                        const hasLoadingMessage = gatewaysList.innerHTML.includes("Loading gateways...");
+                        if (hasLoadingMessage) {
+                            // Trigger HTMX load manually if HTMX is available
                             if (window.htmx && window.htmx.trigger) {
-                                window.htmx.trigger(gatewaysTbody, "load");
+                                window.htmx.trigger(gatewaysList, "load");
                             } else {
                                 // Fallback: reload the page section via fetch
                                 const rootPath = window.ROOT_PATH || "";
