@@ -443,6 +443,29 @@ The transport timeout applies to **all** HTTP operations, not just connection es
 MCP_SESSION_POOL_TRANSPORT_TIMEOUT=120
 ```
 
+### Health Check Timeout Trade-offs
+
+Pool staleness checks use `MCP_SESSION_POOL_TRANSPORT_TIMEOUT` (default 30s) for session acquisition. When `MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC=true`, the explicit RPC call uses `HEALTH_CHECK_TIMEOUT` (default 5s).
+
+**Behavior summary:**
+
+| Check Type | Timeout Used | Default |
+|------------|--------------|---------|
+| Pool staleness check (idle > interval) | `MCP_SESSION_POOL_TRANSPORT_TIMEOUT` | 30s |
+| Explicit health RPC (when enabled) | `HEALTH_CHECK_TIMEOUT` | 5s |
+| Session creation | `MCP_SESSION_POOL_CREATE_TIMEOUT` | 30s |
+
+**Trade-off**: The 30s transport timeout allows long-running tools to complete but means unhealthy sessions may take longer to detect. If you need faster failure detection:
+
+```bash
+# Stricter health checks (5s timeout for explicit RPC)
+MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC=true
+HEALTH_CHECK_TIMEOUT=5
+
+# Or reduce transport timeout (affects all operations)
+MCP_SESSION_POOL_TRANSPORT_TIMEOUT=10
+```
+
 ### Circuit Breaker Behavior
 
 The circuit breaker is keyed by URL only (not per-identity). After `MCP_SESSION_POOL_CIRCUIT_BREAKER_THRESHOLD` consecutive **session creation failures** for a URL, the circuit opens and all requests fail fast for `MCP_SESSION_POOL_CIRCUIT_BREAKER_RESET` seconds.
