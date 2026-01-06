@@ -56,6 +56,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     admin_import_configuration,
     admin_import_tools,
     admin_list_a2a_agents,
+    admin_metrics_partial_html,
     admin_list_gateways,
     admin_list_import_statuses,
     admin_list_prompts,
@@ -803,17 +804,19 @@ class TestAdminResourceRoutes:
     @patch.object(ResourceService, "get_resource_by_id")
     @patch.object(ResourceService, "read_resource")
     async def test_admin_get_resource_with_read_error(self, mock_read_resource, mock_get_resource, mock_db):
-        """Test getting resource when content read fails."""
-        # Resource exists
+        """Test: read_resource should not be called at all."""
+
         mock_resource = MagicMock()
         mock_resource.model_dump.return_value = {"id": 1, "uri": "/test/resource"}
         mock_get_resource.return_value = mock_resource
 
-        # But reading content fails
         mock_read_resource.side_effect = IOError("Cannot read resource content")
 
-        with pytest.raises(IOError):
-            await admin_get_resource("1", mock_db, "test-user")
+        result = await admin_get_resource("1", mock_db, "test-user")
+
+        assert result["resource"]["id"] == 1
+        mock_read_resource.assert_not_called()
+
 
     @patch.object(ResourceService, "register_resource")
     async def test_admin_add_resource_with_valid_mime_type(self, mock_register_resource, mock_request, mock_db):
@@ -821,17 +824,16 @@ class TestAdminResourceRoutes:
         # Use a valid MIME type
         form_data = FakeForm(
             {
-                "uri": "/template/resource",
-                "name": "Template-Resource",  # Valid resource name
-                "mimeType": "text/plain",  # Valid MIME type
-                "template": "Hello {{name}}!",
-                "content": "Default content",
+                        "uri": "greetme://morning/{name}",
+                        "name": "test_doc",
+                        "content": "Test content",
+                        "mimeType": "text/plain"
             }
         )
+
         mock_request.form = AsyncMock(return_value=form_data)
 
         result = await admin_add_resource(mock_request, mock_db, "test-user")
-
         # Assert
         mock_register_resource.assert_called_once()
         assert result.status_code == 200
@@ -839,7 +841,7 @@ class TestAdminResourceRoutes:
         # Verify template was passed
         call_args = mock_register_resource.call_args[0]
         resource_create = call_args[1]
-        assert resource_create.template == "Hello {{name}}!"
+        assert resource_create.uri_template == "greetme://morning/{name}"
 
     @patch.object(ResourceService, "register_resource")
     async def test_admin_add_resource_database_errors(self, mock_register_resource, mock_request, mock_db):
@@ -913,14 +915,14 @@ class TestAdminPromptRoutes:
     async def test_admin_get_prompt_with_detailed_metrics(self, mock_get_prompt_details, mock_db):
         """Test getting prompt with detailed metrics."""
         mock_get_prompt_details.return_value = {
-            "id": 1,
+            "id": "ca627760127d409080fdefc309147e08",
             "name": "test-prompt",
             "template": "Test {{var}}",
             "description": "Test prompt",
             "arguments": [{"name": "var", "type": "string"}],
             "created_at": datetime.now(timezone.utc),
             "updated_at": datetime.now(timezone.utc),
-            "is_active": True,
+            "enabled": True,
             "metrics": {
                 "total_executions": 1000,
                 "successful_executions": 950,
@@ -1357,7 +1359,8 @@ class TestAdminGatewayTestRoute:
 
                 mock_client_class.return_value = mock_client
 
-                result = await admin_test_gateway(request, "test-user")
+                mock_db = MagicMock()
+                result = await admin_test_gateway(request, None, "test-user", mock_db)
 
                 assert result.status_code == 200
                 mock_client.request.assert_called_once()
@@ -1396,7 +1399,8 @@ class TestAdminGatewayTestRoute:
 
                 mock_client_class.return_value = mock_client
 
-                await admin_test_gateway(request, "test-user")
+                mock_db = MagicMock()
+                await admin_test_gateway(request, None, "test-user", mock_db)
 
                 call_args = mock_client.request.call_args
                 assert call_args[1]["url"] == expected_url
@@ -1422,7 +1426,8 @@ class TestAdminGatewayTestRoute:
 
             mock_client_class.return_value = mock_client
 
-            result = await admin_test_gateway(request, "test-user")
+            mock_db = MagicMock()
+            result = await admin_test_gateway(request, None, "test-user", mock_db)
 
             assert result.status_code == 502
             assert "Request timed out" in str(result.body)
@@ -1459,7 +1464,8 @@ class TestAdminGatewayTestRoute:
 
                 mock_client_class.return_value = mock_client
 
-                result = await admin_test_gateway(request, "test-user")
+                mock_db = MagicMock()
+                result = await admin_test_gateway(request, None, "test-user", mock_db)
 
                 assert result.status_code == 200
                 assert result.body["details"] == response_text
@@ -2716,3 +2722,36 @@ class TestEdgeCasesAndErrorHandling:
                 # Generic exceptions return redirect
                 # assert isinstance(result, RedirectResponse)
                 assert isinstance(result, JSONResponse)
+
+    async def test_admin_metrics_partial_html_tools(self, mock_request, mock_db):
+        """Test admin metrics partial HTML endpoint for tools."""
+        with patch("mcpgateway.services.tool_service.ToolService.get_top_tools", new_callable=AsyncMock) as mock_get_tools:
+            mock_get_tools.return_value = [
+                MagicMock(name="Tool1", execution_count=10),
+                MagicMock(name="Tool2", execution_count=5),
+            ]
+            result = await admin_metrics_partial_html(mock_request, "tools", 1, 10, mock_db, "test-user")
+            assert isinstance(result, HTMLResponse)
+            assert result.status_code == 200
+
+    async def test_admin_metrics_partial_html_invalid_entity(self, mock_request, mock_db):
+        """Test admin metrics partial HTML endpoint with invalid entity type."""
+        with pytest.raises(HTTPException) as exc_info:
+            await admin_metrics_partial_html(mock_request, "invalid", 1, 10, mock_db, "test-user")
+        assert exc_info.value.status_code == 400
+
+    async def test_admin_metrics_partial_html_resources(self, mock_request, mock_db):
+        """Test admin metrics partial HTML endpoint for resources."""
+        with patch("mcpgateway.services.resource_service.ResourceService.get_top_resources", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = []
+            result = await admin_metrics_partial_html(mock_request, "resources", 1, 10, mock_db, "test-user")
+            assert isinstance(result, HTMLResponse)
+            assert result.status_code == 200
+
+    async def test_admin_metrics_partial_html_pagination(self, mock_request, mock_db):
+        """Test admin metrics partial HTML endpoint with pagination."""
+        with patch("mcpgateway.services.prompt_service.PromptService.get_top_prompts", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = [MagicMock(name=f"Prompt{i}") for i in range(25)]
+            result = await admin_metrics_partial_html(mock_request, "prompts", 2, 10, mock_db, "test-user")
+            assert isinstance(result, HTMLResponse)
+            assert result.status_code == 200

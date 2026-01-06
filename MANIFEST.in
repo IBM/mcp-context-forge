@@ -10,6 +10,7 @@ include pyproject.toml
 include gunicorn.config.py
 include Containerfile
 include Containerfile.lite
+include Containerfile.scratch
 include __init__
 include alembic.ini
 include tox.ini
@@ -31,6 +32,7 @@ recursive-include tests/async *.py
 recursive-include tests/async *.yaml
 recursive-include examples *.yaml
 recursive-include plugin_templates *
+recursive-include mcpgateway/toolops *.md
 
 # Tooling/lint configuration dot-files (explicit so they're not lost)
 include .env.make
@@ -131,11 +133,15 @@ prune .ruff_cache
 prune .mypy_cache
 prune htmlcov
 
-# Virtual environments
+# Virtual environments (including nested in plugins)
 prune venv
 prune .venv
 prune env
 prune node_modules
+prune plugins/external/opa/.venv
+prune plugins/external/llmguard/.venv
+prune plugins/external/cedar/.venv
+global-exclude **/.venv/*
 
 # Environment files (security sensitive!)
 exclude .env
@@ -148,8 +154,9 @@ exclude *.db
 exclude *.sqlite
 exclude *.log
 
-# Lock files
+# Lock files (including nested in plugins)
 exclude uv.lock
+global-exclude **/uv.lock
 
 # Coverage data
 exclude .coverage
@@ -198,3 +205,12 @@ exclude plugins/external/llmguard/Containerfile
 exclude plugins/external/llmguard/MANIFEST.in
 exclude plugins/external/llmguard/pyproject.toml
 exclude plugins/external/llmguard/run-server.sh
+
+# Exclude cedar
+
+exclude plugins/external/cedar/.dockerignore
+exclude plugins/external/cedar/.env.template
+exclude plugins/external/cedar/.ruff.toml
+exclude plugins/external/cedar/Containerfile
+exclude plugins/external/cedar/MANIFEST.in
+exclude plugins/external/cedar/pyproject.toml

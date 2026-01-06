@@ -279,8 +279,14 @@ export GW_TOKEN=$(curl -s -u '{{ .Values.mcpContextForge.secret.BASIC_AUTH_USER 
   -X POST http://localhost:4444/auth/login | jq -r '.access_token')
 {{- else }}
 export GW_PASS=$(kubectl -n {{ $ns }} get secret {{ $gwSecret }} -o jsonpath="{.data.BASIC_AUTH_PASSWORD}" | base64 -d)
-export GW_TOKEN=$(curl -s -u '{{ .Values.mcpContextForge.secret.BASIC_AUTH_USER }}:$GW_PASS' \
-  -X POST http://localhost:4444/auth/login | jq -r '.access_token')
+export GW_TOKEN=$(curl --request POST \
+  --url http://localhost:4444/auth/login \
+  --header 'Content-Type: application/json' \
+  --data "{
+    \"email\": \"admin@example.com\",
+    \"password\": \"$GW_PASS\"
+  }" | jq -r '.access_token'
+)
 {{- end }}
 
 # 4) Test the gateway health

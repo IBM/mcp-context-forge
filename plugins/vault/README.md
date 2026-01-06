@@ -1,144 +1,224 @@
 # Vault Plugin
 
-The Vault Plugin provides secure storage and retrieval of secrets, ensuring that sensitive information is protected and managed effectively. It generates bearer tokens based on vault-saved tokens and integrates with gateway metadata and OAuth2 configurations.
-
-## Quick Start
+The Vault plugin generates bearer tokens from vault-saved tokens based on OAuth2 configuration protecting a tool.
+It receives a dictionary of secrets and use them to dispatch the authorization token to the server based on rules.
 
 ## Features
 
-Replace the Bearer token in a tool invocation based on a header that is send to the agent. Header is matched based on the MCP server metadata
-   - tag that start with system_tag_prefix
-   - extract the host of the authentication server from
+- **Tag-based metadata handling**: Supports dict format `{"id": "...", "label": "..."}`
+   - Supported tags must be created on an MCP server to drive the secret handling:
+        - system:<system host> where system host is the IDP provider for that MCP Server. For example system:github.com or system:mural.com
+        - AUTH_HEADER:<header name> where header name is the authorization header to be used for this MCP header if a PAT token is send
 
+- **Complex token key format**: Supports secrets send via a  header containing a JSON dictionary with keys like `github.com:USER:OAUTH2:TOKEN` or simple `github.com`
+- **PAT (Personal Access Token) support**: Use `AUTH_HEADER` tag to specify a custom header to be dispatched to the backend server.
+- **OAuth2 token support**: Default bearer token handling for OAuth2 tokens. If no specific rule for PAT the default behavior is to send the secret as Bearer token in Authorization header
+- **Flexible configuration**: Falls back to default bearer token behavior when parts are missing
 
+## Configuration
 
-## Installation
-
-1. Copy .env.example .env
-2. Enable plugins in `.env`
-3. Add the plugin configuration to `plugins/config.yaml`:
+### Basic Configuration
 
 ```yaml
-  - name: "VaultPlugin"
-    kind: "plugins.vault.vault_plugin.Vault"
-    description: "Vault plugin that based  that will generate bearer token based on a vault saved token"
-    version: "0.0.1"
-    author: "Adrian Popa"
-    hooks: ["tool_pre_invoke"]
-    tags: ["security", "vault", "OAUTH2"]
-    mode: "permissive"  # enforce | permissive | disabled
-    priority: 10  # Lower number = higher priority (runs first)
-    conditions:
-      - prompts: []  # Empty list = apply to all prompts
-        server_ids: []  # Apply to all servers
-        tenant_ids: []  # Apply to all tenants
-    config:
-      system_tag_prefix: "system"
-      vault_header_name: "X-Vault-Tokens"
-      vault_handling: "raw"
-
+vault:
+  enabled: true
+  config:
+    system_tag_prefix: "system"
+    vault_header_name: "X-Vault-Tokens"
+    vault_handling: "raw"
+    system_handling: "tag"
+    auth_header_tag_prefix: "AUTH_HEADER"
 ```
 
-## Configuration Examples
+### Configuration Options
 
-### Development Environment (Permissive)
-```yaml
-config:
-  system_tag_prefix: "system" ### The prefix of the tag that contains the system name
-  system_handling: "tag" # # Gets the OAUTH2 IDP host from tags. The tag must have the format "system:host" where host is the hostname of the IDP. Use oauth2_config to extract IDP hostname from the OAUTH_CONFIG metadata of the MCP Server template.
-  vault_header_name: "X-Vault-Tokens"  # Name of the header that contains the tokens.
-  vault_handling: "raw"  # Use the token that matches the system as bearer token
+- **system_tag_prefix**: Prefix for system identification tags (default: `"system"`)
+- **vault_header_name**: HTTP header name for vault tokens (default: `"X-Vault-Tokens"`)
+- **vault_handling**: Token handling mode (default: `"raw"`). Future version will handle token unwrapping
+- **system_handling**: System identification mode (default: `"tag"`)
+- **auth_header_tag_prefix**: Prefix for auth header tags (default: `"AUTH_HEADER"`)
 
+## Token Key Format
 
-### Features
-- Secure storage of secrets
-- Retrieval of secrets with access control
-- Integration with gateway metadata and OAuth2 configurations
+The plugin supports complex token keys in the format:
 
-## Available Hooks
-
-The Vault Plugin implement hooks at these lifecycle points:
-
-| Hook | Description | Payload Type | Use Cases |
-|------|-------------|--------------|-----------|
-| `tool_pre_invoke` | Before tool invocation | `ToolPreInvokePayload` | Access control for OAUTH2 server |
-
-
-
-### Plugin Modes
-
-
-- **`permissive`**: Change headers if possible but allows request to continue
-
-### Plugin Priority
-
-Lower priority numbers run first (higher priority). Recommended ranges:
-- **1-50**: Critical security plugins (access control)
-- **51-100**: Content filtering and validation
-- **101-200**: Transformations and enhancements
-- **201+**: Logging and monitoring
-
-
-### Logging and Monitoring
-
-```python
-def __init__(self, config: PluginConfig):
-    super().__init__(config)
-    self.logger.info(f"Initialized {self.name} v{self.version}")
-
-async def vault_pre_fetch(self, payload: VaultPreFetchPayload) -> VaultPreFetchPayload:
-    self.logger.debug(f"Processing vault: {payload.secret_name}")
-    # ... plugin logic
-    self.metrics.increment("requests_processed")
 ```
+system[:scope][:token_type][:token_name]
+```
+
+Where:
+- **system** (required): The system identifier (e.g., `github.com`, `gitlab.com`)
+- **scope** (optional): USER or GROUP (ignored in processing)
+- **token_type** (optional): PAT or OAUTH2
+- **token_name** (optional): Name of the token
+
+### Examples
+
+1. **Simple key**: `github.com`
+   - Uses default OAuth2 bearer token handling
+
+2. **Full PAT key**: `github.com:USER:PAT:my-token`
+   - System: `github.com`
+   - Scope: `USER` (ignored)
+   - Token type: `PAT`
+   - Token name: `my-token`
+   - Checks for `AUTH_HEADER` tag to determine header name
+
+3. **OAuth2 key**: `gitlab.com:GROUP:OAUTH2:app-token`
+   - System: `gitlab.com`
+   - Scope: `GROUP` (ignored)
+   - Token type: `OAUTH2`
+   - Token name: `TOKEN` (default name)
+   - Uses OAuth2 bearer token handling
+
+## Token Type Handling
+
+### PAT (Personal Access Token)
+
+When `token_type` is `PAT`:
+1. Checks if AUTH_HEADER:header tag exists
+2. If found, uses the configured custom header
+3. If not found, falls back to `Authorization: Bearer <token>`
+
+### OAUTH2
+
+When `token_type` is `OAUTH2` or missing:
+- Uses standard `Authorization: Bearer <token>` header
+
+### Unknown Types
+
+For any other token type:
+- Logs a warning
+- Falls back to `Authorization: Bearer <token>`
+
+## Gateway Metadata Tags
+
+The plugin handles tags in dict format:
+
+```json
+{
+  "tags": [
+    {"id": "auto-generated-id", "label": "system:github.com"},
+    {"id": "another-id", "label": "AUTH_HEADER:X-GitHub-Token"},
+    {"id": "third-id", "label": "environment:production"}
+  ]
+}
+```
+
+The plugin extracts the `label` field from dict tags (the actual tag value), while `id` is autogenerated.
+
+### Tag Types
+
+1. **System Tag**: `system:<system_name>`
+   - Identifies which system the token is for
+   - Example: `system:github.com`
+   - Required for the plugin to work
+
+2. **Auth Header Tag**: `AUTH_HEADER:<header_name>`
+   - Specifies custom header for PAT tokens
+   - Example: `AUTH_HEADER:X-GitHub-Token`
+   - Only used when token type is PAT
+   - Optional - falls back to Bearer token if not present
+
+## Example Usage
+
+### Request with Vault Tokens
+
+```http
+POST /api/tools/invoke
+X-Vault-Tokens: {"github.com:USER:PAT:my-token": "ghp_xxxxxxxxxxxx", "gitlab.com": "glpat-yyyyyyyy"}
+```
+
+### Gateway with AUTH_HEADER Tag
+
+If gateway has tags including `AUTH_HEADER:X-GitHub-Token`:
+```json
+{
+  "tags": [
+    {"id": "1", "label": "system:github.com"},
+    {"id": "2", "label": "AUTH_HEADER:X-GitHub-Token"}
+  ]
+}
+```
+
+The plugin will set:
+```http
+X-GitHub-Token: ghp_xxxxxxxxxxxx
+```
+
+### Without AUTH_HEADER Tag
+
+If no `AUTH_HEADER` tag is defined, the plugin will use default Bearer token:
+```http
+Authorization: Bearer ghp_xxxxxxxxxxxx
+```
+
+## System Identification
+
+The plugin supports two modes for identifying the system:
+
+### TAG Mode (Default)
+
+Extracts system from gateway tags with the configured prefix:
+- Tag: `system:github.com` → System: `github.com`
+
+### OAUTH2_CONFIG Mode
+
+Extracts system from the OAuth2 configuration's `token_url`:
+- Token URL: `https://github.com/login/oauth/access_token` → System: `github.com`
+
+## Hook
+
+- **tool_pre_invoke**: Processes vault tokens before tool invocation
 
 
 ## Testing
-### Create an MCP gateway  that is OAUTH2 authenticated:
+
+## Create a token
+export MCPGATEWAY_BEARER_TOKEN = python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key
+
+export CLIENT_ID=xxx
+export CLIENT_SECRET=xxx
+
+
+## Register MCP server with the gateway and add OAuth2 configuration Using UI
+curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+           "name": "github_com",
+           "url": "https://api.githubcopilot.com/mcp/",
+           "description": "A new MCP server added with OAuth2 authentication",
+           "auth_type": "oauth",
+           "auth_value": {
+             "client_id": "'$CLIENT_ID'",
+             "client_secret": "'$CLIENT_SECRET'",
+             "token_url": "https://github.com/login/oauth/access_token",
+             "redirect_url": "http://localhost:4444/oauth/callback"
+           },
+           "tags": ["system:github.com"],
+           "passthrough_headers": ["X-Vault-Tokens"]
+         }' \
+     http://localhost:4444/gateways
+
+## Invocation
+When the server is configured invoke the server and send a pass through header of form
+
+    "X-Vault-Tokens": {
+        "github.com": "key"
+    },
+
+## Sample of Invoking a Tool on the Added Gateway
 
 ```bash
-curl -s \
-  -X POST \
-  -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-        "name": "github_com",
-        "url": "https://api.githubcopilot.com/mcp/",
-        "description": "A new MCP server added with OAuth2 authentication",
-        "auth_type": "oauth",
-        "auth_value": {
-          "client_id": "'$CLIENT_ID'",
-          "client_secret": "'$CLIENT_SECRET'",
-          "token_url": "https://github.com/login/oauth/access_token",
-          "redirect_url": "http://localhost:4444/oauth/callback"
-        },
-        "tags": ["system:github.com"],
-        "passthrough_headers": ["X-Vault-Tokens"]
-      }' \
-  http://localhost:4444/gateways
-```
-The bearer token can be created by running:
-
-```bash
- export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \              --username admin@example.com --exp 10080 --secret my-test-key)
-```
-
-### Invoke a tool sending the tokens in a dictionary
-```bash
-curl --request POST \
-  --url http://localhost:4444/rpc \
-  --header "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-  --header "Content-Type: application/json" \
-  --header "x-vault-tokens: {\"github.com\": \"123\"}" \
-  --data '{
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "tools/call",
-    "params": {
-      "name": "github-com-get-me",
-      "arguments": {
-        "timezone": "Asia/Kolkata"
-      }
-    }
-  }'
+# Invoke a tool on the added gateway
+curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
+     -H 'X-Vault-Tokens: "{\"github.com\": \"key\"}"' \
+     -d '{
+           "tool_name": "github-com-list-issues",
+           "arguments": {
+             "repo": "reponame"
+           }
+         }' \
+     http://localhost:4444/tools/invoke
 ```

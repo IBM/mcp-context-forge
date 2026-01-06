@@ -18,7 +18,7 @@ export COMPOSE_CMD="docker compose"
 ## 🐳/🦭 Build the images
 
 ```bash
-docker pull ghcr.io/ibm/mcp-context-forge:0.9.0
+docker pull ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
 ```
 
 ## 🐳/🦭 Build the images (when doing local development)
@@ -101,18 +101,17 @@ Uncomment one service block in `docker-compose.yml` and align `DATABASE_URL`:
 | Service block         | Connection string                             | Notes                          |
 | --------------------- | --------------------------------------------- | ------------------------------ |
 | `postgres:` (default) | `postgresql://postgres:...@postgres:5432/mcp` | Recommended for production     |
-| `mariadb:`            | `mysql+pymysql://mysql:...@mariadb:3306/mcp`  | **Fully supported** - MariaDB 12.0+ |
+| `mariadb:`            | `mysql+pymysql://mysql:...@mariadb:3306/mcp`  | **Fully supported** - MariaDB 10.6+ |
 | `mysql:`              | `mysql+pymysql://admin:...@mysql:3306/mcp`    | Alternative MySQL variant      |
-| `mongodb:`            | `mongodb://admin:...@mongodb:27017/mcp`       | NoSQL option                   |
 
 Named volumes (`pgdata`, `mariadbdata`, `mysqldata`, `mongodata`) isolate persistent data.
 
 !!! info "MariaDB & MySQL Full Support"
     MariaDB and MySQL are **fully supported** alongside SQLite and PostgreSQL:
 
-    - **36+ database tables** work perfectly with MariaDB 12.0+ and MySQL 8.4+
+    - **36+ database tables** work perfectly with MariaDB 10.6+ and MySQL 8.0+
     - All **VARCHAR length issues** have been resolved for MariaDB/MySQL compatibility
-    - Simply uncomment the `mariadb:` service block in `docker-compose.yml`
+    - The `mariadb:` service block is available in `docker-compose.yml`
     - Use connection string: `mysql+pymysql://mysql:changeme@mariadb:3306/mcp`
 
 ---

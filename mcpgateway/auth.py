@@ -14,7 +14,7 @@ across different parts of the application without creating circular imports.
 from datetime import datetime, timezone
 import hashlib
 import logging
-from typing import Generator, Never, Optional
+from typing import Any, Dict, Generator, Never, Optional
 import uuid
 
 # Third-Party
@@ -26,10 +26,63 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, SessionLocal
 from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError
+from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.verify_credentials import verify_jwt_token
 
 # Security scheme
-bearer_scheme = HTTPBearer(auto_error=False)
+security = HTTPBearer(auto_error=False)
+
+
+def _log_auth_event(
+    logger: logging.Logger,
+    message: str,
+    level: int = logging.INFO,
+    user_id: Optional[str] = None,
+    auth_method: Optional[str] = None,
+    auth_success: bool = False,
+    security_event: Optional[str] = None,
+    security_severity: str = "low",
+    **extra_context,
+) -> None:
+    """Log authentication event with structured context and request_id.
+
+    This helper creates structured log records that include request_id from the
+    correlation ID context, enabling end-to-end tracing of authentication flows.
+
+    Args:
+        logger: Logger instance to use
+        message: Log message
+        level: Log level (default: INFO)
+        user_id: User identifier
+        auth_method: Authentication method used (jwt, api_token, etc.)
+        auth_success: Whether authentication succeeded
+        security_event: Type of security event (authentication, authorization, etc.)
+        security_severity: Severity level (low, medium, high, critical)
+        **extra_context: Additional context fields
+    """
+    # Get request_id from correlation ID context
+    request_id = get_correlation_id()
+
+    # Build structured log record
+    extra = {
+        "request_id": request_id,
+        "entity_type": "auth",
+        "auth_success": auth_success,
+        "security_event": security_event or "authentication",
+        "security_severity": security_severity,
+    }
+
+    if user_id:
+        extra["user_id"] = user_id
+    if auth_method:
+        extra["auth_method"] = auth_method
+
+    # Add any additional context
+    extra.update(extra_context)
+
+    # Log with structured context
+    logger.log(level, message, extra=extra)
 
 
 def get_db() -> Generator[Session, Never, None]:
@@ -53,8 +106,72 @@ def get_db() -> Generator[Session, Never, None]:
         db.close()
 
 
+async def get_team_from_token(payload: Dict[str, Any], db: Session) -> Optional[str]:
+    """
+    Extract the team ID from an authentication token payload. If the token does
+    not include a team, the user's personal team is retrieved from the database.
+
+    This function behaves as follows:
+
+    1. If `payload["teams"]` exists and is non-empty:
+       Returns the first team ID from that list.
+
+    2. If no teams are present in the payload:
+       Fetches the user's teams (using `payload["sub"]` as the user email) and
+       returns the ID of the personal team, if one exists.
+
+    Args:
+        payload (Dict[str, Any]):
+            The token payload. Expected fields:
+            - "sub" (str): The user's unique identifier (email).
+            - "teams" (List[str], optional): List containing team ID.
+        db (Session):
+            SQLAlchemy database session used to query team data.
+
+    Returns:
+        Optional[str]:
+            The resolved team ID. Returns `None` if no team can be determined
+            either from the payload or from the database.
+
+    Examples:
+        >>> import sys, asyncio
+        >>> from unittest.mock import AsyncMock, MagicMock
+        >>>
+        >>> # --- Mock setup for both tests ---
+        >>> mock_db = MagicMock()
+        >>>
+        >>> # Patch TeamManagementService import path dynamically
+        >>> mock_team_service = AsyncMock()
+        >>> mock_team = MagicMock(id="personal_team_123", is_personal=True)
+        >>> mock_team_service.get_user_teams.return_value = [mock_team]
+        >>>
+        >>> sys.modules['mcpgateway.services.team_management_service'] = type(sys)("dummy")
+        >>> sys.modules['mcpgateway.services.team_management_service'].TeamManagementService = lambda db: mock_team_service
+        >>>
+        >>> # --- Case 1: Token has team ---
+        >>> payload = {"sub": "user@example.com", "teams": ["team_456"]}
+        >>> asyncio.run(get_team_from_token(payload, mock_db))
+        'team_456'
+        >>> del sys.modules["mcpgateway.services.team_management_service"]
+    """
+    team_id = payload.get("teams")[0] if payload.get("teams") else None
+    if isinstance(team_id, dict):
+        team_id = team_id.get("id")
+    user_email = payload.get("sub")
+
+    # If no team found in token, get user's personal team
+    if not team_id:
+
+        team_service = TeamManagementService(db)
+        user_teams = await team_service.get_user_teams(user_email, include_personal=True)
+        personal_team = next((team for team in user_teams if team.is_personal), None)
+        team_id = personal_team.id if personal_team else None
+
+    return team_id
+
+
 async def get_current_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     db: Session = Depends(get_db),
     request: Optional[object] = None,
 ) -> EmailUser:
@@ -104,23 +221,31 @@ async def get_current_user(
             if request and hasattr(request, "headers"):
                 headers = dict(request.headers)
 
-            # Get request ID from request state (set by middleware) or generate new one
-            request_id = None
-            if request and hasattr(request, "state") and hasattr(request.state, "request_id"):
-                request_id = request.state.request_id
-            else:
-                request_id = uuid.uuid4().hex
+            # Get request ID from correlation ID context (set by CorrelationIDMiddleware)
+            request_id = get_correlation_id()
+            if not request_id:
+                # Fallback chain for safety
+                if request and hasattr(request, "state") and hasattr(request.state, "request_id"):
+                    request_id = request.state.request_id
+                else:
+                    request_id = uuid.uuid4().hex
+                    logger.debug(f"Generated fallback request ID in get_current_user: {request_id}")
 
-            # Create global context
-            global_context = GlobalContext(
-                request_id=request_id,
-                server_id=None,
-                tenant_id=None,
-            )
+            # Get plugin contexts from request state if available
+            global_context = getattr(request.state, "plugin_global_context", None) if request else None
+            if not global_context:
+                # Create global context
+                global_context = GlobalContext(
+                    request_id=request_id,
+                    server_id=None,
+                    tenant_id=None,
+                )
+
+            context_table = getattr(request.state, "plugin_context_table", None) if request else None
 
             # Invoke custom auth resolution hook
             # violations_as_exceptions=True so PluginViolationError is raised for explicit denials
-            auth_result, _ = await plugin_manager.invoke_hook(
+            auth_result, context_table_result = await plugin_manager.invoke_hook(
                 HttpHookType.HTTP_AUTH_RESOLVE_USER,
                 payload=HttpAuthResolveUserPayload(
                     credentials=credentials_dict,
@@ -129,7 +254,7 @@ async def get_current_user(
                     client_port=client_port,
                 ),
                 global_context=global_context,
-                local_contexts=None,
+                local_contexts=context_table,
                 violations_as_exceptions=True,  # Raise PluginViolationError for auth denials
             )
 
@@ -150,12 +275,17 @@ async def get_current_user(
                 )
 
                 # Store auth_method in request.state so it can be accessed by RBAC middleware
-                if request and hasattr(request, "state") and auth_result.metadata:
+                if request and auth_result.metadata:
                     auth_method = auth_result.metadata.get("auth_method")
                     if auth_method:
                         request.state.auth_method = auth_method
                         logger.debug(f"Stored auth_method '{auth_method}' in request.state")
 
+                if request and context_table_result:
+                    request.state.plugin_context_table = context_table_result
+
+                if request and global_context:
+                    request.state.plugin_global_context = global_context
                 return user
             # If continue_processing=True (no payload), fall through to standard auth
 
@@ -226,6 +356,11 @@ async def get_current_user(
             except Exception as revoke_check_error:
                 # Log the error but don't fail authentication for admin tokens
                 logger.warning(f"Token revocation check failed for JTI {jti}: {revoke_check_error}")
+
+        # Check team level token, if applicable. If public token, then will be defaulted to personal team.
+        team_id = await get_team_from_token(payload, db)
+        if request:
+            request.state.team_id = team_id
 
     except HTTPException:
         # Re-raise HTTPException from verify_jwt_token (handles expired/invalid tokens)

@@ -86,8 +86,12 @@ def mock_agent():
 
 # ==================== HELPER FUNCTIONS ====================
 
-def create_connect_payload(user_id: str, provider: str = "ollama") -> Dict[str, Any]:
-    """Helper to create connect request payload"""
+def create_connect_payload(user_id: str, model: str = "test-model") -> Dict[str, Any]:
+    """Helper to create connect request payload.
+
+    Note: Models must be configured via Admin UI -> LLM Settings.
+    The model parameter should match a model_id from the gateway.
+    """
     return {
         "user_id": user_id,
         "server": {
@@ -96,11 +100,8 @@ def create_connect_payload(user_id: str, provider: str = "ollama") -> Dict[str, 
             "auth_token": "test-token"
         },
         "llm": {
-            "provider": provider,
-            "config": {
-                "model": "llama2",
-                "base_url": "http://localhost:11434"
-            }
+            "model": model,
+            "temperature": 0.7,
         },
         "streaming": False
     }

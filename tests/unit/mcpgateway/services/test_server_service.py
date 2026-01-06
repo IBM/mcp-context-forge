@@ -80,7 +80,7 @@ def mock_server(mock_tool, mock_resource, mock_prompt):
     server.modified_by = "test_user"
     server.created_at = "2023-01-01T00:00:00"
     server.updated_at = "2023-01-01T00:00:00"
-    server.is_active = True
+    server.enabled = True
 
     # Ownership fields for RBAC
     server.owner_email = "user@example.com"  # Match default test user
@@ -215,7 +215,7 @@ class TestServerService:
                 icon="http://example.com/image.jpg",
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
-                is_active=True,
+                enabled=True,
                 associated_tools=[],
                 associated_resources=[],
                 associated_prompts=[],
@@ -260,7 +260,7 @@ class TestServerService:
         mock_db_server.modified_by = "test_user"
         mock_db_server.created_at = "2023-01-01T00:00:00"
         mock_db_server.updated_at = "2023-01-01T00:00:00"
-        mock_db_server.is_active = True
+        mock_db_server.enabled = True
         mock_db_server.metrics = []
 
         # Create mock lists with append methods
@@ -307,8 +307,8 @@ class TestServerService:
         test_db.get = Mock(
             side_effect=lambda cls, _id: {
                 (DbTool, "101"): mock_tool,
-                (DbResource, 201): mock_resource,
-                (DbPrompt, 301): mock_prompt,
+                (DbResource, "201"): mock_resource,
+                (DbPrompt, "301"): mock_prompt,
             }.get((cls, _id))
         )
 
@@ -322,10 +322,10 @@ class TestServerService:
                 icon="server-icon",
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
-                is_active=True,
+                enabled=True,
                 associated_tools=["101"],
-                associated_resources=[201],
-                associated_prompts=[301],
+                associated_resources=["201"],
+                associated_prompts=["301"],
                 metrics={
                     "total_executions": 0,
                     "successful_executions": 0,
@@ -359,8 +359,8 @@ class TestServerService:
 
         assert result.name == "test_server"
         assert "101" in result.associated_tools
-        assert 201 in result.associated_resources
-        assert 301 in result.associated_prompts
+        assert "201" in result.associated_resources
+        assert "301" in result.associated_prompts
 
     @pytest.mark.asyncio
     async def test_register_server_name_conflict(self, server_service, mock_server, test_db):
@@ -428,10 +428,10 @@ class TestServerService:
             icon="http://example.com/image.jgp",
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
-            is_active=True,
+            enabled=True,
             associated_tools=["101"],
-            associated_resources=[201],
-            associated_prompts=[301],
+            associated_resources=["201"],
+            associated_prompts=["301"],
             metrics={
                 "total_executions": 0,
                 "successful_executions": 0,
@@ -464,10 +464,10 @@ class TestServerService:
             icon="http://example.com/image.jpg",
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
-            is_active=True,
+            enabled=True,
             associated_tools=["101"],
-            associated_resources=[201],
-            associated_prompts=[301],
+            associated_resources=["201"],
+            associated_prompts=["301"],
             metrics={
                 "total_executions": 0,
                 "successful_executions": 0,
@@ -511,21 +511,31 @@ class TestServerService:
         new_prompt.name = "new_prompt"
         new_prompt._sa_instance_state = MagicMock()
 
+        # db.get is still used to retrieve the Server itself
         test_db.get = Mock(
             side_effect=lambda cls, _id: (
                 mock_server
                 if (cls, _id) == (DbServer, 1)
-                else {
-                    (DbTool, 102): new_tool,
-                    (DbResource, 202): new_resource,
-                    (DbPrompt, 302): new_prompt,
-                }.get((cls, _id))
+                else None
             )
         )
 
-        mock_scalar = Mock()
-        mock_scalar.scalar_one_or_none.return_value = None
-        test_db.execute = Mock(return_value=mock_scalar)
+        # FIX: Configure db.execute to handle both the conflict check and the bulk item fetches
+        mock_db_result = MagicMock()
+
+        # 1. Handle name conflict check: scalar_one_or_none() -> None
+        mock_db_result.scalar_one_or_none.return_value = None
+
+        # 2. Handle bulk fetches: scalars().all() -> lists of items
+        # The code executes bulk queries in this order: Tools -> Resources -> Prompts
+        mock_db_result.scalars.return_value.all.side_effect = [
+            [new_tool],      # First call: select(DbTool)...
+            [new_resource],  # Second call: select(DbResource)...
+            [new_prompt]     # Third call: select(DbPrompt)...
+        ]
+
+        test_db.execute = Mock(return_value=mock_db_result)
+
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
@@ -539,18 +549,15 @@ class TestServerService:
         resource_items = []
         prompt_items = []
 
-        mock_tools.append = Mock(side_effect=lambda x: tool_items.append(x))
-        mock_resources.append = Mock(side_effect=lambda x: resource_items.append(x))
-        mock_prompts.append = Mock(side_effect=lambda x: prompt_items.append(x))
-
-        # Make them iterable for conversion
+        # Configure the mock lists to act like real lists for validation
         mock_tools.__iter__ = Mock(return_value=iter(tool_items))
         mock_resources.__iter__ = Mock(return_value=iter(resource_items))
         mock_prompts.__iter__ = Mock(return_value=iter(prompt_items))
 
-        mock_server.tools = mock_tools
-        mock_server.resources = mock_resources
-        mock_server.prompts = mock_prompts
+        # Capture assignment to the lists (since the new code does server.tools = list(...))
+        mock_server.tools = tool_items
+        mock_server.resources = resource_items
+        mock_server.prompts = prompt_items
 
         server_service._notify_server_updated = AsyncMock()
         server_service._convert_server_to_read = Mock(
@@ -561,10 +568,10 @@ class TestServerService:
                 icon="http://example.com/image.jpg",
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
-                is_active=True,
+                enabled=True,
                 associated_tools=["102"],
-                associated_resources=[202],
-                associated_prompts=[302],
+                associated_resources=["202"],
+                associated_prompts=["302"],
                 metrics={
                     "total_executions": 0,
                     "successful_executions": 0,
@@ -653,7 +660,7 @@ class TestServerService:
             server_team.visibility = "team"
             server_team.team_id = "teamA"
 
-            conflict_team_server = types.SimpleNamespace(id="3", name="existing_server", is_active=True, visibility="team", team_id="teamA")
+            conflict_team_server = types.SimpleNamespace(id="3", name="existing_server", enabled=True, visibility="team", team_id="teamA")
 
             test_db.get = Mock(return_value=server_team)
             mock_scalar = Mock()
@@ -681,7 +688,7 @@ class TestServerService:
             server_public.visibility = "public"
             server_public.team_id = None
 
-            conflict_public_server = types.SimpleNamespace(id="5", name="existing_server", is_active=True, visibility="public", team_id=None)
+            conflict_public_server = types.SimpleNamespace(id="5", name="existing_server", enabled=True, visibility="public", team_id=None)
 
             test_db.get = Mock(return_value=server_public)
             mock_scalar = Mock()
@@ -720,10 +727,10 @@ class TestServerService:
                 icon="server-icon",
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
-                is_active=False,
+                enabled=False,
                 associated_tools=["101"],
-                associated_resources=[201],
-                associated_prompts=[301],
+                associated_resources=["201"],
+                associated_prompts=["301"],
                 metrics={
                     "total_executions": 0,
                     "successful_executions": 0,
@@ -743,7 +750,7 @@ class TestServerService:
         test_db.commit.assert_called_once()
         test_db.refresh.assert_called_once()
         server_service._notify_server_deactivated.assert_called_once()
-        assert result.is_active is False
+        assert result.enabled is False
 
     # --------------------------- delete -------------------------------- #
     @pytest.mark.asyncio
@@ -814,7 +821,7 @@ class TestServerService:
                 icon=None,
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
-                is_active=True,
+                enabled=True,
                 associated_tools=[],
                 associated_resources=[],
                 associated_prompts=[],
@@ -885,7 +892,7 @@ class TestServerService:
                 icon=None,
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
-                is_active=True,
+                enabled=True,
                 associated_tools=[],
                 associated_resources=[],
                 associated_prompts=[],
@@ -949,7 +956,7 @@ class TestServerService:
                 icon=None,
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
-                is_active=True,
+                enabled=True,
                 associated_tools=[],
                 associated_resources=[],
                 associated_prompts=[],
@@ -1011,7 +1018,7 @@ class TestServerService:
         existing_server = MagicMock(spec=DbServer)
         existing_server.id = "oldserverid"
         existing_server.name = "Old Name"
-        existing_server.is_active = True
+        existing_server.enabled = True
         existing_server.tools = []
         existing_server.resources = []
         existing_server.prompts = []
@@ -1046,7 +1053,7 @@ class TestServerService:
                 icon=None,
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
-                is_active=True,
+                enabled=True,
                 associated_tools=[],
                 associated_resources=[],
                 associated_prompts=[],

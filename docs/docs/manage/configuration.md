@@ -14,16 +14,15 @@ MCP Gateway supports multiple database backends with full feature parity across 
 |-------------|---------------|--------------------------------------------------------------|--------------------------------|
 | SQLite      | ✅ Full       | `sqlite:///./mcp.db`                                        | Default, file-based            |
 | PostgreSQL  | ✅ Full       | `postgresql://postgres:changeme@localhost:5432/mcp`         | Recommended for production     |
-| MariaDB     | ✅ Full       | `mysql+pymysql://mysql:changeme@localhost:3306/mcp`         | **36+ tables**, MariaDB 12.0+ |
+| MariaDB     | ✅ Full       | `mysql+pymysql://mysql:changeme@localhost:3306/mcp`         | **36+ tables**, MariaDB 10.6+ |
 | MySQL       | ✅ Full       | `mysql+pymysql://admin:changeme@localhost:3306/mcp`         | Alternative MySQL variant      |
-| MongoDB     | ✅ Full       | `mongodb://admin:changeme@localhost:27017/mcp`              | NoSQL document store           |
 
 ### MariaDB/MySQL Setup Details
 
 !!! success "MariaDB & MySQL Full Support"
     MariaDB and MySQL are **fully supported** alongside SQLite and PostgreSQL:
 
-    - **36+ database tables** work perfectly with MariaDB 12.0+ and MySQL 8.4+
+    - **36+ database tables** work perfectly with MariaDB 10.6+ and MySQL 8.0+
     - All **VARCHAR length issues** have been resolved for MariaDB/MySQL compatibility
     - Complete feature parity with SQLite and PostgreSQL
     - Supports all MCP Gateway features including federation, caching, and A2A agents
@@ -154,9 +153,8 @@ DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
 ```bash
 # Database connection (choose one)
 DATABASE_URL=sqlite:///./mcp.db                                        # SQLite (default)
-DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp          # MySQL
+DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp          # MariaDB/MySQL
 DATABASE_URL=postgresql://postgres:changeme@localhost:5432/mcp          # PostgreSQL
-DATABASE_URL=mongodb://admin:changeme@localhost:27017/mcp               # MongoDB
 
 # Connection pool settings (optional)
 DB_POOL_SIZE=200
@@ -176,10 +174,58 @@ PORT=4444
 ENVIRONMENT=development
 APP_DOMAIN=localhost
 APP_ROOT_PATH=
-
-# TLS helper (run-gunicorn.sh)
-# SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-gunicorn.sh
 ```
+
+### Gunicorn Production Server
+
+The production server uses Gunicorn with UVicorn workers. Configure via environment variables or `.env` file:
+
+```bash
+# Worker Configuration
+GUNICORN_WORKERS=auto                 # Number of workers ("auto" = 2*CPU+1, capped at 16)
+GUNICORN_TIMEOUT=600                  # Worker timeout in seconds (increase for long requests)
+GUNICORN_MAX_REQUESTS=100000          # Requests per worker before restart (prevents memory leaks)
+GUNICORN_MAX_REQUESTS_JITTER=100      # Random jitter to prevent thundering herd
+
+# Performance Options
+GUNICORN_PRELOAD_APP=true             # Preload app before forking (saves memory, runs migrations once)
+GUNICORN_DEV_MODE=false               # Enable hot reload (not for production!)
+DISABLE_ACCESS_LOG=true               # Disable access logs for performance (default: true)
+
+# TLS/SSL Configuration
+SSL=false                             # Enable TLS/SSL
+CERT_FILE=certs/cert.pem              # Path to SSL certificate
+KEY_FILE=certs/key.pem                # Path to SSL private key
+KEY_FILE_PASSWORD=                    # Passphrase for encrypted private key
+
+# Process Management
+FORCE_START=false                     # Bypass lock file check
+```
+
+**Starting the Production Server:**
+
+```bash
+# Basic startup
+./run-gunicorn.sh
+
+# With TLS
+SSL=true ./run-gunicorn.sh
+
+# With custom workers
+GUNICORN_WORKERS=8 ./run-gunicorn.sh
+
+# Use fixed worker count instead of auto-detection
+GUNICORN_WORKERS=4 ./run-gunicorn.sh
+
+# High-performance mode (disable access logs)
+DISABLE_ACCESS_LOG=true ./run-gunicorn.sh
+```
+
+!!! tip "Worker Count Recommendations"
+    - **CPU-bound workloads**: 2-4 × CPU cores
+    - **I/O-bound workloads**: 4-12 × CPU cores
+    - **Memory-constrained**: Start with 2 and monitor
+    - **Auto mode**: Uses formula `min(2*CPU+1, 16)`
 
 ### Authentication & Security
 
@@ -224,6 +270,7 @@ AUTH_ENCRYPTION_SECRET=$(openssl rand -hex 32)
 # Core Features
 MCPGATEWAY_UI_ENABLED=true
 MCPGATEWAY_ADMIN_API_ENABLED=true
+MCPGATEWAY_UI_AIRGAPPED=false          # Use local CDN assets for airgapped deployments
 MCPGATEWAY_BULK_IMPORT_ENABLED=true
 MCPGATEWAY_BULK_IMPORT_MAX_TOOLS=200
 
@@ -240,6 +287,33 @@ FEDERATION_DISCOVERY=true
 FEDERATION_PEERS=["https://gateway-1.internal", "https://gateway-2.internal"]
 ```
 
+### Airgapped Deployments
+
+For environments without internet access, the Admin UI can be configured to use local CDN assets instead of external CDNs.
+
+```bash
+# Enable airgapped mode (loads CSS/JS from local files)
+MCPGATEWAY_UI_AIRGAPPED=true
+```
+
+!!! info "Airgapped Mode Features"
+    When `MCPGATEWAY_UI_AIRGAPPED=true`:
+
+    - All CSS and JavaScript libraries are loaded from local files
+    - No external CDN connections required (Tailwind, HTMX, CodeMirror, Alpine.js, Chart.js)
+    - Assets are automatically downloaded during container build
+    - Total asset size: ~932KB
+    - Full UI functionality maintained
+
+!!! warning "Container Build Required"
+    Airgapped mode requires building with `Containerfile.lite` which automatically downloads all CDN assets during the build process. The assets are not included in the Git repository.
+
+**Container Build Example:**
+```bash
+docker build -f Containerfile.lite -t mcpgateway:airgapped .
+docker run -e MCPGATEWAY_UI_AIRGAPPED=true -p 4444:4444 mcpgateway:airgapped
+```
+
 ### Caching Configuration
 
 ```bash
@@ -252,6 +326,19 @@ CACHE_PREFIX=mcpgateway
 SESSION_TTL=3600
 MESSAGE_TTL=600
 RESOURCE_CACHE_TTL=1800
+
+# Redis Connection Pool (performance-tuned defaults)
+REDIS_MAX_CONNECTIONS=50            # Pool size per worker
+REDIS_SOCKET_TIMEOUT=2.0            # Read/write timeout (seconds)
+REDIS_SOCKET_CONNECT_TIMEOUT=2.0    # Connection timeout (seconds)
+REDIS_RETRY_ON_TIMEOUT=true         # Retry commands on timeout
+REDIS_HEALTH_CHECK_INTERVAL=30      # Health check interval (seconds, 0=disabled)
+REDIS_DECODE_RESPONSES=true         # Return strings instead of bytes
+
+# Redis Leader Election (multi-node deployments)
+REDIS_LEADER_TTL=15                 # Leader TTL (seconds)
+REDIS_LEADER_KEY=gateway_service_leader
+REDIS_LEADER_HEARTBEAT_INTERVAL=5   # Heartbeat interval (seconds)
 ```
 
 ### Logging Settings
@@ -268,7 +355,21 @@ LOG_FOLDER=logs
 
 # Structured Logging
 LOG_FORMAT=json                     # json, plain
+
+# Database Log Persistence (disabled by default for performance)
+STRUCTURED_LOGGING_DATABASE_ENABLED=false
 ```
+
+#### Structured Log Database Persistence
+
+When `STRUCTURED_LOGGING_DATABASE_ENABLED=true`, logs are persisted to the database enabling:
+
+- **Log Search API** (`/api/logs/search`) - Search logs by level, component, user, time range
+- **Request Tracing** (`/api/logs/trace/{correlation_id}`) - Trace all logs for a request
+- **Performance Metrics** - Aggregated p50/p95/p99 latencies and error rates
+- **Admin UI Log Viewer** - Browse and filter logs in the web interface
+
+When disabled (default), logs only go to console/file. This improves performance by avoiding synchronous database writes on each log entry. Use this setting if you have an external log aggregator (ELK, Datadog, Splunk, etc.).
 
 ### Development & Debug
 
@@ -284,6 +385,46 @@ OTEL_ENABLE_OBSERVABILITY=true
 OTEL_TRACES_EXPORTER=otlp
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 ```
+
+### LLM Settings (Internal API)
+
+MCP Gateway can act as a unified LLM provider with an OpenAI-compatible API. Configure multiple external LLM providers through the Admin UI and expose them through a single proxy endpoint.
+
+```bash
+# LLM API Configuration
+LLM_API_PREFIX=/v1                  # API prefix for internal LLM endpoints
+LLM_REQUEST_TIMEOUT=120             # Request timeout for LLM API calls (seconds)
+LLM_STREAMING_ENABLED=true          # Enable streaming responses
+LLM_HEALTH_CHECK_INTERVAL=300       # Provider health check interval (seconds)
+
+# Gateway Provider Settings (for LLM Chat with provider=gateway)
+GATEWAY_MODEL=gpt-4o                # Default model to use
+GATEWAY_BASE_URL=                   # Base URL (defaults to internal API)
+GATEWAY_TEMPERATURE=0.7             # Sampling temperature
+```
+
+!!! info "Provider Configuration"
+    LLM providers (OpenAI, Azure OpenAI, Anthropic, Ollama, Google, Mistral, Cohere, AWS Bedrock, Groq, etc.) are configured through the Admin UI under **LLM Settings > Providers**. The settings above control the gateway's internal LLM proxy behavior.
+
+**OpenAI-Compatible API Endpoints:**
+
+```bash
+# List available models
+curl -H "Authorization: Bearer $TOKEN" http://localhost:4444/v1/models
+
+# Chat completion
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gpt-4o", "messages": [{"role": "user", "content": "Hello"}]}' \
+  http://localhost:4444/v1/chat/completions
+```
+
+**Admin UI Features:**
+
+- **Providers**: Add, edit, enable/disable, and delete LLM providers
+- **Models**: View, test, and manage models from configured providers
+- **Health Checks**: Monitor provider health with automatic status checks
+- **Model Discovery**: Fetch available models from providers and sync to database
 
 ---
 

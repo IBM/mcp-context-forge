@@ -1,6 +1,6 @@
 # config.yaml
 host:
-  name: "{{ plugin_name|lower|replace(' ', '_')|replace('-', '_') }}"
+  name: "cedarpolicyplugin"
   log_level: "INFO"
 
 server:

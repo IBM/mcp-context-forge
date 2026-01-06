@@ -340,8 +340,8 @@ class ExportService:
         exported_gateways = []
 
         for gateway in gateways:
-            # Filter by tags if specified
-            if tags and not any(tag in (gateway.tags or []) for tag in tags):
+            # Filter by tags if specified — match by tag 'id' when tag objects present
+            if tags and not any(str(tag) in {(str(t.get("id")) if isinstance(t, dict) and t.get("id") is not None else str(t)) for t in (gateway.tags or [])} for tag in tags):
                 continue
 
             gateway_data = {
@@ -399,7 +399,7 @@ class ExportService:
                 "websocket_endpoint": f"{root_path}/servers/{server.id}/ws",
                 "jsonrpc_endpoint": f"{root_path}/servers/{server.id}/jsonrpc",
                 "capabilities": {"tools": {"list_changed": True}, "prompts": {"list_changed": True}},
-                "is_active": server.is_active,
+                "is_active": getattr(server, "enabled", getattr(server, "is_active", False)),
                 "tags": server.tags or [],
             }
 
@@ -429,7 +429,8 @@ class ExportService:
                 "description": prompt.description,
                 "input_schema": input_schema,
                 "tags": prompt.tags or [],
-                "is_active": prompt.is_active,
+                # Use the new `enabled` attribute on prompt objects but keep export key `is_active` for compatibility
+                "is_active": getattr(prompt, "enabled", getattr(prompt, "is_active", False)),
             }
 
             # Convert arguments to input schema format
@@ -468,7 +469,7 @@ class ExportService:
                 "description": resource.description,
                 "mime_type": resource.mime_type,
                 "tags": resource.tags or [],
-                "is_active": resource.is_active,
+                "is_active": getattr(resource, "enabled", getattr(resource, "is_active", False)),
                 "last_modified": resource.updated_at.isoformat() if resource.updated_at else None,
             }
 

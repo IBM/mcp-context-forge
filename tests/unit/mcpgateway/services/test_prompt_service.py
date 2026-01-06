@@ -44,6 +44,16 @@ from mcpgateway.services.prompt_service import (
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def mock_logging_services():
+    """Mock audit_trail and structured_logger to prevent database writes during tests."""
+    with patch("mcpgateway.services.prompt_service.audit_trail") as mock_audit, \
+         patch("mcpgateway.services.prompt_service.structured_logger") as mock_logger:
+        mock_audit.log_action = MagicMock(return_value=None)
+        mock_logger.log = MagicMock(return_value=None)
+        yield {"audit_trail": mock_audit, "structured_logger": mock_logger}
+
+
 @pytest.fixture
 def mock_prompt():
     """Create a mock prompt model."""
@@ -94,6 +104,8 @@ def _build_db_prompt(
     p.argument_schema = {"properties": {"name": {"type": "string"}}, "required": ["name"]}
     p.created_at = p.updated_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
     p.is_active = is_active
+    # New model uses `enabled` — keep both attributes for backward compatibility in tests
+    p.enabled = is_active
     p.metrics = metrics or []
     # validate_arguments: accept anything
     p.validate_arguments = Mock()
@@ -223,7 +235,7 @@ class TestPromptService:
         db_prompt = _build_db_prompt(template="Hello, {{ name }}!")
         test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))
 
-        pr: PromptResult = await prompt_service.get_prompt(test_db, 1, {"name": "Alice"})
+        pr: PromptResult = await prompt_service.get_prompt(test_db, "1", {"name": "Alice"})
 
         assert isinstance(pr, PromptResult)
         assert len(pr.messages) == 1
@@ -237,7 +249,7 @@ class TestPromptService:
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
 
         with pytest.raises(PromptNotFoundError):
-            await prompt_service.get_prompt(test_db, 999)
+            await prompt_service.get_prompt(test_db, "999")
 
     @pytest.mark.asyncio
     async def test_get_prompt_inactive(self, prompt_service, test_db):
@@ -249,7 +261,7 @@ class TestPromptService:
             ]
         )
         with pytest.raises(PromptNotFoundError) as exc_info:
-            await prompt_service.get_prompt(test_db, 1)
+            await prompt_service.get_prompt(test_db, "1")
         assert "inactive" in str(exc_info.value)
 
     @pytest.mark.asyncio
@@ -258,7 +270,7 @@ class TestPromptService:
         test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))
         db_prompt.validate_arguments.side_effect = Exception("bad args")
         with pytest.raises(PromptError) as exc_info:
-            await prompt_service.get_prompt(test_db, 1, {"name": "Alice"})
+            await prompt_service.get_prompt(test_db, "1", {"name": "Alice"})
         assert "Failed to process prompt" in str(exc_info.value)
 
     @pytest.mark.asyncio
@@ -366,6 +378,7 @@ class TestPromptService:
         p.team_id = 1
         p.name = "hello"
         p.is_active = True
+        p.enabled = True
         test_db.get = Mock(return_value=p)
         test_db.commit = Mock()
         test_db.refresh = Mock()
@@ -373,9 +386,9 @@ class TestPromptService:
 
         res = await prompt_service.toggle_prompt_status(test_db, 1, activate=False)
 
-        assert p.is_active is False
+        assert p.enabled is False
         prompt_service._notify_prompt_deactivated.assert_called_once()
-        assert res["is_active"] is False
+        assert res["enabled"] is False
 
     @pytest.mark.asyncio
     async def test_toggle_prompt_status_not_found(self, prompt_service, test_db):
@@ -451,13 +464,16 @@ class TestPromptService:
 
     @pytest.mark.asyncio
     async def test_publish_event_puts_in_all_queues(self, prompt_service):
-        q1 = asyncio.Queue() # type: ignore[var-annotated]  # TODO: event types for services
-        q2 = asyncio.Queue() # type: ignore[var-annotated]  # TODO: event types for services
-        prompt_service._event_subscribers.extend([q1, q2])
+        """Test that _publish_event uses EventService to publish events."""
+        # Mock the EventService's publish_event method
+        prompt_service._event_service.publish_event = AsyncMock()
+
         event = {"type": "test"}
         await prompt_service._publish_event(event)
-        assert await q1.get() == event
-        assert await q2.get() == event
+
+        # Verify that EventService.publish_event was called with the event
+        prompt_service._event_service.publish_event.assert_called_once_with(event)
+
 
     # ──────────────────────────────────────────────────────────────────
     #   Validation & Exception Handling
@@ -498,18 +514,19 @@ class TestPromptService:
 
     @pytest.mark.asyncio
     async def test_aggregate_and_reset_metrics(self, prompt_service, test_db):
-        # Metrics numbers to be returned by scalar() calls
-        test_db.execute = Mock(
-            side_effect=[
-                _make_execute_result(scalar=10),  # total
-                _make_execute_result(scalar=8),  # successful
-                _make_execute_result(scalar=2),  # failed
-                _make_execute_result(scalar=0.1),  # min_rt
-                _make_execute_result(scalar=0.9),  # max_rt
-                _make_execute_result(scalar=0.5),  # avg_rt
-                _make_execute_result(scalar=datetime(2025, 1, 1, tzinfo=timezone.utc)),  # last_time
-            ]
-        )
+        # Mock a single aggregated query result with .one() call
+        mock_result = MagicMock()
+        mock_result.total_executions = 10
+        mock_result.successful_executions = 8
+        mock_result.failed_executions = 2
+        mock_result.min_response_time = 0.1
+        mock_result.max_response_time = 0.9
+        mock_result.avg_response_time = 0.5
+        mock_result.last_execution_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
+
+        execute_result = MagicMock()
+        execute_result.one.return_value = mock_result
+        test_db.execute = Mock(return_value=execute_result)
 
         metrics = await prompt_service.aggregate_metrics(test_db)
         assert metrics["total_executions"] == 10

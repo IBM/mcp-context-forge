@@ -9,6 +9,57 @@ TLS/SSL utility functions for external MCP plugin connections.
 This module provides utilities for creating and configuring SSL contexts for
 secure communication with external MCP plugin servers. It implements the
 certificate validation logic that is tested in test_client_certificate_validation.py.
+
+Examples:
+    Create a basic SSL context with default settings:
+
+    >>> from mcpgateway.plugins.framework.models import MCPClientTLSConfig
+    >>> import ssl
+    >>> config = MCPClientTLSConfig()
+    >>> ctx = create_ssl_context(config, "ExamplePlugin")
+    >>> ctx.verify_mode == ssl.CERT_REQUIRED
+    True
+
+    Create an SSL context with hostname verification disabled:
+
+    >>> config = MCPClientTLSConfig(verify=True, check_hostname=False)
+    >>> ctx = create_ssl_context(config, "NoHostnamePlugin")
+    >>> ctx.verify_mode == ssl.CERT_REQUIRED
+    True
+    >>> ctx.check_hostname
+    False
+
+    Verify that TLS version is enforced:
+
+    >>> config = MCPClientTLSConfig(verify=True)
+    >>> ctx = create_ssl_context(config, "VersionTestPlugin")
+    >>> ctx.minimum_version >= ssl.TLSVersion.TLSv1_2
+    True
+
+    All SSL contexts have TLS 1.2 minimum:
+
+    >>> config1 = MCPClientTLSConfig(verify=True)
+    >>> config2 = MCPClientTLSConfig(verify=False)
+    >>> ctx1 = create_ssl_context(config1, "Plugin1")
+    >>> ctx2 = create_ssl_context(config2, "Plugin2")
+    >>> ctx1.minimum_version == ctx2.minimum_version
+    True
+    >>> ctx1.minimum_version.name
+    'TLSv1_2'
+
+    Verify mode differs based on configuration:
+
+    >>> config_secure = MCPClientTLSConfig(verify=True)
+    >>> config_insecure = MCPClientTLSConfig(verify=False)
+    >>> ctx_secure = create_ssl_context(config_secure, "SecureP")
+    >>> ctx_insecure = create_ssl_context(config_insecure, "InsecureP")
+    >>> ctx_secure.verify_mode != ctx_insecure.verify_mode
+    True
+    >>> import ssl
+    >>> ctx_secure.verify_mode == ssl.CERT_REQUIRED
+    True
+    >>> ctx_insecure.verify_mode == ssl.CERT_NONE
+    True
 """
 
 # Standard
@@ -57,16 +108,75 @@ def create_ssl_context(tls_config: MCPClientTLSConfig, plugin_name: str) -> ssl.
     Raises:
         PluginError: If SSL context configuration fails
 
-    Example:
-        >>> tls_config = MCPClientTLSConfig(  # doctest: +SKIP
-        ...     ca_bundle="/path/to/ca.crt",
-        ...     certfile="/path/to/client.crt",
-        ...     keyfile="/path/to/client.key",
-        ...     verify=True,
-        ...     check_hostname=True
-        ... )
-        >>> ssl_context = create_ssl_context(tls_config, "MyPlugin")  # doctest: +SKIP
-        >>> # Use ssl_context with httpx or other SSL connections
+    Examples:
+        Create SSL context with verification enabled (default secure mode):
+
+        >>> from mcpgateway.plugins.framework.models import MCPClientTLSConfig
+        >>> tls_config = MCPClientTLSConfig(verify=True)
+        >>> ssl_context = create_ssl_context(tls_config, "TestPlugin")
+        >>> ssl_context.verify_mode == 2  # ssl.CERT_REQUIRED
+        True
+        >>> ssl_context.check_hostname
+        True
+
+        Create SSL context with verification disabled (development/testing):
+
+        >>> tls_config = MCPClientTLSConfig(verify=False, check_hostname=False)
+        >>> ssl_context = create_ssl_context(tls_config, "DevPlugin")
+        >>> ssl_context.verify_mode == 0  # ssl.CERT_NONE
+        True
+        >>> ssl_context.check_hostname
+        False
+
+        Verify TLS 1.2 minimum version enforcement:
+
+        >>> tls_config = MCPClientTLSConfig(verify=True)
+        >>> ssl_context = create_ssl_context(tls_config, "SecurePlugin")
+        >>> ssl_context.minimum_version.name
+        'TLSv1_2'
+
+        Mixed security settings (verify enabled, hostname check disabled):
+
+        >>> tls_config = MCPClientTLSConfig(verify=True, check_hostname=False)
+        >>> ssl_context = create_ssl_context(tls_config, "MixedPlugin")
+        >>> ssl_context.verify_mode == 2  # ssl.CERT_REQUIRED
+        True
+        >>> ssl_context.check_hostname
+        False
+
+        Default configuration is secure:
+
+        >>> tls_config = MCPClientTLSConfig()
+        >>> ssl_context = create_ssl_context(tls_config, "DefaultPlugin")
+        >>> ssl_context.verify_mode == 2  # ssl.CERT_REQUIRED
+        True
+        >>> ssl_context.check_hostname
+        True
+        >>> ssl_context.minimum_version.name
+        'TLSv1_2'
+
+        Test error handling with invalid certificate file:
+
+        >>> import tempfile
+        >>> import os
+        >>> tmp_dir = tempfile.mkdtemp()
+        >>> bad_cert = os.path.join(tmp_dir, "bad.pem")
+        >>> with open(bad_cert, 'w') as f:
+        ...     _ = f.write("INVALID CERT")
+        >>> tls_config = MCPClientTLSConfig(certfile=bad_cert, keyfile=bad_cert, verify=False)
+        >>> try:
+        ...     ssl_context = create_ssl_context(tls_config, "BadCertPlugin")
+        ... except PluginError as e:
+        ...     "Failed to configure SSL context" in e.error.message
+        True
+
+        Verify logging occurs for different configurations:
+
+        >>> import logging
+        >>> tls_config = MCPClientTLSConfig(verify=False)
+        >>> ssl_context = create_ssl_context(tls_config, "LogTestPlugin")
+        >>> ssl_context is not None
+        True
     """
     try:
         # Create SSL context with secure defaults
@@ -86,7 +196,7 @@ def create_ssl_context(tls_config: MCPClientTLSConfig, plugin_name: str) -> ssl.
             # Disable certificate verification (not recommended for production)
             logger.warning(f"Certificate verification disabled for plugin '{plugin_name}'. This is not recommended for production use.")
             ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE  # noqa: DUO122
+            ssl_context.verify_mode = ssl.CERT_NONE  # nosec B502  # noqa: DUO122
         else:
             # Enable strict certificate verification (production mode)
             # Load CA certificate bundle for server certificate validation

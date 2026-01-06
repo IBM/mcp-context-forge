@@ -21,7 +21,7 @@
 <!-- Infinite scroll trigger element -->
 <div
   id="prompts-scroll-trigger-{{ pagination.page }}"
-  hx-get="{{ root_path }}/admin/prompts/partial?page={{ pagination.page + 1 }}&per_page={{ pagination.per_page }}&render=selector"
+  hx-get="{{ root_path }}/admin/prompts/partial?page={{ pagination.page + 1 }}&per_page={{ pagination.per_page }}&render=selector{% if gateway_id %}&gateway_id={{ gateway_id }}{% endif %}"
   hx-trigger="intersect once"
   hx-swap="outerHTML"
   class="text-center py-2 text-xs text-gray-500 dark:text-gray-400"

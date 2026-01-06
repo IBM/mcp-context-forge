@@ -36,6 +36,15 @@ from mcpgateway.services.tool_service import (
 from mcpgateway.utils.services_auth import encode_auth
 
 
+@pytest.fixture(autouse=True)
+def mock_logging_services():
+    """Mock audit_trail and structured_logger to prevent database writes during tests."""
+    with patch("mcpgateway.services.tool_service.audit_trail") as mock_audit, patch("mcpgateway.services.tool_service.structured_logger") as mock_logger:
+        mock_audit.log_action = MagicMock(return_value=None)
+        mock_logger.log = MagicMock(return_value=None)
+        yield {"audit_trail": mock_audit, "structured_logger": mock_logger}
+
+
 @pytest.fixture
 def tool_service():
     """Create a tool service instance."""
@@ -290,7 +299,8 @@ class TestToolService:
         # Verify DB operations
         test_db.add.assert_called_once()
         test_db.commit.assert_called_once()
-        test_db.refresh.assert_called_once()
+        # refresh is called twice: once after commit and once after logging commits
+        assert test_db.refresh.call_count == 2
 
         # Verify result
         assert result.name == "test-gateway-test-tool"
@@ -518,11 +528,17 @@ class TestToolService:
         )
         tool_service._convert_tool_to_read = Mock(return_value=tool_read)
 
+        # Mock DB to return a tuple of (tool, team_name) from LEFT JOIN
+        mock_row = MagicMock()
+        mock_row.__getitem__ = lambda self, idx: mock_tool if idx == 0 else None
+        mock_row.team_name = None
+        test_db.execute = Mock(return_value=MagicMock(all=Mock(return_value=[mock_row])))
+
         # Call method
         result, next_cursor = await tool_service.list_tools(test_db)
 
-        # Verify DB query: should be called twice
-        assert test_db.execute.call_count == 2
+        # Verify DB query: should be called once (LEFT JOIN optimization)
+        assert test_db.execute.call_count == 1
 
         # Verify result
         assert len(result) == 1
@@ -533,13 +549,12 @@ class TestToolService:
     @pytest.mark.asyncio
     async def test_list_inactive_tools(self, tool_service, mock_tool, test_db):
         """Test listing tools."""
-        # Mock DB to return a list of tools
-        mock_scalars = MagicMock()
+        # Mock DB to return a tuple of (tool, team_name) from LEFT JOIN
         mock_tool.enabled = False
-        mock_scalars.all.return_value = [mock_tool]
-        mock_scalar_result = MagicMock()
-        mock_scalar_result.scalars.return_value = mock_scalars
-        mock_execute = Mock(return_value=mock_scalar_result)
+        mock_row = MagicMock()
+        mock_row.__getitem__ = lambda self, idx: mock_tool if idx == 0 else None
+        mock_row.team_name = None
+        mock_execute = Mock(return_value=MagicMock(all=Mock(return_value=[mock_row])))
         test_db.execute = mock_execute
 
         # Mock conversion
@@ -581,8 +596,8 @@ class TestToolService:
         # Call method
         result, _ = await tool_service.list_tools(test_db, include_inactive=True)
 
-        # Verify DB query: should be called twice
-        assert test_db.execute.call_count == 2
+        # Verify DB query: should be called once (LEFT JOIN optimization)
+        assert test_db.execute.call_count == 1
 
         # Verify result
         assert len(result) == 1
@@ -592,11 +607,12 @@ class TestToolService:
     @pytest.mark.asyncio
     async def test_list_server_tools_active_only(self):
         mock_db = Mock()
-        mock_scalars = Mock()
-        mock_tool = Mock(enabled=True)
-        mock_scalars.all.return_value = [mock_tool]
+        mock_tool = Mock(enabled=True, team_id=None)
+        mock_row = MagicMock()
+        mock_row.__getitem__ = lambda self, idx: mock_tool if idx == 0 else None
+        mock_row.team_name = None
 
-        mock_db.execute.return_value.scalars.return_value = mock_scalars
+        mock_db.execute.return_value.all.return_value = [mock_row]
 
         service = ToolService()
         service._convert_tool_to_read = Mock(return_value="converted_tool")
@@ -604,17 +620,23 @@ class TestToolService:
         tools = await service.list_server_tools(mock_db, server_id="server123", include_inactive=False)
 
         assert tools == ["converted_tool"]
-        service._convert_tool_to_read.assert_called_once_with(mock_tool)
+        service._convert_tool_to_read.assert_called_once_with(mock_tool, include_metrics=False)
 
     @pytest.mark.asyncio
     async def test_list_server_tools_include_inactive(self):
         mock_db = Mock()
-        mock_scalars = Mock()
-        active_tool = Mock(enabled=True, reachable=True)
-        inactive_tool = Mock(enabled=False, reachable=True)
-        mock_scalars.all.return_value = [active_tool, inactive_tool]
+        active_tool = Mock(enabled=True, reachable=True, team_id=None)
+        inactive_tool = Mock(enabled=False, reachable=True, team_id=None)
 
-        mock_db.execute.return_value.scalars.return_value = mock_scalars
+        active_row = MagicMock()
+        active_row.__getitem__ = lambda self, idx: active_tool if idx == 0 else None
+        active_row.team_name = None
+
+        inactive_row = MagicMock()
+        inactive_row.__getitem__ = lambda self, idx: inactive_tool if idx == 0 else None
+        inactive_row.team_name = None
+
+        mock_db.execute.return_value.all.return_value = [active_row, inactive_row]
 
         service = ToolService()
         service._convert_tool_to_read = Mock(side_effect=["active_converted", "inactive_converted"])
@@ -825,12 +847,14 @@ class TestToolService:
         assert result.enabled is True
 
     @pytest.mark.asyncio
-    async def test_notify_tool_publish_event(self, tool_service, mock_tool, monkeypatch):
-        # Arrange - freeze the publish method so we can inspect the call
-        publish_mock = AsyncMock()
-        monkeypatch.setattr(tool_service, "_publish_event", publish_mock)
+    async def test_notify_tool_publish_event(self, tool_service, mock_tool):
+        """Test notification methods publish events via EventService."""
+        # Mock EventService.publish_event
+        tool_service._event_service.publish_event = AsyncMock()
 
+        # Test all notification methods
         mock_tool.enabled = True
+        mock_tool.reachable = True
         await tool_service._notify_tool_activated(mock_tool)
 
         mock_tool.enabled = False
@@ -839,62 +863,33 @@ class TestToolService:
         mock_tool.enabled = False
         await tool_service._notify_tool_removed(mock_tool)
 
-        mock_tool.enabled = False
-        await tool_service._notify_tool_deleted({"id": mock_tool.id, "name": mock_tool.name})
+        tool_info = {"id": mock_tool.id, "name": mock_tool.name}
+        await tool_service._notify_tool_deleted(tool_info)
 
-        assert publish_mock.await_count == 4
+        # Verify all 4 events were published
+        assert tool_service._event_service.publish_event.await_count == 4
 
-        publish_mock.assert_has_calls(
-            [
-                call(
-                    {
-                        "type": "tool_activated",
-                        "data": {
-                            "id": mock_tool.id,
-                            "name": mock_tool.name,
-                            "enabled": True,
-                        },
-                        "timestamp": ANY,
-                    }
-                ),
-                call(
-                    {
-                        "type": "tool_deactivated",
-                        "data": {
-                            "id": mock_tool.id,
-                            "name": mock_tool.name,
-                            "enabled": False,
-                        },
-                        "timestamp": ANY,
-                    }
-                ),
-                call(
-                    {
-                        "type": "tool_removed",
-                        "data": {
-                            "id": mock_tool.id,
-                            "name": mock_tool.name,
-                            "enabled": False,
-                        },
-                        "timestamp": ANY,
-                    }
-                ),
-                call(
-                    {
-                        "type": "tool_deleted",
-                        "data": {"id": mock_tool.id, "name": mock_tool.name},
-                        "timestamp": ANY,
-                    }
-                ),
-            ],
-            any_order=False,
-        )
+        # Verify event types were correct
+        calls = tool_service._event_service.publish_event.call_args_list
+        assert calls[0][0][0]["type"] == "tool_activated"
+        assert calls[1][0][0]["type"] == "tool_deactivated"
+        assert calls[2][0][0]["type"] == "tool_removed"
+        assert calls[3][0][0]["type"] == "tool_deleted"
+
+        # Verify event data
+        assert calls[0][0][0]["data"]["id"] == mock_tool.id
+        assert calls[0][0][0]["data"]["name"] == mock_tool.name
+        assert calls[0][0][0]["data"]["enabled"] is True
+
+        assert calls[3][0][0]["data"] == tool_info
 
     @pytest.mark.asyncio
     async def test_publish_event_with_real_queue(self, tool_service):
         # Arrange
         q = asyncio.Queue()
-        tool_service._event_subscribers = [q]  # seed one subscriber
+        # Force local mode (no Redis) and seed one subscriber via EventService
+        tool_service._event_service._redis_client = None
+        tool_service._event_service._event_subscribers = [q]
         event = {"type": "test", "data": 123}
 
         # Act
@@ -1649,7 +1644,7 @@ class TestToolService:
         mock_gateway.enabled = True
         mock_gateway.reachable = True
         mock_gateway.id = mock_tool.gateway_id
-        mock_gateway.slug="test-gateway"
+        mock_gateway.slug = "test-gateway"
         mock_gateway.capabilities = {"tools": {"listChanged": True}}
         mock_gateway.transport = "SSE"
         mock_gateway.passthrough_headers = []
@@ -1829,23 +1824,25 @@ class TestToolService:
                 mock_db.add.assert_called_once_with(mock_metric_instance)
                 mock_db.commit.assert_called_once()
 
+    @pytest.mark.asyncio
     async def test_aggregate_metrics(self, tool_service):
         """Test aggregating metrics across all tools."""
         # Mock database
         mock_db = MagicMock()
 
-        # Create a mock that returns scalar values
-        mock_execute_result = MagicMock()
-        mock_execute_result.scalar.side_effect = [
-            10,  # total count
-            8,  # successful count
-            2,  # failed count
-            0.5,  # min response time
-            5.0,  # max response time
-            2.3,  # avg response time
-            "2025-01-10T12:00:00",  # last execution time
-        ]
-        mock_db.execute.return_value = mock_execute_result
+        # Create a mock object that behaves like the SQLAlchemy Row result
+        # The new implementation calls .one() and accesses attributes .total, .successful, etc.
+        mock_row = MagicMock()
+        mock_row.total = 10
+        mock_row.successful = 8
+        mock_row.failed = 2
+        mock_row.min_rt = 0.5
+        mock_row.max_rt = 5.0
+        mock_row.avg_rt = 2.3
+        mock_row.last_time = "2025-01-10T12:00:00"
+
+        # Setup the chain: db.execute(...).one() -> returns the mock_row
+        mock_db.execute.return_value.one.return_value = mock_row
 
         result = await tool_service.aggregate_metrics(mock_db)
 
@@ -1860,26 +1857,26 @@ class TestToolService:
             "last_execution_time": "2025-01-10T12:00:00",
         }
 
-        # Verify all expected queries were made
-        assert mock_db.execute.call_count == 7
+        # Verify only 1 query was executed (optimization check)
+        assert mock_db.execute.call_count == 1
 
+    @pytest.mark.asyncio
     async def test_aggregate_metrics_no_data(self, tool_service):
         """Test aggregating metrics when no data exists."""
         # Mock database
         mock_db = MagicMock()
 
-        # Create a mock that returns scalar values
-        mock_execute_result = MagicMock()
-        mock_execute_result.scalar.side_effect = [
-            0,  # total count
-            0,  # successful count
-            0,  # failed count
-            None,  # min response time
-            None,  # max response time
-            None,  # avg response time
-            None,  # last execution time
-        ]
-        mock_db.execute.return_value = mock_execute_result
+        # Create a mock object for empty results (None values)
+        mock_row = MagicMock()
+        mock_row.total = 0
+        mock_row.successful = 0
+        mock_row.failed = 0
+        mock_row.min_rt = None
+        mock_row.max_rt = None
+        mock_row.avg_rt = None
+        mock_row.last_time = None
+
+        mock_db.execute.return_value.one.return_value = mock_row
 
         result = await tool_service.aggregate_metrics(mock_db)
 
@@ -1893,6 +1890,9 @@ class TestToolService:
             "avg_response_time": None,
             "last_execution_time": None,
         }
+
+        # Verify optimization
+        assert mock_db.execute.call_count == 1
 
     async def test_validate_tool_url_success(self, tool_service):
         """Test successful tool URL validation."""
@@ -1987,6 +1987,7 @@ class TestToolService:
             assert event["type"] == "tool_removed"
             assert event["data"]["id"] == mock_tool.id
 
+    @pytest.mark.asyncio
     async def test_get_top_tools(self, tool_service, test_db):
         """Test get_top_tools method."""
         # Mock database query result
@@ -1995,18 +1996,24 @@ class TestToolService:
             (2, "tool2", 5, 2.0, 80.0, "2024-01-02T12:00:00"),
         ]
 
-        # Create a proper mock chain for the query
-        mock_query_chain = Mock()
-        mock_query_chain.outerjoin.return_value.group_by.return_value.order_by.return_value.limit.return_value.all.return_value = mock_results
-        test_db.query = Mock(return_value=mock_query_chain)
+        # Mock the execute method on the test_db (which is likely a MagicMock)
+        test_db.execute = MagicMock()
+        test_db.execute.return_value.all.return_value = mock_results
 
         with patch("mcpgateway.services.tool_service.build_top_performers") as mock_build:
             mock_build.return_value = ["top_performer1", "top_performer2"]
+
+            # Run the method
             result = await tool_service.get_top_tools(test_db, limit=5)
 
+            # Assert the result is as expected
             assert result == ["top_performer1", "top_performer2"]
+
+            # Assert build_top_performers was called with the mock results
             mock_build.assert_called_once_with(mock_results)
-            test_db.query.assert_called_once()
+
+            # Verify that the execute method was called once
+            test_db.execute.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_list_tools_with_tags(self, tool_service, mock_tool):
@@ -2020,7 +2027,12 @@ class TestToolService:
         mock_query.limit.return_value = mock_query
 
         session = MagicMock()
-        session.execute.return_value.scalars.return_value.all.return_value = [mock_tool]
+
+        # Mock LEFT JOIN row result
+        mock_row = MagicMock()
+        mock_row.__getitem__ = lambda self, idx: mock_tool if idx == 0 else None
+        mock_row.team_name = "test-team"
+        session.execute.return_value.all.return_value = [mock_row]
 
         bind = MagicMock()
         bind.dialect = MagicMock()
@@ -2033,22 +2045,15 @@ class TestToolService:
                 fake_condition = MagicMock()
                 mock_json_contains.return_value = fake_condition
 
-                # Patch team name lookup to return a real string, not a MagicMock
-                mock_team = MagicMock()
-                mock_team.name = "test-team"
-                session.query().filter().first.return_value = mock_team
-
                 result, _ = await tool_service.list_tools(session, tags=["test", "production"])
 
-                # helper should be called once with the tags list (not once per tag)
-                mock_json_contains.assert_called_once()  # called exactly once
+                # json_contains_expr should be called once with the tags list
+                mock_json_contains.assert_called_once()
                 called_args = mock_json_contains.call_args[0]  # positional args tuple
                 assert called_args[0] is session  # session passed through
                 # third positional arg is the tags list (signature: session, col, values, match_any=True)
                 assert called_args[2] == ["test", "production"]
-                # and the fake condition returned must have been passed to where()
-                mock_query.where.assert_called_with(fake_condition)
-                # finally, your service should return the list produced by mock_db.execute(...)
+                # finally, your service should return the list produced by session.execute(...)
                 assert isinstance(result, list)
                 assert len(result) == 1
 

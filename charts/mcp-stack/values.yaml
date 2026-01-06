@@ -132,12 +132,14 @@ mcpContextForge:
   # Rendered into a ConfigMap; readable by anyone with GET access.
   ####################################################################
   config:
-    # - Gunicorn settings ─
-    GUNICORN_WORKERS: "2"               # number of worker processes
+    # ─ Gunicorn settings ─
+    GUNICORN_WORKERS: "auto"            # number of worker processes ("auto" = 2*CPU+1, capped at 16)
     GUNICORN_TIMEOUT: "600"             # worker timeout in seconds
-    GUNICORN_MAX_REQUESTS: "10000"      # max requests per worker before restart
+    GUNICORN_MAX_REQUESTS: "100000"     # max requests per worker before restart
     GUNICORN_MAX_REQUESTS_JITTER: "100" # random jitter to avoid thundering herd
-    GUNICORN_PRELOAD_APP: "true"        # preload app code before forking workers (TODO: not implemented yet)
+    GUNICORN_PRELOAD_APP: "true"        # preload app code before forking workers
+    GUNICORN_DEV_MODE: "false"          # developer mode with hot reload (not for production)
+    DISABLE_ACCESS_LOG: "true"          # disable access logging for performance
 
     # ─ Basic application info ─
     APP_NAME: MCP_Gateway            # public-facing name of the gateway
@@ -163,9 +165,23 @@ mcpContextForge:
     DB_MAX_RETRIES: "3"              # Maximum retries for DB cold start
     DB_RETRY_INTERVAL_MS: "2000"     # Interval between DB retries (ms)
 
+    # ─ Redis connection pool (performance-tuned) ─
+    REDIS_MAX_CONNECTIONS: "50"      # Pool size per worker
+    REDIS_SOCKET_TIMEOUT: "2.0"      # Read/write timeout (seconds)
+    REDIS_SOCKET_CONNECT_TIMEOUT: "2.0"  # Connection timeout (seconds)
+    REDIS_RETRY_ON_TIMEOUT: "true"   # Retry commands on timeout
+    REDIS_HEALTH_CHECK_INTERVAL: "30"  # Health check interval (seconds, 0=disabled)
+    REDIS_DECODE_RESPONSES: "true"   # Return strings instead of bytes
+
+    # ─ Redis leader election (multi-node) ─
+    REDIS_LEADER_TTL: "15"           # Leader TTL (seconds)
+    REDIS_LEADER_KEY: "gateway_service_leader"  # Leader key name
+    REDIS_LEADER_HEARTBEAT_INTERVAL: "5"  # Heartbeat interval (seconds)
+
     # ─ Protocol & feature toggles ─
     PROTOCOL_VERSION: 2025-03-26
     MCPGATEWAY_UI_ENABLED: "true"    # toggle Admin UI
+    MCPGATEWAY_UI_AIRGAPPED: "false"  # serve vendored CSS/JS files locally (air-gapped mode)
     MCPGATEWAY_ADMIN_API_ENABLED: "true" # toggle Admin API endpoints
     MCPGATEWAY_BULK_IMPORT_ENABLED: "true" # toggle bulk import endpoint
     MCPGATEWAY_BULK_IMPORT_MAX_TOOLS: "200" # maximum tools per bulk import
@@ -188,8 +204,23 @@ mcpContextForge:
     # ─ UI Configuration ─
     MCPGATEWAY_UI_TOOL_TEST_TIMEOUT: "60000" # tool test timeout in milliseconds for the admin UI
 
+    # ─ ToolOps Feature ─
+    TOOLOPS_ENABLED: "false"            # enable ToolOps feature
+
     # ─ LLM Chat Feature ─
     LLMCHAT_ENABLED: "false"            # enable LLM Chat feature
+
+    # ─ LLM Settings (Internal API) ─
+    # These settings control the internal LLM API that allows the gateway to
+    # act as a unified LLM provider. Configure external providers in the Admin UI.
+    LLM_API_PREFIX: "/v1"               # API prefix for internal LLM endpoints (OpenAI-compatible)
+    LLM_REQUEST_TIMEOUT: "120"          # request timeout in seconds for LLM API calls
+    LLM_STREAMING_ENABLED: "true"       # enable streaming responses for LLM Chat
+    LLM_HEALTH_CHECK_INTERVAL: "300"    # provider health check interval in seconds (5 minutes)
+    # Gateway provider settings (used when provider=gateway in LLM Chat)
+    GATEWAY_MODEL: "gpt-4o"             # default model for gateway provider
+    # GATEWAY_BASE_URL: ""              # optional, defaults to internal API
+    GATEWAY_TEMPERATURE: "0.7"          # sampling temperature for gateway provider
 
     # ─ Default Configuration ─
     DEFAULT_ROOTS: "[]"                 # default roots configuration (JSON array)
@@ -305,10 +336,10 @@ mcpContextForge:
     PLUGINS_MTLS_VERIFY: "true"              # verify remote plugin certificates
     PLUGINS_MTLS_CHECK_HOSTNAME: "true"      # enforce hostname verification when verifying certs
     PLUGINS_CLI_COMPLETION: "false"  # enable auto-completion for plugins CLI
-    PLUGINS_CLI_MARKUP_MODE: ""      # set markup mode for plugins CLI
+    PLUGINS_CLI_MARKUP_MODE: "rich"  # set markup mode for plugins CLI (rich, markdown, or disabled)
 
     # ─ OpenTelemetry Observability ─
-    OTEL_ENABLE_OBSERVABILITY: "true" # master switch for observability
+    OTEL_ENABLE_OBSERVABILITY: "false" # master switch for observability
     OTEL_TRACES_EXPORTER: "otlp"     # traces exporter: otlp, jaeger, zipkin, console, none
     OTEL_EXPORTER_OTLP_PROTOCOL: "grpc" # OTLP protocol: grpc or http
     OTEL_EXPORTER_OTLP_INSECURE: "true" # use insecure connection for OTLP
@@ -323,7 +354,7 @@ mcpContextForge:
     OBSERVABILITY_TRACE_RETENTION_DAYS: "7"      # number of days to retain trace data
     OBSERVABILITY_MAX_TRACES: "100000"           # maximum number of traces to retain
     OBSERVABILITY_SAMPLE_RATE: "1.0"             # trace sampling rate (0.0-1.0, 1.0 = trace everything)
-    OBSERVABILITY_EXCLUDE_PATHS: "/health,/healthz,/ready,/metrics,/static/.*" # paths to exclude from tracing
+    OBSERVABILITY_EXCLUDE_PATHS: '["/health", "/healthz", "/ready", "/metrics", "/static/.*"]' # paths to exclude from tracing
     OBSERVABILITY_METRICS_ENABLED: "true"        # enable metrics collection
     OBSERVABILITY_EVENTS_ENABLED: "true"         # enable event logging within spans
 
@@ -348,7 +379,7 @@ mcpContextForge:
     VALIDATION_DANGEROUS_JS_PATTERN: '(?i)(?:^|\s|[\"''`<>=])(javascript:|vbscript:|data:\s*[^,]*[;\s]*(javascript|vbscript)|\bon[a-z]+\s*=|<\s*script\b)' # pattern to detect JavaScript injection
     VALIDATION_NAME_PATTERN: '^[a-zA-Z0-9_.\-\s]+$' # pattern for validating names (allows spaces)
     VALIDATION_IDENTIFIER_PATTERN: '^[a-zA-Z0-9_\-\.]+$' # pattern for validating IDs (no spaces)
-    VALIDATION_SAFE_URI_PATTERN: '^[a-zA-Z0-9_\-.:/?=&%]+$' # pattern for safe URI characters
+    VALIDATION_SAFE_URI_PATTERN: '^[a-zA-Z0-9_\-.:/?=&%{}]+$' # pattern for safe URI characters
     VALIDATION_UNSAFE_URI_PATTERN: '[<>"''\\]' # pattern to detect unsafe URI characters
     VALIDATION_TOOL_NAME_PATTERN: '^[a-zA-Z][a-zA-Z0-9._-]*$' # MCP tool naming pattern
     VALIDATION_TOOL_METHOD_PATTERN: '^[a-zA-Z][a-zA-Z0-9_\./-]*$' # MCP tool method naming pattern
@@ -643,6 +674,12 @@ postgres:
       successThreshold: 1
       failureThreshold: 5
 
+  # ─── PostgreSQL Upgrade Configuration ───
+  upgrade:
+    enabled: false              # Set to true to enable the upgrade process
+    targetVersion: "18"         # Target PostgreSQL version (e.g., "18")
+    backupCompleted: false      # Set to true after successful backup (to prevent re-running backup job)
+
 ########################################################################
 # REDIS CACHE
 ########################################################################
@@ -800,6 +837,46 @@ redisCommander:
       failureThreshold: 5
 
 ########################################################################
+# MINIO - S3 Compatible Object Storage
+########################################################################
+minio:
+  enabled: true # Set to true to deploy MinIO (required for PostgreSQL backups during upgrade)
+
+  image:
+    repository: minio/minio
+    tag: "RELEASE.2025-09-07T16-13-09Z-cpuv1" # Use a specific stable tag
+    pullPolicy: IfNotPresent
+
+  # Credentials for the MinIO root user
+  # It's recommended to use existingSecret in production
+  existingSecret: ""
+  credentials:
+    rootUser: minioadmin
+    rootPassword: minioadminchangeme # CHANGE IN PRODUCTION!
+
+  service:
+    type: ClusterIP
+    apiPort: 9000 # S3 API
+    consolePort: 9001 # Web UI
+
+  # PersistentVolumeClaim for data durability
+  persistence:
+    enabled: true
+    storageClassName: "" # Use default StorageClass
+    accessModes: [ReadWriteOnce]
+    size: 10Gi
+    reclaimPolicy: Retain
+
+  # Resource limits & requests
+  resources:
+    limits:
+      cpu: 500m
+      memory: 1Gi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+########################################################################
 # MCP-FAST-TIME-SERVER - optional high-performance time server for MCP (go)
 # Provides a fast implementation including SSE and Streamable HTTP
 ########################################################################
@@ -808,7 +885,7 @@ mcpFastTimeServer:
   replicaCount: 2
   image:
     repository: ghcr.io/ibm/fast-time-server
-    tag: "0.9.0"
+    tag: "latest"
     pullPolicy: IfNotPresent
   port: 8080
 

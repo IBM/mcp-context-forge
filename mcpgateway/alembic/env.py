@@ -122,6 +122,42 @@ if config.config_file_name is not None:
 # for 'autogenerate' support
 # from myapp import mymodel
 
+# MariaDB naming convention for shorter FK names
+mariadb_naming_convention = {
+    "ix": "ix_%(column_0_label)s",
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_name)s",
+    "pk": "pk_%(table_name)s",
+}
+
+
+# MariaDB metadata modifications
+def _modify_metadata_for_mariadb():
+    """Force VARCHAR length and replace unsupported types for MariaDB."""
+    # Third-Party
+    from sqlalchemy import String, Text
+    from sqlalchemy.dialects import postgresql
+
+    for table in Base.metadata.tables.values():
+        for column in table.columns:
+            # UUID → String(36)
+            if isinstance(column.type, postgresql.UUID):
+                column.type = String(36)
+            # Bare String without length → String(255)
+            elif isinstance(column.type, String) and column.type.length is None:
+                column.type = String(255)
+            # JSONB → Text (simple fallback)
+            elif hasattr(column.type, "__class__") and "JSONB" in str(column.type.__class__):
+                column.type = Text
+            # ARRAY → Text
+            elif hasattr(column.type, "__class__") and "ARRAY" in str(column.type.__class__):
+                column.type = Text
+
+
+# MariaDB modifications will be applied when needed during table creation
+# Do not apply automatically during import to avoid SQLAlchemy column management issues
+
 target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,
@@ -129,9 +165,11 @@ target_metadata = Base.metadata
 # my_important_option = config.get_main_option("my_important_option")
 # ... etc.
 
+# Escape '%' characters in URL to avoid configparser interpolation errors
+# (e.g., URL-encoded passwords like %40 for '@')
 config.set_main_option(
     "sqlalchemy.url",
-    settings.database_url,
+    settings.database_url.replace("%", "%%"),
 )
 
 
@@ -160,13 +198,57 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    """Run migrations in 'online' mode.
+    """Run migrations in 'online' mode."""
 
-    In this scenario we need to create an Engine
-    and associate a connection with the context.
+    def configure_for_mariadb(connection):
+        """
+        Apply MariaDB-specific autogenerate rules.
 
-    """
+        Args:
+            connection: SQLAlchemy Connection object.
+                The active database connection being used by Alembic during
+                autogenerate. Used to apply MariaDB-specific type replacements
+                and rules.
+        """
+        # Third-Party
+        from sqlalchemy import String, VARCHAR
+        from sqlalchemy.dialects import postgresql
+
+        # Apply naming convention
+        target_metadata.naming_convention = mariadb_naming_convention
+
+        def render_item(type_, obj, _autogen_context):
+            # UUID → String(36)
+            if isinstance(type_, postgresql.UUID):
+                return "String(36)"
+
+            # JSONB → JSON (MariaDB ≥ 10.4) else TEXT
+            if "JSONB" in str(type_.__class__):
+                version = connection.engine.dialect.server_version_info
+                return "JSON" if version >= (10, 4) else "Text"
+
+            # ARRAY → TEXT (comma-separated values)
+            if "ARRAY" in str(type_.__class__):
+                return "Text"
+
+            # VARCHAR with no length → 255
+            if isinstance(type_, (String, VARCHAR)):
+                return f"String({type_.length or 255})"
+
+            return False
+
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            render_item=render_item,
+            # prevent Alembic from generating tables that already exist
+            include_object=lambda obj, name, type_, _reflected, _compare_to: not (type_ == "table" and connection.dialect.has_table(connection, name)),
+        )
+
+    # ----------------------------------------------------------------------
+
     connection = config.attributes.get("connection")
+
     if connection is None:
         connectable = engine_from_config(
             config.get_section(config.config_ini_section, {}),
@@ -175,12 +257,20 @@ def run_migrations_online() -> None:
         )
 
         with connectable.connect() as connection:
-            context.configure(connection=connection, target_metadata=target_metadata)
+            if connection.engine.dialect.name == "mariadb":
+                configure_for_mariadb(connection)
+            else:
+                context.configure(connection=connection, target_metadata=target_metadata)
 
             with context.begin_transaction():
                 context.run_migrations()
+
     else:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        # Alembic already has a connection (e.g., in tests)
+        if connection.engine.dialect.name == "mariadb":
+            configure_for_mariadb(connection)
+        else:
+            context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():
             context.run_migrations()

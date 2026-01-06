@@ -18,6 +18,9 @@ from typing import Generator
 from playwright.sync_api import APIRequestContext, Page, Playwright
 import pytest
 
+# First-Party
+from mcpgateway.config import Settings
+
 # Get configuration from environment
 BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8000")
 API_TOKEN = os.getenv("MCP_AUTH", "test-token")
@@ -85,8 +88,14 @@ def authenticated_page(page: Page) -> Page:
 @pytest.fixture
 def admin_page(page: Page):
     """Provide a logged-in admin page for UI tests."""
+    settings = Settings()
     # Go directly to admin - HTTP Basic Auth is handled by the page fixture
     page.goto("/admin")
+    # Handle login page redirect if auth is required
+    if re.search(r"login", page.url):
+        page.fill('[name="email"]', settings.basic_auth_user)
+        page.fill('[name="password"]', settings.basic_auth_password.get_secret_value())
+        page.click('button[type="submit"]')
     # Verify we're on the admin page
     page.wait_for_url(re.compile(r".*admin"))
     return page

@@ -1,5 +1,6 @@
 [flake8]
 max-line-length = 600
+jobs = 1
 exclude = mcp-servers
 extend-ignore =
     E203,
@@ -7,3 +8,4 @@ extend-ignore =
 per-file-ignores =
     mcpgateway/services/gateway_service.py: DAR401,DAR402
     mcpgateway/translate.py: DAR401
+    tests/loadtest/locustfile.py: DAR101,DAR201,DUO102

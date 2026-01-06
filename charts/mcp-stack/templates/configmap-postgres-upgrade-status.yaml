@@ -1,0 +1,13 @@
+{{- if .Values.postgres.upgrade.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-postgres-upgrade-status
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-upgrade-status
+data:
+  backupCompleted: {{ .Values.postgres.upgrade.backupCompleted | quote }}
+  targetVersion: {{ .Values.postgres.upgrade.targetVersion | quote }}
+  lastUpdated: {{ now | quote }}
+{{- end }}

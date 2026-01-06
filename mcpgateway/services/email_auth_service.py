@@ -200,13 +200,13 @@ class EmailAuthService:
 
         Examples:
             >>> service = EmailAuthService(None)
-            >>> service.validate_password("password123")
+            >>> service.validate_password("Password123!")  # Meets all requirements
             True
             >>> service.validate_password("ValidPassword123!")
             True
-            >>> service.validate_password("shortpass")  # 8+ chars to meet default min_length
+            >>> service.validate_password("Shortpass!")  # 8+ chars with requirements
             True
-            >>> service.validate_password("verylongpasswordthatmeetsminimumrequirements")
+            >>> service.validate_password("VeryLongPasswordThatMeetsMinimumRequirements!")
             True
             >>> try:
             ...     service.validate_password("")
@@ -273,7 +273,7 @@ class EmailAuthService:
             logger.error(f"Error getting user by email {email}: {e}")
             return None
 
-    async def create_user(self, email: str, password: str, full_name: Optional[str] = None, is_admin: bool = False, auth_provider: str = "local") -> EmailUser:
+    async def create_user(self, email: str, password: str, full_name: Optional[str] = None, is_admin: bool = False, auth_provider: str = "local", skip_password_validation: bool = False) -> EmailUser:
         """Create a new user with email authentication.
 
         Args:
@@ -282,6 +282,7 @@ class EmailAuthService:
             full_name: Optional full name for display
             is_admin: Whether user has admin privileges
             auth_provider: Authentication provider ('local', 'github', etc.)
+            skip_password_validation: Skip password policy validation (for bootstrap)
 
         Returns:
             EmailUser: The created user object
@@ -305,7 +306,8 @@ class EmailAuthService:
 
         # Validate inputs
         self.validate_email(email)
-        self.validate_password(password)
+        if not skip_password_validation:
+            self.validate_password(password)
 
         # Check if user already exists
         existing_user = await self.get_user_by_email(email)
@@ -436,7 +438,7 @@ class EmailAuthService:
             self.db.add(auth_event)
             self.db.commit()
 
-    async def change_password(self, email: str, old_password: str, new_password: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> bool:
+    async def change_password(self, email: str, old_password: Optional[str], new_password: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> bool:
         """Change a user's password.
 
         Args:
@@ -462,6 +464,10 @@ class EmailAuthService:
             # )
             # success              # Returns: True
         """
+        # Validate old password is provided
+        if old_password is None:
+            raise AuthenticationError("Current password is required")
+
         # First authenticate with old password
         user = await self.authenticate_user(email, old_password, ip_address, user_agent)
         if not user:
@@ -539,8 +545,8 @@ class EmailAuthService:
             logger.info(f"Updated platform admin user: {email}")
             return existing_admin
 
-        # Create new admin user
-        admin_user = await self.create_user(email=email, password=password, full_name=full_name, is_admin=True, auth_provider="local")
+        # Create new admin user - skip password validation during bootstrap
+        admin_user = await self.create_user(email=email, password=password, full_name=full_name, is_admin=True, auth_provider="local", skip_password_validation=True)
 
         logger.info(f"Created platform admin user: {email}")
         return admin_user

@@ -29,7 +29,6 @@ Examples:
 
 # Standard
 import asyncio
-from copy import deepcopy
 import logging
 from typing import Any, Optional, Union
 
@@ -38,6 +37,7 @@ from mcpgateway.plugins.framework.base import AttachedHookRef, HookRef, Plugin
 from mcpgateway.plugins.framework.errors import convert_exception_to_error, PluginError, PluginViolationError
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.loader.plugin import PluginLoader
+from mcpgateway.plugins.framework.memory import copyonwrite
 from mcpgateway.plugins.framework.models import (
     Config,
     EntityType,
@@ -173,7 +173,7 @@ class PluginExecutor:
                 continue
 
             # Build metadata combining global context metadata + attachment metadata
-            merged_metadata = {} if not global_context.metadata else deepcopy(global_context.metadata)
+            merged_metadata = {} if not global_context.metadata else copyonwrite(global_context.metadata)
 
             # Merge attachment config/metadata if present
             if attached_hook_ref.attachment and attached_hook_ref.attachment.config:
@@ -196,7 +196,7 @@ class PluginExecutor:
                 entity_id=global_context.entity_id,
                 entity_name=global_context.entity_name,
                 attachment_config=attached_hook_ref.attachment,  # Will be None for old system
-                state={} if not global_context.state else deepcopy(global_context.state),
+                state={} if not global_context.state else copyonwrite(global_context.state),
                 metadata=merged_metadata,
             )
             # Get or create local context for this plugin

@@ -40,7 +40,7 @@ The OPA plugin and loader configuration can be customized in `resources/plugins/
 
 ## Installation
 
-1. In the folder `external/opa`, copy .env.example .env
+1. In the folder `external/opa`, copy .env.template .env
 2. Add the plugin configuration to `plugins/external/opa/resources/plugins/config.yaml`:
 
 ```yaml
@@ -173,6 +173,18 @@ starting
 
 ## Testing with gateway
 
+### Authentication & Tokens
+Run the following from the project root folder:
+
+```bash
+# Generate JWT bearer token
+python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key
+
+# Export for API calls
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 0 --secret my-test-key)
+```
+
+
 1. Add server fast-time that exposes git tools in the mcp gateway
 ```bash
 curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
@@ -263,6 +275,21 @@ make test
 The`make test` command executes a complete testing workflow: it launches an OPA server using the policy file located at ./opaserver/rego/policy.rego (as specified by `POLICY_PATH`), runs all test cases against this server, and automatically terminates the OPA server process once testing finishes.
 
 
+## Error Handling Verification
+
+1. `OPA_SERVER_NONE_RESPONSE` = "OPA server returned an empty response"
+2. `OPA_SERVER_ERROR` = "Error while communicating with the OPA server"
+3. `OPA_SERVER_UNCONFIGURED_ENDPOINT` = "Policy endpoint not configured on the OPA server"
+4. `UNSPECIFIED_REQUIRED_PARAMS` = "Required parameters missing: policy config, payload, or hook type"
+5. `UNSUPPORTED_HOOK_TYPE` = "Unsupported hook type (only tool, prompt, and resource are supported)"
+6. `INVALID_POLICY_ENDPOINT` = "Policy endpoint must be curated with the supported hooktypes"
+7. `UNSPECIFIED_POLICY_MODALITY` = "Unspecified policy modality. Picking up default modality: text"
+8. `UNSUPPORTED_POLICY_MODALITY` = "Unsupported policy modality (Supports text, image and resource)"
+9. `UNSPECIFIED_POLICY_PACKAGE_NAME` = "Unspecified policy package name"
+
+If OPA plugin encounters any of the errors above, it raises a PluginError.
+The file `test_errors.py` includes unit tests to verify that these errors are correctly raised under the corresponding conditions.
+Run it using `make test`
 
 ## License
 

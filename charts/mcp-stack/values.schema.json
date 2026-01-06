@@ -323,8 +323,8 @@
           "properties": {
             "GUNICORN_WORKERS": {
               "type": "string",
-              "description": "Number of Gunicorn worker processes",
-              "default": "2"
+              "description": "Number of Gunicorn worker processes (auto = 2*CPU+1, capped at 16)",
+              "default": "auto"
             },
             "GUNICORN_TIMEOUT": {
               "type": "string",
@@ -334,7 +334,7 @@
             "GUNICORN_MAX_REQUESTS": {
               "type": "string",
               "description": "Max requests per worker before restart",
-              "default": "10000"
+              "default": "100000"
             },
             "GUNICORN_MAX_REQUESTS_JITTER": {
               "type": "string",
@@ -345,6 +345,18 @@
               "type": "string",
               "enum": ["true", "false"],
               "description": "Preload app code before forking workers",
+              "default": "true"
+            },
+            "GUNICORN_DEV_MODE": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Developer mode with hot reload (not for production)",
+              "default": "false"
+            },
+            "DISABLE_ACCESS_LOG": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Disable access logging for performance",
               "default": "true"
             },
             "APP_NAME": {
@@ -418,6 +430,53 @@
               "description": "Redis retry interval in milliseconds",
               "default": "2000"
             },
+            "REDIS_MAX_CONNECTIONS": {
+              "type": "string",
+              "description": "Redis connection pool size per worker",
+              "default": "50"
+            },
+            "REDIS_SOCKET_TIMEOUT": {
+              "type": "string",
+              "description": "Redis socket read/write timeout in seconds",
+              "default": "2.0"
+            },
+            "REDIS_SOCKET_CONNECT_TIMEOUT": {
+              "type": "string",
+              "description": "Redis connection timeout in seconds",
+              "default": "2.0"
+            },
+            "REDIS_RETRY_ON_TIMEOUT": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Retry Redis commands on timeout",
+              "default": "true"
+            },
+            "REDIS_HEALTH_CHECK_INTERVAL": {
+              "type": "string",
+              "description": "Redis health check interval in seconds (0=disabled)",
+              "default": "30"
+            },
+            "REDIS_DECODE_RESPONSES": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Return strings instead of bytes from Redis",
+              "default": "true"
+            },
+            "REDIS_LEADER_TTL": {
+              "type": "string",
+              "description": "Redis leader election TTL in seconds",
+              "default": "15"
+            },
+            "REDIS_LEADER_KEY": {
+              "type": "string",
+              "description": "Redis leader election key name",
+              "default": "gateway_service_leader"
+            },
+            "REDIS_LEADER_HEARTBEAT_INTERVAL": {
+              "type": "string",
+              "description": "Redis leader heartbeat interval in seconds",
+              "default": "5"
+            },
             "DB_MAX_RETRIES": {
               "type": "string",
               "description": "Database max retries",
@@ -438,6 +497,12 @@
               "enum": ["true", "false"],
               "description": "Enable admin UI",
               "default": "true"
+            },
+            "MCPGATEWAY_UI_AIRGAPPED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable air-gapped mode for UI assets (serve vendored CSS/JS files locally)",
+              "default": "false"
             },
             "MCPGATEWAY_ADMIN_API_ENABLED": {
               "type": "string",
@@ -481,7 +546,7 @@
             },
             "X_FRAME_OPTIONS": {
               "type": "string",
-              "enum": ["DENY", "SAMEORIGIN"],
+              "enum": ["DENY", "SAMEORIGIN", "ALLOW-ALL"],
               "description": "X-Frame-Options header value",
               "default": "DENY"
             },
@@ -1021,6 +1086,28 @@
             }
           },
           "additionalProperties": false
+        },
+        "upgrade": {
+          "type": "object",
+          "description": "PostgreSQL upgrade configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable PostgreSQL upgrade process",
+              "default": false
+            },
+            "targetVersion": {
+              "type": ["string", "number"],
+              "description": "Target PostgreSQL version for upgrade",
+              "default": "18"
+            },
+            "backupCompleted": {
+              "type": "boolean",
+              "description": "Flag to indicate if backup has been completed to prevent re-running",
+              "default": false
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -1310,6 +1397,57 @@
         }
       },
       "additionalProperties": false
+    },
+    "minio": {
+      "type": "object",
+      "description": "Configuration for the MinIO S3-compatible object storage.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable to deploy MinIO."
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string" },
+            "tag": { "type": "string" },
+            "pullPolicy": { "type": "string" }
+          }
+        },
+        "existingSecret": {
+          "type": "string",
+          "description": "Name of an existing secret for MinIO credentials."
+        },
+        "credentials": {
+          "type": "object",
+          "properties": {
+            "rootUser": { "type": "string" },
+            "rootPassword": { "type": "string" }
+          }
+        },
+        "service": {
+          "type": "object",
+          "properties": {
+            "type": { "type": "string" },
+            "apiPort": { "type": "integer" },
+            "consolePort": { "type": "integer" }
+          }
+        },
+        "persistence": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "storageClassName": { "type": "string" },
+            "accessModes": { "type": "array", "items": { "type": "string" } },
+            "size": { "type": "string" },
+            "reclaimPolicy": { "type": "string" }
+          }
+        },
+        "resources": {
+          "$ref": "#/$defs/resources",
+          "description": "CPU/Memory resource requests/limits."
+        }
+      }
     },
     "mcpFastTimeServer": {
       "type": "object",

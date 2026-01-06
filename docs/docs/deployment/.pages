@@ -14,3 +14,4 @@ nav:
   - azure.md
   - fly-io.md
   - proxy-auth.md
+  - cforge-gateway.md

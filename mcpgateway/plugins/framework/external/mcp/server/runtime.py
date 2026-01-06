@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/plugins/framework/external/mcp/server/runtime.py
 Copyright 2025
@@ -12,6 +13,46 @@ This runtime does the following:
 - Reads configuration from PLUGINS_SERVER_* environment variables or uses configurations
   the plugin config.yaml
 - Implements all plugin hook tools (get_plugin_configs, tool_pre_invoke, etc.)
+
+Examples:
+    Create an SSL-capable FastMCP server:
+
+    >>> from mcpgateway.plugins.framework.models import MCPServerConfig
+    >>> config = MCPServerConfig(host="localhost", port=8000)
+    >>> server = SSLCapableFastMCP(server_config=config, name="TestServer")
+    >>> server.settings.host
+    'localhost'
+    >>> server.settings.port
+    8000
+
+    Check SSL configuration returns empty dict when TLS is not configured:
+
+    >>> from mcpgateway.plugins.framework.models import MCPServerConfig
+    >>> config = MCPServerConfig(host="127.0.0.1", port=8000, tls=None)
+    >>> server = SSLCapableFastMCP(server_config=config, name="NoTLSServer")
+    >>> ssl_config = server._get_ssl_config()
+    >>> ssl_config
+    {}
+
+    Verify server configuration is accessible:
+
+    >>> from mcpgateway.plugins.framework.models import MCPServerConfig
+    >>> config = MCPServerConfig(host="localhost", port=9000)
+    >>> server = SSLCapableFastMCP(server_config=config, name="ConfigTest")
+    >>> server.server_config.host
+    'localhost'
+    >>> server.server_config.port
+    9000
+
+    Settings are properly passed to FastMCP:
+
+    >>> from mcpgateway.plugins.framework.models import MCPServerConfig
+    >>> config = MCPServerConfig(host="0.0.0.0", port=8080)
+    >>> server = SSLCapableFastMCP(server_config=config, name="SettingsTest")
+    >>> server.settings.host
+    '0.0.0.0'
+    >>> server.settings.port
+    8080
 """
 
 # Standard
@@ -26,17 +67,8 @@ from mcp.server.fastmcp import FastMCP
 import uvicorn
 
 # First-Party
-from mcpgateway.plugins.framework import (
-    ExternalPluginServer,
-    MCPServerConfig,
-)
-from mcpgateway.plugins.framework.constants import (
-    GET_PLUGIN_CONFIG,
-    GET_PLUGIN_CONFIGS,
-    INVOKE_HOOK,
-    MCP_SERVER_INSTRUCTIONS,
-    MCP_SERVER_NAME,
-)
+from mcpgateway.plugins.framework import ExternalPluginServer, MCPServerConfig
+from mcpgateway.plugins.framework.constants import GET_PLUGIN_CONFIG, GET_PLUGIN_CONFIGS, INVOKE_HOOK, MCP_SERVER_INSTRUCTIONS, MCP_SERVER_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +86,15 @@ async def get_plugin_configs() -> list[dict]:
 
     Raises:
         RuntimeError: If plugin server not initialized.
+
+    Examples:
+        Function raises RuntimeError when server is not initialized:
+
+        >>> import asyncio
+        >>> asyncio.run(get_plugin_configs())  # doctest: +SKIP
+        Traceback (most recent call last):
+        ...
+        RuntimeError: Plugin server not initialized
     """
     if not SERVER:
         raise RuntimeError("Plugin server not initialized")
@@ -71,6 +112,13 @@ async def get_plugin_config(name: str) -> dict:
 
     Raises:
         RuntimeError: If plugin server not initialized.
+
+    Examples:
+        Function returns empty dict when result is None:
+
+        >>> result = None
+        >>> result if result is not None else {}
+        {}
     """
     if not SERVER:
         raise RuntimeError("Plugin server not initialized")
@@ -94,6 +142,15 @@ async def invoke_hook(hook_type: str, plugin_name: str, payload: Dict[str, Any],
 
     Raises:
         RuntimeError: If plugin server not initialized.
+
+    Examples:
+        Function raises RuntimeError when server is not initialized:
+
+        >>> import asyncio
+        >>> asyncio.run(invoke_hook("hook", "plugin", {}, {}))  # doctest: +SKIP
+        Traceback (most recent call last):
+        ...
+        RuntimeError: Plugin server not initialized
     """
     if not SERVER:
         raise RuntimeError("Plugin server not initialized")
@@ -101,7 +158,19 @@ async def invoke_hook(hook_type: str, plugin_name: str, payload: Dict[str, Any],
 
 
 class SSLCapableFastMCP(FastMCP):
-    """FastMCP server with SSL/TLS support using MCPServerConfig."""
+    """FastMCP server with SSL/TLS support using MCPServerConfig.
+
+    Examples:
+        Create an SSL-capable FastMCP server:
+
+        >>> from mcpgateway.plugins.framework.models import MCPServerConfig
+        >>> config = MCPServerConfig(host="127.0.0.1", port=8000)
+        >>> server = SSLCapableFastMCP(server_config=config, name="TestServer")
+        >>> server.settings.host
+        '127.0.0.1'
+        >>> server.settings.port
+        8000
+    """
 
     def __init__(self, server_config: MCPServerConfig, *args, **kwargs):
         """Initialize an SSL capable Fast MCP server.
@@ -110,6 +179,15 @@ class SSLCapableFastMCP(FastMCP):
             server_config: the MCP server configuration including mTLS information.
             *args: Additional positional arguments passed to FastMCP.
             **kwargs: Additional keyword arguments passed to FastMCP.
+
+        Examples:
+            >>> from mcpgateway.plugins.framework.models import MCPServerConfig
+            >>> config = MCPServerConfig(host="0.0.0.0", port=9000)
+            >>> server = SSLCapableFastMCP(server_config=config, name="PluginServer")
+            >>> server.server_config.host
+            '0.0.0.0'
+            >>> server.server_config.port
+            9000
         """
         # Load server config from environment
 
@@ -127,6 +205,14 @@ class SSLCapableFastMCP(FastMCP):
 
         Returns:
             Dictionary of SSL configuration parameters for uvicorn.
+
+        Examples:
+            >>> from mcpgateway.plugins.framework.models import MCPServerConfig
+            >>> config = MCPServerConfig(host="127.0.0.1", port=8000, tls=None)
+            >>> server = SSLCapableFastMCP(server_config=config, name="TestServer")
+            >>> ssl_config = server._get_ssl_config()
+            >>> ssl_config
+            {}
         """
         ssl_config = {}
 
@@ -164,6 +250,18 @@ class SSLCapableFastMCP(FastMCP):
 
         Args:
             health_port: Port number for the health check server.
+
+        Examples:
+            Health check endpoint returns expected JSON response:
+
+            >>> import asyncio
+            >>> from starlette.responses import JSONResponse
+            >>> from starlette.requests import Request
+            >>> async def health_check(_request: Request):
+            ...     return JSONResponse({"status": "healthy"})
+            >>> response = asyncio.run(health_check(None))
+            >>> response.status_code
+            200
         """
         # Third-Party
         from starlette.applications import Starlette  # pylint: disable=import-outside-toplevel
@@ -193,7 +291,19 @@ class SSLCapableFastMCP(FastMCP):
         await server.serve()
 
     async def run_streamable_http_async(self) -> None:
-        """Run the server using StreamableHTTP transport with optional SSL/TLS."""
+        """Run the server using StreamableHTTP transport with optional SSL/TLS.
+
+        Examples:
+            Server uses configured host and port:
+
+            >>> from mcpgateway.plugins.framework.models import MCPServerConfig
+            >>> config = MCPServerConfig(host="0.0.0.0", port=9000)
+            >>> server = SSLCapableFastMCP(server_config=config, name="HTTPServer")
+            >>> server.settings.host
+            '0.0.0.0'
+            >>> server.settings.port
+            9000
+        """
         starlette_app = self.streamable_http_app()
 
         # Add health check endpoint to main app
@@ -256,6 +366,20 @@ async def run() -> None:
 
     Raises:
         Exception: If plugin server initialization or execution fails.
+
+    Examples:
+        SERVER module variable starts as None:
+
+        >>> SERVER is None
+        True
+
+        FastMCP server names are defined as constants:
+
+        >>> from mcpgateway.plugins.framework.constants import MCP_SERVER_NAME
+        >>> isinstance(MCP_SERVER_NAME, str)
+        True
+        >>> len(MCP_SERVER_NAME) > 0
+        True
     """
     global SERVER  # pylint: disable=global-statement
 

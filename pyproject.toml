@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 # ----------------------------------------------------------------
 [project]
 name = "mcp-contextforge-gateway"
-version = "0.9.0"
+version = "1.0.0-BETA-1"
 description = "A production-grade MCP Gateway & Proxy built with FastAPI. Supports multi-server registration, virtual server composition, authentication, retry logic, observability, protocol translation, and a unified federated tool catalog."
 keywords = ["MCP","API","gateway","proxy","tools",
   "agents","agentic ai","model context protocol","multi-agent","fastapi",
@@ -47,11 +47,10 @@ maintainers = [
 # ----------------------------------------------------------------
 dependencies = [
     "aiohttp>=3.13.2",
-    "alembic>=1.17.1",
+    "alembic>=1.17.2",
     "argon2-cffi>=25.1.0",
-    "copier>=9.10.3",
     "cryptography>=46.0.3",
-    "fastapi>=0.121.1",
+    "fastapi>=0.124.4",
     "filelock>=3.20.0",
     "gunicorn>=23.0.0",
     "httpx>=0.28.1",
@@ -60,16 +59,16 @@ dependencies = [
     "jq>=1.10.0",
     "jsonpath-ng>=1.7.0",
     "jsonschema>=4.25.1",
-    "mcp>=1.21.0",
+    "mcp>=1.24.0",
     "oauthlib>=3.3.1",
-    "orjson>=3.11.4",
+    "orjson>=3.11.5",
     "parse>=1.20.2",
     "prometheus-fastapi-instrumentator>=7.1.0",
     "prometheus_client>=0.23.1",
     "psutil>=7.1.3",
-    "pydantic>=2.12.4",
-    "pydantic[email]>=2.12.4",
-    "pydantic-settings>=2.11.0",
+    "pydantic>=2.12.5",
+    "pydantic[email]>=2.12.5",
+    "pydantic-settings>=2.12.0",
     "pyjwt>=2.10.1",
     "python-json-logger>=4.0.0",
     "PyYAML>=6.0.3",
@@ -110,6 +109,7 @@ dev = [
     "importchecker>=3.0",
     "interrogate>=1.7.0",
     "isort>=6.1.0",
+    "locust>=2.35.0",
     "mypy>=1.18.2",
     "pexpect>=4.9.0",
     "pip-licenses>=5.0.0",
@@ -166,7 +166,7 @@ dev = [
 
 # Optional dependency groups (runtime)
 redis = [
-    "redis>=7.0.1",
+    "redis>=7.1.0",
 ]
 
 postgres = [
@@ -177,50 +177,69 @@ mysql = [
     "pymysql>=1.1.2",
 ]
 
+mariadb = [
+    "mariadb>=1.1.14",
+]
+
 llmchat = [
-    "langchain-core>=1.0.4",
-    "langchain-mcp-adapters>=0.1.12",
-    "langchain-ollama>=1.0.0",
-    "langchain-openai>=1.0.2",
-    "langgraph>=1.0.2",
+    "langchain-core>=1.2.0",
+    "langchain-mcp-adapters>=0.2.1",
+    "langchain-ollama>=1.0.1",
+    "langchain-openai>=1.1.3",
+    "langgraph>=1.0.5",
 ]
 
 # Fuzzing and property-based testing
 fuzz = [
-    "hypothesis>=6.147.0",
-    "pytest-benchmark>=5.2.2",
+    "hypothesis>=6.148.7",
+    "pytest-benchmark>=5.2.3",
     "pytest-xdist>=3.8.0",
-    "schemathesis>=4.4.4",
+    "schemathesis>=4.7.5",
 ]
 
 # Coverage-guided fuzzing (requires clang/libfuzzer)
 fuzz-atheris = [
-    "atheris>=2.3.0",
+    "atheris>=3.0.0",
 ]
 
 alembic = [
-    "alembic>=1.17.1",
+    "alembic>=1.17.2",
 ]
 
 # Observability dependencies (optional)
 observability = [
-    "opentelemetry-api>=1.38.0",
-    "opentelemetry-sdk>=1.38.0",
+    "opentelemetry-api>=1.39.1",
+    "opentelemetry-sdk>=1.39.1",
 ]
 
 # Async SQLite Driver (optional)
 aiosqlite = [
-    "aiosqlite>=0.21.0",
+    "aiosqlite>=0.22.0",
 ]
 
 # Async PostgreSQL driver (optional)
 asyncpg = [
-    "asyncpg>=0.30.0",
+    "asyncpg>=0.31.0",
+]
+
+# Plugin templating tools (optional) - copier pulls jinja2-ansible-filters which is GPL licensed
+templating = [
+    "copier>=9.11.0",
 ]
 
 # Agent Lifecycle Toolkit(optional)
 altk = [
-    "agent-lifecycle-toolkit>=0.4.1",
+    "agent-lifecycle-toolkit>=0.9.0",
+]
+
+# Agent Lifecycle Toolkit(optional)
+toolops = [
+    "agent-lifecycle-toolkit>=0.9.0",
+    "langchain-core>=1.2.0",
+    "langchain-mcp-adapters>=0.2.1",
+    "langchain-ollama>=1.0.1",
+    "langchain-openai>=1.1.3",
+    "langgraph>=1.0.5",
 ]
 
 # gRPC Support (EXPERIMENTAL - optional, disabled by default)
@@ -229,24 +248,24 @@ grpc = [
     "grpcio>=1.76.0",
     "grpcio-reflection>=1.76.0",
     "grpcio-tools>=1.76.0",
-    "protobuf>=6.33.0",
+    "protobuf>=6.33.2",
 ]
 
 # UI Testing
 playwright = [
-    "playwright>=1.55.0",
+    "playwright>=1.57.0",
     "pytest-html>=4.1.1",
-    "pytest-playwright>=0.7.1",
+    "pytest-playwright>=0.7.2",
     "pytest-timeout>=2.4.0",
 ]
 
 # Convenience meta-extras
 all = [
-    "mcp-contextforge-gateway[redis]>=0.9.0",
+    "mcp-contextforge-gateway[redis]>=0.8.0",
 ]
 
 dev-all = [
-    "mcp-contextforge-gateway[redis,dev]>=0.9.0",
+    "mcp-contextforge-gateway[redis,dev]>=0.8.0",
 ]
 
 # --------------------------------------------------------------------
@@ -269,6 +288,7 @@ Changelog = "https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md"
 [project.scripts]
 mcpgateway = "mcpgateway.cli:main"
 mcpplugins = "mcpgateway.plugins.tools.cli:main"
+cforge = "mcpgateway.tools.cli:main"
 
 # --------------------------------------------------------------------
 #  🔧 setuptools-specific configuration
@@ -287,6 +307,9 @@ exclude = ["tests*"]
 #  - templates -> Jinja2 templates shipped at runtime
 [tool.setuptools.package-data]
 mcpgateway = [
+  "tools/builder/templates/*.yaml.j2",
+  "tools/builder/templates/compose/*.yaml.j2",
+  "tools/builder/templates/kubernetes/*.yaml.j2",
   "py.typed",
   "static/*.css",
   "static/*.js",
@@ -560,6 +583,8 @@ markers = [
     "e2e: marks tests as end-to-end tests",
     "fuzz: marks tests as fuzz tests (excluded from main test suite)",
     "benchmark: marks tests as performance benchmarks (migration testing)",
+    "integration: marks tests as integration tests (require external services)",
+    "postgresql: marks tests that require PostgreSQL database",
 ]
 
 # Playwright-specific test discovery patterns
@@ -661,7 +686,11 @@ omit = [
     "*/test_*.py",
     "*/__init__.py",
     "*/alembic/*",
-    "*/version.py"
+    "*/version.py",
+    # Builder deployment files - require external tools (docker, kubectl, templates)
+    "mcpgateway/tools/builder/common.py",
+    "mcpgateway/tools/builder/dagger_deploy.py",
+    "mcpgateway/tools/builder/python_deploy.py"
 ]
 
 # --------------------------------------------------------------------

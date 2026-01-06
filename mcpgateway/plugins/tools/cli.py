@@ -33,7 +33,6 @@ import subprocess  # nosec B404 # Safe: Used only for git commands with hardcode
 from typing import Optional
 
 # Third-Party
-from copier import run_copy
 import typer
 from typing_extensions import Annotated
 
@@ -142,7 +141,17 @@ def bootstrap(
         answers_file: The copier answers file that can be used to skip interactive mode.
         defaults: Bootstrap with defaults.
         dry_run: Run but do not make any changes.
+
+    Raises:
+        Exit: If copier is not installed.
     """
+    try:
+        # Third-Party
+        from copier import run_copy  # pylint: disable=import-outside-toplevel
+    except ImportError:
+        logger.error("copier is not installed. Install with: pip install mcp-contextforge-gateway[templating]")
+        raise typer.Exit(1)
+
     try:
         if command_exists("git"):
             run_copy(

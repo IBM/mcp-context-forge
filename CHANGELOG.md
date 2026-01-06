@@ -4,6 +4,111 @@
 
 ---
 
+## [1.0.0-BETA-1] - 2025-12-16 - Multi-Architecture Containers, gRPC Translation, Performance & Security Enhancements
+
+### Overview
+
+This release marks the first beta milestone toward 1.0.0 GA, delivering **multi-architecture container support**, **gRPC-to-MCP protocol translation**, **air-gapped deployment capabilities**, and **significant performance improvements** with **25+ issues resolved**:
+
+- **🏗️ Multi-Architecture Containers** - ARM64 and s390x architecture support for broader deployment options
+- **🔌 gRPC-to-MCP Translation** - Experimental gRPC service interface for MCP protocol operations
+- **🌐 Air-Gapped Deployment** - CDN asset bundling for fully offline/disconnected environments
+- **⚡ Performance Improvements** - Concurrent health checks and N+1 query optimizations reducing gateway operations latency by 10x+
+- **🔐 Security Enhancements** - Password expiration policies, one-time authentication, and input validation
+- **🛠️ Developer Experience** - Performance benchmarking framework, test resource buttons, and improved bulk import feedback
+- **🗄️ Database Support** - Enhanced MariaDB documentation and testing
+
+### 🎉 Announcements
+
+#### **🖥️ ContextForge Desktop App**
+We're excited to announce the **ContextForge Desktop** application - a native desktop client for managing MCP servers and gateways:
+- **Repository:** [contextforge-org/contextforge-desktop](https://github.com/contextforge-org/contextforge-desktop)
+- Cross-platform support (Windows, macOS, Linux)
+- Visual MCP server management and monitoring
+- Integrated gateway configuration
+
+#### **⌨️ ContextForge CLI**
+A new command-line interface for ContextForge operations:
+- **Repository:** [contextforge-org/contextforge-cli](https://github.com/contextforge-org/contextforge-cli)
+- Scriptable MCP server and gateway management
+- CI/CD integration support
+- Configuration export/import utilities
+
+#### **🏢 New ContextForge Organization**
+We've established the [contextforge-org](https://github.com/contextforge-org) GitHub organization to host the growing ContextForge ecosystem. In upcoming releases, several components will migrate to this organization:
+- Plugins
+- MCP Servers
+- Agent runtimes
+- Desktop and CLI tools
+
+> **Note:** The main gateway repository remains at [IBM/mcp-context-forge](https://github.com/IBM/mcp-context-forge).
+
+### Added
+
+#### **🏗️ Multi-Architecture Container Support** ([#80](https://github.com/IBM/mcp-context-forge/issues/80), [#1138](https://github.com/IBM/mcp-context-forge/issues/1138))
+* **ARM64 Support** - Container images now available for ARM64 architecture (Apple Silicon, AWS Graviton)
+* **s390x Support** - IBM Z/LinuxONE architecture support for enterprise mainframe deployments
+* **Multi-Platform Builds** - Automated CI/CD pipeline produces `linux/amd64`, `linux/arm64`, and `linux/s390x` images
+
+#### **🔌 gRPC-to-MCP Protocol Translation** ([#1171](https://github.com/IBM/mcp-context-forge/issues/1171))
+* **Experimental gRPC Service** - New gRPC interface for MCP protocol operations
+  - Tool listing, discovery, and invocation via gRPC
+  - Resource and prompt management endpoints
+  - Server health and capability queries
+* **Protocol Buffers** - Well-defined `.proto` schemas for type-safe client generation
+* **Optional Dependency** - Install with `pip install mcp-contextforge-gateway[grpc]`
+
+#### **🌐 Air-Gapped Environment Support** ([#932](https://github.com/IBM/mcp-context-forge/issues/932))
+* **CDN Asset Bundling** - All frontend assets (HTMX, Alpine.js, CSS) bundled in container image
+* **Offline Deployment** - No external network requests required for Admin UI
+* **Asset Download Script** - `scripts/download-cdn-assets.sh` for manual asset updates
+
+#### **🔐 Password Expiration & Security** ([#1282](https://github.com/IBM/mcp-context-forge/issues/1282), [#1387](https://github.com/IBM/mcp-context-forge/issues/1387))
+* **Configurable Password Expiration** - Set password validity periods via `PASSWORD_EXPIRY_DAYS`
+* **Forced Password Change** - Users prompted to change expired passwords on login
+* **One-Time Authentication Mode** - Support for WXO integration with single-use auth tokens
+* **Multiple Gateway Registrations** - Allow same gateway URL with different authentication contexts ([#1392](https://github.com/IBM/mcp-context-forge/issues/1392))
+
+#### **🧪 Performance Testing Framework** ([#1203](https://github.com/IBM/mcp-context-forge/issues/1203), [#1219](https://github.com/IBM/mcp-context-forge/issues/1219))
+* **Benchmarking Framework** - Comprehensive performance testing infrastructure
+* **Benchmark MCP Server** - Dedicated server for load testing and performance analysis
+* **N+1 Query Detection** - Automated tests to catch database query performance regressions
+
+#### **📦 Sample MCP Servers**
+* **Go System Monitor Server** ([#898](https://github.com/IBM/mcp-context-forge/issues/898)) - Reference implementation in Go for system monitoring
+
+#### **🛠️ Developer Experience Improvements**
+* **Test Button for Resources** ([#1560](https://github.com/IBM/mcp-context-forge/issues/1560)) - Quick resource testing from Admin UI
+* **Tool Tag Structure** ([#1442](https://github.com/IBM/mcp-context-forge/issues/1442)) - Enhanced tag structure with metadata support (objects instead of strings)
+* **Authentication Plugin Architecture** ([#1019](https://github.com/IBM/mcp-context-forge/issues/1019)) - Extensible authentication through plugin system
+* **Bulk Import Feedback** ([#806](https://github.com/IBM/mcp-context-forge/issues/806)) - Improved error messages and registration feedback in UI
+
+### Fixed
+
+#### **⚡ Performance Fixes**
+* **Concurrent Health Checks** ([#1522](https://github.com/IBM/mcp-context-forge/issues/1522)) - Gateway health checks now run in parallel instead of sequentially, reducing latency from O(n) to O(1)
+* **N+1 Query Elimination** ([#1523](https://github.com/IBM/mcp-context-forge/issues/1523)) - Major performance fix for gateway/tool/server services, reducing database queries by 90%+ in multi-gateway scenarios
+
+#### **🐛 Bug Fixes**
+* **Gateway Status Updates** ([#464](https://github.com/IBM/mcp-context-forge/issues/464)) - MCP Server "Active" status now properly updates when servers shutdown
+* **Resource Listing** ([#1259](https://github.com/IBM/mcp-context-forge/issues/1259)) - Fixed MCP resources not appearing in listings
+* **StreamableHTTP Redirects** ([#1280](https://github.com/IBM/mcp-context-forge/issues/1280)) - Proper redirect handling in gateway URL validation
+* **Tool Schema team_id** ([#1395](https://github.com/IBM/mcp-context-forge/issues/1395)) - Team ID now correctly applied in tool schemas
+* **Virtual Server Structured Content** ([#1406](https://github.com/IBM/mcp-context-forge/issues/1406)) - Fixed missing structured content in Streamable HTTP responses
+* **One-Time Auth Gateway Registration** ([#1448](https://github.com/IBM/mcp-context-forge/issues/1448)) - Multiple gateways with same URL now supported with one-time auth
+* **SSL Key Passphrase** ([#1577](https://github.com/IBM/mcp-context-forge/issues/1577)) - Support for passphrase-protected SSL keys in HTTPS configuration
+
+### Security
+
+* **Input Validation & Output Sanitization** ([#221](https://github.com/IBM/mcp-context-forge/issues/221)) - Gateway-level input validation to prevent path traversal and injection attacks
+
+### Changed
+
+#### **🗄️ Database Support**
+* **MariaDB Documentation** ([#288](https://github.com/IBM/mcp-context-forge/issues/288)) - Comprehensive MariaDB testing, documentation, and CI/CD integration
+
+---
+
 ## [0.9.0] - 2025-11-09 - REST Passthrough, Ed25519 Certificate Signing, Multi-Tenancy Fixes & Platform Enhancements
 
 ### Overview
@@ -20,6 +125,7 @@ This release delivers **Ed25519 Certificate Signing**, **REST API Passthrough Ca
 - **⚡ Performance Optimizations** - Response compression middleware (Brotli, Zstd, GZip) reducing bandwidth by 30-70% + orjson JSON serialization providing 5-6x faster JSON encoding
 - **🦀 Rust Plugin Framework** - Optional Rust-accelerated plugins with 5-100x performance improvements
 - **💻 Admin UI** - Quality of life improvements for admins when managing MCP servers
+- **🗄️ Enhanced Database Support** - Complete MariaDB/MySQL documentation, migration guides, and observability metrics
 
 ### ⚠️ BREAKING CHANGES
 
@@ -108,6 +214,25 @@ docker compose up -d
 - **Error: "Invalid cross-device link"** - Upgrade uses copy mode (not `--link`) to work across different Docker volumes
 
 ### Added
+
+#### **🗄️ Enhanced Database Support & Documentation**
+* **Complete MariaDB/MySQL Documentation** - Comprehensive documentation for MariaDB and MySQL support
+  - New "Supported Databases" page with sample connection URLs and limitations
+  - Detailed MariaDB/MySQL configuration examples with version requirements
+  - Known limitations documentation (JSONPath indexes, foreign key constraints)
+  - Performance optimization guidelines for MariaDB/MySQL deployments
+* **Simplified Database Migration** - MariaDB compatibility with existing PostgreSQL schemas
+  - No complex migration required - simply change the `DATABASE_URL`
+  - Automatic schema creation and migration handling
+  - Full compatibility between PostgreSQL and MariaDB deployments
+* **Enhanced Observability Metrics** - Database engine detection in Prometheus metrics
+  - Automatic `engine="mariadb"` labels in metrics for MariaDB deployments
+  - `database_info` gauge with engine and URL scheme labels
+  - Support for monitoring MariaDB-specific performance characteristics
+* **Quick Start Documentation Updates** - Docker Compose and Helm examples
+  - Docker Compose quick-start with MariaDB as the recommended database
+  - Helm chart deployment examples with MariaDB configuration
+  - Production-ready stack examples with Redis and admin tools
 
 #### **📄 REST API and UI Pagination** (#1224, #1277)
 * **Paginated REST API Endpoints** - All admin API endpoints now support pagination with configurable page size
@@ -931,10 +1056,10 @@ This release focuses on **Advanced OAuth Integration, Plugin Ecosystem, MCP Regi
   # MariaDB (recommended MySQL-compatible option):
   DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
 
-  # Docker deployment with MariaDB 12.0.2-ubi10:
+  # Docker deployment with MariaDB:
   DATABASE_URL=mysql+pymysql://mysql:changeme@mariadb:3306/mcp
   ```
-  - **36+ database tables** fully compatible with MariaDB 12.0+ and MySQL 8.4+
+  - **36+ database tables** fully compatible with MariaDB 10.6+ and MySQL 8.0+
   - All **VARCHAR length issues** resolved for MySQL compatibility
   - **Container support**: MariaDB and MySQL drivers included in all container images
   - **Complete feature parity** with SQLite and PostgreSQL backends

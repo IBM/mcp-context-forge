@@ -1,0 +1,64 @@
+{{- $targetVersion := .Values.postgres.upgrade.targetVersion | toString -}}
+{{- if and .Values.postgres.upgrade.enabled (eq $targetVersion "18") }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-postgres-migration-check
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-migration-check
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": "before-hook-creation,hook-succeeded"
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: postgres-migration-check
+          image: "{{ .Values.postgres.image.repository }}:18"
+          command:
+            - /bin/bash
+            - -c
+            - |
+              #!/bin/bash
+              set -e
+
+              echo "Checking PostgreSQL 18 migration status..."
+
+              # Wait for PostgreSQL to be ready
+              echo "Waiting for PostgreSQL 18 to be ready..."
+              until pg_isready -h {{ include "mcp-stack.fullname" . }}-postgres -U {{ .Values.postgres.credentials.user }}; do
+                sleep 2
+              done
+
+              # Run a simple query to verify the database is working
+              RESULT=$(psql -h {{ include "mcp-stack.fullname" . }}-postgres \
+                         -U {{ .Values.postgres.credentials.user }} \
+                         -d {{ .Values.postgres.credentials.database }} \
+                         -t -c "SELECT version();" 2>/dev/null || echo "ERROR")
+
+              if [[ $RESULT == *"ERROR"* ]] || [[ -z "$RESULT" ]]; then
+                echo "❌ Migration check failed - PostgreSQL 18 is not working properly"
+                exit 1
+              else
+                echo "✅ PostgreSQL 18 is working properly"
+                echo "PostgreSQL version: $RESULT"
+
+                # Update the upgrade status in a ConfigMap or similar
+                # For now, we'll just log that the migration was successful
+                echo "Migration to PostgreSQL 18 completed successfully"
+              fi
+          env:
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: POSTGRES_USER
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: POSTGRES_PASSWORD
+{{- end }}

@@ -90,7 +90,7 @@ def sample_tool():
         ),
         gateway_slug="",
         custom_name_slug="test_tool",
-        tags=["api", "test"],
+        tags=[{"id": "api", "label": "API"}, {"id": "test", "label": "Test"}],
     )
 
 
@@ -116,7 +116,7 @@ def sample_gateway():
         auth_token=None,
         auth_header_key=None,
         auth_header_value=None,
-        tags=["gateway", "test"],
+        tags=[{"id": "gateway", "label": "Gateway"}, {"id": "test", "label": "Test"}],
         slug="test_gateway",
         passthrough_headers=None,
     )
@@ -590,7 +590,7 @@ async def test_export_gateways_with_tag_filtering(export_service, mock_db):
         auth_token=None,
         auth_header_key=None,
         auth_header_value=None,
-        tags=["production", "api"],
+        tags=[{"id": "production", "label": "Production"}, {"id": "api", "label": "API"}],
         slug="gateway_with_tags",
         passthrough_headers=None,
     )
@@ -614,7 +614,7 @@ async def test_export_gateways_with_tag_filtering(export_service, mock_db):
         auth_token=None,
         auth_header_key=None,
         auth_header_value=None,
-        tags=["test", "dev"],
+        tags=[{"id": "test", "label": "Test"}, {"id": "dev", "label": "Dev"}],
         slug="gateway_no_tags",
         passthrough_headers=None,
     )
@@ -726,7 +726,7 @@ async def test_export_servers_with_data(export_service, mock_db):
     mock_server.name = "test_server"
     mock_server.description = "Test server"
     mock_server.associated_tools = ["tool1", "tool2"]
-    mock_server.is_active = True
+    mock_server.enabled = True
     mock_server.tags = ["test", "api"]
 
     export_service.server_service.list_servers.return_value = [mock_server]
@@ -767,7 +767,7 @@ async def test_export_prompts_with_arguments(export_service, mock_db):
     mock_prompt.template = "Process {{user_input}} with {{context}}"
     mock_prompt.description = "Test prompt"
     mock_prompt.arguments = [mock_arg1, mock_arg2]
-    mock_prompt.is_active = True
+    mock_prompt.enabled = True
     mock_prompt.tags = ["nlp", "processing"]
 
     export_service.prompt_service.list_prompts.return_value = ([mock_prompt], None)
@@ -803,7 +803,7 @@ async def test_export_resources_with_data(export_service, mock_db):
     mock_resource.uri = "file:///workspace/test.txt"
     mock_resource.description = "Test resource file"
     mock_resource.mime_type = "text/plain"
-    mock_resource.is_active = True
+    mock_resource.enabled = True
     mock_resource.tags = ["file", "text"]
     mock_resource.updated_at = datetime.now(timezone.utc)
 
@@ -925,7 +925,7 @@ async def test_export_selective_all_entity_types(export_service, mock_db):
         icon=None,
         associated_tools=[],
         associated_a2a_agents=[],
-        is_active=True,
+        enabled=True,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
         metrics=create_default_server_metrics(),
@@ -933,12 +933,12 @@ async def test_export_selective_all_entity_types(export_service, mock_db):
     )
 
     sample_prompt = PromptRead(
-        id=1,
+        id="ca627760127d409080fdefc309147e08",
         name="test_prompt",
         template="Test template",
         description="Test prompt",
         arguments=[],
-        is_active=True,
+        enabled=True,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
         metrics=create_default_prompt_metrics(),
@@ -946,13 +946,13 @@ async def test_export_selective_all_entity_types(export_service, mock_db):
     )
 
     sample_resource = ResourceRead(
-        id=1,
+        id="ca627760127d409080fdefc309147e08",
         name="test_resource",
         uri="file:///test.txt",
         description="Test resource",
         mime_type="text/plain",
         size=None,
-        is_active=True,
+        enabled=True,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
         metrics=create_default_resource_metrics(),
@@ -1070,7 +1070,7 @@ async def test_export_selected_servers(export_service, mock_db):
         icon=None,
         associated_tools=[],
         associated_a2a_agents=[],
-        is_active=True,
+        enabled=True,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
         metrics=create_default_server_metrics(),
@@ -1103,12 +1103,12 @@ async def test_export_selected_prompts(export_service, mock_db):
     # First-Party
 
     sample_prompt = PromptRead(
-        id=1,
+        id="ca627760127d409080fdefc309147e08",
         name="test_prompt",
         template="Test template",
         description="Test prompt",
         arguments=[],
-        is_active=True,
+        enabled=True,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
         metrics=create_default_prompt_metrics(),
@@ -1141,13 +1141,13 @@ async def test_export_selected_resources(export_service, mock_db):
     # First-Party
 
     sample_resource = ResourceRead(
-        id=1,
+        id="ca627760127d409080fdefc309147e08",
         name="test_resource",
         uri="file:///test.txt",
         description="Test resource",
         mime_type="text/plain",
         size=None,
-        is_active=True,
+        enabled=True,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
         metrics=create_default_resource_metrics(),

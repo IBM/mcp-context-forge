@@ -32,17 +32,25 @@ Examples:
 # Standard
 import asyncio
 from importlib.resources import files
+import os
+import tempfile
+import time
 from typing import Any, cast
 
 # Third-Party
 from alembic import command
 from alembic.config import Config
+from filelock import FileLock, Timeout
 from sqlalchemy import create_engine, inspect
 
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent, Base, EmailTeam, EmailUser, Gateway, Prompt, Resource, Server, SessionLocal, Tool
 from mcpgateway.services.logging_service import LoggingService
+
+# Migration lock to prevent concurrent migrations from multiple workers
+_MIGRATION_LOCK_PATH = os.path.join(tempfile.gettempdir(), "mcpgateway_migration.lock")
+_MIGRATION_LOCK_TIMEOUT = 300  # seconds to wait for lock (5 minutes for slow migrations)
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -76,18 +84,18 @@ async def bootstrap_admin_user() -> None:
 
             # Create admin user
             logger.info(f"Creating platform admin user: {settings.platform_admin_email}")
-            admin_user = await auth_service.create_user(
+            admin_user = await auth_service.create_platform_admin(
                 email=settings.platform_admin_email,
                 password=settings.platform_admin_password.get_secret_value(),
                 full_name=settings.platform_admin_full_name,
-                is_admin=True,
             )
 
-            # Mark admin user as email verified
+            # Mark admin user as email verified and require password change on first login
             # First-Party
             from mcpgateway.db import utc_now  # pylint: disable=import-outside-toplevel
 
             admin_user.email_verified_at = utc_now()
+            admin_user.password_change_required = True  # Force admin to change default password
             db.commit()
 
             # Personal team is automatically created during user creation if enabled
@@ -115,15 +123,11 @@ async def bootstrap_default_roles() -> None:
 
     try:
         # First-Party
-        from mcpgateway.db import get_db  # pylint: disable=import-outside-toplevel
         from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
         from mcpgateway.services.role_service import RoleService  # pylint: disable=import-outside-toplevel
 
-        # Get database session
-        db_gen = get_db()
-        db = next(db_gen)
-
-        try:
+        # Use context manager to ensure proper session cleanup
+        with cast(Any, SessionLocal)() as db:
             role_service = RoleService(db)
             auth_service = EmailAuthService(db)
 
@@ -204,9 +208,6 @@ async def bootstrap_default_roles() -> None:
 
             logger.info("Default RBAC roles bootstrap completed successfully")
 
-        finally:
-            db.close()
-
     except Exception as e:
         logger.error(f"Failed to bootstrap default roles: {e}")
         # Don't fail the entire bootstrap process if role creation fails
@@ -247,6 +248,9 @@ async def main() -> None:
     executes `alembic upgrade head`, leaving application data intact.
     Also creates the platform admin user if email authentication is enabled.
 
+    Uses file locking to prevent race conditions when multiple workers start
+    simultaneously (e.g., with GUNICORN_PRELOAD_APP=false).
+
     Args:
         None
     """
@@ -255,19 +259,62 @@ async def main() -> None:
     cfg = Config(str(ini_path))  # path in container
     cfg.attributes["configure_logger"] = True
 
-    with engine.begin() as conn:
-        cfg.attributes["connection"] = conn
-        cfg.set_main_option("sqlalchemy.url", settings.database_url)
+    # Use file lock to prevent concurrent migrations from multiple workers
+    lock = FileLock(_MIGRATION_LOCK_PATH, timeout=_MIGRATION_LOCK_TIMEOUT)
 
-        insp = inspect(conn)
+    try:
+        # Try to acquire lock - if another process has it, wait up to timeout
+        with lock:
+            logger.info("Acquired migration lock, checking database schema...")
 
-        if "gateways" not in insp.get_table_names():
-            logger.info("Empty DB detected - creating baseline schema")
-            Base.metadata.create_all(bind=conn)
-            command.stamp(cfg, "head")
+            with engine.begin() as conn:
+                cfg.attributes["connection"] = conn
+                # Escape '%' characters in URL to avoid configparser interpolation errors
+                # (e.g., URL-encoded passwords like %40 for '@')
+                escaped_url = settings.database_url.replace("%", "%%")
+                cfg.set_main_option("sqlalchemy.url", escaped_url)
+
+                insp = inspect(conn)
+
+                if "gateways" not in insp.get_table_names():
+                    logger.info("Empty DB detected - creating baseline schema")
+                    # Apply MariaDB compatibility fixes if needed
+                    if settings.database_url.startswith(("mariadb", "mysql")):
+                        # pylint: disable=import-outside-toplevel
+                        # First-Party
+                        from mcpgateway.alembic.env import _modify_metadata_for_mariadb, mariadb_naming_convention
+
+                        _modify_metadata_for_mariadb()
+                        Base.metadata.naming_convention = mariadb_naming_convention
+                        logger.info("Applied MariaDB compatibility modifications")
+
+                    Base.metadata.create_all(bind=conn)
+                    command.stamp(cfg, "head")
+                else:
+                    logger.info("Running Alembic migrations to ensure schema is up to date")
+                    command.upgrade(cfg, "head")
+
+    except Timeout:
+        logger.warning(f"Could not acquire migration lock within {_MIGRATION_LOCK_TIMEOUT}s - another process may be migrating")
+        # Wait a bit and verify the schema is ready before continuing
+        logger.info("Waiting for schema to be ready...")
+
+        for attempt in range(30):  # Wait up to 60 seconds
+            try:
+                with engine.connect() as conn:
+                    insp = inspect(conn)
+                    if "gateways" in insp.get_table_names():
+                        logger.info("Schema verified - proceeding with bootstrap")
+                        break
+            except Exception as e:
+                logger.debug(f"Schema check attempt {attempt + 1} failed: {e}")
+            time.sleep(2)
         else:
-            logger.info("Running Alembic migrations to ensure schema is up to date")
-            command.upgrade(cfg, "head")
+            logger.error("Schema not ready after waiting - bootstrap may fail")
+
+    finally:
+        # Dispose the engine to close all connections in the pool
+        engine.dispose()
 
     # Post-upgrade normalization passes
     updated = normalize_team_visibility()

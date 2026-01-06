@@ -35,6 +35,7 @@ def db_session():
         yield session
     finally:
         session.close()
+        engine.dispose()  # Properly close all connections in the pool
 
 
 @pytest.fixture
@@ -160,7 +161,7 @@ class TestServerUUIDFeature:
         custom_uuid = "12345678-1234-1234-1234-123456789abc"
 
         # Create server with custom UUID
-        db_server = DbServer(id=custom_uuid, name="Test Server", description="Test server with custom UUID", is_active=True)
+        db_server = DbServer(id=custom_uuid, name="Test Server", description="Test server with custom UUID", enabled=True)
 
         db_session.add(db_server)
         db_session.commit()
@@ -173,7 +174,7 @@ class TestServerUUIDFeature:
     def test_server_create_without_uuid(self, db_session):
         """Test creating a server without specifying UUID (auto-generated)."""
         # Create server without specifying UUID
-        db_server = DbServer(name="Auto UUID Server", description="Test server with auto UUID", is_active=True)
+        db_server = DbServer(name="Auto UUID Server", description="Test server with auto UUID", enabled=True)
 
         db_session.add(db_server)
         db_session.commit()
@@ -190,7 +191,7 @@ class TestServerUUIDFeature:
         new_uuid = "new-uuid-5678"
 
         # Create server with original UUID
-        db_server = DbServer(id=original_uuid, name="UUID Update Server", description="Test server for UUID update", is_active=True)
+        db_server = DbServer(id=original_uuid, name="UUID Update Server", description="Test server for UUID update", enabled=True)
 
         db_session.add(db_server)
         db_session.commit()
@@ -211,12 +212,12 @@ class TestServerUUIDFeature:
         duplicate_uuid = "duplicate-uuid-1234"
 
         # Create first server with UUID
-        db_server1 = DbServer(id=duplicate_uuid, name="First Server", description="First server", is_active=True)
+        db_server1 = DbServer(id=duplicate_uuid, name="First Server", description="First server", enabled=True)
         db_session.add(db_server1)
         db_session.commit()
 
         # Try to create second server with same UUID
-        db_server2 = DbServer(id=duplicate_uuid, name="Second Server", description="Second server", is_active=True)
+        db_server2 = DbServer(id=duplicate_uuid, name="Second Server", description="Second server", enabled=True)
 
         db_session.add(db_server2)
 
@@ -333,7 +334,7 @@ class TestServerUUIDNormalization:
                 icon=None,
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
-                is_active=True,
+                enabled=True,
                 associated_tools=[],
                 associated_resources=[],
                 associated_prompts=[],
@@ -401,7 +402,7 @@ class TestServerUUIDNormalization:
                 icon=None,
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
-                is_active=True,
+                enabled=True,
                 associated_tools=[],
                 associated_resources=[],
                 associated_prompts=[],
@@ -465,7 +466,7 @@ class TestServerUUIDNormalization:
                 icon=None,
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
-                is_active=True,
+                enabled=True,
                 associated_tools=[],
                 associated_resources=[],
                 associated_prompts=[],
@@ -561,7 +562,7 @@ class TestServerUUIDNormalization:
             id=expected_hex,  # Simulate the normalized UUID
             name="Storage Test Server",
             description="Test UUID storage format",
-            is_active=True,
+            enabled=True,
         )
 
         db_session.add(db_server)
@@ -616,7 +617,7 @@ class TestServerUUIDNormalization:
                     icon=None,
                     created_at="2023-01-01T00:00:00",
                     updated_at="2023-01-01T00:00:00",
-                    is_active=True,
+                    enabled=True,
                     associated_tools=[],
                     associated_resources=[],
                     associated_prompts=[],

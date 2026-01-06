@@ -70,7 +70,7 @@ if not logging.getLogger().handlers:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%H:%M:%S",
+        datefmt="%Y-%m-%dT%H:%M:%S",
     )
 
 logger = logging.getLogger(__name__)
@@ -152,8 +152,17 @@ class Settings(BaseSettings):
     app_name: str = "MCP_Gateway"
     host: str = "127.0.0.1"
     port: PositiveInt = Field(default=4444, ge=1, le=65535)
+    client_mode: bool = False
     docs_allow_basic_auth: bool = False  # Allow basic auth for docs
-    database_url: str = "sqlite:///./mcp.db"
+    database_url: str = Field(
+        default="sqlite:///./mcp.db",
+        description=(
+            "Database connection URL. Supports SQLite, PostgreSQL, MySQL/MariaDB. "
+            "For PostgreSQL with custom schema, use the 'options' query parameter: "
+            "postgresql://user:pass@host:5432/db?options=-c%20search_path=schema_name "
+            "(See Issue #1535 for details)"
+        ),
+    )
 
     # Absolute paths resolved at import-time (still override-able via env vars)
     templates_dir: Path = Field(default_factory=lambda: Path(str(files("mcpgateway") / "templates")))
@@ -207,6 +216,24 @@ class Settings(BaseSettings):
     sso_keycloak_map_realm_roles: bool = Field(default=True, description="Map Keycloak realm roles to gateway teams")
     sso_keycloak_map_client_roles: bool = Field(default=False, description="Map Keycloak client roles to gateway RBAC")
     sso_keycloak_username_claim: str = Field(default="preferred_username", description="JWT claim for username")
+
+    # Security Validation & Sanitization
+    experimental_validate_io: bool = Field(default=False, description="Enable experimental input validation and output sanitization")
+    validation_middleware_enabled: bool = Field(default=False, description="Enable validation middleware for all requests")
+    validation_strict: bool = Field(default=True, description="Strict validation mode - reject on violations")
+    sanitize_output: bool = Field(default=True, description="Sanitize output to remove control characters")
+    allowed_roots: List[str] = Field(default_factory=list, description="Allowed root paths for resource access")
+    max_path_depth: int = Field(default=10, description="Maximum allowed path depth")
+    max_param_length: int = Field(default=10000, description="Maximum parameter length")
+    dangerous_patterns: List[str] = Field(
+        default_factory=lambda: [
+            r"[;&|`$(){}\[\]<>]",  # Shell metacharacters
+            r"\.\.[\\/]",  # Path traversal
+            r"[\x00-\x1f\x7f-\x9f]",  # Control characters
+        ],
+        description="Regex patterns for dangerous input",
+    )
+
     sso_keycloak_email_claim: str = Field(default="email", description="JWT claim for email")
     sso_keycloak_groups_claim: str = Field(default="groups", description="JWT claim for groups/roles")
 
@@ -290,6 +317,7 @@ class Settings(BaseSettings):
     email_auth_enabled: bool = Field(default=True, description="Enable email-based authentication")
     platform_admin_email: str = Field(default="admin@example.com", description="Platform administrator email address")
     platform_admin_password: SecretStr = Field(default=SecretStr("changeme"), description="Platform administrator password")
+    default_user_password: SecretStr = Field(default=SecretStr("changeme"), description="Default password for new users")  # nosec B105
     platform_admin_full_name: str = Field(default="Platform Administrator", description="Platform administrator full name")
 
     # Argon2id Password Hashing Configuration
@@ -299,10 +327,10 @@ class Settings(BaseSettings):
 
     # Password Policy Configuration
     password_min_length: int = Field(default=8, description="Minimum password length")
-    password_require_uppercase: bool = Field(default=False, description="Require uppercase letters in passwords")
-    password_require_lowercase: bool = Field(default=False, description="Require lowercase letters in passwords")
+    password_require_uppercase: bool = Field(default=True, description="Require uppercase letters in passwords")
+    password_require_lowercase: bool = Field(default=True, description="Require lowercase letters in passwords")
     password_require_numbers: bool = Field(default=False, description="Require numbers in passwords")
-    password_require_special: bool = Field(default=False, description="Require special characters in passwords")
+    password_require_special: bool = Field(default=True, description="Require special characters in passwords")
 
     # Account Security Configuration
     max_failed_login_attempts: int = Field(default=5, description="Maximum failed login attempts before account lockout")
@@ -319,6 +347,7 @@ class Settings(BaseSettings):
     # UI/Admin Feature Flags
     mcpgateway_ui_enabled: bool = False
     mcpgateway_admin_api_enabled: bool = False
+    mcpgateway_ui_airgapped: bool = Field(default=False, description="Use local CDN assets instead of external CDNs for airgapped deployments")
     mcpgateway_bulk_import_enabled: bool = True
     mcpgateway_bulk_import_max_tools: int = 200
     mcpgateway_bulk_import_rate_limit: int = 10
@@ -339,6 +368,16 @@ class Settings(BaseSettings):
     mcpgateway_grpc_max_message_size: int = Field(default=4194304, description="Maximum gRPC message size in bytes (4MB)")
     mcpgateway_grpc_timeout: int = Field(default=30, description="Default gRPC call timeout in seconds")
     mcpgateway_grpc_tls_enabled: bool = Field(default=False, description="Enable TLS for gRPC connections by default")
+
+    # ===================================
+    # Performance Monitoring Configuration
+    # ===================================
+    mcpgateway_performance_tracking: bool = Field(default=False, description="Enable performance tracking tab in admin UI")
+    mcpgateway_performance_collection_interval: int = Field(default=10, ge=1, le=300, description="Metric collection interval in seconds")
+    mcpgateway_performance_retention_hours: int = Field(default=24, ge=1, le=168, description="Snapshot retention period in hours")
+    mcpgateway_performance_retention_days: int = Field(default=90, ge=1, le=365, description="Aggregate retention period in days")
+    mcpgateway_performance_max_snapshots: int = Field(default=10000, ge=100, le=1000000, description="Maximum performance snapshots to retain")
+    mcpgateway_performance_distributed: bool = Field(default=False, description="Enable distributed mode metrics aggregation via Redis")
 
     # MCP Server Catalog Configuration
     mcpgateway_catalog_enabled: bool = Field(default=True, description="Enable MCP server catalog feature")
@@ -371,7 +410,23 @@ class Settings(BaseSettings):
 
     # Security Headers Configuration
     security_headers_enabled: bool = Field(default=True)
-    x_frame_options: str = Field(default="DENY")
+    x_frame_options: Optional[str] = Field(default="DENY")
+
+    @field_validator("x_frame_options")
+    @classmethod
+    def normalize_x_frame_options(cls, v: Optional[str]) -> Optional[str]:
+        """Convert string 'null' or 'none' to Python None to disable iframe restrictions.
+
+        Args:
+            v: The x_frame_options value from environment/config
+
+        Returns:
+            None if v is "null" or "none" (case-insensitive), otherwise returns v unchanged
+        """
+        if isinstance(v, str) and v.lower() in ("null", "none"):
+            return None
+        return v
+
     x_content_type_options_enabled: bool = Field(default=True)
     x_xss_protection_enabled: bool = Field(default=True)
     x_download_options_enabled: bool = Field(default=True)
@@ -400,6 +455,7 @@ class Settings(BaseSettings):
     require_strong_secrets: bool = False  # Default to False for backward compatibility, will be enforced in 1.0.0
 
     llmchat_enabled: bool = Field(default=False, description="Enable LLM Chat feature")
+    toolops_enabled: bool = Field(default=False, description="Enable ToolOps feature")
 
     # redis configurations for Maintaining Chat Sessions in multi-worker environment
     llmchat_session_ttl: int = Field(default=300, description="Seconds for active_session key TTL")
@@ -408,6 +464,40 @@ class Settings(BaseSettings):
     llmchat_session_lock_wait: float = Field(default=0.2, description="Seconds between polls")
     llmchat_chat_history_ttl: int = Field(default=3600, description="Seconds for chat history expiry")
     llmchat_chat_history_max_messages: int = Field(default=50, description="Maximum message history to store per user")
+
+    # LLM Settings (Internal API for LLM Chat)
+    llm_api_prefix: str = Field(default="/v1", description="API prefix for internal LLM endpoints")
+    llm_request_timeout: int = Field(default=120, description="Request timeout in seconds for LLM API calls")
+    llm_streaming_enabled: bool = Field(default=True, description="Enable streaming responses for LLM Chat")
+    llm_health_check_interval: int = Field(default=300, description="Provider health check interval in seconds")
+
+    @field_validator("allowed_roots", mode="before")
+    @classmethod
+    def parse_allowed_roots(cls, v):
+        """Parse allowed roots from environment variable or config value.
+
+        Args:
+            v: The input value to parse
+
+        Returns:
+            list: Parsed list of allowed root paths
+        """
+        if isinstance(v, str):
+            # Support both JSON array and comma-separated values
+            v = v.strip()
+            if not v:
+                return []
+            # Try JSON first
+            try:
+                loaded = json.loads(v)
+                if isinstance(loaded, list):
+                    return loaded
+            except json.JSONDecodeError:
+                # Not a valid JSON array → fallback to comma-separated parsing
+                pass
+            # Fallback to comma-split
+            return [x.strip() for x in v.split(",") if x.strip()]
+        return v
 
     @field_validator("jwt_secret_key", "auth_encryption_secret")
     @classmethod
@@ -446,28 +536,30 @@ class Settings(BaseSettings):
             value = str(v)
 
         # Check for default/weak secrets
-        weak_secrets = ["my-test-key", "my-test-salt", "changeme", "secret", "password"]
-        if value.lower() in weak_secrets:
-            logger.warning(f"🔓 SECURITY WARNING - {field_name}: Default/weak secret detected! Please set a strong, unique value for production.")
+        if not info.data.get("client_mode"):
+            weak_secrets = ["my-test-key", "my-test-salt", "changeme", "secret", "password"]
+            if value.lower() in weak_secrets:
+                logger.warning(f"🔓 SECURITY WARNING - {field_name}: Default/weak secret detected! Please set a strong, unique value for production.")
 
-        # Check minimum length
-        if len(value) < 32:
-            logger.warning(f"⚠️  SECURITY WARNING - {field_name}: Secret should be at least 32 characters long. Current length: {len(value)}")
+            # Check minimum length
+            if len(value) < 32:
+                logger.warning(f"⚠️  SECURITY WARNING - {field_name}: Secret should be at least 32 characters long. Current length: {len(value)}")
 
-        # Basic entropy check (at least 10 unique characters)
-        if len(set(value)) < 10:
-            logger.warning(f"🔑 SECURITY WARNING - {field_name}: Secret has low entropy. Consider using a more random value.")
+            # Basic entropy check (at least 10 unique characters)
+            if len(set(value)) < 10:
+                logger.warning(f"🔑 SECURITY WARNING - {field_name}: Secret has low entropy. Consider using a more random value.")
 
         # Always return SecretStr to keep it secret-safe
         return v if isinstance(v, SecretStr) else SecretStr(value)
 
     @field_validator("basic_auth_password")
     @classmethod
-    def validate_admin_password(cls, v: str | SecretStr) -> SecretStr:
+    def validate_admin_password(cls, v: str | SecretStr, info: ValidationInfo) -> SecretStr:
         """Validate admin password meets security requirements.
 
         Args:
             v: The admin password value to validate.
+            info: ValidationInfo containing field data.
 
         Returns:
             SecretStr: The validated admin password value, wrapped as SecretStr.
@@ -478,35 +570,37 @@ class Settings(BaseSettings):
         else:
             value = v
 
-        if value == "changeme":  # nosec B105 - checking for default value
-            logger.warning("🔓 SECURITY WARNING: Default admin password detected! Please change the BASIC_AUTH_PASSWORD immediately.")
+        if not info.data.get("client_mode"):
+            if value == "changeme":  # nosec B105 - checking for default value
+                logger.warning("🔓 SECURITY WARNING: Default admin password detected! Please change the BASIC_AUTH_PASSWORD immediately.")
 
-        # Note: We can't access password_min_length here as it's not set yet during validation
-        # Using default value of 8 to match the field default
-        min_length = 8  # This matches the default in password_min_length field
-        if len(value) < min_length:
-            logger.warning(f"⚠️  SECURITY WARNING: Admin password should be at least {min_length} characters long. Current length: {len(value)}")
+            # Note: We can't access password_min_length here as it's not set yet during validation
+            # Using default value of 8 to match the field default
+            min_length = 8  # This matches the default in password_min_length field
+            if len(value) < min_length:
+                logger.warning(f"⚠️  SECURITY WARNING: Admin password should be at least {min_length} characters long. Current length: {len(value)}")
 
-        # Check password complexity
-        has_upper = any(c.isupper() for c in value)
-        has_lower = any(c.islower() for c in value)
-        has_digit = any(c.isdigit() for c in value)
-        has_special = bool(re.search(r'[!@#$%^&*(),.?":{}|<>]', value))
+            # Check password complexity
+            has_upper = any(c.isupper() for c in value)
+            has_lower = any(c.islower() for c in value)
+            has_digit = any(c.isdigit() for c in value)
+            has_special = bool(re.search(r'[!@#$%^&*(),.?":{}|<>]', value))
 
-        complexity_score = sum([has_upper, has_lower, has_digit, has_special])
-        if complexity_score < 3:
-            logger.warning("🔐 SECURITY WARNING: Admin password has low complexity. Should contain at least 3 of: uppercase, lowercase, digits, special characters")
+            complexity_score = sum([has_upper, has_lower, has_digit, has_special])
+            if complexity_score < 3:
+                logger.warning("🔐 SECURITY WARNING: Admin password has low complexity. Should contain at least 3 of: uppercase, lowercase, digits, special characters")
 
         # Always return SecretStr to keep it secret-safe
         return v if isinstance(v, SecretStr) else SecretStr(value)
 
     @field_validator("allowed_origins")
     @classmethod
-    def validate_cors_origins(cls, v: Any) -> set[str] | None:
+    def validate_cors_origins(cls, v: Any, info: ValidationInfo) -> set[str] | None:
         """Validate CORS allowed origins.
 
         Args:
             v: The set of allowed origins to validate.
+            info: ValidationInfo containing field data.
 
         Returns:
             set: The validated set of allowed origins.
@@ -520,35 +614,38 @@ class Settings(BaseSettings):
             raise ValueError("allowed_origins must be a set or list of strings")
 
         dangerous_origins = ["*", "null", ""]
-        for origin in v:
-            if origin in dangerous_origins:
-                logger.warning(f"🌐 SECURITY WARNING: Dangerous CORS origin '{origin}' detected. Consider specifying explicit origins instead of wildcards.")
+        if not info.data.get("client_mode"):
+            for origin in v:
+                if origin in dangerous_origins:
+                    logger.warning(f"🌐 SECURITY WARNING: Dangerous CORS origin '{origin}' detected. Consider specifying explicit origins instead of wildcards.")
 
-            # Validate URL format
-            if not origin.startswith(("http://", "https://")) and origin not in dangerous_origins:
-                logger.warning(f"⚠️  SECURITY WARNING: Invalid origin format '{origin}'. Origins should start with http:// or https://")
+                # Validate URL format
+                if not origin.startswith(("http://", "https://")) and origin not in dangerous_origins:
+                    logger.warning(f"⚠️  SECURITY WARNING: Invalid origin format '{origin}'. Origins should start with http:// or https://")
 
         return set({str(origin) for origin in v})
 
     @field_validator("database_url")
     @classmethod
-    def validate_database_url(cls, v: str) -> str:
+    def validate_database_url(cls, v: str, info: ValidationInfo) -> str:
         """Validate database connection string security.
 
         Args:
             v: The database URL to validate.
+            info: ValidationInfo containing field data.
 
         Returns:
             str: The validated database URL.
         """
         # Check for hardcoded passwords in non-SQLite databases
-        if not v.startswith("sqlite"):
-            if "password" in v and any(weak in v for weak in ["password", "123", "admin", "test"]):
-                logger.warning("Potentially weak database password detected. Consider using a stronger password.")
+        if not info.data.get("client_mode"):
+            if not v.startswith("sqlite"):
+                if "password" in v and any(weak in v for weak in ["password", "123", "admin", "test"]):
+                    logger.warning("Potentially weak database password detected. Consider using a stronger password.")
 
-        # Warn about SQLite in production
-        if v.startswith("sqlite"):
-            logger.info("Using SQLite database. Consider PostgreSQL or MySQL for production.")
+            # Warn about SQLite in production
+            if v.startswith("sqlite"):
+                logger.info("Using SQLite database. Consider PostgreSQL or MySQL for production.")
 
         return v
 
@@ -559,6 +656,9 @@ class Settings(BaseSettings):
         Returns:
             Itself.
         """
+        if self.client_mode:
+            return self
+
         # Check for dangerous combinations - only log warnings, don't raise errors
         if not self.auth_required and self.mcpgateway_ui_enabled:
             logger.warning("🔓 SECURITY WARNING: Admin UI is enabled without authentication. Consider setting AUTH_REQUIRED=true for production.")
@@ -746,6 +846,63 @@ class Settings(BaseSettings):
     # Enable span events
     observability_events_enabled: bool = Field(default=True, description="Enable event logging within spans")
 
+    # Correlation ID Settings
+    correlation_id_enabled: bool = Field(default=True, description="Enable automatic correlation ID tracking for requests")
+    correlation_id_header: str = Field(default="X-Correlation-ID", description="HTTP header name for correlation ID")
+    correlation_id_preserve: bool = Field(default=True, description="Preserve correlation IDs from incoming requests")
+    correlation_id_response_header: bool = Field(default=True, description="Include correlation ID in response headers")
+
+    # ===================================
+    # Database Query Logging (N+1 Detection)
+    # ===================================
+    db_query_log_enabled: bool = Field(default=False, description="Enable database query logging to file (for N+1 detection)")
+    db_query_log_file: str = Field(default="logs/db-queries.log", description="Path to database query log file")
+    db_query_log_json_file: str = Field(default="logs/db-queries.jsonl", description="Path to JSON Lines query log file")
+    db_query_log_format: str = Field(default="both", description="Log format: 'json', 'text', or 'both'")
+    db_query_log_min_queries: int = Field(default=1, ge=1, description="Only log requests with >= N queries")
+    db_query_log_include_params: bool = Field(default=False, description="Include query parameters (may expose sensitive data)")
+    db_query_log_detect_n1: bool = Field(default=True, description="Automatically detect and flag N+1 query patterns")
+    db_query_log_n1_threshold: int = Field(default=3, ge=2, description="Number of similar queries to flag as potential N+1")
+
+    # Structured Logging Configuration
+    structured_logging_enabled: bool = Field(default=True, description="Enable structured JSON logging with database persistence")
+    structured_logging_database_enabled: bool = Field(default=True, description="Persist structured logs to database")
+    structured_logging_external_enabled: bool = Field(default=False, description="Send logs to external systems")
+
+    # Performance Tracking Configuration
+    performance_tracking_enabled: bool = Field(default=True, description="Enable performance tracking and metrics")
+    performance_threshold_database_query_ms: float = Field(default=100.0, description="Alert threshold for database queries (ms)")
+    performance_threshold_tool_invocation_ms: float = Field(default=2000.0, description="Alert threshold for tool invocations (ms)")
+    performance_threshold_resource_read_ms: float = Field(default=1000.0, description="Alert threshold for resource reads (ms)")
+    performance_threshold_http_request_ms: float = Field(default=500.0, description="Alert threshold for HTTP requests (ms)")
+    performance_degradation_multiplier: float = Field(default=1.5, description="Alert if performance degrades by this multiplier vs baseline")
+
+    # Security Logging Configuration
+    security_logging_enabled: bool = Field(default=True, description="Enable security event logging")
+    security_failed_auth_threshold: int = Field(default=5, description="Failed auth attempts before high severity alert")
+    security_threat_score_alert: float = Field(default=0.7, description="Threat score threshold for alerts (0.0-1.0)")
+    security_rate_limit_window_minutes: int = Field(default=5, description="Time window for rate limit checks (minutes)")
+
+    # Metrics Aggregation Configuration
+    metrics_aggregation_enabled: bool = Field(default=True, description="Enable automatic log aggregation into performance metrics")
+    metrics_aggregation_backfill_hours: int = Field(default=6, ge=0, le=168, description="Hours of structured logs to backfill into performance metrics on startup")
+    metrics_aggregation_window_minutes: int = Field(default=5, description="Time window for metrics aggregation (minutes)")
+    metrics_aggregation_auto_start: bool = Field(default=False, description="Automatically run the log aggregation loop on application startup")
+
+    # Log Search Configuration
+    log_search_max_results: int = Field(default=1000, description="Maximum results per log search query")
+    log_retention_days: int = Field(default=30, description="Number of days to retain logs in database")
+
+    # External Log Integration Configuration
+    elasticsearch_enabled: bool = Field(default=False, description="Send logs to Elasticsearch")
+    elasticsearch_url: Optional[str] = Field(default=None, description="Elasticsearch cluster URL")
+    elasticsearch_index_prefix: str = Field(default="mcpgateway-logs", description="Elasticsearch index prefix")
+    syslog_enabled: bool = Field(default=False, description="Send logs to syslog")
+    syslog_host: Optional[str] = Field(default=None, description="Syslog server host")
+    syslog_port: int = Field(default=514, description="Syslog server port")
+    webhook_logging_enabled: bool = Field(default=False, description="Send logs to webhook endpoints")
+    webhook_logging_urls: List[str] = Field(default_factory=list, description="Webhook URLs for log delivery")
+
     @field_validator("log_level", mode="before")
     @classmethod
     def validate_log_level(cls, v: str) -> str:
@@ -911,9 +1068,11 @@ class Settings(BaseSettings):
     health_check_interval: int = 60  # seconds
     health_check_timeout: int = 10  # seconds
     unhealthy_threshold: int = 5  # after this many failures, mark as Offline
+    max_concurrent_health_checks: int = 20  # maximum concurrent health checks per worker
 
     # Validation Gateway URL
     gateway_validation_timeout: int = 5  # seconds
+    gateway_max_redirects: int = 5
 
     filelock_name: str = "gateway_service_leader.lock"
 
@@ -921,6 +1080,7 @@ class Settings(BaseSettings):
     default_roots: List[str] = []
 
     # Database
+    db_driver: str = "mariadb+mariadbconnector"
     db_pool_size: int = 200
     db_max_overflow: int = 10
     db_pool_timeout: int = 30
@@ -936,6 +1096,19 @@ class Settings(BaseSettings):
     message_ttl: int = 600
     redis_max_retries: int = 3
     redis_retry_interval_ms: int = 2000
+
+    # Redis Connection Pool - Performance Optimized
+    redis_decode_responses: bool = Field(default=True, description="Return strings instead of bytes")
+    redis_max_connections: int = Field(default=50, description="Connection pool size per worker")
+    redis_socket_timeout: float = Field(default=2.0, description="Socket read/write timeout in seconds")
+    redis_socket_connect_timeout: float = Field(default=2.0, description="Connection timeout in seconds")
+    redis_retry_on_timeout: bool = Field(default=True, description="Retry commands on timeout")
+    redis_health_check_interval: int = Field(default=30, description="Seconds between connection health checks (0=disabled)")
+
+    # Redis Leader Election - Multi-Node Deployments
+    redis_leader_ttl: int = Field(default=15, description="Leader election TTL in seconds")
+    redis_leader_key: str = Field(default="gateway_service_leader", description="Leader key name")
+    redis_leader_heartbeat_interval: int = Field(default=5, description="Seconds between leader heartbeats")
 
     # streamable http transport
     use_stateful_sessions: bool = False  # Set to False to use stateless sessions without event store
@@ -955,7 +1128,7 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # Observability (OpenTelemetry)
-    otel_enable_observability: bool = Field(default=True, description="Enable OpenTelemetry observability")
+    otel_enable_observability: bool = Field(default=False, description="Enable OpenTelemetry observability")
     otel_traces_exporter: str = Field(default="otlp", description="Traces exporter: otlp, jaeger, zipkin, console, none")
     otel_exporter_otlp_endpoint: Optional[str] = Field(default=None, description="OTLP endpoint (e.g., http://localhost:4317)")
     otel_exporter_otlp_protocol: str = Field(default="grpc", description="OTLP protocol: grpc or http")
@@ -1301,7 +1474,7 @@ Disallow: /
     # Character validation patterns
     validation_name_pattern: str = r"^[a-zA-Z0-9_.\-\s]+$"  # Allow spaces for names
     validation_identifier_pattern: str = r"^[a-zA-Z0-9_\-\.]+$"  # No spaces for IDs
-    validation_safe_uri_pattern: str = r"^[a-zA-Z0-9_\-.:/?=&%]+$"
+    validation_safe_uri_pattern: str = r"^[a-zA-Z0-9_\-.:/?=&%{}]+$"
     validation_unsafe_uri_pattern: str = r'[<>"\'\\]'
     validation_tool_name_pattern: str = r"^[a-zA-Z][a-zA-Z0-9._-]*$"  # MCP tool naming
     validation_tool_method_pattern: str = r"^[a-zA-Z][a-zA-Z0-9_\./-]*$"
@@ -1311,7 +1484,17 @@ Disallow: /
     validation_max_description_length: int = 8192  # 8KB
     validation_max_template_length: int = 65536  # 64KB
     validation_max_content_length: int = 1048576  # 1MB
-    validation_max_json_depth: int = 10
+    validation_max_json_depth: int = Field(
+        default=int(os.getenv("VALIDATION_MAX_JSON_DEPTH", "30")),
+        description=(
+            "Maximum allowed JSON nesting depth for tool/resource schemas. "
+            "Increased from 10 to 30 for compatibility with deeply nested schemas "
+            "like Notion MCP (issue #1542). Override with VALIDATION_MAX_JSON_DEPTH "
+            "environment variable. Minimum: 1, Maximum: 100"
+        ),
+        ge=1,
+        le=100,
+    )
     validation_max_url_length: int = 2048
     validation_max_rpc_param_size: int = 262144  # 256KB
 
@@ -1522,8 +1705,11 @@ Disallow: /
 
 
 @lru_cache()
-def get_settings() -> Settings:
+def get_settings(**kwargs: Any) -> Settings:
     """Get cached settings instance.
+
+    Args:
+        **kwargs: Keyword arguments to pass to the Settings setup.
 
     Returns:
         Settings: A cached instance of the Settings class.
@@ -1539,7 +1725,7 @@ def get_settings() -> Settings:
     """
     # Instantiate a fresh Pydantic Settings object,
     # loading from env vars or .env exactly once.
-    cfg = Settings()
+    cfg = Settings(**kwargs)
     # Validate that transport_type is correct; will
     # raise if mis-configured.
     cfg.validate_transport()
@@ -1561,7 +1747,24 @@ def generate_settings_schema() -> dict[str, Any]:
     return Settings.model_json_schema(mode="validation")
 
 
-settings = get_settings()
+# Lazy "instance" of settings
+class LazySettingsWrapper:
+    """Lazily initialize settings singleton on getattr"""
+
+    def __getattr__(self, key: str) -> Any:
+        """Get the real settings object and forward to it
+
+        Args:
+            key: The key to fetch from settings
+
+        Returns:
+            Any: The value of the attribute on the settings
+        """
+        return getattr(get_settings(), key)
+
+
+settings = LazySettingsWrapper()
+
 
 if __name__ == "__main__":
     if "--schema" in sys.argv:

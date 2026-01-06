@@ -275,13 +275,11 @@ def test_redis_import_error(monkeypatch: pytest.MonkeyPatch) -> None:
     # First-Party
     from mcpgateway import version as ver_mod
 
-    # Set aioredis to None and REDIS_AVAILABLE to False to simulate ImportError
-    monkeypatch.setattr(ver_mod, "aioredis", None)
+    # Set REDIS_AVAILABLE to False to simulate redis.asyncio not installed
     monkeypatch.setattr(ver_mod, "REDIS_AVAILABLE", False)
 
-    # This simulates the state after ImportError occurred
+    # This simulates the state when redis.asyncio is not available
     assert ver_mod.REDIS_AVAILABLE is False
-    assert ver_mod.aioredis is None
 
 
 def test_sanitize_url_none_and_empty() -> None:

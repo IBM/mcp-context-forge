@@ -183,6 +183,8 @@ check-env-dev:
 # help: ▶️ SERVE
 # help: serve                - Run production Gunicorn server on :4444
 # help: certs                - Generate self-signed TLS cert & key in ./certs (won't overwrite)
+# help: certs-passphrase     - Generate self-signed cert with passphrase-protected key
+# help: certs-remove-passphrase - Remove passphrase from encrypted key
 # help: certs-jwt            - Generate JWT RSA keys in ./certs/jwt/ (idempotent)
 # help: certs-jwt-ecdsa      - Generate JWT ECDSA keys in ./certs/jwt/ (idempotent)
 # help: certs-all            - Generate both TLS certs and JWT keys (combo target)
@@ -193,9 +195,13 @@ check-env-dev:
 # help: certs-mcp-check      - Check expiry dates of MCP certificates
 # help: serve-ssl            - Run Gunicorn behind HTTPS on :4444 (uses ./certs)
 # help: dev                  - Run fast-reload dev server (uvicorn)
+# help: dev-echo             - Run dev server with SQL query logging (N+1 debugging)
+# help: stop                 - Stop all mcpgateway server processes
+# help: stop-dev             - Stop uvicorn dev server (port 8000)
+# help: stop-serve           - Stop gunicorn production server (port 4444)
 # help: run                  - Execute helper script ./run.sh
 
-.PHONY: serve serve-ssl dev run certs certs-jwt certs-jwt-ecdsa certs-all \
+.PHONY: serve serve-ssl dev stop stop-dev stop-serve run certs certs-jwt certs-jwt-ecdsa certs-all \
         certs-mcp-ca certs-mcp-gateway certs-mcp-plugin certs-mcp-all certs-mcp-check
 
 ## --- Primary servers ---------------------------------------------------------
@@ -207,6 +213,26 @@ serve-ssl: certs
 
 dev:
 	@$(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
+
+dev-echo:                        ## Run dev server with SQL query logging enabled
+	@echo "🔍 Starting dev server with SQL query logging (N+1 detection)"
+	@echo "   Docs: docs/docs/development/db-performance.md"
+	@SQLALCHEMY_ECHO=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
+
+stop:                            ## Stop all mcpgateway server processes
+	@echo "Stopping all mcpgateway processes..."
+	@if [ -f /tmp/mcpgateway-gunicorn.lock ]; then kill -9 $$(cat /tmp/mcpgateway-gunicorn.lock) 2>/dev/null || true; rm -f /tmp/mcpgateway-gunicorn.lock; fi
+	@lsof -ti:8000 2>/dev/null | xargs -r kill -9 || true
+	@lsof -ti:4444 2>/dev/null | xargs -r kill -9 || true
+	@echo "Done."
+
+stop-dev:                        ## Stop uvicorn dev server (port 8000)
+	@lsof -ti:8000 2>/dev/null | xargs -r kill -9 || true
+
+stop-serve:                      ## Stop gunicorn production server (port 4444)
+	@if [ -f /tmp/mcpgateway-gunicorn.lock ]; then kill -9 $$(cat /tmp/mcpgateway-gunicorn.lock) 2>/dev/null || true; rm -f /tmp/mcpgateway-gunicorn.lock; fi
+	@lsof -ti:4444 2>/dev/null | xargs -r kill -9 || true
+
 run:
 	./run.sh
 
@@ -224,6 +250,45 @@ certs:                           ## Generate ./certs/cert.pem & ./certs/key.pem 
 		echo "✅  TLS certificate written to ./certs"; \
 	fi
 	chmod 640 certs/key.pem
+
+certs-passphrase:                ## Generate self-signed cert with passphrase-protected key
+	@if [ -f certs/cert.pem ] && [ -f certs/key-encrypted.pem ]; then \
+		echo "🔏  Existing passphrase-protected certificates found - skipping."; \
+	else \
+		echo "🔏  Generating passphrase-protected certificate (1 year)..."; \
+		mkdir -p certs; \
+		read -sp "Enter passphrase for private key: " PASSPHRASE; echo; \
+		read -sp "Confirm passphrase: " PASSPHRASE2; echo; \
+		if [ "$$PASSPHRASE" != "$$PASSPHRASE2" ]; then \
+			echo "❌  Passphrases do not match!"; \
+			exit 1; \
+		fi; \
+		openssl req -x509 -newkey rsa:4096 -sha256 -days 365 \
+			-keyout certs/key-encrypted.pem -out certs/cert.pem \
+			-subj "/CN=localhost" \
+			-addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
+			-passout pass:"$$PASSPHRASE"; \
+		echo "✅  Passphrase-protected certificate created"; \
+		echo "📁  Certificate: ./certs/cert.pem"; \
+		echo "📁  Encrypted Key: ./certs/key-encrypted.pem"; \
+		echo ""; \
+		echo "💡  To use this certificate:"; \
+		echo "   1. Set KEY_FILE_PASSWORD environment variable"; \
+		echo "   2. Run: KEY_FILE_PASSWORD='your-passphrase' SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key-encrypted.pem make serve-ssl"; \
+	fi
+	@chmod 600 certs/key-encrypted.pem
+
+certs-remove-passphrase:         ## Remove passphrase from encrypted key (creates key.pem from key-encrypted.pem)
+	@if [ ! -f certs/key-encrypted.pem ]; then \
+		echo "❌  No encrypted key found at certs/key-encrypted.pem"; \
+		echo "💡  Generate one with: make certs-passphrase"; \
+		exit 1; \
+	fi
+	@echo "🔓  Removing passphrase from private key..."
+	@openssl rsa -in certs/key-encrypted.pem -out certs/key.pem
+	@chmod 600 certs/key.pem
+	@echo "✅  Passphrase removed - unencrypted key saved to certs/key.pem"
+	@echo "⚠️   Keep this file secure! It contains your unencrypted private key."
 
 certs-jwt:                       ## Generate JWT RSA keys in ./certs/jwt/ (idempotent)
 	@if [ -f certs/jwt/private.pem ] && [ -f certs/jwt/public.pem ]; then \
@@ -426,13 +491,19 @@ clean:
 # help: doctest-verbose      - Run doctest with detailed output (-v flag)
 # help: doctest-coverage     - Generate coverage report for doctest examples
 # help: doctest-check        - Check doctest coverage percentage (fail if < 100%)
+# help: test-db-perf         - Run database performance and N+1 query detection tests
+# help: test-db-perf-verbose - Run database performance tests with full SQL query output
+# help: dev-query-log        - Run dev server with query logging to file (N+1 detection)
+# help: query-log-tail       - Tail the database query log file
+# help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
+# help: query-log-clear      - Clear database query log files
 
-.PHONY: smoketest test test-profile coverage pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check
+.PHONY: smoketest test test-profile coverage pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000
 
 ## --- Automated checks --------------------------------------------------------
 smoketest:
 	@echo "🚀 Running smoketest..."
-	@bash -c '\
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
 		./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }; \
 		echo "✅ Smoketest passed!" \
 	'
@@ -443,7 +514,7 @@ test:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		uv run pytest -n auto --maxfail=0 -v --ignore=tests/fuzz"
+		uv run --active pytest -n auto --maxfail=0 -v --ignore=tests/fuzz"
 
 test-profile:
 	@echo "🧪 Running tests with profiling (showing slowest tests)..."
@@ -451,7 +522,7 @@ test-profile:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		uv run pytest -n auto --durations=20 --durations-min=1.0 --disable-warnings -v --ignore=tests/fuzz"
+		uv run --active pytest -n auto --durations=20 --durations-min=1.0 --disable-warnings -v --ignore=tests/fuzz"
 
 coverage:
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
@@ -530,6 +601,51 @@ doctest-check:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python3 -m pytest --doctest-modules mcpgateway/ --tb=no -q && \
 		echo '✅ All doctests passing' || (echo '❌ Doctest failures detected' && exit 1)"
+
+## --- Database Performance Testing --------------------------------------------
+test-db-perf:                    ## Run database performance and N+1 detection tests
+	@echo "🔍 Running database performance tests..."
+	@echo "   Tip: Use 'make dev-echo' to debug queries in dev server"
+	@echo "   Docs: docs/docs/development/db-performance.md"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export DATABASE_URL='sqlite:///:memory:' && \
+		export TEST_DATABASE_URL='sqlite:///:memory:' && \
+		uv run --active pytest tests/performance/test_db_query_patterns.py -v --tb=short"
+
+test-db-perf-verbose:            ## Run database performance tests with full SQL query output
+	@echo "🔍 Running database performance tests with query logging..."
+	@echo "   All SQL queries will be printed to help identify N+1 patterns"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export DATABASE_URL='sqlite:///:memory:' && \
+		export TEST_DATABASE_URL='sqlite:///:memory:' && \
+		export SQLALCHEMY_ECHO=true && \
+		uv run --active pytest tests/performance/test_db_query_patterns.py -v -s --tb=short"
+
+dev-query-log:                   ## Run dev server with query logging to file
+	@echo "📊 Starting dev server with database query logging"
+	@echo "   Logs: logs/db-queries.log (text), logs/db-queries.jsonl (JSON)"
+	@echo "   Use 'make query-log-tail' in another terminal to watch queries"
+	@echo "   Docs: docs/docs/development/db-performance.md"
+	@mkdir -p logs
+	@DB_QUERY_LOG_ENABLED=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
+
+query-log-tail:                  ## Tail the database query log file
+	@echo "📊 Tailing logs/db-queries.log (Ctrl+C to stop)"
+	@echo "   Start server with 'make dev-query-log' to generate queries"
+	@tail -f logs/db-queries.log 2>/dev/null || echo "No log file yet. Start server with 'make dev-query-log' first."
+
+query-log-analyze:               ## Analyze query log for N+1 patterns
+	@echo "📊 Analyzing database query log..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m mcpgateway.utils.analyze_query_log"
+
+query-log-clear:                 ## Clear database query log files
+	@echo "🗑️  Clearing database query logs..."
+	@rm -f logs/db-queries.log logs/db-queries.jsonl
+	@echo "✅ Query logs cleared"
 
 
 # =============================================================================
@@ -621,6 +737,196 @@ generate-report:                           ## Display most recent load test repo
 			echo ""; \
 		fi; \
 	done || echo "❌ No reports found. Run 'make generate-small' first."
+
+# =============================================================================
+# 🔥 HTTP LOAD TESTING - Locust-based traffic generation
+# =============================================================================
+# help: 🔥 HTTP LOAD TESTING (Locust)
+# help: load-test             - Run HTTP load test (50 users, 60s, headless)
+# help: load-test-ui          - Start Locust web UI at http://localhost:8089
+# help: load-test-light       - Light load test (10 users, 30s)
+# help: load-test-heavy       - Heavy load test (200 users, 120s)
+# help: load-test-sustained   - Sustained load test (25 users, 300s)
+# help: load-test-stress      - Stress test (500 users, 60s, minimal wait)
+# help: load-test-report      - Show last load test HTML report
+# help: load-test-compose     - Light load test for compose stack (port 4444)
+# help: load-test-timeserver  - Load test fast_time_server (5 users, 30s)
+# help: load-test-fasttime    - Load test fast_time MCP tools (50 users, 60s)
+# help: load-test-1000        - High-load test (1000 users, 120s)
+
+# Default load test configuration
+LOADTEST_HOST ?= http://localhost:8000
+LOADTEST_USERS ?= 50
+LOADTEST_SPAWN_RATE ?= 10
+LOADTEST_RUN_TIME ?= 60s
+LOADTEST_LOCUSTFILE := tests/loadtest/locustfile.py
+LOADTEST_HTML_REPORT := reports/locust_report.html
+LOADTEST_CSV_PREFIX := reports/locust
+
+load-test:                                 ## Run HTTP load test (50 users, 60s, headless)
+	@echo "🔥 Running HTTP load test with Locust..."
+	@echo "   Host: $(LOADTEST_HOST)"
+	@echo "   Users: $(LOADTEST_USERS)"
+	@echo "   Spawn rate: $(LOADTEST_SPAWN_RATE)/s"
+	@echo "   Duration: $(LOADTEST_RUN_TIME)"
+	@echo ""
+	@echo "   💡 Tip: Start server first with 'make dev' in another terminal"
+	@echo "   💡 Tip: Enable performance tab: MCPGATEWAY_PERFORMANCE_TRACKING=true"
+	@echo ""
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		locust -f $(LOADTEST_LOCUSTFILE) \
+			--host=$(LOADTEST_HOST) \
+			--users=$(LOADTEST_USERS) \
+			--spawn-rate=$(LOADTEST_SPAWN_RATE) \
+			--run-time=$(LOADTEST_RUN_TIME) \
+			--headless \
+			--html=$(LOADTEST_HTML_REPORT) \
+			--csv=$(LOADTEST_CSV_PREFIX) \
+			--only-summary"
+	@echo ""
+	@echo "✅ Load test complete!"
+	@echo "📄 HTML Report: $(LOADTEST_HTML_REPORT)"
+	@echo "📊 CSV Reports: $(LOADTEST_CSV_PREFIX)_*.csv"
+
+load-test-ui:                              ## Start Locust web UI at http://localhost:8089
+	@echo "🔥 Starting Locust Web UI..."
+	@echo "   🌐 Open http://localhost:8089 in your browser"
+	@echo "   🎯 Default host: $(LOADTEST_HOST)"
+	@echo ""
+	@echo "   💡 Configure users, spawn rate, and duration in the UI"
+	@echo "   💡 Use 'User classes' dropdown to select FastTimeUser, etc."
+	@echo "   💡 Start server first with 'make dev' or 'docker compose up'"
+	@echo ""
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		locust -f $(LOADTEST_LOCUSTFILE) \
+			--host=$(LOADTEST_HOST) \
+			--class-picker"
+
+load-test-light:                           ## Light load test (10 users, 30s)
+	@echo "🔥 Running LIGHT load test..."
+	@$(MAKE) load-test LOADTEST_USERS=10 LOADTEST_SPAWN_RATE=2 LOADTEST_RUN_TIME=30s
+
+load-test-heavy:                           ## Heavy load test (200 users, 120s)
+	@echo "🔥 Running HEAVY load test..."
+	@echo "   ⚠️  This will generate significant load on your server"
+	@$(MAKE) load-test LOADTEST_USERS=200 LOADTEST_SPAWN_RATE=20 LOADTEST_RUN_TIME=120s
+
+load-test-sustained:                       ## Sustained load test (25 users, 300s)
+	@echo "🔥 Running SUSTAINED load test (5 minutes)..."
+	@$(MAKE) load-test LOADTEST_USERS=25 LOADTEST_SPAWN_RATE=5 LOADTEST_RUN_TIME=300s
+
+load-test-stress:                          ## Stress test (500 users, 60s)
+	@echo "🔥 Running STRESS test..."
+	@echo "   ⚠️  WARNING: This will generate EXTREME load!"
+	@echo "   ⚠️  Your server may become unresponsive"
+	@echo ""
+	@read -p "Continue with stress test? [y/N] " -n 1 -r; \
+	echo; \
+	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+		$(MAKE) load-test LOADTEST_USERS=500 LOADTEST_SPAWN_RATE=50 LOADTEST_RUN_TIME=60s; \
+	else \
+		echo "❌ Cancelled"; \
+	fi
+
+load-test-report:                          ## Show last load test HTML report
+	@if [ -f "$(LOADTEST_HTML_REPORT)" ]; then \
+		echo "📊 Opening load test report: $(LOADTEST_HTML_REPORT)"; \
+		if command -v xdg-open &> /dev/null; then \
+			xdg-open $(LOADTEST_HTML_REPORT); \
+		elif command -v open &> /dev/null; then \
+			open $(LOADTEST_HTML_REPORT); \
+		else \
+			echo "Open $(LOADTEST_HTML_REPORT) in your browser"; \
+		fi; \
+	else \
+		echo "❌ No report found. Run 'make load-test' first."; \
+	fi
+
+load-test-compose:                         ## Light load test for compose stack (10 users, 30s, port 4444)
+	@echo "🐳 Running compose-optimized load test..."
+	@echo "   Host: http://localhost:4444"
+	@echo "   Users: 10, Duration: 30s"
+	@echo "   💡 Requires: make compose-up"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		locust -f $(LOADTEST_LOCUSTFILE) \
+			--host=http://localhost:4444 \
+			--users=10 \
+			--spawn-rate=2 \
+			--run-time=30s \
+			--headless \
+			--html=reports/loadtest_compose.html \
+			--csv=reports/loadtest_compose \
+			--only-summary"
+	@echo "✅ Report: reports/loadtest_compose.html"
+
+load-test-timeserver:                      ## Load test fast_time_server tools (5 users, 30s)
+	@echo "⏰ Running time server load test..."
+	@echo "   Host: http://localhost:4444"
+	@echo "   Users: 5, Duration: 30s"
+	@echo "   💡 Requires: docker compose --profile with-fast-time up -d"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		locust -f $(LOADTEST_LOCUSTFILE) \
+			--host=http://localhost:4444 \
+			--users=5 \
+			--spawn-rate=1 \
+			--run-time=30s \
+			--headless \
+			--html=reports/loadtest_timeserver.html \
+			--csv=reports/loadtest_timeserver \
+			FastTimeUser \
+			--only-summary"
+	@echo "✅ Report: reports/loadtest_timeserver.html"
+
+load-test-fasttime:                        ## Load test fast_time MCP tools (50 users, 60s)
+	@echo "⏰ Running FastTime MCP server load test..."
+	@echo "   Host: http://localhost:4444"
+	@echo "   Users: 50, Duration: 60s"
+	@echo "   💡 Requires: docker compose --profile with-fast-time up -d"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		locust -f $(LOADTEST_LOCUSTFILE) \
+			--host=http://localhost:4444 \
+			--users=50 \
+			--spawn-rate=10 \
+			--run-time=60s \
+			--headless \
+			--html=reports/loadtest_fasttime.html \
+			--csv=reports/loadtest_fasttime \
+			FastTimeUser \
+			--only-summary"
+	@echo "✅ Report: reports/loadtest_fasttime.html"
+
+load-test-1000:                            ## High-load test (1000 users, 120s) - requires tuned compose
+	@echo "🔥 Running HIGH LOAD test (1000 users, ~1000 RPS)..."
+	@echo "   Host: http://localhost:4444"
+	@echo "   Users: 1000, Spawn: 50/s, Duration: 120s"
+	@echo "   ⚠️  Requires tuned compose stack (make compose-down && make compose-up)"
+	@read -p "Continue? [y/N] " -n 1 -r; echo; \
+	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+		test -d "$(VENV_DIR)" || $(MAKE) venv; \
+		mkdir -p reports; \
+		/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+			locust -f $(LOADTEST_LOCUSTFILE) \
+				--host=http://localhost:4444 \
+				--users=1000 \
+				--spawn-rate=50 \
+				--run-time=120s \
+				--headless \
+				--html=reports/loadtest_1000.html \
+				--csv=reports/loadtest_1000 \
+				--only-summary"; \
+		echo "✅ Report: reports/loadtest_1000.html"; \
+	else \
+		echo "❌ Cancelled"; \
+	fi
 
 # =============================================================================
 # 🧬 MUTATION TESTING
@@ -1027,7 +1333,10 @@ flake8:                             ## 🐍  flake8 checks
 
 pylint: uv                             ## 🐛  pylint checks
 	@echo "🐛 pylint $(TARGET) (parallel)..."
-	uv run pylint -j 0 --fail-on E --fail-under 10 $(TARGET)
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		PYLINTHOME=\"$(CURDIR)/.pylint-cache\" UV_CACHE_DIR=\"$(CURDIR)/.uv-cache\" \
+		uv run --active pylint -j 0 --fail-on E --fail-under 10 $(TARGET)"
 
 markdownlint:					    ## 📖  Markdown linting
 	@# Install markdownlint-cli2 if not present
@@ -1073,7 +1382,9 @@ pycodestyle:                        ## 📝  Simple PEP-8 checker
 
 pre-commit: uv                      ## 🪄  Run pre-commit tool
 	@echo "🪄  Running pre-commit hooks..."
-	uv run pre-commit run --config .pre-commit-lite.yaml --all-files --show-diff-on-failure
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		uv run --active pre-commit run --config .pre-commit-lite.yaml --all-files --show-diff-on-failure"
 
 ruff:                               ## ⚡  Ruff lint + (eventually) format
 	@echo "⚡ ruff $(TARGET)..." && $(VENV_DIR)/bin/ruff check $(TARGET)
@@ -2098,7 +2409,7 @@ endif
 # =============================================================================
 
 # Auto-detect container runtime if not specified - DEFAULT TO DOCKER
-CONTAINER_RUNTIME = $(shell command -v docker >/dev/null 2>&1 && echo docker || echo podman)
+CONTAINER_RUNTIME ?= $(shell command -v docker >/dev/null 2>&1 && echo docker || echo podman)
 
 # Alternative: Always default to docker unless explicitly overridden
 # CONTAINER_RUNTIME ?= docker
@@ -2147,6 +2458,8 @@ endef
 # =============================================================================
 # help: 🐳 UNIFIED CONTAINER OPERATIONS (Auto-detects Docker/Podman)
 # help: container-build      - Build image using detected runtime
+# help: container-build-multi - Build multiplatform image (amd64/arm64/s390x) locally
+# help: container-inspect-manifest - Inspect multiplatform manifest in registry
 # help: container-build-rust - Build image WITH Rust plugins (ENABLE_RUST_BUILD=1)
 # help: container-build-rust-lite - Build lite image WITH Rust plugins
 # help: container-rust       - Build with Rust and run container (all-in-one)
@@ -2172,7 +2485,7 @@ endef
         container-run container-run-ssl container-run-ssl-host \
         container-run-ssl-jwt container-push container-info container-stop container-logs container-shell \
         container-health image-list image-clean image-retag container-check-image \
-        container-build-multi use-docker use-podman show-runtime print-runtime \
+        container-build-multi container-inspect-manifest use-docker use-podman show-runtime print-runtime \
         print-image container-validate-env container-check-ports container-wait-healthy
 
 
@@ -2402,28 +2715,54 @@ container-health:
 	@$(CONTAINER_RUNTIME) inspect $(PROJECT_NAME) --format='{{range .State.Health.Log}}{{.Output}}{{end}}' 2>/dev/null || true
 
 container-build-multi:
-	@echo "🔨 Building multi-architecture image..."
+	@echo "🔨 Building multi-architecture image (amd64, arm64, s390x)..."
+	@echo "💡 Note: Multiplatform images require a registry. Use REGISTRY= to push, or omit to validate only."
 	@if [ "$(CONTAINER_RUNTIME)" = "docker" ]; then \
 		if ! docker buildx inspect $(PROJECT_NAME)-builder >/dev/null 2>&1; then \
-			echo "📦 Creating buildx builder..."; \
-			docker buildx create --name $(PROJECT_NAME)-builder; \
+			echo "📦 Creating buildx builder with docker-container driver..."; \
+			docker buildx create --name $(PROJECT_NAME)-builder --driver docker-container; \
 		fi; \
 		docker buildx use $(PROJECT_NAME)-builder; \
-		docker buildx build \
-			--platform=linux/amd64,linux/arm64,linux/s390x \
-			-f $(CONTAINER_FILE) \
-			--tag $(IMAGE_BASE):$(IMAGE_TAG) \
-			--push \
-			.; \
+		if [ -n "$(REGISTRY)" ]; then \
+			docker buildx build \
+				--platform=linux/amd64,linux/arm64,linux/s390x \
+				-f $(CONTAINER_FILE) \
+				--tag $(REGISTRY)/$(IMAGE_BASE):$(IMAGE_TAG) \
+				--push \
+				.; \
+			echo "✅ Multiplatform image pushed to $(REGISTRY)/$(IMAGE_BASE):$(IMAGE_TAG)"; \
+		else \
+			docker buildx build \
+				--platform=linux/amd64,linux/arm64,linux/s390x \
+				-f $(CONTAINER_FILE) \
+				--tag $(IMAGE_BASE):$(IMAGE_TAG) \
+				.; \
+			echo "✅ Multiplatform build validated (no push - set REGISTRY= to push)"; \
+		fi; \
 	elif [ "$(CONTAINER_RUNTIME)" = "podman" ]; then \
 		echo "📦 Building manifest with Podman..."; \
 		$(CONTAINER_RUNTIME) build --platform=linux/amd64,linux/arm64,linux/s390x \
 			-f $(CONTAINER_FILE) \
 			--manifest $(IMAGE_BASE):$(IMAGE_TAG) \
 			.; \
-		echo "💡 To push: podman manifest push $(IMAGE_BASE):$(IMAGE_TAG)"; \
+		echo "✅ Multiplatform manifest built: $(IMAGE_BASE):$(IMAGE_TAG)"; \
 	else \
 		echo "❌ Multi-arch builds require Docker buildx or Podman"; \
+		exit 1; \
+	fi
+
+# Inspect multiplatform manifest in a registry
+container-inspect-manifest:
+	@echo "🔍 Inspecting multiplatform manifest..."
+	@if [ -z "$(REGISTRY)" ]; then \
+		echo "Usage: make container-inspect-manifest REGISTRY=ghcr.io/org/repo:tag"; \
+		echo "Example: make container-inspect-manifest REGISTRY=ghcr.io/ibm/mcp-context-forge:latest"; \
+	elif [ "$(CONTAINER_RUNTIME)" = "docker" ]; then \
+		docker buildx imagetools inspect $(REGISTRY); \
+	elif [ "$(CONTAINER_RUNTIME)" = "podman" ]; then \
+		$(CONTAINER_RUNTIME) manifest inspect $(REGISTRY); \
+	else \
+		echo "❌ Manifest inspection requires Docker buildx or Podman"; \
 		exit 1; \
 	fi
 

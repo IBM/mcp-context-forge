@@ -9,6 +9,7 @@ Tests for external client on stdio.
 
 # Standard
 import asyncio
+import json
 
 # Third-Party
 import pytest

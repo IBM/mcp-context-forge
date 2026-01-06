@@ -35,6 +35,25 @@ def validate_header_mapping(header_name: str, env_var_name: str) -> None:
 
     Raises:
         HeaderMappingError: If validation fails
+
+    Examples:
+        >>> # Valid mappings
+        >>> validate_header_mapping("Authorization", "AUTH_TOKEN")
+        >>> validate_header_mapping("X-Custom-Header", "CUSTOM_VAR")
+        >>>
+        >>> # Invalid header name
+        >>> try:
+        ...     validate_header_mapping("Invalid Header!", "VAR")
+        ... except HeaderMappingError as e:
+        ...     "Invalid header name" in str(e)
+        True
+        >>>
+        >>> # Invalid env var name
+        >>> try:
+        ...     validate_header_mapping("Header", "123_VAR")
+        ... except HeaderMappingError as e:
+        ...     "Invalid environment variable name" in str(e)
+        True
     """
     if not ALLOWED_HEADERS_REGEX.match(header_name):
         raise HeaderMappingError(f"Invalid header name '{header_name}' - must contain only alphanumeric characters and hyphens")
@@ -55,6 +74,23 @@ def sanitize_header_value(value: str, max_length: int = MAX_HEADER_VALUE_LENGTH)
 
     Returns:
         Sanitized value safe for environment variable
+
+    Examples:
+        >>> # Normal value passes through
+        >>> sanitize_header_value("Bearer token123")
+        'Bearer token123'
+        >>>
+        >>> # Long value gets truncated
+        >>> sanitize_header_value("a" * 100, max_length=10)
+        'aaaaaaaaaa'
+        >>>
+        >>> # Non-printable characters removed
+        >>> sanitize_header_value("hello\\x00world")
+        'helloworld'
+        >>>
+        >>> # Only printable ASCII kept
+        >>> sanitize_header_value("test\\x01value")
+        'testvalue'
     """
     if len(value) > max_length:
         logger.warning(f"Header value truncated from {len(value)} to {max_length} characters")
@@ -78,6 +114,27 @@ def parse_header_mappings(header_mappings: List[str]) -> Dict[str, str]:
 
     Raises:
         HeaderMappingError: If any mapping is invalid
+
+    Examples:
+        >>> # Parse valid mappings
+        >>> parse_header_mappings(["Authorization=AUTH_TOKEN"])
+        {'Authorization': 'AUTH_TOKEN'}
+        >>>
+        >>> # Multiple mappings
+        >>> result = parse_header_mappings(["X-Api-Key=API_KEY", "X-User-Id=USER_ID"])
+        >>> result == {'X-Api-Key': 'API_KEY', 'X-User-Id': 'USER_ID'}
+        True
+        >>>
+        >>> # Invalid format (no equals)
+        >>> try:
+        ...     parse_header_mappings(["InvalidMapping"])
+        ... except HeaderMappingError as e:
+        ...     "Invalid mapping format" in str(e)
+        True
+        >>>
+        >>> # Empty list returns empty dict
+        >>> parse_header_mappings([])
+        {}
     """
     mappings = {}
 
@@ -111,6 +168,29 @@ def extract_env_vars_from_headers(request_headers: Dict[str, str], header_mappin
 
     Returns:
         Dictionary of environment variable name -> sanitized value
+
+    Examples:
+        >>> # Extract matching headers
+        >>> headers = {"Authorization": "Bearer token123", "Content-Type": "application/json"}
+        >>> mappings = {"Authorization": "AUTH_TOKEN"}
+        >>> extract_env_vars_from_headers(headers, mappings)
+        {'AUTH_TOKEN': 'Bearer token123'}
+        >>>
+        >>> # Case-insensitive matching
+        >>> headers = {"authorization": "Bearer token"}
+        >>> mappings = {"Authorization": "AUTH"}
+        >>> extract_env_vars_from_headers(headers, mappings)
+        {'AUTH': 'Bearer token'}
+        >>>
+        >>> # No matching headers
+        >>> headers = {"X-Other": "value"}
+        >>> mappings = {"Authorization": "AUTH"}
+        >>> extract_env_vars_from_headers(headers, mappings)
+        {}
+        >>>
+        >>> # Empty mappings
+        >>> extract_env_vars_from_headers({"Header": "value"}, {})
+        {}
     """
     env_vars = {}
 

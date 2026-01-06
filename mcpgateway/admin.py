@@ -111,7 +111,7 @@ from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictE
 from mcpgateway.services.catalog_service import catalog_service
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.export_service import ExportError, ExportService
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNameConflictError, GatewayNotFoundError, GatewayService, GatewayUrlConflictError
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayNameConflictError, GatewayNotFoundError, GatewayService
 from mcpgateway.services.import_service import ConflictStrategy
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
@@ -6857,7 +6857,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
 
     except GatewayConnectionError as ex:
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=502)
-    except GatewayUrlConflictError as ex:
+    except GatewayDuplicateConflictError as ex:
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except GatewayNameConflictError as ex:
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
@@ -7407,16 +7407,23 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
     team_id = await team_service.verify_team_for_user(user_email, team_id)
 
     try:
-        # Handle template field: convert empty string to None for optional field
+        # Handle uri_template field: convert empty string to None for optional field
+        # If URI contains template patterns {}, automatically set uri_template
+        uri_value = str(form["uri"])
         template_value = form.get("template")
-        template = template_value if template_value else None
+
+        # Auto-detect template URIs (containing {})
+        if "{" in uri_value and "}" in uri_value:
+            uri_template = uri_value
+        else:
+            uri_template = template_value if template_value else None
 
         resource = ResourceCreate(
-            uri=str(form["uri"]),
+            uri=uri_value,
             name=str(form["name"]),
             description=str(form.get("description", "")),
             mime_type=str(form.get("mimeType", "")),
-            template=template,
+            uri_template=uri_template,
             content=str(form["content"]),
             tags=tags,
             visibility=visibility,
@@ -8563,6 +8570,87 @@ async def get_aggregated_metrics(
         },
     }
     return metrics
+
+
+@admin_router.get("/metrics/partial", response_class=HTMLResponse)
+async def admin_metrics_partial_html(
+    request: Request,
+    entity_type: str = Query("tools", description="Entity type: tools, resources, prompts, or servers"),
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    per_page: int = Query(10, ge=1, le=1000, description="Items per page"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """
+    Return HTML partial for paginated top performers (HTMX endpoint).
+
+    Matches the /admin/tools/partial pattern for consistent pagination UX.
+
+    Args:
+        request: FastAPI request object
+        entity_type: Entity type (tools, resources, prompts, servers)
+        page: Page number (1-indexed)
+        per_page: Items per page (1-1000)
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        HTMLResponse with paginated table and OOB pagination controls
+
+    Raises:
+        HTTPException: If entity_type is not one of the valid types
+    """
+    LOGGER.debug(f"User {get_user_email(user)} requested metrics partial " f"(entity_type={entity_type}, page={page}, per_page={per_page})")
+
+    # Validate entity type
+    valid_types = ["tools", "resources", "prompts", "servers"]
+    if entity_type not in valid_types:
+        raise HTTPException(status_code=400, detail=f"Invalid entity_type. Must be one of: {', '.join(valid_types)}")
+
+    # Constrain parameters
+    page = max(1, page)
+    per_page = max(1, min(per_page, 1000))
+
+    # Get all items for this entity type
+    if entity_type == "tools":
+        all_items = await tool_service.get_top_tools(db, limit=None)
+    elif entity_type == "resources":
+        all_items = await resource_service.get_top_resources(db, limit=None)
+    elif entity_type == "prompts":
+        all_items = await prompt_service.get_top_prompts(db, limit=None)
+    else:  # servers
+        all_items = await server_service.get_top_servers(db, limit=None)
+
+    # Calculate pagination
+    total_items = len(all_items)
+    total_pages = math.ceil(total_items / per_page) if per_page > 0 else 0
+    offset = (page - 1) * per_page
+    paginated_items = all_items[offset : offset + per_page]
+
+    # Convert to JSON-serializable format
+    data = jsonable_encoder(paginated_items)
+
+    # Build pagination metadata
+    pagination = PaginationMeta(
+        page=page,
+        per_page=per_page,
+        total_items=total_items,
+        total_pages=total_pages,
+        has_next=page < total_pages,
+        has_prev=page > 1,
+    )
+
+    # Render template
+    return request.app.state.templates.TemplateResponse(
+        "metrics_top_performers_partial.html",
+        {
+            "request": request,
+            "entity_type": entity_type,
+            "data": data,
+            "pagination": pagination.model_dump(),
+            "root_path": request.scope.get("root_path", ""),
+        },
+    )
 
 
 @admin_router.post("/metrics/reset", response_model=Dict[str, object])
@@ -11525,22 +11613,22 @@ async def get_entities_by_type(
         for entity_type in types:
             entities = []
             if entity_type == "tool":
-                tools = db.query(Tool).filter(Tool.enabled).all()
+                tools = db.query(Tool).filter(Tool.enabled == True).all()
                 entities = [{"id": t.id, "name": t.name, "display_name": t.original_name} for t in tools]
             elif entity_type == "prompt":
-                prompts = db.query(Prompt).filter(Prompt.is_active).all()
+                prompts = db.query(Prompt).filter(Prompt.is_active == True).all()
                 entities = [{"id": p.id, "name": p.name, "display_name": p.name} for p in prompts]
             elif entity_type == "resource":
-                resources = db.query(Resource).filter(Resource.is_active).all()
+                resources = db.query(Resource).filter(Resource.is_active == True).all()
                 entities = [{"id": r.id, "name": r.name, "display_name": r.name} for r in resources]
             elif entity_type == "agent":
-                agents = db.query(A2AAgent).filter(A2AAgent.enabled).all()
+                agents = db.query(A2AAgent).filter(A2AAgent.enabled == True).all()
                 entities = [{"id": a.id, "name": a.name, "display_name": a.name} for a in agents]
             elif entity_type == "virtual_server":
-                servers = db.query(Server).filter(Server.is_active).all()
+                servers = db.query(Server).filter(Server.is_active == True).all()
                 entities = [{"id": s.id, "name": s.name, "display_name": s.name} for s in servers]
             elif entity_type == "mcp_server":
-                gateways = db.query(Gateway).filter(Gateway.enabled).all()
+                gateways = db.query(Gateway).filter(Gateway.enabled == True).all()
                 entities = [{"id": g.id, "name": g.name, "display_name": g.name} for g in gateways]
 
             result[entity_type] = entities

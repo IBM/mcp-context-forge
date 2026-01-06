@@ -562,7 +562,7 @@ class CommonAttributes(BaseModel):
         update_at (Optional[datetime]): The time at which the tool was updated.
         enabled (Optional[bool]): If the tool is enabled.
         reachable (Optional[bool]): If the tool is currently reachable.
-        tags (Optional[list[str]]): A list of meta data tags describing the tool.
+        tags (Optional[list[Dict[str,str]]]): A list of meta data tags describing the tool.
         created_by (Optional[str]): The person that created the tool.
         created_from_ip (Optional[str]): The client IP that created the tool.
         created_via (Optional[str]): How the tool was created (e.g., ui).
@@ -587,7 +587,7 @@ class CommonAttributes(BaseModel):
     enabled: Optional[bool] = None
     reachable: Optional[bool] = None
     auth_type: Optional[str] = None
-    tags: Optional[list[str]] = None
+    tags: Optional[list[Dict[str, str]]] = None
     # Comprehensive metadata for audit tracking
     created_by: Optional[str] = None
     created_from_ip: Optional[str] = None
@@ -705,6 +705,7 @@ class ResourceTemplate(BaseModelWithConfigDict):
     """A template for constructing resource URIs (MCP spec-compliant).
 
     Attributes:
+        id (Optional[str]): Unique identifier for resource
         uri_template (str): The URI template string.
         name (str): The unique name of the template.
         description (Optional[str]): A description of the template.
@@ -715,11 +716,14 @@ class ResourceTemplate(BaseModelWithConfigDict):
                                         Serialized as '_meta' in JSON.
     """
 
-    uri_template: str
+    # ✅ DB field name: uri_template
+    # ✅ API (JSON) alias:
+    id: Optional[str] = None
+    uri_template: str = Field(..., alias="uriTemplate")
     name: str
     description: Optional[str] = None
     mime_type: Optional[str] = None
-    annotations: Optional[Annotations] = None
+    annotations: Optional[Dict[str, Any]] = None
     meta: Optional[Dict[str, Any]] = Field(None, alias="_meta")
 
 

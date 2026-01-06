@@ -16,25 +16,25 @@ It handles:
 Examples:
     >>> from mcpgateway.services.resource_service import ResourceService, ResourceError
     >>> service = ResourceService()
-    >>> hasattr(service, '_event_subscribers')
-    True
-    >>> hasattr(service, '_template_cache')
-    True
-    >>> isinstance(service._event_subscribers, dict)
+    >>> isinstance(service._event_service, EventService)
     True
 """
 
 # Standard
-import asyncio
 from datetime import datetime, timezone
 import mimetypes
 import os
 import re
+import ssl
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 import uuid
 
 # Third-Party
+import httpx
+from mcp import ClientSession
+from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamablehttp_client
 import parse
 from sqlalchemy import and_, case, delete, desc, Float, func, not_, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -42,24 +42,32 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.common.models import ResourceContent, ResourceTemplate, TextContent
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam
+from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import ResourceMetric
 from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
+from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
+from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor
+from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
+from mcpgateway.utils.validate_signature import validate_signature
 
 # Plugin support imports (conditional)
 try:
     # First-Party
-    from mcpgateway.plugins.framework import GlobalContext, PluginManager, ResourceHookType, ResourcePostFetchPayload, ResourcePreFetchPayload
+    from mcpgateway.plugins.framework import GlobalContext, PluginContextTable, PluginManager, ResourceHookType, ResourcePostFetchPayload, ResourcePreFetchPayload
 
     PLUGINS_AVAILABLE = True
 except ImportError:
@@ -68,6 +76,10 @@ except ImportError:
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+# Initialize structured logger and audit trail for resource operations
+structured_logger = get_structured_logger("resource_service")
+audit_trail = get_audit_trail_service()
 
 
 class ResourceError(Exception):
@@ -81,21 +93,21 @@ class ResourceNotFoundError(ResourceError):
 class ResourceURIConflictError(ResourceError):
     """Raised when a resource URI conflicts with existing (active or inactive) resource."""
 
-    def __init__(self, uri: str, is_active: bool = True, resource_id: Optional[int] = None, visibility: str = "public") -> None:
+    def __init__(self, uri: str, enabled: bool = True, resource_id: Optional[int] = None, visibility: str = "public") -> None:
         """Initialize the error with resource information.
 
         Args:
             uri: The conflicting resource URI
-            is_active: Whether the existing resource is active
+            enabled: Whether the existing resource is active
             resource_id: ID of the existing resource if available
             visibility: Visibility status of the resource
         """
         self.uri = uri
-        self.is_active = is_active
+        self.enabled = enabled
         self.resource_id = resource_id
         message = f"{visibility.capitalize()} Resource already exists with URI: {uri}"
         logger.info(f"ResourceURIConflictError: {message}")
-        if not is_active:
+        if not enabled:
             message += f" (currently inactive, ID: {resource_id})"
         super().__init__(message)
 
@@ -117,8 +129,9 @@ class ResourceService:
 
     def __init__(self) -> None:
         """Initialize the resource service."""
-        self._event_subscribers: Dict[str, List[asyncio.Queue]] = {}
+        self._event_service = EventService(channel_name="mcpgateway:resource_events")
         self._template_cache: Dict[str, ResourceTemplate] = {}
+        self.oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
 
         # Initialize plugin manager if plugins are enabled in settings
         self._plugin_manager = None
@@ -147,11 +160,12 @@ class ResourceService:
     async def initialize(self) -> None:
         """Initialize the service."""
         logger.info("Initializing resource service")
+        await self._event_service.initialize()
 
     async def shutdown(self) -> None:
         """Shutdown the service."""
         # Clear subscriptions
-        self._event_subscribers.clear()
+        await self._event_service.shutdown()
         logger.info("Resource service shutdown complete")
 
     async def get_top_resources(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
@@ -220,8 +234,8 @@ class ResourceService:
             >>> m1 = SimpleNamespace(is_success=True, response_time=0.1, timestamp=now)
             >>> m2 = SimpleNamespace(is_success=False, response_time=0.3, timestamp=now)
             >>> r = SimpleNamespace(
-            ...     id=1, uri='res://x', name='R', description=None, mime_type='text/plain', size=123,
-            ...     created_at=now, updated_at=now, is_active=True, tags=['t'], metrics=[m1, m2]
+            ...     id="ca627760127d409080fdefc309147e08", uri='res://x', name='R', description=None, mime_type='text/plain', size=123,
+            ...     created_at=now, updated_at=now, enabled=True, tags=[{"id": "t", "label": "T"}], metrics=[m1, m2]
             ... )
             >>> out = svc._convert_resource_to_read(r)
             >>> out.metrics.total_executions
@@ -233,6 +247,18 @@ class ResourceService:
         # Remove SQLAlchemy state and any pre-existing 'metrics' attribute
         resource_dict.pop("_sa_instance_state", None)
         resource_dict.pop("metrics", None)
+
+        # Ensure required base fields are present even if SQLAlchemy hasn't loaded them into __dict__ yet
+        resource_dict["id"] = getattr(resource, "id", resource_dict.get("id"))
+        resource_dict["uri"] = getattr(resource, "uri", resource_dict.get("uri"))
+        resource_dict["name"] = getattr(resource, "name", resource_dict.get("name"))
+        resource_dict["description"] = getattr(resource, "description", resource_dict.get("description"))
+        resource_dict["mime_type"] = getattr(resource, "mime_type", resource_dict.get("mime_type"))
+        resource_dict["size"] = getattr(resource, "size", resource_dict.get("size"))
+        resource_dict["created_at"] = getattr(resource, "created_at", resource_dict.get("created_at"))
+        resource_dict["updated_at"] = getattr(resource, "updated_at", resource_dict.get("updated_at"))
+        resource_dict["is_active"] = getattr(resource, "is_active", resource_dict.get("is_active"))
+        resource_dict["enabled"] = getattr(resource, "enabled", resource_dict.get("enabled"))
 
         # Compute aggregated metrics from the resource's metrics list.
         total = len(resource.metrics) if hasattr(resource, "metrics") and resource.metrics is not None else 0
@@ -343,12 +369,12 @@ class ResourceService:
                 # Check for existing public resource with the same uri
                 existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "public")).scalar_one_or_none()
                 if existing_resource:
-                    raise ResourceURIConflictError(resource.uri, is_active=existing_resource.is_active, resource_id=existing_resource.id, visibility=existing_resource.visibility)
+                    raise ResourceURIConflictError(resource.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
             elif visibility.lower() == "team" and team_id:
                 # Check for existing team resource with the same uri
                 existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "team", DbResource.team_id == team_id)).scalar_one_or_none()
                 if existing_resource:
-                    raise ResourceURIConflictError(resource.uri, is_active=existing_resource.is_active, resource_id=existing_resource.id, visibility=existing_resource.visibility)
+                    raise ResourceURIConflictError(resource.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
 
             # Detect mime type if not provided
             mime_type = resource.mime_type
@@ -364,7 +390,7 @@ class ResourceService:
                 name=resource.name,
                 description=resource.description,
                 mime_type=mime_type,
-                template=resource.template,
+                uri_template=resource.uri_template,
                 text_content=resource.content if is_text else None,
                 binary_content=(resource.content.encode() if is_text and isinstance(resource.content, str) else resource.content if isinstance(resource.content, bytes) else None),
                 size=len(resource.content) if resource.content else 0,
@@ -391,16 +417,106 @@ class ResourceService:
             await self._notify_resource_added(db_resource)
 
             logger.info(f"Registered resource: {resource.uri}")
+
+            # Structured logging: Audit trail for resource creation
+            audit_trail.log_action(
+                user_id=created_by or "system",
+                action="create_resource",
+                resource_type="resource",
+                resource_id=str(db_resource.id),
+                resource_name=db_resource.name,
+                user_email=owner_email,
+                team_id=team_id,
+                client_ip=created_from_ip,
+                user_agent=created_user_agent,
+                new_values={
+                    "uri": db_resource.uri,
+                    "name": db_resource.name,
+                    "visibility": visibility,
+                    "mime_type": db_resource.mime_type,
+                },
+                context={
+                    "created_via": created_via,
+                    "import_batch_id": import_batch_id,
+                    "federation_source": federation_source,
+                },
+                db=db,
+            )
+
+            # Structured logging: Log successful resource creation
+            structured_logger.log(
+                level="INFO",
+                message="Resource created successfully",
+                event_type="resource_created",
+                component="resource_service",
+                user_id=created_by,
+                user_email=owner_email,
+                team_id=team_id,
+                resource_type="resource",
+                resource_id=str(db_resource.id),
+                custom_fields={
+                    "resource_uri": db_resource.uri,
+                    "resource_name": db_resource.name,
+                    "visibility": visibility,
+                },
+                db=db,
+            )
+
             db_resource.team = self._get_team_name(db, db_resource.team_id)
             return self._convert_resource_to_read(db_resource)
         except IntegrityError as ie:
             logger.error(f"IntegrityErrors in group: {ie}")
+
+            # Structured logging: Log database integrity error
+            structured_logger.log(
+                level="ERROR",
+                message="Resource creation failed due to database integrity error",
+                event_type="resource_creation_failed",
+                component="resource_service",
+                user_id=created_by,
+                user_email=owner_email,
+                error=ie,
+                custom_fields={
+                    "resource_uri": resource.uri,
+                },
+                db=db,
+            )
             raise ie
         except ResourceURIConflictError as rce:
             logger.error(f"ResourceURIConflictError in group: {resource.uri}")
+
+            # Structured logging: Log URI conflict error
+            structured_logger.log(
+                level="WARNING",
+                message="Resource creation failed due to URI conflict",
+                event_type="resource_uri_conflict",
+                component="resource_service",
+                user_id=created_by,
+                user_email=owner_email,
+                custom_fields={
+                    "resource_uri": resource.uri,
+                    "visibility": visibility,
+                },
+                db=db,
+            )
             raise rce
         except Exception as e:
             db.rollback()
+
+            # Structured logging: Log generic resource creation failure
+            structured_logger.log(
+                level="ERROR",
+                message="Resource creation failed",
+                event_type="resource_creation_failed",
+                component="resource_service",
+                user_id=created_by,
+                user_email=owner_email,
+                error=e,
+                custom_fields={
+                    "resource_uri": resource.uri,
+                },
+                db=db,
+            )
             raise ResourceError(f"Failed to register resource: {str(e)}")
 
     async def list_resources(self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None) -> tuple[List[ResourceRead], Optional[str]]:
@@ -449,7 +565,7 @@ class ResourceService:
             True
         """
         page_size = settings.pagination_default_page_size
-        query = select(DbResource).order_by(DbResource.id)  # Consistent ordering for cursor pagination
+        query = select(DbResource).where(DbResource.uri_template.is_(None)).order_by(DbResource.id)  # Consistent ordering for cursor pagination
 
         # Decode cursor to get last_id if provided
         last_id = None
@@ -466,7 +582,7 @@ class ResourceService:
             query = query.where(DbResource.id > last_id)
 
         if not include_inactive:
-            query = query.where(DbResource.is_active)
+            query = query.where(DbResource.enabled)
 
         # Add tag filtering if tags are provided
         if tags:
@@ -559,7 +675,7 @@ class ResourceService:
 
         # Apply active/inactive filter
         if not include_inactive:
-            query = query.where(DbResource.is_active)
+            query = query.where(DbResource.enabled)
 
         if team_id:
             if team_id not in team_ids:
@@ -636,9 +752,15 @@ class ResourceService:
             >>> isinstance(result, list)
             True
         """
-        query = select(DbResource).join(server_resource_association, DbResource.id == server_resource_association.c.resource_id).where(server_resource_association.c.server_id == server_id)
+        logger.debug(f"Listing resources for server_id: {server_id}, include_inactive: {include_inactive}")
+        query = (
+            select(DbResource)
+            .join(server_resource_association, DbResource.id == server_resource_association.c.resource_id)
+            .where(DbResource.uri_template.is_(None))
+            .where(server_resource_association.c.server_id == server_id)
+        )
         if not include_inactive:
-            query = query.where(DbResource.is_active)
+            query = query.where(DbResource.enabled)
         # Cursor-based pagination logic can be implemented here in the future.
         resources = db.execute(query).scalars().all()
         result = []
@@ -671,15 +793,446 @@ class ResourceService:
         db.add(metric)
         db.commit()
 
-    async def read_resource(self, db: Session, resource_id: Union[int, str], request_id: Optional[str] = None, user: Optional[str] = None, server_id: Optional[str] = None) -> ResourceContent:
+    async def _record_invoke_resource_metric(self, db: Session, resource_id: str, start_time: float, success: bool, error_message: Optional[str]) -> None:
+        """
+        Records a metric for invoking resource.
+
+        Args:
+            db: Database Session
+            resource_id: unique identifier to access & invoke resource
+            start_time: Monotonic start time of the access
+            success: True if successful, False otherwise
+            error_message: Error message if failed, None otherwise
+        """
+        end_time = time.monotonic()
+        response_time = end_time - start_time
+
+        metric = ResourceMetric(
+            resource_id=resource_id,
+            response_time=response_time,
+            is_success=success,
+            error_message=error_message,
+        )
+        db.add(metric)
+        db.commit()
+
+    def create_ssl_context(self, ca_certificate: str) -> ssl.SSLContext:
+        """Create an SSL context with the provided CA certificate.
+
+        Args:
+            ca_certificate: CA certificate in PEM format
+
+        Returns:
+            ssl.SSLContext: Configured SSL context
+        """
+        ctx = ssl.create_default_context()
+        ctx.load_verify_locations(cadata=ca_certificate)
+        return ctx
+
+    async def invoke_resource(self, db: Session, resource_id: str, resource_uri: str, resource_template_uri: Optional[str] = None) -> Any:
+        """
+        Invoke a resource via its configured gateway using SSE or StreamableHTTP transport.
+
+        This method determines the correct URI to invoke, loads the associated resource
+        and gateway from the database, validates certificates if applicable, prepares
+        authentication headers (OAuth, header-based, or none), and then connects to
+        the gateway to read the resource using the appropriate transport.
+
+        The function supports:
+        - CA certificate validation / SSL context creation
+        - OAuth client-credentials and authorization-code flow
+        - Header-based auth
+        - SSE transport gateways
+        - StreamableHTTP transport gateways
+
+        Args:
+            db (Session):
+                SQLAlchemy session for retrieving resource and gateway information.
+            resource_id (str):
+                ID of the resource to invoke.
+            resource_uri (str):
+                Direct resource URI configured for the resource.
+            resource_template_uri (Optional[str]):
+                URI from the template. Overrides `resource_uri` when provided.
+
+        Returns:
+            Any: The text content returned by the remote resource, or ``None`` if the
+            gateway could not be contacted or an error occurred.
+
+        Raises:
+            Exception: Any unhandled internal errors (e.g., DB issues).
+
+        ---
+        Doctest Examples
+        ----------------
+
+        >>> class FakeDB:
+        ...     "Simple DB stub returning fake resource and gateway rows."
+        ...     def execute(self, query):
+        ...         class Result:
+        ...             def scalar_one_or_none(self):
+        ...                 # Return fake objects with the needed attributes
+        ...                 class FakeResource:
+        ...                     id = "res123"
+        ...                     name = "Demo Resource"
+        ...                     gateway_id = "gw1"
+        ...                 return FakeResource()
+        ...         return Result()
+
+        >>> class FakeGateway:
+        ...     id = "gw1"
+        ...     name = "Fake Gateway"
+        ...     url = "https://fake.gateway"
+        ...     ca_certificate = None
+        ...     ca_certificate_sig = None
+        ...     transport = "sse"
+        ...     auth_type = None
+        ...     auth_value = {}
+
+        >>> # Monkeypatch the DB lookup for gateway
+        >>> def fake_execute_gateway(self, query):
+        ...     class Result:
+        ...         def scalar_one_or_none(self_inner):
+        ...             return FakeGateway()
+        ...     return Result()
+
+        >>> FakeDB.execute_gateway = fake_execute_gateway
+
+        >>> class FakeService:
+        ...     "Service stub replacing network calls with predictable outputs."
+        ...     async def invoke_resource(self, db, resource_id, resource_uri, resource_template_uri=None):
+        ...         # Represent the behavior of a successful SSE response.
+        ...         return "hello from gateway"
+
+        >>> svc = FakeService()
+        >>> import asyncio
+        >>> asyncio.run(svc.invoke_resource(FakeDB(), "res123", "/test"))
+        'hello from gateway'
+
+        ---
+        Example: Template URI overrides resource URI
+        --------------------------------------------
+
+        >>> class FakeService2(FakeService):
+        ...     async def invoke_resource(self, db, resource_id, resource_uri, resource_template_uri=None):
+        ...         if resource_template_uri:
+        ...             return f"using template: {resource_template_uri}"
+        ...         return f"using direct: {resource_uri}"
+
+        >>> svc2 = FakeService2()
+        >>> asyncio.run(svc2.invoke_resource(FakeDB(), "res123", "/direct", "/template"))
+        'using template: /template'
+
+        """
+        uri = None
+        if resource_uri and resource_template_uri:
+            uri = resource_template_uri
+        elif resource_uri:
+            uri = resource_uri
+
+        logger.info(f"Invoking the resource: {uri}")
+        gateway_id = None
+        resource_info = None
+        resource_info = db.execute(select(DbResource).where(DbResource.id == resource_id)).scalar_one_or_none()
+        user_email = settings.platform_admin_email
+
+        if resource_info:
+            gateway_id = getattr(resource_info, "gateway_id", None)
+            resource_name = getattr(resource_info, "name", None)
+            if gateway_id:
+                gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+
+                start_time = time.monotonic()
+                success = False
+                error_message = None
+
+                # Create database span for observability dashboard
+                trace_id = current_trace_id.get()
+                db_span_id = None
+                db_span_ended = False
+                observability_service = ObservabilityService() if trace_id else None
+
+                if trace_id and observability_service:
+                    try:
+                        db_span_id = observability_service.start_span(
+                            db=db,
+                            trace_id=trace_id,
+                            name="invoke.resource",
+                            attributes={
+                                "resource.name": resource_name if resource_name else "unknown",
+                                "resource.id": str(resource_id) if resource_id else "unknown",
+                                "resource.uri": str(uri) or "unknown",
+                                "gateway.transport": getattr(gateway, "transport") or "uknown",
+                                "gateway.url": getattr(gateway, "url") or "unknown",
+                            },
+                        )
+                        logger.debug(f"✓ Created resource.read span: {db_span_id} for resource: {resource_id} & {uri}")
+                    except Exception as e:
+                        logger.warning(f"Failed to start the observability span for invoking resource: {e}")
+                        db_span_id = None
+
+                with create_span(
+                    "invoke.resource",
+                    {
+                        "resource.name": resource_name if resource_name else "unknown",
+                        "resource.id": str(resource_id) if resource_id else "unknown",
+                        "resource.uri": str(uri) or "unknown",
+                        "gateway.transport": getattr(gateway, "transport") or "uknown",
+                        "gateway.url": getattr(gateway, "url") or "unknown",
+                    },
+                ) as span:
+                    valid = False
+                    if gateway.ca_certificate:
+                        if settings.enable_ed25519_signing:
+                            public_key_pem = settings.ed25519_public_key
+                            valid = validate_signature(gateway.ca_certificate.encode(), gateway.ca_certificate_sig, public_key_pem)
+                        else:
+                            valid = True
+
+                    if valid:
+                        ssl_context = self.create_ssl_context(gateway.ca_certificate)
+                    else:
+                        ssl_context = None
+
+                    def _get_httpx_client_factory(
+                        headers: dict[str, str] | None = None,
+                        timeout: httpx.Timeout | None = None,
+                        auth: httpx.Auth | None = None,
+                    ) -> httpx.AsyncClient:
+                        """Factory function to create httpx.AsyncClient with optional CA certificate.
+
+                        Args:
+                            headers: Optional headers for the client
+                            timeout: Optional timeout for the client
+                            auth: Optional auth for the client
+
+                        Returns:
+                            httpx.AsyncClient: Configured HTTPX async client
+                        """
+                        return httpx.AsyncClient(
+                            verify=ssl_context if ssl_context else True,  # pylint: disable=cell-var-from-loop
+                            follow_redirects=True,
+                            headers=headers,
+                            timeout=timeout or httpx.Timeout(30.0),
+                            auth=auth,
+                        )
+
+                    try:
+                        # Handle different authentication types
+                        headers = {}
+                        if gateway and gateway.auth_type == "oauth" and gateway.oauth_config:
+                            grant_type = gateway.oauth_config.get("grant_type", "client_credentials")
+
+                            if grant_type == "authorization_code":
+                                # For Authorization Code flow, try to get stored tokens
+                                try:
+                                    # First-Party
+                                    from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+
+                                    token_storage = TokenStorageService(db)
+                                    # Get user-specific OAuth token
+                                    # if not user_email:
+                                    #     if span:
+                                    #         span.set_attribute("health.status", "unhealthy")
+                                    #         span.set_attribute("error.message", "User email required for OAuth token")
+                                    #     await self._handle_gateway_failure(gateway)
+
+                                    access_token: str = await token_storage.get_user_token(gateway.id, user_email)
+
+                                    if access_token:
+                                        headers["Authorization"] = f"Bearer {access_token}"
+                                    else:
+                                        if span:
+                                            span.set_attribute("health.status", "unhealthy")
+                                            span.set_attribute("error.message", "No valid OAuth token for user")
+                                        # await self._handle_gateway_failure(gateway)
+
+                                except Exception as e:
+                                    logger.error(f"Failed to obtain stored OAuth token for gateway {gateway.name}: {e}")
+                                    if span:
+                                        span.set_attribute("health.status", "unhealthy")
+                                        span.set_attribute("error.message", "Failed to obtain stored OAuth token")
+                                    # await self._handle_gateway_failure(gateway)
+                            else:
+                                # For Client Credentials flow, get token directly
+                                try:
+                                    access_token: str = await self.oauth_manager.get_access_token(gateway.oauth_config)
+                                    headers["Authorization"] = f"Bearer {access_token}"
+                                except Exception as e:
+                                    if span:
+                                        span.set_attribute("health.status", "unhealthy")
+                                        span.set_attribute("error.message", str(e))
+                                    # await self._handle_gateway_failure(gateway)
+                        else:
+                            # Handle non-OAuth authentication (existing logic)
+                            auth_data = gateway.auth_value or {}
+                            if isinstance(auth_data, str):
+                                headers = decode_auth(auth_data)
+                            elif isinstance(auth_data, dict):
+                                headers = {str(k): str(v) for k, v in auth_data.items()}
+                            else:
+                                headers = {}
+
+                        async def connect_to_sse_session(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | None:
+                            """
+                            Connect to an SSE-based gateway and retrieve the text content of a resource.
+
+                            This helper establishes an SSE (Server-Sent Events) session with the remote
+                            gateway, initializes a `ClientSession`, invokes `read_resource()` for the
+                            given URI, and returns the textual content from the first item in the
+                            response's `contents` list.
+
+                            If any error occurs (network failure, unexpected response format, session
+                            initialization failure, etc.), the method logs the exception and returns
+                            ``None`` instead of raising.
+
+                            Args:
+                                server_url (str):
+                                    The base URL of the SSE gateway to connect to.
+                                uri (str):
+                                    The resource URI that should be requested from the gateway.
+                                authentication (Optional[Dict[str, str]]):
+                                    Optional dictionary of headers (e.g., OAuth Bearer tokens) to
+                                    include in the SSE connection request. Defaults to an empty
+                                    dictionary when not provided.
+
+                            Returns:
+                                str | None:
+                                    The text content returned by the remote resource, or ``None`` if the
+                                    SSE connection fails or the response is invalid.
+
+                            Notes:
+                                - This function assumes the SSE client context manager yields:
+                                    ``(read_stream, write_stream, get_session_id)``.
+                                - The expected response object from `session.read_resource()` must have a
+                                `contents` attribute containing a list, where the first element has a
+                                `text` attribute.
+                            """
+                            if authentication is None:
+                                authentication = {}
+                            try:
+                                async with sse_client(url=server_url, headers=authentication, timeout=settings.health_check_timeout, httpx_client_factory=_get_httpx_client_factory) as (
+                                    read_stream,
+                                    write_stream,
+                                    _get_session_id,
+                                ):
+                                    async with ClientSession(read_stream, write_stream) as session:
+                                        _ = await session.initialize()
+                                        resource_response = await session.read_resource(uri=uri)
+                                        return getattr(getattr(resource_response, "contents")[0], "text")
+                            except Exception as e:
+                                logger.debug(f"Exception while connecting to sse gateway: {e}")
+                                return None
+
+                        async def connect_to_streamablehttp_server(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | None:
+                            """
+                            Connect to a StreamableHTTP gateway and retrieve the text content of a resource.
+
+                            This helper establishes a StreamableHTTP client session with the specified
+                            gateway, initializes a `ClientSession`, invokes `read_resource()` for the
+                            given URI, and returns the textual content from the first element in the
+                            response's `contents` list.
+
+                            If any exception occurs during connection, session initialization, or
+                            resource reading, the function logs the error and returns ``None`` instead
+                            of propagating the exception.
+
+                            Args:
+                                server_url (str):
+                                    The endpoint URL of the StreamableHTTP gateway.
+                                uri (str):
+                                    The resource URI to request from the gateway.
+                                authentication (Optional[Dict[str, str]]):
+                                    Optional dictionary of authentication headers (e.g., API keys or
+                                    Bearer tokens). Defaults to an empty dictionary when not provided.
+
+                            Returns:
+                                str | None:
+                                    The text content returned by the StreamableHTTP resource, or ``None``
+                                    if the connection fails or the response format is invalid.
+
+                            Notes:
+                                - The `streamablehttp_client` context manager must yield a tuple:
+                                ``(read_stream, write_stream, get_session_id)``.
+                                - The expected `resource_response` returned by ``session.read_resource()``
+                                must contain a `contents` list, whose first element exposes a `text`
+                                attribute.
+                            """
+                            if authentication is None:
+                                authentication = {}
+                            try:
+                                async with streamablehttp_client(url=server_url, headers=authentication, timeout=settings.health_check_timeout, httpx_client_factory=_get_httpx_client_factory) as (
+                                    read_stream,
+                                    write_stream,
+                                    _get_session_id,
+                                ):
+                                    async with ClientSession(read_stream, write_stream) as session:
+                                        _ = await session.initialize()
+                                        resource_response = await session.read_resource(uri=uri)
+                                        return getattr(getattr(resource_response, "contents")[0], "text")
+                            except Exception as e:
+                                logger.debug(f"Exception while connecting to streamablehttp gateway: {e}")
+                                return None
+
+                        if span:
+                            span.set_attribute("success", True)
+                            span.set_attribute("duration.ms", (time.monotonic() - start_time) * 1000)
+
+                        resource_text = ""
+                        if (gateway.transport).lower() == "sse":
+                            resource_text = await connect_to_sse_session(server_url=gateway.url, authentication=headers, uri=uri)
+                        else:
+                            resource_text = await connect_to_streamablehttp_server(server_url=gateway.url, authentication=headers, uri=uri)
+                        return resource_text
+                    except Exception as e:
+                        success = False
+                        error_message = str(e)
+                        raise
+                    finally:
+                        if resource_text:
+                            try:
+                                await self._record_invoke_resource_metric(db, resource_id, start_time, success, error_message)
+                            except Exception as metrics_error:
+                                logger.warning(f"Failed to invoke resource metric: {metrics_error}")
+
+                            # End Invoke resource span for Observability dashboard
+                            if db_span_id and observability_service and not db_span_ended:
+                                try:
+                                    observability_service.end_span(
+                                        db=db,
+                                        span_id=db_span_id,
+                                        status="ok" if success else "error",
+                                        status_message=error_message if error_message else None,
+                                    )
+                                    db_span_ended = True
+                                    logger.debug(f"✓ Ended invoke.resource span: {db_span_id}")
+                                except Exception as e:
+                                    logger.warning(f"Failed to end observability span for invoking resource: {e}")
+
+    async def read_resource(
+        self,
+        db: Session,
+        resource_id: Optional[Union[int, str]] = None,
+        resource_uri: Optional[str] = None,
+        request_id: Optional[str] = None,
+        user: Optional[str] = None,
+        server_id: Optional[str] = None,
+        include_inactive: bool = False,
+        plugin_context_table: Optional[PluginContextTable] = None,
+        plugin_global_context: Optional[GlobalContext] = None,
+    ) -> ResourceContent:
         """Read a resource's content with plugin hook support.
 
         Args:
-            db: Database session
-            resource_id: ID of the resource to read
-            request_id: Optional request ID for tracing
-            user: Optional user making the request
-            server_id: Optional server ID for context
+            db: Database session.
+            resource_id: Optional ID of the resource to read.
+            resource_uri: Optional URI of the resource to read.
+            request_id: Optional request ID for tracing.
+            user: Optional user making the request.
+            server_id: Optional server ID for context.
+            include_inactive: Whether to include inactive resources. Defaults to False.
+            plugin_context_table: Optional plugin context table from previous hooks for cross-hook state sharing.
+            plugin_global_context: Optional global context from middleware for consistency across hooks.
 
         Returns:
             Resource content object
@@ -689,29 +1242,32 @@ class ResourceService:
             ResourceError: If blocked by plugin
             PluginError: If encounters issue with plugin
             PluginViolationError: If plugin violated the request. Example - In case of OPA plugin, if the request is denied by policy.
+            ValueError: If neither resource_id nor resource_uri is provided
 
         Examples:
+            >>> from mcpgateway.common.models import ResourceContent
             >>> from mcpgateway.services.resource_service import ResourceService
             >>> from unittest.mock import MagicMock
-            >>> from mcpgateway.common.models import ResourceContent
             >>> service = ResourceService()
             >>> db = MagicMock()
             >>> uri = 'http://example.com/resource.txt'
             >>> import types
-            >>> mock_resource = types.SimpleNamespace(id='res-123', content='test', uri=uri, name='test_resource')
+            >>> mock_resource = types.SimpleNamespace(id=123,content='test', uri=uri)
             >>> db.execute.return_value.scalar_one_or_none.return_value = mock_resource
-            >>> db.get.return_value = mock_resource  # Ensure uri is a string, not None
+            >>> db.get.return_value = mock_resource
             >>> import asyncio
-            >>> result = asyncio.run(service.read_resource(db, uri))
-            >>> isinstance(result, ResourceContent)
+            >>> result = asyncio.run(service.read_resource(db, resource_uri=uri))
+            >>> result.__class__.__name__ == 'ResourceContent'
             True
 
-            Not found case returns ResourceNotFoundError:
+        Not found case returns ResourceNotFoundError:
+
             >>> db2 = MagicMock()
             >>> db2.execute.return_value.scalar_one_or_none.return_value = None
+            >>> import asyncio
             >>> def _nf():
             ...     try:
-            ...         asyncio.run(service.read_resource(db2, 'abc'))
+            ...         asyncio.run(service.read_resource(db2, resource_uri='abc'))
             ...     except ResourceNotFoundError:
             ...         return True
             >>> _nf()
@@ -720,9 +1276,12 @@ class ResourceService:
         start_time = time.monotonic()
         success = False
         error_message = None
-        resource = None
-        resource_db = db.get(DbResource, resource_id)
-        uri = resource_db.uri if resource_db else None
+        resource_db = None
+        content = None
+        uri = resource_uri or "unknown"
+        if resource_id:
+            resource_db = db.get(DbResource, resource_id)
+            uri = resource_db.uri if resource_db else None
 
         # Create database span for observability dashboard
         trace_id = current_trace_id.get()
@@ -737,7 +1296,7 @@ class ResourceService:
                     trace_id=trace_id,
                     name="resource.read",
                     attributes={
-                        "resource.uri": str(uri) if uri else "unknown",
+                        "resource.uri": str(resource_uri) if resource_uri else "unknown",
                         "user": user or "anonymous",
                         "server_id": server_id,
                         "request_id": request_id,
@@ -750,11 +1309,10 @@ class ResourceService:
                 logger.warning(f"Failed to start observability span for resource reading: {e}")
                 db_span_id = None
 
-        # Create trace span for OpenTelemetry export (Jaeger, Zipkin, etc.)
         with create_span(
             "resource.read",
             {
-                "resource.uri": uri,
+                "resource.uri": resource_uri or "unknown",
                 "user": user or "anonymous",
                 "server_id": server_id,
                 "request_id": request_id,
@@ -769,6 +1327,15 @@ class ResourceService:
 
                 original_uri = uri
                 contexts = None
+
+                # Try to fetch resource early for entity context
+                # This allows plugins to have access to entity metadata
+                if not resource_db and resource_uri:
+                    # Try to fetch by URI for context purposes
+                    query = select(DbResource).where(DbResource.uri == str(uri)).where(DbResource.enabled)
+                    if include_inactive:
+                        query = select(DbResource).where(DbResource.uri == str(uri))
+                    resource_db = db.execute(query).scalar_one_or_none()
 
                 # Call pre-fetch hooks if plugin manager is available
                 plugin_eligible = bool(self._plugin_manager and PLUGINS_AVAILABLE and uri and ("://" in uri))
@@ -791,48 +1358,110 @@ class ResourceService:
                             # Attempt to fallback to attribute access
                             user_id = getattr(user, "email", None)
 
-                    global_context = GlobalContext(request_id=request_id, user=user_id, server_id=server_id)
+                    # Use existing global_context from middleware or create new one
+                    if plugin_global_context:
+                        global_context = plugin_global_context
+                        # Update fields with resource-specific information
+                        if user_id:
+                            global_context.user = user_id
+                        if server_id:
+                            global_context.server_id = server_id
+                        # Set entity-related fields
+                        global_context.entity_type = "resource"
+                        if resource_db:
+                            global_context.entity_id = str(resource_db.id)
+                            global_context.entity_name = str(resource_db.name) if hasattr(resource_db, "name") and resource_db.name else None
+                    else:
+                        # Create new context (fallback when middleware didn't run)
+                        global_context = GlobalContext(
+                            request_id=request_id,
+                            user=user_id,
+                            server_id=server_id,
+                            entity_type="resource",
+                            entity_id=str(resource_db.id) if resource_db else None,
+                            entity_name=str(resource_db.name) if resource_db and hasattr(resource_db, "name") and resource_db.name else None,
+                        )
 
                     # Create pre-fetch payload
                     pre_payload = ResourcePreFetchPayload(uri=uri, metadata={})
 
-                    # Execute pre-fetch hooks
-                    pre_result, contexts = await self._plugin_manager.invoke_hook(ResourceHookType.RESOURCE_PRE_FETCH, pre_payload, global_context, violations_as_exceptions=True)
+                    # Execute pre-fetch hooks with context from previous hooks
+                    pre_result, contexts = await self._plugin_manager.invoke_hook(
+                        ResourceHookType.RESOURCE_PRE_FETCH,
+                        pre_payload,
+                        global_context,
+                        local_contexts=plugin_context_table,  # Pass context from previous hooks
+                        violations_as_exceptions=True,
+                    )
                     # Use modified URI if plugin changed it
                     if pre_result.modified_payload:
                         uri = pre_result.modified_payload.uri
                         logger.debug(f"Resource URI modified by plugin: {original_uri} -> {uri}")
 
+                # Validate resource path if experimental validation is enabled
+                if getattr(settings, "experimental_validate_io", False) and uri and isinstance(uri, str):
+                    try:
+                        SecurityValidator.validate_path(uri, getattr(settings, "allowed_roots", None))
+                    except ValueError as e:
+                        raise ResourceError(f"Path validation failed: {e}")
+
                 # Original resource fetching logic
                 logger.info(f"Fetching resource: {resource_id} (URI: {uri})")
                 # Check for template
-                resource = None
-                if uri is not None and "{" in uri and "}" in uri:
-                    content = await self._read_template_resource(uri)
-                else:
-                    # Find resource
-                    resource = db.execute(select(DbResource).where(DbResource.id == resource_id).where(DbResource.is_active)).scalar_one_or_none()
-                    if not resource:
-                        # Check if inactive resource exists
-                        inactive_resource = db.execute(select(DbResource).where(DbResource.id == resource_id).where(not_(DbResource.is_active))).scalar_one_or_none()
-                        if inactive_resource:
+
+                if uri is not None:  # and "{" in uri and "}" in uri:
+                    # Matches uri (modified value from pluggins if applicable)
+                    # with uri from resource DB
+                    # if uri is of type resource template then resource is retreived from DB
+                    query = select(DbResource).where(DbResource.uri == str(uri)).where(DbResource.enabled)
+                    if include_inactive:
+                        query = select(DbResource).where(DbResource.uri == str(uri))
+                    resource_db = db.execute(query).scalar_one_or_none()
+                    if resource_db:
+                        # resource_id = resource_db.id
+                        content = resource_db.content
+                    else:
+                        # Check the inactivity first
+                        check_inactivity = db.execute(select(DbResource).where(DbResource.uri == str(resource_uri)).where(not_(DbResource.enabled))).scalar_one_or_none()
+                        if check_inactivity:
+                            raise ResourceNotFoundError(f"Resource '{resource_uri}' exists but is inactive")
+
+                if resource_db is None:
+                    if resource_uri:
+                        # if resource_uri is provided
+                        # modified uri have templatized resource with prefilled value
+                        # triggers _read_template_resource
+                        # it internally checks which uri matches the pattern of modified uri and fetches
+                        # the one which matches else raises ResourceNotFoundError
+                        try:
+                            content = await self._read_template_resource(db, uri) or None
+                        except Exception as e:
+                            raise ResourceNotFoundError(f"Resource template not found for '{resource_uri}'") from e
+
+                if resource_uri:
+                    if content is None and resource_db is None:
+                        raise ResourceNotFoundError(f"Resource template not found for '{resource_uri}'")
+
+                if resource_id:
+                    # if resource_id provided instead of resource_uri
+                    # retrieves resource based on resource_id
+                    query = select(DbResource).where(DbResource.id == str(resource_id)).where(DbResource.enabled)
+                    if include_inactive:
+                        query = select(DbResource).where(DbResource.id == str(resource_id))
+                    resource_db = db.execute(query).scalar_one_or_none()
+                    if resource_db:
+                        original_uri = resource_db.uri or None
+                        content = resource_db.content
+                    else:
+                        check_inactivity = db.execute(select(DbResource).where(DbResource.id == str(resource_id)).where(not_(DbResource.enabled))).scalar_one_or_none()
+                        if check_inactivity:
                             raise ResourceNotFoundError(f"Resource '{resource_id}' exists but is inactive")
-
-                        raise ResourceNotFoundError(f"Resource not found: {resource_id}")
-
-                    content = resource.content
-
-                    # Populate entity context now that we have the resource
-                    if plugin_eligible and resource:
-                        global_context.entity_type = "resource"
-                        global_context.entity_id = str(resource.id)
-                        global_context.entity_name = resource.name
+                        raise ResourceNotFoundError(f"Resource not found for the resource id: {resource_id}")
 
                 # Call post-fetch hooks if plugin manager is available
                 if plugin_eligible:
                     # Create post-fetch payload
                     post_payload = ResourcePostFetchPayload(uri=original_uri, content=content)
-
                     # Execute post-fetch hooks
                     post_result, _ = await self._plugin_manager.invoke_hook(
                         ResourceHookType.RESOURCE_POST_FETCH, post_payload, global_context, contexts, violations_as_exceptions=True
@@ -841,6 +1470,7 @@ class ResourceService:
                     # Use modified content if plugin changed it
                     if post_result.modified_payload:
                         content = post_result.modified_payload.content
+
                 # Set success attributes on span
                 if span:
                     span.set_attribute("success", True)
@@ -849,36 +1479,48 @@ class ResourceService:
                         span.set_attribute("content.size", len(str(content)))
 
                 success = True
-
                 # Return standardized content without breaking callers that expect passthrough
                 # Prefer returning first-class content models or objects with content-like attributes.
                 # ResourceContent and TextContent already imported at top level
 
                 # If content is already a Pydantic content model, return as-is
                 if isinstance(content, (ResourceContent, TextContent)):
+                    resource_response = await self.invoke_resource(
+                        db=db, resource_id=getattr(content, "id"), resource_uri=getattr(content, "uri") or None, resource_template_uri=getattr(content, "text") or None
+                    )
+                    if resource_response:
+                        setattr(content, "text", resource_response)
                     return content
                 # If content is any object that quacks like content (e.g., MagicMock with .text/.blob), return as-is
                 if hasattr(content, "text") or hasattr(content, "blob"):
+                    if hasattr(content, "blob"):
+                        resource_response = await self.invoke_resource(
+                            db=db, resource_id=getattr(content, "id"), resource_uri=getattr(content, "uri") or None, resource_template_uri=getattr(content, "blob") or None
+                        )
+                        setattr(content, "blob", resource_response)
+                    elif hasattr(content, "text"):
+                        resource_response = await self.invoke_resource(
+                            db=db, resource_id=getattr(content, "id"), resource_uri=getattr(content, "uri") or None, resource_template_uri=getattr(content, "text") or None
+                        )
+                        setattr(content, "text", resource_response)
                     return content
-
                 # Normalize primitive types to ResourceContent
                 if isinstance(content, bytes):
-                    return ResourceContent(type="resource", id=resource_id, uri=original_uri, blob=content)
+                    return ResourceContent(type="resource", id=str(resource_id), uri=original_uri, blob=content)
                 if isinstance(content, str):
-                    return ResourceContent(type="resource", id=resource_id, uri=original_uri, text=content)
+                    return ResourceContent(type="resource", id=str(resource_id), uri=original_uri, text=content)
 
                 # Fallback to stringified content
-                return ResourceContent(type="resource", id=resource_id, uri=original_uri, text=str(content))
-
+                return ResourceContent(type="resource", id=str(resource_id) or str(content.id), uri=original_uri or content.uri, text=str(content))
             except Exception as e:
                 success = False
                 error_message = str(e)
                 raise
             finally:
                 # Record metrics only if we found a resource (not for templates)
-                if resource:
+                if resource_db:
                     try:
-                        await self._record_resource_metric(db, resource, start_time, success, error_message)
+                        await self._record_resource_metric(db, resource_db, start_time, success, error_message)
                     except Exception as metrics_error:
                         logger.warning(f"Failed to record resource metric: {metrics_error}")
 
@@ -946,8 +1588,8 @@ class ResourceService:
                     raise PermissionError("Only the owner can activate the Resource" if activate else "Only the owner can deactivate the Resource")
 
             # Update status if it's different
-            if resource.is_active != activate:
-                resource.is_active = activate
+            if resource.enabled != activate:
+                resource.enabled = activate
                 resource.updated_at = datetime.now(timezone.utc)
                 db.commit()
                 db.refresh(resource)
@@ -960,12 +1602,72 @@ class ResourceService:
 
                 logger.info(f"Resource {resource.uri} {'activated' if activate else 'deactivated'}")
 
+                # Structured logging: Audit trail for resource status toggle
+                audit_trail.log_action(
+                    user_id=user_email or "system",
+                    action="toggle_resource_status",
+                    resource_type="resource",
+                    resource_id=str(resource.id),
+                    resource_name=resource.name,
+                    user_email=user_email,
+                    team_id=resource.team_id,
+                    new_values={
+                        "enabled": resource.enabled,
+                    },
+                    context={
+                        "action": "activate" if activate else "deactivate",
+                    },
+                    db=db,
+                )
+
+                # Structured logging: Log successful resource status toggle
+                structured_logger.log(
+                    level="INFO",
+                    message=f"Resource {'activated' if activate else 'deactivated'} successfully",
+                    event_type="resource_status_toggled",
+                    component="resource_service",
+                    user_email=user_email,
+                    team_id=resource.team_id,
+                    resource_type="resource",
+                    resource_id=str(resource.id),
+                    custom_fields={
+                        "resource_uri": resource.uri,
+                        "enabled": resource.enabled,
+                    },
+                    db=db,
+                )
+
             resource.team = self._get_team_name(db, resource.team_id)
             return self._convert_resource_to_read(resource)
         except PermissionError as e:
+            # Structured logging: Log permission error
+            structured_logger.log(
+                level="WARNING",
+                message="Resource status toggle failed due to permission error",
+                event_type="resource_toggle_permission_denied",
+                component="resource_service",
+                user_email=user_email,
+                resource_type="resource",
+                resource_id=str(resource_id),
+                error=e,
+                db=db,
+            )
             raise e
         except Exception as e:
             db.rollback()
+
+            # Structured logging: Log generic resource status toggle failure
+            structured_logger.log(
+                level="ERROR",
+                message="Resource status toggle failed",
+                event_type="resource_toggle_failed",
+                component="resource_service",
+                user_email=user_email,
+                resource_type="resource",
+                resource_id=str(resource_id),
+                error=e,
+                db=db,
+            )
             raise ResourceError(f"Failed to toggle resource status: {str(e)}")
 
     async def subscribe_resource(self, db: Session, subscription: ResourceSubscription) -> None:
@@ -991,11 +1693,11 @@ class ResourceService:
         """
         try:
             # Verify resource exists
-            resource = db.execute(select(DbResource).where(DbResource.uri == subscription.uri).where(DbResource.is_active)).scalar_one_or_none()
+            resource = db.execute(select(DbResource).where(DbResource.uri == subscription.uri).where(DbResource.enabled)).scalar_one_or_none()
 
             if not resource:
                 # Check if inactive resource exists
-                inactive_resource = db.execute(select(DbResource).where(DbResource.uri == subscription.uri).where(not_(DbResource.is_active))).scalar_one_or_none()
+                inactive_resource = db.execute(select(DbResource).where(DbResource.uri == subscription.uri).where(not_(DbResource.enabled))).scalar_one_or_none()
 
                 if inactive_resource:
                     raise ResourceNotFoundError(f"Resource '{subscription.uri}' exists but is inactive")
@@ -1115,12 +1817,12 @@ class ResourceService:
                     # Check for existing public resources with the same uri
                     existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource_update.uri, DbResource.visibility == "public")).scalar_one_or_none()
                     if existing_resource:
-                        raise ResourceURIConflictError(resource_update.uri, is_active=existing_resource.is_active, resource_id=existing_resource.id, visibility=existing_resource.visibility)
+                        raise ResourceURIConflictError(resource_update.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
                 elif visibility.lower() == "team" and team_id:
                     # Check for existing team resource with the same uri
                     existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource_update.uri, DbResource.visibility == "team", DbResource.team_id == team_id)).scalar_one_or_none()
                     if existing_resource:
-                        raise ResourceURIConflictError(resource_update.uri, is_active=existing_resource.is_active, resource_id=existing_resource.id, visibility=existing_resource.visibility)
+                        raise ResourceURIConflictError(resource_update.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
 
             # Check ownership if user_email provided
             if user_email:
@@ -1140,8 +1842,8 @@ class ResourceService:
                 resource.description = resource_update.description
             if resource_update.mime_type is not None:
                 resource.mime_type = resource_update.mime_type
-            if resource_update.template is not None:
-                resource.template = resource_update.template
+            if resource_update.uri_template is not None:
+                resource.uri_template = resource_update.uri_template
             if resource_update.visibility is not None:
                 resource.visibility = resource_update.visibility
 
@@ -1181,21 +1883,138 @@ class ResourceService:
             await self._notify_resource_updated(resource)
 
             logger.info(f"Updated resource: {resource.uri}")
+
+            # Structured logging: Audit trail for resource update
+            changes = []
+            if resource_update.uri:
+                changes.append(f"uri: {resource_update.uri}")
+            if resource_update.visibility:
+                changes.append(f"visibility: {resource_update.visibility}")
+            if resource_update.description:
+                changes.append("description updated")
+
+            audit_trail.log_action(
+                user_id=user_email or modified_by or "system",
+                action="update_resource",
+                resource_type="resource",
+                resource_id=str(resource.id),
+                resource_name=resource.name,
+                user_email=user_email,
+                team_id=resource.team_id,
+                client_ip=modified_from_ip,
+                user_agent=modified_user_agent,
+                new_values={
+                    "uri": resource.uri,
+                    "name": resource.name,
+                    "version": resource.version,
+                },
+                context={
+                    "modified_via": modified_via,
+                    "changes": ", ".join(changes) if changes else "metadata only",
+                },
+                db=db,
+            )
+
+            # Structured logging: Log successful resource update
+            structured_logger.log(
+                level="INFO",
+                message="Resource updated successfully",
+                event_type="resource_updated",
+                component="resource_service",
+                user_id=modified_by,
+                user_email=user_email,
+                team_id=resource.team_id,
+                resource_type="resource",
+                resource_id=str(resource.id),
+                custom_fields={
+                    "resource_uri": resource.uri,
+                    "version": resource.version,
+                },
+                db=db,
+            )
+
             return self._convert_resource_to_read(resource)
-        except PermissionError:
+        except PermissionError as pe:
             db.rollback()
+
+            # Structured logging: Log permission error
+            structured_logger.log(
+                level="WARNING",
+                message="Resource update failed due to permission error",
+                event_type="resource_update_permission_denied",
+                component="resource_service",
+                user_email=user_email,
+                resource_type="resource",
+                resource_id=str(resource_id),
+                error=pe,
+                db=db,
+            )
             raise
         except IntegrityError as ie:
             db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
+
+            # Structured logging: Log database integrity error
+            structured_logger.log(
+                level="ERROR",
+                message="Resource update failed due to database integrity error",
+                event_type="resource_update_failed",
+                component="resource_service",
+                user_id=modified_by,
+                user_email=user_email,
+                resource_type="resource",
+                resource_id=str(resource_id),
+                error=ie,
+                db=db,
+            )
             raise ie
         except ResourceURIConflictError as pe:
             logger.error(f"Resource URI conflict: {pe}")
+
+            # Structured logging: Log URI conflict error
+            structured_logger.log(
+                level="WARNING",
+                message="Resource update failed due to URI conflict",
+                event_type="resource_uri_conflict",
+                component="resource_service",
+                user_id=modified_by,
+                user_email=user_email,
+                resource_type="resource",
+                resource_id=str(resource_id),
+                error=pe,
+                db=db,
+            )
             raise pe
         except Exception as e:
             db.rollback()
             if isinstance(e, ResourceNotFoundError):
+                # Structured logging: Log not found error
+                structured_logger.log(
+                    level="ERROR",
+                    message="Resource update failed - resource not found",
+                    event_type="resource_not_found",
+                    component="resource_service",
+                    user_email=user_email,
+                    resource_type="resource",
+                    resource_id=str(resource_id),
+                    error=e,
+                    db=db,
+                )
                 raise e
+
+            # Structured logging: Log generic resource update failure
+            structured_logger.log(
+                level="ERROR",
+                message="Resource update failed",
+                event_type="resource_update_failed",
+                component="resource_service",
+                user_id=modified_by,
+                user_email=user_email,
+                resource_type="resource",
+                resource_id=str(resource_id),
+                error=e,
+                db=db,
+            )
             raise ResourceError(f"Failed to update resource: {str(e)}")
 
     async def delete_resource(self, db: Session, resource_id: Union[int, str], user_email: Optional[str] = None) -> None:
@@ -1254,6 +2073,10 @@ class ResourceService:
             db.execute(delete(DbSubscription).where(DbSubscription.resource_id == resource.id))
 
             # Hard delete the resource.
+            resource_uri = resource.uri
+            resource_name = resource.name
+            resource_team_id = resource.team_id
+
             db.delete(resource)
             db.commit()
 
@@ -1262,17 +2085,87 @@ class ResourceService:
 
             logger.info(f"Permanently deleted resource: {resource.uri}")
 
-        except PermissionError:
+            # Structured logging: Audit trail for resource deletion
+            audit_trail.log_action(
+                user_id=user_email or "system",
+                action="delete_resource",
+                resource_type="resource",
+                resource_id=str(resource_info["id"]),
+                resource_name=resource_name,
+                user_email=user_email,
+                team_id=resource_team_id,
+                old_values={
+                    "uri": resource_uri,
+                    "name": resource_name,
+                },
+                db=db,
+            )
+
+            # Structured logging: Log successful resource deletion
+            structured_logger.log(
+                level="INFO",
+                message="Resource deleted successfully",
+                event_type="resource_deleted",
+                component="resource_service",
+                user_email=user_email,
+                team_id=resource_team_id,
+                resource_type="resource",
+                resource_id=str(resource_info["id"]),
+                custom_fields={
+                    "resource_uri": resource_uri,
+                },
+                db=db,
+            )
+
+        except PermissionError as pe:
             db.rollback()
+
+            # Structured logging: Log permission error
+            structured_logger.log(
+                level="WARNING",
+                message="Resource deletion failed due to permission error",
+                event_type="resource_delete_permission_denied",
+                component="resource_service",
+                user_email=user_email,
+                resource_type="resource",
+                resource_id=str(resource_id),
+                error=pe,
+                db=db,
+            )
             raise
-        except ResourceNotFoundError:
+        except ResourceNotFoundError as rnfe:
             # ResourceNotFoundError is re-raised to be handled in the endpoint.
+            # Structured logging: Log not found error
+            structured_logger.log(
+                level="ERROR",
+                message="Resource deletion failed - resource not found",
+                event_type="resource_not_found",
+                component="resource_service",
+                user_email=user_email,
+                resource_type="resource",
+                resource_id=str(resource_id),
+                error=rnfe,
+                db=db,
+            )
             raise
         except Exception as e:
             db.rollback()
+
+            # Structured logging: Log generic resource deletion failure
+            structured_logger.log(
+                level="ERROR",
+                message="Resource deletion failed",
+                event_type="resource_deletion_failed",
+                component="resource_service",
+                user_email=user_email,
+                resource_type="resource",
+                resource_id=str(resource_id),
+                error=e,
+                db=db,
+            )
             raise ResourceError(f"Failed to delete resource: {str(e)}")
 
-    async def get_resource_by_id(self, db: Session, resource_id: int, include_inactive: bool = False) -> ResourceRead:
+    async def get_resource_by_id(self, db: Session, resource_id: str, include_inactive: bool = False) -> ResourceRead:
         """
         Get a resource by ID.
 
@@ -1296,27 +2189,44 @@ class ResourceService:
             >>> db.execute.return_value.scalar_one_or_none.return_value = resource
             >>> service._convert_resource_to_read = MagicMock(return_value='resource_read')
             >>> import asyncio
-            >>> asyncio.run(service.get_resource_by_id(db, 999))
+            >>> asyncio.run(service.get_resource_by_id(db, "39334ce0ed2644d79ede8913a66930c9"))
             'resource_read'
         """
         query = select(DbResource).where(DbResource.id == resource_id)
 
         if not include_inactive:
-            query = query.where(DbResource.is_active)
+            query = query.where(DbResource.enabled)
 
         resource = db.execute(query).scalar_one_or_none()
 
         if not resource:
             if not include_inactive:
                 # Check if inactive resource exists
-                inactive_resource = db.execute(select(DbResource).where(DbResource.id == resource_id).where(not_(DbResource.is_active))).scalar_one_or_none()
+                inactive_resource = db.execute(select(DbResource).where(DbResource.id == resource_id).where(not_(DbResource.enabled))).scalar_one_or_none()
 
                 if inactive_resource:
                     raise ResourceNotFoundError(f"Resource '{resource_id}' exists but is inactive")
 
             raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
-        return self._convert_resource_to_read(resource)
+        resource_read = self._convert_resource_to_read(resource)
+
+        structured_logger.log(
+            level="INFO",
+            message="Resource retrieved successfully",
+            event_type="resource_viewed",
+            component="resource_service",
+            team_id=getattr(resource, "team_id", None),
+            resource_type="resource",
+            resource_id=str(resource.id),
+            custom_fields={
+                "resource_uri": resource.uri,
+                "include_inactive": include_inactive,
+            },
+            db=db,
+        )
+
+        return resource_read
 
     async def _notify_resource_activated(self, resource: DbResource) -> None:
         """
@@ -1331,11 +2241,11 @@ class ResourceService:
                 "id": resource.id,
                 "uri": resource.uri,
                 "name": resource.name,
-                "is_active": True,
+                "enabled": True,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        await self._publish_event(resource.uri, event)
+        await self._publish_event(event)
 
     async def _notify_resource_deactivated(self, resource: DbResource) -> None:
         """
@@ -1350,11 +2260,11 @@ class ResourceService:
                 "id": resource.id,
                 "uri": resource.uri,
                 "name": resource.name,
-                "is_active": False,
+                "enabled": False,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        await self._publish_event(resource.uri, event)
+        await self._publish_event(event)
 
     async def _notify_resource_deleted(self, resource_info: Dict[str, Any]) -> None:
         """
@@ -1368,7 +2278,7 @@ class ResourceService:
             "data": resource_info,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        await self._publish_event(resource_info["uri"], event)
+        await self._publish_event(event)
 
     async def _notify_resource_removed(self, resource: DbResource) -> None:
         """
@@ -1383,44 +2293,20 @@ class ResourceService:
                 "id": resource.id,
                 "uri": resource.uri,
                 "name": resource.name,
-                "is_active": False,
+                "enabled": False,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        await self._publish_event(resource.uri, event)
+        await self._publish_event(event)
 
-    async def subscribe_events(self, uri: Optional[str] = None) -> AsyncGenerator[Dict[str, Any], None]:
-        """Subscribe to resource events.
-
-        Args:
-            uri: Optional URI to filter events
+    async def subscribe_events(self) -> AsyncGenerator[Dict[str, Any], None]:
+        """Subscribe to Resource events via the EventService.
 
         Yields:
-            Resource event messages
+            Resource event messages.
         """
-        queue: asyncio.Queue = asyncio.Queue()
-
-        if uri:
-            if uri not in self._event_subscribers:
-                self._event_subscribers[uri] = []
-            self._event_subscribers[uri].append(queue)
-        else:
-            self._event_subscribers["*"] = self._event_subscribers.get("*", [])
-            self._event_subscribers["*"].append(queue)
-
-        try:
-            while True:
-                event = await queue.get()
-                yield event
-        finally:
-            if uri:
-                self._event_subscribers[uri].remove(queue)
-                if not self._event_subscribers[uri]:
-                    del self._event_subscribers[uri]
-            else:
-                self._event_subscribers["*"].remove(queue)
-                if not self._event_subscribers["*"]:
-                    del self._event_subscribers["*"]
+        async for event in self._event_service.subscribe_events():
+            yield event
 
     def _detect_mime_type(self, uri: str, content: Union[str, bytes]) -> str:
         """Detect mime type from URI and content.
@@ -1443,73 +2329,135 @@ class ResourceService:
 
         return "application/octet-stream"
 
-    async def _read_template_resource(self, uri: str) -> ResourceContent:
-        """Read a templated resource.
+    async def _read_template_resource(self, db: Session, uri: str, include_inactive: Optional[bool] = False) -> ResourceContent:
+        """
+        Read a templated resource.
 
         Args:
-            uri: Template URI with parameters
+            db: Database session.
+            uri: Template URI with parameters.
+            include_inactive: Whether to include inactive resources in DB lookups.
 
         Returns:
-            Resource content
+            ResourceContent: The resolved content from the matching template.
 
         Raises:
-            ResourceNotFoundError: If template not found
-            ResourceError: For other template errors
-            NotImplementedError: When binary template is passed
+            ResourceNotFoundError: If no matching template is found.
+            ResourceError: For other template resolution errors.
+            NotImplementedError: If a binary template resource is encountered.
         """
-        # Find matching template
+        # Find matching template # DRT BREAKPOINT
         template = None
+        if not self._template_cache:
+            logger.info("_template_cache is empty, fetching exisitng resource templates")
+            resource_templates = await self.list_resource_templates(db=db, include_inactive=include_inactive)
+            for i in resource_templates:
+                self._template_cache[i.name] = i
         for cached in self._template_cache.values():
             if self._uri_matches_template(uri, cached.uri_template):
                 template = cached
                 break
 
-        if not template:
+        if template:
+            check_inactivity = db.execute(select(DbResource).where(DbResource.id == str(template.id)).where(not_(DbResource.enabled))).scalar_one_or_none()
+            if check_inactivity:
+                raise ResourceNotFoundError(f"Resource '{template.id}' exists but is inactive")
+        else:
             raise ResourceNotFoundError(f"No template matches URI: {uri}")
 
         try:
             # Extract parameters
             params = self._extract_template_params(uri, template.uri_template)
-
             # Generate content
             if template.mime_type and template.mime_type.startswith("text/"):
                 content = template.uri_template.format(**params)
-                return TextContent(type="text", text=content)
-
-            # Handle binary template
+                return ResourceContent(type="resource", id=str(template.id) or None, uri=template.uri_template or None, mime_type=template.mime_type or None, text=content)
+            # # Handle binary template
             raise NotImplementedError("Binary resource templates not yet supported")
 
+        except ResourceNotFoundError:
+            raise
         except Exception as e:
-            raise ResourceError(f"Failed to process template: {str(e)}")
+            raise ResourceError(f"Failed to process template: {str(e)}") from e
 
-    def _uri_matches_template(self, uri: str, template: str) -> bool:
-        """Check if URI matches a template pattern.
+    def _build_regex(self, template: str) -> re.Pattern:
+        """
+        Convert a URI template into a compiled regular expression.
+
+        This parser supports a subset of RFC 6570–style templates for path
+        matching. It extracts path parameters and converts them into named
+        regex groups.
+
+        Supported template features:
+        - `{var}`
+        A simple path parameter. Matches a single URI segment
+        (i.e., any characters except `/`).
+        → Translates to `(?P<var>[^/]+)`
+        - `{var*}`
+        A wildcard parameter. Matches one or more URI segments,
+        including `/`.
+        → Translates to `(?P<var>.+)`
+        - `{?var1,var2}`
+        Query-parameter expressions. These are ignored when building
+        the regex for path matching and are stripped from the template.
+
+        Example:
+            Template: "files://root/{path*}/meta/{id}{?expand,debug}"
+            Regex: r"^files://root/(?P<path>.+)/meta/(?P<id>[^/]+)$"
 
         Args:
-            uri: URI to check
-            template: Template pattern
+            template: The URI template string containing parameter expressions.
 
         Returns:
-            True if URI matches template
+            A compiled regular expression (re.Pattern) that can be used to
+            match URIs and extract parameter values.
         """
-        # Convert template to regex pattern
+        # Remove query parameter syntax for path matching
+        template_without_query = re.sub(r"\{\?[^}]+\}", "", template)
 
-        pattern = re.escape(template).replace(r"\{.*?\}", r"[^/]+")
-        return bool(re.match(pattern, uri))
+        parts = re.split(r"(\{[^}]+\})", template_without_query)
+        pattern = ""
+        for part in parts:
+            if part.startswith("{") and part.endswith("}"):
+                name = part[1:-1]
+                if name.endswith("*"):
+                    name = name[:-1]
+                    pattern += f"(?P<{name}>.+)"
+                else:
+                    pattern += f"(?P<{name}>[^/]+)"
+            else:
+                pattern += re.escape(part)
+        return re.compile(f"^{pattern}$")
 
     def _extract_template_params(self, uri: str, template: str) -> Dict[str, str]:
-        """Extract parameters from URI based on template.
+        """
+        Extract parameters from a URI based on a template.
 
         Args:
-            uri: URI with parameter values
-            template: Template pattern
+            uri: The actual URI containing parameter values.
+            template: The template pattern (e.g. "file:///{name}/{id}").
 
         Returns:
-            Dict of parameter names and values
+            Dict of parameter names and extracted values.
         """
-
         result = parse.parse(template, uri)
         return result.named if result else {}
+
+    def _uri_matches_template(self, uri: str, template: str) -> bool:
+        """
+        Check whether a URI matches a given template pattern.
+
+        Args:
+            uri: The URI to check.
+            template: The template pattern.
+
+        Returns:
+            True if the URI matches the template, otherwise False.
+        """
+
+        uri_path, _, _ = uri.partition("?")
+        regex = self._build_regex(template)
+        return bool(regex.match(uri_path))
 
     async def _notify_resource_added(self, resource: DbResource) -> None:
         """
@@ -1525,11 +2473,11 @@ class ResourceService:
                 "uri": resource.uri,
                 "name": resource.name,
                 "description": resource.description,
-                "is_active": resource.is_active,
+                "enabled": resource.enabled,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        await self._publish_event(resource.uri, event)
+        await self._publish_event(event)
 
     async def _notify_resource_updated(self, resource: DbResource) -> None:
         """
@@ -1544,28 +2492,20 @@ class ResourceService:
                 "id": resource.id,
                 "uri": resource.uri,
                 "content": resource.content,
-                "is_active": resource.is_active,
+                "enabled": resource.enabled,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        await self._publish_event(resource.uri, event)
+        await self._publish_event(event)
 
-    async def _publish_event(self, uri: str, event: Dict[str, Any]) -> None:
-        """Publish event to relevant subscribers.
+    async def _publish_event(self, event: Dict[str, Any]) -> None:
+        """
+        Publish event to all subscribers via the EventService.
 
         Args:
-            uri: Resource URI event relates to
-            event: Event data to publish
+            event: Event to publish
         """
-        # Notify resource-specific subscribers
-        if uri in self._event_subscribers:
-            for queue in self._event_subscribers[uri]:
-                await queue.put(event)
-
-        # Notify global subscribers
-        if "*" in self._event_subscribers:
-            for queue in self._event_subscribers["*"]:
-                await queue.put(event)
+        await self._event_service.publish_event(event)
 
     # --- Resource templates ---
     async def list_resource_templates(self, db: Session, include_inactive: bool = False) -> List[ResourceTemplate]:
@@ -1593,12 +2533,13 @@ class ResourceService:
             ...     result == ['resource_template']
             True
         """
-        query = select(DbResource).where(DbResource.template.isnot(None))
+        query = select(DbResource).where(DbResource.uri_template.isnot(None))
         if not include_inactive:
-            query = query.where(DbResource.is_active)
+            query = query.where(DbResource.enabled)
         # Cursor-based pagination logic can be implemented here in the future.
         templates = db.execute(query).scalars().all()
-        return [ResourceTemplate.model_validate(t) for t in templates]
+        result = [ResourceTemplate.model_validate(t) for t in templates]
+        return result
 
     # --- Metrics ---
     async def aggregate_metrics(self, db: Session) -> ResourceMetrics:
@@ -1616,35 +2557,38 @@ class ResourceService:
             >>> from unittest.mock import MagicMock
             >>> service = ResourceService()
             >>> db = MagicMock()
-            >>> db.execute.return_value.scalar.return_value = 0
+            >>> db.execute.return_value.one.return_value = MagicMock(total_executions=0, successful_executions=0, failed_executions=0, min_response_time=None, max_response_time=None, avg_response_time=None, last_execution_time=None)
             >>> import asyncio
             >>> result = asyncio.run(service.aggregate_metrics(db))
             >>> hasattr(result, 'total_executions')
             True
         """
-        total_executions = db.execute(select(func.count()).select_from(ResourceMetric)).scalar() or 0  # pylint: disable=not-callable
+        # Execute a single query to get all metrics at once
+        result = db.execute(
+            select(
+                func.count().label("total_executions"),  # pylint: disable=not-callable
+                func.sum(case((ResourceMetric.is_success.is_(True), 1), else_=0)).label("successful_executions"),  # pylint: disable=not-callable
+                func.sum(case((ResourceMetric.is_success.is_(False), 1), else_=0)).label("failed_executions"),  # pylint: disable=not-callable
+                func.min(ResourceMetric.response_time).label("min_response_time"),  # pylint: disable=not-callable
+                func.max(ResourceMetric.response_time).label("max_response_time"),  # pylint: disable=not-callable
+                func.avg(ResourceMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
+                func.max(ResourceMetric.timestamp).label("last_execution_time"),  # pylint: disable=not-callable
+            ).select_from(ResourceMetric)
+        ).one()
 
-        successful_executions = db.execute(select(func.count()).select_from(ResourceMetric).where(ResourceMetric.is_success.is_(True))).scalar() or 0  # pylint: disable=not-callable
-
-        failed_executions = db.execute(select(func.count()).select_from(ResourceMetric).where(ResourceMetric.is_success.is_(False))).scalar() or 0  # pylint: disable=not-callable
-
-        min_response_time = db.execute(select(func.min(ResourceMetric.response_time))).scalar()
-
-        max_response_time = db.execute(select(func.max(ResourceMetric.response_time))).scalar()
-
-        avg_response_time = db.execute(select(func.avg(ResourceMetric.response_time))).scalar()
-
-        last_execution_time = db.execute(select(func.max(ResourceMetric.timestamp))).scalar()
+        total_executions = result.total_executions or 0
+        successful_executions = result.successful_executions or 0
+        failed_executions = result.failed_executions or 0
 
         return ResourceMetrics(
             total_executions=total_executions,
             successful_executions=successful_executions,
             failed_executions=failed_executions,
             failure_rate=(failed_executions / total_executions) if total_executions > 0 else 0.0,
-            min_response_time=min_response_time,
-            max_response_time=max_response_time,
-            avg_response_time=avg_response_time,
-            last_execution_time=last_execution_time,
+            min_response_time=result.min_response_time,
+            max_response_time=result.max_response_time,
+            avg_response_time=result.avg_response_time,
+            last_execution_time=result.last_execution_time,
         )
 
     async def reset_metrics(self, db: Session) -> None:

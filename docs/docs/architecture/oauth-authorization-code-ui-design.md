@@ -397,7 +397,7 @@ async def oauth_callback(
         name="oauth_grant_type"
         id="oauth-grant-type-gw"
         onchange="toggleOAuthFields()"
-        class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+        class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
       >
         <option value="client_credentials">Client Credentials (Machine-to-Machine)</option>
         <option value="authorization_code">Authorization Code (User Delegation)</option>
@@ -412,7 +412,7 @@ async def oauth_callback(
       <input
         type="text"
         name="oauth_client_id"
-        class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+        class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
         placeholder="Your OAuth client ID"
       />
     </div>
@@ -427,7 +427,7 @@ async def oauth_callback(
         <input
           type="url"
           name="oauth_authorization_url"
-          class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+          class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
           placeholder="https://oauth.example.com/authorize"
         />
       </div>
@@ -439,7 +439,7 @@ async def oauth_callback(
         <input
           type="url"
           name="oauth_redirect_uri"
-          class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+          class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
           placeholder="https://gateway.example.com/oauth/callback"
         />
         <p class="mt-1 text-sm text-gray-500">

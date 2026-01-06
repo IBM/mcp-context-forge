@@ -37,14 +37,12 @@ class TestPIIDetector:
 
     def test_ssn_detection(self):
         """Test Social Security Number detection."""
-        config = PIIFilterConfig(detect_ssn=True)
+        config = PIIFilterConfig(detect_ssn=True, detect_bsn=False)
         detector = PIIDetector(config)
 
         test_cases = [
             ("My SSN is 123-45-6789", True),
-            ("SSN: 123456789", True),
             ("Number 123-45-6789 is sensitive", True),
-            ("Regular number 123456789", True),
             ("No SSN here", False),
         ]
 
@@ -54,6 +52,39 @@ class TestPIIDetector:
                 assert PIIType.SSN in detections
             else:
                 assert PIIType.SSN not in detections
+
+    def test_bsn_detection(self):
+        """Test Dutch BSN (Burgerservicenummer) detection."""
+        config = PIIFilterConfig(detect_bsn=True, detect_ssn=False, detect_phone=False, detect_bank_account=False)
+        detector = PIIDetector(config)
+
+        test_cases = [
+            ("My BSN is 180774955. Store it and confirm.", True),
+            ("BSN: 123456789", True),
+            ("Regular number 180774955", True),
+            ("No BSN here", False),
+            ("Too short 12345678", False),
+            ("Too long 1234567890", False),
+        ]
+
+        for text, should_detect in test_cases:
+            detections = detector.detect(text)
+            if should_detect:
+                assert PIIType.BSN in detections, f"Expected BSN detection in: {text}"
+            else:
+                assert PIIType.BSN not in detections, f"Unexpected BSN detection in: {text}"
+
+    def test_bsn_masking(self):
+        """Test BSN partial masking."""
+        config = PIIFilterConfig(detect_bsn=True, detect_ssn=False, detect_phone=False, detect_bank_account=False)
+        detector = PIIDetector(config)
+
+        text = "My BSN is 180774955. Store it and confirm."
+        detections = detector.detect(text)
+        masked = detector.mask(text, detections)
+
+        assert "180774955" not in masked
+        assert "*****4955" in masked
 
     def test_credit_card_detection(self):
         """Test credit card number detection."""

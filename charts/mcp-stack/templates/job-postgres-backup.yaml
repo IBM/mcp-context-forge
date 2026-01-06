@@ -1,0 +1,86 @@
+{{- $targetVersion := .Values.postgres.upgrade.targetVersion | toString -}}
+{{- if and .Values.postgres.upgrade.enabled (eq $targetVersion "18") (not .Values.postgres.upgrade.backupCompleted) }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-postgres-backup
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-backup
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": "before-hook-creation,hook-succeeded"
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: postgres-backup
+          image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
+          command:
+            - /bin/bash
+            - -c
+            - |
+              #!/bin/bash
+              set -e
+
+              echo "Starting PostgreSQL backup..."
+
+              # Wait for PostgreSQL to be ready
+              echo "Waiting for PostgreSQL to be ready..."
+              until pg_isready -h {{ include "mcp-stack.fullname" . }}-postgres -U {{ .Values.postgres.credentials.user }}; do
+                sleep 2
+              done
+
+              # Create backup file
+              BACKUP_FILE="/tmp/postgres-dump-$(date +%Y%m%d-%H%M%S).sql"
+              pg_dump -h {{ include "mcp-stack.fullname" . }}-postgres \
+                      -U {{ .Values.postgres.credentials.user }} \
+                      -d {{ .Values.postgres.credentials.database }} \
+                      --no-password > $BACKUP_FILE
+
+              echo "Database dumped to $BACKUP_FILE"
+
+              # Install MinIO client and jq
+              apt-get update && apt-get install -y wget jq
+              wget https://dl.min.io/client/mc/release/linux-amd64/mc -O /tmp/mc
+              chmod +x /tmp/mc
+
+              # Configure MinIO client
+              /tmp/mc alias set minio http://{{ include "mcp-stack.fullname" . }}-minio:{{ .Values.minio.service.apiPort }} $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD
+
+              # Create bucket if it doesn't exist
+              /tmp/mc mb minio/postgres-backups --ignore-existing
+
+              # Upload the backup file to MinIO
+              /tmp/mc cp $BACKUP_FILE minio/postgres-backups/
+
+              echo "Backup uploaded to MinIO successfully"
+
+              # Clean up local file
+              rm $BACKUP_FILE
+
+              echo "PostgreSQL backup completed and stored in MinIO"
+          env:
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: POSTGRES_USER
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: POSTGRES_PASSWORD
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.minio.existingSecret }}{{ .Values.minio.existingSecret }}{{ else }}{{ include "mcp-stack.fullname" . }}-minio{{ end }}
+                  key: MINIO_ROOT_USER
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.minio.existingSecret }}{{ .Values.minio.existingSecret }}{{ else }}{{ include "mcp-stack.fullname" . }}-minio{{ end }}
+                  key: MINIO_ROOT_PASSWORD
+{{- end }}

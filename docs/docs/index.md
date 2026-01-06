@@ -368,13 +368,13 @@ docker run -d --name mcpgateway \
   -e PLATFORM_ADMIN_PASSWORD=changeme \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   -e DATABASE_URL=sqlite:///./mcp.db \
-  ghcr.io/ibm/mcp-context-forge:0.9.0
+  ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
 
 # Tail logs (Ctrl+C to quit)
 docker logs -f mcpgateway
 
 # Generating an API key
-docker run --rm -it ghcr.io/ibm/mcp-context-forge:0.9.0 \
+docker run --rm -it ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1 \
   python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 0 --secret my-test-key
 ```
 
@@ -405,7 +405,7 @@ docker run -d --name mcpgateway \
   -e PLATFORM_ADMIN_EMAIL=admin@example.com \
   -e PLATFORM_ADMIN_PASSWORD=changeme \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
-  ghcr.io/ibm/mcp-context-forge:0.9.0
+  ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
 ```
 
 SQLite now lives on the host at `./data/mcp.db`.
@@ -432,7 +432,7 @@ docker run -d --name mcpgateway \
   -e PLATFORM_ADMIN_PASSWORD=changeme \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   -v $(pwd)/data:/data \
-  ghcr.io/ibm/mcp-context-forge:0.9.0
+  ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
 ```
 
 Using `--network=host` allows Docker to access the local network, allowing you to add MCP servers running on your host. See [Docker Host network driver documentation](https://docs.docker.com/engine/network/drivers/host/) for more details.
@@ -448,7 +448,7 @@ podman run -d --name mcpgateway \
   -p 4444:4444 \
   -e HOST=0.0.0.0 \
   -e DATABASE_URL=sqlite:///./mcp.db \
-  ghcr.io/ibm/mcp-context-forge:0.9.0
+  ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
 ```
 
 #### 2 - Persist SQLite
@@ -467,7 +467,7 @@ podman run -d --name mcpgateway \
   -p 4444:4444 \
   -v $(pwd)/data:/data \
   -e DATABASE_URL=sqlite:////data/mcp.db \
-  ghcr.io/ibm/mcp-context-forge:0.9.0
+  ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
 ```
 
 #### 3 - Host networking (rootless)
@@ -485,7 +485,7 @@ podman run -d --name mcpgateway \
   --network=host \
   -v $(pwd)/data:/data \
   -e DATABASE_URL=sqlite:////data/mcp.db \
-  ghcr.io/ibm/mcp-context-forge:0.9.0
+  ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
 ```
 
 ---
@@ -540,7 +540,7 @@ docker run --rm -i \
   -e MCP_SERVER_URL=http://host.docker.internal:4444/servers/UUID_OF_SERVER_1/mcp \
   -e MCP_TOOL_CALL_TIMEOUT=120 \
   -e MCP_WRAPPER_LOG_LEVEL=DEBUG \
-  ghcr.io/ibm/mcp-context-forge:0.9.0 \
+  ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1 \
   python3 -m mcpgateway.wrapper
 ```
 
@@ -622,7 +622,7 @@ docker run -i --rm \
   -e MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1/mcp \
   -e MCP_AUTH=${MCP_AUTH} \
   -e MCP_TOOL_CALL_TIMEOUT=120 \
-  ghcr.io/ibm/mcp-context-forge:0.9.0 \
+  ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1 \
   python3 -m mcpgateway.wrapper
 ```
 
@@ -1173,7 +1173,7 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 >
 > **Security Headers**: The gateway automatically adds configurable security headers to all responses including CSP, X-Frame-Options, X-Content-Type-Options, X-Download-Options, and HSTS (on HTTPS). All headers can be individually enabled/disabled. Sensitive server headers are removed.
 >
-> **iframe Embedding**: By default, `X-Frame-Options: DENY` prevents iframe embedding for security. To allow embedding, set `X_FRAME_OPTIONS=SAMEORIGIN` (same domain) or disable with `X_FRAME_OPTIONS=""`. Also update CSP `frame-ancestors` directive if needed.
+> **iframe Embedding**: By default, `X-Frame-Options: DENY` prevents iframe embedding for security. To allow embedding, set `X_FRAME_OPTIONS=SAMEORIGIN` (same domain) or allow all with `X_FRAME_OPTIONS="ALLOW-ALL"`. Also update CSP `frame-ancestors` directive if needed.
 >
 > **Cookie Security**: Authentication cookies are automatically configured with HttpOnly, Secure (in production), and SameSite attributes for CSRF protection.
 >
@@ -1243,7 +1243,7 @@ MCP Gateway includes **vendor-agnostic OpenTelemetry support** for distributed t
 
 | Setting                         | Description                                    | Default               | Options                                    |
 | ------------------------------- | ---------------------------------------------- | --------------------- | ------------------------------------------ |
-| `OTEL_ENABLE_OBSERVABILITY`     | Master switch for observability               | `true`                | `true`, `false`                           |
+| `OTEL_ENABLE_OBSERVABILITY`     | Master switch for observability               | `false`               | `true`, `false`                           |
 | `OTEL_SERVICE_NAME`             | Service identifier in traces                   | `mcp-gateway`         | string                                     |
 | `OTEL_SERVICE_VERSION`          | Service version in traces                      | `0.9.0`               | string                                     |
 | `OTEL_DEPLOYMENT_ENVIRONMENT`   | Environment tag (dev/staging/prod)            | `development`         | string                                     |

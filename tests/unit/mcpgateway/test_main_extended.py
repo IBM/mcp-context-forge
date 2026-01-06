@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.main import app
 
 
@@ -142,13 +143,24 @@ class TestApplicationStartupPaths:
             patch("mcpgateway.main.sampling_handler") as mock_sampling,
             patch("mcpgateway.main.resource_cache") as mock_cache,
             patch("mcpgateway.main.streamable_http_session") as mock_session,
+            patch("mcpgateway.main.session_registry") as mock_session_registry,
+            patch("mcpgateway.main.export_service") as mock_export,
+            patch("mcpgateway.main.import_service") as mock_import,
             patch("mcpgateway.main.refresh_slugs_on_startup") as mock_refresh,
+            patch("mcpgateway.main.get_redis_client", new_callable=AsyncMock) as mock_get_redis,
+            patch("mcpgateway.main.close_redis_client", new_callable=AsyncMock) as mock_close_redis,
+            patch("mcpgateway.routers.llmchat_router.init_redis", new_callable=AsyncMock) as mock_init_llmchat,
         ):
             # Setup all mocks
-            services = [mock_tool, mock_resource, mock_prompt, mock_gateway, mock_root, mock_completion, mock_sampling, mock_cache, mock_session]
+            services = [mock_tool, mock_resource, mock_prompt, mock_gateway, mock_root, mock_completion, mock_sampling, mock_cache, mock_session, mock_session_registry, mock_export, mock_import]
             for service in services:
                 service.initialize = AsyncMock()
                 service.shutdown = AsyncMock()
+
+            # Setup Redis mocks
+            mock_get_redis.return_value = None
+            mock_close_redis.return_value = None
+            mock_init_llmchat.return_value = None
 
             # Test lifespan without plugin manager
             # First-Party
@@ -186,9 +198,9 @@ class TestUtilityFunctions:
             client = TestClient(app)
             response = client.get("/", follow_redirects=False)
 
-            # Should redirect to /admin when UI is enabled
+            # Should redirect to /admin/ when UI is enabled
             if response.status_code == 303:
-                assert response.headers.get("location") == "/admin"
+                assert response.headers.get("location") == f"{settings.app_root_path}/admin/"
             else:
                 # Fallback behavior
                 assert response.status_code == 200
@@ -290,7 +302,7 @@ class TestUtilityFunctions:
                 "icon": None,
                 "created_at": "2023-01-01T00:00:00+00:00",
                 "updated_at": "2023-01-01T00:00:00+00:00",
-                "is_active": True,
+                "enabled": True,
                 "associated_tools": [],
                 "associated_resources": [],
                 "associated_prompts": [],
@@ -313,7 +325,7 @@ class TestUtilityFunctions:
             assert response.status_code == 200
 
             # Test activate=false
-            mock_server_data["is_active"] = False
+            mock_server_data["enabled"] = False
             mock_toggle.return_value = ServerRead(**mock_server_data)
             response = test_client.post("/servers/1/toggle?activate=false", headers=auth_headers)
             assert response.status_code == 200
@@ -324,7 +336,7 @@ class TestUtilityFunctions:
 def test_client(app):
     """Test client with auth override for testing protected endpoints."""
     # Standard
-    from unittest.mock import patch
+    from unittest.mock import MagicMock, patch
 
     # First-Party
     from mcpgateway.auth import get_current_user
@@ -340,6 +352,13 @@ def test_client(app):
         is_active=True,
         auth_provider="test",
     )
+
+    # Mock security_logger to prevent database access
+    mock_sec_logger = MagicMock()
+    mock_sec_logger.log_authentication_attempt = MagicMock(return_value=None)
+    mock_sec_logger.log_security_event = MagicMock(return_value=None)
+    sec_patcher = patch("mcpgateway.middleware.auth_middleware.security_logger", mock_sec_logger)
+    sec_patcher.start()
 
     # Mock require_auth_override function
     def mock_require_auth_override(user: str) -> str:
@@ -390,6 +409,7 @@ def test_client(app):
     app.dependency_overrides.pop(get_current_user, None)
     app.dependency_overrides.pop(get_current_user_with_permissions, None)
     patcher.stop()  # Stop the require_auth_override patch
+    sec_patcher.stop()  # Stop the security_logger patch
     if hasattr(PermissionService, "_original_check_permission"):
         PermissionService.check_permission = PermissionService._original_check_permission
 

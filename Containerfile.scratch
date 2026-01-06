@@ -1,0 +1,351 @@
+# syntax=docker/dockerfile:1.7
+
+###############################################################################
+# MCP Gateway (lite) - OCI-compliant container build
+#
+# This multi-stage Dockerfile produces an ultra-slim, scratch-based runtime
+# image that automatically tracks the latest Python 3.12.x patch release
+# from the RHEL 10 repositories and is fully patched on each rebuild.
+#
+# Key design points:
+#   - Builder stage has full DNF + devel headers for wheel compilation
+#   - Runtime stage is scratch: only the Python runtime and app
+#   - Both builder and runtime rootfs receive `dnf upgrade -y`
+#   - Development headers are dropped from the final image
+#   - Hadolint DL3041 is suppressed to allow "latest patch" RPM usage
+###############################################################################
+
+###########################
+# Build-time arguments
+###########################
+# Temporary dir for assembling the scratch rootfs
+ARG ROOTFS_PATH=/tmp/rootfs
+# Python major.minor series to track
+ARG PYTHON_VERSION=3.12
+ARG ENABLE_RUST=false
+
+###############################################################################
+# Rust builder stage - builds Rust plugins in manylinux2014 container
+# To build WITH Rust: docker build --build-arg ENABLE_RUST=true -f Containerfile.lite .
+# To build WITHOUT Rust (default): docker build -f Containerfile.lite .
+###############################################################################
+FROM quay.io/pypa/manylinux2014:2025.10.19-2 AS rust-builder-base
+ARG ENABLE_RUST
+
+# Set shell with pipefail for safety
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# Only build if ENABLE_RUST=true
+RUN if [ "$ENABLE_RUST" != "true" ]; then \
+        echo "⏭️  Rust builds disabled (set --build-arg ENABLE_RUST=true to enable)"; \
+        mkdir -p /build/plugins_rust/target/wheels; \
+        exit 0; \
+    fi
+
+# Install Rust toolchain (only if ENABLE_RUST=true)
+RUN if [ "$ENABLE_RUST" = "true" ]; then \
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable; \
+    fi
+ENV PATH="/root/.cargo/bin:$PATH"
+
+WORKDIR /build
+
+# Copy only Rust plugin files (only if ENABLE_RUST=true)
+COPY plugins_rust/ /build/plugins_rust/
+
+# Switch to Rust plugin directory
+WORKDIR /build/plugins_rust
+
+# Build Rust plugins using Python 3.12 from manylinux image (only if ENABLE_RUST=true)
+RUN if [ "$ENABLE_RUST" = "true" ]; then \
+        rm -rf target/wheels && \
+        /opt/python/cp312-cp312/bin/python -m pip install --upgrade pip maturin && \
+        /opt/python/cp312-cp312/bin/maturin build --release --compatibility manylinux2014 && \
+        echo "✅ Rust plugins built successfully"; \
+    else \
+        echo "⏭️  Skipping Rust plugin build"; \
+    fi
+
+FROM rust-builder-base AS rust-builder
+
+###########################
+# Builder stage
+###########################
+FROM registry.access.redhat.com/ubi10/ubi:10.0-1760519443 AS builder
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+
+ARG PYTHON_VERSION
+ARG ROOTFS_PATH
+ARG GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'
+
+# ----------------------------------------------------------------------------
+# 1) Patch the OS
+# 2) Install Python + headers for building wheels
+# 3) Install binutils for strip command and curl for downloading CDN assets
+# 4) Register python3 alternative
+# 5) Clean caches to reduce layer size
+# ----------------------------------------------------------------------------
+# hadolint ignore=DL3041
+RUN set -euo pipefail \
+    && dnf upgrade -y \
+    && dnf install -y \
+         python${PYTHON_VERSION} \
+         python${PYTHON_VERSION}-devel \
+         binutils openssl-devel gcc postgresql-devel gcc-c++ curl \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 \
+    && dnf clean all
+
+WORKDIR /app
+
+# ----------------------------------------------------------------------------
+# s390x architecture does not support BoringSSL when building wheel grpcio.
+# Force Python whl to use OpenSSL.
+# ----------------------------------------------------------------------------
+RUN if [ `uname -m` = "s390x" ]; then \
+        echo "Building for s390x."; \
+        echo "export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='True'" > /etc/profile.d/use-openssl.sh; \
+    else \
+        echo "export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'" > /etc/profile.d/use-openssl.sh; \
+    fi
+RUN chmod 644 /etc/profile.d/use-openssl.sh
+
+# ----------------------------------------------------------------------------
+# Copy only the files needed for dependency installation first
+# This maximizes Docker layer caching - dependencies change less often
+# ----------------------------------------------------------------------------
+COPY pyproject.toml /app/
+
+# ----------------------------------------------------------------------------
+# Copy Rust plugin wheels from rust-builder stage (if any exist)
+# ----------------------------------------------------------------------------
+COPY --from=rust-builder /build/plugins_rust/target/wheels/ /tmp/rust-wheels/
+
+# ----------------------------------------------------------------------------
+# Create and populate virtual environment
+#  - Upgrade pip, setuptools, wheel, pdm, uv
+#  - Install project dependencies and package
+#  - Include observability packages for OpenTelemetry support
+#  - Install Rust plugins from pre-built wheels (if built)
+#  - Remove build tools but keep runtime dist-info
+#  - Remove build caches and build artifacts
+# ----------------------------------------------------------------------------
+ARG ENABLE_RUST=false
+RUN set -euo pipefail \
+    && . /etc/profile.d/use-openssl.sh \
+    && python3 -m venv /app/.venv \
+    && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel pdm uv \
+    && /app/.venv/bin/uv pip install ".[redis,postgres,mysql,observability]" \
+    && if [ "$ENABLE_RUST" = "true" ] && ls /tmp/rust-wheels/*.whl 1> /dev/null 2>&1; then \
+        echo "🦀 Installing Rust plugins..."; \
+        /app/.venv/bin/pip install --no-cache-dir /tmp/rust-wheels/mcpgateway_rust-*-manylinux*.whl && \
+        /app/.venv/bin/python3 -c "from plugins_rust import PIIDetectorRust; print('✓ Rust PII filter installed successfully')"; \
+    else \
+        echo "⏭️  Rust plugins not available - using Python implementations"; \
+    fi \
+    && rm -rf /tmp/rust-wheels \
+    && /app/.venv/bin/pip uninstall --yes uv pip setuptools wheel pdm \
+    && rm -rf /root/.cache /var/cache/dnf \
+    && find /app/.venv -name "*.dist-info" -type d \
+        \( -name "pip-*" -o -name "setuptools-*" -o -name "wheel-*" -o -name "pdm-*" -o -name "uv-*" \) \
+        -exec rm -rf {} + 2>/dev/null || true \
+    && rm -rf /app/.venv/share/python-wheels \
+    && rm -rf /app/*.egg-info /app/build /app/dist /app/.eggs
+
+# ----------------------------------------------------------------------------
+# Now copy only the application files needed for runtime
+# This ensures code changes don't invalidate the dependency layer
+# ----------------------------------------------------------------------------
+COPY run-gunicorn.sh /app/
+COPY mcpgateway/ /app/mcpgateway/
+COPY gunicorn.config.py /app/
+COPY plugins/ /app/plugins/
+COPY mcp-catalog.yml /app/
+
+# Optional: Copy run.sh if it's needed in production
+COPY run.sh /app/
+
+# ----------------------------------------------------------------------------
+# Download CDN assets for airgapped deployment
+# This downloads external CSS/JS dependencies during build
+# ----------------------------------------------------------------------------
+COPY scripts/download-cdn-assets.sh /tmp/download-cdn-assets.sh
+RUN chmod +x /tmp/download-cdn-assets.sh \
+    && /tmp/download-cdn-assets.sh \
+    && rm /tmp/download-cdn-assets.sh
+
+# ----------------------------------------------------------------------------
+# Ensure executable permissions for scripts
+# ----------------------------------------------------------------------------
+RUN chmod +x /app/run-gunicorn.sh /app/run.sh
+
+# ----------------------------------------------------------------------------
+# Pre-compile Python bytecode with -OO optimization
+#  - Strips docstrings and assertions
+#  - Improves startup performance
+#  - Must be done before copying to rootfs
+#  - Remove __pycache__ directories after compilation
+# ----------------------------------------------------------------------------
+RUN python3 -OO -m compileall -q /app/.venv /app/mcpgateway /app/plugins \
+    && find /app -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+
+# ----------------------------------------------------------------------------
+# Build a minimal, fully-patched rootfs containing only the runtime Python
+# Include ca-certificates for HTTPS connections
+# ----------------------------------------------------------------------------
+# hadolint ignore=DL3041
+RUN set -euo pipefail \
+    && mkdir -p "${ROOTFS_PATH:?}" \
+    && dnf --installroot="${ROOTFS_PATH:?}" --releasever=10 upgrade -y \
+    && dnf --installroot="${ROOTFS_PATH:?}" --releasever=10 install -y \
+         --setopt=install_weak_deps=0 \
+         --setopt=tsflags=nodocs \
+         python${PYTHON_VERSION} \
+         ca-certificates \
+         procps-ng \
+    && dnf clean all --installroot="${ROOTFS_PATH:?}"
+
+# ----------------------------------------------------------------------------
+# Create `python3` symlink in the rootfs for compatibility
+# ----------------------------------------------------------------------------
+RUN ln -sf /usr/bin/python${PYTHON_VERSION} ${ROOTFS_PATH:?}/usr/bin/python3
+
+# ----------------------------------------------------------------------------
+# Clean up unnecessary files from rootfs (if they exist)
+#  - Remove development headers, documentation
+#  - Use ${var:?} to prevent accidental deletion of host directories
+# ----------------------------------------------------------------------------
+RUN set -euo pipefail \
+    && rm -rf ${ROOTFS_PATH:?}/usr/include/* \
+    ${ROOTFS_PATH:?}/usr/share/man/* \
+    ${ROOTFS_PATH:?}/usr/share/doc/* \
+    ${ROOTFS_PATH:?}/usr/share/info/* \
+    ${ROOTFS_PATH:?}/usr/share/locale/* \
+    ${ROOTFS_PATH:?}/var/log/* \
+    ${ROOTFS_PATH:?}/boot \
+    ${ROOTFS_PATH:?}/media \
+    ${ROOTFS_PATH:?}/srv \
+    ${ROOTFS_PATH:?}/usr/games \
+    && find ${ROOTFS_PATH:?}/usr/lib*/python*/ -type d -name "test" -exec rm -rf {} + 2>/dev/null || true \
+    && find ${ROOTFS_PATH:?}/usr/lib*/python*/ -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true \
+    && find ${ROOTFS_PATH:?}/usr/lib*/python*/ -type d -name "idle_test" -exec rm -rf {} + 2>/dev/null || true \
+    && find ${ROOTFS_PATH:?}/usr/lib*/python*/ -name "*.mo" -delete 2>/dev/null || true \
+    && rm -rf ${ROOTFS_PATH:?}/usr/lib*/python*/ensurepip \
+    ${ROOTFS_PATH:?}/usr/lib*/python*/idlelib \
+    ${ROOTFS_PATH:?}/usr/lib*/python*/tkinter \
+    ${ROOTFS_PATH:?}/usr/lib*/python*/turtle* \
+    ${ROOTFS_PATH:?}/usr/lib*/python*/distutils/command/*.exe
+
+# ----------------------------------------------------------------------------
+# Remove package managers and unnecessary system tools from rootfs
+# - Keep RPM database for security scanning with Trivy/Dockle
+# - This keeps the final image size minimal while allowing vulnerability scanning
+# ----------------------------------------------------------------------------
+RUN rm -rf ${ROOTFS_PATH:?}/usr/bin/dnf* \
+    ${ROOTFS_PATH:?}/usr/bin/yum* \
+    ${ROOTFS_PATH:?}/usr/bin/rpm* \
+    ${ROOTFS_PATH:?}/usr/bin/microdnf \
+    ${ROOTFS_PATH:?}/usr/lib/rpm \
+    ${ROOTFS_PATH:?}/usr/lib/dnf \
+    ${ROOTFS_PATH:?}/usr/lib/yum* \
+    ${ROOTFS_PATH:?}/etc/dnf \
+    ${ROOTFS_PATH:?}/etc/yum*
+
+# ----------------------------------------------------------------------------
+# Strip unneeded symbols from shared libraries and remove binutils
+# - This reduces the final image size and removes the build tool in one step
+# ----------------------------------------------------------------------------
+RUN find "${ROOTFS_PATH:?}/usr/lib64" -name '*.so*' -exec strip --strip-unneeded {} + 2>/dev/null || true \
+    && dnf remove -y binutils \
+    && dnf clean all
+
+# ----------------------------------------------------------------------------
+# Remove setuid/setgid binaries for security
+# ----------------------------------------------------------------------------
+RUN find ${ROOTFS_PATH:?} -perm /4000 -o -perm /2000 -type f -delete 2>/dev/null || true
+
+# ----------------------------------------------------------------------------
+# Create minimal passwd/group files for user 1001
+# - Using GID 1001 to match UID for consistency
+# - OpenShift compatible (accepts any UID in group 1001)
+# ----------------------------------------------------------------------------
+RUN printf 'app:x:1001:1001:app:/app:/sbin/nologin\n' > "${ROOTFS_PATH:?}/etc/passwd" && \
+    printf 'app:x:1001:\n' > "${ROOTFS_PATH:?}/etc/group"
+
+# ----------------------------------------------------------------------------
+# Create necessary directories in the rootfs
+#  - /tmp and /var/tmp with sticky bit for security
+# ----------------------------------------------------------------------------
+RUN chmod 1777 ${ROOTFS_PATH:?}/tmp ${ROOTFS_PATH:?}/var/tmp 2>/dev/null || true \
+    && chown 1001:1001 ${ROOTFS_PATH:?}/tmp ${ROOTFS_PATH:?}/var/tmp
+
+# ----------------------------------------------------------------------------
+# Copy application directory into the rootfs and fix permissions for non-root
+# - Set ownership to 1001:1001 (matching passwd/group)
+# - Allow group write permissions for OpenShift compatibility
+# ----------------------------------------------------------------------------
+RUN cp -r /app ${ROOTFS_PATH:?}/app \
+    && chown -R 1001:1001 ${ROOTFS_PATH:?}/app \
+    && chmod -R g=u ${ROOTFS_PATH:?}/app
+
+###########################
+# Final runtime (squashed)
+###########################
+FROM scratch AS runtime
+
+ARG PYTHON_VERSION
+ARG ROOTFS_PATH
+
+# ----------------------------------------------------------------------------
+# OCI image metadata
+# ----------------------------------------------------------------------------
+LABEL maintainer="Mihai Criveti" \
+      org.opencontainers.image.title="mcp/mcpgateway" \
+      org.opencontainers.image.description="MCP Gateway: An enterprise-ready Model Context Protocol Gateway" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="1.0.0-BETA-1"
+
+# ----------------------------------------------------------------------------
+# Copy the entire prepared root filesystem from the builder stage
+# ----------------------------------------------------------------------------
+COPY --from=builder ${ROOTFS_PATH}/ /
+
+# ----------------------------------------------------------------------------
+# Ensure our virtual environment binaries have priority in PATH
+# - Don't write bytecode files (we pre-compiled with -OO)
+# - Unbuffered output for better logging
+# - Random hash seed for security
+# - Disable pip cache to save space
+# - Disable pip version check to reduce startup time
+# ----------------------------------------------------------------------------
+ENV PATH="/app/.venv/bin:${PATH}" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONHASHSEED=random \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# ----------------------------------------------------------------------------
+# Application working directory
+# ----------------------------------------------------------------------------
+WORKDIR /app
+
+# ----------------------------------------------------------------------------
+# Expose application port
+# ----------------------------------------------------------------------------
+EXPOSE 4444
+
+# ----------------------------------------------------------------------------
+# Run as non-root user (1001)
+# ----------------------------------------------------------------------------
+USER 1001
+
+# ----------------------------------------------------------------------------
+# Health check
+# ----------------------------------------------------------------------------
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD ["python3", "-c", "import httpx,sys;sys.exit(0 if httpx.get('http://localhost:4444/health',timeout=5).status_code==200 else 1)"]
+
+# ----------------------------------------------------------------------------
+# Entrypoint
+# ----------------------------------------------------------------------------
+CMD ["./run-gunicorn.sh"]

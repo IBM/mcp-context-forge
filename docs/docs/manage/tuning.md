@@ -21,6 +21,26 @@
 | `DATABASE_URL`   | SQLite         | Move to managed PostgreSQL + connection pooling for anything beyond dev tests.      |
 | `HOST`/`PORT`    | `0.0.0.0:4444` | Expose a different port or bind only to `127.0.0.1` behind a reverse-proxy.         |
 
+### Redis Connection Pool Tuning
+
+When using `CACHE_TYPE=redis`, tune the connection pool for your workload:
+
+| Variable | Default | Tuning Guidance |
+| -------- | ------- | --------------- |
+| `REDIS_MAX_CONNECTIONS` | `50` | Pool size per worker. Formula: `(concurrent_requests / workers) × 1.5` |
+| `REDIS_SOCKET_TIMEOUT` | `2.0` | Lower (1.0s) for high-concurrency; Redis ops typically <100ms |
+| `REDIS_SOCKET_CONNECT_TIMEOUT` | `2.0` | Keep low to fail fast on network issues |
+| `REDIS_HEALTH_CHECK_INTERVAL` | `30` | Lower (15s) for production to detect stale connections faster |
+
+**High-concurrency production settings:**
+
+```bash
+REDIS_MAX_CONNECTIONS=100
+REDIS_SOCKET_TIMEOUT=1.0
+REDIS_SOCKET_CONNECT_TIMEOUT=1.0
+REDIS_HEALTH_CHECK_INTERVAL=15
+```
+
 > **Tip**  Any change here requires rebuilding or restarting the container if you pass the file with `--env-file`.
 
 ---

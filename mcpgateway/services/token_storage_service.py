@@ -280,10 +280,10 @@ class TokenStorageService:
             >>> svc._is_token_expired(rec_past, threshold_seconds=0)
             True
             >>> svc._is_token_expired(SimpleNamespace(expires_at=None))
-            True
+            False
         """
         if not token_record.expires_at:
-            return True
+            return False
         expires_at = token_record.expires_at
         if expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=timezone.utc)

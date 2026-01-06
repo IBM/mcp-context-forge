@@ -155,7 +155,7 @@ def wait_for_redis_ready(
     if not log.handlers:  # basicConfig **once** - respects *log.setLevel* later
         logging.basicConfig(
             level=getattr(logging, LOG_LEVEL, logging.INFO),
-            format="%(asctime)s [%(levelname)s] %(message)s",
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
             datefmt="%Y-%m-%dT%H:%M:%S",
         )
 

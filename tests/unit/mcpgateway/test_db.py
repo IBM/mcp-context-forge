@@ -407,3 +407,26 @@ def test_session_record_and_message_record():
     assert session.session_id == msg.session_id
     assert session.messages[0].message == "msg"
     assert msg.session.data == "data"
+
+
+# --- extract_json_field ---
+def test_extract_json_field_sqlite(monkeypatch):
+    from sqlalchemy import Column, String
+    from sqlalchemy.dialects import sqlite
+    col = Column("attributes", String)
+    monkeypatch.setattr(db, "backend", "sqlite")
+    expr = db.extract_json_field(col, '$."tool.name"')
+    compiled = str(expr.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
+    assert "json_extract" in compiled
+    assert "$.\"tool.name\"" in compiled
+
+
+def test_extract_json_field_postgresql(monkeypatch):
+    from sqlalchemy import Column, String
+    from sqlalchemy.dialects import postgresql
+    col = Column("attributes", String)
+    monkeypatch.setattr(db, "backend", "postgresql")
+    expr = db.extract_json_field(col, '$."tool.name"')
+    compiled = str(expr.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+    assert "->>" in compiled
+    assert "tool.name" in compiled

@@ -25,7 +25,7 @@ class DummySettings:
     validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
     validation_name_pattern = r"^[a-zA-Z0-9_\-]+$"
     validation_identifier_pattern = r"^[a-zA-Z0-9_\-\.]+$"
-    validation_safe_uri_pattern = r"^[a-zA-Z0-9_\-.:/?=&%]+$"
+    validation_safe_uri_pattern = r"^[a-zA-Z0-9_\-.:/?=&%{}]+$"
     validation_unsafe_uri_pattern = r"[<>\"'\\]"
     validation_tool_name_pattern = r"^[a-zA-Z][a-zA-Z0-9_]*$"
     validation_max_name_length = 10  # Increased for realistic URIs

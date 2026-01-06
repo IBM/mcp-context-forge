@@ -24,12 +24,14 @@ Examples:
 # Standard
 from datetime import datetime, timedelta, timezone
 import logging
+import os
 from typing import Any, cast, Dict, Generator, List, Optional, TYPE_CHECKING
 import uuid
 
 # Third-Party
 import jsonschema
-from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index, Integer, JSON, make_url, select, String, Table, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index, Integer, JSON, make_url, MetaData, select, String, Table, Text, UniqueConstraint, VARCHAR
+from sqlalchemy.engine import Engine
 from sqlalchemy.event import listen
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -68,6 +70,10 @@ connect_args: dict[str, object] = {}
 # 2. PostgreSQL (synchronous psycopg2 only)
 #    The keep-alive parameters below are recognised exclusively by libpq /
 #    psycopg2 and let the kernel detect broken network links quickly.
+#
+#    Additionally, support PostgreSQL-specific options like search_path
+#    via the 'options' query parameter in DATABASE_URL.
+#    Example: postgresql://user:pass@host/db?options=-c%20search_path=mcp_gateway
 # ---------------------------------------------------------------------------
 if backend == "postgresql" and driver in ("psycopg2", "default", ""):
     connect_args.update(
@@ -76,6 +82,13 @@ if backend == "postgresql" and driver in ("psycopg2", "default", ""):
         keepalives_interval=5,  # seconds between probes
         keepalives_count=5,  # drop the link after N failed probes
     )
+
+    # Extract and apply PostgreSQL options from URL query parameters
+    # This allows users to specify search_path for custom schema support (Issue #1535)
+    url_options = url.query.get("options")
+    if url_options:
+        connect_args["options"] = url_options
+        logger.info(f"PostgreSQL connection options applied: {url_options}")
 
 # ---------------------------------------------------------------------------
 # 3. SQLite (optional) - only one extra flag and it is *SQLite-specific*.
@@ -89,30 +102,71 @@ elif backend == "sqlite":
 # ---------------------------------------------------------------------------
 # 5. Build the Engine with a single, clean connect_args mapping.
 # ---------------------------------------------------------------------------
-if backend == "sqlite":
-    # SQLite supports connection pooling with proper configuration
-    # For SQLite, we use a smaller pool size since it's file-based
-    sqlite_pool_size = min(settings.db_pool_size, 50)  # Cap at 50 for SQLite
-    sqlite_max_overflow = min(settings.db_max_overflow, 20)  # Cap at 20 for SQLite
 
-    logger.info("Configuring SQLite with pool_size=%s, max_overflow=%s", sqlite_pool_size, sqlite_max_overflow)
+# Check for SQLALCHEMY_ECHO environment variable for query debugging
+# This is useful for N+1 detection and performance analysis
+_sqlalchemy_echo = os.getenv("SQLALCHEMY_ECHO", "").lower() in ("true", "1", "yes")
 
-    engine = create_engine(
-        settings.database_url,
-        pool_pre_ping=True,  # quick liveness check per checkout
-        pool_size=sqlite_pool_size,
-        max_overflow=sqlite_max_overflow,
-        pool_timeout=settings.db_pool_timeout,
-        pool_recycle=settings.db_pool_recycle,
-        # SQLite specific optimizations
-        poolclass=QueuePool,  # Explicit pool class
-        connect_args=connect_args,
-        # Log pool events in debug mode
-        echo_pool=settings.log_level == "DEBUG",
-    )
-else:
+
+def build_engine() -> Engine:
+    """Build the SQLAlchemy engine with appropriate settings.
+
+    This function constructs the SQLAlchemy engine using the database URL
+    and connection arguments determined by the backend type. It also configures
+    the connection pool size and timeout based on application settings.
+
+    Environment variables:
+        SQLALCHEMY_ECHO: Set to 'true' to log all SQL queries (useful for N+1 detection)
+
+    Returns:
+        SQLAlchemy Engine instance configured for the specified database.
+    """
+    if _sqlalchemy_echo:
+        logger.info("SQLALCHEMY_ECHO enabled - all SQL queries will be logged")
+
+    if backend == "sqlite":
+        # SQLite supports connection pooling with proper configuration
+        # For SQLite, we use a smaller pool size since it's file-based
+        sqlite_pool_size = min(settings.db_pool_size, 50)  # Cap at 50 for SQLite
+        sqlite_max_overflow = min(settings.db_max_overflow, 20)  # Cap at 20 for SQLite
+
+        logger.info("Configuring SQLite with pool_size=%s, max_overflow=%s", sqlite_pool_size, sqlite_max_overflow)
+
+        return create_engine(
+            settings.database_url,
+            pool_pre_ping=True,  # quick liveness check per checkout
+            pool_size=sqlite_pool_size,
+            max_overflow=sqlite_max_overflow,
+            pool_timeout=settings.db_pool_timeout,
+            pool_recycle=settings.db_pool_recycle,
+            # SQLite specific optimizations
+            poolclass=QueuePool,  # Explicit pool class
+            connect_args=connect_args,
+            # Log pool events in debug mode
+            echo_pool=settings.log_level == "DEBUG",
+            # Log all SQL queries when SQLALCHEMY_ECHO=true (useful for N+1 detection)
+            echo=_sqlalchemy_echo,
+        )
+
+    if backend in ("mysql", "mariadb"):
+        # MariaDB/MySQL specific configuration
+        logger.info("Configuring MariaDB/MySQL with pool_size=%s, max_overflow=%s", settings.db_pool_size, settings.db_max_overflow)
+
+        return create_engine(
+            settings.database_url,
+            pool_pre_ping=True,
+            pool_size=settings.db_pool_size,
+            max_overflow=settings.db_max_overflow,
+            pool_timeout=settings.db_pool_timeout,
+            pool_recycle=settings.db_pool_recycle,
+            connect_args=connect_args,
+            isolation_level="READ_COMMITTED",  # Fix PyMySQL sync issues
+            # Log all SQL queries when SQLALCHEMY_ECHO=true (useful for N+1 detection)
+            echo=_sqlalchemy_echo,
+        )
+
     # Other databases support full pooling configuration
-    engine = create_engine(
+    return create_engine(
         settings.database_url,
         pool_pre_ping=True,  # quick liveness check per checkout
         pool_size=settings.db_pool_size,
@@ -120,7 +174,12 @@ else:
         pool_timeout=settings.db_pool_timeout,
         pool_recycle=settings.db_pool_recycle,
         connect_args=connect_args,
+        # Log all SQL queries when SQLALCHEMY_ECHO=true (useful for N+1 detection)
+        echo=_sqlalchemy_echo,
     )
+
+
+engine = build_engine()
 
 # Initialize SQLAlchemy instrumentation for observability
 if settings.observability_enabled:
@@ -190,37 +249,60 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def refresh_slugs_on_startup():
     """Refresh slugs for all gateways and names of tools on startup."""
+    try:
+        with cast(Any, SessionLocal)() as session:
+            # Skip if tables don't exist yet (fresh database)
+            try:
+                gateways = session.query(Gateway).all()
+            except Exception:
+                logger.info("Gateway table not found, skipping slug refresh")
+                return
 
-    with cast(Any, SessionLocal)() as session:
-        gateways = session.query(Gateway).all()
-        updated = False
-        for gateway in gateways:
-            new_slug = slugify(gateway.name)
-            if gateway.slug != new_slug:
-                gateway.slug = new_slug
-                updated = True
-        if updated:
-            session.commit()
+            updated = False
+            for gateway in gateways:
+                new_slug = slugify(gateway.name)
+                if gateway.slug != new_slug:
+                    gateway.slug = new_slug
+                    updated = True
+            if updated:
+                session.commit()
 
-        tools = session.query(Tool).all()
-        for tool in tools:
-            session.expire(tool, ["gateway"])
+            try:
+                tools = session.query(Tool).all()
+                for tool in tools:
+                    session.expire(tool, ["gateway"])
 
-        updated = False
-        for tool in tools:
-            if tool.gateway:
-                new_name = f"{tool.gateway.slug}{settings.gateway_tool_name_separator}{slugify(tool.original_name)}"
-            else:
-                new_name = slugify(tool.original_name)
-            if tool.name != new_name:
-                tool.name = new_name
-                updated = True
-        if updated:
-            session.commit()
+                updated = False
+                for tool in tools:
+                    if tool.gateway:
+                        new_name = f"{tool.gateway.slug}{settings.gateway_tool_name_separator}{slugify(tool.original_name)}"
+                    else:
+                        new_name = slugify(tool.original_name)
+                    if tool.name != new_name:
+                        tool.name = new_name
+                        updated = True
+                if updated:
+                    session.commit()
+            except Exception:
+                logger.info("Tool table not found, skipping tool name refresh")
+
+    except Exception as e:
+        logger.warning("Failed to refresh slugs on startup: %s", e)
 
 
 class Base(DeclarativeBase):
     """Base class for all models."""
+
+    # MariaDB-compatible naming convention for foreign keys
+    metadata = MetaData(
+        naming_convention={
+            "fk": "fk_%(table_name)s_%(column_0_name)s",
+            "pk": "pk_%(table_name)s",
+            "ix": "ix_%(table_name)s_%(column_0_name)s",
+            "uq": "uq_%(table_name)s_%(column_0_name)s",
+            "ck": "ck_%(table_name)s_%(constraint_name)s",
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -482,6 +564,7 @@ class EmailUser(Base):
     password_hash_type: Mapped[str] = mapped_column(String(20), default="argon2id", nullable=False)
     failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    password_change_required: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
@@ -1373,7 +1456,7 @@ server_resource_association = Table(
     "server_resource_association",
     Base.metadata,
     Column("server_id", String(36), ForeignKey("servers.id"), primary_key=True),
-    Column("resource_id", Integer, ForeignKey("resources.id"), primary_key=True),
+    Column("resource_id", String(36), ForeignKey("resources.id"), primary_key=True),
 )
 
 # Association table for servers and prompts
@@ -1381,7 +1464,7 @@ server_prompt_association = Table(
     "server_prompt_association",
     Base.metadata,
     Column("server_id", String(36), ForeignKey("servers.id"), primary_key=True),
-    Column("prompt_id", Integer, ForeignKey("prompts.id"), primary_key=True),
+    Column("prompt_id", String(36), ForeignKey("prompts.id"), primary_key=True),
 )
 
 # Association table for servers and A2A agents
@@ -1441,7 +1524,7 @@ class ResourceMetric(Base):
 
     Attributes:
         id (int): Primary key.
-        resource_id (int): Foreign key linking to the resource.
+        resource_id (str): Foreign key linking to the resource.
         timestamp (datetime): The time when the invocation occurred.
         response_time (float): The response time in seconds.
         is_success (bool): True if the invocation succeeded, False otherwise.
@@ -1451,7 +1534,7 @@ class ResourceMetric(Base):
     __tablename__ = "resource_metrics"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    resource_id: Mapped[int] = mapped_column(Integer, ForeignKey("resources.id"), nullable=False)
+    resource_id: Mapped[str] = mapped_column(String(36), ForeignKey("resources.id"), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -1493,7 +1576,7 @@ class PromptMetric(Base):
 
     Attributes:
         id (int): Primary key.
-        prompt_id (int): Foreign key linking to the prompt.
+        prompt_id (str): Foreign key linking to the prompt.
         timestamp (datetime): The time when the invocation occurred.
         response_time (float): The response time in seconds.
         is_success (bool): True if the invocation succeeded, False otherwise.
@@ -1503,7 +1586,7 @@ class PromptMetric(Base):
     __tablename__ = "prompt_metrics"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    prompt_id: Mapped[int] = mapped_column(Integer, ForeignKey("prompts.id"), nullable=False)
+    prompt_id: Mapped[str] = mapped_column(String(36), ForeignKey("prompts.id"), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -1844,6 +1927,105 @@ class ObservabilitySavedQuery(Base):
     )
 
 
+# ---------------------------------------------------------------------------
+# Performance Monitoring Models
+# ---------------------------------------------------------------------------
+
+
+class PerformanceSnapshot(Base):
+    """
+    ORM model for point-in-time performance snapshots.
+
+    Stores comprehensive system, request, and worker metrics at regular intervals
+    for historical analysis and trend detection.
+
+    Attributes:
+        id (int): Auto-incrementing primary key.
+        timestamp (datetime): When the snapshot was taken.
+        host (str): Hostname of the machine.
+        worker_id (str): Worker identifier (PID or UUID).
+        metrics_json (dict): JSON blob containing all metrics data.
+        created_at (datetime): Record creation timestamp.
+    """
+
+    __tablename__ = "performance_snapshots"
+
+    # Primary key
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    # Snapshot metadata
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    host: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    worker_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+
+    # Metrics data (JSON blob)
+    metrics_json: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    # Indexes for efficient querying
+    __table_args__ = (
+        Index("idx_performance_snapshots_timestamp", "timestamp"),
+        Index("idx_performance_snapshots_host_timestamp", "host", "timestamp"),
+        Index("idx_performance_snapshots_created_at", "created_at"),
+    )
+
+
+class PerformanceAggregate(Base):
+    """
+    ORM model for aggregated performance metrics.
+
+    Stores hourly and daily aggregations of performance data for efficient
+    historical reporting and trend analysis.
+
+    Attributes:
+        id (int): Auto-incrementing primary key.
+        period_start (datetime): Start of the aggregation period.
+        period_end (datetime): End of the aggregation period.
+        period_type (str): Type of aggregation (hourly, daily).
+        host (str): Hostname (None for cluster-wide aggregates).
+        Various aggregate metrics for requests and resources.
+        created_at (datetime): Record creation timestamp.
+    """
+
+    __tablename__ = "performance_aggregates"
+
+    # Primary key
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    # Period metadata
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    period_type: Mapped[str] = mapped_column(String(20), nullable=False, index=True)  # hourly, daily
+    host: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+
+    # Request aggregates
+    requests_total: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    requests_2xx: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    requests_4xx: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    requests_5xx: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    avg_response_time_ms: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    p95_response_time_ms: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    peak_requests_per_second: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+
+    # Resource aggregates
+    avg_cpu_percent: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    avg_memory_percent: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    peak_cpu_percent: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    peak_memory_percent: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    # Indexes and constraints
+    __table_args__ = (
+        Index("idx_performance_aggregates_period", "period_type", "period_start"),
+        Index("idx_performance_aggregates_host_period", "host", "period_type", "period_start"),
+        UniqueConstraint("period_type", "period_start", "host", name="uq_performance_aggregate_period_host"),
+    )
+
+
 class Tool(Base):
     """
     ORM model for a registered Tool.
@@ -2155,16 +2337,17 @@ class Resource(Base):
 
     __tablename__ = "resources"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     uri: Mapped[str] = mapped_column(String(767), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     mime_type: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    template: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # URI template for parameterized resources
+    uri_template: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # URI template for parameterized resources
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
-    is_active: Mapped[bool] = mapped_column(default=True)
+    # is_active: Mapped[bool] = mapped_column(default=True)
+    enabled: Mapped[bool] = mapped_column(default=True)
     tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
 
     # Comprehensive metadata for audit tracking
@@ -2368,12 +2551,30 @@ class ResourceSubscription(Base):
     __tablename__ = "resource_subscriptions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    resource_id: Mapped[int] = mapped_column(ForeignKey("resources.id"))
+    resource_id: Mapped[str] = mapped_column(ForeignKey("resources.id"))
     subscriber_id: Mapped[str] = mapped_column(String(255), nullable=False)  # Client identifier
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     last_notification: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     resource: Mapped["Resource"] = relationship(back_populates="subscriptions")
+
+
+class ToolOpsTestCases(Base):
+    """
+    ORM model for a registered Tool test cases.
+
+    Represents a tool and the generated test cases.
+    Includes:
+        - tool_id: unique tool identifier
+        - test_cases: generated test cases.
+        - run_status: status of test case generation
+    """
+
+    __tablename__ = "toolops_test_cases"
+
+    tool_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    test_cases: Mapped[Dict[str, Any]] = mapped_column(JSON)
+    run_status: Mapped[str] = mapped_column(String(255), nullable=False)
 
 
 class Prompt(Base):
@@ -2396,14 +2597,15 @@ class Prompt(Base):
 
     __tablename__ = "prompts"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     template: Mapped[str] = mapped_column(Text)
     argument_schema: Mapped[Dict[str, Any]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
-    is_active: Mapped[bool] = mapped_column(default=True)
+    # is_active: Mapped[bool] = mapped_column(default=True)
+    enabled: Mapped[bool] = mapped_column(default=True)
     tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
 
     # Comprehensive metadata for audit tracking
@@ -2594,7 +2796,8 @@ class Server(Base):
     icon: Mapped[Optional[str]] = mapped_column(String(767), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
-    is_active: Mapped[bool] = mapped_column(default=True)
+    # is_active: Mapped[bool] = mapped_column(default=True)
+    enabled: Mapped[bool] = mapped_column(default=True)
     tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
 
     # Comprehensive metadata for audit tracking
@@ -2818,10 +3021,7 @@ class Gateway(Base):
 
     registered_oauth_clients: Mapped[List["RegisteredOAuthClient"]] = relationship("RegisteredOAuthClient", back_populates="gateway", cascade="all, delete-orphan")
 
-    __table_args__ = (
-        UniqueConstraint("team_id", "owner_email", "slug", name="uq_team_owner_slug_gateway"),
-        UniqueConstraint("team_id", "owner_email", "url", name="uq_team_owner_url_gateway"),
-    )
+    __table_args__ = (UniqueConstraint("team_id", "owner_email", "slug", name="uq_team_owner_slug_gateway"),)
 
 
 @event.listens_for(Gateway, "after_update")
@@ -3687,6 +3887,56 @@ def get_db() -> Generator[Session, Any, None]:
         db.close()
 
 
+def patch_string_columns_for_mariadb(base, engine_) -> None:
+    """
+    MariaDB requires VARCHAR to have an explicit length.
+    Auto-assign VARCHAR(255) to any String() columns without a length.
+
+    Args:
+        base (DeclarativeBase): SQLAlchemy Declarative Base containing metadata.
+        engine_ (Engine): SQLAlchemy engine, used to detect MariaDB dialect.
+    """
+    if engine_.dialect.name != "mariadb":
+        return
+
+    for table in base.metadata.tables.values():
+        for column in table.columns:
+            if isinstance(column.type, String) and column.type.length is None:
+                # Replace with VARCHAR(255)
+                column.type = VARCHAR(255)
+
+
+def extract_json_field(column, json_path: str):
+    """Extract a JSON field in a database-agnostic way.
+
+    This function provides cross-database compatibility for JSON field extraction,
+    supporting both SQLite and PostgreSQL backends.
+
+    Args:
+        column: SQLAlchemy column containing JSON data
+        json_path: JSON path in SQLite format (e.g., '$.\"tool.name\"')
+
+    Returns:
+        SQLAlchemy expression for extracting the JSON field as text
+
+    Note:
+        - For SQLite: Uses json_extract(column, '$.\"key\"')
+        - For PostgreSQL: Uses column ->> 'key' operator
+        - Backend-specific behavior is tested via unit tests in test_db.py
+    """
+
+    if backend == "postgresql":
+        # PostgreSQL uses ->> operator for text extraction
+        # Convert $.\"key\" or $.\"nested.key\" format to just the key
+        # Handle both simple keys and nested keys with dots
+        path_key = json_path.replace('$."', "").replace('"', "")
+        return column.op("->>")(path_key)
+
+    # SQLite and other databases use json_extract function
+    # Keep the original $.\"key\" format
+    return func.json_extract(column, json_path)
+
+
 # Create all tables
 def init_db():
     """
@@ -3696,10 +3946,562 @@ def init_db():
         Exception: If database initialization fails.
     """
     try:
+        # Apply MariaDB compatibility fix
+        patch_string_columns_for_mariadb(Base, engine)
+
         # Base.metadata.drop_all(bind=engine)
         Base.metadata.create_all(bind=engine)
     except SQLAlchemyError as e:
         raise Exception(f"Failed to initialize database: {str(e)}")
+
+
+# ============================================================================
+# Structured Logging Models
+# ============================================================================
+
+
+class StructuredLogEntry(Base):
+    """Structured log entry for comprehensive logging and analysis.
+
+    Stores all log entries with correlation IDs, performance metrics,
+    and security context for advanced search and analytics.
+    """
+
+    __tablename__ = "structured_log_entries"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+
+    # Timestamps
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True, default=utc_now)
+
+    # Correlation and request tracking
+    correlation_id: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
+    request_id: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
+
+    # Log metadata
+    level: Mapped[str] = mapped_column(String(20), nullable=False, index=True)  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+    component: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    logger: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    # User and request context
+    user_id: Mapped[Optional[str]] = mapped_column(String(255), index=True, nullable=True)
+    user_email: Mapped[Optional[str]] = mapped_column(String(255), index=True, nullable=True)
+    client_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)  # IPv6 max length
+    user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    request_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    request_method: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+
+    # Performance data
+    duration_ms: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    operation_type: Mapped[Optional[str]] = mapped_column(String(100), index=True, nullable=True)
+
+    # Security context
+    is_security_event: Mapped[bool] = mapped_column(Boolean, default=False, index=True, nullable=False)
+    security_severity: Mapped[Optional[str]] = mapped_column(String(20), index=True, nullable=True)  # LOW, MEDIUM, HIGH, CRITICAL
+    threat_indicators: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
+    # Structured context data
+    context: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    error_details: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    performance_metrics: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
+    # System information
+    hostname: Mapped[str] = mapped_column(String(255), nullable=False)
+    process_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    thread_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    version: Mapped[str] = mapped_column(String(50), nullable=False)
+    environment: Mapped[str] = mapped_column(String(50), nullable=False, default="production")
+
+    # OpenTelemetry trace context
+    trace_id: Mapped[Optional[str]] = mapped_column(String(32), index=True, nullable=True)
+    span_id: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+
+    # Indexes for performance
+    __table_args__ = (
+        Index("idx_log_correlation_time", "correlation_id", "timestamp"),
+        Index("idx_log_user_time", "user_id", "timestamp"),
+        Index("idx_log_level_time", "level", "timestamp"),
+        Index("idx_log_component_time", "component", "timestamp"),
+        Index("idx_log_security", "is_security_event", "security_severity", "timestamp"),
+        Index("idx_log_operation", "operation_type", "timestamp"),
+        Index("idx_log_trace", "trace_id", "timestamp"),
+    )
+
+
+class PerformanceMetric(Base):
+    """Aggregated performance metrics from log analysis.
+
+    Stores time-windowed aggregations of operation performance
+    for analytics and trend analysis.
+    """
+
+    __tablename__ = "performance_metrics"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+
+    # Timestamp
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True, default=utc_now)
+
+    # Metric identification
+    operation_type: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    component: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+
+    # Aggregated metrics
+    request_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+    # Duration metrics (in milliseconds)
+    avg_duration_ms: Mapped[float] = mapped_column(Float, nullable=False)
+    min_duration_ms: Mapped[float] = mapped_column(Float, nullable=False)
+    max_duration_ms: Mapped[float] = mapped_column(Float, nullable=False)
+    p50_duration_ms: Mapped[float] = mapped_column(Float, nullable=False)
+    p95_duration_ms: Mapped[float] = mapped_column(Float, nullable=False)
+    p99_duration_ms: Mapped[float] = mapped_column(Float, nullable=False)
+
+    # Time window
+    window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    window_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    window_duration_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # Additional context
+    metric_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
+    __table_args__ = (
+        Index("idx_perf_operation_time", "operation_type", "window_start"),
+        Index("idx_perf_component_time", "component", "window_start"),
+        Index("idx_perf_window", "window_start", "window_end"),
+    )
+
+
+class SecurityEvent(Base):
+    """Security event logging for threat detection and audit trails.
+
+    Specialized table for security events with enhanced context
+    and threat analysis capabilities.
+    """
+
+    __tablename__ = "security_events"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+
+    # Timestamps
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True, default=utc_now)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    # Correlation tracking
+    correlation_id: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
+    log_entry_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("structured_log_entries.id"), index=True, nullable=True)
+
+    # Event classification
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False, index=True)  # auth_failure, suspicious_activity, rate_limit, etc.
+    severity: Mapped[str] = mapped_column(String(20), nullable=False, index=True)  # LOW, MEDIUM, HIGH, CRITICAL
+    category: Mapped[str] = mapped_column(String(50), nullable=False, index=True)  # authentication, authorization, data_access, etc.
+
+    # User and request context
+    user_id: Mapped[Optional[str]] = mapped_column(String(255), index=True, nullable=True)
+    user_email: Mapped[Optional[str]] = mapped_column(String(255), index=True, nullable=True)
+    client_ip: Mapped[str] = mapped_column(String(45), nullable=False, index=True)
+    user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Event details
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    action_taken: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)  # blocked, allowed, flagged, etc.
+
+    # Threat analysis
+    threat_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # 0.0-1.0
+    threat_indicators: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    failed_attempts_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Resolution tracking
+    resolved: Mapped[bool] = mapped_column(Boolean, default=False, index=True, nullable=False)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    resolution_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Alert tracking
+    alert_sent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    alert_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    alert_recipients: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
+
+    # Additional context
+    context: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
+    __table_args__ = (
+        Index("idx_security_type_time", "event_type", "timestamp"),
+        Index("idx_security_severity_time", "severity", "timestamp"),
+        Index("idx_security_user_time", "user_id", "timestamp"),
+        Index("idx_security_ip_time", "client_ip", "timestamp"),
+        Index("idx_security_unresolved", "resolved", "severity", "timestamp"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# LLM Provider Configuration Models
+# ---------------------------------------------------------------------------
+
+
+class LLMProviderType:
+    """Constants for LLM provider types."""
+
+    OPENAI = "openai"
+    AZURE_OPENAI = "azure_openai"
+    ANTHROPIC = "anthropic"
+    BEDROCK = "bedrock"
+    GOOGLE_VERTEX = "google_vertex"
+    WATSONX = "watsonx"
+    OLLAMA = "ollama"
+    OPENAI_COMPATIBLE = "openai_compatible"
+    COHERE = "cohere"
+    MISTRAL = "mistral"
+    GROQ = "groq"
+    TOGETHER = "together"
+
+    @classmethod
+    def get_all_types(cls) -> List[str]:
+        """Get list of all supported provider types.
+
+        Returns:
+            List of provider type strings.
+        """
+        return [
+            cls.OPENAI,
+            cls.AZURE_OPENAI,
+            cls.ANTHROPIC,
+            cls.BEDROCK,
+            cls.GOOGLE_VERTEX,
+            cls.WATSONX,
+            cls.OLLAMA,
+            cls.OPENAI_COMPATIBLE,
+            cls.COHERE,
+            cls.MISTRAL,
+            cls.GROQ,
+            cls.TOGETHER,
+        ]
+
+    @classmethod
+    def get_provider_defaults(cls) -> Dict[str, Dict[str, Any]]:
+        """Get default configuration for each provider type.
+
+        Returns:
+            Dictionary mapping provider type to default config.
+        """
+        return {
+            cls.OPENAI: {
+                "api_base": "https://api.openai.com/v1",
+                "default_model": "gpt-4o",
+                "supports_model_list": True,
+                "models_endpoint": "/models",
+                "requires_api_key": True,
+                "description": "OpenAI GPT models (GPT-4, GPT-4o, etc.)",
+            },
+            cls.AZURE_OPENAI: {
+                "api_base": "https://{resource}.openai.azure.com/openai/deployments/{deployment}",
+                "default_model": "",
+                "supports_model_list": False,
+                "requires_api_key": True,
+                "description": "Azure OpenAI Service",
+            },
+            cls.ANTHROPIC: {
+                "api_base": "https://api.anthropic.com",
+                "default_model": "claude-sonnet-4-20250514",
+                "supports_model_list": False,
+                "requires_api_key": True,
+                "description": "Anthropic Claude models",
+            },
+            cls.OLLAMA: {
+                "api_base": "http://localhost:11434/v1",
+                "default_model": "llama3.2",
+                "supports_model_list": True,
+                "models_endpoint": "/models",
+                "requires_api_key": False,
+                "description": "Local Ollama server (OpenAI-compatible)",
+            },
+            cls.OPENAI_COMPATIBLE: {
+                "api_base": "http://localhost:8080/v1",
+                "default_model": "",
+                "supports_model_list": True,
+                "models_endpoint": "/models",
+                "requires_api_key": False,
+                "description": "Any OpenAI-compatible API server",
+            },
+            cls.COHERE: {
+                "api_base": "https://api.cohere.ai/v1",
+                "default_model": "command-r-plus",
+                "supports_model_list": True,
+                "models_endpoint": "/models",
+                "requires_api_key": True,
+                "description": "Cohere Command models",
+            },
+            cls.MISTRAL: {
+                "api_base": "https://api.mistral.ai/v1",
+                "default_model": "mistral-large-latest",
+                "supports_model_list": True,
+                "models_endpoint": "/models",
+                "requires_api_key": True,
+                "description": "Mistral AI models",
+            },
+            cls.GROQ: {
+                "api_base": "https://api.groq.com/openai/v1",
+                "default_model": "llama-3.3-70b-versatile",
+                "supports_model_list": True,
+                "models_endpoint": "/models",
+                "requires_api_key": True,
+                "description": "Groq high-speed inference",
+            },
+            cls.TOGETHER: {
+                "api_base": "https://api.together.xyz/v1",
+                "default_model": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+                "supports_model_list": True,
+                "models_endpoint": "/models",
+                "requires_api_key": True,
+                "description": "Together AI inference",
+            },
+            cls.BEDROCK: {
+                "api_base": "",
+                "default_model": "anthropic.claude-3-sonnet-20240229-v1:0",
+                "supports_model_list": False,
+                "requires_api_key": False,
+                "description": "AWS Bedrock (uses IAM credentials)",
+            },
+            cls.GOOGLE_VERTEX: {
+                "api_base": "",
+                "default_model": "gemini-1.5-pro",
+                "supports_model_list": False,
+                "requires_api_key": False,
+                "description": "Google Vertex AI (uses service account)",
+            },
+            cls.WATSONX: {
+                "api_base": "https://us-south.ml.cloud.ibm.com",
+                "default_model": "ibm/granite-13b-chat-v2",
+                "supports_model_list": False,
+                "requires_api_key": True,
+                "description": "IBM watsonx.ai",
+            },
+        }
+
+
+class LLMProvider(Base):
+    """ORM model for LLM provider configurations.
+
+    Stores credentials and settings for external LLM providers
+    used by the internal LLM Chat feature.
+
+    Attributes:
+        id: Unique identifier (UUID)
+        name: Display name (unique)
+        slug: URL-safe identifier (unique)
+        provider_type: Provider type (openai, anthropic, etc.)
+        api_key: Encrypted API key
+        api_base: Base URL for API requests
+        api_version: API version (for Azure OpenAI)
+        config: Provider-specific settings (JSON)
+        default_model: Default model ID
+        default_temperature: Default temperature (0.0-2.0)
+        default_max_tokens: Default max tokens
+        enabled: Whether provider is enabled
+        health_status: Current health status (healthy/unhealthy/unknown)
+        last_health_check: Last health check timestamp
+        plugin_ids: Attached plugin IDs (JSON)
+    """
+
+    __tablename__ = "llm_providers"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+
+    # Basic info
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    slug: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Provider type
+    provider_type: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    # Credentials (encrypted)
+    api_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    api_base: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    api_version: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+
+    # Provider-specific configuration
+    config: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+
+    # Default settings
+    default_model: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    default_temperature: Mapped[float] = mapped_column(Float, default=0.7, nullable=False)
+    default_max_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Status
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    health_status: Mapped[str] = mapped_column(String(20), default="unknown", nullable=False)
+    last_health_check: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Plugin integration
+    plugin_ids: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    # Audit fields
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    modified_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    # Relationships
+    models: Mapped[List["LLMModel"]] = relationship("LLMModel", back_populates="provider", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_llm_providers_name"),
+        UniqueConstraint("slug", name="uq_llm_providers_slug"),
+        Index("idx_llm_providers_enabled", "enabled"),
+        Index("idx_llm_providers_type", "provider_type"),
+        Index("idx_llm_providers_health", "health_status"),
+    )
+
+    def __repr__(self) -> str:
+        """Return string representation.
+
+        Returns:
+            String representation of the provider.
+        """
+        return f"<LLMProvider(id='{self.id}', name='{self.name}', type='{self.provider_type}')>"
+
+
+class LLMModel(Base):
+    """ORM model for LLM model definitions.
+
+    Stores model metadata and capabilities for each provider.
+
+    Attributes:
+        id: Unique identifier (UUID)
+        provider_id: Foreign key to llm_providers
+        model_id: Provider's model ID (e.g., gpt-4o)
+        model_name: Display name
+        model_alias: Optional routing alias
+        supports_chat: Whether model supports chat completions
+        supports_streaming: Whether model supports streaming
+        supports_function_calling: Whether model supports function/tool calling
+        supports_vision: Whether model supports vision/images
+        context_window: Maximum context tokens
+        max_output_tokens: Maximum output tokens
+        enabled: Whether model is enabled
+        deprecated: Whether model is deprecated
+    """
+
+    __tablename__ = "llm_models"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+
+    # Provider relationship
+    provider_id: Mapped[str] = mapped_column(String(36), ForeignKey("llm_providers.id", ondelete="CASCADE"), nullable=False)
+
+    # Model identification
+    model_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    model_alias: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Capabilities
+    supports_chat: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    supports_streaming: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    supports_function_calling: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    supports_vision: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Limits
+    context_window: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    max_output_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Status
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    deprecated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    # Relationship
+    provider: Mapped["LLMProvider"] = relationship("LLMProvider", back_populates="models")
+
+    __table_args__ = (
+        UniqueConstraint("provider_id", "model_id", name="uq_llm_models_provider_model"),
+        Index("idx_llm_models_provider", "provider_id"),
+        Index("idx_llm_models_enabled", "enabled"),
+        Index("idx_llm_models_deprecated", "deprecated"),
+    )
+
+    def __repr__(self) -> str:
+        """Return string representation.
+
+        Returns:
+            String representation of the model.
+        """
+        return f"<LLMModel(id='{self.id}', model_id='{self.model_id}', provider_id='{self.provider_id}')>"
+
+
+class AuditTrail(Base):
+    """Comprehensive audit trail for data access and changes.
+
+    Tracks all significant system changes and data access for
+    compliance and security auditing.
+    """
+
+    __tablename__ = "audit_trails"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+
+    # Timestamps
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True, default=utc_now)
+
+    # Correlation tracking
+    correlation_id: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
+    request_id: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
+
+    # Action details
+    action: Mapped[str] = mapped_column(String(100), nullable=False, index=True)  # create, read, update, delete, execute, etc.
+    resource_type: Mapped[str] = mapped_column(String(100), nullable=False, index=True)  # tool, resource, prompt, user, etc.
+    resource_id: Mapped[Optional[str]] = mapped_column(String(255), index=True, nullable=True)
+    resource_name: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+
+    # User context
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    user_email: Mapped[Optional[str]] = mapped_column(String(255), index=True, nullable=True)
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), index=True, nullable=True)
+
+    # Request context
+    client_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    request_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    request_method: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+
+    # Change tracking
+    old_values: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    new_values: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    changes: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
+    # Data classification
+    data_classification: Mapped[Optional[str]] = mapped_column(String(50), index=True, nullable=True)  # public, internal, confidential, restricted
+    requires_review: Mapped[bool] = mapped_column(Boolean, default=False, index=True, nullable=False)
+
+    # Result
+    success: Mapped[bool] = mapped_column(Boolean, nullable=False, index=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Additional context
+    context: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
+    __table_args__ = (
+        Index("idx_audit_action_time", "action", "timestamp"),
+        Index("idx_audit_resource_time", "resource_type", "resource_id", "timestamp"),
+        Index("idx_audit_user_time", "user_id", "timestamp"),
+        Index("idx_audit_classification", "data_classification", "timestamp"),
+        Index("idx_audit_review", "requires_review", "timestamp"),
+    )
 
 
 if __name__ == "__main__":
@@ -3742,6 +4544,18 @@ def set_grpc_service_slug(_mapper, _conn, target):
         _mapper: Mapper
         _conn: Connection
         target: Target GrpcService instance
+    """
+    target.slug = slugify(target.name)
+
+
+@event.listens_for(LLMProvider, "before_insert")
+def set_llm_provider_slug(_mapper, _conn, target):
+    """Set the slug for an LLMProvider before insert.
+
+    Args:
+        _mapper: Mapper
+        _conn: Connection
+        target: Target LLMProvider instance
     """
     target.slug = slugify(target.name)
 

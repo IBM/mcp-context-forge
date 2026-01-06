@@ -5,6 +5,60 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Fred Araujo, Teryl Taylor
 
 Module that contains plugin MCP server code to serve external plugins.
+
+Examples:
+    Create an external plugin server with a configuration file:
+
+    >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
+    >>> server is not None
+    True
+    >>> isinstance(server._config_path, str)
+    True
+
+    Get server configuration with defaults:
+
+    >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
+    >>> config = server.get_server_config()
+    >>> config.host == '127.0.0.1'
+    True
+    >>> config.port == 8000
+    True
+
+    Verify plugin manager is initialized:
+
+    >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
+    >>> server._plugin_manager is not None
+    True
+    >>> server._config is not None
+    True
+
+    Multiple servers can be created:
+
+    >>> server1 = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
+    >>> server2 = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_multiple_plugins_filter.yaml")
+    >>> server1._config_path != server2._config_path
+    True
+
+    Configuration is loaded from file:
+
+    >>> import asyncio
+    >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
+    >>> plugins = asyncio.run(server.get_plugin_configs())
+    >>> isinstance(plugins, list)
+    True
+    >>> len(plugins) >= 1
+    True
+
+    Server configuration defaults are sensible:
+
+    >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
+    >>> config = server.get_server_config()
+    >>> isinstance(config.host, str)
+    True
+    >>> isinstance(config.port, int)
+    True
+    >>> config.port > 0
+    True
 """
 
 # Standard
@@ -20,10 +74,7 @@ from mcpgateway.plugins.framework.constants import CONTEXT, ERROR, PLUGIN_NAME, 
 from mcpgateway.plugins.framework.errors import convert_exception_to_error, PluginError
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.manager import PluginManager
-from mcpgateway.plugins.framework.models import (
-    MCPServerConfig,
-    PluginContext,
-)
+from mcpgateway.plugins.framework.models import MCPServerConfig, PluginContext
 
 P = TypeVar("P", bound=BaseModel)
 
@@ -61,6 +112,21 @@ class ExternalPluginServer:
             >>> plugins = asyncio.run(server.get_plugin_configs())
             >>> len(plugins) > 0
             True
+
+            Returns empty list when no plugins configured:
+
+            >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
+            >>> server._config.plugins = None
+            >>> plugins = asyncio.run(server.get_plugin_configs())
+            >>> plugins
+            []
+
+            Each plugin config is a dictionary:
+
+            >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
+            >>> plugins = asyncio.run(server.get_plugin_configs())
+            >>> all(isinstance(p, dict) for p in plugins)
+            True
         """
         plugins: list[dict] = []
         if self._config.plugins:
@@ -84,6 +150,21 @@ class ExternalPluginServer:
             >>> c is not None
             True
             >>> c["name"] == "DenyListPlugin"
+            True
+
+            Returns None when plugin not found:
+
+            >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
+            >>> c = asyncio.run(server.get_plugin_config(name="NonExistentPlugin"))
+            >>> c is None
+            True
+
+            Case-insensitive plugin name lookup:
+
+            >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
+            >>> c1 = asyncio.run(server.get_plugin_config(name="ReplaceBadWordsPlugin"))
+            >>> c2 = asyncio.run(server.get_plugin_config(name="replacebadwordsplugin"))
+            >>> c1 == c2
             True
         """
         if self._config.plugins:
@@ -148,12 +229,28 @@ class ExternalPluginServer:
 
         Returns:
             A boolean indicating the intialization status of the server.
+
+        Examples:
+            >>> import asyncio
+            >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
+            >>> result = asyncio.run(server.initialize())
+            >>> result
+            True
+            >>> asyncio.run(server.shutdown())
         """
         await self._plugin_manager.initialize()
         return self._plugin_manager.initialized
 
     async def shutdown(self) -> None:
-        """Shutdown the plugin server."""
+        """Shutdown the plugin server.
+
+        Examples:
+            >>> import asyncio
+            >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
+            >>> asyncio.run(server.initialize())
+            True
+            >>> asyncio.run(server.shutdown())
+        """
         if self._plugin_manager.initialized:
             await self._plugin_manager.shutdown()
 
@@ -162,5 +259,15 @@ class ExternalPluginServer:
 
         Returns:
             A server configuration including host, port, and TLS information.
+
+        Examples:
+            >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
+            >>> config = server.get_server_config()
+            >>> isinstance(config, MCPServerConfig)
+            True
+            >>> config.host
+            '127.0.0.1'
+            >>> config.port
+            8000
         """
         return self._config.server_settings or MCPServerConfig.from_env() or MCPServerConfig()

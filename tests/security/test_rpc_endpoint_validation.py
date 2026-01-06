@@ -14,6 +14,7 @@ Run with:
 
 # Standard
 import logging
+from unittest.mock import MagicMock, patch
 
 # Third-Party
 from fastapi.testclient import TestClient
@@ -37,9 +38,14 @@ class TestRPCEndpointValidation:
     """
 
     @pytest.fixture
-    def client(self):
-        """Create a test client for the FastAPI app."""
-        return TestClient(app)
+    def client(self, app):
+        """Create a test client for the FastAPI app with mocked security_logger."""
+        # Mock security_logger to prevent database access
+        mock_sec_logger = MagicMock()
+        mock_sec_logger.log_authentication_attempt = MagicMock(return_value=None)
+        mock_sec_logger.log_security_event = MagicMock(return_value=None)
+        with patch("mcpgateway.middleware.auth_middleware.security_logger", mock_sec_logger):
+            yield TestClient(app)
 
     @pytest.fixture
     def auth_headers(self):
@@ -269,8 +275,14 @@ class TestRPCValidationBypass:
     """Test various techniques to bypass RPC validation."""
 
     @pytest.fixture
-    def client(self):
-        return TestClient(app)
+    def client(self, app):
+        """Create a test client for the FastAPI app with mocked security_logger."""
+        # Mock security_logger to prevent database access
+        mock_sec_logger = MagicMock()
+        mock_sec_logger.log_authentication_attempt = MagicMock(return_value=None)
+        mock_sec_logger.log_security_event = MagicMock(return_value=None)
+        with patch("mcpgateway.middleware.auth_middleware.security_logger", mock_sec_logger):
+            yield TestClient(app)
 
     def test_bypass_techniques(self, client):
         """Test various bypass techniques."""

@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  mariadb:
+    image: mariadb:10.6
+    container_name: mcp-mariadb
+    environment:
+      MARIADB_ROOT_PASSWORD: gateway
+      MARIADB_DATABASE: gateway
+    ports:
+      - "3306:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      start_period: 10s
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  gateway:
+    image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
+    container_name: mcp-gateway
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    environment:
+      - HOST=0.0.0.0
+      - PORT=4444
+      - DATABASE_URL=mariadb+mariadbconnector://root:gateway@mariadb:3306/gateway
+      - MCPGATEWAY_UI_ENABLED=true
+      - MCPGATEWAY_ADMIN_API_ENABLED=true
+      - JWT_SECRET_KEY=my-test-key
+      - BASIC_AUTH_USER=admin
+      - BASIC_AUTH_PASSWORD=changeme
+      - PLATFORM_ADMIN_EMAIL=admin@example.com
+      - PLATFORM_ADMIN_PASSWORD=changeme
+      - PLATFORM_ADMIN_FULL_NAME=Platform Administrator
+      - SECURE_COOKIES=false
+    ports:
+      - "4444:4444"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4444/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  redis:
+    image: redis:7-alpine
+    container_name: mcp-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  mariadb_data:
+  redis_data:

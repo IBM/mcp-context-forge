@@ -1,8 +1,4 @@
 """
-Location: ./mcpgateway/admin_helpers.py
-Copyright 2025
-SPDX-License-Identifier: Apache-2.0
-Authors: Teryl Taylor
 Helper functions for admin UI operations.
 
 This module contains shared utility functions used by admin.py to reduce

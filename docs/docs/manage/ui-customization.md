@@ -164,7 +164,7 @@ When packaging the gateway:
   docker run \
     -v $(pwd)/overrides/admin.html:/app/mcpgateway/templates/admin.html:ro \
     -v $(pwd)/overrides/static:/app/mcpgateway/static/custom:ro \
-    ghcr.io/ibm/mcp-context-forge:0.9.0
+    ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
   ```
   Then update template references to point at `static/custom/...`.
 

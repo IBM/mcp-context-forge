@@ -8,7 +8,7 @@ SHELL := /bin/bash
 PACKAGE_NAME = opapluginfilter
 PROJECT_NAME = opapluginfilter
 TARGET ?= opapluginfilter
-OPASERVER_VERSION ?= 1.8.0
+OPASERVER_VERSION ?= 1.10.1
 POLICY_PATH = "./opaserver/rego/policy.rego"
 
 # Virtual-environment variables

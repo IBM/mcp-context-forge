@@ -1,0 +1,49 @@
+# Location: ./mcpgateway/tools/builder/templates/compose/plugins-config.yaml.j2
+# Copyright 2025
+# SPDX-License-Identifier: Apache-2.0
+# Authors: Teryl Taylor
+# Plugin configuration for MCP Gateway
+# Auto-generated from mcp-stack.yaml
+
+# Global plugin settings
+plugin_settings:
+  parallel_execution_within_band: true
+  plugin_timeout: 120
+  fail_on_plugin_error: false
+  enable_plugin_api: true
+  plugin_health_check_interval: 60
+
+# External plugin connections
+plugins:
+{% for plugin in plugins -%}
+- name: {{ plugin.name }}
+  kind: external
+{%- if plugin.description %}
+  description: "{{ plugin.description }}"
+{%- endif %}
+{%- if plugin.version %}
+  version: "{{ plugin.version }}"
+{%- endif %}
+{%- if plugin.author %}
+  author: "{{ plugin.author }}"
+{%- endif %}
+{%- if plugin.hooks %}
+  hooks: {{ plugin.hooks }}
+{%- endif %}
+{%- if plugin.tags %}
+  tags: {{ plugin.tags }}
+{%- endif %}
+{%- if plugin.mode %}
+  mode: "{{ plugin.mode }}"
+{%- endif %}
+{%- if plugin.priority %}
+  priority: {{ plugin.priority }}
+{%- endif %}
+{%- if plugin.conditions %}
+  conditions: {{ plugin.conditions }}
+{%- endif %}
+  mcp:
+    proto: STREAMABLEHTTP
+    url: {{ plugin.url }}
+
+{% endfor %}
