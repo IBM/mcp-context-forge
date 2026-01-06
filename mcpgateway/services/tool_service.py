@@ -2198,7 +2198,6 @@ class ToolService:
             'tool_read'
         """
         try:
-            tool = db.get(DbTool, tool_id)
             tool = get_for_update(db, DbTool, tool_id)
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
@@ -2379,14 +2378,12 @@ class ToolService:
 
         if not tool_payload:
             # Eager load tool WITH gateway in single query to prevent lazy load N+1
-            tool = db.execute(select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.name == name).where(DbTool.enabled)).scalar_one_or_none()
+            # Use a single query to avoid a race between separate enabled/inactive lookups.
+            tool = db.execute(select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.name == name)).scalar_one_or_none()
             if not tool:
-                inactive_tool = db.execute(select(DbTool).where(DbTool.name == name).where(not_(DbTool.enabled))).scalar_one_or_none()
-                if inactive_tool:
-                    await tool_lookup_cache.set_negative(name, "inactive")
-                    raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
-                await tool_lookup_cache.set_negative(name, "missing")
                 raise ToolNotFoundError(f"Tool not found: {name}")
+            if not tool.enabled:
+                raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
 
             if not tool.reachable:
                 await tool_lookup_cache.set_negative(name, "offline")
@@ -3185,15 +3182,30 @@ class ToolService:
             if tool_update.name and tool_update.name != tool.name:
                 # Check for existing tool with the same name and visibility
                 if tool_update.visibility.lower() == "public":
-                    # Check for existing public tool with the same name
-                    existing_tool = db.execute(select(DbTool).where(DbTool.custom_name == tool_update.custom_name, DbTool.visibility == "public",DbTool.id != tool.id).with_for_update()).scalar_one_or_none()
+                    # Check for existing public tool with the same name (row-locked)
+                    existing_tool = get_for_update(
+                        db,
+                        DbTool,
+                        where=and_(
+                            DbTool.custom_name == tool_update.custom_name,
+                            DbTool.visibility == "public",
+                            DbTool.id != tool.id,
+                        ),
+                    )
                     if existing_tool:
                         raise ToolNameConflictError(existing_tool.custom_name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
                 elif tool_update.visibility.lower() == "team" and tool_update.team_id:
                     # Check for existing team tool with the same name
-                    existing_tool = db.execute(
-                        select(DbTool).where(DbTool.custom_name == tool_update.custom_name, DbTool.visibility == "team", DbTool.team_id == tool_update.team_id, DbTool.id != tool.id).with_for_update()
-                    ).scalar_one_or_none()
+                    existing_tool = get_for_update(
+                        db,
+                        DbTool,
+                        where=and_(
+                            DbTool.custom_name == tool_update.custom_name,
+                            DbTool.visibility == "team",
+                            DbTool.team_id == tool_update.team_id,
+                            DbTool.id != tool.id,
+                        ),
+                    )
                     if existing_tool:
                         raise ToolNameConflictError(existing_tool.custom_name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
                 if tool_update.custom_name is None and tool.name == tool.custom_name:
