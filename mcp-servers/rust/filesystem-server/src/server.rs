@@ -1,4 +1,4 @@
-use crate::tools::{info, read, search, write};
+use crate::tools::{edit, info, read, search, write};
 use rmcp::ErrorData as McpError;
 use rmcp::{
     ServerHandler,
@@ -64,6 +64,14 @@ pub struct CreateFileParameters {
 pub struct CreateDirectoryParameter {
     #[schemars(description = "Path of new directory")]
     path: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct MoveFileParameters {
+    #[schemars(description = "Source file path")]
+    source: String,
+    #[schemars(description = "Destination file path")]
+    destination: String,
 }
 
 // SERVER ROUTER
@@ -160,6 +168,34 @@ impl FilesystemServer {
         Ok(CallToolResult::success(vec![content]))
     }
 
+    #[tool(description = "Move a file from a source path to destination path")]
+    async fn move_file(
+        &self,
+        Parameters(MoveFileParameters {
+            source,
+            destination,
+        }): Parameters<MoveFileParameters>,
+    ) -> Result<CallToolResult, McpError> {
+        let result = edit::move_file(&source, &destination).await.map_err(|e| {
+            McpError::internal_error(
+                format!(
+                    "Error moving file from '{}' to {}: {}",
+                    source, destination, e
+                ),
+                None,
+            )
+        })?;
+
+        let content = Content::json(&result).map_err(|e| {
+            McpError::internal_error(
+                format!("Error converting file content to JSON: {}", e),
+                None,
+            )
+        })?;
+
+        Ok(CallToolResult::success(vec![content]))
+    }
+
     #[tool(description = "Create new directory")]
     async fn create_directory(
         &self,
@@ -222,9 +258,8 @@ impl FilesystemServer {
         Ok(CallToolResult::success(vec![content]))
     }
 
-    #[tool(description="Reveal sandbox roots")]
-    async fn list_allowed_directories()-> Result<CallToolResult, McpError> {
-
+    #[tool(description = "Reveal sandbox roots")]
+    async fn list_allowed_directories() -> Result<CallToolResult, McpError> {
         let content = Content::json(["hardecoded", "hardcoded2"]).map_err(|e| {
             McpError::internal_error(
                 format!("Error converting file metadata to JSON: {}", e),
@@ -235,7 +270,6 @@ impl FilesystemServer {
         Ok(CallToolResult::success(vec![content]))
     }
 }
-
 
 #[tool_handler] // Macro that will generate a tool handler
 impl ServerHandler for FilesystemServer {
@@ -253,6 +287,7 @@ impl ServerHandler for FilesystemServer {
         - list_directory: List files and subdirectories in a directory
         - search_files: Recursively search for files under a directory matching glob patterns
         - read_file: Read a file from a given filepath
+        - move_file: Move a file from a source path to a destination path
         - read_multiple_files: Read several files from a list of filepaths
         - get_file_info: Return metadata for a given file path, including size, permissions, creation time, and last modified time
         - write_file: Create or ovewrite a file
