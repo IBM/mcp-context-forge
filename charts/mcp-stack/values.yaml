@@ -365,7 +365,6 @@ mcpContextForge:
     JSON_RESPONSE_ENABLED: "true"    # default to JSON; false for SSE stream
 
     # ─ Federation ─
-    FEDERATION_PEERS: '[]'           # explicit peer list (JSON array)
     FEDERATION_TIMEOUT: "120"        # seconds before peer request timeout
     FEDERATION_SYNC_INTERVAL: "300"  # seconds between peer syncs
 

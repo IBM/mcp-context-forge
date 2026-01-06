@@ -2152,16 +2152,6 @@
       "title": "Sse Keepalive Interval",
       "type": "integer"
     },
-    "federation_peers": {
-      "items": {
-        "format": "uri",
-        "maxLength": 2083,
-        "minLength": 1,
-        "type": "string"
-      },
-      "title": "Federation Peers",
-      "type": "array"
-    },
     "federation_timeout": {
       "default": 120,
       "title": "Federation Timeout",

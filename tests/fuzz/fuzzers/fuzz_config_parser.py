@@ -67,10 +67,6 @@ def TestOneInput(data: bytes) -> None:  # noqa: N802
                 if fdp.ConsumeBool():
                     kwargs[field] = fdp.ConsumeBool()
 
-            # List fields
-            if fdp.ConsumeBool():
-                kwargs["federation_peers"] = [fdp.ConsumeUnicodeNoSurrogates(50) for _ in range(fdp.ConsumeIntInRange(0, 5))]
-
             settings = Settings(**kwargs)
 
             # Test methods that might fail

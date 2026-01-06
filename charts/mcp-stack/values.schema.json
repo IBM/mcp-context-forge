@@ -660,11 +660,6 @@
               "description": "Enable JSON responses",
               "default": "true"
             },
-            "FEDERATION_PEERS": {
-              "type": "string",
-              "description": "Federation peers (JSON array)",
-              "default": "[]"
-            },
             "FEDERATION_TIMEOUT": {
               "type": "string",
               "description": "Federation timeout in seconds",

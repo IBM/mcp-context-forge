@@ -20,7 +20,6 @@ Environment variables:
 - AUTH_REQUIRED: Require authentication (default: True)
 - TRANSPORT_TYPE: Transport mechanisms (default: "all")
 - DOCS_ALLOW_BASIC_AUTH: Allow basic auth for docs (default: False)
-- FEDERATION_PEERS: List of peer gateway URLs (default: [])
 - RESOURCE_CACHE_SIZE: Max cached resources (default: 1000)
 - RESOURCE_CACHE_TTL: Cache TTL in seconds (default: 3600)
 - TOOL_TIMEOUT: Tool invocation timeout (default: 60)
@@ -1089,58 +1088,6 @@ class Settings(BaseSettings):
     sse_retry_timeout: int = 5000  # milliseconds
     sse_keepalive_enabled: bool = True  # Enable SSE keepalive events
     sse_keepalive_interval: int = 30  # seconds between keepalive events
-
-    # For federation_peers strip out quotes to ensure we're passing valid JSON via env
-    federation_peers: List[HttpUrl] = Field(default_factory=list)
-
-    @field_validator("federation_peers", mode="before")
-    @classmethod
-    def _parse_federation_peers(cls, v: Any) -> List[str]:
-        """Parse federation peer URLs from environment variable or config value.
-
-        Handles multiple input formats for the federation_peers field:
-        - JSON array string: '["https://gw1.com", "https://gw2.com"]'
-        - Comma-separated string: "https://gw1.com, https://gw2.com"
-        - Already parsed list
-
-        Automatically strips whitespace and removes outer quotes if present.
-        Order is preserved when parsing.
-
-        Args:
-            v: The input value to parse. Can be a string (JSON or CSV), list, or other iterable.
-
-        Returns:
-            List[str]: A list of federation peer URLs.
-
-        Examples:
-            >>> Settings._parse_federation_peers('["https://gw1", "https://gw2"]')
-            ['https://gw1', 'https://gw2']
-            >>> Settings._parse_federation_peers("https://gw3, https://gw4")
-            ['https://gw3', 'https://gw4']
-            >>> Settings._parse_federation_peers('""')
-            []
-            >>> Settings._parse_federation_peers('"https://single-peer.com"')
-            ['https://single-peer.com']
-            >>> Settings._parse_federation_peers(['http://p1.com', 'http://p2.com'])
-            ['http://p1.com', 'http://p2.com']
-            >>> Settings._parse_federation_peers([])
-            []
-        """
-        if v is None:
-            return []  # always return a list
-
-        if isinstance(v, str):
-            v = v.strip()
-            if len(v) > 1 and v[0] in "\"'" and v[-1] == v[0]:
-                v = v[1:-1]
-            try:
-                peers = orjson.loads(v)
-            except orjson.JSONDecodeError:
-                peers = [s.strip() for s in v.split(",") if s.strip()]
-            return peers  # type: ignore[no-any-return]
-
-        # Convert other iterables to list
-        return list(v)
 
     federation_timeout: int = 120  # seconds
     federation_sync_interval: int = 300  # seconds
