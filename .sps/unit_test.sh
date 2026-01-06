@@ -7,7 +7,7 @@ pip3.11 install --upgrade pip pytest pytest-cov sqlalchemy
 
 echo "############# Python Version #################"
 python3 -V
-dnf install postgresql-devel
+dnf install -y  postgresql-devel
 
 echo "############# Running Install ################"
 make install-dev
