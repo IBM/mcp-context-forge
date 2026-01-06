@@ -2117,7 +2117,7 @@ Automatic management of metrics data to prevent unbounded table growth and maint
 | Setting                 | Description                               | Default | Options |
 | ----------------------- | ----------------------------------------- | ------- | ------- |
 | `HEALTH_CHECK_INTERVAL` | Health poll interval (secs)               | `60`    | int > 0 |
-| `HEALTH_CHECK_TIMEOUT`  | Health request timeout (secs)             | `10`    | int > 0 |
+| `HEALTH_CHECK_TIMEOUT`  | Health request timeout (secs)             | `5`     | int > 0 |
 | `GATEWAY_HEALTH_CHECK_TIMEOUT` | Per-check timeout for gateway health check (secs) | `5.0` | float > 0 |
 | `UNHEALTHY_THRESHOLD`   | Fail-count before peer deactivation,      | `3`     | int > 0 |
 |                         | Set to -1 if deactivation is not needed.  |         |         |
@@ -2168,6 +2168,28 @@ Automatic management of metrics data to prevent unbounded table growth and maint
 | `METRICS_CACHE_TTL_SECONDS` | Cache TTL (seconds)                   | `60`    | int (1-300)|
 
 > ⚡ **Performance**: Caches aggregate metrics queries to reduce full table scans. Under high load (3000+ users), setting TTL to 60-120 seconds can reduce database scans by 6-12×. See [Issue #1906](https://github.com/IBM/mcp-context-forge/issues/1906).
+
+### MCP Session Pool
+
+| Setting                                   | Description                                        | Default | Options     |
+| ----------------------------------------- | -------------------------------------------------- | ------- | ----------- |
+| `MCP_SESSION_POOL_ENABLED`                | Enable session pooling (10-20x latency improvement)| `false` | bool        |
+| `MCP_SESSION_POOL_MAX_PER_KEY`            | Max sessions per (URL, identity, transport)        | `10`    | int (1-100) |
+| `MCP_SESSION_POOL_TTL`                    | Session TTL before forced close (seconds)          | `300`   | float       |
+| `MCP_SESSION_POOL_TRANSPORT_TIMEOUT`      | Timeout for all HTTP operations (seconds)          | `30`    | float       |
+| `MCP_SESSION_POOL_HEALTH_CHECK_INTERVAL`  | Idle time before health check (seconds)            | `60`    | float       |
+| `MCP_SESSION_POOL_ACQUIRE_TIMEOUT`        | Timeout waiting for session slot (seconds)         | `30`    | float       |
+| `MCP_SESSION_POOL_CREATE_TIMEOUT`         | Timeout creating new session (seconds)             | `30`    | float       |
+| `MCP_SESSION_POOL_CIRCUIT_BREAKER_THRESHOLD` | Failures before circuit opens                   | `5`     | int         |
+| `MCP_SESSION_POOL_CIRCUIT_BREAKER_RESET`  | Seconds before circuit resets                      | `60`    | float       |
+| `MCP_SESSION_POOL_IDLE_EVICTION`          | Evict idle pool keys after (seconds)               | `600`   | float       |
+| `MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC`    | Force explicit RPC on health checks                | `false` | bool        |
+
+> ⚡ **Performance**: Session pooling reduces per-request overhead from ~20ms to ~1-2ms (10-20x improvement). Sessions are isolated per user/tenant via identity hashing to prevent cross-user session sharing.
+>
+> 🔒 **Security**: Sessions are keyed by `(URL, identity_hash, transport_type)` to ensure different users never share sessions.
+>
+> 🏥 **Health Checks**: By default, the pool's internal staleness check handles health verification. Set `MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC=true` for stricter verification at ~5ms latency cost per check.
 
 ### Database Management
 

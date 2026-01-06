@@ -390,11 +390,27 @@ mcpContextForge:
 
     # ─ Health checks ─
     HEALTH_CHECK_INTERVAL: "60"      # seconds between peer health checks
-    HEALTH_CHECK_TIMEOUT: "10"       # request timeout per health check
+    HEALTH_CHECK_TIMEOUT: "5"        # request timeout per health check
     GATEWAY_HEALTH_CHECK_TIMEOUT: "5.0" # per-check timeout to bound total time of one gateway health check
     UNHEALTHY_THRESHOLD: "3"         # failed checks before peer marked unhealthy
     GATEWAY_VALIDATION_TIMEOUT: "5"  # gateway URL validation timeout (seconds)
     FILELOCK_NAME: gateway_healthcheck_init.lock # lock file used at start-up
+
+    # ─ MCP Session Pool ─
+    # Session pooling reduces per-request overhead from ~20ms to ~1-2ms (10-20x improvement)
+    # Sessions are isolated per user/tenant via identity hashing
+    # Disabled by default for safety; enable explicitly in production after testing
+    MCP_SESSION_POOL_ENABLED: "false"             # enable session pooling
+    MCP_SESSION_POOL_MAX_PER_KEY: "10"            # max sessions per (URL, identity, transport)
+    MCP_SESSION_POOL_TTL: "300.0"                 # session TTL in seconds
+    MCP_SESSION_POOL_HEALTH_CHECK_INTERVAL: "60.0" # idle time before health check
+    MCP_SESSION_POOL_ACQUIRE_TIMEOUT: "30.0"      # timeout waiting for session slot
+    MCP_SESSION_POOL_CREATE_TIMEOUT: "30.0"       # timeout creating new session
+    MCP_SESSION_POOL_CIRCUIT_BREAKER_THRESHOLD: "5" # failures before circuit opens
+    MCP_SESSION_POOL_CIRCUIT_BREAKER_RESET: "60.0"  # seconds before circuit resets
+    MCP_SESSION_POOL_IDLE_EVICTION: "600.0"       # evict idle pool keys after (seconds)
+    MCP_SESSION_POOL_TRANSPORT_TIMEOUT: "30.0"   # timeout for all HTTP operations (connect, read, write)
+    MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC: "false" # force RPC on health checks (off for performance)
 
     # ─ Development toggles ─
     DEV_MODE: "false"                # enable dev-mode features

@@ -118,6 +118,7 @@ from mcpgateway.services.import_service import ConflictStrategy
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.mcp_session_pool import get_mcp_session_pool
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.plugin_service import get_plugin_service
@@ -836,6 +837,58 @@ async def get_a2a_stats_cache_stats(
         True
     """
     return a2a_stats_cache.stats()
+
+
+@admin_router.get("/mcp-pool/metrics")
+@rate_limit(requests_per_minute=60)
+async def get_mcp_session_pool_metrics(
+    request: Request,  # pylint: disable=unused-argument
+    _user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Get MCP session pool metrics.
+
+    Returns pool statistics including hits, misses, evictions, hit rate,
+    circuit breaker status, and per-pool details. Useful for monitoring
+    pool effectiveness and diagnosing connection issues.
+
+    Args:
+        request: HTTP request object (required by rate_limit decorator)
+        _user: Authenticated user
+
+    Returns:
+        Dict with pool metrics including:
+        - hits: Number of pool hits (session reuse)
+        - misses: Number of pool misses (new session created)
+        - evictions: Number of sessions evicted due to TTL
+        - health_check_failures: Number of failed health checks
+        - circuit_breaker_trips: Number of circuit breaker activations
+        - pool_keys_evicted: Number of idle pool keys cleaned up
+        - sessions_reaped: Number of stale sessions closed by background reaper
+        - hit_rate: Ratio of hits to total requests (0.0-1.0)
+        - pool_key_count: Number of active pool keys
+        - pools: Per-pool statistics (available, active, max)
+        - circuit_breakers: Circuit breaker status per URL
+
+    Raises:
+        HTTPException: If session pool is not initialized
+
+    Examples:
+        >>> from mcpgateway.admin import get_mcp_session_pool_metrics
+        >>> get_mcp_session_pool_metrics.__name__
+        'get_mcp_session_pool_metrics'
+        >>> import inspect
+        >>> inspect.iscoroutinefunction(get_mcp_session_pool_metrics)
+        True
+    """
+    if not settings.mcp_session_pool_enabled:
+        return {"enabled": False, "message": "MCP session pool is disabled"}
+
+    try:
+        pool = get_mcp_session_pool()
+        metrics = pool.get_metrics()
+        return {"enabled": True, **metrics}
+    except RuntimeError as e:
+        return {"enabled": True, "error": str(e), "message": "Pool not yet initialized"}
 
 
 @admin_router.get("/config/settings")

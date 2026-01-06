@@ -286,6 +286,24 @@ services:
       # - GRANIAN_HTTP=2
 
       # ═══════════════════════════════════════════════════════════════════════════
+      # MCP Session Pool Configuration
+      # ═══════════════════════════════════════════════════════════════════════════
+      # Session pooling for MCP ClientSessions reduces per-request overhead from
+      # ~20ms to ~1-2ms (10-20x improvement). Sessions are isolated per user/tenant
+      # via identity hashing to prevent cross-user session sharing.
+      - MCP_SESSION_POOL_ENABLED=true              # Enable session pooling (default: false, enabled for docker-compose)
+      - MCP_SESSION_POOL_MAX_PER_KEY=50            # Max sessions per (URL, identity, transport)
+      - MCP_SESSION_POOL_TTL=300.0                 # Session TTL in seconds (default: 300)
+      - MCP_SESSION_POOL_HEALTH_CHECK_INTERVAL=60.0  # Idle time before health check (default: 60)
+      - MCP_SESSION_POOL_ACQUIRE_TIMEOUT=60.0     # Timeout waiting for session slot (default: 30)
+      - MCP_SESSION_POOL_CREATE_TIMEOUT=30.0       # Timeout creating new session (default: 30)
+      - MCP_SESSION_POOL_CIRCUIT_BREAKER_THRESHOLD=5  # Failures before circuit opens
+      - MCP_SESSION_POOL_CIRCUIT_BREAKER_RESET=60.0   # Seconds before circuit resets
+      - MCP_SESSION_POOL_IDLE_EVICTION=600.0      # Evict idle pool keys after (default: 600)
+      - MCP_SESSION_POOL_TRANSPORT_TIMEOUT=30.0   # Timeout for all HTTP operations (default: 30)
+      - MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC=false  # Force RPC on health checks (default: false)
+
+      # ═══════════════════════════════════════════════════════════════════════════
       # Execution Metrics Recording
       # ═══════════════════════════════════════════════════════════════════════════
       # Controls tool/resource/prompt/server/A2A execution metrics (one DB row per operation).
