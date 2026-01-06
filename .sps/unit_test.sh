@@ -10,7 +10,7 @@ python3 -V
 echo "############# Running Install ################"
 make install-dev
 echo "############# Running Install psycogpg################"
-python3 -m uv pip install 'psycopg2'
+source $HOME/.venv/mcpgateway/bin/activate && python3 -m uv pip install 'psycopg2'
 echo "############# Running Install DB ################"
 make install-db
 echo "############# Running Linting ################"
