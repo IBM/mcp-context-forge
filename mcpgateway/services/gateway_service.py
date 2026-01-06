@@ -77,6 +77,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_db
+from mcpgateway.db import get_for_update
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
 from mcpgateway.db import Resource as DbResource
@@ -1572,16 +1573,18 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             ValidationError: If validation fails
         """
         try:  # pylint: disable=too-many-nested-blocks
-            # Find gateway with eager loading for sync operations to avoid N+1 queries
-            gateway = db.execute(
-                select(DbGateway)
-                .options(
+            # Acquire row lock and eager-load relationships while locked so
+            # concurrent updates are serialized on Postgres.
+            gateway = get_for_update(
+                db,
+                DbGateway,
+                gateway_id,
+                options=[
                     selectinload(DbGateway.tools),
                     selectinload(DbGateway.resources),
                     selectinload(DbGateway.prompts),
-                )
-                .where(DbGateway.id == gateway_id)
-            ).scalar_one_or_none()
+                ],
+            )
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
@@ -2140,16 +2143,20 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             PermissionError: If user doesn't own the agent.
         """
         try:
-            # Get gateway with eager loading for sync operations to avoid N+1 queries
-            gateway = db.execute(
-                select(DbGateway)
-                .options(
+            # Build a single select that eager-loads collections and, when
+            # supported by the backend, applies FOR UPDATE to acquire a row
+            # lock so the multi-field state check and subsequent
+            # initialization are atomic.
+            gateway = get_for_update(
+                db,
+                DbGateway,
+                gateway_id,
+                options=[
                     selectinload(DbGateway.tools),
                     selectinload(DbGateway.resources),
                     selectinload(DbGateway.prompts),
-                )
-                .where(DbGateway.id == gateway_id)
-            ).scalar_one_or_none()
+                ],
+            )
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
@@ -2438,16 +2445,18 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             ...     pass
         """
         try:
-            # Find gateway with eager loading for deletion to avoid N+1 queries
-            gateway = db.execute(
-                select(DbGateway)
-                .options(
+            # Acquire row lock and eager-load relationships while locked so
+            # deletion and child cleanup happen atomically on Postgres.
+            gateway = get_for_update(
+                db,
+                DbGateway,
+                gateway_id,
+                options=[
                     selectinload(DbGateway.tools),
                     selectinload(DbGateway.resources),
                     selectinload(DbGateway.prompts),
-                )
-                .where(DbGateway.id == gateway_id)
-            ).scalar_one_or_none()
+                ],
+            )
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
