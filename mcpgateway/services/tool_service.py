@@ -3192,7 +3192,7 @@ class ToolService:
                 elif tool_update.visibility.lower() == "team" and tool_update.team_id:
                     # Check for existing team tool with the same name
                     existing_tool = db.execute(
-                        select(DbTool).where(DbTool.custom_name == tool_update.custom_name, DbTool.visibility == "team", DbTool.team_id == tool_update.team_id)
+                        select(DbTool).where(DbTool.custom_name == tool_update.custom_name, DbTool.visibility == "team", DbTool.team_id == tool_update.team_id, DbTool.id != tool.id).with_for_update()
                     ).scalar_one_or_none()
                     if existing_tool:
                         raise ToolNameConflictError(existing_tool.custom_name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
