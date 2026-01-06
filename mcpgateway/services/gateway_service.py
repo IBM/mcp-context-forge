@@ -897,7 +897,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             # Add to DB
             db.add(db_gateway)
-            db.commit()
+            db.flush()  # Flush to get the ID without committing
             db.refresh(db_gateway)
 
             # Update tracking

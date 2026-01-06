@@ -58,7 +58,10 @@ import (
     "log"
     "net/http"
     "os"
+    "os/signal"
     "strings"
+    "sync"
+    "syscall"
     "time"
 
     "github.com/mark3labs/mcp-go/mcp"
@@ -77,12 +80,16 @@ const (
     defaultPort           = 8080
     defaultListen         = "0.0.0.0"
     defaultLogLevel       = "info"
+    defaultServerCount    = 1
     defaultToolCount      = 100
     defaultResourceCnt    = 100
     defaultPromptCount    = 100
     defaultToolSize       = 1000
     defaultResourceSize   = 1000
     defaultPromptSize     = 1000
+
+    // Server timeouts
+    shutdownTimeout = 10 * time.Second
 
     // Environment variables
     envAuthToken = "AUTH_TOKEN"
@@ -304,6 +311,136 @@ func authMiddleware(token string, next http.Handler) http.Handler {
 }
 
 /* ------------------------------------------------------------------ */
+/*                      server creation helpers                       */
+/* ------------------------------------------------------------------ */
+
+// serverConfig holds configuration for creating an MCP server instance
+type serverConfig struct {
+    toolCount    int
+    toolSize     int
+    resourceCnt  int
+    resourceSize int
+    promptCount  int
+    promptSize   int
+}
+
+// buildMCPServer creates and registers tools/resources/prompts for a server
+func buildMCPServer(cfg serverConfig, serverID int, isMultiServer bool) *server.MCPServer {
+    name := appName
+    if isMultiServer {
+        name = fmt.Sprintf("%s-%d", appName, serverID)
+    }
+
+    s := server.NewMCPServer(
+        name,
+        appVersion,
+        server.WithToolCapabilities(false),           // No progress reporting needed
+        server.WithResourceCapabilities(false, true), // Enable resource capabilities
+        server.WithPromptCapabilities(true),          // Enable prompt capabilities
+        server.WithLogging(),                         // Enable MCP protocol logging
+        server.WithRecovery(),                        // Recover from panics in handlers
+    )
+
+    // Register tools
+    logAt(logInfo, "[%s] registering %d tools...", name, cfg.toolCount)
+    for i := 0; i < cfg.toolCount; i++ {
+        toolName := fmt.Sprintf("benchmark_tool_%d", i)
+        tool := mcp.NewTool(toolName,
+            mcp.WithDescription(fmt.Sprintf("Benchmark tool #%d - returns test data", i)),
+            mcp.WithTitleAnnotation(fmt.Sprintf("Benchmark Tool %d", i)),
+            mcp.WithReadOnlyHintAnnotation(true),
+            mcp.WithString("param1",
+                mcp.Description("Optional parameter 1"),
+            ),
+            mcp.WithString("param2",
+                mcp.Description("Optional parameter 2"),
+            ),
+        )
+        s.AddTool(tool, createToolHandler(toolName, cfg.toolSize))
+    }
+    logAt(logInfo, "[%s] registered %d tools", name, cfg.toolCount)
+
+    // Register resources
+    logAt(logInfo, "[%s] registering %d resources...", name, cfg.resourceCnt)
+    for i := 0; i < cfg.resourceCnt; i++ {
+        var resourceURI, resourceName string
+        if isMultiServer {
+            // Multi-server mode: include server ID in URI for uniqueness
+            resourceName = fmt.Sprintf("resource_%d", i)
+            resourceURI = fmt.Sprintf("benchmark://server%d/resource_%d", serverID, i)
+        } else {
+            // Single server mode: original naming
+            resourceName = fmt.Sprintf("benchmark_resource_%d", i)
+            resourceURI = fmt.Sprintf("benchmark://%s", resourceName)
+        }
+
+        resource := mcp.NewResource(
+            resourceURI,
+            fmt.Sprintf("Benchmark Resource %d", i),
+            mcp.WithResourceDescription(fmt.Sprintf("Benchmark resource #%d - returns test data", i)),
+            mcp.WithMIMEType("application/json"),
+        )
+        s.AddResource(resource, createResourceHandler(resourceName, cfg.resourceSize))
+    }
+    logAt(logInfo, "[%s] registered %d resources", name, cfg.resourceCnt)
+
+    // Register prompts
+    logAt(logInfo, "[%s] registering %d prompts...", name, cfg.promptCount)
+    for i := 0; i < cfg.promptCount; i++ {
+        promptName := fmt.Sprintf("benchmark_prompt_%d", i)
+        prompt := mcp.NewPrompt(promptName,
+            mcp.WithPromptDescription(fmt.Sprintf("Benchmark prompt #%d - returns test prompt", i)),
+            mcp.WithArgument("arg1",
+                mcp.ArgumentDescription("Optional argument 1"),
+            ),
+            mcp.WithArgument("arg2",
+                mcp.ArgumentDescription("Optional argument 2"),
+            ),
+        )
+        s.AddPrompt(prompt, createPromptHandler(promptName, cfg.promptSize))
+    }
+    logAt(logInfo, "[%s] registered %d prompts", name, cfg.promptCount)
+
+    return s
+}
+
+/* ------------------------------------------------------------------ */
+/*                     HTTP server runner with shutdown               */
+/* ------------------------------------------------------------------ */
+
+// runHTTPServer starts an HTTP server and handles graceful shutdown
+func runHTTPServer(ctx context.Context, wg *sync.WaitGroup, addr string, handler http.Handler, serverName string) {
+    defer wg.Done()
+
+    srv := &http.Server{
+        Addr:    addr,
+        Handler: handler,
+    }
+
+    // Start server in a goroutine
+    go func() {
+        logAt(logInfo, "[%s] listening on http://%s", serverName, addr)
+        if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+            logAt(logError, "[%s] server error: %v", serverName, err)
+        }
+    }()
+
+    // Wait for context cancellation (shutdown signal)
+    <-ctx.Done()
+
+    // Create shutdown context with timeout
+    shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+    defer cancel()
+
+    logAt(logInfo, "[%s] shutting down gracefully...", serverName)
+    if err := srv.Shutdown(shutdownCtx); err != nil {
+        logAt(logError, "[%s] shutdown error: %v", serverName, err)
+    } else {
+        logAt(logInfo, "[%s] shutdown complete", serverName)
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /*                              main                                  */
 /* ------------------------------------------------------------------ */
 
@@ -314,6 +451,8 @@ func main() {
         addrFlag      = flag.String("addr", "", "Full listen address (host:port) - overrides -listen/-port")
         listenHost    = flag.String("listen", defaultListen, "Listen interface for sse/http")
         port          = flag.Int("port", defaultPort, "TCP port for sse/http")
+        serverCount   = flag.Int("server-count", defaultServerCount, "Number of servers to spawn (for multi-server testing)")
+        startPort     = flag.Int("start-port", defaultPort, "Starting port for multi-server mode")
         publicURL     = flag.String("public-url", "", "External base URL advertised to SSE clients")
         authToken     = flag.String("auth-token", "", "Bearer token for authentication (SSE/HTTP only)")
         logLevel      = flag.String("log-level", defaultLogLevel, "Logging level: debug|info|warn|error|none")
@@ -343,10 +482,12 @@ func main() {
                 ind+"%s -tools=1000 -resources=500 -prompts=200\n"+
                 ind+"%s -transport=sse -port=8080 -tools=500\n"+
                 ind+"%s -tools=100 -tool-size=5000 -resource-size=10000 -prompt-size=2000\n"+
-                ind+"%s -tools=10000 -resources=0 -prompts=0 -tool-size=500\n\n"+
+                ind+"%s -tools=10000 -resources=0 -prompts=0 -tool-size=500\n"+
+                ind+"%s -transport=sse -server-count=10 -start-port=8080 -tools=100\n"+
+                ind+"%s -transport=http -server-count=5 -start-port=9000\n\n"+
                 "Environment Variables:\n"+
                 ind+"AUTH_TOKEN - Bearer token for authentication (overrides -auth-token flag)\n",
-            os.Args[0], os.Args[0], os.Args[0], os.Args[0])
+            os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0])
     }
 
     flag.Parse()
@@ -377,67 +518,30 @@ func main() {
         logAt(logInfo, "authentication enabled with Bearer token")
     }
 
-    /* ----------------------- build MCP server --------------------- */
-    // Create server with appropriate options
-    s := server.NewMCPServer(
-        appName,
-        appVersion,
-        server.WithToolCapabilities(false),           // No progress reporting needed
-        server.WithResourceCapabilities(false, true), // Enable resource capabilities
-        server.WithPromptCapabilities(true),          // Enable prompt capabilities
-        server.WithLogging(),                         // Enable MCP protocol logging
-        server.WithRecovery(),                        // Recover from panics in handlers
-    )
-
-    /* ----------------------- register tools ----------------------- */
-    logAt(logInfo, "registering %d tools...", *toolCount)
-    for i := 0; i < *toolCount; i++ {
-        toolName := fmt.Sprintf("benchmark_tool_%d", i)
-        tool := mcp.NewTool(toolName,
-            mcp.WithDescription(fmt.Sprintf("Benchmark tool #%d - returns test data", i)),
-            mcp.WithTitleAnnotation(fmt.Sprintf("Benchmark Tool %d", i)),
-            mcp.WithReadOnlyHintAnnotation(true),
-            mcp.WithString("param1",
-                mcp.Description("Optional parameter 1"),
-            ),
-            mcp.WithString("param2",
-                mcp.Description("Optional parameter 2"),
-            ),
-        )
-        s.AddTool(tool, createToolHandler(toolName, *toolSize))
+    // Validate server count for multi-server mode
+    if *serverCount < 1 {
+        logger.Fatalf("server-count must be at least 1, got %d", *serverCount)
     }
-    logAt(logInfo, "registered %d tools", *toolCount)
 
-    /* ----------------------- register resources ------------------- */
-    logAt(logInfo, "registering %d resources...", *resourceCnt)
-    for i := 0; i < *resourceCnt; i++ {
-        resourceName := fmt.Sprintf("benchmark_resource_%d", i)
-        resource := mcp.NewResource(
-            fmt.Sprintf("benchmark://%s", resourceName),
-            fmt.Sprintf("Benchmark Resource %d", i),
-            mcp.WithResourceDescription(fmt.Sprintf("Benchmark resource #%d - returns test data", i)),
-            mcp.WithMIMEType("application/json"),
-        )
-        s.AddResource(resource, createResourceHandler(resourceName, *resourceSize))
+    // stdio transport doesn't support multi-server
+    if strings.ToLower(*transport) == "stdio" && *serverCount > 1 {
+        logAt(logWarn, "stdio transport does not support multi-server mode, ignoring server-count")
+        *serverCount = 1
     }
-    logAt(logInfo, "registered %d resources", *resourceCnt)
 
-    /* ----------------------- register prompts --------------------- */
-    logAt(logInfo, "registering %d prompts...", *promptCount)
-    for i := 0; i < *promptCount; i++ {
-        promptName := fmt.Sprintf("benchmark_prompt_%d", i)
-        prompt := mcp.NewPrompt(promptName,
-            mcp.WithPromptDescription(fmt.Sprintf("Benchmark prompt #%d - returns test prompt", i)),
-            mcp.WithArgument("arg1",
-                mcp.ArgumentDescription("Optional argument 1"),
-            ),
-            mcp.WithArgument("arg2",
-                mcp.ArgumentDescription("Optional argument 2"),
-            ),
-        )
-        s.AddPrompt(prompt, createPromptHandler(promptName, *promptSize))
+    if *serverCount > 1 {
+        logAt(logInfo, "multi-server mode: spawning %d servers starting at port %d", *serverCount, *startPort)
     }
-    logAt(logInfo, "registered %d prompts", *promptCount)
+
+    /* ----------------------- build server config ------------------ */
+    cfg := serverConfig{
+        toolCount:    *toolCount,
+        toolSize:     *toolSize,
+        resourceCnt:  *resourceCnt,
+        resourceSize: *resourceSize,
+        promptCount:  *promptCount,
+        promptSize:   *promptSize,
+    }
 
     /* -------------------- choose transport & serve ---------------- */
     switch strings.ToLower(*transport) {
@@ -448,86 +552,167 @@ func main() {
             logAt(logWarn, "auth-token is ignored for stdio transport")
         }
         logAt(logInfo, "serving via stdio transport")
+        s := buildMCPServer(cfg, 0, false)
         if err := server.ServeStdio(s); err != nil {
             logger.Fatalf("stdio server error: %v", err)
         }
 
     /* ----------------------------- sse --------------------------- */
     case "sse":
-        addr := effectiveAddr(*addrFlag, *listenHost, *port)
-        mux := http.NewServeMux()
+        // Setup signal handling for graceful shutdown
+        ctx, cancel := context.WithCancel(context.Background())
+        sigChan := make(chan os.Signal, 1)
+        signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-        // Configure SSE options
-        opts := []server.SSEOption{}
-        if *publicURL != "" {
-            opts = append(opts, server.WithBaseURL(strings.TrimRight(*publicURL, "/")))
+        var wg sync.WaitGroup
+
+        // Spawn servers
+        for i := 0; i < *serverCount; i++ {
+            serverID := i
+            currentPort := *startPort + i
+
+            // Override addr for multi-server mode
+            var addr string
+            if *serverCount > 1 {
+                addr = fmt.Sprintf("%s:%d", *listenHost, currentPort)
+            } else {
+                addr = effectiveAddr(*addrFlag, *listenHost, *port)
+            }
+
+            // Build MCP server instance
+            s := buildMCPServer(cfg, serverID, *serverCount > 1)
+
+            // Create mux and register handlers
+            mux := http.NewServeMux()
+
+            // Configure SSE options
+            opts := []server.SSEOption{}
+            if *publicURL != "" {
+                // Append port to public URL for multi-server
+                if *serverCount > 1 {
+                    opts = append(opts, server.WithBaseURL(fmt.Sprintf("%s:%d", strings.TrimRight(*publicURL, "/"), currentPort)))
+                } else {
+                    opts = append(opts, server.WithBaseURL(strings.TrimRight(*publicURL, "/")))
+                }
+            }
+
+            // Register SSE handler
+            sseHandler := server.NewSSEServer(s, opts...)
+            mux.Handle("/", sseHandler)
+
+            // Register health and version endpoints
+            registerHealthAndVersion(mux)
+
+            // Create handler chain
+            var handler http.Handler = mux
+            handler = loggingHTTPMiddleware(handler)
+            if *authToken != "" {
+                handler = authMiddleware(*authToken, handler)
+            }
+
+            // Log server info
+            serverName := fmt.Sprintf("%s-%d", appName, serverID)
+            if *serverCount == 1 {
+                serverName = appName
+                logAt(logInfo, "SSE server ready on http://%s", addr)
+                logAt(logInfo, "  MCP SSE events:   /sse")
+                logAt(logInfo, "  MCP SSE messages: /messages")
+                logAt(logInfo, "  Health check:     /health")
+                logAt(logInfo, "  Version info:     /version")
+                if *publicURL != "" {
+                    logAt(logInfo, "  Public URL:       %s", *publicURL)
+                }
+                if *authToken != "" {
+                    logAt(logInfo, "  Authentication:   Bearer token required")
+                }
+            }
+
+            // Start server
+            wg.Add(1)
+            go runHTTPServer(ctx, &wg, addr, handler, serverName)
         }
 
-        // Register SSE handler at root
-        sseHandler := server.NewSSEServer(s, opts...)
-        mux.Handle("/", sseHandler)
+        // Wait for interrupt signal
+        <-sigChan
+        logAt(logInfo, "received shutdown signal, shutting down %d server(s)...", *serverCount)
 
-        // Register health and version endpoints
-        registerHealthAndVersion(mux)
+        // Cancel context to trigger graceful shutdown
+        cancel()
 
-        logAt(logInfo, "SSE server ready on http://%s", addr)
-        logAt(logInfo, "  MCP SSE events:   /sse")
-        logAt(logInfo, "  MCP SSE messages: /messages")
-        logAt(logInfo, "  Health check:     /health")
-        logAt(logInfo, "  Version info:     /version")
-
-        if *publicURL != "" {
-            logAt(logInfo, "  Public URL:       %s", *publicURL)
-        }
-
-        if *authToken != "" {
-            logAt(logInfo, "  Authentication:   Bearer token required")
-        }
-
-        // Create handler chain
-        var handler http.Handler = mux
-        handler = loggingHTTPMiddleware(handler)
-        if *authToken != "" {
-            handler = authMiddleware(*authToken, handler)
-        }
-
-        // Start server
-        if err := http.ListenAndServe(addr, handler); err != nil && err != http.ErrServerClosed {
-            logger.Fatalf("SSE server error: %v", err)
-        }
+        // Wait for all servers to finish shutting down
+        wg.Wait()
+        logAt(logInfo, "all servers stopped")
 
     /* ----------------------- streamable http --------------------- */
     case "http":
-        addr := effectiveAddr(*addrFlag, *listenHost, *port)
-        mux := http.NewServeMux()
+        // Setup signal handling for graceful shutdown
+        ctx, cancel := context.WithCancel(context.Background())
+        sigChan := make(chan os.Signal, 1)
+        signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-        // Register HTTP handler at root
-        httpHandler := server.NewStreamableHTTPServer(s)
-        mux.Handle("/", httpHandler)
+        var wg sync.WaitGroup
 
-        // Register health and version endpoints
-        registerHealthAndVersion(mux)
+        // Spawn servers
+        for i := 0; i < *serverCount; i++ {
+            serverID := i
+            currentPort := *startPort + i
 
-        logAt(logInfo, "HTTP server ready on http://%s", addr)
-        logAt(logInfo, "  MCP endpoint:     / (POST with JSON-RPC)")
-        logAt(logInfo, "  Health check:     /health")
-        logAt(logInfo, "  Version info:     /version")
+            // Override addr for multi-server mode
+            var addr string
+            if *serverCount > 1 {
+                addr = fmt.Sprintf("%s:%d", *listenHost, currentPort)
+            } else {
+                addr = effectiveAddr(*addrFlag, *listenHost, *port)
+            }
 
-        if *authToken != "" {
-            logAt(logInfo, "  Authentication:   Bearer token required")
+            // Build MCP server instance
+            s := buildMCPServer(cfg, serverID, *serverCount > 1)
+
+            // Create mux and register handlers
+            mux := http.NewServeMux()
+
+            // Register HTTP handler
+            httpHandler := server.NewStreamableHTTPServer(s)
+            mux.Handle("/", httpHandler)
+
+            // Register health and version endpoints
+            registerHealthAndVersion(mux)
+
+            // Create handler chain
+            var handler http.Handler = mux
+            handler = loggingHTTPMiddleware(handler)
+            if *authToken != "" {
+                handler = authMiddleware(*authToken, handler)
+            }
+
+            // Log server info
+            serverName := fmt.Sprintf("%s-%d", appName, serverID)
+            if *serverCount == 1 {
+                serverName = appName
+                logAt(logInfo, "HTTP server ready on http://%s", addr)
+                logAt(logInfo, "  MCP endpoint:     / (POST with JSON-RPC)")
+                logAt(logInfo, "  Health check:     /health")
+                logAt(logInfo, "  Version info:     /version")
+                if *authToken != "" {
+                    logAt(logInfo, "  Authentication:   Bearer token required")
+                }
+            }
+
+            // Start server
+            wg.Add(1)
+            go runHTTPServer(ctx, &wg, addr, handler, serverName)
         }
 
-        // Create handler chain
-        var handler http.Handler = mux
-        handler = loggingHTTPMiddleware(handler)
-        if *authToken != "" {
-            handler = authMiddleware(*authToken, handler)
-        }
+        // Wait for interrupt signal
+        <-sigChan
+        logAt(logInfo, "received shutdown signal, shutting down %d server(s)...", *serverCount)
 
-        // Start server
-        if err := http.ListenAndServe(addr, handler); err != nil && err != http.ErrServerClosed {
-            logger.Fatalf("HTTP server error: %v", err)
-        }
+        // Cancel context to trigger graceful shutdown
+        cancel()
+
+        // Wait for all servers to finish shutting down
+        wg.Wait()
+        logAt(logInfo, "all servers stopped")
 
     default:
         fmt.Fprintf(os.Stderr, "Error: unknown transport %q\n\n", *transport)
