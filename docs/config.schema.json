@@ -2157,11 +2157,6 @@
       "title": "Federation Timeout",
       "type": "integer"
     },
-    "federation_sync_interval": {
-      "default": 300,
-      "title": "Federation Sync Interval",
-      "type": "integer"
-    },
     "sso_issuers": {
       "anyOf": [
         {

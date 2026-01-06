@@ -990,7 +990,6 @@ async def get_configuration_settings(
         },
         "Federation": {
             "federation_timeout": settings.federation_timeout,
-            "federation_sync_interval": settings.federation_sync_interval,
         },
         "Transport": {
             "transport_type": settings.transport_type,

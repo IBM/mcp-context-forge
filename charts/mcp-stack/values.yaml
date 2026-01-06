@@ -366,7 +366,6 @@ mcpContextForge:
 
     # ─ Federation ─
     FEDERATION_TIMEOUT: "120"        # seconds before peer request timeout
-    FEDERATION_SYNC_INTERVAL: "300"  # seconds between peer syncs
 
     # ─ Resource cache ─
     RESOURCE_CACHE_SIZE: "1000"      # max resources kept in memory cache

@@ -665,11 +665,6 @@
               "description": "Federation timeout in seconds",
               "default": "30"
             },
-            "FEDERATION_SYNC_INTERVAL": {
-              "type": "string",
-              "description": "Federation sync interval in seconds",
-              "default": "300"
-            },
             "RESOURCE_CACHE_SIZE": {
               "type": "string",
               "description": "Resource cache size",

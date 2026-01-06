@@ -1090,7 +1090,6 @@ class Settings(BaseSettings):
     sse_keepalive_interval: int = 30  # seconds between keepalive events
 
     federation_timeout: int = 120  # seconds
-    federation_sync_interval: int = 300  # seconds
 
     # SSO
     # For sso_issuers strip out quotes to ensure we're passing valid JSON via env
