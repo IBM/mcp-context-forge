@@ -9,12 +9,13 @@ echo "############# Python Version #################"
 python3 -V
 echo "############# Running Install ################"
 make install-dev
+make install-db
 #echo "############# Running Linting ################"
-#make lint
+make lint
 #echo "############# Running Tests ##################"
-#make test
+make test
 #echo "############# Running Coverage ###############"
-#make coverage
+make coverage
 
 
 echo "#############################"
