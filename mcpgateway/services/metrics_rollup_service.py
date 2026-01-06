@@ -54,7 +54,7 @@ from mcpgateway.db import (
 )
 
 logger = logging.getLogger(__name__)
-from mcpgateway.services import task_scheduler, Priority
+from mcpgateway.services import task_scheduler, Priority  # noqa: E402
 
 
 @dataclass
