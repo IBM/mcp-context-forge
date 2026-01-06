@@ -7,7 +7,7 @@ pip3.11 install --upgrade pip pytest pytest-cov sqlalchemy
 
 echo "############# Python Version #################"
 python3 -V
-sudo apt-get install libpq-dev
+dnf install libpq-dev
 
 echo "############# Running Install ################"
 make install-dev
