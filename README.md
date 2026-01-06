@@ -158,15 +158,6 @@ For a list of upcoming features, check out the [ContextForge Roadmap](https://ib
 </details>
 
 <details>
-<summary><strong>🌐 Federation of Peer Gateways (MCP Registry)</strong></summary>
-
-* Auto-discovers or configures peer gateways (via mDNS or manual)
-* Performs health checks and merges remote registries transparently
-* Supports Redis-backed syncing and fail-over
-
-</details>
-
-<details>
 <summary><strong>🧩 Virtualization of REST/gRPC Services</strong></summary>
 
 * Wraps non-MCP services as virtual MCP servers
