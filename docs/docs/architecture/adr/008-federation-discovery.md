@@ -17,7 +17,7 @@ Manual configuration (e.g. hardcoded peer IPs) is error-prone and brittle in dyn
 The codebase includes a `DiscoveryService` and federation settings such as:
 
 - `FEDERATION_ENABLED`  NOTE: DEPRECATED NOW
-- `FEDERATION_DISCOVERY`
+- `FEDERATION_DISCOVERY`  NOTE: DEPRECATED NOW
 - `DISCOVERY_INTERVAL_SECONDS`
 
 ## Decision

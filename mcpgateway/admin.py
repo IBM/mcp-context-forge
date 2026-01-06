@@ -989,7 +989,6 @@ async def get_configuration_settings(
             "well_known_enabled": settings.well_known_enabled,
         },
         "Federation": {
-            "federation_discovery": settings.federation_discovery,
             "federation_timeout": settings.federation_timeout,
             "federation_sync_interval": settings.federation_sync_interval,
         },

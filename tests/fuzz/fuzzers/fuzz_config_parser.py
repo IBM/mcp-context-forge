@@ -62,7 +62,7 @@ def TestOneInput(data: bytes) -> None:  # noqa: N802
                     kwargs[field] = fdp.ConsumeIntInRange(-1000, 65535)
 
             # Boolean fields
-            bool_fields = ["skip_ssl_verify", "auth_required", "docs_allow_basic_auth", "federation_discovery"]
+            bool_fields = ["skip_ssl_verify", "auth_required", "docs_allow_basic_auth"]
             for field in bool_fields:
                 if fdp.ConsumeBool():
                     kwargs[field] = fdp.ConsumeBool()

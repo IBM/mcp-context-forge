@@ -377,7 +377,6 @@ MCPGATEWAY_A2A_MAX_RETRIES=3
 MCPGATEWAY_A2A_METRICS_ENABLED=true
 
 # Federation & Discovery
-FEDERATION_DISCOVERY=true
 FEDERATION_PEERS=["https://gateway-1.internal", "https://gateway-2.internal"]
 ```
 

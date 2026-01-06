@@ -2152,11 +2152,6 @@
       "title": "Sse Keepalive Interval",
       "type": "integer"
     },
-    "federation_discovery": {
-      "default": false,
-      "title": "Federation Discovery",
-      "type": "boolean"
-    },
     "federation_peers": {
       "items": {
         "format": "uri",

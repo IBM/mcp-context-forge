@@ -660,12 +660,6 @@
               "description": "Enable JSON responses",
               "default": "true"
             },
-            "FEDERATION_DISCOVERY": {
-              "type": "string",
-              "enum": ["true", "false"],
-              "description": "Enable federation discovery",
-              "default": "false"
-            },
             "FEDERATION_PEERS": {
               "type": "string",
               "description": "Federation peers (JSON array)",

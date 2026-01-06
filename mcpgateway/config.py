@@ -20,7 +20,6 @@ Environment variables:
 - AUTH_REQUIRED: Require authentication (default: True)
 - TRANSPORT_TYPE: Transport mechanisms (default: "all")
 - DOCS_ALLOW_BASIC_AUTH: Allow basic auth for docs (default: False)
-- FEDERATION_DISCOVERY: Enable auto-discovery (default: False)
 - FEDERATION_PEERS: List of peer gateway URLs (default: [])
 - RESOURCE_CACHE_SIZE: Max cached resources (default: 1000)
 - RESOURCE_CACHE_TTL: Cache TTL in seconds (default: 3600)
@@ -1090,9 +1089,6 @@ class Settings(BaseSettings):
     sse_retry_timeout: int = 5000  # milliseconds
     sse_keepalive_enabled: bool = True  # Enable SSE keepalive events
     sse_keepalive_interval: int = 30  # seconds between keepalive events
-
-    # Federation
-    federation_discovery: bool = False
 
     # For federation_peers strip out quotes to ensure we're passing valid JSON via env
     federation_peers: List[HttpUrl] = Field(default_factory=list)
