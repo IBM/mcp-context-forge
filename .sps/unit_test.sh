@@ -5,8 +5,14 @@ source $WORKSPACE/$PIPELINE_CONFIG_REPO_PATH/scripts/utilities/python_utils.sh
 install_python3 3.11
 pip3.11 install --upgrade pip pytest pytest-cov sqlalchemy
 
+echo "############# Python Version #################"
+python3 -V
+echo "############# Running Linting ################"
+make lint
+echo "############# Running Tests ##################"
+make test
+echo "############# Running Coverage ###############"
 make coverage
-#pytest --cov=mcpgateway --cov-report=term-missing tests/unit/
 
 
 echo "#############################"
