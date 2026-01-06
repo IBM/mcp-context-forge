@@ -1234,6 +1234,15 @@ class Settings(BaseSettings):
     db_max_retries: int = 3
     db_retry_interval_ms: int = 2000
 
+    # Database Performance Optimization
+    use_postgresdb_percentiles: bool = Field(
+        default=True,
+        description="Use database-native percentile functions (percentile_cont) for performance metrics. "
+        "When enabled, PostgreSQL uses native SQL percentile calculations (5-10x faster). "
+        "When disabled or using SQLite, falls back to Python-based percentile calculations. "
+        "Recommended: true for PostgreSQL, auto-detected for SQLite.",
+    )
+
     # psycopg3-specific: Number of times a query must be executed before it's
     # prepared server-side. Set to 0 to disable, 1 to prepare immediately.
     # Default of 5 balances memory usage with query performance.

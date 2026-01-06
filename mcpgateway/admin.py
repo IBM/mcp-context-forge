@@ -487,11 +487,13 @@ def _get_span_entity_performance(
     """Shared helper to compute performance metrics for spans grouped by a JSON attribute.
 
     Returns a list of dicts with the entity key named by `result_key` and metrics.
-    Uses PostgreSQL `percentile_cont` when available, otherwise falls back to Python aggregation.
+    Uses PostgreSQL `percentile_cont` when available and enabled via USE_POSTGRESDB_PERCENTILES config,
+    otherwise falls back to Python aggregation.
     """
     dialect_name = db.get_bind().dialect.name
 
-    if dialect_name == "postgresql":
+    # Use database-native percentiles only if enabled in config and using PostgreSQL
+    if dialect_name == "postgresql" and settings.use_postgresdb_percentiles:
         names_sql = ",".join(f"'{n}'" for n in span_names)
         stats_sql = text(
             f"""
