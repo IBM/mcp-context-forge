@@ -13,8 +13,8 @@ echo "############# Running Install ################"
 make install-dev
 echo "############# Running Install psycogpg ################"
 . $HOME/.venv/mcpgateway/bin/activate && \
-    python3 -m uv pip install 'pytest' && \
-    python3 -m uv pip install 'pytest_cov' && \
+    python3 -m pip install 'pytest' && \
+    python3 -m pip install 'pytest_cov' && \
     python3 -m uv pip install 'psycopg[c]' && \
     python3 -m uv pip install 'psycopg2'  
 echo "############# Running Install DB ################"
