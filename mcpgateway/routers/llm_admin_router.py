@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import LLMProviderType
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.llm_provider_service import (
@@ -106,7 +107,7 @@ async def get_providers_partial(
             "providers": provider_data,
             "provider_types": LLMProviderType.get_all_types(),
             "pagination": pagination,
-            "root_path": request.scope.get("root_path", ""),
+            "root_path": settings.app_root_path,
         },
     )
 
@@ -203,7 +204,7 @@ async def get_models_partial(
             "providers": provider_options,
             "selected_provider_id": provider_id,
             "pagination": pagination,
-            "root_path": request.scope.get("root_path", ""),
+            "root_path": settings.app_root_path,
         },
     )
 
@@ -251,7 +252,7 @@ async def toggle_provider_html(
                     "health_status": provider.health_status,
                     "model_count": len(provider.models),
                 },
-                "root_path": request.scope.get("root_path", ""),
+                "root_path": settings.app_root_path,
             },
         )
     except LLMProviderNotFoundError as e:
@@ -370,7 +371,7 @@ async def toggle_model_html(
                     "enabled": model.enabled,
                     "deprecated": model.deprecated,
                 },
-                "root_path": request.scope.get("root_path", ""),
+                "root_path": settings.app_root_path,
             },
         )
     except LLMModelNotFoundError as e:
@@ -466,7 +467,7 @@ async def get_api_info_partial(
             "models": model_data,
             "stats": stats,
             "llmchat_enabled": settings.llmchat_enabled,
-            "root_path": request.scope.get("root_path", ""),
+            "root_path": settings.app_root_path,
         },
     )
 

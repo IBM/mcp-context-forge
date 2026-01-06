@@ -200,7 +200,7 @@ async def handle_sso_callback(
         raise HTTPException(status_code=404, detail="SSO authentication is disabled")
 
     # Get root path for URL construction
-    root_path = request.scope.get("root_path", "") if request else ""
+    root_path = settings.app_root_path if request else ""
 
     sso_service = SSOService(db)
 
@@ -226,7 +226,7 @@ async def handle_sso_callback(
     # Third-Party
     from fastapi.responses import RedirectResponse
 
-    redirect_response = RedirectResponse(url=f"{root_path}/admin", status_code=302)
+    redirect_response = RedirectResponse(url=f"{root_path}/admin/", status_code=302)
 
     # Set secure HTTP-only cookie using the same method as email auth
     # First-Party
