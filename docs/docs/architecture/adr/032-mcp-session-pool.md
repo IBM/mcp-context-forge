@@ -4,24 +4,214 @@
 - *Date:* 2025-01-05
 - *Deciders:* Platform Team
 
+## Introduction: Understanding Connection Reuse
+
+### The Connection Overhead Problem
+
+When a client makes an HTTP request, several steps must occur before any application data is exchanged:
+
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│                    Traditional HTTP Request Flow                            │
+├────────────────────────────────────────────────────────────────────────────┤
+│                                                                            │
+│  Client                                                          Server    │
+│    │                                                               │       │
+│    │─────────── TCP SYN ─────────────────────────────────────────►│ ①     │
+│    │◄────────── TCP SYN-ACK ─────────────────────────────────────│       │
+│    │─────────── TCP ACK ─────────────────────────────────────────►│       │
+│    │                                                               │       │
+│    │─────────── TLS ClientHello ─────────────────────────────────►│ ②     │
+│    │◄────────── TLS ServerHello + Certificate ───────────────────│       │
+│    │─────────── TLS Key Exchange ────────────────────────────────►│       │
+│    │◄────────── TLS Finished ────────────────────────────────────│       │
+│    │                                                               │       │
+│    │═══════════ HTTP Request ═══════════════════════════════════►│ ③     │
+│    │◄══════════ HTTP Response ═══════════════════════════════════│       │
+│    │                                                               │       │
+│    │─────────── TCP FIN ─────────────────────────────────────────►│ ④     │
+│    │                                                               │       │
+│                                                                            │
+│  ① TCP Handshake:  ~1-3ms (local) to ~50-150ms (cross-region)             │
+│  ② TLS Handshake:  ~5-15ms (additional round trips + crypto)              │
+│  ③ HTTP Exchange:  ~1-5ms (actual request/response)                       │
+│  ④ Connection Close                                                        │
+│                                                                            │
+│  Total overhead per request: 10-170ms (mostly handshakes!)                │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+### HTTP Persistent Connections (Keep-Alive)
+
+[HTTP/1.1 persistent connections](https://en.wikipedia.org/wiki/HTTP_persistent_connection) solve this by reusing TCP connections:
+
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│                    HTTP Keep-Alive Flow                                     │
+├────────────────────────────────────────────────────────────────────────────┤
+│                                                                            │
+│  Client                                                          Server    │
+│    │                                                               │       │
+│    │─────────── TCP + TLS Handshakes ────────────────────────────►│ Once  │
+│    │                                                               │       │
+│    │═══════════ HTTP Request 1 ═════════════════════════════════►│       │
+│    │◄══════════ HTTP Response 1 ════════════════════════════════│       │
+│    │                                                               │       │
+│    │═══════════ HTTP Request 2 ═════════════════════════════════►│ Reuse │
+│    │◄══════════ HTTP Response 2 ════════════════════════════════│       │
+│    │                                                               │       │
+│    │═══════════ HTTP Request 3 ═════════════════════════════════►│ Reuse │
+│    │◄══════════ HTTP Response 3 ════════════════════════════════│       │
+│    │                                                               │       │
+│                                                                            │
+│  First request:  10-170ms (includes handshakes)                           │
+│  Subsequent:     1-5ms (just HTTP exchange) ← 10-50x faster!              │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+### MCP Protocol: An Additional Layer
+
+The Model Context Protocol (MCP) adds its own session initialization on top of HTTP:
+
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│                    MCP Session Initialization                               │
+├────────────────────────────────────────────────────────────────────────────┤
+│                                                                            │
+│  MCP Client                                                    MCP Server  │
+│    │                                                               │       │
+│    │ ┌─────────────────────────────────────────────────────────┐  │       │
+│    │ │ TCP + TLS (reused via HTTP Keep-Alive in httpx client)  │  │       │
+│    │ └─────────────────────────────────────────────────────────┘  │       │
+│    │                                                               │       │
+│    │═══════════ initialize (JSON-RPC) ═════════════════════════►│ ①     │
+│    │            {                                                  │       │
+│    │              "method": "initialize",                          │       │
+│    │              "params": {                                      │       │
+│    │                "protocolVersion": "2025-03-26",               │       │
+│    │                "capabilities": {...},                         │       │
+│    │                "clientInfo": {"name": "gateway", ...}         │       │
+│    │              }                                                │       │
+│    │            }                                                  │       │
+│    │                                                               │       │
+│    │◄══════════ InitializeResult ══════════════════════════════│ ②     │
+│    │            {                                                  │       │
+│    │              "protocolVersion": "2025-03-26",                 │       │
+│    │              "capabilities": {...},                           │       │
+│    │              "serverInfo": {"name": "my-mcp-server", ...}     │       │
+│    │            }                                                  │       │
+│    │            Header: mcp-session-id: "abc123"                   │       │
+│    │                                                               │       │
+│    │═══════════ initialized (notification) ════════════════════►│ ③     │
+│    │                                                               │       │
+│    │ ┌─────────────────────────────────────────────────────────┐  │       │
+│    │ │ Session established - can now call tools, read resources │  │       │
+│    │ └─────────────────────────────────────────────────────────┘  │       │
+│    │                                                               │       │
+│    │═══════════ tools/call ════════════════════════════════════►│ ④     │
+│    │◄══════════ CallToolResult ════════════════════════════════│       │
+│    │                                                               │       │
+│                                                                            │
+│  ① Client sends initialize with protocol version and capabilities         │
+│  ② Server responds with its capabilities and assigns mcp-session-id       │
+│  ③ Client confirms with initialized notification                          │
+│  ④ Now tool calls, resource reads, etc. can proceed                       │
+│                                                                            │
+│  MCP initialization overhead: ~10-15ms (2-3 round trips)                  │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+The `mcp-session-id` header is critical - it identifies this session for all subsequent requests. The MCP SDK's `ClientSession` class manages this state internally.
+
+### The Full Picture: Why Session Pooling Matters
+
+Without session pooling, every tool call pays the full cost:
+
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│              WITHOUT Session Pooling (Current MCP SDK Default)             │
+├────────────────────────────────────────────────────────────────────────────┤
+│                                                                            │
+│  Tool Call 1:                                                              │
+│    TCP Handshake ───────────────────────────────── ~2ms                   │
+│    TLS Handshake ───────────────────────────────── ~5ms                   │
+│    MCP Initialize ──────────────────────────────── ~10ms                  │
+│    Tool Execution ──────────────────────────────── ~2ms                   │
+│    Close ───────────────────────────────────────── ~1ms                   │
+│                                               Total: ~20ms                 │
+│                                                                            │
+│  Tool Call 2:                                                              │
+│    TCP Handshake ───────────────────────────────── ~2ms                   │
+│    TLS Handshake ───────────────────────────────── ~5ms                   │
+│    MCP Initialize ──────────────────────────────── ~10ms                  │
+│    Tool Execution ──────────────────────────────── ~2ms                   │
+│    Close ───────────────────────────────────────── ~1ms                   │
+│                                               Total: ~20ms                 │
+│                                                                            │
+│  Tool Call 3:  ~20ms                                                       │
+│  Tool Call 4:  ~20ms                                                       │
+│  ...                                                                       │
+│                                                                            │
+│  10 tool calls = 200ms total                                               │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│              WITH Session Pooling (This Implementation)                    │
+├────────────────────────────────────────────────────────────────────────────┤
+│                                                                            │
+│  Tool Call 1 (Pool Miss - creates new session):                           │
+│    TCP Handshake ───────────────────────────────── ~2ms                   │
+│    TLS Handshake ───────────────────────────────── ~5ms                   │
+│    MCP Initialize ──────────────────────────────── ~10ms                  │
+│    Tool Execution ──────────────────────────────── ~2ms                   │
+│    Return to pool (not closed!) ────────────────── ~0ms                   │
+│                                               Total: ~19ms                 │
+│                                                                            │
+│  Tool Call 2 (Pool Hit - reuses session):                                 │
+│    Acquire from pool ───────────────────────────── ~0.1ms                 │
+│    Tool Execution ──────────────────────────────── ~2ms                   │
+│    Return to pool ──────────────────────────────── ~0.1ms                 │
+│                                               Total: ~2ms  ← 10x faster!  │
+│                                                                            │
+│  Tool Call 3:  ~2ms (pool hit)                                            │
+│  Tool Call 4:  ~2ms (pool hit)                                            │
+│  ...                                                                       │
+│                                                                            │
+│  10 tool calls = 19ms + 9×2ms = 37ms total (vs 200ms = 5.4x faster!)      │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Comparison: HTTP Keep-Alive vs MCP Session Pooling
+
+| Layer | What's Reused | Overhead Saved | Who Manages It |
+|-------|---------------|----------------|----------------|
+| HTTP Keep-Alive | TCP + TLS connection | ~5-15ms | `httpx` client |
+| **MCP Session Pool** | TCP + TLS + MCP session | ~15-25ms | This implementation |
+
+HTTP Keep-Alive is already used by the `httpx` client internally. MCP Session Pooling adds **MCP-level session reuse** on top, saving the `initialize` → `initialized` handshake (~10-15ms) on every call.
+
 ## Context
 
-Every MCP tool call previously required establishing a new connection to the MCP server:
+Every MCP tool call previously required establishing a new MCP session:
 
-1. Create HTTP/SSE transport
-2. Establish TCP connection (potentially with TLS handshake)
-3. Initialize MCP session (protocol handshake)
-4. Execute the tool call
-5. Close connection
+1. Create HTTP/SSE transport (httpx may reuse TCP via keep-alive)
+2. Initialize MCP session (protocol handshake with capability negotiation)
+3. Execute the tool call
+4. Close MCP session
 
-This per-request connection overhead added **15-25ms latency** to every tool invocation, which becomes significant under high load or in latency-sensitive applications.
+This per-request session overhead added **15-25ms latency** to every tool invocation, which becomes significant under high load or in latency-sensitive applications.
 
 ### Problem Statement
 
-- **Latency**: Connection establishment dominates tool call time for fast operations
-- **Resource Usage**: Repeated TLS handshakes increase CPU usage
-- **Scalability**: Connection churn limits throughput under load
-- **Connection Limits**: Rapid connect/disconnect can hit OS or load balancer limits
+- **Latency**: MCP session initialization dominates tool call time for fast operations
+- **Resource Usage**: Repeated protocol handshakes increase CPU usage
+- **Scalability**: Session churn limits throughput under load
+- **State Loss**: Each session starts fresh (no caching of tool lists, etc.)
 
 ### Requirements
 
@@ -33,7 +223,49 @@ This per-request connection overhead added **15-25ms latency** to every tool inv
 
 ## Decision
 
-Implement a **connection pool** that maintains persistent MCP sessions keyed by `(URL, identity_hash, transport_type)`.
+Implement a **session pool** that maintains persistent MCP `ClientSession` objects keyed by `(URL, identity_hash, transport_type)`.
+
+### Architecture Overview
+
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│                         MCP Gateway with Session Pool                       │
+├────────────────────────────────────────────────────────────────────────────┤
+│                                                                            │
+│  ┌─────────────┐     ┌─────────────────────────────────────────────────┐  │
+│  │   User A    │────►│                                                 │  │
+│  │  (token X)  │     │                                                 │  │
+│  └─────────────┘     │            MCP Gateway                          │  │
+│                      │                                                 │  │
+│  ┌─────────────┐     │   ┌─────────────────────────────────────────┐   │  │
+│  │   User B    │────►│   │           Session Pool                  │   │  │
+│  │  (token Y)  │     │   │                                         │   │  │
+│  └─────────────┘     │   │  Pool Key = (URL, identity_hash, transport) │
+│                      │   │                                         │   │  │
+│  ┌─────────────┐     │   │  ┌─────────────────────────────────┐   │   │  │
+│  │   User C    │────►│   │  │ Key: (mcp-server:8080, sha(X), http) │   │  │
+│  │  (token X)  │     │   │  │ Sessions: [S1, S2, S3]          │───┼───┼──┼──► MCP Server A
+│  └─────────────┘     │   │  └─────────────────────────────────┘   │   │  │
+│                      │   │                                         │   │  │
+│                      │   │  ┌─────────────────────────────────┐   │   │  │
+│                      │   │  │ Key: (mcp-server:8080, sha(Y), http) │   │  │
+│                      │   │  │ Sessions: [S4, S5]              │───┼───┼──┼──► MCP Server A
+│                      │   │  └─────────────────────────────────┘   │   │  │
+│                      │   │                                         │   │  │
+│                      │   │  ┌─────────────────────────────────┐   │   │  │
+│                      │   │  │ Key: (other-mcp:9000, sha(X), sse)  │   │  │
+│                      │   │  │ Sessions: [S6]                  │───┼───┼──┼──► MCP Server B
+│                      │   │  └─────────────────────────────────┘   │   │  │
+│                      │   │                                         │   │  │
+│                      │   └─────────────────────────────────────────┘   │  │
+│                      │                                                 │  │
+│                      └─────────────────────────────────────────────────┘  │
+│                                                                            │
+│  Note: User A and User C have the same token (X), so they share sessions  │
+│        User B has different token (Y), so gets isolated sessions          │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+```
 
 ### Key Design Decisions
 
@@ -183,6 +415,22 @@ async with pool.session(
 | Pool Hit | 20ms | 1-2ms | **10-20x** |
 | Pool Miss | 20ms | 20ms | Same |
 | Health Check | N/A | +5ms | Occasional |
+
+### Real-World Metrics Example
+
+From production deployment:
+```json
+{
+    "hits": 2977,
+    "misses": 10,
+    "hit_rate": 0.9967,
+    "pool_key_count": 2,
+    "anonymous_identity_count": 2997,
+    "circuit_breaker_trips": 0
+}
+```
+
+**99.67% of requests reused existing sessions** → 10x latency reduction for those calls.
 
 ### Resource Usage
 
@@ -341,13 +589,15 @@ With default configuration, `Authorization` is part of the identity hash. Token 
 
 | Alternative | Why Not |
 |-------------|---------|
-| HTTP/2 multiplexing | MCP SDK doesn't support it; would require upstream changes |
+| HTTP/2 multiplexing only | Saves TCP/TLS but not MCP initialize overhead |
 | Global session pool | Security risk from cross-user session sharing |
 | No pooling | Unacceptable latency for high-throughput use cases |
 | Connection-only pool | MCP session state includes more than just connection |
 
 ## References
 
+- [HTTP Persistent Connection (Wikipedia)](https://en.wikipedia.org/wiki/HTTP_persistent_connection)
+- [MCP Protocol Specification](https://modelcontextprotocol.io/docs/concepts/architecture)
 - `mcpgateway/services/mcp_session_pool.py` - Implementation
 - `mcpgateway/config.py` - Configuration settings
 - `mcpgateway/admin.py` - Metrics endpoint (`/admin/mcp-pool/metrics`)
