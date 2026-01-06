@@ -14805,7 +14805,6 @@ function setupFormValidation() {
                 const validation = validateInputName(this.value, "name");
                 if (!validation.valid) {
                     this.setCustomValidity(validation.error);
-                    this.reportValidity();
                 } else {
                     this.setCustomValidity("");
                     this.value = validation.value;
@@ -14823,7 +14822,6 @@ function setupFormValidation() {
                     const validation = validateUrl(this.value);
                     if (!validation.valid) {
                         this.setCustomValidity(validation.error);
-                        this.reportValidity();
                     } else {
                         this.setCustomValidity("");
                         this.value = validation.value;
@@ -14841,7 +14839,6 @@ function setupFormValidation() {
                 const validation = validateInputName(this.value, "prompt");
                 if (!validation.valid) {
                     this.setCustomValidity(validation.error);
-                    this.reportValidity();
                 } else {
                     this.setCustomValidity("");
                     this.value = validation.value;
