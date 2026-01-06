@@ -14,12 +14,14 @@ make install-dev
 echo "############# Running Install psycogpg ################"
 . $HOME/.venv/mcpgateway/bin/activate && \
     python3 -m uv pip install 'psycopg[c]' && \
-    python3 -m uv pip install 'psycopg2'  
+    python3 -m uv pip install 'psycopg2' && \
+    python3 -m uv pip install 'openpyxl' && \
+    python3 -m uv pip install 'copier'   
 echo "############# Running Install DB ################"
 make install-db
 #echo "############# Running Linting ################"
 #make lint
-#echo "############# Running Tests ##################"
+echo "############# Running Tests ##################"
 make test
 echo "############# Running Coverage ###############"
 set +e
