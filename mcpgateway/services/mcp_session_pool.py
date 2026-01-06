@@ -251,6 +251,7 @@ class MCPSessionPool:
         self._circuit_breaker_trips = 0
         self._pool_keys_evicted = 0
         self._sessions_reaped = 0  # Sessions closed during background eviction
+        self._anonymous_identity_count = 0  # Count of requests with no identity headers
 
         # Lifecycle
         self._closed = False
@@ -292,6 +293,8 @@ class MCPSessionPool:
             Identity hash string, or "anonymous" if no identity headers present.
         """
         if not headers:
+            self._anonymous_identity_count += 1
+            logger.debug("Session pool identity collapsed to 'anonymous' (no headers provided). " "Sessions will be shared. Ensure this is intentional for stateless MCP servers.")
             return "anonymous"
 
         # Try custom identity extractor first (for rotating tokens like JWTs)
@@ -312,6 +315,11 @@ class MCPSessionPool:
                 identity_parts.append(f"{header}:{headers_lower[header]}")
 
         if not identity_parts:
+            self._anonymous_identity_count += 1
+            logger.debug(
+                "Session pool identity collapsed to 'anonymous' (no identity headers found). " "Expected headers: %s. Sessions will be shared.",
+                list(self._identity_headers),
+            )
             return "anonymous"
 
         # Create stable hash (full SHA-256 for collision resistance)

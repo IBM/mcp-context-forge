@@ -473,8 +473,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             circuit_breaker_reset_seconds=settings.mcp_session_pool_circuit_breaker_reset,
             identity_headers=frozenset(settings.mcp_session_pool_identity_headers),
             idle_pool_eviction_seconds=settings.mcp_session_pool_idle_eviction,
-            # Use gateway health_check_timeout for transport timeout consistency
-            default_transport_timeout_seconds=float(settings.health_check_timeout),
+            # Use dedicated transport timeout (default 30s to match MCP SDK default).
+            # This is separate from health_check_timeout to allow long-running tool calls.
+            default_transport_timeout_seconds=settings.mcp_session_pool_transport_timeout,
         )
         logger.info("MCP session pool initialized")
 

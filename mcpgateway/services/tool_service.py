@@ -2549,9 +2549,11 @@ class ToolService:
                         # Get correlation ID for distributed tracing
                         correlation_id = get_correlation_id()
 
-                        # Add correlation ID to headers
-                        if correlation_id and headers:
-                            headers["X-Correlation-ID"] = correlation_id
+                        # NOTE: X-Correlation-ID is NOT added to headers for pooled sessions.
+                        # MCP SDK pins headers at transport creation, so adding per-request headers
+                        # would cause the first request's correlation ID to be reused for all
+                        # subsequent requests on the same pooled session. Correlation IDs are
+                        # still logged locally for tracing within the gateway.
 
                         # Log MCP call start (using local variables)
                         mcp_start_time = time.time()
@@ -2576,6 +2578,7 @@ class ToolService:
                                     pass
 
                             if use_pool and pool is not None:
+                                # Pooled path: do NOT add per-request headers (they would be pinned)
                                 async with pool.session(
                                     url=server_url,
                                     headers=headers,
@@ -2584,6 +2587,9 @@ class ToolService:
                                 ) as pooled:
                                     tool_call_result = await pooled.session.call_tool(tool_name_original, arguments)
                             else:
+                                # Non-pooled path: safe to add per-request headers
+                                if correlation_id and headers:
+                                    headers["X-Correlation-ID"] = correlation_id
                                 # Fallback to per-call sessions when pool disabled or not initialized
                                 async with sse_client(url=server_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as streams:
                                     async with ClientSession(*streams) as session:
@@ -2638,9 +2644,11 @@ class ToolService:
                         # Get correlation ID for distributed tracing
                         correlation_id = get_correlation_id()
 
-                        # Add correlation ID to headers
-                        if correlation_id and headers:
-                            headers["X-Correlation-ID"] = correlation_id
+                        # NOTE: X-Correlation-ID is NOT added to headers for pooled sessions.
+                        # MCP SDK pins headers at transport creation, so adding per-request headers
+                        # would cause the first request's correlation ID to be reused for all
+                        # subsequent requests on the same pooled session. Correlation IDs are
+                        # still logged locally for tracing within the gateway.
 
                         # Log MCP call start (using local variables)
                         mcp_start_time = time.time()
@@ -2665,6 +2673,7 @@ class ToolService:
                                     pass
 
                             if use_pool and pool is not None:
+                                # Pooled path: do NOT add per-request headers (they would be pinned)
                                 async with pool.session(
                                     url=server_url,
                                     headers=headers,
@@ -2673,6 +2682,9 @@ class ToolService:
                                 ) as pooled:
                                     tool_call_result = await pooled.session.call_tool(tool_name_original, arguments)
                             else:
+                                # Non-pooled path: safe to add per-request headers
+                                if correlation_id and headers:
+                                    headers["X-Correlation-ID"] = correlation_id
                                 # Fallback to per-call sessions when pool disabled or not initialized
                                 async with streamablehttp_client(url=server_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):
                                     async with ClientSession(read_stream, write_stream) as session:

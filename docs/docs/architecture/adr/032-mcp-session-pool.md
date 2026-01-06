@@ -96,19 +96,19 @@ Failed endpoints are temporarily blocked:
 
 #### 6. Timeout Configuration
 
-Timeouts are **automatically aligned** with gateway health check settings for consistency:
+The pool uses **separate timeouts** for different operations:
 
 | Setting | Default | Purpose |
 |---------|---------|---------|
 | `health_check_interval` | 60s | Gateway health check frequency |
 | `mcp_session_pool_health_check_interval` | 60s | Session staleness threshold |
-| `health_check_timeout` | 5s | Per-request timeout (used for pool transport timeout) |
+| `mcp_session_pool_transport_timeout` | 30s | Transport timeout for all HTTP operations |
 
-**Auto-alignment behavior:**
+**Configuration behavior:**
 - Pool health check interval uses `min(health_check_interval, mcp_session_pool_health_check_interval)`
-- Pool transport timeout uses `health_check_timeout` directly (single source of truth)
+- Pool transport timeout uses `mcp_session_pool_transport_timeout` (default 30s to match MCP SDK)
 
-This ensures pool timeouts never exceed gateway timeouts, preventing health check anomalies.
+The transport timeout applies to **all** HTTP operations (connect, read, write) on pooled sessions. If your tools require longer execution times, increase this value accordingly.
 
 #### 7. Optional Explicit Health Verification
 
@@ -236,8 +236,9 @@ MCP_SESSION_POOL_TTL=300.0
 # Auto-aligned with min(HEALTH_CHECK_INTERVAL, MCP_SESSION_POOL_HEALTH_CHECK_INTERVAL)
 MCP_SESSION_POOL_HEALTH_CHECK_INTERVAL=60.0
 
-# Transport timeout uses HEALTH_CHECK_TIMEOUT directly (no separate setting)
-# HEALTH_CHECK_TIMEOUT=5
+# Transport timeout for all HTTP operations (connect, read, write) - default: 30s
+# Increase for deployments with long-running tool calls
+MCP_SESSION_POOL_TRANSPORT_TIMEOUT=30.0
 
 # Timeout waiting for session slot - default: 30s
 MCP_SESSION_POOL_ACQUIRE_TIMEOUT=30.0
@@ -277,6 +278,64 @@ Security: MCP sessions may contain user-specific state (authentication context, 
 The MCP protocol establishes auth during `initialize()`. Changing headers mid-session would require protocol renegotiation, defeating the purpose of pooling.
 
 For rotating tokens, use `identity_extractor` to extract stable identity (e.g., user ID from JWT claims), ensuring the same user always gets the same pool.
+
+## Known Limitations
+
+### 1. Request-Scoped Headers Are Pinned
+
+The MCP SDK pins headers at transport creation time. Per-request headers (like `X-Correlation-ID`) passed to pooled sessions become "sticky" and are reused for all subsequent requests on that session.
+
+**Impact**: Distributed tracing may attribute multiple requests to the same correlation ID if they share a pooled session.
+
+**Mitigation**: The gateway strips `X-Correlation-ID` from headers before pooling. If you need per-request headers downstream, use non-pooled sessions or contribute MCP SDK support for per-request headers.
+
+### 2. identity_extractor Requires Code Changes
+
+The `identity_extractor` callback is supported in pool code but cannot be enabled via environment variables. Operators who need custom identity extraction (e.g., extracting user ID from JWT claims) must modify the initialization code in `main.py`.
+
+### 3. Circuit Breaker Is URL-Scoped
+
+The circuit breaker tracks failures per URL, not per identity. If one tenant causes repeated session creation failures, the circuit opens for all tenants accessing that URL.
+
+**Scope**: Only session creation failures (connection refused, SSL errors) trip the circuit. Tool call failures do not affect the circuit breaker.
+
+### 4. TLS Configuration Not in Pool Key
+
+Pool keys do not include TLS/CA context. If the same URL is accessed with different CA bundles (unusual deployment pattern), the first session's TLS configuration may be reused.
+
+## Security Considerations
+
+### Session Isolation Model
+
+Sessions are isolated by a composite key: `(URL, identity_hash, transport_type)`. The identity hash is derived from authentication headers (`Authorization`, `X-Tenant-ID`, `X-User-ID`, `X-API-Key`, `Cookie`).
+
+**Key security properties:**
+- Different users with different credentials get different pool keys → different sessions
+- Different MCP server URLs always get different sessions
+- Identity is validated at the gateway level; upstream MCP servers validate only `mcp-session-id`
+
+### Anonymous Pooling Risk
+
+When no identity headers are present, identity collapses to `"anonymous"`, causing all such requests to share sessions. This is acceptable **only if**:
+
+1. The gateway requires authentication (default), preventing truly anonymous requests
+2. Upstream MCP servers are stateless and don't maintain per-session context
+
+If MCP servers maintain per-session state, anonymous pooling can leak data between users.
+
+**Recommended configuration**: Ensure `AUTH_REQUIRED=true` and identity headers are present via passthrough or gateway authentication.
+
+### Shared Credentials Scenario
+
+With shared service credentials (OAuth Client Credentials, static API keys), all users share the same `Authorization` header and therefore the same session. This is intentional for machine-to-machine auth where the MCP server has no per-user concept.
+
+**Risk**: Only if the upstream MCP server maintains per-user state. For truly stateless servers, this is safe and provides maximum connection reuse.
+
+### Token Rotation Handling
+
+With default configuration, `Authorization` is part of the identity hash. Token rotation produces a new pool key and therefore a new session. Stale tokens are not reused.
+
+**Exception**: If `identity_extractor` is enabled (requires code changes) or `Authorization` is removed from identity headers, rotating tokens may reuse sessions with stale credentials until TTL expiration.
 
 ## Alternatives Considered
 

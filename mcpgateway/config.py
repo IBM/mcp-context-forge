@@ -1229,6 +1229,10 @@ class Settings(BaseSettings):
     mcp_session_pool_circuit_breaker_threshold: int = 5  # Failures before circuit opens
     mcp_session_pool_circuit_breaker_reset: float = 60.0  # Seconds before circuit resets
     mcp_session_pool_idle_eviction: float = 600.0  # Evict idle pool keys after this time
+    # Transport timeout for pooled sessions (default 30s to match MCP SDK default).
+    # This timeout applies to all HTTP operations (connect, read, write) on pooled sessions.
+    # Use a higher value for deployments with long-running tool calls.
+    mcp_session_pool_transport_timeout: float = 30.0
     # Force explicit RPC (list_tools) on gateway health checks even when session is fresh.
     # Off by default: pool's internal staleness check (idle > health_check_interval) handles this.
     # Enable for stricter health verification at the cost of ~5ms latency per check.
