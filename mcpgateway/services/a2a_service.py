@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, EmailTeam, fresh_db_session
+from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, EmailTeam, fresh_db_session, get_for_update
 from mcpgateway.schemas import A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
@@ -254,12 +254,12 @@ class A2AAgentService:
                 logger.info(f"agent_data.name: {agent_data.name}")
                 logger.info(f"agent_data.slug: {agent_data.slug}")
                 # Check for existing public a2a agent with the same slug
-                existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "public")).scalar_one_or_none()
+                existing_agent = get_for_update(db, DbA2AAgent, where=and_(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "public"))
                 if existing_agent:
                     raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
             elif visibility.lower() == "team" and team_id:
                 # Check for existing team a2a agent with the same slug
-                existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == team_id)).scalar_one_or_none()
+                existing_agent = get_for_update(db, DbA2AAgent, where=and_(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == team_id))
                 if existing_agent:
                     raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
 
@@ -817,8 +817,8 @@ class A2AAgentService:
             IntegrityError: If a database integrity error occurs.
         """
         try:
-            query = select(DbA2AAgent).where(DbA2AAgent.id == agent_id)
-            agent = db.execute(query).scalar_one_or_none()
+            # Acquire row lock for update to avoid lost-update on `version` and other fields
+            agent = get_for_update(db, DbA2AAgent, agent_id)
 
             if not agent:
                 raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
@@ -839,12 +839,12 @@ class A2AAgentService:
                 # Check for existing server with the same slug within the same team or public scope
                 if visibility.lower() == "public":
                     # Check for existing public a2a agent with the same slug
-                    existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == new_slug, DbA2AAgent.visibility == "public")).scalar_one_or_none()
+                    existing_agent = get_for_update(db, DbA2AAgent, where=and_(DbA2AAgent.slug == new_slug, DbA2AAgent.visibility == "public"))
                     if existing_agent:
                         raise A2AAgentNameConflictError(name=new_slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
                 elif visibility.lower() == "team" and team_id:
                     # Check for existing team a2a agent with the same slug
-                    existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == new_slug, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == team_id)).scalar_one_or_none()
+                    existing_agent = get_for_update(db, DbA2AAgent, where=and_(DbA2AAgent.slug == new_slug, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == team_id))
                     if existing_agent:
                         raise A2AAgentNameConflictError(name=new_slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
                 # Update the slug when name changes
@@ -1094,9 +1094,20 @@ class A2AAgentService:
             A2AAgentError: If the agent is disabled or invocation fails.
         """
         # ═══════════════════════════════════════════════════════════════════════════
-        # PHASE 1: Fetch all required data before HTTP call
+        # PHASE 1: Acquire a short row lock to read `enabled` + `auth_value`,
+        # then release the lock before performing the external HTTP call.
+        # This avoids TOCTOU for the critical checks while not holding DB
+        # connections during the potentially slow HTTP request.
         # ═══════════════════════════════════════════════════════════════════════════
-        agent = await self.get_agent_by_name(db, agent_name)
+
+        # Lookup the agent id, then lock the row by id using get_for_update
+        agent_row = db.execute(select(DbA2AAgent.id).where(DbA2AAgent.name == agent_name)).scalar_one_or_none()
+        if not agent_row:
+            raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
+
+        agent = get_for_update(db, DbA2AAgent, agent_row)
+        if not agent:
+            raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
 
         if not agent.enabled:
             raise A2AAgentError(f"A2A Agent '{agent_name}' is disabled")
@@ -1249,8 +1260,9 @@ class A2AAgentService:
             # Update last interaction timestamp (quick separate write)
             try:
                 with fresh_db_session() as ts_db:
-                    db_agent = ts_db.execute(select(DbA2AAgent).where(DbA2AAgent.id == agent_id)).scalar_one_or_none()
-                    if db_agent:
+                    # Reacquire short lock and re-check enabled before writing
+                    db_agent = get_for_update(ts_db, DbA2AAgent, agent_id)
+                    if db_agent and getattr(db_agent, "enabled", False):
                         db_agent.last_interaction = end_time
                         ts_db.commit()
             except Exception as ts_error:

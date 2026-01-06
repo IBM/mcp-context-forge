@@ -5294,13 +5294,14 @@ def get_db() -> Generator[Session, Any, None]:
     finally:
         db.close()
 
-def get_for_update(db: Session, model, id, skip_locked: bool = True, options: Optional[List] = None):
+def get_for_update(db: Session, model, id=None, where: Optional[Any] = None, skip_locked: bool = True, options: Optional[List] = None):
     """Get entity with row lock for update operations.
 
     Args:
         db: SQLAlchemy Session
         model: ORM model class
-        id: Primary key value
+        id: Primary key value (optional if `where` provided)
+        where: Optional SQLAlchemy WHERE clause to locate rows for conflict detection
         skip_locked: Pass-through to FOR UPDATE(skip_locked=...)
         options: Optional list of loader options (e.g., selectinload(...))
 
@@ -5320,14 +5321,21 @@ def get_for_update(db: Session, model, id, skip_locked: bool = True, options: Op
     except Exception:
         dialect = ""
 
-    # Build base select statement
-    stmt = select(model).where(model.id == id)
+    # Build base select statement. Prefer `where` when provided, otherwise use primary key `id`.
+    if where is not None:
+        stmt = select(model).where(where)
+    elif id is not None:
+        stmt = select(model).where(model.id == id)
+    else:
+        return None
+
     if options:
         stmt = stmt.options(*options)
 
     if dialect != "postgresql":
         # SQLite and others: no FOR UPDATE support
-        if not options:
+        # Use db.get optimization only when querying by primary key without loader options
+        if not options and where is None and id is not None:
             return db.get(model, id)
         return db.execute(stmt).scalar_one_or_none()
 
