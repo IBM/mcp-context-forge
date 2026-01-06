@@ -1138,6 +1138,9 @@ async def admin_list_servers(
         user_email=user_email,
     )
 
+    # End the read-only transaction early to avoid idle-in-transaction under load.
+    db.commit()
+
     # Return standardized paginated response
     return {
         "data": [server.model_dump(by_alias=True) for server in paginated_result["data"]],
@@ -2848,6 +2851,9 @@ async def admin_ui(
     # Template variables and context: include selected_team_id so the template and frontend can read it
     root_path = settings.app_root_path
     max_name_length = settings.validation_max_name_length
+
+    # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
+    db.commit()
 
     response = request.app.state.templates.TemplateResponse(
         request,
@@ -5757,6 +5763,9 @@ async def admin_list_tools(
         user_email=user_email,
     )
 
+    # End the read-only transaction early to avoid idle-in-transaction under load.
+    db.commit()
+
     # Return standardized paginated response
     return {
         "data": [tool.model_dump(by_alias=True) for tool in paginated_result["data"]],
@@ -5889,6 +5898,9 @@ async def admin_tools_partial_html(
 
     # Serialize tools
     data = jsonable_encoder(tools_pydantic)
+
+    # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
+    db.commit()
 
     # If render=controls, return only pagination controls
     if render == "controls":
@@ -6218,6 +6230,9 @@ async def admin_prompts_partial_html(
     data = jsonable_encoder(prompts_pydantic)
     base_url = f"{settings.app_root_path}/admin/prompts/partial"
 
+    # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
+    db.commit()
+
     if render == "controls":
         return request.app.state.templates.TemplateResponse(
             "pagination_controls.html",
@@ -6379,6 +6394,9 @@ async def admin_resources_partial_html(
     resources_pydantic = [resource_service.convert_resource_to_read(r, include_metrics=False) for r in resources_db]
 
     data = jsonable_encoder(resources_pydantic)
+
+    # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
+    db.commit()
 
     if render == "controls":
         return request.app.state.templates.TemplateResponse(
