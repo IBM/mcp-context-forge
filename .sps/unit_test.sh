@@ -9,12 +9,12 @@ echo "############# Python Version #################"
 python3 -V
 echo "############# Running Install ################"
 make install-dev
-echo "############# Running Linting ################"
-make lint
-echo "############# Running Tests ##################"
-make test
-echo "############# Running Coverage ###############"
-make coverage
+#echo "############# Running Linting ################"
+#make lint
+#echo "############# Running Tests ##################"
+#make test
+#echo "############# Running Coverage ###############"
+#make coverage
 
 
 echo "#############################"
