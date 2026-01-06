@@ -15,7 +15,7 @@ Exposes core MCP Gateway services:
 from enum import IntEnum
 import asyncio
 import logging
-from typing import Awaitable
+from typing import Awaitable, Callable
 
 logger = logging.getLogger("mcpgateway.task_scheduler")
 
@@ -123,10 +123,10 @@ task_scheduler = TaskScheduler(max_concurrent=3)
 # The following imports expose service classes at package-level for convenience.
 # They are intentionally placed after the scheduler definition to avoid import
 # cycles at module import time. Silence pylint's import-position complaint.
-from mcpgateway.services.gateway_service import GatewayError, GatewayService  # pylint: disable=wrong-import-position
-from mcpgateway.services.prompt_service import PromptError, PromptService  # pylint: disable=wrong-import-position
-from mcpgateway.services.resource_service import ResourceError, ResourceService  # pylint: disable=wrong-import-position
-from mcpgateway.services.tool_service import ToolError, ToolService  # pylint: disable=wrong-import-position
+from mcpgateway.services.gateway_service import GatewayError, GatewayService  # pylint: disable=wrong-import-position  # noqa: E402
+from mcpgateway.services.prompt_service import PromptError, PromptService  # pylint: disable=wrong-import-position  # noqa: E402
+from mcpgateway.services.resource_service import ResourceError, ResourceService  # pylint: disable=wrong-import-position  # noqa: E402
+from mcpgateway.services.tool_service import ToolError, ToolService  # pylint: disable=wrong-import-position  # noqa: E402
 
 __all__ = [
     "ToolService",

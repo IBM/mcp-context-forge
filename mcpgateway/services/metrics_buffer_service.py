@@ -23,7 +23,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import A2AAgentMetric, fresh_db_session, PromptMetric, ResourceMetric, ServerMetric, ToolMetric
 
 logger = logging.getLogger(__name__)
-from mcpgateway.services import task_scheduler, Priority
+from mcpgateway.services import task_scheduler, Priority  # noqa: E402
 
 
 @dataclass
