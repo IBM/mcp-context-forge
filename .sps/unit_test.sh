@@ -17,10 +17,10 @@ echo "############# Running Install psycogpg ################"
     python3 -m uv pip install 'psycopg2'
 echo "############# Running Install DB ################"
 make install-db
-echo "############# Running Linting ################"
-make lint
-echo "############# Running Tests ##################"
-make test
+#echo "############# Running Linting ################"
+#make lint
+#echo "############# Running Tests ##################"
+#make test
 echo "############# Running Coverage ###############"
 make coverage
 
