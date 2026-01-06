@@ -51,6 +51,7 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import ResourceMetric, ResourceMetricsHourly
 from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
+from mcpgateway.db import get_for_update
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
@@ -2127,7 +2128,8 @@ class ResourceService:
             'resource_read'
         """
         try:
-            resource = db.get(DbResource, resource_id)
+            #resource = db.get(DbResource, resource_id)
+            resource = get_for_update(db, DbResource, resource_id)
             if not resource:
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
@@ -2248,17 +2250,14 @@ class ResourceService:
             >>> asyncio.run(service.subscribe_resource(db, subscription))
         """
         try:
-            # Verify resource exists
-            resource = db.execute(select(DbResource).where(DbResource.uri == subscription.uri).where(DbResource.enabled)).scalar_one_or_none()
+            # Verify resource exists (single query to avoid TOCTOU between active/inactive checks)
+            resource = db.execute(select(DbResource).where(DbResource.uri == subscription.uri)).scalar_one_or_none()
 
             if not resource:
-                # Check if inactive resource exists
-                inactive_resource = db.execute(select(DbResource).where(DbResource.uri == subscription.uri).where(not_(DbResource.enabled))).scalar_one_or_none()
-
-                if inactive_resource:
-                    raise ResourceNotFoundError(f"Resource '{subscription.uri}' exists but is inactive")
-
                 raise ResourceNotFoundError(f"Resource not found: {subscription.uri}")
+
+            if not resource.enabled:
+                raise ResourceNotFoundError(f"Resource '{subscription.uri}' exists but is inactive")
 
             # Create subscription
             db_sub = DbSubscription(resource_id=resource.id, subscriber_id=subscription.subscriber_id)
@@ -2361,7 +2360,8 @@ class ResourceService:
         """
         try:
             logger.info(f"Updating resource: {resource_id}")
-            resource = db.get(DbResource, resource_id)
+            #resource = db.get(DbResource, resource_id)
+            resource = get_for_update(db, DbResource, resource_id)
             if not resource:
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
@@ -2371,7 +2371,7 @@ class ResourceService:
                 team_id = resource_update.team_id or resource.team_id
                 if visibility.lower() == "public":
                     # Check for existing public resources with the same uri
-                    existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource_update.uri, DbResource.visibility == "public")).scalar_one_or_none()
+                    existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource_update.uri, DbResource.visibility == "public",DbResource.id != resource_id if resource_id else True)).scalar_one_or_none()
                     if existing_resource:
                         raise ResourceURIConflictError(resource_update.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
                 elif visibility.lower() == "team" and team_id:
