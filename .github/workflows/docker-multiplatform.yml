@@ -11,8 +11,8 @@
 #   1. Lint Dockerfile with Hadolint
 #   2. Build platform images in parallel
 #   3. Create multiplatform manifest
-#   4. Security scan (Trivy, Grype, SBOM)
-#   5. Sign with Cosign (keyless OIDC)
+#   4. Security scan (Dockle, Trivy, Grype, SBOM)
+#   5. Sign and attest with Cosign (keyless OIDC)
 #
 # ===============================================================
 
@@ -247,6 +247,26 @@ jobs:
         run: |
           docker pull --platform linux/amd64 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:latest
 
+      - name: Image lint (Dockle)
+        id: dockle
+        continue-on-error: true
+        env:
+          DOCKLE_VERSION: 0.4.15
+        run: |
+          curl -sSL "https://github.com/goodwithtech/dockle/releases/download/v${DOCKLE_VERSION}/dockle_${DOCKLE_VERSION}_Linux-64bit.tar.gz" \
+            | tar -xz -C /usr/local/bin dockle
+          dockle --exit-code 1 --format sarif \
+                 --output dockle-results.sarif \
+                 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:latest
+          echo "DOCKLE_EXIT=$?" >> "$GITHUB_ENV"
+          exit 0
+
+      - name: Upload Dockle SARIF
+        if: always() && hashFiles('dockle-results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: dockle-results.sarif
+
       - name: Generate SBOM (Syft)
         uses: anchore/sbom-action@v0
         with:
@@ -295,6 +315,12 @@ jobs:
         with:
           sarif_file: grype-results.sarif
 
+      - name: Enforce lint & vuln gates
+        if: env.DOCKLE_EXIT != '0'
+        run: |
+          echo "Dockle exit: $DOCKLE_EXIT"
+          exit 1
+
   # ---------------------------------------------------------------
   # Sign images with Cosign (keyless OIDC)
   # ---------------------------------------------------------------
@@ -320,18 +346,28 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Sign multiplatform image
+      - name: Download SBOM
+        uses: actions/download-artifact@v4
+        with:
+          name: sbom
+          path: .
+
+      - name: Sign and attest multiplatform image
         env:
           COSIGN_EXPERIMENTAL: "1"
         run: |
           IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}
           SHA=${{ github.sha }}
 
-          echo "Signing ${IMAGE}:latest"
+          for REF in "${IMAGE}:latest" "${IMAGE}:${SHA}"; do
+            echo "Signing ${REF}"
+            cosign sign --recursive --yes "${REF}"
 
-          cosign sign --recursive --yes "${IMAGE}:latest"
+            echo "Attesting SBOM for ${REF}"
+            cosign attest --yes \
+                         --predicate sbom.spdx.json \
+                         --type spdxjson \
+                         "${REF}"
+          done
 
-          echo "Signing ${IMAGE}:${SHA}"
-          cosign sign --recursive --yes "${IMAGE}:${SHA}"
-
-          echo "Images signed successfully"
+          echo "Images signed and attested successfully"
