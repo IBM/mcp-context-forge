@@ -4,7 +4,7 @@ export PATH=/root/.local/bin:$PATH
 source $WORKSPACE/$PIPELINE_CONFIG_REPO_PATH/scripts/utilities/python_utils.sh
 install_python3 3.11
 pip3.11 install --upgrade pip pytest pytest-cov sqlalchemy
-
+mkdir -p app
 echo "############# Python Version #################"
 python3 -V
 dnf install -y  postgresql-devel
@@ -22,9 +22,8 @@ make install-db
 #echo "############# Running Tests ##################"
 make test
 echo "############# Running Coverage ###############"
-make coverage
-
-ls -alF
+result=$(make coverage)
+coverage xml
 
 
 echo "#############################"
