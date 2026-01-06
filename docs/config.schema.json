@@ -2298,6 +2298,11 @@
       "title": "Mcp Session Pool Idle Eviction",
       "type": "number"
     },
+    "mcp_session_pool_transport_timeout": {
+      "default": 30.0,
+      "title": "Mcp Session Pool Transport Timeout",
+      "type": "number"
+    },
     "mcp_session_pool_explicit_health_rpc": {
       "default": false,
       "title": "Mcp Session Pool Explicit Health Rpc",

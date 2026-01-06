@@ -3,7 +3,7 @@
 
 Verifies:
 - Pool health check interval uses min(health_check_interval, mcp_session_pool_health_check_interval)
-- Pool transport timeout uses float(settings.health_check_timeout)
+- Pool transport timeout uses settings.mcp_session_pool_transport_timeout
 
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
@@ -52,19 +52,19 @@ class TestPoolInitAutoAlignment:
         )
         assert effective_interval == 60
 
-    def test_transport_timeout_uses_health_check_timeout(self):
-        """Pool should use float(settings.health_check_timeout) for transport timeout."""
+    def test_transport_timeout_uses_pool_transport_timeout(self):
+        """Pool should use settings.mcp_session_pool_transport_timeout for transport timeout."""
         mock_settings = MagicMock()
-        mock_settings.health_check_timeout = 5
+        mock_settings.mcp_session_pool_transport_timeout = 30.0
 
-        transport_timeout = float(mock_settings.health_check_timeout)
-        assert transport_timeout == 5.0
+        transport_timeout = mock_settings.mcp_session_pool_transport_timeout
+        assert transport_timeout == 30.0
         assert isinstance(transport_timeout, float)
 
         # Test with different value
-        mock_settings.health_check_timeout = 10
-        transport_timeout = float(mock_settings.health_check_timeout)
-        assert transport_timeout == 10.0
+        mock_settings.mcp_session_pool_transport_timeout = 60.0
+        transport_timeout = mock_settings.mcp_session_pool_transport_timeout
+        assert transport_timeout == 60.0
 
     @pytest.mark.asyncio
     async def test_init_mcp_session_pool_receives_correct_parameters(self):
@@ -160,7 +160,7 @@ class TestPoolInitIntegration:
                 circuit_breaker_reset_seconds=settings.mcp_session_pool_circuit_breaker_reset,
                 identity_headers=frozenset(settings.mcp_session_pool_identity_headers),
                 idle_pool_eviction_seconds=settings.mcp_session_pool_idle_eviction,
-                default_transport_timeout_seconds=float(settings.health_check_timeout),
+                default_transport_timeout_seconds=settings.mcp_session_pool_transport_timeout,
             )
 
             try:
@@ -172,7 +172,7 @@ class TestPoolInitIntegration:
                 )
                 assert pool._health_check_interval == expected_interval
 
-                # 2. Transport timeout should use health_check_timeout
-                assert pool._default_transport_timeout == float(settings.health_check_timeout)
+                # 2. Transport timeout should use mcp_session_pool_transport_timeout
+                assert pool._default_transport_timeout == settings.mcp_session_pool_transport_timeout
             finally:
                 await close_mcp_session_pool()

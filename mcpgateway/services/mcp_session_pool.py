@@ -194,7 +194,7 @@ class MCPSessionPool:
         identity_headers: Optional[frozenset[str]] = None,
         identity_extractor: Optional[IdentityExtractor] = None,
         idle_pool_eviction_seconds: float = 600.0,
-        default_transport_timeout_seconds: float = 5.0,
+        default_transport_timeout_seconds: float = 30.0,
     ):
         """
         Initialize the session pool.
@@ -808,6 +808,7 @@ class MCPSessionPool:
             "circuit_breaker_trips": self._circuit_breaker_trips,
             "pool_keys_evicted": self._pool_keys_evicted,
             "sessions_reaped": self._sessions_reaped,
+            "anonymous_identity_count": self._anonymous_identity_count,
             "hit_rate": self._hits / total_requests if total_requests > 0 else 0.0,
             "pool_key_count": len(self._pools),
             "pools": {
@@ -889,7 +890,7 @@ def init_mcp_session_pool(
     identity_headers: Optional[frozenset[str]] = None,
     identity_extractor: Optional[IdentityExtractor] = None,
     idle_pool_eviction_seconds: float = 600.0,
-    default_transport_timeout_seconds: float = 5.0,
+    default_transport_timeout_seconds: float = 30.0,
 ) -> MCPSessionPool:
     """Initialize the global MCP session pool.
 

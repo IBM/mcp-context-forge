@@ -300,6 +300,7 @@ services:
       - MCP_SESSION_POOL_CIRCUIT_BREAKER_THRESHOLD=5  # Failures before circuit opens
       - MCP_SESSION_POOL_CIRCUIT_BREAKER_RESET=60.0   # Seconds before circuit resets
       - MCP_SESSION_POOL_IDLE_EVICTION=600.0      # Evict idle pool keys after (default: 600)
+      - MCP_SESSION_POOL_TRANSPORT_TIMEOUT=30.0   # Timeout for all HTTP operations (default: 30)
       - MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC=false  # Force RPC on health checks (default: false)
 
       # ═══════════════════════════════════════════════════════════════════════════

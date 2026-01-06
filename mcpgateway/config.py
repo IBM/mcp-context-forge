@@ -1253,7 +1253,7 @@ class Settings(BaseSettings):
     # Health Checks
     # Interval in seconds between health checks (aligned with mcp_session_pool_health_check_interval)
     health_check_interval: int = 60
-    # Timeout in seconds for each health check request (also used for pool transport timeout)
+    # Timeout in seconds for each health check request
     health_check_timeout: int = 5
     # Per-check timeout (seconds) to bound total time of one gateway health check
     # Env: GATEWAY_HEALTH_CHECK_TIMEOUT

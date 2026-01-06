@@ -39,7 +39,7 @@ class TestMCPSessionPoolInit:
         assert pool._circuit_breaker_threshold == 5
         assert pool._circuit_breaker_reset == 60.0
         assert pool._idle_pool_eviction == 600.0
-        assert pool._default_transport_timeout == 5.0  # Default transport timeout
+        assert pool._default_transport_timeout == 30.0  # Default transport timeout (matches MCP SDK)
         assert pool._closed is False
 
     def test_init_custom_values(self):
