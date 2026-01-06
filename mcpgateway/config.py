@@ -1219,14 +1219,41 @@ class Settings(BaseSettings):
     tool_rate_limit: int = 100  # requests per minute
     tool_concurrent_limit: int = 10
 
+    # MCP Session Pool - reduces per-request latency from ~20ms to ~1-2ms
+    # Disabled by default for safety. Enable explicitly in production after testing.
+    mcp_session_pool_enabled: bool = False
+    mcp_session_pool_max_per_key: int = 10  # Max sessions per (URL, identity, transport)
+    mcp_session_pool_ttl: float = 300.0  # Session TTL in seconds
+    mcp_session_pool_health_check_interval: float = 60.0  # Idle time before health check (aligned with health_check_interval)
+    mcp_session_pool_acquire_timeout: float = 30.0  # Timeout waiting for session slot
+    mcp_session_pool_create_timeout: float = 30.0  # Timeout creating new session
+    mcp_session_pool_circuit_breaker_threshold: int = 5  # Failures before circuit opens
+    mcp_session_pool_circuit_breaker_reset: float = 60.0  # Seconds before circuit resets
+    mcp_session_pool_idle_eviction: float = 600.0  # Evict idle pool keys after this time
+    # Transport timeout for pooled sessions (default 30s to match MCP SDK default).
+    # This timeout applies to all HTTP operations (connect, read, write) on pooled sessions.
+    # Use a higher value for deployments with long-running tool calls.
+    mcp_session_pool_transport_timeout: float = 30.0
+    # Force explicit RPC (list_tools) on gateway health checks even when session is fresh.
+    # Off by default: pool's internal staleness check (idle > health_check_interval) handles this.
+    # Enable for stricter health verification at the cost of ~5ms latency per check.
+    mcp_session_pool_explicit_health_rpc: bool = False
+    mcp_session_pool_identity_headers: List[str] = [
+        "authorization",
+        "x-tenant-id",
+        "x-user-id",
+        "x-api-key",
+        "cookie",
+    ]
+
     # Prompts
     prompt_cache_size: int = 100
     max_prompt_size: int = 100 * 1024  # 100KB
     prompt_render_timeout: int = 10  # seconds
 
     # Health Checks
-    # Interval in seconds between health checks
-    health_check_interval: int = 300
+    # Interval in seconds between health checks (aligned with mcp_session_pool_health_check_interval)
+    health_check_interval: int = 60
     # Timeout in seconds for each health check request
     health_check_timeout: int = 5
     # Per-check timeout (seconds) to bound total time of one gateway health check

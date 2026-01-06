@@ -453,6 +453,32 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     await SharedHttpClient.get_instance()
 
+    # Initialize MCP session pool (for session reuse across tool invocations)
+    if settings.mcp_session_pool_enabled:
+        # First-Party
+        from mcpgateway.services.mcp_session_pool import init_mcp_session_pool  # pylint: disable=import-outside-toplevel
+
+        # Auto-align pool health check interval to min of pool and gateway settings
+        effective_health_check_interval = min(
+            settings.health_check_interval,
+            settings.mcp_session_pool_health_check_interval,
+        )
+        init_mcp_session_pool(
+            max_sessions_per_key=settings.mcp_session_pool_max_per_key,
+            session_ttl_seconds=settings.mcp_session_pool_ttl,
+            health_check_interval_seconds=effective_health_check_interval,
+            acquire_timeout_seconds=settings.mcp_session_pool_acquire_timeout,
+            session_create_timeout_seconds=settings.mcp_session_pool_create_timeout,
+            circuit_breaker_threshold=settings.mcp_session_pool_circuit_breaker_threshold,
+            circuit_breaker_reset_seconds=settings.mcp_session_pool_circuit_breaker_reset,
+            identity_headers=frozenset(settings.mcp_session_pool_identity_headers),
+            idle_pool_eviction_seconds=settings.mcp_session_pool_idle_eviction,
+            # Use dedicated transport timeout (default 30s to match MCP SDK default).
+            # This is separate from health_check_timeout to allow long-running tool calls.
+            default_transport_timeout_seconds=settings.mcp_session_pool_transport_timeout,
+        )
+        logger.info("MCP session pool initialized")
+
     # Initialize LLM chat router Redis client
     # First-Party
     from mcpgateway.routers.llmchat_router import init_redis as init_llmchat_redis  # pylint: disable=import-outside-toplevel
@@ -672,6 +698,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             services_to_shutdown.insert(2, metrics_cleanup_service)
 
         await shutdown_services(services_to_shutdown)
+
+        # Shutdown MCP session pool (before shared HTTP client)
+        if settings.mcp_session_pool_enabled:
+            # First-Party
+            from mcpgateway.services.mcp_session_pool import close_mcp_session_pool  # pylint: disable=import-outside-toplevel
+
+            await close_mcp_session_pool()
 
         # Shutdown shared HTTP client (after services, before Redis)
         await SharedHttpClient.shutdown()

@@ -67,6 +67,7 @@ from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.metrics_query_service import get_top_performers_combined
 from mcpgateway.services.oauth_manager import OAuthManager
@@ -2548,9 +2549,11 @@ class ToolService:
                         # Get correlation ID for distributed tracing
                         correlation_id = get_correlation_id()
 
-                        # Add correlation ID to headers
-                        if correlation_id and headers:
-                            headers["X-Correlation-ID"] = correlation_id
+                        # NOTE: X-Correlation-ID is NOT added to headers for pooled sessions.
+                        # MCP SDK pins headers at transport creation, so adding per-request headers
+                        # would cause the first request's correlation ID to be reused for all
+                        # subsequent requests on the same pooled session. Correlation IDs are
+                        # still logged locally for tracing within the gateway.
 
                         # Log MCP call start (using local variables)
                         mcp_start_time = time.time()
@@ -2563,10 +2566,35 @@ class ToolService:
                         )
 
                         try:
-                            async with sse_client(url=server_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as streams:
-                                async with ClientSession(*streams) as session:
-                                    await session.initialize()
-                                    tool_call_result = await session.call_tool(tool_name_original, arguments)
+                            # Use session pool if enabled for 10-20x latency improvement
+                            use_pool = False
+                            pool = None
+                            if settings.mcp_session_pool_enabled:
+                                try:
+                                    pool = get_mcp_session_pool()
+                                    use_pool = True
+                                except RuntimeError:
+                                    # Pool not initialized (e.g., in tests), fall back to per-call sessions
+                                    pass
+
+                            if use_pool and pool is not None:
+                                # Pooled path: do NOT add per-request headers (they would be pinned)
+                                async with pool.session(
+                                    url=server_url,
+                                    headers=headers,
+                                    transport_type=TransportType.SSE,
+                                    httpx_client_factory=get_httpx_client_factory,
+                                ) as pooled:
+                                    tool_call_result = await pooled.session.call_tool(tool_name_original, arguments)
+                            else:
+                                # Non-pooled path: safe to add per-request headers
+                                if correlation_id and headers:
+                                    headers["X-Correlation-ID"] = correlation_id
+                                # Fallback to per-call sessions when pool disabled or not initialized
+                                async with sse_client(url=server_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as streams:
+                                    async with ClientSession(*streams) as session:
+                                        await session.initialize()
+                                        tool_call_result = await session.call_tool(tool_name_original, arguments)
 
                             # Log successful MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
@@ -2616,9 +2644,11 @@ class ToolService:
                         # Get correlation ID for distributed tracing
                         correlation_id = get_correlation_id()
 
-                        # Add correlation ID to headers
-                        if correlation_id and headers:
-                            headers["X-Correlation-ID"] = correlation_id
+                        # NOTE: X-Correlation-ID is NOT added to headers for pooled sessions.
+                        # MCP SDK pins headers at transport creation, so adding per-request headers
+                        # would cause the first request's correlation ID to be reused for all
+                        # subsequent requests on the same pooled session. Correlation IDs are
+                        # still logged locally for tracing within the gateway.
 
                         # Log MCP call start (using local variables)
                         mcp_start_time = time.time()
@@ -2631,10 +2661,35 @@ class ToolService:
                         )
 
                         try:
-                            async with streamablehttp_client(url=server_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):
-                                async with ClientSession(read_stream, write_stream) as session:
-                                    await session.initialize()
-                                    tool_call_result = await session.call_tool(tool_name_original, arguments)
+                            # Use session pool if enabled for 10-20x latency improvement
+                            use_pool = False
+                            pool = None
+                            if settings.mcp_session_pool_enabled:
+                                try:
+                                    pool = get_mcp_session_pool()
+                                    use_pool = True
+                                except RuntimeError:
+                                    # Pool not initialized (e.g., in tests), fall back to per-call sessions
+                                    pass
+
+                            if use_pool and pool is not None:
+                                # Pooled path: do NOT add per-request headers (they would be pinned)
+                                async with pool.session(
+                                    url=server_url,
+                                    headers=headers,
+                                    transport_type=TransportType.STREAMABLE_HTTP,
+                                    httpx_client_factory=get_httpx_client_factory,
+                                ) as pooled:
+                                    tool_call_result = await pooled.session.call_tool(tool_name_original, arguments)
+                            else:
+                                # Non-pooled path: safe to add per-request headers
+                                if correlation_id and headers:
+                                    headers["X-Correlation-ID"] = correlation_id
+                                # Fallback to per-call sessions when pool disabled or not initialized
+                                async with streamablehttp_client(url=server_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):
+                                    async with ClientSession(read_stream, write_stream) as session:
+                                        await session.initialize()
+                                        tool_call_result = await session.call_tool(tool_name_original, arguments)
 
                             # Log successful MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000

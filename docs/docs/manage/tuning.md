@@ -377,7 +377,139 @@ hey -n 10000 -c 200 \
 
 ---
 
-## 6 - Security tips while tuning
+## 6 - MCP Session Pool Tuning
+
+The MCP session pool maintains persistent connections to upstream MCP servers, providing **10-20x latency improvement** for repeated tool calls from the same user.
+
+!!! note "Disabled by Default"
+    Session pooling is disabled by default for safety. Enable it explicitly after testing in your environment:
+    ```bash
+    MCP_SESSION_POOL_ENABLED=true
+    ```
+
+### When to Enable Pooling
+
+| Enable pooling when... | Avoid or tighten isolation when... |
+|------------------------|-----------------------------------|
+| MCP servers are stable and latency matters | MCP servers maintain per-session state |
+| You can tolerate session reuse within user/tenant scope | You rely on request-scoped headers for security/tracing |
+| High-throughput tool invocations | Long-running tools (>30s) need custom timeouts |
+
+### Configuration Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCP_SESSION_POOL_ENABLED` | `false` | Enable/disable session pooling |
+| `MCP_SESSION_POOL_MAX_PER_KEY` | `10` | Max sessions per (URL, identity, transport) |
+| `MCP_SESSION_POOL_TTL` | `300.0` | Session TTL before forced close (seconds) |
+| `MCP_SESSION_POOL_TRANSPORT_TIMEOUT` | `30.0` | Timeout for all HTTP operations (seconds) |
+| `MCP_SESSION_POOL_HEALTH_CHECK_INTERVAL` | `60.0` | Idle time before health check (seconds) |
+| `MCP_SESSION_POOL_ACQUIRE_TIMEOUT` | `30.0` | Timeout waiting for session slot |
+| `MCP_SESSION_POOL_CREATE_TIMEOUT` | `30.0` | Timeout creating new session |
+| `MCP_SESSION_POOL_IDLE_EVICTION` | `600.0` | Evict idle pool keys after (seconds) |
+| `MCP_SESSION_POOL_CIRCUIT_BREAKER_THRESHOLD` | `5` | Consecutive failures before circuit opens |
+| `MCP_SESSION_POOL_CIRCUIT_BREAKER_RESET` | `60.0` | Circuit reset time (seconds) |
+
+### Recommended Production Settings
+
+```bash
+# Baseline settings for authenticated deployments
+MCP_SESSION_POOL_ENABLED=true
+MCP_SESSION_POOL_MAX_PER_KEY=10
+MCP_SESSION_POOL_TTL=300
+MCP_SESSION_POOL_TRANSPORT_TIMEOUT=30
+
+# Ensure identity headers are present
+ENABLE_HEADER_PASSTHROUGH=true
+DEFAULT_PASSTHROUGH_HEADERS="Authorization,X-Tenant-Id,X-User-Id,X-API-Key"
+```
+
+### Session Isolation
+
+Sessions are isolated by a composite key: `(URL, identity_hash, transport_type)`. Identity is derived from authentication headers (`Authorization`, `X-Tenant-ID`, `X-User-ID`, `X-API-Key`, `Cookie`).
+
+**Key security considerations:**
+
+1. **Anonymous Pooling**: When no identity headers are present, identity collapses to `"anonymous"` and all such requests share sessions. This is safe **only if** upstream MCP servers are stateless.
+
+2. **Shared Credentials**: With OAuth Client Credentials or static API keys, all users share the same identity hash. Only safe if the upstream MCP server has no per-user state.
+
+3. **Header Passthrough**: If gateway auth is disabled (`AUTH_REQUIRED=false`), enable header passthrough to preserve user identity:
+   ```bash
+   ENABLE_HEADER_PASSTHROUGH=true
+   DEFAULT_PASSTHROUGH_HEADERS="Authorization,X-Tenant-Id,X-User-Id"
+   ```
+
+### Long-Running Tools
+
+The transport timeout applies to **all** HTTP operations, not just connection establishment. For tools that take longer than 30 seconds:
+
+```bash
+# Increase for long-running tools
+MCP_SESSION_POOL_TRANSPORT_TIMEOUT=120
+```
+
+### Health Check Timeout Trade-offs
+
+Pool staleness checks use `MCP_SESSION_POOL_TRANSPORT_TIMEOUT` (default 30s) for session acquisition. When `MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC=true`, the explicit RPC call uses `HEALTH_CHECK_TIMEOUT` (default 5s).
+
+**Behavior summary:**
+
+| Check Type | Timeout Used | Default |
+|------------|--------------|---------|
+| Pool staleness check (idle > interval) | `MCP_SESSION_POOL_TRANSPORT_TIMEOUT` | 30s |
+| Explicit health RPC (when enabled) | `HEALTH_CHECK_TIMEOUT` | 5s |
+| Session creation | `MCP_SESSION_POOL_CREATE_TIMEOUT` | 30s |
+
+**Trade-off**: The 30s transport timeout allows long-running tools to complete but means unhealthy sessions may take longer to detect. If you need faster failure detection:
+
+```bash
+# Stricter health checks (5s timeout for explicit RPC)
+MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC=true
+HEALTH_CHECK_TIMEOUT=5
+
+# Or reduce transport timeout (affects all operations)
+MCP_SESSION_POOL_TRANSPORT_TIMEOUT=10
+```
+
+### Circuit Breaker Behavior
+
+The circuit breaker is keyed by URL only (not per-identity). After `MCP_SESSION_POOL_CIRCUIT_BREAKER_THRESHOLD` consecutive **session creation failures** for a URL, the circuit opens and all requests fail fast for `MCP_SESSION_POOL_CIRCUIT_BREAKER_RESET` seconds.
+
+**Note**: Only session creation failures (connection refused, SSL errors) trip the circuit. Tool call failures do not affect the circuit breaker.
+
+### Monitoring
+
+Monitor pool performance via the metrics endpoint:
+
+```bash
+curl -u admin:changeme http://localhost:4444/admin/mcp-pool/metrics
+```
+
+Response includes:
+- `total_sessions_created` / `total_sessions_reused`: Pool hit ratio
+- `pool_hits` / `pool_misses`: Cache effectiveness
+- `active_sessions`: Current utilization
+- `circuit_breaker_states`: Per-URL circuit status
+
+### Operational Checklist
+
+Before enabling pooling in production:
+
+- [ ] Confirm upstream MCP servers are stateless for any shared/anonymous access
+- [ ] Verify identity headers are present and stable
+- [ ] Validate tool call durations vs `MCP_SESSION_POOL_TRANSPORT_TIMEOUT`
+- [ ] Ensure tracing headers are not relied upon in pooled sessions
+
+After enabling pooling:
+
+- [ ] Monitor pool metrics at `/admin/mcp-pool/metrics`
+- [ ] Watch for increased tool timeouts or unexpected auth failures
+- [ ] Verify correlation IDs in upstream logs (note: per-request headers are stripped from pooled sessions)
+
+---
+
+## 7 - Security tips while tuning
 
 * Never commit real `JWT_SECRET_KEY`, DB passwords, or tokens-use `.env.example` as a template.
 * Prefer platform secrets (K8s Secrets, Code Engine secrets) over baking creds into the image.

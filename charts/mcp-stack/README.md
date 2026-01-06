@@ -75,7 +75,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.GUNICORN_TIMEOUT | string | `"600"` |  |
 | mcpContextForge.config.GUNICORN_WORKERS | string | `"auto"` |  |
 | mcpContextForge.config.HEALTH_CHECK_INTERVAL | string | `"60"` |  |
-| mcpContextForge.config.HEALTH_CHECK_TIMEOUT | string | `"10"` |  |
+| mcpContextForge.config.HEALTH_CHECK_TIMEOUT | string | `"5"` |  |
 | mcpContextForge.config.HOST | string | `"0.0.0.0"` |  |
 | mcpContextForge.config.HSTS_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.HSTS_INCLUDE_SUBDOMAINS | string | `"true"` |  |
