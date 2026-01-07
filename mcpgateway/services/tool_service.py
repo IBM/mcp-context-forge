@@ -54,7 +54,6 @@ from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_span
-from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.plugins.framework import (
     GlobalContext,
     HttpHeaderPayload,
@@ -75,6 +74,7 @@ from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, Transport
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.metrics_query_service import get_top_performers_combined
 from mcpgateway.services.oauth_manager import OAuthManager
+from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService

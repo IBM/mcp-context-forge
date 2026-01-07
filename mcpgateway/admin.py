@@ -475,6 +475,7 @@ def get_user_email(user: Union[str, dict, object] = None) -> str:
 
     return str(user)
 
+
 def _get_span_entity_performance(
     db: Session,
     cutoff_time: datetime,
@@ -486,9 +487,21 @@ def _get_span_entity_performance(
 ) -> List[dict]:
     """Shared helper to compute performance metrics for spans grouped by a JSON attribute.
 
-    Returns a list of dicts with the entity key named by `result_key` and metrics.
-    Uses PostgreSQL `percentile_cont` when available and enabled via USE_POSTGRESDB_PERCENTILES config,
-    otherwise falls back to Python aggregation.
+    Args:
+        db: Database session.
+        cutoff_time: Timezone-aware datetime for filtering spans.
+        cutoff_time_naive: Naive datetime for SQLite compatibility.
+        span_names: List of span names to filter (e.g., ["tool.invoke"]).
+        json_key: JSON attribute key to group by (e.g., "tool.name").
+        result_key: Key name for the entity in returned dicts (e.g., "tool_name").
+        limit: Maximum number of results to return (default: 20).
+
+    Returns:
+        List[dict]: List of dicts with entity key and performance metrics (count, avg, min, max, percentiles).
+
+    Note:
+        Uses PostgreSQL `percentile_cont` when available and enabled via USE_POSTGRESDB_PERCENTILES config,
+        otherwise falls back to Python aggregation.
     """
     dialect_name = db.get_bind().dialect.name
 
@@ -592,6 +605,7 @@ def _get_span_entity_performance(
 
     items.sort(key=lambda x: x.get("avg_duration_ms", 0), reverse=True)
     return items
+
 
 def get_user_id(user: Union[str, dict[str, Any], object] = None) -> str:
     """Return the user ID from a JWT payload, user object, or string.
