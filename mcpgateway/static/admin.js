@@ -6795,12 +6795,20 @@ function showTab(tabName) {
                     const serversList = safeGetElement("servers-table");
                     console.log("🔍 servers-table element:", serversList);
                     if (serversList) {
-                        const hasLoadingMessage = serversList.innerHTML.includes("Loading servers...");
-                        console.log("🔍 Has loading message:", hasLoadingMessage);
+                        const hasLoadingMessage =
+                            serversList.innerHTML.includes(
+                                "Loading servers...",
+                            );
+                        console.log(
+                            "🔍 Has loading message:",
+                            hasLoadingMessage,
+                        );
                         if (hasLoadingMessage) {
                             // Trigger HTMX load manually if HTMX is available
                             if (window.htmx && window.htmx.trigger) {
-                                console.log("🔍 Triggering HTMX load for servers");
+                                console.log(
+                                    "🔍 Triggering HTMX load for servers",
+                                );
                                 window.htmx.trigger(serversList, "load");
                             }
                         }
@@ -6813,12 +6821,18 @@ function showTab(tabName) {
                     const agentsList = safeGetElement("agents-table");
                     console.log("🔍 agents-table element:", agentsList);
                     if (agentsList) {
-                        const hasLoadingMessage = agentsList.innerHTML.includes("Loading agents...");
-                        console.log("🔍 Has loading message:", hasLoadingMessage);
+                        const hasLoadingMessage =
+                            agentsList.innerHTML.includes("Loading agents...");
+                        console.log(
+                            "🔍 Has loading message:",
+                            hasLoadingMessage,
+                        );
                         if (hasLoadingMessage) {
                             // Trigger HTMX load manually if HTMX is available
                             if (window.htmx && window.htmx.trigger) {
-                                console.log("🔍 Triggering HTMX load for agents");
+                                console.log(
+                                    "🔍 Triggering HTMX load for agents",
+                                );
                                 window.htmx.trigger(agentsList, "load");
                             }
                         }
@@ -6894,7 +6908,10 @@ function showTab(tabName) {
                     // Load gateways list if not already loaded
                     const gatewaysList = safeGetElement("gateways-table");
                     if (gatewaysList) {
-                        const hasLoadingMessage = gatewaysList.innerHTML.includes("Loading gateways...");
+                        const hasLoadingMessage =
+                            gatewaysList.innerHTML.includes(
+                                "Loading gateways...",
+                            );
                         if (hasLoadingMessage) {
                             // Trigger HTMX load manually if HTMX is available
                             if (window.htmx && window.htmx.trigger) {
@@ -6911,16 +6928,17 @@ function showTab(tabName) {
                                             html,
                                             "text/html",
                                         );
-                                        const newTbody = doc.querySelector(
-                                            "#gateways-section tbody",
-                                        );
-                                        if (newTbody) {
-                                            gatewaysTbody.innerHTML =
-                                                newTbody.innerHTML;
+                                        const newTable =
+                                            doc.querySelector(
+                                                "#gateways-table",
+                                            );
+                                        if (newTable) {
+                                            gatewaysList.innerHTML =
+                                                newTable.innerHTML;
                                             // Process any HTMX attributes in the new content
                                             if (window.htmx) {
                                                 window.htmx.process(
-                                                    gatewaysTbody,
+                                                    gatewaysList,
                                                 );
                                             }
                                         }
