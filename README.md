@@ -84,9 +84,10 @@ ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that 
     * 10.16. [Health Checks](#health-checks)
     * 10.17. [Database](#database)
     * 10.18. [Cache Backend](#cache-backend)
-    * 10.19. [Metrics Aggregation Cache](#metrics-aggregation-cache)
-    * 10.20. [Plugin Configuration](#plugin-configuration)
-    * 10.21. [Development](#development)
+    * 10.19. [Tool Lookup Cache](#tool-lookup-cache)
+    * 10.20. [Metrics Aggregation Cache](#metrics-aggregation-cache)
+    * 10.21. [Plugin Configuration](#plugin-configuration)
+    * 10.22. [Development](#development)
 * 11. [Running](#running)
     * 11.1. [Makefile](#makefile)
     * 11.2. [Script helper](#script-helper)
@@ -2146,6 +2147,18 @@ Automatic management of metrics data to prevent unbounded table growth and maint
 | `REDIS_LEADER_HEARTBEAT_INTERVAL` | Heartbeat (secs)   | `5`      | int > 0                  |
 
 > 🧠 `none` disables caching entirely. Use `memory` for dev, `database` for local persistence, or `redis` for distributed caching across multiple instances.
+
+### Tool Lookup Cache
+
+| Setting                               | Description                                                     | Default | Options          |
+| ------------------------------------- | --------------------------------------------------------------- | ------- | ---------------- |
+| `TOOL_LOOKUP_CACHE_ENABLED`           | Enable tool lookup cache for `invoke_tool` hot path             | `true`  | bool             |
+| `TOOL_LOOKUP_CACHE_TTL_SECONDS`       | Cache TTL (seconds) for tool lookup entries                     | `60`    | int (5-600)      |
+| `TOOL_LOOKUP_CACHE_NEGATIVE_TTL_SECONDS` | Cache TTL (seconds) for missing/inactive/offline entries     | `10`    | int (1-60)       |
+| `TOOL_LOOKUP_CACHE_L1_MAXSIZE`        | Max entries in in-memory L1 cache                               | `10000` | int (100-1000000) |
+| `TOOL_LOOKUP_CACHE_L2_ENABLED`        | Enable Redis-backed L2 cache when `CACHE_TYPE=redis`            | `true`  | bool             |
+
+> ⚡ **Performance**: Eliminates a DB lookup per tool invocation. L1 is always available; L2 activates when `CACHE_TYPE=redis` and `TOOL_LOOKUP_CACHE_L2_ENABLED=true`.
 
 ### Metrics Aggregation Cache
 

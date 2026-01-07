@@ -22,6 +22,7 @@ import os
 import re
 import ssl
 import time
+from types import SimpleNamespace
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
 from urllib.parse import parse_qs, urlparse
 import uuid
@@ -47,7 +48,9 @@ from mcpgateway.common.models import Tool as PydanticTool
 from mcpgateway.common.models import ToolResult
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import EmailTeam, fresh_db_session, server_tool_association
+from mcpgateway.db import EmailTeam, fresh_db_session
+from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_span
@@ -87,6 +90,7 @@ from mcpgateway.utils.validate_signature import validate_signature
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
+_TOOL_LOOKUP_CACHE = None
 
 
 def _get_registry_cache():
@@ -102,6 +106,21 @@ def _get_registry_cache():
 
         _REGISTRY_CACHE = registry_cache
     return _REGISTRY_CACHE
+
+
+def _get_tool_lookup_cache():
+    """Get tool lookup cache singleton lazily.
+
+    Returns:
+        ToolLookupCache instance.
+    """
+    global _TOOL_LOOKUP_CACHE  # pylint: disable=global-statement
+    if _TOOL_LOOKUP_CACHE is None:
+        # First-Party
+        from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
+
+        _TOOL_LOOKUP_CACHE = tool_lookup_cache
+    return _TOOL_LOOKUP_CACHE
 
 
 # Initialize logging service first
@@ -463,6 +482,100 @@ class ToolService:
         team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
         db.commit()  # Release transaction to avoid idle-in-transaction
         return team.name if team else None
+
+    def _build_tool_cache_payload(self, tool: DbTool, gateway: Optional[DbGateway]) -> Dict[str, Any]:
+        """Build cache payload for tool lookup by name.
+
+        Args:
+            tool: Tool ORM instance.
+            gateway: Optional gateway ORM instance.
+
+        Returns:
+            Cache payload dict for tool lookup.
+        """
+        tool_payload = {
+            "id": str(tool.id),
+            "name": tool.name,
+            "original_name": tool.original_name,
+            "url": tool.url,
+            "description": tool.description,
+            "integration_type": tool.integration_type,
+            "request_type": tool.request_type,
+            "headers": tool.headers or {},
+            "input_schema": tool.input_schema or {"type": "object", "properties": {}},
+            "output_schema": tool.output_schema,
+            "annotations": tool.annotations or {},
+            "auth_type": tool.auth_type,
+            "auth_value": tool.auth_value,
+            "oauth_config": getattr(tool, "oauth_config", None),
+            "jsonpath_filter": tool.jsonpath_filter,
+            "custom_name": tool.custom_name,
+            "custom_name_slug": tool.custom_name_slug,
+            "display_name": tool.display_name,
+            "gateway_id": str(tool.gateway_id) if tool.gateway_id else None,
+            "enabled": bool(tool.enabled),
+            "reachable": bool(tool.reachable),
+            "tags": tool.tags or [],
+            "team_id": tool.team_id,
+            "owner_email": tool.owner_email,
+            "visibility": tool.visibility,
+        }
+
+        gateway_payload = None
+        if gateway:
+            gateway_payload = {
+                "id": str(gateway.id),
+                "name": gateway.name,
+                "url": gateway.url,
+                "description": gateway.description,
+                "slug": gateway.slug,
+                "transport": gateway.transport,
+                "capabilities": gateway.capabilities or {},
+                "passthrough_headers": gateway.passthrough_headers or [],
+                "auth_type": gateway.auth_type,
+                "auth_value": gateway.auth_value,
+                "oauth_config": getattr(gateway, "oauth_config", None),
+                "ca_certificate": getattr(gateway, "ca_certificate", None),
+                "ca_certificate_sig": getattr(gateway, "ca_certificate_sig", None),
+                "enabled": bool(gateway.enabled),
+                "reachable": bool(gateway.reachable),
+                "team_id": gateway.team_id,
+                "owner_email": gateway.owner_email,
+                "visibility": gateway.visibility,
+                "tags": gateway.tags or [],
+            }
+
+        return {"status": "active", "tool": tool_payload, "gateway": gateway_payload}
+
+    def _pydantic_tool_from_payload(self, tool_payload: Dict[str, Any]) -> Optional[PydanticTool]:
+        """Build Pydantic tool metadata from cache payload.
+
+        Args:
+            tool_payload: Cached tool payload dict.
+
+        Returns:
+            Pydantic tool metadata or None if validation fails.
+        """
+        try:
+            return PydanticTool.model_validate(tool_payload)
+        except Exception as exc:
+            logger.debug("Failed to build PydanticTool from cache payload: %s", exc)
+            return None
+
+    def _pydantic_gateway_from_payload(self, gateway_payload: Dict[str, Any]) -> Optional[PydanticGateway]:
+        """Build Pydantic gateway metadata from cache payload.
+
+        Args:
+            gateway_payload: Cached gateway payload dict.
+
+        Returns:
+            Pydantic gateway metadata or None if validation fails.
+        """
+        try:
+            return PydanticGateway.model_validate(gateway_payload)
+        except Exception as exc:
+            logger.debug("Failed to build PydanticGateway from cache payload: %s", exc)
+            return None
 
     def convert_tool_to_read(self, tool: DbTool, include_metrics: bool = False, include_auth: bool = True) -> ToolRead:
         """Converts a DbTool instance into a ToolRead model, including aggregated metrics and
@@ -958,6 +1071,8 @@ class ToolService:
             # Invalidate cache after successful creation
             cache = _get_registry_cache()
             await cache.invalidate_tools()
+            tool_lookup_cache = _get_tool_lookup_cache()
+            await tool_lookup_cache.invalidate(db_tool.name, gateway_id=str(db_tool.gateway_id) if db_tool.gateway_id else None)
             # Also invalidate tags cache since tool tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
@@ -1114,6 +1229,25 @@ class ToolService:
                     stats[key].extend(value)
                 else:
                     stats[key] += value
+
+            if chunk_stats["created"] or chunk_stats["updated"]:
+                cache = _get_registry_cache()
+                await cache.invalidate_tools()
+                tool_lookup_cache = _get_tool_lookup_cache()
+                tool_name_map: Dict[str, Optional[str]] = {}
+                for tool in chunk:
+                    name = getattr(tool, "name", None)
+                    if not name:
+                        continue
+                    gateway_id = getattr(tool, "gateway_id", None)
+                    tool_name_map[name] = str(gateway_id) if gateway_id else tool_name_map.get(name)
+                for tool_name, gateway_id in tool_name_map.items():
+                    await tool_lookup_cache.invalidate(tool_name, gateway_id=gateway_id)
+                # Also invalidate tags cache since tool tags may have changed
+                # First-Party
+                from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+                await admin_stats_cache.invalidate_tags()
 
         return stats
 
@@ -1960,6 +2094,8 @@ class ToolService:
             # Invalidate cache after successful deletion
             cache = _get_registry_cache()
             await cache.invalidate_tools()
+            tool_lookup_cache = _get_tool_lookup_cache()
+            await tool_lookup_cache.invalidate(tool_name, gateway_id=str(tool.gateway_id) if tool.gateway_id else None)
             # Also invalidate tags cache since tool tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
@@ -2074,6 +2210,8 @@ class ToolService:
                 if not skip_cache_invalidation:
                     cache = _get_registry_cache()
                     await cache.invalidate_tools()
+                    tool_lookup_cache = _get_tool_lookup_cache()
+                    await tool_lookup_cache.invalidate(tool.name, gateway_id=str(tool.gateway_id) if tool.gateway_id else None)
 
                 if not tool.enabled:
                     # Inactive
@@ -2210,71 +2348,111 @@ class ToolService:
         # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 1: Fetch all required data with eager loading to minimize DB queries
         # ═══════════════════════════════════════════════════════════════════════════
+        tool = None
+        gateway = None
+        tool_payload: Dict[str, Any] = {}
+        gateway_payload: Optional[Dict[str, Any]] = None
 
-        # Eager load tool WITH gateway in single query to prevent lazy load N+1
-        tool = db.execute(select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.name == name).where(DbTool.enabled)).scalar_one_or_none()
-        if not tool:
-            inactive_tool = db.execute(select(DbTool).where(DbTool.name == name).where(not_(DbTool.enabled))).scalar_one_or_none()
-            if inactive_tool:
+        tool_lookup_cache = _get_tool_lookup_cache()
+        cached_payload = await tool_lookup_cache.get(name) if tool_lookup_cache.enabled else None
+        if cached_payload:
+            status = cached_payload.get("status", "active")
+            if status == "missing":
+                raise ToolNotFoundError(f"Tool not found: {name}")
+            if status == "inactive":
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
-            raise ToolNotFoundError(f"Tool not found: {name}")
+            if status == "offline":
+                raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
+            tool_payload = cached_payload.get("tool") or {}
+            gateway_payload = cached_payload.get("gateway")
 
-        # is_reachable = db.execute(select(DbTool.reachable).where(slug_expr == name)).scalar_one_or_none()
-        is_reachable = tool.reachable
+        if not tool_payload:
+            # Eager load tool WITH gateway in single query to prevent lazy load N+1
+            tool = db.execute(select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.name == name).where(DbTool.enabled)).scalar_one_or_none()
+            if not tool:
+                inactive_tool = db.execute(select(DbTool).where(DbTool.name == name).where(not_(DbTool.enabled))).scalar_one_or_none()
+                if inactive_tool:
+                    await tool_lookup_cache.set_negative(name, "inactive")
+                    raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
+                await tool_lookup_cache.set_negative(name, "missing")
+                raise ToolNotFoundError(f"Tool not found: {name}")
 
-        if not is_reachable:
+            if not tool.reachable:
+                await tool_lookup_cache.set_negative(name, "offline")
+                raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
+
+            gateway = tool.gateway
+            cache_payload = self._build_tool_cache_payload(tool, gateway)
+            tool_payload = cache_payload.get("tool") or {}
+            gateway_payload = cache_payload.get("gateway")
+            await tool_lookup_cache.set(name, cache_payload, gateway_id=tool_payload.get("gateway_id"))
+
+        if tool_payload.get("enabled") is False:
+            raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
+        if tool_payload.get("reachable") is False:
             raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
+
         # Check if this is an A2A tool and route to A2A service
-        if tool.integration_type == "A2A" and tool.annotations and "a2a_agent_id" in tool.annotations:
-            return await self._invoke_a2a_tool(db=db, tool=tool, arguments=arguments)
+        tool_annotations = tool_payload.get("annotations") or {}
+        tool_integration_type = tool_payload.get("integration_type")
+        if tool_integration_type == "A2A" and tool_annotations and "a2a_agent_id" in tool_annotations:
+            tool_stub = tool if tool is not None else SimpleNamespace(name=tool_payload.get("name", name), annotations=tool_annotations)
+            return await self._invoke_a2a_tool(db=db, tool=tool_stub, arguments=arguments)
 
         # Get passthrough headers from in-memory cache (Issue #1715)
         # This eliminates 42,000+ redundant DB queries under load
         passthrough_allowed = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
 
         # Access gateway now (already eager-loaded) to prevent later lazy load
-        gateway = tool.gateway
+        if tool is not None:
+            gateway = tool.gateway
 
         # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 2: Extract all needed data to local variables before network I/O
         # This allows us to release the DB session before making HTTP calls
         # ═══════════════════════════════════════════════════════════════════════════
-
-        tool_id = str(tool.id)
-        tool_name_original = tool.original_name
-        tool_name_computed = tool.name
-        tool_url = tool.url
-        tool_integration_type = tool.integration_type
-        tool_request_type = tool.request_type
-        tool_headers = dict(tool.headers) if tool.headers else {}
-        tool_auth_type = tool.auth_type
-        tool_auth_value = tool.auth_value
-        tool_jsonpath_filter = tool.jsonpath_filter
-        tool_output_schema = tool.output_schema
-        tool_oauth_config = getattr(tool, "oauth_config", None)
-        tool_gateway_id = tool.gateway_id
+        tool_id = tool_payload.get("id") or (str(tool.id) if tool else "")
+        tool_name_original = tool_payload.get("original_name") or tool_payload.get("name") or name
+        tool_name_computed = tool_payload.get("name") or name
+        tool_url = tool_payload.get("url")
+        tool_integration_type = tool_payload.get("integration_type")
+        tool_request_type = tool_payload.get("request_type")
+        tool_headers = dict(tool_payload.get("headers") or {})
+        tool_auth_type = tool_payload.get("auth_type")
+        tool_auth_value = tool_payload.get("auth_value")
+        tool_jsonpath_filter = tool_payload.get("jsonpath_filter")
+        tool_output_schema = tool_payload.get("output_schema")
+        tool_oauth_config = tool_payload.get("oauth_config")
+        tool_gateway_id = tool_payload.get("gateway_id")
 
         # Save gateway existence as local boolean BEFORE db.close()
         # to avoid checking ORM object truthiness after session is closed
-        has_gateway = gateway is not None
-        gateway_url = gateway.url if has_gateway else None
-        gateway_name = gateway.name if has_gateway else None
-        gateway_auth_type = gateway.auth_type if has_gateway else None
-        gateway_auth_value = gateway.auth_value if has_gateway else None
-        gateway_oauth_config = gateway.oauth_config if has_gateway else None
-        gateway_ca_cert = gateway.ca_certificate if has_gateway else None
-        gateway_ca_cert_sig = gateway.ca_certificate_sig if has_gateway else None
-        gateway_passthrough = gateway.passthrough_headers if has_gateway else None
-        gateway_id_str = str(gateway.id) if has_gateway else None
+        has_gateway = gateway_payload is not None
+        gateway_url = gateway_payload.get("url") if has_gateway else None
+        gateway_name = gateway_payload.get("name") if has_gateway else None
+        gateway_auth_type = gateway_payload.get("auth_type") if has_gateway else None
+        gateway_auth_value = gateway_payload.get("auth_value") if has_gateway else None
+        gateway_oauth_config = gateway_payload.get("oauth_config") if has_gateway else None
+        gateway_ca_cert = gateway_payload.get("ca_certificate") if has_gateway else None
+        gateway_ca_cert_sig = gateway_payload.get("ca_certificate_sig") if has_gateway else None
+        gateway_passthrough = gateway_payload.get("passthrough_headers") if has_gateway else None
+        gateway_id_str = gateway_payload.get("id") if has_gateway else None
 
         # Create Pydantic models for plugins BEFORE HTTP calls (use ORM objects while still valid)
         # This prevents lazy loading during HTTP calls
         tool_metadata: Optional[PydanticTool] = None
         gateway_metadata: Optional[PydanticGateway] = None
         if self._plugin_manager:
-            tool_metadata = PydanticTool.model_validate(tool)
-            if has_gateway:
-                gateway_metadata = PydanticGateway.model_validate(gateway)
+            if tool is not None:
+                tool_metadata = PydanticTool.model_validate(tool)
+                if has_gateway and gateway is not None:
+                    gateway_metadata = PydanticGateway.model_validate(gateway)
+            else:
+                tool_metadata = self._pydantic_tool_from_payload(tool_payload)
+                if has_gateway and gateway_payload:
+                    gateway_metadata = self._pydantic_gateway_from_payload(gateway_payload)
+
+        tool_for_validation = tool if tool is not None else SimpleNamespace(output_schema=tool_output_schema, name=tool_name_computed)
 
         # ═══════════════════════════════════════════════════════════════════════════
         # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls
@@ -2423,7 +2601,7 @@ class ToolService:
                         success = True
                         # If output schema is present, validate and attach structured content
                         if tool_output_schema:
-                            valid = self._extract_and_validate_structured_content(tool, tool_result, candidate=filtered_response)
+                            valid = self._extract_and_validate_structured_content(tool_for_validation, tool_result, candidate=filtered_response)
                             success = bool(valid)
                 elif tool_integration_type == "MCP":
                     transport = tool_request_type.lower() if tool_request_type else "sse"
@@ -2916,6 +3094,9 @@ class ToolService:
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
 
+            old_tool_name = tool.name
+            old_gateway_id = tool.gateway_id
+
             # Check ownership if user_email provided
             if user_email:
                 # First-Party
@@ -3056,6 +3237,9 @@ class ToolService:
             # Invalidate cache after successful update
             cache = _get_registry_cache()
             await cache.invalidate_tools()
+            tool_lookup_cache = _get_tool_lookup_cache()
+            await tool_lookup_cache.invalidate(old_tool_name, gateway_id=str(old_gateway_id) if old_gateway_id else None)
+            await tool_lookup_cache.invalidate(tool.name, gateway_id=str(tool.gateway_id) if tool.gateway_id else None)
             # Also invalidate tags cache since tool tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel

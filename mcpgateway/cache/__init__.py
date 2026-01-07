@@ -32,6 +32,8 @@ __all__ = [
     "metrics_cache",
     "RegistryCache",
     "registry_cache",
+    "ToolLookupCache",
+    "tool_lookup_cache",
     "ResourceCache",
     "SessionRegistry",
 ]
@@ -47,6 +49,7 @@ if TYPE_CHECKING:
     from mcpgateway.cache.global_config_cache import GlobalConfigCache, global_config_cache
     from mcpgateway.cache.metrics_cache import MetricsCache, metrics_cache
     from mcpgateway.cache.registry_cache import RegistryCache, registry_cache
+    from mcpgateway.cache.tool_lookup_cache import ToolLookupCache, tool_lookup_cache
     from mcpgateway.cache.resource_cache import ResourceCache
     from mcpgateway.cache.session_registry import SessionRegistry
 
@@ -92,6 +95,10 @@ def __getattr__(name: str):
         from mcpgateway.cache.registry_cache import RegistryCache, registry_cache
 
         return registry_cache if name == "registry_cache" else RegistryCache
+    if name in ("ToolLookupCache", "tool_lookup_cache"):
+        from mcpgateway.cache.tool_lookup_cache import ToolLookupCache, tool_lookup_cache
+
+        return tool_lookup_cache if name == "tool_lookup_cache" else ToolLookupCache
     if name == "ResourceCache":
         from mcpgateway.cache.resource_cache import ResourceCache
 

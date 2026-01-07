@@ -107,6 +107,7 @@ from mcpgateway.validation.tags import validate_tags_field
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
+_TOOL_LOOKUP_CACHE = None
 
 
 def _get_registry_cache():
@@ -122,6 +123,21 @@ def _get_registry_cache():
 
         _REGISTRY_CACHE = registry_cache
     return _REGISTRY_CACHE
+
+
+def _get_tool_lookup_cache():
+    """Get tool lookup cache singleton lazily.
+
+    Returns:
+        ToolLookupCache instance.
+    """
+    global _TOOL_LOOKUP_CACHE  # pylint: disable=global-statement
+    if _TOOL_LOOKUP_CACHE is None:
+        # First-Party
+        from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
+
+        _TOOL_LOOKUP_CACHE = tool_lookup_cache
+    return _TOOL_LOOKUP_CACHE
 
 
 # Initialize logging service first
@@ -1224,6 +1240,18 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 # Still commit to save any updates to existing items
                 db.commit()
 
+            cache = _get_registry_cache()
+            await cache.invalidate_tools()
+            await cache.invalidate_resources()
+            await cache.invalidate_prompts()
+            tool_lookup_cache = _get_tool_lookup_cache()
+            await tool_lookup_cache.invalidate_gateway(str(gateway.id))
+            # Also invalidate tags cache since tool/resource tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
+
             return {"capabilities": capabilities, "tools": tools, "resources": resources, "prompts": prompts}
 
         except GatewayConnectionError as gce:
@@ -1860,6 +1888,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 # Invalidate cache after successful update
                 cache = _get_registry_cache()
                 await cache.invalidate_gateways()
+                tool_lookup_cache = _get_tool_lookup_cache()
+                await tool_lookup_cache.invalidate_gateway(str(gateway.id))
                 # Also invalidate tags cache since gateway tags may have changed
                 # First-Party
                 from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
@@ -2265,6 +2295,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 # Invalidate tools cache once after all tool status changes
                 if tools:
                     await cache.invalidate_tools()
+                    tool_lookup_cache = _get_tool_lookup_cache()
+                    await tool_lookup_cache.invalidate_gateway(str(gateway.id))
 
                 logger.info(f"Gateway status: {gateway.name} - {'enabled' if activate else 'disabled'} and {'accessible' if reachable else 'inaccessible'}")
 
@@ -2460,6 +2492,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Invalidate cache after successful deletion
             cache = _get_registry_cache()
             await cache.invalidate_gateways()
+            tool_lookup_cache = _get_tool_lookup_cache()
+            await tool_lookup_cache.invalidate_gateway(str(gateway_id))
             # Also invalidate tags cache since gateway tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
