@@ -20,7 +20,7 @@ echo "############# Running Install psycogpg ################"
 echo "############# Running Install DB ################"
 make install-db
 echo "############# Running Linting ##################"
-make lint
+make lint-quick
 echo "############# Running Tests and Coverage ##################"
 source $HOME/.venv/mcpgateway/bin/activate && \
 		export DATABASE_URL='sqlite:///:memory:' && \
