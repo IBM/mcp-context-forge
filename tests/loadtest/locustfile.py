@@ -27,6 +27,9 @@ Environment Variables (also reads from .env file):
     JWT_ALGORITHM: JWT algorithm (default: HS256)
     JWT_AUDIENCE: JWT audience claim
     JWT_ISSUER: JWT issuer claim
+    LOADTEST_BENCHMARK_START_PORT: First port for benchmark servers (default: 9000)
+    LOADTEST_BENCHMARK_SERVER_COUNT: Number of benchmark servers available (default: 1000)
+    LOADTEST_BENCHMARK_HOST: Host where benchmark servers run (default: localhost)
 
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
@@ -226,106 +229,17 @@ def _fetch_json(url: str, headers: dict[str, str], timeout: float = 30.0) -> tup
         return (0, None)
 
 
-def _register_benchmark_gateways(host: str, headers: dict[str, str]) -> int:
-    """Register all benchmark servers as gateways.
-
-    Args:
-        host: Base URL of the MCP Gateway
-        headers: Authentication headers
-
-    Returns:
-        Number of gateways successfully registered
-    """
-    import json  # pylint: disable=import-outside-toplevel
-    import urllib.error  # pylint: disable=import-outside-toplevel
-    import urllib.request  # pylint: disable=import-outside-toplevel
-
-    logger.info(f"Registering {BENCHMARK_SERVER_COUNT} benchmark gateways...")
-    logger.info(f"Port range: {BENCHMARK_START_PORT} to {BENCHMARK_START_PORT + BENCHMARK_SERVER_COUNT - 1}")
-    logger.info(f"Host: {BENCHMARK_HOST}")
-
-    registered = 0
-    skipped = 0
-    failed = 0
-
-    # First, get existing gateways
-    existing_gateways = set()
-    try:
-        status, data = _fetch_json(f"{host}/gateways", headers)
-        if status == 200 and data:
-            gateways = data if isinstance(data, list) else data.get("gateways", data.get("items", []))
-            existing_gateways = {gw.get("name") for gw in gateways if gw.get("name")}
-            logger.info(f"Found {len(existing_gateways)} existing gateways")
-    except Exception as e:
-        logger.warning(f"Failed to fetch existing gateways: {e}")
-
-    # Register each benchmark server
-    for port_offset in range(BENCHMARK_SERVER_COUNT):
-        port = BENCHMARK_START_PORT + port_offset
-        gateway_name = f"loadtest-benchmark-{port}"
-
-        # Skip if already exists
-        if gateway_name in existing_gateways:
-            skipped += 1
-            continue
-
-        # Register gateway
-        gateway_data = {
-            "name": gateway_name,
-            "url": f"http://{BENCHMARK_HOST}:{port}/",
-            "transport": "STREAMABLEHTTP",
-        }
-
-        try:
-            req = urllib.request.Request(
-                f"{host}/gateways",
-                data=json.dumps(gateway_data).encode("utf-8"),
-                headers={**headers, "Content-Type": "application/json"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                if resp.status in (200, 201):
-                    registered += 1
-                    if (registered + skipped) % 100 == 0:
-                        logger.info(f"Progress: {registered + skipped}/{BENCHMARK_SERVER_COUNT} gateways processed")
-        except urllib.error.HTTPError as e:
-            if e.code == 409:
-                # Conflict - already exists
-                skipped += 1
-            else:
-                failed += 1
-                if failed <= 5:  # Only log first few failures
-                    logger.warning(f"Failed to register {gateway_name}: HTTP {e.code}")
-        except Exception as e:
-            failed += 1
-            if failed <= 5:
-                logger.warning(f"Exception registering {gateway_name}: {e}")
-
-        # Small delay to avoid overwhelming the server
-        time.sleep(0.01)
-
-    logger.info(f"Gateway registration complete: {registered} registered, {skipped} skipped, {failed} failed")
-    return registered
-
-
 @events.test_start.add_listener
 def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
-    """Fetch existing entity IDs for use in tests and register benchmark gateways.
+    """Fetch existing entity IDs for use in tests.
 
     Uses urllib.request instead of httpx to avoid Python 3.13/gevent threading conflicts.
     httpx creates threads that trigger '_DummyThread' object has no attribute '_handle' errors.
     """
-    logger.info("Test starting - registering benchmark gateways and fetching entity IDs...")
+    logger.info("Test starting - fetching entity IDs...")
 
     host = environment.host or "http://localhost:8080"
     headers = _get_auth_headers()
-
-    # Register benchmark gateways first
-    try:
-        _register_benchmark_gateways(host, headers)
-    except Exception as e:
-        logger.error(f"Failed to register benchmark gateways: {e}")
-        logger.info("Tests will continue without benchmark gateways")
 
     try:
         # Fetch tools
@@ -1508,6 +1422,44 @@ class WriteAPIUser(BaseUser):
                 catch_response=True,
             ) as response:
                 self._validate_json_response(response, allowed_codes=[200, 404])
+
+    @task(3)
+    @tag("api", "write", "gateways", "benchmark")
+    def register_benchmark_gateway(self):
+        """Register a benchmark server as a gateway.
+
+        Uses LOADTEST_BENCHMARK_START_PORT and LOADTEST_BENCHMARK_SERVER_COUNT
+        environment variables to determine which benchmark servers are available.
+
+        This tests the gateway registration workflow by adding gateways one by one
+        during the load test, rather than pre-registering them.
+        """
+        # Pick a random port from the configured benchmark server range
+        port_offset = random.randint(0, BENCHMARK_SERVER_COUNT - 1)
+        port = BENCHMARK_START_PORT + port_offset
+        gateway_name = f"loadtest-benchmark-{port}"
+
+        # Register the gateway
+        gateway_data = {
+            "name": gateway_name,
+            "url": f"http://{BENCHMARK_HOST}:{port}/",
+            "transport": "STREAMABLEHTTP",
+        }
+
+        with self.client.post(
+            "/gateways",
+            json=gateway_data,
+            headers={**self.auth_headers, "Content-Type": "application/json"},
+            name="/gateways [register benchmark]",
+            catch_response=True,
+        ) as response:
+            if response.status_code in (200, 201):
+                response.success()
+            elif response.status_code == 409:
+                # Conflict - already exists, this is fine
+                response.success()
+            else:
+                response.failure(f"Failed to register gateway: {response.status_code}")
 
 
 class StressTestUser(BaseUser):
