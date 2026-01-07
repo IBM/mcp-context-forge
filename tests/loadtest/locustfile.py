@@ -146,80 +146,6 @@ JWT_USERNAME = _get_config("JWT_USERNAME", _get_config("PLATFORM_ADMIN_EMAIL", "
 JWT_TOKEN_EXPIRY_HOURS = int(_get_config("LOADTEST_JWT_EXPIRY_HOURS", "8760"))
 
 
-# Benchmark server configuration for gateway registration testing
-def _detect_benchmark_servers() -> tuple[bool, int]:
-    """Auto-detect if benchmark server is running and how many servers it has.
-
-    Returns:
-        Tuple of (is_running, server_count)
-    """
-    # Method 1: Query running Docker container for exposed ports
-    try:
-        import subprocess  # pylint: disable=import-outside-toplevel
-
-        # Get port mappings from running benchmark_server container
-        result = subprocess.run(
-            ["docker", "port", "benchmark_server"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False
-        )
-
-        if result.returncode == 0 and result.stdout:
-            # Parse output like "9000/tcp -> 0.0.0.0:9000" to find port range
-            ports = []
-            for line in result.stdout.strip().split("\n"):
-                if "/tcp" in line:
-                    # Extract container port from "9000/tcp -> ..."
-                    container_port = line.split("/tcp")[0].strip()
-                    if container_port.isdigit():
-                        ports.append(int(container_port))
-
-            if ports:
-                count = max(ports) - min(ports) + 1
-                logger.info(f"✅ Benchmark server is running with {count} servers (ports {min(ports)}-{max(ports)})")
-                return (True, count)
-        else:
-            logger.info("❌ Benchmark server container is not running - benchmark gateway registration will be skipped")
-            return (False, 0)
-    except Exception as e:
-        logger.debug(f"Could not query Docker container: {e}")
-
-    # Method 2: Fall back to reading docker-compose.perf.yml (but mark as not running)
-    try:
-        import yaml  # pylint: disable=import-outside-toplevel
-
-        compose_file = Path(__file__).parent.parent.parent / "docker-compose.perf.yml"
-        if compose_file.exists():
-            with open(compose_file) as f:
-                compose = yaml.safe_load(f)
-                benchmark_service = compose.get("services", {}).get("benchmark_server", {})
-                ports = benchmark_service.get("ports", [])
-
-                # Parse port range like "9000-9099:9000-9099"
-                for port_mapping in ports:
-                    if isinstance(port_mapping, str) and "-" in port_mapping:
-                        host_range = port_mapping.split(":")[0]
-                        if "-" in host_range:
-                            start, end = host_range.split("-")
-                            count = int(end) - int(start) + 1
-                            logger.warning(f"⚠️  Found docker-compose.perf.yml with {count} servers, but container not running - benchmark tasks disabled")
-                            return (False, count)
-    except Exception as e:
-        logger.debug(f"Could not read docker-compose.perf.yml: {e}")
-
-    logger.info("ℹ️  No benchmark server configuration found - benchmark gateway registration disabled")
-    return (False, 0)
-
-
-# Detect benchmark server status
-BENCHMARK_SERVER_ENABLED, _detected_count = _detect_benchmark_servers()
-BENCHMARK_START_PORT = int(_get_config("LOADTEST_BENCHMARK_START_PORT", "9000"))
-BENCHMARK_SERVER_COUNT = int(_get_config("LOADTEST_BENCHMARK_SERVER_COUNT", str(_detected_count if BENCHMARK_SERVER_ENABLED else 10)))
-# Default to benchmark_server for Docker networking, override with localhost for native runs
-BENCHMARK_HOST = _get_config("LOADTEST_BENCHMARK_HOST", "benchmark_server")
-
 # Log loaded configuration (masking sensitive values)
 logger.info("Configuration loaded:")
 logger.info(f"  BASIC_AUTH_USER: {BASIC_AUTH_USER}")
@@ -228,9 +154,6 @@ logger.info(f"  JWT_AUDIENCE: {JWT_AUDIENCE}")
 logger.info(f"  JWT_ISSUER: {JWT_ISSUER}")
 logger.info(f"  JWT_SECRET_KEY: {'*' * len(JWT_SECRET_KEY) if JWT_SECRET_KEY else '(not set)'}")
 logger.info(f"  JWT_TOKEN_EXPIRY_HOURS: {JWT_TOKEN_EXPIRY_HOURS}")
-logger.info(f"  BENCHMARK_START_PORT: {BENCHMARK_START_PORT}")
-logger.info(f"  BENCHMARK_SERVER_COUNT: {BENCHMARK_SERVER_COUNT}")
-logger.info(f"  BENCHMARK_HOST: {BENCHMARK_HOST}")
 
 # Test data pools (populated during test setup)
 # IDs for REST API calls (GET /tools/{id}, etc.)
@@ -244,9 +167,6 @@ PROMPT_IDS: list[str] = []
 TOOL_NAMES: list[str] = []
 RESOURCE_URIS: list[str] = []
 PROMPT_NAMES: list[str] = []
-
-# Pre-registered benchmark gateway ports (to avoid duplicate registration attempts)
-PREREGISTERED_BENCHMARK_PORTS: set[int] = set()
 
 # Tools that require arguments and are tested with proper arguments in specific user classes
 # These should be excluded from generic rpc_call_tool to avoid false failures
@@ -372,7 +292,8 @@ def _preregister_gateways(host: str, headers: dict[str, str]) -> None:
     Registers:
     1. Fast-time MCP server (Go - time tools)
     2. Fast-test MCP server (Rust - echo/stats tools)
-    3. Subset of benchmark servers (15%, if enabled)
+
+    Note: Benchmark servers are registered at compose startup via register_benchmark service.
 
     Args:
         host: Gateway host URL
@@ -436,51 +357,6 @@ def _preregister_gateways(host: str, headers: dict[str, str]) -> None:
     except Exception as e:
         logger.warning(f"Failed to register fast-test gateway: {e}")
 
-    # 3. Pre-register subset of benchmark gateways (if enabled)
-    if not BENCHMARK_SERVER_ENABLED:
-        logger.info("Benchmark server not enabled - skipping benchmark gateway pre-registration")
-        return
-
-    # Pre-register 15% of benchmark servers (min 1, max 50)
-    percentage = 0.15
-    count_to_register = max(1, min(50, int(BENCHMARK_SERVER_COUNT * percentage)))
-
-    logger.info(f"Pre-registering {count_to_register} benchmark gateways ({percentage*100:.0f}% of {BENCHMARK_SERVER_COUNT} available)...")
-
-    registered = 0
-    for i in range(count_to_register):
-        port = BENCHMARK_START_PORT + i
-        gateway_name = f"loadtest-benchmark-{port}"
-
-        gateway_data = {
-            "name": gateway_name,
-            "url": f"http://{BENCHMARK_HOST}:{port}/mcp",
-            "transport": "STREAMABLEHTTP",
-        }
-
-        try:
-            req = urllib.request.Request(
-                f"{host}/gateways",
-                data=json.dumps(gateway_data).encode(),
-                headers={**headers, "Content-Type": "application/json"},
-                method="POST"
-            )
-
-            with urllib.request.urlopen(req, timeout=30) as response:
-                if response.status in (200, 201, 409):  # 409 = already exists
-                    registered += 1
-                    PREREGISTERED_BENCHMARK_PORTS.add(port)
-        except urllib.error.HTTPError as e:
-            if e.code == 409:  # Conflict - already exists
-                registered += 1
-                PREREGISTERED_BENCHMARK_PORTS.add(port)
-            else:
-                logger.warning(f"Failed to register gateway {gateway_name}: HTTP {e.code}")
-        except Exception as e:
-            logger.warning(f"Failed to register gateway {gateway_name}: {e}")
-
-    logger.info(f"✅ Pre-registered {registered}/{count_to_register} benchmark gateways (ports: {min(PREREGISTERED_BENCHMARK_PORTS) if PREREGISTERED_BENCHMARK_PORTS else 'N/A'}-{max(PREREGISTERED_BENCHMARK_PORTS) if PREREGISTERED_BENCHMARK_PORTS else 'N/A'})")
-
 
 @events.test_stop.add_listener
 def on_test_stop(environment, **kwargs):  # pylint: disable=unused-argument
@@ -494,7 +370,6 @@ def on_test_stop(environment, **kwargs):  # pylint: disable=unused-argument
     TOOL_NAMES.clear()
     RESOURCE_URIS.clear()
     PROMPT_NAMES.clear()
-    PREREGISTERED_BENCHMARK_PORTS.clear()
 
     # Print detailed summary statistics
     _print_summary_stats(environment)
@@ -1615,57 +1490,6 @@ class WriteAPIUser(BaseUser):
                 catch_response=True,
             ) as response:
                 self._validate_json_response(response, allowed_codes=[200, 404])
-
-    @task(3)
-    @tag("api", "write", "gateways", "benchmark")
-    def register_benchmark_gateway(self):
-        """Register a benchmark server as a gateway.
-
-        Uses LOADTEST_BENCHMARK_START_PORT and LOADTEST_BENCHMARK_SERVER_COUNT
-        environment variables to determine which benchmark servers are available.
-
-        Tracks registered ports to avoid duplicate registration attempts.
-        """
-        # Skip if benchmark server container is not running
-        if not BENCHMARK_SERVER_ENABLED:
-            return
-
-        # Find an unregistered port
-        # Pick a random unregistered port from available range
-        available_ports = set(range(BENCHMARK_START_PORT, BENCHMARK_START_PORT + BENCHMARK_SERVER_COUNT))
-        unregistered_ports = available_ports - PREREGISTERED_BENCHMARK_PORTS
-
-        if not unregistered_ports:
-            # All ports already registered
-            return
-
-        port = random.choice(list(unregistered_ports))
-        gateway_name = f"loadtest-benchmark-{port}"
-
-        # Register the gateway
-        gateway_data = {
-            "name": gateway_name,
-            "url": f"http://{BENCHMARK_HOST}:{port}/mcp",
-            "transport": "STREAMABLEHTTP",
-        }
-
-        with self.client.post(
-            "/gateways",
-            json=gateway_data,
-            headers={**self.auth_headers, "Content-Type": "application/json"},
-            name="/gateways [register benchmark]",
-            catch_response=True,
-        ) as response:
-            if response.status_code in (200, 201):
-                # Successfully registered - track this port
-                PREREGISTERED_BENCHMARK_PORTS.add(port)
-                response.success()
-            elif response.status_code == 409:
-                # Conflict - already exists, track it to avoid future attempts
-                PREREGISTERED_BENCHMARK_PORTS.add(port)
-                response.success()
-            else:
-                response.failure(f"Failed to register gateway: {response.status_code}")
 
 
 class StressTestUser(BaseUser):

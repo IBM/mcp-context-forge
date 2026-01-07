@@ -878,6 +878,41 @@ testing-logs:                              ## Show testing stack logs
 	$(COMPOSE_CMD_MONITOR) --profile testing logs -f --tail=100
 
 # =============================================================================
+# help: 🎯 BENCHMARK STACK (Go benchmark-server)
+# help: benchmark-up           - Start benchmark stack (10 MCP servers + auto-registration)
+# help: benchmark-down         - Stop benchmark stack
+# help: benchmark-status       - Show status of benchmark services
+# help: benchmark-logs         - Show benchmark stack logs
+
+benchmark-up:                              ## Start benchmark stack (10 MCP servers + registration)
+	@echo "🎯 Starting benchmark stack (10 MCP servers on ports 9000-9009)..."
+	$(COMPOSE_CMD_MONITOR) --profile benchmark up -d
+	@echo ""
+	@echo "✅ Benchmark stack started!"
+	@echo ""
+	@echo "   🚀 Benchmark Servers: http://localhost:9000-9009"
+	@echo "      • MCP endpoint:  http://localhost:900X/mcp"
+	@echo "      • Health:        http://localhost:900X/health"
+	@echo "      • Version:       http://localhost:900X/version"
+	@echo ""
+	@echo "   📝 Registered as 'benchmark-9000' through 'benchmark-9009' gateways"
+	@echo ""
+	@echo "   Run load test: make load-test-ui"
+
+benchmark-down:                            ## Stop benchmark stack
+	@echo "🎯 Stopping benchmark stack..."
+	$(COMPOSE_CMD_MONITOR) --profile benchmark down
+	@echo "✅ Benchmark stack stopped."
+
+benchmark-status:                          ## Show status of benchmark services
+	@echo "🎯 Benchmark stack status:"
+	@$(COMPOSE_CMD_MONITOR) ps | grep -E "(benchmark)" || \
+		echo "   No benchmark services running. Start with 'make benchmark-up'"
+
+benchmark-logs:                            ## Show benchmark stack logs
+	$(COMPOSE_CMD_MONITOR) --profile benchmark logs -f --tail=100
+
+# =============================================================================
 # 🚀 PERFORMANCE TESTING STACK - High-capacity configuration
 # =============================================================================
 # help: 🚀 PERFORMANCE TESTING STACK
@@ -1042,7 +1077,7 @@ load-test-ui:                              ## Start Locust web UI at http://loca
 	fi
 	@echo "   💡 For best results, run: sudo scripts/tune-loadtest.sh"
 	@echo "   💡 Use 'User classes' dropdown to select FastTimeUser, etc."
-	@echo "   💡 Start server first: docker compose --profile monitoring up -d"
+	@echo "   💡 Start benchmark servers first: make benchmark-up"
 	@echo ""
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \

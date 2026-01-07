@@ -1371,7 +1371,7 @@ services:
   ###############################################################################
   # Benchmark Server - Multi-server MCP benchmark tool
   # Spawns multiple lightweight MCP servers for load testing
-  # Usage: docker compose --profile monitoring up -d
+  # Usage: make benchmark-up (or: docker compose --profile benchmark up -d)
   ###############################################################################
   benchmark_server:
     build:
@@ -1380,10 +1380,10 @@ services:
     image: mcpgateway/benchmark-server:latest
     restart: unless-stopped
     networks: [mcpnet]
-    # Spawn 100 servers on ports 9000-9099 for load testing (matches staging profile)
-    command: ["-transport=http", "-server-count=100", "-start-port=9000", "-tools=50", "-resources=20", "-prompts=10"]
+    # Spawn 10 servers on ports 9000-9009 for load testing
+    command: ["-transport=http", "-server-count=10", "-start-port=9000", "-tools=50", "-resources=20", "-prompts=10"]
     ports:
-      - "9000-9099:9000-9099"
+      - "9000-9009:9000-9009"
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9000/health || exit 1"]
       interval: 30s
@@ -1393,12 +1393,79 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2'
-          memory: 2G
-        reservations:
-          cpus: '0.5'
+          cpus: '1'
           memory: 512M
-    profiles: ["monitoring"]
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    profiles: ["benchmark"]
+
+  ###############################################################################
+  # Auto-registration service - registers benchmark servers with gateway
+  # Registers all 10 benchmark servers (ports 9000-9009) as gateways
+  ###############################################################################
+  register_benchmark:
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    networks: [mcpnet]
+    depends_on:
+      gateway:
+        condition: service_healthy
+      benchmark_server:
+        condition: service_healthy
+    environment:
+      - JWT_SECRET_KEY=my-test-key
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Registering benchmark servers with gateway..."
+
+        # Generate JWT token
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+
+        # Register all 10 benchmark servers
+        python3 -c "
+        import urllib.request
+        import json
+        import os
+
+        token = os.environ.get('MCPGATEWAY_BEARER_TOKEN', '')
+        headers = {
+            'Authorization': f'Bearer {token}',
+            'Content-Type': 'application/json'
+        }
+
+        def api_request(method, path, data=None):
+            url = f'http://gateway:4444{path}'
+            body = json.dumps(data).encode() if data else None
+            req = urllib.request.Request(url, data=body, headers=headers, method=method)
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read().decode())
+
+        # Register 10 benchmark servers (ports 9000-9009)
+        registered = 0
+        for port in range(9000, 9010):
+            name = f'benchmark-{port}'
+            try:
+                result = api_request('POST', '/gateways', {
+                    'name': name,
+                    'url': f'http://benchmark_server:{port}/mcp',
+                    'transport': 'STREAMABLEHTTP'
+                })
+                print(f'✅ Registered {name}: {result.get(\"id\", \"unknown\")}')
+                registered += 1
+            except urllib.error.HTTPError as e:
+                if e.code == 409:
+                    print(f'⏭️  {name} already registered')
+                    registered += 1
+                else:
+                    print(f'❌ Failed to register {name}: HTTP {e.code}')
+            except Exception as e:
+                print(f'❌ Failed to register {name}: {e}')
+
+        print(f'✅ Registration complete: {registered}/10 benchmark servers')
+        "
+    profiles: ["benchmark"]
 
   ###############################################################################
   # Hashicorp Terraform MCP Server
