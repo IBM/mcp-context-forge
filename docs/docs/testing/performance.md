@@ -370,6 +370,7 @@ For testing with 4000+ concurrent users:
 - **Monitor errors**: High error rates indicate server saturation
 - **Check p95/p99**: Tail latency matters more than average
 - **Use `constant_throughput`**: For predictable RPS instead of random waits
+- **Nginx caching**: Admin pages use 5s TTL caching by default (see [Nginx Tuning](../manage/tuning.md#7---nginx-reverse-proxy-tuning))
 
 ---
 
