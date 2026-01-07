@@ -188,6 +188,7 @@ def on_locust_init(environment, **_kwargs):  # pylint: disable=unused-argument
         logger.info("Running as worker node")
     else:
         logger.info("Running in standalone mode")
+    _log_auth_mode()
 
 
 def _fetch_json(url: str, headers: dict[str, str], timeout: float = 30.0) -> tuple[int, Any]:
@@ -458,6 +459,22 @@ def _get_auth_headers() -> dict[str, str]:
             logger.warning("Using basic auth - REST API endpoints may fail. Set MCPGATEWAY_BEARER_TOKEN or install PyJWT.")
 
     return headers
+
+
+def _log_auth_mode() -> None:
+    """Log which authentication mode the load test will use."""
+    headers = _get_auth_headers()
+    auth_header = headers.get("Authorization", "")
+
+    if auth_header.startswith("Bearer "):
+        if BEARER_TOKEN:
+            logger.info("Auth mode: Bearer (MCPGATEWAY_BEARER_TOKEN)")
+        else:
+            logger.info("Auth mode: Bearer (auto-generated JWT via PyJWT)")
+    elif auth_header.startswith("Basic "):
+        logger.warning("!!! WARNING !!! BASIC AUTH IN USE - /rpc calls will 401. Set MCPGATEWAY_BEARER_TOKEN or install PyJWT.")
+    else:
+        logger.warning("!!! WARNING !!! NO AUTH HEADER - /rpc calls will 401. Set MCPGATEWAY_BEARER_TOKEN or install PyJWT.")
 
 
 def _json_rpc_request(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
