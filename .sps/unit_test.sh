@@ -19,12 +19,11 @@ echo "############# Running Install psycogpg ################"
     python3 -m uv pip install 'copier'   
 echo "############# Running Install DB ################"
 make install-db
-#echo "############# Running Linting ################"
-#make lint
-echo "############# Running Tests ##################"
-make test
-echo "############# Running Coverage ###############"
-#make coverage
+echo "############# Running Tests and Coverage ##################"
+source $(VENV_DIR)/bin/activate && \
+		export DATABASE_URL='sqlite:///:memory:' && \
+		export TEST_DATABASE_URL='sqlite:///:memory:' && \
+		uv run --active pytest -p pytest_cov -n auto --maxfail=0 -v --ignore=tests/fuzz --cov=mcpgateway
 coverage xml
 coverage report
 
