@@ -1622,7 +1622,13 @@ class TestAdminUIRoute:
             mock_settings.app_root_path = "/custom/root"
             mock_settings.gateway_tool_name_separator = "__"
 
-            response = await admin_ui(mock_request, None, True, mock_db, "admin")
+            response = await admin_ui(
+                request=mock_request,
+                team_id=None,
+                include_inactive=True,
+                db=mock_db,
+                user="admin",
+            )
 
             # Check template was called with correct context
             template_call = mock_request.app.state.templates.TemplateResponse.call_args
@@ -1654,7 +1660,13 @@ class TestAdminUIRoute:
         mock_gateways.return_value = []
         mock_roots.return_value = []
 
-        response = await admin_ui(mock_request, None, False, mock_db, "admin")
+        response = await admin_ui(
+            request=mock_request,
+            team_id=None,
+            include_inactive=False,
+            db=mock_db,
+            user="admin",
+        )
 
         # Verify response is an HTMLResponse
         assert isinstance(response, HTMLResponse)
@@ -2633,7 +2645,13 @@ class TestAdminUIMainEndpoint:
         mock_gateways.return_value = []
         mock_roots.return_value = []
 
-        response = await admin_ui(mock_request, False, mock_db, "admin")
+        response = await admin_ui(
+            request=mock_request,
+            team_id=None,
+            include_inactive=False,
+            db=mock_db,
+            user="admin",
+        )
 
         # Check template was called with correct context (no a2a_agents)
         template_call = mock_request.app.state.templates.TemplateResponse.call_args

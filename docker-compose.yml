@@ -120,6 +120,9 @@ services:
       - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@pgbouncer:6432/mcp
       # Direct PostgreSQL connection (bypass PgBouncer - increase DB_POOL_SIZE if using):
       # - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
+      # SQLAlchemy query logging (useful for N+1 detection; noisy under load)
+      # NOTE: SQLALCHEMY_ECHO logs at INFO; set LOG_LEVEL=INFO/DEBUG to see output.
+      - SQLALCHEMY_ECHO=true
       # - DATABASE_URL=mysql+pymysql://mysql:${MYSQL_PASSWORD:-changeme}@mariadb:3306/mcp
       # - DATABASE_URL=mysql+pymysql://admin:${MARIADB_PASSWORD:-changeme}@mariadb:3306/mcp
       # - DATABASE_URL=mongodb://admin:${MONGO_PASSWORD:-changeme}@mongodb:27017/mcp
@@ -208,6 +211,7 @@ services:
       - MCP_CLIENT_AUTH_ENABLED=true
       - TRUST_PROXY_AUTH=false
       # Logging configuration
+      # NOTE: LOG_LEVEL=INFO/DEBUG is required for SQLALCHEMY_ECHO output.
       - LOG_LEVEL=ERROR  # Default to ERROR for production performance
       - DISABLE_ACCESS_LOG=true  # Disable uvicorn access logs for performance (massive I/O overhead)
       - STRUCTURED_LOGGING_DATABASE_ENABLED=false  # Disable DB logging for performance (use true only for debugging)
@@ -310,7 +314,7 @@ services:
       # Disable when using external observability to improve performance.
       # Set to true if you need per-operation metrics in the database.
       # Note: Does NOT affect log aggregation (METRICS_AGGREGATION_ENABLED) or Prometheus.
-      - DB_METRICS_RECORDING_ENABLED=false
+      - DB_METRICS_RECORDING_ENABLED=true
 
       # ═══════════════════════════════════════════════════════════════════════════
       # Metrics Configuration
@@ -479,12 +483,12 @@ services:
       # After enabling, run in psql:
       #   CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
       #   SELECT * FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 10;
-      # - "-c"
-      # - "shared_preload_libraries=pg_stat_statements"
-      # - "-c"
-      # - "pg_stat_statements.track=all"
-      # - "-c"
-      # - "pg_stat_statements.max=10000"
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements"
+      - "-c"
+      - "pg_stat_statements.track=all"
+      - "-c"
+      - "pg_stat_statements.max=10000"
       # === AUTO_EXPLAIN - Slow query plan logging ===
       # Uncomment to auto-log execution plans for slow queries
       # - "-c"
@@ -579,6 +583,8 @@ services:
       - CLIENT_IDLE_TIMEOUT=300        # Close idle client connections (aligned with pool_recycle)
       - SERVER_CONNECT_TIMEOUT=5       # Timeout for new connections to PostgreSQL
       # Transaction cleanup - critical for avoiding idle-in-transaction buildup
+      # NOTE: In transaction pooling, session-level advisory locks (used by migrations)
+      # can stick unless the reset query clears them; DISCARD ALL is safest.
       - SERVER_RESET_QUERY=DISCARD ALL # Reset connection state when returned to pool
       - SERVER_RESET_QUERY_ALWAYS=1    # Always run reset query even after clean transactions
       - IDLE_TRANSACTION_TIMEOUT=120   # Kill transactions idle > 120s (prevents connection starvation)

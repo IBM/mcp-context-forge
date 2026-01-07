@@ -778,6 +778,24 @@ COMPOSE_CMD_MONITOR := $(shell \
 
 monitoring-up:                             ## Start monitoring stack (Prometheus, Grafana, exporters)
 	@echo "📊 Starting monitoring stack..."
+	@echo "🔎 Preflight: checking host port 8080 (nginx)"
+	@if command -v ss >/dev/null 2>&1; then \
+		if ss -H -ltn 'sport = :8080' | grep -q .; then \
+			echo "⚠️  Port 8080 already in use; nginx can't bind to it."; \
+			ss -ltnp 'sport = :8080' || ss -ltn 'sport = :8080'; \
+			echo "   Stop the process or change the nginx host port mapping."; \
+			exit 1; \
+		fi; \
+	elif command -v lsof >/dev/null 2>&1; then \
+		if lsof -nP -iTCP:8080 -sTCP:LISTEN >/dev/null 2>&1; then \
+			echo "⚠️  Port 8080 already in use; nginx can't bind to it."; \
+			lsof -nP -iTCP:8080 -sTCP:LISTEN || true; \
+			echo "   Stop the process or change the nginx host port mapping."; \
+			exit 1; \
+		fi; \
+	else \
+		echo "ℹ️  Skipping port check (ss/lsof not found)."; \
+	fi
 	$(COMPOSE_CMD_MONITOR) --profile monitoring up -d
 	@echo "⏳ Waiting for Grafana to be ready..."
 	@for i in 1 2 3 4 5 6 7 8 9 10; do \
