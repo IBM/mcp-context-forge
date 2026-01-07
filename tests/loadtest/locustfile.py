@@ -27,6 +27,9 @@ Environment Variables (also reads from .env file):
     JWT_ALGORITHM: JWT algorithm (default: HS256)
     JWT_AUDIENCE: JWT audience claim
     JWT_ISSUER: JWT issuer claim
+    LOADTEST_BENCHMARK_START_PORT: First port for benchmark servers (default: 9000)
+    LOADTEST_BENCHMARK_SERVER_COUNT: Number of benchmark servers available (default: 1000)
+    LOADTEST_BENCHMARK_HOST: Host where benchmark servers run (default: benchmark_server for Docker, use localhost for native)
 
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
@@ -141,6 +144,7 @@ JWT_USERNAME = _get_config("JWT_USERNAME", _get_config("PLATFORM_ADMIN_EMAIL", "
 # Token expiry in hours - default 8760 (1 year) to avoid expiration during long load tests
 # JTI (JWT ID) is automatically generated for each token for proper cache keying
 JWT_TOKEN_EXPIRY_HOURS = int(_get_config("LOADTEST_JWT_EXPIRY_HOURS", "8760"))
+
 
 # Log loaded configuration (masking sensitive values)
 logger.info("Configuration loaded:")
@@ -277,6 +281,10 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
     except Exception as e:
         logger.warning(f"Failed to fetch entity IDs: {e}")
         logger.info("Tests will continue without pre-fetched IDs")
+
+    # Note: All gateways (fast-time, fast-test, benchmark) are registered
+    # at compose startup via dedicated registration services.
+    # Locust only performs load testing, not registration.
 
 
 @events.test_stop.add_listener
@@ -1659,7 +1667,7 @@ class FastTestTimeUser(BaseUser):
     @task(10)
     @tag("mcp", "fasttest", "time")
     def call_get_system_time(self):
-        """Call fast-test-get-system-time with a random timezone."""
+        """Call fast-time-get-system-time with a random timezone."""
         timezone = random.choice(self.TIMEZONES)
         payload = _json_rpc_request(
             "tools/call",

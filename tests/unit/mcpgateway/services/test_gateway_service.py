@@ -156,7 +156,6 @@ class TestGatewayService:
     @pytest.mark.asyncio
     async def test_register_gateway(self, gateway_service, test_db, monkeypatch):
         """Successful gateway registration populates DB and returns data."""
-        # DB: no gateway with that name; no existing tools found
         test_db.execute = Mock(
             side_effect=[
                 _make_execute_result(scalar=None),  # name-conflict check
@@ -164,8 +163,10 @@ class TestGatewayService:
             ]
         )
         test_db.add = Mock()
-        test_db.commit = Mock()
+        test_db.flush = Mock()  # Implementation uses flush() not commit()
         test_db.refresh = Mock()
+        # Mock query for _check_gateway_uniqueness
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(all=Mock(return_value=[])))))
 
         # Internal helpers
         gateway_service._initialize_gateway = AsyncMock(
@@ -203,7 +204,7 @@ class TestGatewayService:
         result = await gateway_service.register_gateway(test_db, gateway_create)
 
         test_db.add.assert_called_once()
-        test_db.commit.assert_called_once()
+        test_db.flush.assert_called_once()  # Implementation uses flush() not commit()
         test_db.refresh.assert_called_once()
         gateway_service._initialize_gateway.assert_called_once()
         gateway_service._notify_gateway_added.assert_called_once()
@@ -268,8 +269,10 @@ class TestGatewayService:
             ]
         )
         test_db.add = Mock()
-        test_db.commit = Mock()
+        test_db.flush = Mock()  # Implementation uses flush() not commit()
         test_db.refresh = Mock()
+        # Mock query for _check_gateway_uniqueness
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(all=Mock(return_value=[])))))
 
         url = url_normalize("example.com")
         print(f"url:{url}")
@@ -302,7 +305,7 @@ class TestGatewayService:
         await gateway_service.register_gateway(test_db, gateway_create)
 
         test_db.add.assert_called_once()
-        test_db.commit.assert_called_once()
+        test_db.flush.assert_called_once()  # Implementation uses flush() not commit()
         gateway_service._initialize_gateway.assert_called_once()
 
     @pytest.mark.asyncio
@@ -389,8 +392,10 @@ class TestGatewayService:
         """Test database error during gateway registration."""
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
         test_db.add = Mock()
-        test_db.commit = Mock(side_effect=Exception("Database error"))
+        test_db.flush = Mock(side_effect=Exception("Database error"))  # Implementation uses flush() not commit()
         test_db.rollback = Mock()
+        # Mock query for _check_gateway_uniqueness
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(all=Mock(return_value=[])))))
 
         gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], []))
 
@@ -449,7 +454,9 @@ class TestGatewayService:
 
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
         test_db.add = Mock()
-        test_db.commit = Mock(side_effect=SQLIntegrityError("statement", "params", BaseException("orig")))
+        test_db.flush = Mock(side_effect=SQLIntegrityError("statement", "params", BaseException("orig")))  # Implementation uses flush()
+        # Mock query for _check_gateway_uniqueness
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(all=Mock(return_value=[])))))
 
         gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], []))
 
@@ -472,8 +479,10 @@ class TestGatewayService:
             ]
         )
         test_db.add = Mock()
-        test_db.commit = Mock()
+        test_db.flush = Mock()  # Implementation uses flush() not commit()
         test_db.refresh = Mock()
+        # Mock query for _check_gateway_uniqueness
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(all=Mock(return_value=[])))))
 
         gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], []))
         gateway_service._notify_gateway_added = AsyncMock()
@@ -500,7 +509,7 @@ class TestGatewayService:
             await gateway_service.register_gateway(test_db, gateway_create)
 
         test_db.add.assert_called_once()
-        test_db.commit.assert_called_once()
+        test_db.flush.assert_called_once()  # Implementation uses flush() not commit()
         gateway_service._initialize_gateway.assert_called_once()
 
     @pytest.mark.asyncio
@@ -508,8 +517,10 @@ class TestGatewayService:
         """Test rollback on exception during gateway registration."""
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
         test_db.add = Mock()
-        test_db.commit = Mock(side_effect=Exception("Commit failed"))
+        test_db.flush = Mock(side_effect=Exception("Flush failed"))  # Implementation uses flush() not commit()
         test_db.rollback = Mock()
+        # Mock query for _check_gateway_uniqueness
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(all=Mock(return_value=[])))))
 
         gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], []))
 
@@ -522,7 +533,7 @@ class TestGatewayService:
         with pytest.raises(Exception) as exc_info:
             await gateway_service.register_gateway(test_db, gateway_create)
 
-        assert "Commit failed" in str(exc_info.value)
+        assert "Flush failed" in str(exc_info.value)  # Error message matches the mocked exception
         # The register_gateway method doesn't actually call rollback in the exception handler
         # It just re-raises the exception, so we shouldn't expect rollback to be called
 
