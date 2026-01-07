@@ -10,9 +10,9 @@ python3 -V
 dnf install -y  postgresql-devel
 
 echo "############# Running Install ################"
-make install-dev
-echo "############# Running Linting ##################"
-echo "make lint-quick"
+ make venv install install-dev
+ echo "############# Running Linting ##################"
+make autoflake isort black
 echo "############# Running Install dependencies ################"
 . $HOME/.venv/mcpgateway/bin/activate && \
     python3 -m uv pip install 'psycopg[c]' && \
