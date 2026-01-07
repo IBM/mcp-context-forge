@@ -313,8 +313,7 @@ class A2AAgentService:
             )
 
             db.add(new_agent)
-            db.commit()
-            db.refresh(new_agent)
+            db.flush()  # Flush to get the agent ID without committing yet
 
             # Invalidate caches since agent count changed
             a2a_stats_cache.invalidate()
