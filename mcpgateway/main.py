@@ -4334,7 +4334,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 tools = await tool_service.list_server_tools(db, server_id, cursor=cursor)
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
             else:
-                tools, next_cursor = await tool_service.list_tools(db, cursor=cursor)
+                tools, next_cursor = await tool_service.list_tools(db, cursor=cursor, limit=0)
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
                 if next_cursor:
                     result["nextCursor"] = next_cursor
@@ -4343,7 +4343,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 tools = await tool_service.list_server_tools(db, server_id, cursor=cursor)
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
             else:
-                tools, next_cursor = await tool_service.list_tools(db, cursor=cursor)
+                tools, next_cursor = await tool_service.list_tools(db, cursor=cursor, limit=0)
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
                 if next_cursor:
                     result["nextCursor"] = next_cursor
@@ -4358,7 +4358,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 resources = await resource_service.list_server_resources(db, server_id)
                 result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
             else:
-                resources, next_cursor = await resource_service.list_resources(db, cursor=cursor)
+                resources, next_cursor = await resource_service.list_resources(db, cursor=cursor, limit=0)
                 result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
                 if next_cursor:
                     result["nextCursor"] = next_cursor
@@ -4415,7 +4415,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 prompts = await prompt_service.list_server_prompts(db, server_id, cursor=cursor)
                 result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
             else:
-                prompts, next_cursor = await prompt_service.list_prompts(db, cursor=cursor)
+                prompts, next_cursor = await prompt_service.list_prompts(db, cursor=cursor, limit=0)
                 result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
                 if next_cursor:
                     result["nextCursor"] = next_cursor
