@@ -879,30 +879,46 @@ testing-logs:                              ## Show testing stack logs
 
 # =============================================================================
 # help: 🎯 BENCHMARK STACK (Go benchmark-server)
-# help: benchmark-up           - Start benchmark stack (10 MCP servers + auto-registration)
+# help: benchmark-up           - Start benchmark stack (MCP servers + auto-registration)
 # help: benchmark-down         - Stop benchmark stack
+# help: benchmark-clean        - Stop and remove all benchmark data (volumes)
 # help: benchmark-status       - Show status of benchmark services
 # help: benchmark-logs         - Show benchmark stack logs
+# help:
+# help: Environment variables:
+# help:   BENCHMARK_SERVER_COUNT  - Number of MCP servers to spawn (default: 10)
 
-benchmark-up:                              ## Start benchmark stack (10 MCP servers + registration)
-	@echo "🎯 Starting benchmark stack (10 MCP servers on ports 9000-9009)..."
-	$(COMPOSE_CMD_MONITOR) --profile benchmark up -d
+# Benchmark configuration (override via environment)
+BENCHMARK_SERVER_COUNT ?= 10
+BENCHMARK_START_PORT ?= 9000
+
+benchmark-up:                              ## Start benchmark stack (MCP servers + registration)
+	@echo "🎯 Starting benchmark stack ($(BENCHMARK_SERVER_COUNT) MCP servers on ports $(BENCHMARK_START_PORT)-$$(($(BENCHMARK_START_PORT) + $(BENCHMARK_SERVER_COUNT) - 1)))..."
+	BENCHMARK_SERVER_COUNT=$(BENCHMARK_SERVER_COUNT) BENCHMARK_START_PORT=$(BENCHMARK_START_PORT) \
+		$(COMPOSE_CMD_MONITOR) --profile benchmark up -d
 	@echo ""
 	@echo "✅ Benchmark stack started!"
 	@echo ""
-	@echo "   🚀 Benchmark Servers: http://localhost:9000-9009"
-	@echo "      • MCP endpoint:  http://localhost:900X/mcp"
-	@echo "      • Health:        http://localhost:900X/health"
-	@echo "      • Version:       http://localhost:900X/version"
+	@echo "   🚀 Benchmark Servers: http://localhost:$(BENCHMARK_START_PORT)-$$(($(BENCHMARK_START_PORT) + $(BENCHMARK_SERVER_COUNT) - 1))"
+	@echo "      • MCP endpoint:  http://localhost:<port>/mcp"
+	@echo "      • Health:        http://localhost:<port>/health"
+	@echo "      • Version:       http://localhost:<port>/version"
 	@echo ""
-	@echo "   📝 Registered as 'benchmark-9000' through 'benchmark-9009' gateways"
+	@echo "   📝 Registered as 'benchmark-$(BENCHMARK_START_PORT)' through 'benchmark-$$(($(BENCHMARK_START_PORT) + $(BENCHMARK_SERVER_COUNT) - 1))' gateways"
 	@echo ""
 	@echo "   Run load test: make load-test-ui"
+	@echo ""
+	@echo "   💡 Configure server count: BENCHMARK_SERVER_COUNT=50 make benchmark-up"
 
 benchmark-down:                            ## Stop benchmark stack
 	@echo "🎯 Stopping benchmark stack..."
 	$(COMPOSE_CMD_MONITOR) --profile benchmark down
 	@echo "✅ Benchmark stack stopped."
+
+benchmark-clean:                           ## Stop and remove all benchmark data (volumes)
+	@echo "🎯 Stopping and cleaning benchmark stack..."
+	$(COMPOSE_CMD_MONITOR) --profile benchmark down -v
+	@echo "✅ Benchmark stack stopped and volumes removed."
 
 benchmark-status:                          ## Show status of benchmark services
 	@echo "🎯 Benchmark stack status:"

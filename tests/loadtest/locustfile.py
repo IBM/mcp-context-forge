@@ -282,80 +282,9 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
         logger.warning(f"Failed to fetch entity IDs: {e}")
         logger.info("Tests will continue without pre-fetched IDs")
 
-    # Pre-register gateways
-    _preregister_gateways(host, headers)
-
-
-def _preregister_gateways(host: str, headers: dict[str, str]) -> None:
-    """Pre-register essential gateways before load test starts.
-
-    Registers:
-    1. Fast-time MCP server (Go - time tools)
-    2. Fast-test MCP server (Rust - echo/stats tools)
-
-    Note: Benchmark servers are registered at compose startup via register_benchmark service.
-
-    Args:
-        host: Gateway host URL
-        headers: Auth headers for registration
-    """
-    import json  # pylint: disable=import-outside-toplevel
-    import urllib.error  # pylint: disable=import-outside-toplevel
-    import urllib.request  # pylint: disable=import-outside-toplevel
-
-    # 1. Register fast-time gateway (Go server - time tools)
-    logger.info("Pre-registering fast-time gateway...")
-    fast_time_data = {
-        "name": "fast-time",
-        "url": "http://fast_time_server:8002/sse",
-        "transport": "SSE",
-    }
-
-    try:
-        req = urllib.request.Request(
-            f"{host}/gateways",
-            data=json.dumps(fast_time_data).encode(),
-            headers={**headers, "Content-Type": "application/json"},
-            method="POST"
-        )
-
-        with urllib.request.urlopen(req, timeout=30) as response:
-            if response.status in (200, 201, 409):  # 409 = already exists
-                logger.info("✅ Pre-registered fast-time gateway")
-    except urllib.error.HTTPError as e:
-        if e.code == 409:
-            logger.info("✅ Fast-time gateway already registered")
-        else:
-            logger.warning(f"Failed to register fast-time gateway: HTTP {e.code}")
-    except Exception as e:
-        logger.warning(f"Failed to register fast-time gateway: {e}")
-
-    # 2. Register fast-test gateway (Rust server - echo/stats tools)
-    logger.info("Pre-registering fast-test gateway...")
-    fast_test_data = {
-        "name": "fast-test",
-        "url": "http://fast_test_server:8880/mcp",
-        "transport": "STREAMABLEHTTP",
-    }
-
-    try:
-        req = urllib.request.Request(
-            f"{host}/gateways",
-            data=json.dumps(fast_test_data).encode(),
-            headers={**headers, "Content-Type": "application/json"},
-            method="POST"
-        )
-
-        with urllib.request.urlopen(req, timeout=30) as response:
-            if response.status in (200, 201, 409):  # 409 = already exists
-                logger.info("✅ Pre-registered fast-test gateway")
-    except urllib.error.HTTPError as e:
-        if e.code == 409:
-            logger.info("✅ Fast-test gateway already registered")
-        else:
-            logger.warning(f"Failed to register fast-test gateway: HTTP {e.code}")
-    except Exception as e:
-        logger.warning(f"Failed to register fast-test gateway: {e}")
+    # Note: All gateways (fast-time, fast-test, benchmark) are registered
+    # at compose startup via dedicated registration services.
+    # Locust only performs load testing, not registration.
 
 
 @events.test_stop.add_listener

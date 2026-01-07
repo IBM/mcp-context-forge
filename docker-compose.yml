@@ -1372,6 +1372,10 @@ services:
   # Benchmark Server - Multi-server MCP benchmark tool
   # Spawns multiple lightweight MCP servers for load testing
   # Usage: make benchmark-up (or: docker compose --profile benchmark up -d)
+  #
+  # Environment variables:
+  #   BENCHMARK_SERVER_COUNT - Number of servers to spawn (default: 10)
+  #   BENCHMARK_START_PORT   - Starting port number (default: 9000)
   ###############################################################################
   benchmark_server:
     build:
@@ -1380,25 +1384,32 @@ services:
     image: mcpgateway/benchmark-server:latest
     restart: unless-stopped
     networks: [mcpnet]
-    # Spawn 10 servers on ports 9000-9009 for load testing
-    command: ["-transport=http", "-server-count=10", "-start-port=9000", "-tools=50", "-resources=20", "-prompts=10"]
+    command:
+      - "-transport=http"
+      - "-server-count=${BENCHMARK_SERVER_COUNT:-10}"
+      - "-start-port=${BENCHMARK_START_PORT:-9000}"
+      - "-tools=50"
+      - "-resources=20"
+      - "-prompts=10"
     ports:
-      - "9000-9009:9000-9009"
+      # Port range supports up to 100 servers (9000-9099)
+      # Actual servers spawned controlled by BENCHMARK_SERVER_COUNT
+      - "9000-9099:9000-9099"
     # Note: No healthcheck - scratch-based Go image has no shell
     # Verify health via: curl http://localhost:9000/health
     deploy:
       resources:
         limits:
-          cpus: '1'
-          memory: 512M
+          cpus: '2'
+          memory: 1G
         reservations:
-          cpus: '0.25'
-          memory: 128M
+          cpus: '0.5'
+          memory: 256M
     profiles: ["benchmark"]
 
   ###############################################################################
   # Auto-registration service - registers benchmark servers with gateway
-  # Registers all 10 benchmark servers (ports 9000-9009) as gateways
+  # Uses BENCHMARK_SERVER_COUNT and BENCHMARK_START_PORT environment variables
   ###############################################################################
   register_benchmark:
     image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
@@ -1410,6 +1421,8 @@ services:
         condition: service_started
     environment:
       - JWT_SECRET_KEY=my-test-key
+      - BENCHMARK_SERVER_COUNT=${BENCHMARK_SERVER_COUNT:-10}
+      - BENCHMARK_START_PORT=${BENCHMARK_START_PORT:-9000}
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -1423,13 +1436,16 @@ services:
         # Generate JWT token
         export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
 
-        # Register all 10 benchmark servers
+        # Register benchmark servers using environment variables
         python3 -c "
         import urllib.request
         import json
         import os
 
         token = os.environ.get('MCPGATEWAY_BEARER_TOKEN', '')
+        server_count = int(os.environ.get('BENCHMARK_SERVER_COUNT', '10'))
+        start_port = int(os.environ.get('BENCHMARK_START_PORT', '9000'))
+
         headers = {
             'Authorization': f'Bearer {token}',
             'Content-Type': 'application/json'
@@ -1442,9 +1458,10 @@ services:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 return json.loads(resp.read().decode())
 
-        # Register 10 benchmark servers (ports 9000-9009)
+        # Register benchmark servers
+        print(f'Registering {server_count} benchmark servers (ports {start_port}-{start_port + server_count - 1})...')
         registered = 0
-        for port in range(9000, 9010):
+        for port in range(start_port, start_port + server_count):
             name = f'benchmark-{port}'
             try:
                 result = api_request('POST', '/gateways', {
@@ -1463,7 +1480,7 @@ services:
             except Exception as e:
                 print(f'❌ Failed to register {name}: {e}')
 
-        print(f'✅ Registration complete: {registered}/10 benchmark servers')
+        print(f'✅ Registration complete: {registered}/{server_count} benchmark servers')
         "
     profiles: ["benchmark"]
 
