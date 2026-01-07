@@ -166,6 +166,11 @@ class Settings(BaseSettings):
     templates_dir: Path = Field(default_factory=lambda: Path(str(files("mcpgateway") / "templates")))
     static_dir: Path = Field(default_factory=lambda: Path(str(files("mcpgateway") / "static")))
 
+    # Template auto-reload: False for production (default), True for development
+    # Disabling prevents re-parsing templates on each request, improving performance under load
+    # Use TEMPLATES_AUTO_RELOAD=true for development (make dev sets this automatically)
+    templates_auto_reload: bool = Field(default=False, description="Auto-reload Jinja2 templates on change (enable for development)")
+
     app_root_path: str = ""
 
     # Protocol

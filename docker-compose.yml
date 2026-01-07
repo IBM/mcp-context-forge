@@ -5,7 +5,7 @@
 #  See docs/docs/testing/performance.md for full details
 #
 #  One-liner (TCP + VM + I/O tuning):
-#  sudo sysctl -w net.core.somaxconn=65535 net.core.netdev_max_backlog=65535 net.ipv4.tcp_max_syn_backlog=65535 net.ipv4.tcp_tw_reuse=2 net.ipv4.tcp_fin_timeout=15 net.ipv4.ip_local_port_range="1024 65535" vm.swappiness=10 fs.aio-max-nr=1048576
+#  sudo sysctl -w net.core.somaxconn=65535 net.core.netdev_max_backlog=65535 net.ipv4.tcp_max_syn_backlog=65535 net.ipv4.tcp_tw_reuse=1 net.ipv4.tcp_fin_timeout=15 net.ipv4.ip_local_port_range="1024 65535" vm.swappiness=10 fs.aio-max-nr=1048576
 #
 #  Make persistent: sudo tee /etc/sysctl.d/99-mcp-loadtest.conf (see docs)
 ###############################################################################
@@ -214,6 +214,8 @@ services:
       # NOTE: LOG_LEVEL=INFO/DEBUG is required for SQLALCHEMY_ECHO output.
       - LOG_LEVEL=ERROR  # Required for SQLALCHEMY_ECHO output during load testing
       - DISABLE_ACCESS_LOG=true  # Disable uvicorn access logs for performance (massive I/O overhead)
+      # Template auto-reload disabled for performance (prevents re-parsing templates on each request)
+      - TEMPLATES_AUTO_RELOAD=false
       - STRUCTURED_LOGGING_DATABASE_ENABLED=false  # Disable DB logging for performance (use true only for debugging)
       # Audit trail logging - disabled by default for performance
       # WARNING: Causes a DB write on EVERY API request - can generate millions of rows during load testing!
@@ -459,7 +461,7 @@ services:
       # Application code now properly closes transactions via get_db() commit-on-success pattern
       # This timeout is a safety net for any edge cases
       - "-c"
-      - "idle_in_transaction_session_timeout=120s"  # Kill stuck transactions after 120s (aligned with PgBouncer)
+      - "idle_in_transaction_session_timeout=300s"  # Kill stuck transactions after 300s (aligned with PgBouncer)
       - "-c"
       - "statement_timeout=120s"           # Kill runaway queries after 120s
       - "-c"
@@ -587,7 +589,7 @@ services:
       # can stick unless the reset query clears them; DISCARD ALL is safest.
       - SERVER_RESET_QUERY=DISCARD ALL # Reset connection state when returned to pool
       - SERVER_RESET_QUERY_ALWAYS=1    # Always run reset query even after clean transactions
-      - IDLE_TRANSACTION_TIMEOUT=120   # Kill transactions idle > 120s (prevents connection starvation)
+      - IDLE_TRANSACTION_TIMEOUT=300   # Kill transactions idle > 300s (allows slow admin page rendering)
       # Authentication
       - AUTH_TYPE=scram-sha-256        # Match PostgreSQL auth method
     depends_on:

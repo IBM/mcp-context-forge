@@ -752,6 +752,12 @@
               "description": "Enable auto-reload",
               "default": "false"
             },
+            "TEMPLATES_AUTO_RELOAD": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Auto-reload Jinja2 templates on change (disable for production performance)",
+              "default": "false"
+            },
             "DEBUG": {
               "type": "string",
               "enum": ["true", "false"],

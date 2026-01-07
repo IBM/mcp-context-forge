@@ -167,6 +167,7 @@ environment:
 | `GRANIAN_RESPAWN_FAILED` | true | Auto-restart failed workers |
 | `GRANIAN_DEV_MODE` | false | Enable hot reload |
 | `DISABLE_ACCESS_LOG` | true | Disable access logging for performance |
+| `TEMPLATES_AUTO_RELOAD` | false | Disable Jinja2 template auto-reload for production |
 
 **Performance tuning profiles:**
 

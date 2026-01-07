@@ -1432,7 +1432,10 @@ else:
     logger.debug("📊 Database query logging disabled (enable with DB_QUERY_LOG_ENABLED=true)")
 
 # Set up Jinja2 templates and store in app state for later use
-templates = Jinja2Templates(directory=str(settings.templates_dir))
+# auto_reload=False in production prevents re-parsing templates on each request (performance)
+templates = Jinja2Templates(directory=str(settings.templates_dir), auto_reload=settings.templates_auto_reload)
+if not settings.templates_auto_reload:
+    logger.info("🎨 Template auto-reload disabled (production mode)")
 app.state.templates = templates
 
 # Store plugin manager in app state for access in routes
