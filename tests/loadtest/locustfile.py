@@ -244,6 +244,9 @@ TOOL_NAMES: list[str] = []
 RESOURCE_URIS: list[str] = []
 PROMPT_NAMES: list[str] = []
 
+# Pre-registered benchmark gateway ports (to avoid duplicate registration attempts)
+PREREGISTERED_BENCHMARK_PORTS: set[int] = set()
+
 # Tools that require arguments and are tested with proper arguments in specific user classes
 # These should be excluded from generic rpc_call_tool to avoid false failures
 TOOLS_WITH_REQUIRED_ARGS: set[str] = {
@@ -358,6 +361,125 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
         logger.warning(f"Failed to fetch entity IDs: {e}")
         logger.info("Tests will continue without pre-fetched IDs")
 
+    # Pre-register gateways
+    _preregister_gateways(host, headers)
+
+
+def _preregister_gateways(host: str, headers: dict[str, str]) -> None:
+    """Pre-register essential gateways before load test starts.
+
+    Registers:
+    1. Fast-time MCP server (Go - time tools)
+    2. Fast-test MCP server (Rust - echo/stats tools)
+    3. Subset of benchmark servers (15%, if enabled)
+
+    Args:
+        host: Gateway host URL
+        headers: Auth headers for registration
+    """
+    import json  # pylint: disable=import-outside-toplevel
+    import urllib.error  # pylint: disable=import-outside-toplevel
+    import urllib.request  # pylint: disable=import-outside-toplevel
+
+    # 1. Register fast-time gateway (Go server - time tools)
+    logger.info("Pre-registering fast-time gateway...")
+    fast_time_data = {
+        "name": "fast-time",
+        "url": "http://fast_time_server:8002/sse",
+        "transport": "SSE",
+    }
+
+    try:
+        req = urllib.request.Request(
+            f"{host}/gateways",
+            data=json.dumps(fast_time_data).encode(),
+            headers={**headers, "Content-Type": "application/json"},
+            method="POST"
+        )
+
+        with urllib.request.urlopen(req, timeout=30) as response:
+            if response.status in (200, 201, 409):  # 409 = already exists
+                logger.info("✅ Pre-registered fast-time gateway")
+    except urllib.error.HTTPError as e:
+        if e.code == 409:
+            logger.info("✅ Fast-time gateway already registered")
+        else:
+            logger.warning(f"Failed to register fast-time gateway: HTTP {e.code}")
+    except Exception as e:
+        logger.warning(f"Failed to register fast-time gateway: {e}")
+
+    # 2. Register fast-test gateway (Rust server - echo/stats tools)
+    logger.info("Pre-registering fast-test gateway...")
+    fast_test_data = {
+        "name": "fast-test",
+        "url": "http://fast_test_server:9080/mcp",
+        "transport": "STREAMABLEHTTP",
+    }
+
+    try:
+        req = urllib.request.Request(
+            f"{host}/gateways",
+            data=json.dumps(fast_test_data).encode(),
+            headers={**headers, "Content-Type": "application/json"},
+            method="POST"
+        )
+
+        with urllib.request.urlopen(req, timeout=30) as response:
+            if response.status in (200, 201, 409):  # 409 = already exists
+                logger.info("✅ Pre-registered fast-test gateway")
+    except urllib.error.HTTPError as e:
+        if e.code == 409:
+            logger.info("✅ Fast-test gateway already registered")
+        else:
+            logger.warning(f"Failed to register fast-test gateway: HTTP {e.code}")
+    except Exception as e:
+        logger.warning(f"Failed to register fast-test gateway: {e}")
+
+    # 3. Pre-register subset of benchmark gateways (if enabled)
+    if not BENCHMARK_SERVER_ENABLED:
+        logger.info("Benchmark server not enabled - skipping benchmark gateway pre-registration")
+        return
+
+    # Pre-register 15% of benchmark servers (min 1, max 50)
+    percentage = 0.15
+    count_to_register = max(1, min(50, int(BENCHMARK_SERVER_COUNT * percentage)))
+
+    logger.info(f"Pre-registering {count_to_register} benchmark gateways ({percentage*100:.0f}% of {BENCHMARK_SERVER_COUNT} available)...")
+
+    registered = 0
+    for i in range(count_to_register):
+        port = BENCHMARK_START_PORT + i
+        gateway_name = f"loadtest-benchmark-{port}"
+
+        gateway_data = {
+            "name": gateway_name,
+            "url": f"http://{BENCHMARK_HOST}:{port}/mcp",
+            "transport": "STREAMABLEHTTP",
+        }
+
+        try:
+            req = urllib.request.Request(
+                f"{host}/gateways",
+                data=json.dumps(gateway_data).encode(),
+                headers={**headers, "Content-Type": "application/json"},
+                method="POST"
+            )
+
+            with urllib.request.urlopen(req, timeout=30) as response:
+                if response.status in (200, 201, 409):  # 409 = already exists
+                    registered += 1
+                    PREREGISTERED_BENCHMARK_PORTS.add(port)
+        except urllib.error.HTTPError as e:
+            if e.code == 409:  # Conflict - already exists
+                registered += 1
+                PREREGISTERED_BENCHMARK_PORTS.add(port)
+            else:
+                logger.warning(f"Failed to register gateway {gateway_name}: HTTP {e.code}")
+        except Exception as e:
+            logger.warning(f"Failed to register gateway {gateway_name}: {e}")
+
+    logger.info(f"✅ Pre-registered {registered}/{count_to_register} benchmark gateways (ports: {min(PREREGISTERED_BENCHMARK_PORTS) if PREREGISTERED_BENCHMARK_PORTS else 'N/A'}-{max(PREREGISTERED_BENCHMARK_PORTS) if PREREGISTERED_BENCHMARK_PORTS else 'N/A'})")
+
 
 @events.test_stop.add_listener
 def on_test_stop(environment, **kwargs):  # pylint: disable=unused-argument
@@ -371,6 +493,7 @@ def on_test_stop(environment, **kwargs):  # pylint: disable=unused-argument
     TOOL_NAMES.clear()
     RESOURCE_URIS.clear()
     PROMPT_NAMES.clear()
+    PREREGISTERED_BENCHMARK_PORTS.clear()
 
     # Print detailed summary statistics
     _print_summary_stats(environment)
@@ -1500,16 +1623,22 @@ class WriteAPIUser(BaseUser):
         Uses LOADTEST_BENCHMARK_START_PORT and LOADTEST_BENCHMARK_SERVER_COUNT
         environment variables to determine which benchmark servers are available.
 
-        This tests the gateway registration workflow by adding gateways one by one
-        during the load test, rather than pre-registering them.
+        Tracks registered ports to avoid duplicate registration attempts.
         """
         # Skip if benchmark server container is not running
         if not BENCHMARK_SERVER_ENABLED:
             return
 
-        # Pick a random port from the configured benchmark server range
-        port_offset = random.randint(0, BENCHMARK_SERVER_COUNT - 1)
-        port = BENCHMARK_START_PORT + port_offset
+        # Find an unregistered port
+        # Pick a random unregistered port from available range
+        available_ports = set(range(BENCHMARK_START_PORT, BENCHMARK_START_PORT + BENCHMARK_SERVER_COUNT))
+        unregistered_ports = available_ports - PREREGISTERED_BENCHMARK_PORTS
+
+        if not unregistered_ports:
+            # All ports already registered
+            return
+
+        port = random.choice(list(unregistered_ports))
         gateway_name = f"loadtest-benchmark-{port}"
 
         # Register the gateway
@@ -1527,9 +1656,12 @@ class WriteAPIUser(BaseUser):
             catch_response=True,
         ) as response:
             if response.status_code in (200, 201):
+                # Successfully registered - track this port
+                PREREGISTERED_BENCHMARK_PORTS.add(port)
                 response.success()
             elif response.status_code == 409:
-                # Conflict - already exists, this is fine
+                # Conflict - already exists, track it to avoid future attempts
+                PREREGISTERED_BENCHMARK_PORTS.add(port)
                 response.success()
             else:
                 response.failure(f"Failed to register gateway: {response.status_code}")
@@ -1781,7 +1913,7 @@ class FastTestTimeUser(BaseUser):
     @task(10)
     @tag("mcp", "fasttest", "time")
     def call_get_system_time(self):
-        """Call fast-test-get-system-time with a random timezone."""
+        """Call fast-time-get-system-time with a random timezone."""
         timezone = random.choice(self.TIMEZONES)
         payload = _json_rpc_request(
             "tools/call",
