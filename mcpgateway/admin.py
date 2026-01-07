@@ -49,7 +49,7 @@ from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
 from sqlalchemy import and_, case, cast, desc, func, or_, select, String, text
 from sqlalchemy.exc import IntegrityError, InvalidRequestError, OperationalError
-from sqlalchemy.orm import joinedload, Session
+from sqlalchemy.orm import joinedload, selectinload, Session
 from sqlalchemy.sql.functions import coalesce
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
@@ -1196,8 +1196,13 @@ async def admin_servers_partial_html(
     user_teams = await team_service.get_user_teams(user_email)
     team_ids = [t.id for t in user_teams]
 
-    # Build base query
-    query = select(DbServer)
+    # Build base query with eager loading to avoid N+1 queries
+    query = select(DbServer).options(
+        selectinload(DbServer.tools),
+        selectinload(DbServer.resources),
+        selectinload(DbServer.prompts),
+        selectinload(DbServer.a2a_agents),
+    )
 
     if not include_inactive:
         query = query.where(DbServer.enabled.is_(True))
@@ -1252,6 +1257,9 @@ async def admin_servers_partial_html(
 
     data = jsonable_encoder(servers_pydantic)
     base_url = f"{settings.app_root_path}/admin/servers/partial"
+
+    # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
+    db.commit()
 
     if render == "controls":
         return request.app.state.templates.TemplateResponse(
@@ -6477,6 +6485,9 @@ async def admin_gateways_partial_html(
     data = jsonable_encoder(gateways_pydantic)
     base_url = f"{settings.app_root_path}/admin/gateways/partial"
 
+    # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
+    db.commit()
+
     if render == "controls":
         return request.app.state.templates.TemplateResponse(
             "pagination_controls.html",
@@ -7308,6 +7319,9 @@ async def admin_a2a_partial_html(
 
     data = jsonable_encoder(a2a_agents_pydantic)
     base_url = f"{settings.app_root_path}/admin/a2a/partial"
+
+    # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
+    db.commit()
 
     if render == "controls":
         return request.app.state.templates.TemplateResponse(
