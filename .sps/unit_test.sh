@@ -21,9 +21,9 @@ echo "############# Running Install DB ################"
 make install-db
 echo "############# Running Linting ##################"
 . $HOME/.venv/mcpgateway/bin/activate && \
-    python3 -m uv pip install 'ruff' && \
-    python3 -m uv pip install 'black' && \
-    python3 -m uv pip install 'isort' 
+    python3 -m pip install 'ruff' && \
+    python3 -m pip install 'black' && \
+    python3 -m pip install 'isort' 
 make lint-quick
 echo "############# Running Tests and Coverage ##################"
 source $HOME/.venv/mcpgateway/bin/activate && \
