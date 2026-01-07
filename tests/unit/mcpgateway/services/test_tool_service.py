@@ -20,6 +20,7 @@ from sqlalchemy.exc import IntegrityError
 
 # First-Party
 from mcpgateway.cache.global_config_cache import global_config_cache
+from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.config import settings
@@ -63,6 +64,14 @@ def mock_fresh_db_session():
 
     with patch("mcpgateway.services.tool_service.fresh_db_session", mock_fresh_session):
         yield
+
+
+@pytest.fixture(autouse=True)
+def reset_tool_lookup_cache():
+    """Clear tool lookup cache between tests to avoid cross-test pollution."""
+    tool_lookup_cache.invalidate_all_local()
+    yield
+    tool_lookup_cache.invalidate_all_local()
 
 
 @pytest.fixture
