@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """Test MCP client against gateway to verify tools/list returns all tools."""
 
 import asyncio

@@ -48,8 +48,9 @@ from mcpgateway.common.models import Tool as PydanticTool
 from mcpgateway.common.models import ToolResult
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import EmailTeam, fresh_db_session, server_tool_association
+from mcpgateway.db import EmailTeam, fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_span
@@ -1228,6 +1229,25 @@ class ToolService:
                     stats[key].extend(value)
                 else:
                     stats[key] += value
+
+            if chunk_stats["created"] or chunk_stats["updated"]:
+                cache = _get_registry_cache()
+                await cache.invalidate_tools()
+                tool_lookup_cache = _get_tool_lookup_cache()
+                tool_name_map: Dict[str, Optional[str]] = {}
+                for tool in chunk:
+                    name = getattr(tool, "name", None)
+                    if not name:
+                        continue
+                    gateway_id = getattr(tool, "gateway_id", None)
+                    tool_name_map[name] = str(gateway_id) if gateway_id else tool_name_map.get(name)
+                for tool_name, gateway_id in tool_name_map.items():
+                    await tool_lookup_cache.invalidate(tool_name, gateway_id=gateway_id)
+                # Also invalidate tags cache since tool tags may have changed
+                # First-Party
+                from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+                await admin_stats_cache.invalidate_tags()
 
         return stats
 

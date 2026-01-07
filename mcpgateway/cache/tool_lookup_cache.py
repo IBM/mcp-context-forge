@@ -266,6 +266,7 @@ class ToolLookupCache:
             await redis.delete(self._redis_key(name))
             if gateway_id:
                 await redis.srem(self._gateway_set_key(gateway_id), name)
+            await redis.publish("mcpgw:cache:invalidate", f"tool_lookup:{name}")
         except Exception as exc:
             logger.debug("ToolLookupCache Redis invalidate failed: %s", exc)
 
@@ -295,6 +296,7 @@ class ToolLookupCache:
                 keys = [self._redis_key(name.decode() if isinstance(name, bytes) else name) for name in tool_names]
                 await redis.delete(*keys)
             await redis.delete(set_key)
+            await redis.publish("mcpgw:cache:invalidate", f"tool_lookup:gateway:{gateway_id}")
         except Exception as exc:
             logger.debug("ToolLookupCache Redis invalidate_gateway failed: %s", exc)
 
@@ -326,6 +328,13 @@ class ToolLookupCache:
             "l2_enabled": self._l2_enabled,
             "redis_available": self._redis_available,
         }
+
+    def reset_stats(self) -> None:
+        """Reset hit/miss counters."""
+        self._l1_hit_count = 0
+        self._l1_miss_count = 0
+        self._l2_hit_count = 0
+        self._l2_miss_count = 0
 
 
 tool_lookup_cache = ToolLookupCache()
