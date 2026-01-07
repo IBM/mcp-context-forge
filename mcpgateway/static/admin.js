@@ -6791,24 +6791,15 @@ function showTab(tabName) {
 
                 if (tabName === "catalog") {
                     // Load servers list if not already loaded
-                    console.log("🔍 Catalog tab activated");
                     const serversList = safeGetElement("servers-table");
-                    console.log("🔍 servers-table element:", serversList);
                     if (serversList) {
                         const hasLoadingMessage =
                             serversList.innerHTML.includes(
                                 "Loading servers...",
                             );
-                        console.log(
-                            "🔍 Has loading message:",
-                            hasLoadingMessage,
-                        );
                         if (hasLoadingMessage) {
                             // Trigger HTMX load manually if HTMX is available
                             if (window.htmx && window.htmx.trigger) {
-                                console.log(
-                                    "🔍 Triggering HTMX load for servers",
-                                );
                                 window.htmx.trigger(serversList, "load");
                             }
                         }
@@ -6817,22 +6808,13 @@ function showTab(tabName) {
 
                 if (tabName === "a2a-agents") {
                     // Load A2A agents list if not already loaded
-                    console.log("🔍 A2A Agents tab activated");
                     const agentsList = safeGetElement("agents-table");
-                    console.log("🔍 agents-table element:", agentsList);
                     if (agentsList) {
                         const hasLoadingMessage =
                             agentsList.innerHTML.includes("Loading agents...");
-                        console.log(
-                            "🔍 Has loading message:",
-                            hasLoadingMessage,
-                        );
                         if (hasLoadingMessage) {
                             // Trigger HTMX load manually if HTMX is available
                             if (window.htmx && window.htmx.trigger) {
-                                console.log(
-                                    "🔍 Triggering HTMX load for agents",
-                                );
                                 window.htmx.trigger(agentsList, "load");
                             }
                         }

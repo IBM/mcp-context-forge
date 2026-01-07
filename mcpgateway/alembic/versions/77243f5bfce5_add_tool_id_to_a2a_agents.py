@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Add tool_id to a2a_agents
 
 Revision ID: 77243f5bfce5

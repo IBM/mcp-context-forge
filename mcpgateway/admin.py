@@ -2337,35 +2337,6 @@ async def admin_list_gateways(
     }
 
 
-# @admin_router.get("/gateways/ids")
-# async def admin_list_gateway_ids(
-#     include_inactive: bool = False,
-#     db: Session = Depends(get_db),
-#     user=Depends(get_current_user_with_permissions),
-# ) -> Dict[str, Any]:
-#     """
-#     Return a JSON object containing a list of all gateway IDs.
-
-#     This endpoint is used by the admin UI to support the "Select All" action
-#     for gateways. It returns a simple JSON payload with a single key
-#     `gateway_ids` containing an array of gateway identifiers.
-
-#     Args:
-#         include_inactive (bool): Whether to include inactive gateways in the results.
-#         db (Session): Database session dependency.
-#         user: Authenticated user dependency.
-
-#     Returns:
-#         Dict[str, Any]: JSON object containing the `gateway_ids` list and metadata.
-#     """
-#     user_email = get_user_email(user)
-#     LOGGER.debug(f"User {user_email} requested gateway ids list")
-#     gateways, _ = await gateway_service.list_gateways(db, include_inactive=include_inactive, user_email=user_email, limit=0)
-#     ids = [str(g.id) for g in gateways]
-#     LOGGER.info(f"Gateway IDs retrieved: {ids}")
-#     return {"gateway_ids": ids}
-
-
 @admin_router.post("/gateways/{gateway_id}/toggle")
 async def admin_toggle_gateway(
     gateway_id: str,
