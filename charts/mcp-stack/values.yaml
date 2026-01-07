@@ -221,6 +221,13 @@ mcpContextForge:
     REGISTRY_CACHE_GATEWAYS_TTL: "20"  # Gateways list cache TTL (seconds)
     REGISTRY_CACHE_CATALOG_TTL: "300" # Catalog servers cache TTL (seconds, longer since external)
 
+    # ─ Tool Lookup Cache (reduces DB queries in invoke_tool) ─
+    TOOL_LOOKUP_CACHE_ENABLED: "true"           # Enable tool lookup caching
+    TOOL_LOOKUP_CACHE_TTL_SECONDS: "60"         # Cache TTL (seconds)
+    TOOL_LOOKUP_CACHE_NEGATIVE_TTL_SECONDS: "10" # Negative cache TTL (seconds)
+    TOOL_LOOKUP_CACHE_L1_MAXSIZE: "10000"       # In-memory L1 cache size
+    TOOL_LOOKUP_CACHE_L2_ENABLED: "true"        # Enable Redis L2 cache when CACHE_TYPE=redis
+
     # ─ Admin Stats Cache (reduces aggregate queries for dashboard) ─
     ADMIN_STATS_CACHE_ENABLED: "true"  # Enable admin stats caching
     ADMIN_STATS_CACHE_SYSTEM_TTL: "60" # System stats cache TTL (seconds)

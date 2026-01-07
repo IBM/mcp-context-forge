@@ -1212,8 +1212,8 @@
     },
     "allowed_origins": {
       "default": [
-        "http://localhost:4444",
-        "http://localhost"
+        "http://localhost",
+        "http://localhost:4444"
       ],
       "items": {
         "type": "string"
@@ -1991,6 +1991,42 @@
       "title": "Registry Cache Catalog Ttl",
       "type": "integer"
     },
+    "tool_lookup_cache_enabled": {
+      "default": true,
+      "description": "Enable tool lookup cache (tool name -> tool config)",
+      "title": "Tool Lookup Cache Enabled",
+      "type": "boolean"
+    },
+    "tool_lookup_cache_ttl_seconds": {
+      "default": 60,
+      "description": "TTL in seconds for tool lookup cache entries",
+      "maximum": 600,
+      "minimum": 5,
+      "title": "Tool Lookup Cache Ttl Seconds",
+      "type": "integer"
+    },
+    "tool_lookup_cache_negative_ttl_seconds": {
+      "default": 10,
+      "description": "TTL in seconds for negative tool lookup cache entries",
+      "maximum": 60,
+      "minimum": 1,
+      "title": "Tool Lookup Cache Negative Ttl Seconds",
+      "type": "integer"
+    },
+    "tool_lookup_cache_l1_maxsize": {
+      "default": 10000,
+      "description": "Max entries for in-memory tool lookup cache (L1)",
+      "maximum": 1000000,
+      "minimum": 100,
+      "title": "Tool Lookup Cache L1 Maxsize",
+      "type": "integer"
+    },
+    "tool_lookup_cache_l2_enabled": {
+      "default": true,
+      "description": "Enable Redis-backed tool lookup cache (L2) when cache_type=redis",
+      "title": "Tool Lookup Cache L2 Enabled",
+      "type": "boolean"
+    },
     "admin_stats_cache_enabled": {
       "default": true,
       "description": "Enable caching for admin dashboard statistics",
@@ -2192,14 +2228,14 @@
     },
     "allowed_mime_types": {
       "default": [
-        "text/plain",
-        "image/gif",
-        "image/jpeg",
-        "text/markdown",
-        "image/png",
-        "application/json",
         "text/html",
-        "application/xml"
+        "image/png",
+        "image/jpeg",
+        "application/json",
+        "application/xml",
+        "text/markdown",
+        "image/gif",
+        "text/plain"
       ],
       "items": {
         "type": "string"
