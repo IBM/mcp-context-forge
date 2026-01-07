@@ -521,7 +521,7 @@ test:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		uv run --active pytest -p pytest_cov -n auto --maxfail=0 -v --ignore=tests/fuzz --cov=mcpgateway"
+		uv run --active pytest -n auto --maxfail=0 -v --ignore=tests/fuzz"
 
 test-altk:
 	@echo "🧪 Running tests with ALTK (agent-lifecycle-toolkit)..."
