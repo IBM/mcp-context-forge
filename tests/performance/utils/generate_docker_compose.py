@@ -140,14 +140,14 @@ FAST_TEST_SERVER_TEMPLATE = """  fast_test_server:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      - BIND_ADDRESS=0.0.0.0:9080
+      - BIND_ADDRESS=0.0.0.0:8880
       - RUST_LOG=info
     ports:
-      - "9080:9080"
+      - "8880:8880"
     networks:
       - mcpnet
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9080/health || exit 1"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8880/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3
