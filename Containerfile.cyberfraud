@@ -1,4 +1,3 @@
-# syntax = devthefuture/dockerfile-x
 FROM ./Containerfile
 
 USER root 
