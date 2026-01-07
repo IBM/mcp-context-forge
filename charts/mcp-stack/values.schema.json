@@ -662,8 +662,8 @@
             },
             "FEDERATION_TIMEOUT": {
               "type": "string",
-              "description": "Federation timeout in seconds",
-              "default": "30"
+              "description": "HTTP timeout in seconds for gateway and MCP server requests (health checks, tool invocations)",
+              "default": "120"
             },
             "RESOURCE_CACHE_SIZE": {
               "type": "string",

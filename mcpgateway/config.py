@@ -1089,7 +1089,11 @@ class Settings(BaseSettings):
     sse_keepalive_enabled: bool = True  # Enable SSE keepalive events
     sse_keepalive_interval: int = 30  # seconds between keepalive events
 
-    federation_timeout: int = 120  # seconds
+    # Gateway/Server Connection Timeout
+    # Timeout in seconds for HTTP requests to registered gateways and MCP servers.
+    # Used by: GatewayService, ToolService, ServerService for health checks and tool invocations.
+    # Note: Previously part of federation settings, retained for gateway connectivity.
+    federation_timeout: int = 120
 
     # SSO
     # For sso_issuers strip out quotes to ensure we're passing valid JSON via env

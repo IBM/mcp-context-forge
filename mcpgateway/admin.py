@@ -988,8 +988,8 @@ async def get_configuration_settings(
             "plugins_enabled": settings.plugins_enabled,
             "well_known_enabled": settings.well_known_enabled,
         },
-        "Federation": {
-            "federation_timeout": settings.federation_timeout,
+        "Connection Timeouts": {
+            "federation_timeout": settings.federation_timeout,  # Gateway/server HTTP request timeout
         },
         "Transport": {
             "transport_type": settings.transport_type,

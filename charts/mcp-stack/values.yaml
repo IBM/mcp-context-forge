@@ -364,8 +364,8 @@ mcpContextForge:
     USE_STATEFUL_SESSIONS: "false"   # true = use event store; false = stateless
     JSON_RESPONSE_ENABLED: "true"    # default to JSON; false for SSE stream
 
-    # ─ Federation ─
-    FEDERATION_TIMEOUT: "120"        # seconds before peer request timeout
+    # ─ Gateway/Server Connection Timeout ─
+    FEDERATION_TIMEOUT: "120"        # HTTP timeout (seconds) for gateway and MCP server requests
 
     # ─ Resource cache ─
     RESOURCE_CACHE_SIZE: "1000"      # max resources kept in memory cache
