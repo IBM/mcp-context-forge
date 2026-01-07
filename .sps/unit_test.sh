@@ -19,6 +19,8 @@ echo "############# Running Install psycogpg ################"
     python3 -m uv pip install 'copier'   
 echo "############# Running Install DB ################"
 make install-db
+echo "############# Running Linting ##################"
+make lint
 echo "############# Running Tests and Coverage ##################"
 source $HOME/.venv/mcpgateway/bin/activate && \
 		export DATABASE_URL='sqlite:///:memory:' && \
