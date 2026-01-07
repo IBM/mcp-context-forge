@@ -132,7 +132,7 @@ sysctl net.core.somaxconn \
 | `net.core.somaxconn` | 4096 | 65535 | Max listen queue depth |
 | `net.core.netdev_max_backlog` | 1000 | 65535 | Max packets queued for processing |
 | `net.ipv4.tcp_max_syn_backlog` | 1024 | 65535 | Max SYN requests queued |
-| `net.ipv4.tcp_tw_reuse` | 0 | 2 | Reuse TIME_WAIT sockets |
+| `net.ipv4.tcp_tw_reuse` | 0 | 1 | Reuse TIME_WAIT sockets (outbound only) |
 | `net.ipv4.tcp_fin_timeout` | 60 | 15 | Faster TIME_WAIT cleanup |
 | `net.ipv4.ip_local_port_range` | 32768-60999 | 1024-65535 | More ephemeral ports |
 
@@ -163,11 +163,17 @@ Edit `/etc/security/limits.conf` if needed:
 sudo sysctl -w net.core.somaxconn=65535 \
                net.core.netdev_max_backlog=65535 \
                net.ipv4.tcp_max_syn_backlog=65535 \
-               net.ipv4.tcp_tw_reuse=2 \
+               net.ipv4.tcp_tw_reuse=1 \
                net.ipv4.tcp_fin_timeout=15 \
                net.ipv4.ip_local_port_range="1024 65535" \
                vm.swappiness=10 \
                fs.aio-max-nr=1048576
+```
+
+Or use the provided tuning script:
+
+```bash
+sudo scripts/tune-loadtest.sh
 ```
 
 ### Make Persistent
@@ -183,14 +189,26 @@ cat << 'EOF' | sudo tee /etc/sysctl.d/99-mcp-loadtest.conf
 net.core.somaxconn = 65535
 net.core.netdev_max_backlog = 65535
 net.ipv4.tcp_max_syn_backlog = 65535
-net.ipv4.tcp_tw_reuse = 2
+net.ipv4.tcp_tw_reuse = 1
 net.ipv4.tcp_fin_timeout = 15
 net.ipv4.ip_local_port_range = 1024 65535
+
+# TCP keepalive (faster dead connection detection)
+net.ipv4.tcp_keepalive_time = 60
+net.ipv4.tcp_keepalive_intvl = 10
+net.ipv4.tcp_keepalive_probes = 6
+
+# TCP buffer sizes (16MB max)
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_wmem = 4096 65536 16777216
 
 # Memory/VM tuning for database workloads
 vm.swappiness = 10
 
-# Async I/O for high disk throughput
+# File handle limits
+fs.file-max = 2097152
 fs.aio-max-nr = 1048576
 EOF
 
@@ -206,6 +224,152 @@ Without tuning, you may see errors like:
 - High failure rates at 500+ concurrent users
 
 The docker-compose.yml includes per-container TCP tuning via `sysctls`, but host-level settings provide the foundation.
+
+### User Limits (/etc/security/limits.conf)
+
+For persistent file descriptor and process limits, add to `/etc/security/limits.conf`:
+
+```bash
+sudo tee -a /etc/security/limits.conf << 'EOF'
+
+# =============================================================================
+# Load Testing Limits (Locust 4000+ users)
+# =============================================================================
+
+# Open files - each connection needs a file descriptor
+*               soft    nofile          65536
+*               hard    nofile          65536
+
+# Max user processes - for worker processes and threads
+*               soft    nproc           65536
+*               hard    nproc           65536
+
+# Max pending signals
+*               soft    sigpending      65536
+*               hard    sigpending      65536
+
+# Max locked memory (KB) - helps prevent swapping for critical data
+*               soft    memlock         unlimited
+*               hard    memlock         unlimited
+
+# Max message queue size (bytes)
+*               soft    msgqueue        819200
+*               hard    msgqueue        819200
+
+# Root user also needs these (limits.conf * doesn't apply to root)
+root            soft    nofile          65536
+root            hard    nofile          65536
+root            soft    nproc           65536
+root            hard    nproc           65536
+EOF
+```
+
+After editing, log out and back in (or for WSL2: `wsl --shutdown` from Windows).
+
+Verify with:
+```bash
+ulimit -n   # Should show 65536
+ulimit -u   # Should show 65536
+```
+
+---
+
+## 🦗 Locust Load Testing
+
+MCP Gateway includes [Locust](https://locust.io/) for comprehensive load testing with realistic user behavior simulation.
+
+### Quick Start
+
+```bash
+# Start Locust Web UI (default: 4000 users, 200 spawn/s)
+make load-test-ui
+
+# Open http://localhost:8089 in your browser
+```
+
+### Available Targets
+
+| Target | Description |
+|--------|-------------|
+| `make load-test-ui` | Web UI with class picker (4000 users default) |
+| `make load-test` | Headless test with HTML/CSV reports |
+| `make load-test-light` | Light test (10 users, 30s) |
+| `make load-test-heavy` | Heavy test (200 users, 120s) |
+| `make load-test-stress` | Stress test (500 users, 60s) |
+
+### Configuration
+
+Override defaults via environment variables:
+
+```bash
+# Custom user count and spawn rate
+LOADTEST_USERS=2000 LOADTEST_SPAWN_RATE=100 make load-test-ui
+
+# Custom host
+LOADTEST_HOST=http://localhost:4444 make load-test-ui
+
+# Limit worker processes (default: auto-detect CPUs)
+LOADTEST_PROCESSES=4 make load-test-ui
+```
+
+### User Classes
+
+The Locust UI provides a class picker to select different user behavior profiles:
+
+| User Class | Weight | Description |
+|------------|--------|-------------|
+| `HealthCheckUser` | 5 | Health endpoint only |
+| `ReadOnlyAPIUser` | 30 | GET endpoints (tools, servers, etc.) |
+| `AdminUIUser` | 10 | Admin dashboard pages |
+| `MCPJsonRpcUser` | 15 | MCP JSON-RPC protocol |
+| `WriteAPIUser` | 5 | POST/PUT/DELETE operations |
+| `StressTestUser` | 1 | High-frequency requests |
+| `FastTimeUser` | 20 | Fast Time MCP server |
+| `RealisticUser` | 10 | Mixed realistic workload |
+| `HighThroughputUser` | - | Maximum RPS (separate file) |
+
+### High-Concurrency Testing (4000+ Users)
+
+For testing with 4000+ concurrent users:
+
+1. **Tune the OS first:**
+   ```bash
+   sudo scripts/tune-loadtest.sh
+   ```
+
+2. **Ensure limits are set:**
+   ```bash
+   ulimit -n   # Should be 65536
+   ulimit -u   # Should be 65536
+   ```
+
+3. **Run the load test:**
+   ```bash
+   make load-test-ui
+   ```
+
+4. **Monitor during test:**
+   ```bash
+   # In separate terminals:
+   watch -n1 'ss -s'           # Socket statistics
+   docker stats                # Container resources
+   ```
+
+### Locust Files
+
+| File | Purpose |
+|------|---------|
+| `tests/loadtest/locustfile.py` | Main locustfile with all user classes |
+| `tests/loadtest/locustfile_highthroughput.py` | Optimized for maximum RPS |
+| `tests/loadtest/locustfile_baseline.py` | Component baseline testing |
+
+### Performance Tips
+
+- **Start small**: Test with 100-500 users first to identify bottlenecks
+- **Scale gradually**: Increase users in steps (500 → 1000 → 2000 → 4000)
+- **Monitor errors**: High error rates indicate server saturation
+- **Check p95/p99**: Tail latency matters more than average
+- **Use `constant_throughput`**: For predictable RPS instead of random waits
 
 ---
 
