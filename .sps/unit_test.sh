@@ -15,9 +15,9 @@ echo "############# Running Install dependencies ################"
 . $HOME/.venv/mcpgateway/bin/activate && \
     python3 -m uv pip install 'psycopg[c]' && \
     python3 -m uv pip install 'psycopg2' && \
-    python3 -m pip install 'ruff' && \
-    python3 -m pip install 'black' && \
-    python3 -m pip install 'isort' && \
+    python3 -m uv pip install --force-reinstall 'ruff' && \
+    python3 -m uv pip install --force-reinstall 'black' && \
+    python3 -m uv pip install --force-reinstall 'isort' && \
     python3 -m uv pip install 'openpyxl' && \
     python3 -m uv pip install 'copier'   
 echo "############# Running Install DB ################"
