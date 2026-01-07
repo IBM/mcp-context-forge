@@ -964,9 +964,7 @@ performance-clean:                         ## Stop and remove all performance da
 # help: load-test-summary     - Parse CSV reports and show summary statistics
 
 # Default load test configuration (optimized for 4000+ users)
-# Default to nginx load balancer (8000) for performance testing with multiple gateway instances
-# Override with LOADTEST_HOST=http://localhost:4444 for single gateway instance (dev mode)
-LOADTEST_HOST ?= http://localhost:8000
+LOADTEST_HOST ?= http://localhost:8080
 LOADTEST_USERS ?= 4000
 LOADTEST_SPAWN_RATE ?= 200
 LOADTEST_RUN_TIME ?= 5m

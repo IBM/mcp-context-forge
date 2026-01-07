@@ -178,7 +178,7 @@ NGINX_LOAD_BALANCER = """  nginx:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "8000:80"
+      - "8080:80"
     networks:
       - mcpnet
     volumes:
