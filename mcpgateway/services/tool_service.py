@@ -48,7 +48,7 @@ from mcpgateway.common.models import Tool as PydanticTool
 from mcpgateway.common.models import ToolResult
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import EmailTeam, fresh_db_session
+from mcpgateway.db import fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
@@ -466,22 +466,6 @@ class ToolService:
             metrics_cache.set(cache_key, top_performers)
 
         return top_performers
-
-    def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
-        """Retrieve the team name given a team ID.
-
-        Args:
-            db (Session): Database session for querying teams.
-            team_id (Optional[str]): The ID of the team.
-
-        Returns:
-            Optional[str]: The name of the team if found, otherwise None.
-        """
-        if not team_id:
-            return None
-        team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
-        db.commit()  # Release transaction to avoid idle-in-transaction
-        return team.name if team else None
 
     def _build_tool_cache_payload(self, tool: DbTool, gateway: Optional[DbGateway]) -> Dict[str, Any]:
         """Build cache payload for tool lookup by name.
@@ -1640,8 +1624,8 @@ class ToolService:
                 cached_tools = [ToolRead.model_validate(t) for t in cached["tools"]]
                 return (cached_tools, cached.get("next_cursor"))
 
-        # Build base query with ordering and eager load gateway to avoid N+1
-        query = select(DbTool).options(joinedload(DbTool.gateway)).order_by(desc(DbTool.created_at), desc(DbTool.id))
+        # Build base query with ordering and eager load gateway + email_team to avoid N+1
+        query = select(DbTool).options(joinedload(DbTool.gateway), joinedload(DbTool.email_team)).order_by(desc(DbTool.created_at), desc(DbTool.id))
 
         # Apply active/inactive filter
         if not include_inactive:
@@ -1706,19 +1690,12 @@ class ToolService:
             # Cursor-based: pag_result is a tuple
             tools_db, next_cursor = pag_result
 
-        # Fetch team names for the tools (common for both pagination types)
-        team_ids_set = {s.team_id for s in tools_db if s.team_id}
-        team_map = {}
-        if team_ids_set:
-            teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids_set), EmailTeam.is_active.is_(True))).all()
-            team_map = {team.id: team.name for team in teams}
-
         db.commit()  # Release transaction to avoid idle-in-transaction
 
         # Convert to ToolRead (common for both pagination types)
+        # Team names are loaded via joinedload(DbTool.email_team)
         result = []
         for s in tools_db:
-            s.team = team_map.get(s.team_id) if s.team_id else None
             result.append(self.convert_tool_to_read(s, include_metrics=False, include_auth=False))
 
         # Return appropriate format based on pagination type
@@ -1780,14 +1757,17 @@ class ToolService:
         if include_metrics:
             query = (
                 select(DbTool)
-                .options(joinedload(DbTool.gateway))
+                .options(joinedload(DbTool.gateway), joinedload(DbTool.email_team))
                 .options(selectinload(DbTool.metrics))
                 .join(server_tool_association, DbTool.id == server_tool_association.c.tool_id)
                 .where(server_tool_association.c.server_id == server_id)
             )
         else:
             query = (
-                select(DbTool).options(joinedload(DbTool.gateway)).join(server_tool_association, DbTool.id == server_tool_association.c.tool_id).where(server_tool_association.c.server_id == server_id)
+                select(DbTool)
+                .options(joinedload(DbTool.gateway), joinedload(DbTool.email_team))
+                .join(server_tool_association, DbTool.id == server_tool_association.c.tool_id)
+                .where(server_tool_association.c.server_id == server_id)
             )
 
         cursor = None  # Placeholder for pagination; ignore for now
@@ -1796,19 +1776,13 @@ class ToolService:
         if not include_inactive:
             query = query.where(DbTool.enabled)
 
-        # Execute the query with LEFT JOIN for team names in single query
-        query_with_join = query.outerjoin(EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True))).add_columns(EmailTeam.name.label("team_name"))
-
-        rows = db.execute(query_with_join).all()
+        # Execute the query - team names are loaded via joinedload(DbTool.email_team)
+        tools = db.execute(query).scalars().all()
 
         db.commit()  # Release transaction to avoid idle-in-transaction
 
-        # Add team names to tools based on join result
         result = []
-        for row in rows:
-            tool = row[0]
-            team_name = row.team_name
-            tool.team = team_name
+        for tool in tools:
             result.append(self.convert_tool_to_read(tool, include_metrics=include_metrics, include_auth=False))
 
         return result
@@ -1877,8 +1851,8 @@ class ToolService:
         user_teams = await team_service.get_user_teams(user_email)
         team_ids = [team.id for team in user_teams]
 
-        # Eager load gateway to avoid N+1 when accessing gateway_slug
-        query = select(DbTool).options(joinedload(DbTool.gateway))
+        # Eager load gateway and email_team to avoid N+1 when accessing gateway_slug and team name
+        query = select(DbTool).options(joinedload(DbTool.gateway), joinedload(DbTool.email_team))
 
         # Apply active/inactive filter
         if not include_inactive:
@@ -1920,29 +1894,22 @@ class ToolService:
         if last_id:
             query = query.where(DbTool.id > last_id)
 
-        # Execute query with LEFT JOIN for team names in single query
-        query_with_join = query.outerjoin(EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True))).add_columns(EmailTeam.name.label("team_name"))
-
+        # Execute query - team names are loaded via joinedload(DbTool.email_team)
         if page_size is not None:
-            rows = db.execute(query_with_join.limit(page_size + 1)).all()
+            tools = db.execute(query.limit(page_size + 1)).scalars().all()
         else:
-            rows = db.execute(query_with_join).all()
+            tools = db.execute(query).scalars().all()
 
         db.commit()  # Release transaction to avoid idle-in-transaction
 
         # Check if there are more results (only when paginating)
-        has_more = page_size is not None and len(rows) > page_size
+        has_more = page_size is not None and len(tools) > page_size
         if has_more:
-            rows = rows[:page_size]
+            tools = tools[:page_size]
 
-        # Convert to ToolRead objects with team names from join result
+        # Convert to ToolRead objects
         result = []
-        tools = []
-        for row in rows:
-            tool = row[0]
-            team_name = row.team_name
-            tool.team = team_name
-            tools.append(tool)
+        for tool in tools:
             result.append(self.convert_tool_to_read(tool, include_metrics=False, include_auth=False))
 
         next_cursor = None
@@ -1982,7 +1949,6 @@ class ToolService:
         tool = db.get(DbTool, tool_id)
         if not tool:
             raise ToolNotFoundError(f"Tool not found: {tool_id}")
-        tool.team = self._get_team_name(db, getattr(tool, "team_id", None))
 
         tool_read = self.convert_tool_to_read(tool)
 
@@ -2521,7 +2487,11 @@ class ToolService:
                     # Use cached passthrough headers (no DB query needed)
                     if request_headers:
                         headers = compute_passthrough_headers_cached(
-                            request_headers, headers, passthrough_allowed, gateway_auth_type=None, gateway_passthrough_headers=None  # REST tools don't use gateway auth here
+                            request_headers,
+                            headers,
+                            passthrough_allowed,
+                            gateway_auth_type=None,
+                            gateway_passthrough_headers=None,  # REST tools don't use gateway auth here
                         )
 
                     if self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE):

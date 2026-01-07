@@ -2726,6 +2726,12 @@ class Tool(Base):
 
     The property `metrics_summary` returns a dictionary with these aggregated values.
 
+    Team association is handled via the `email_team` relationship (default lazy loading)
+    which only includes active teams. For list operations, use explicit joinedload()
+    to eager load team names. The `team` property provides convenient access to
+    the team name:
+        - team: Returns the team name if the tool belongs to an active team, otherwise None.
+
     The following fields have been added to support tool invocation configuration:
         - request_type: HTTP method to use when invoking the tool.
         - auth_type: Type of authentication ("basic", "bearer", or None).
@@ -2806,6 +2812,25 @@ class Tool(Base):
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
+
+    # Relationship for loading team names (only active teams)
+    # Uses default lazy loading - team name is only loaded when accessed
+    # For list/admin views, use explicit joinedload(DbTool.email_team) for single-query loading
+    # This avoids adding overhead to hot paths like tool invocation that don't need team names
+    email_team: Mapped[Optional["EmailTeam"]] = relationship(
+        "EmailTeam",
+        primaryjoin="and_(Tool.team_id == EmailTeam.id, EmailTeam.is_active == True)",
+        foreign_keys=[team_id],
+    )
+
+    @property
+    def team(self) -> Optional[str]:
+        """Return the team name from the eagerly-loaded email_team relationship.
+
+        Returns:
+            Optional[str]: The team name if the tool belongs to an active team, otherwise None.
+        """
+        return self.email_team.name if self.email_team else None
 
     # @property
     # def gateway_slug(self) -> str:
