@@ -3668,6 +3668,9 @@ class ToolService:
             created_from_ip=created_from_ip,
             created_via=created_via or "a2a_integration",
             created_user_agent=created_user_agent,
+            team_id=agent.team_id,
+            owner_email=agent.owner_email,
+            visibility=agent.visibility,
         )
 
     async def _invoke_a2a_tool(self, db: Session, tool: DbTool, arguments: Dict[str, Any]) -> ToolResult:
