@@ -122,7 +122,7 @@ services:
       # - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
       # SQLAlchemy query logging (useful for N+1 detection; noisy under load)
       # NOTE: SQLALCHEMY_ECHO logs at INFO; set LOG_LEVEL=INFO/DEBUG to see output.
-      - SQLALCHEMY_ECHO=true
+      - SQLALCHEMY_ECHO=false
       # - DATABASE_URL=mysql+pymysql://mysql:${MYSQL_PASSWORD:-changeme}@mariadb:3306/mcp
       # - DATABASE_URL=mysql+pymysql://admin:${MARIADB_PASSWORD:-changeme}@mariadb:3306/mcp
       # - DATABASE_URL=mongodb://admin:${MONGO_PASSWORD:-changeme}@mongodb:27017/mcp
@@ -212,7 +212,7 @@ services:
       - TRUST_PROXY_AUTH=false
       # Logging configuration
       # NOTE: LOG_LEVEL=INFO/DEBUG is required for SQLALCHEMY_ECHO output.
-      - LOG_LEVEL=ERROR  # Default to ERROR for production performance
+      - LOG_LEVEL=ERROR  # Required for SQLALCHEMY_ECHO output during load testing
       - DISABLE_ACCESS_LOG=true  # Disable uvicorn access logs for performance (massive I/O overhead)
       - STRUCTURED_LOGGING_DATABASE_ENABLED=false  # Disable DB logging for performance (use true only for debugging)
       # Audit trail logging - disabled by default for performance
@@ -251,8 +251,8 @@ services:
       # Tool configuration for high-concurrency load testing
       - TOOL_TIMEOUT=60               # Seconds before tool invocation times out
       - MAX_TOOL_RETRIES=3            # Retry attempts for failed tool invocations
-      - TOOL_RATE_LIMIT=3000          # Max tool invocations per minute
-      - TOOL_CONCURRENT_LIMIT=100     # Max concurrent tool invocations
+      - TOOL_RATE_LIMIT=60000         # Max tool invocations per minute
+      - TOOL_CONCURRENT_LIMIT=1000    # Max concurrent tool invocations
       - FEDERATION_TIMEOUT=30
       # ═══════════════════════════════════════════════════════════════════════════
       # HTTPX Client Connection Pool Configuration
@@ -275,11 +275,11 @@ services:
       # ═══════════════════════════════════════════════════════════════════════════
       # Backpressure provides overload protection by rejecting excess requests with
       # immediate 503 responses instead of queuing them (which can cause OOM/timeouts).
-      # Total capacity = GRANIAN_WORKERS × GRANIAN_BACKPRESSURE = 16 × 64 = 1024 concurrent
+      # Total capacity = GRANIAN_WORKERS × GRANIAN_BACKPRESSURE = 16 × 128 = 2048 concurrent
       # Requests beyond this limit receive immediate 503 (no queuing, no OOM)
       - GRANIAN_WORKERS=16
       - GRANIAN_BACKLOG=4096
-      - GRANIAN_BACKPRESSURE=64
+      - GRANIAN_BACKPRESSURE=128
       - GRANIAN_HTTP1_BUFFER_SIZE=524288
       - GRANIAN_RESPAWN_FAILED=true
       # HTTP/2: Granian supports native HTTP/2 multiplexing, but not useful here because:
@@ -314,7 +314,7 @@ services:
       # Disable when using external observability to improve performance.
       # Set to true if you need per-operation metrics in the database.
       # Note: Does NOT affect log aggregation (METRICS_AGGREGATION_ENABLED) or Prometheus.
-      - DB_METRICS_RECORDING_ENABLED=true
+      - DB_METRICS_RECORDING_ENABLED=false
 
       # ═══════════════════════════════════════════════════════════════════════════
       # Metrics Configuration

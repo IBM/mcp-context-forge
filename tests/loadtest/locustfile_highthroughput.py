@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from locust import between, events, tag, task
+from locust import constant_throughput, events, tag, task
 from locust.contrib.fasthttp import FastHttpUser
 
 logging.basicConfig(level=logging.INFO)
@@ -155,14 +155,24 @@ def on_test_stop(environment: Any, **_kwargs: Any) -> None:
 
 
 class HighThroughputUser(FastHttpUser):
-    """High-throughput user with minimal wait time.
+    """High-throughput user for maximum RPS testing.
 
-    Uses FastHttpUser (gevent-based) for maximum RPS.
+    Uses FastHttpUser (gevent-based) and constant_throughput for predictable load.
     Focuses on fast, read-only endpoints.
+
+    Target RPS per user. With 4000 users:
+      constant_throughput(1)  =  4,000 RPS
+      constant_throughput(2)  =  8,000 RPS
+      constant_throughput(5)  = 20,000 RPS
+    Start low and increase based on server/client capacity.
     """
 
-    # Minimal wait time for maximum throughput
-    wait_time = between(0.001, 0.01)
+    # 2 requests/second per user for predictable throughput
+    wait_time = constant_throughput(2)
+
+    # Connection tuning for high concurrency
+    connection_timeout = 30.0
+    network_timeout = 30.0
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         """Initialize user with auth headers attribute.
