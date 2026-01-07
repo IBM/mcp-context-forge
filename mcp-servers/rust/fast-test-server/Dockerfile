@@ -42,14 +42,14 @@ RUN useradd -r -s /bin/false mcpuser
 USER mcpuser
 
 # Expose default port
-EXPOSE 9080
+EXPOSE 8880
 
 # Environment
-ENV BIND_ADDRESS=0.0.0.0:9080
+ENV BIND_ADDRESS=0.0.0.0:8880
 ENV RUST_LOG=info
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:9080/health || exit 1
+    CMD curl -f http://localhost:8880/health || exit 1
 
 ENTRYPOINT ["/app/fast-test-server"]
