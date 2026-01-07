@@ -217,12 +217,12 @@ serve-granian-http2: certs       ## Run Granian with HTTP/2 and TLS
 	SSL=true GRANIAN_HTTP=2 CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-granian.sh
 
 dev:
-	@$(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
+	@TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
 
 dev-echo:                        ## Run dev server with SQL query logging enabled
 	@echo "🔍 Starting dev server with SQL query logging (N+1 detection)"
 	@echo "   Docs: docs/docs/development/db-performance.md"
-	@SQLALCHEMY_ECHO=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
+	@SQLALCHEMY_ECHO=true TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
 
 stop:                            ## Stop all mcpgateway server processes
 	@echo "Stopping all mcpgateway processes..."
@@ -646,7 +646,7 @@ dev-query-log:                   ## Run dev server with query logging to file
 	@echo "   Use 'make query-log-tail' in another terminal to watch queries"
 	@echo "   Docs: docs/docs/development/db-performance.md"
 	@mkdir -p logs
-	@DB_QUERY_LOG_ENABLED=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
+	@DB_QUERY_LOG_ENABLED=true TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
 
 query-log-tail:                  ## Tail the database query log file
 	@echo "📊 Tailing logs/db-queries.log (Ctrl+C to stop)"
@@ -3307,6 +3307,7 @@ container-dev: container-check-image container-validate
 		--env-file=.env \
 		-e DEBUG=true \
 		-e LOG_LEVEL=DEBUG \
+		-e TEMPLATES_AUTO_RELOAD=true \
 		-v $(PWD)/mcpgateway:/app/mcpgateway:ro$(if $(filter podman,$(CONTAINER_RUNTIME)),$(COMMA)Z,) \
 		-p 8000:8000 \
 		--memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \

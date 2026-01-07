@@ -418,6 +418,7 @@ mcpContextForge:
     # ─ Development toggles ─
     DEV_MODE: "false"                # enable dev-mode features
     RELOAD: "false"                  # auto-reload code on changes
+    TEMPLATES_AUTO_RELOAD: "false"   # auto-reload Jinja2 templates (disable for production perf)
     DEBUG: "false"                   # verbose debug traces
 
     # ─ HTTP Retry Configuration ─

@@ -679,6 +679,7 @@ When disabled (default), logs only go to console/file. This improves performance
 ENVIRONMENT=development             # development, staging, production
 DEV_MODE=true
 RELOAD=true
+TEMPLATES_AUTO_RELOAD=true          # Auto-reload Jinja2 templates (default: false for production)
 DEBUG=true
 
 # Observability
