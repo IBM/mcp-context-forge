@@ -480,21 +480,20 @@ services:
       # - "autovacuum_vacuum_scale_factor=0.05" # Vacuum at 5% dead tuples (default: 0.2)
       # - "-c"
       # - "autovacuum_vacuum_cost_limit=1000"   # More vacuum work per cycle (default: 200)
-      # === PG_STAT_STATEMENTS - Query performance tracking ===
-      # Uncomment to enable query statistics (slight overhead, ~2-5%)
+      # === PG_STAT_STATEMENTS + AUTO_EXPLAIN ===
+      # Query performance tracking and slow query plan logging
+      # NOTE: Both extensions must be in the SAME shared_preload_libraries line!
       # After enabling, run in psql:
       #   CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
       #   SELECT * FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 10;
-      - "-c"
-      - "shared_preload_libraries=pg_stat_statements"
-      - "-c"
-      - "pg_stat_statements.track=all"
-      - "-c"
-      - "pg_stat_statements.max=10000"
-      # === AUTO_EXPLAIN - Slow query plan logging ===
-      # Uncomment to auto-log execution plans for slow queries
       # - "-c"
-      # - "shared_preload_libraries=auto_explain"
+      # - "shared_preload_libraries=pg_stat_statements"
+      # - "shared_preload_libraries=pg_stat_statements,auto_explain"  # Use this line to enable both
+      # - "-c"
+      # - "pg_stat_statements.track=all"
+      # - "-c"
+      #- "pg_stat_statements.max=10000"
+      # AUTO_EXPLAIN settings (uncomment if using combined shared_preload_libraries above)
       # - "-c"
       # - "auto_explain.log_min_duration=1000"
       # - "-c"
