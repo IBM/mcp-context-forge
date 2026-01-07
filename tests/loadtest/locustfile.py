@@ -145,6 +145,7 @@ JWT_USERNAME = _get_config("JWT_USERNAME", _get_config("PLATFORM_ADMIN_EMAIL", "
 # JTI (JWT ID) is automatically generated for each token for proper cache keying
 JWT_TOKEN_EXPIRY_HOURS = int(_get_config("LOADTEST_JWT_EXPIRY_HOURS", "8760"))
 
+
 # Benchmark server configuration for gateway registration testing
 def _detect_benchmark_servers() -> tuple[bool, int]:
     """Auto-detect if benchmark server is running and how many servers it has.

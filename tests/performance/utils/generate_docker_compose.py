@@ -126,7 +126,7 @@ FAST_TIME_SERVER_TEMPLATE = """  fast_time_server:
     networks:
       - mcpnet
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8888/health || exit 1"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8002/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3
