@@ -455,7 +455,7 @@ http {{
 def main():
     parser = argparse.ArgumentParser(description="Generate docker-compose.yml from infrastructure profiles")
     parser.add_argument("--config", type=Path, default=Path("config.yaml"), help="Configuration file path")
-    parser.add_argument("--infrastructure", required=True, help="Infrastructure profile name")
+    parser.add_argument("--infrastructure", default="staging", help="Infrastructure profile name (default: staging)")
     parser.add_argument("--server-profile", default="standard", help="Server profile name")
     parser.add_argument("--postgres-version", help="PostgreSQL version (e.g., 17-alpine)")
     parser.add_argument("--instances", type=int, help="Number of gateway instances")

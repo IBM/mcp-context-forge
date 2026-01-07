@@ -1042,7 +1042,7 @@ load-test-ui:                              ## Start Locust web UI at http://loca
 	fi
 	@echo "   💡 For best results, run: sudo scripts/tune-loadtest.sh"
 	@echo "   💡 Use 'User classes' dropdown to select FastTimeUser, etc."
-	@echo "   💡 Start server first with 'make dev' or 'docker compose up'"
+	@echo "   💡 Start server first: docker compose --profile monitoring up -d"
 	@echo ""
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
