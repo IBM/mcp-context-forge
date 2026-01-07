@@ -33,22 +33,22 @@
     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-300">{{ server.name }}</td>
     <td class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300">{{ server.description }}</td>
     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-300">
-      {% if server.associated_tools %}
-      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300">{{ server.associated_tools | length }} tool{{ 's' if server.associated_tools | length != 1 else '' }}</span>
+      {% if server.associatedTools %}
+      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300">{{ server.associatedTools | length }} tool{{ 's' if server.associatedTools | length != 1 else '' }}</span>
       {% else %}
       <span class="text-gray-500 dark:text-gray-400 text-xs">0 tools</span>
       {% endif %}
     </td>
     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-300">
-      {% if server.associated_resources %}
-      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300">{{ server.associated_resources | length }} resource{{ 's' if server.associated_resources | length != 1 else '' }}</span>
+      {% if server.associatedResources %}
+      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300">{{ server.associatedResources | length }} resource{{ 's' if server.associatedResources | length != 1 else '' }}</span>
       {% else %}
       <span class="text-gray-500 dark:text-gray-400 text-xs">0 resources</span>
       {% endif %}
     </td>
     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-300">
-      {% if server.associated_prompts %}
-      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300">{{ server.associated_prompts | length }} prompt{{ 's' if server.associated_prompts | length != 1 else '' }}</span>
+      {% if server.associatedPrompts %}
+      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300">{{ server.associatedPrompts | length }} prompt{{ 's' if server.associatedPrompts | length != 1 else '' }}</span>
       {% else %}
       <span class="text-gray-500 dark:text-gray-400 text-xs">0 prompts</span>
       {% endif %}
