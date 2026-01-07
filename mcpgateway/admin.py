@@ -60,13 +60,14 @@ from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
-from mcpgateway.db import EmailTeam, extract_json_field, get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
+from mcpgateway.db import A2AAgent as DbA2AAgent
+from mcpgateway.db import EmailTeam, extract_json_field
+from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
-from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import Server as DbServer
-from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import A2AAgent as DbA2AAgent
+from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import utc_now
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.routers.email_auth import create_access_token
@@ -6522,12 +6523,7 @@ async def admin_gateways_partial_html(
     if render == "selector":
         return request.app.state.templates.TemplateResponse(
             "gateways_selector_items.html",
-            {
-                "request": request,
-                "data": data,
-                "pagination": pagination.model_dump(),
-                "root_path": request.scope.get("root_path", "")
-            },
+            {"request": request, "data": data, "pagination": pagination.model_dump(), "root_path": request.scope.get("root_path", "")},
         )
 
     return request.app.state.templates.TemplateResponse(
@@ -6618,7 +6614,7 @@ async def admin_search_gateways(
     user_teams = await team_service.get_user_teams(user_email)
     team_ids = [t.id for t in user_teams]
 
-    query = select(DbGateway.id, DbGateway.original_name, DbGateway.display_name, DbGateway.description)
+    query = select(DbGateway.id, DbGateway.name, DbGateway.url, DbGateway.description)
 
     if not include_inactive:
         query = query.where(DbGateway.enabled.is_(True))
@@ -6630,19 +6626,19 @@ async def admin_search_gateways(
     query = query.where(or_(*access_conditions))
 
     search_conditions = [
-        func.lower(DbGateway.original_name).contains(search_query),
-        func.lower(coalesce(DbGateway.display_name, "")).contains(search_query),
+        func.lower(DbGateway.name).contains(search_query),
+        func.lower(coalesce(DbGateway.url, "")).contains(search_query),
         func.lower(coalesce(DbGateway.description, "")).contains(search_query),
     ]
     query = query.where(or_(*search_conditions))
 
     query = query.order_by(
         case(
-            (func.lower(DbGateway.original_name).startswith(search_query), 1),
-            (func.lower(coalesce(DbGateway.display_name, "")).startswith(search_query), 1),
+            (func.lower(DbGateway.name).startswith(search_query), 1),
+            (func.lower(coalesce(DbGateway.url, "")).startswith(search_query), 1),
             else_=2,
         ),
-        func.lower(DbGateway.original_name),
+        func.lower(DbGateway.name),
     ).limit(limit)
 
     results = db.execute(query).all()
@@ -6651,9 +6647,8 @@ async def admin_search_gateways(
         gateways.append(
             {
                 "id": row.id,
-                "name": row.original_name,
-                "original_name": row.original_name,
-                "display_name": row.display_name,
+                "name": row.name,
+                "url": row.url,
                 "description": row.description,
             }
         )
@@ -6736,7 +6731,7 @@ async def admin_search_servers(
     user_teams = await team_service.get_user_teams(user_email)
     team_ids = [t.id for t in user_teams]
 
-    query = select(DbServer.id, DbServer.original_name, DbServer.display_name, DbServer.description)
+    query = select(DbServer.id, DbServer.name, DbServer.description)
 
     if not include_inactive:
         query = query.where(DbServer.enabled.is_(True))
@@ -6748,19 +6743,17 @@ async def admin_search_servers(
     query = query.where(or_(*access_conditions))
 
     search_conditions = [
-        func.lower(DbServer.original_name).contains(search_query),
-        func.lower(coalesce(DbServer.display_name, "")).contains(search_query),
+        func.lower(DbServer.name).contains(search_query),
         func.lower(coalesce(DbServer.description, "")).contains(search_query),
     ]
     query = query.where(or_(*search_conditions))
 
     query = query.order_by(
         case(
-            (func.lower(DbServer.original_name).startswith(search_query), 1),
-            (func.lower(coalesce(DbServer.display_name, "")).startswith(search_query), 1),
+            (func.lower(DbServer.name).startswith(search_query), 1),
             else_=2,
         ),
-        func.lower(DbServer.original_name),
+        func.lower(DbServer.name),
     ).limit(limit)
 
     results = db.execute(query).all()
@@ -6769,9 +6762,7 @@ async def admin_search_servers(
         servers.append(
             {
                 "id": row.id,
-                "name": row.original_name,
-                "original_name": row.original_name,
-                "display_name": row.display_name,
+                "name": row.name,
                 "description": row.description,
             }
         )
@@ -7288,21 +7279,8 @@ async def admin_a2a_partial_html(
     # Build base query
     query = select(DbA2AAgent)
 
-    # Apply gateway filter if provided
-    if gateway_id:
-        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
-        if gateway_ids:
-            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
-            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
-            if non_null_ids and null_requested:
-                query = query.where(or_(DbA2AAgent.gateway_id.in_(non_null_ids), DbA2AAgent.gateway_id.is_(None)))
-                LOGGER.debug(f"Filtering a2a_agents by gateway IDs (including NULL): {non_null_ids} + NULL")
-            elif null_requested:
-                query = query.where(DbA2AAgent.gateway_id.is_(None))
-                LOGGER.debug("Filtering a2a_agents by NULL gateway_id (RestTool)")
-            else:
-                query = query.where(DbA2AAgent.gateway_id.in_(non_null_ids))
-                LOGGER.debug(f"Filtering a2a_agents by gateway IDs: {non_null_ids}")
+    # Note: A2A agents don't have gateway_id field, they connect directly via endpoint_url
+    # The gateway_id parameter is ignored for A2A agents
 
     if not include_inactive:
         query = query.where(DbA2AAgent.enabled.is_(True))
@@ -7429,21 +7407,8 @@ async def admin_get_all_agent_ids(
 
     query = select(DbA2AAgent.id)
 
-    # Apply optional gateway scoping
-    if gateway_id:
-        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
-        if gateway_ids:
-            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
-            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
-            if non_null_ids and null_requested:
-                query = query.where(or_(DbA2AAgent.gateway_id.in_(non_null_ids), DbA2AAgent.gateway_id.is_(None)))
-                LOGGER.debug(f"Filtering a2a agents by gateway IDs (including NULL): {non_null_ids} + NULL")
-            elif null_requested:
-                query = query.where(DbA2AAgent.gateway_id.is_(None))
-                LOGGER.debug("Filtering a2a agents by NULL gateway_id (RestTool)")
-            else:
-                query = query.where(DbA2AAgent.gateway_id.in_(non_null_ids))
-                LOGGER.debug(f"Filtering a2a agents by gateway IDs: {non_null_ids}")
+    # Note: A2A agents don't have gateway_id field, they connect directly via endpoint_url
+    # The gateway_id parameter is ignored for A2A agents
 
     if not include_inactive:
         query = query.where(DbA2AAgent.enabled.is_(True))
@@ -7494,23 +7459,10 @@ async def admin_search_a2a_agents(
     user_teams = await team_service.get_user_teams(user_email)
     team_ids = [t.id for t in user_teams]
 
-    query = select(DbA2AAgent.id, DbA2AAgent.original_name, DbA2AAgent.display_name, DbA2AAgent.description)
+    query = select(DbA2AAgent.id, DbA2AAgent.name, DbA2AAgent.endpoint_url, DbA2AAgent.description)
 
-    # Apply gateway filter if provided
-    if gateway_id:
-        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
-        if gateway_ids:
-            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
-            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
-            if non_null_ids and null_requested:
-                query = query.where(or_(DbA2AAgent.gateway_id.in_(non_null_ids), DbA2AAgent.gateway_id.is_(None)))
-                LOGGER.debug(f"Filtering prompt search by gateway IDs (including NULL): {non_null_ids} + NULL")
-            elif null_requested:
-                query = query.where(DbA2AAgent.gateway_id.is_(None))
-                LOGGER.debug("Filtering prompt search by NULL gateway_id")
-            else:
-                query = query.where(DbA2AAgent.gateway_id.in_(non_null_ids))
-                LOGGER.debug(f"Filtering prompt search by gateway IDs: {non_null_ids}")
+    # Note: A2A agents don't have gateway_id field, they connect directly via endpoint_url
+    # The gateway_id parameter is ignored for A2A agents
 
     if not include_inactive:
         query = query.where(DbA2AAgent.enabled.is_(True))
@@ -7522,19 +7474,19 @@ async def admin_search_a2a_agents(
     query = query.where(or_(*access_conditions))
 
     search_conditions = [
-        func.lower(DbA2AAgent.original_name).contains(search_query),
-        func.lower(coalesce(DbA2AAgent.display_name, "")).contains(search_query),
+        func.lower(DbA2AAgent.name).contains(search_query),
+        func.lower(coalesce(DbA2AAgent.endpoint_url, "")).contains(search_query),
         func.lower(coalesce(DbA2AAgent.description, "")).contains(search_query),
     ]
     query = query.where(or_(*search_conditions))
 
     query = query.order_by(
         case(
-            (func.lower(DbA2AAgent.original_name).startswith(search_query), 1),
-            (func.lower(coalesce(DbA2AAgent.display_name, "")).startswith(search_query), 1),
+            (func.lower(DbA2AAgent.name).startswith(search_query), 1),
+            (func.lower(coalesce(DbA2AAgent.endpoint_url, "")).startswith(search_query), 1),
             else_=2,
         ),
-        func.lower(DbA2AAgent.original_name),
+        func.lower(DbA2AAgent.name),
     ).limit(limit)
 
     results = db.execute(query).all()
@@ -7543,9 +7495,8 @@ async def admin_search_a2a_agents(
         agents.append(
             {
                 "id": row.id,
-                "name": row.original_name,
-                "original_name": row.original_name,
-                "display_name": row.display_name,
+                "name": row.name,
+                "endpoint_url": row.endpoint_url,
                 "description": row.description,
             }
         )

@@ -332,7 +332,7 @@ class A2AAgentService:
 
             # Automatically create a tool for the A2A agent if not already present
             tool_service = ToolService()
-            await tool_service.create_tool_from_a2a_agent(
+            tool_db = await tool_service.create_tool_from_a2a_agent(
                 db=db,
                 agent=new_agent,
                 created_by=created_by,
@@ -341,7 +341,13 @@ class A2AAgentService:
                 created_user_agent=created_user_agent,
             )
 
-            logger.info(f"Registered new A2A agent: {new_agent.name} (ID: {new_agent.id})")
+            # Associate the tool with the agent using the relationship
+            # This sets both the tool_id foreign key and the tool relationship
+            new_agent.tool = tool_db
+            db.commit()
+            db.refresh(new_agent)
+
+            logger.info(f"Registered new A2A agent: {new_agent.name} (ID: {new_agent.id}) with tool ID: {tool_db.id}")
 
             # Log A2A agent registration for lifecycle tracking
             structured_logger.info(
@@ -816,6 +822,8 @@ class A2AAgentService:
                     existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == new_slug, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == team_id)).scalar_one_or_none()
                     if existing_agent:
                         raise A2AAgentNameConflictError(name=new_slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
+                # Update the slug when name changes
+                agent.slug = new_slug
             # Update fields
             update_data = agent_data.model_dump(exclude_unset=True)
 
@@ -863,6 +871,17 @@ class A2AAgentService:
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
             await admin_stats_cache.invalidate_tags()
+
+            # Update the associated tool if it exists
+            tool_service = ToolService()
+            await tool_service.update_tool_from_a2a_agent(
+                db=db,
+                agent=agent,
+                modified_by=modified_by,
+                modified_from_ip=modified_from_ip,
+                modified_via=modified_via,
+                modified_user_agent=modified_user_agent,
+            )
 
             logger.info(f"Updated A2A agent: {agent.name} (ID: {agent.id})")
             return self.convert_agent_to_read(agent, db=db)
@@ -976,6 +995,11 @@ class A2AAgentService:
                     raise PermissionError("Only the owner can delete this agent")
 
             agent_name = agent.name
+
+            # Delete the associated tool before deleting the agent
+            tool_service = ToolService()
+            await tool_service.delete_tool_from_a2a_agent(db=db, agent=agent, user_email=user_email, purge_metrics=purge_metrics)
+
             if purge_metrics:
                 with pause_rollup_during_purge(reason=f"purge_a2a_agent:{agent_id}"):
                     delete_metrics_in_batches(db, A2AAgentMetric, A2AAgentMetric.a2a_agent_id, agent_id)
