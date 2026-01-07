@@ -479,7 +479,6 @@ class ExportService:
                 "capabilities": gateway.capabilities or {},
                 "health_check": {"url": f"{gateway.url}/health", "interval": 30, "timeout": 10, "retries": 3},
                 "is_active": gateway.enabled,
-                "federation_enabled": True,
                 "tags": gateway.tags or [],
                 "passthrough_headers": gateway.passthrough_headers or [],
             }
@@ -847,7 +846,6 @@ class ExportService:
                 "capabilities": db_gateway.capabilities or {},
                 "health_check": {"url": f"{db_gateway.url}/health", "interval": 30, "timeout": 10, "retries": 3},
                 "is_active": db_gateway.is_active,
-                "federation_enabled": True,
                 "tags": db_gateway.tags or [],
                 "passthrough_headers": db_gateway.passthrough_headers or [],
             }

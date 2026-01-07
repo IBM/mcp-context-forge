@@ -1,8 +1,11 @@
 # ADR-0008: Federation & Auto-Discovery via DNS-SD
 
-- *Status:* Accepted
+- *Status:* **Deprecated** (see [#1912](https://github.com/IBM/mcp-context-forge/issues/1912))
 - *Date:* 2025-02-21
+- *Deprecated:* 2026-01-07
 - *Deciders:* Core Engineering Team
+
+> **⚠️ Deprecation Notice:** The `DiscoveryService` (mDNS auto-discovery) and `ForwardingService` have been removed. The `ToolService` now handles all gateway tool invocations with improved OAuth, plugin, and SSE support. Gateway peer management via `/gateways` API remains available.
 
 ## Context
 
@@ -14,29 +17,30 @@ The MCP Gateway must support **federated operation**, where multiple gateway ins
 
 Manual configuration (e.g. hardcoded peer IPs) is error-prone and brittle in dynamic environments like laptops or Kubernetes.
 
-The codebase includes a `DiscoveryService` and federation settings such as:
+The codebase included a `DiscoveryService` and federation settings such as:
 
-- `FEDERATION_ENABLED`
-- `FEDERATION_DISCOVERY`
-- `DISCOVERY_INTERVAL_SECONDS`
+- `FEDERATION_ENABLED` *(deprecated)*
+- `FEDERATION_DISCOVERY` *(deprecated)*
+- `FEDERATION_PEERS` *(deprecated)*
+- `FEDERATION_SYNC_INTERVAL` *(deprecated)*
 
 ## Decision
 
-We enable **auto-discovery via DNS-SD (mDNS/zeroconf)** by default. Each gateway:
+We enabled **auto-discovery via DNS-SD (mDNS/zeroconf)** by default. Each gateway:
 
-- Publishes itself using `_mcp._tcp.local.` with TXT records
-- Periodically probes for peers using `zeroconf` or a fallback registry
-- Merges discovered gateways into its internal routing map
-- Sends periodic liveness pings to verify peer health
+- Published itself using `_mcp._tcp.local.` with TXT records
+- Periodically probed for peers using `zeroconf` or a fallback registry
+- Merged discovered gateways into its internal routing map
+- Sent periodic liveness pings to verify peer health
 
-Static peer configuration is still supported for restricted networks.
+Static peer configuration was supported for restricted networks.
 
 ## Consequences
 
-- 🔌 Gateways connect seamlessly on the same local network or overlay mesh
-- 🕵️♂️ DNS-SD adds moderate background network traffic, tunable via TTL
-- ⚠️ Firewalls or environments without multicast must use static peer config
-- ♻️ Federated topologies are self-healing and require no orchestration
+- 🔌 Gateways connected seamlessly on the same local network or overlay mesh
+- 🕵️♂️ DNS-SD added moderate background network traffic, tunable via TTL
+- ⚠️ Firewalls or environments without multicast required static peer config
+- ♻️ Federated topologies were self-healing and required no orchestration
 
 ## Alternatives Considered
 
@@ -47,8 +51,13 @@ Static peer configuration is still supported for restricted networks.
 | **Cloud DNS-based discovery** | Requires cloud provider integration and persistent internet access. |
 | **gRPC service registry** | Less transparent, requires protobuf tooling and internal coordination layer. |
 
+## Deprecation Rationale
+
+- **mDNS Discovery** was not required for current deployment models (Kubernetes, cloud environments)
+- **ForwardingService** duplicated functionality already present in `ToolService`, which provides more advanced features (OAuth, plugins, SSE)
+- Gateway peer management remains available via the `/gateways` REST API
+- `FEDERATION_TIMEOUT` setting is retained for gateway request timeouts
+
 ## Status
 
-Auto-discovery is implemented using `zeroconf`, and federation is active when `FEDERATION_ENABLED=true`.
-
-Current feature is early pre-alpha and may not work correctly.
+**Deprecated.** The `DiscoveryService` and `ForwardingService` have been removed. Use the `/gateways` API for manual gateway peer registration.

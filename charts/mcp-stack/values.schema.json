@@ -660,32 +660,10 @@
               "description": "Enable JSON responses",
               "default": "true"
             },
-            "FEDERATION_ENABLED": {
-              "type": "string",
-              "enum": ["true", "false"],
-              "description": "Enable federation",
-              "default": "true"
-            },
-            "FEDERATION_DISCOVERY": {
-              "type": "string",
-              "enum": ["true", "false"],
-              "description": "Enable federation discovery",
-              "default": "false"
-            },
-            "FEDERATION_PEERS": {
-              "type": "string",
-              "description": "Federation peers (JSON array)",
-              "default": "[]"
-            },
             "FEDERATION_TIMEOUT": {
               "type": "string",
-              "description": "Federation timeout in seconds",
-              "default": "30"
-            },
-            "FEDERATION_SYNC_INTERVAL": {
-              "type": "string",
-              "description": "Federation sync interval in seconds",
-              "default": "300"
+              "description": "HTTP timeout in seconds for gateway and MCP server requests (health checks, tool invocations)",
+              "default": "120"
             },
             "RESOURCE_CACHE_SIZE": {
               "type": "string",

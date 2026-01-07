@@ -2152,34 +2152,9 @@
       "title": "Sse Keepalive Interval",
       "type": "integer"
     },
-    "federation_enabled": {
-      "default": true,
-      "title": "Federation Enabled",
-      "type": "boolean"
-    },
-    "federation_discovery": {
-      "default": false,
-      "title": "Federation Discovery",
-      "type": "boolean"
-    },
-    "federation_peers": {
-      "items": {
-        "format": "uri",
-        "maxLength": 2083,
-        "minLength": 1,
-        "type": "string"
-      },
-      "title": "Federation Peers",
-      "type": "array"
-    },
     "federation_timeout": {
       "default": 120,
       "title": "Federation Timeout",
-      "type": "integer"
-    },
-    "federation_sync_interval": {
-      "default": 300,
-      "title": "Federation Sync Interval",
       "type": "integer"
     },
     "sso_issuers": {

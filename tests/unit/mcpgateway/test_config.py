@@ -38,17 +38,6 @@ def test_parse_allowed_origins_json_and_csv():
     assert s_csv.allowed_origins == {"https://x.com", "https://y.com"}
 
 
-def test_parse_federation_peers_json_and_csv():
-    peers_json = '["https://gw1", "https://gw2"]'
-    peers_csv = "https://gw3, https://gw4"
-
-    s_json = Settings(federation_peers=peers_json)
-    s_csv = Settings(federation_peers=peers_csv)
-
-    assert [str(u) for u in s_json.federation_peers] == ["https://gw1/", "https://gw2/"]
-    assert [str(u) for u in s_csv.federation_peers] == ["https://gw3/", "https://gw4/"]
-
-
 # --------------------------------------------------------------------------- #
 #                          database / CORS helpers                            #
 # --------------------------------------------------------------------------- #
