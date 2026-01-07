@@ -548,7 +548,7 @@ async def list_tools() -> List[types.Tool]:
     else:
         try:
             async with get_db() as db:
-                tools, _ = await tool_service.list_tools(db, False, None, None, request_headers)
+                tools, _ = await tool_service.list_tools(db, include_inactive=False, limit=0, _request_headers=request_headers)
                 return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations) for tool in tools]
         except Exception as e:
             logger.exception(f"Error listing tools:{e}")
@@ -586,7 +586,7 @@ async def list_prompts() -> List[types.Prompt]:
     else:
         try:
             async with get_db() as db:
-                prompts, _ = await prompt_service.list_prompts(db, False, None, None)
+                prompts, _ = await prompt_service.list_prompts(db, include_inactive=False, limit=0)
                 return [types.Prompt(name=prompt.name, description=prompt.description, arguments=prompt.arguments) for prompt in prompts]
         except Exception as e:
             logger.exception(f"Error listing prompts:{e}")
@@ -664,7 +664,7 @@ async def list_resources() -> List[types.Resource]:
     else:
         try:
             async with get_db() as db:
-                resources, _ = await resource_service.list_resources(db, False)
+                resources, _ = await resource_service.list_resources(db, include_inactive=False, limit=0)
                 return [types.Resource(uri=resource.uri, name=resource.name, description=resource.description, mimeType=resource.mime_type) for resource in resources]
         except Exception as e:
             logger.exception(f"Error listing resources:{e}")
