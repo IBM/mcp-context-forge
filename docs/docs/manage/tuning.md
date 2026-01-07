@@ -510,7 +510,67 @@ After enabling pooling:
 
 ---
 
-## 7 - Security tips while tuning
+## 7 - Nginx Reverse Proxy Tuning
+
+When deploying MCP Gateway behind nginx (as in the default `docker-compose.yml`), several optimizations can significantly improve performance under load.
+
+### Admin UI Caching
+
+Admin pages use Jinja2 template rendering which is CPU-intensive under high concurrency. The default nginx configuration enables short-TTL caching with multi-tenant isolation:
+
+| Setting | Value | Purpose |
+|---------|-------|---------|
+| `proxy_cache_valid` | `5s` | Short TTL keeps data fresh while reducing backend load |
+| `Cache-Control` | `private` | Prevents CDNs/proxies from caching user-specific content |
+| Cache key | Includes auth tokens | Per-user isolation prevents data leakage |
+
+**Performance impact (4000 concurrent users):**
+
+| Metric | Without Caching | With Caching | Improvement |
+|--------|-----------------|--------------|-------------|
+| `/admin/` response time | 5414ms | 199ms | 96% |
+| Throughput | ~2400 RPS | ~4000 RPS | 67% |
+
+### Multi-Tenant Cache Safety
+
+The cache key includes all authentication credentials to ensure user isolation:
+
+```nginx
+proxy_cache_key "$scheme$request_method$host$request_uri$is_args$args$http_authorization$cookie_jwt_token$cookie_access_token";
+```
+
+This ensures:
+
+- **Bearer token auth** (`$http_authorization`): API clients get isolated caches
+- **Primary session cookie** (`$cookie_jwt_token`): Browser users get isolated caches
+- **Alternative auth cookie** (`$cookie_access_token`): Fallback auth method also isolated
+
+### Verifying Cache Behavior
+
+Check the `X-Cache-Status` header to verify caching is working:
+
+```bash
+curl -I http://localhost:8080/admin/ -b "jwt_token=..." | grep X-Cache
+# X-Cache-Status: MISS  (first request)
+# X-Cache-Status: HIT   (subsequent requests within 5s)
+# X-Cache-Status: STALE (background refresh in progress)
+```
+
+### Disabling Admin Caching
+
+If you need real-time admin data or have concerns about caching, modify `infra/nginx/nginx.conf`:
+
+```nginx
+location /admin {
+    proxy_cache off;
+    add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+    # ... rest of config
+}
+```
+
+---
+
+## 8 - Security tips while tuning
 
 * Never commit real `JWT_SECRET_KEY`, DB passwords, or tokens-use `.env.example` as a template.
 * Prefer platform secrets (K8s Secrets, Code Engine secrets) over baking creds into the image.
