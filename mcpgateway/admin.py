@@ -10255,6 +10255,7 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
     """
     # Create a shared queue to aggregate events from all services
     event_queue = asyncio.Queue()
+    heartbeat_interval = 15.0
 
     # Define a generic producer that feeds a specific stream into the queue
     async def stream_to_queue(generator, source_name: str):
@@ -10388,8 +10389,8 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
                 # We use asyncio.wait_for to allow checking request.is_disconnected periodically
                 # or simply rely on queue.get() which is efficient.
                 try:
-                    # Wait for an event
-                    event = await event_queue.get()
+                    # Wait for an event or send a keepalive to avoid idle timeouts
+                    event = await asyncio.wait_for(event_queue.get(), timeout=heartbeat_interval)
 
                     # SSE format
                     event_type = event.get("type", "message")
@@ -10399,6 +10400,8 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
 
                     # Mark task as done in queue (good practice)
                     event_queue.task_done()
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
 
                 except asyncio.CancelledError:
                     LOGGER.debug("SSE Event generator task cancelled")
