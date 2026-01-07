@@ -1393,10 +1393,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '4'
+          cpus: '2'
           memory: 2G
         reservations:
-          cpus: '1'
+          cpus: '0.5'
           memory: 512M
     profiles: ["monitoring"]
 
