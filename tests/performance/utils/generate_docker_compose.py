@@ -43,6 +43,8 @@ services:
 
 {gateway_services}
 
+{benchmark_servers}
+
 {load_balancer}
 
 volumes:
@@ -107,6 +109,23 @@ REDIS_SERVICE = """  redis:
       retries: 5
 """
 
+BENCHMARK_SERVER_TEMPLATE = """  benchmark_server:
+    build:
+      context: ./mcp-servers/go/benchmark-server
+      dockerfile: Dockerfile
+    container_name: benchmark_server
+    command: ["-transport=http", "-server-count={server_count}", "-start-port={start_port}", "-tools=100", "-resources=10", "-prompts=5"]
+    ports:
+      - "{port_range}"
+    networks:
+      - mcpnet
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:{start_port}/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+"""
+
 NGINX_LOAD_BALANCER = """  nginx:
     image: nginx:alpine
     container_name: nginx_lb
@@ -162,6 +181,9 @@ class DockerComposeGenerator:
         pg_version = postgres_version or infra.get("postgres_version", "17-alpine")
         num_instances = instances or infra.get("gateway_instances", 1)
         redis_enabled = infra.get("redis_enabled", False)
+        benchmark_enabled = infra.get("benchmark_server_enabled", False)
+        benchmark_count = infra.get("benchmark_server_count", 10)
+        benchmark_start_port = infra.get("benchmark_start_port", 9000)
 
         # Generate PostgreSQL configuration commands
         postgres_commands = self._generate_postgres_config(infra)
@@ -177,6 +199,11 @@ class DockerComposeGenerator:
         # Generate gateway services
         gateway_services = self._generate_gateway_services(num_instances, server, redis_enabled)
 
+        # Generate benchmark servers
+        benchmark_servers = ""
+        if benchmark_enabled:
+            benchmark_servers = self._generate_benchmark_servers(benchmark_count, benchmark_start_port)
+
         # Generate load balancer if multiple instances
         load_balancer = ""
         if num_instances > 1:
@@ -190,6 +217,7 @@ class DockerComposeGenerator:
             postgres_config_commands=postgres_commands,
             redis_service=redis_service,
             gateway_services=gateway_services,
+            benchmark_servers=benchmark_servers,
             load_balancer=load_balancer,
             redis_volume=redis_volume,
         )
@@ -271,6 +299,24 @@ class DockerComposeGenerator:
             services.append(service)
 
         return "\n".join(services)
+
+    def _generate_benchmark_servers(self, count: int, start_port: int) -> str:
+        """Generate benchmark server service definition.
+
+        Uses the benchmark server's multi-server mode to spawn multiple
+        HTTP servers within a single container, avoiding resource overhead
+        of running thousands of containers.
+        """
+        end_port = start_port + count - 1
+        port_range = f"{start_port}-{end_port}:{start_port}-{end_port}"
+
+        service = BENCHMARK_SERVER_TEMPLATE.format(
+            server_count=count,
+            start_port=start_port,
+            port_range=port_range,
+        )
+
+        return service
 
     def _generate_load_balancer(self, num_instances: int) -> str:
         """Generate nginx load balancer service"""
