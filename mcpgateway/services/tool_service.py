@@ -54,6 +54,7 @@ from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_span
+from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.plugins.framework import (
     GlobalContext,
     HttpHeaderPayload,
@@ -2454,7 +2455,40 @@ class ToolService:
         success = False
         error_message = None
 
-        # Create a trace span for the tool invocation (using local variables)
+        # Get trace_id from context for database span creation
+        trace_id = current_trace_id.get()
+        db_span_id = None
+        db_span_ended = False
+        observability_service = ObservabilityService() if trace_id else None
+
+        # Create database span for observability_spans table
+        if trace_id and observability_service:
+            try:
+                # Re-open database session for span creation (original was closed at line 2285)
+                with fresh_db_session() as span_db:
+                    db_span_id = observability_service.start_span(
+                        db=span_db,
+                        trace_id=trace_id,
+                        name="tool.invoke",
+                        kind="client",
+                        resource_type="tool",
+                        resource_name=name,
+                        resource_id=tool_id,
+                        attributes={
+                            "tool.name": name,
+                            "tool.id": tool_id,
+                            "tool.integration_type": tool_integration_type,
+                            "tool.gateway_id": tool_gateway_id,
+                            "arguments_count": len(arguments) if arguments else 0,
+                            "has_headers": bool(request_headers),
+                        },
+                    )
+                    logger.debug(f"✓ Created tool.invoke span: {db_span_id} for tool: {name}")
+            except Exception as e:
+                logger.warning(f"Failed to start observability span for tool invocation: {e}")
+                db_span_id = None
+
+        # Create a trace span for OpenTelemetry export (Jaeger, Zipkin, etc.)
         with create_span(
             "tool.invoke",
             {
@@ -2958,7 +2992,26 @@ class ToolService:
                 # Calculate duration
                 duration_ms = (time.monotonic() - start_time) * 1000
 
-                # Add final span attributes
+                # End database span for observability_spans table
+                if db_span_id and observability_service and not db_span_ended:
+                    try:
+                        with fresh_db_session() as span_db:
+                            observability_service.end_span(
+                                db=span_db,
+                                span_id=db_span_id,
+                                status="ok" if success else "error",
+                                status_message=error_message if error_message else None,
+                                attributes={
+                                    "success": success,
+                                    "duration_ms": duration_ms,
+                                },
+                            )
+                            db_span_ended = True
+                            logger.debug(f"✓ Ended tool.invoke span: {db_span_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to end observability span for tool invocation: {e}")
+
+                # Add final span attributes for OpenTelemetry
                 if span:
                     span.set_attribute("success", success)
                     span.set_attribute("duration.ms", duration_ms)
