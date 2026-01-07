@@ -27,9 +27,6 @@ gateway:
     # Auth
     AUTH_REQUIRED: "false"  # Disabled for easy testing
 
-    # Federation
-    MCPGATEWAY_ENABLE_FEDERATION: "false"
-
   # mTLS client configuration (gateway connects to plugins)
   mtls_enabled: false
 

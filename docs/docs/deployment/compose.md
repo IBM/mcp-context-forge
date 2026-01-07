@@ -192,6 +192,7 @@ PgBouncer supports three pool modes:
     - **Prepared statements** may not work as expected across transactions
     - **Session-level settings** (like `SET` commands) are not preserved
     - **LISTEN/NOTIFY** requires session mode
+    - **Advisory locks** (used during migrations/bootstrap) are session-level; ensure `server_reset_query` clears them (use `DISCARD ALL` or add `SELECT pg_advisory_unlock_all()`), or run migrations against direct PostgreSQL.
 
     MCP Gateway is designed to work with transaction mode.
 

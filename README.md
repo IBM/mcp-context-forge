@@ -84,9 +84,10 @@ ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that 
     * 10.16. [Health Checks](#health-checks)
     * 10.17. [Database](#database)
     * 10.18. [Cache Backend](#cache-backend)
-    * 10.19. [Metrics Aggregation Cache](#metrics-aggregation-cache)
-    * 10.20. [Plugin Configuration](#plugin-configuration)
-    * 10.21. [Development](#development)
+    * 10.19. [Tool Lookup Cache](#tool-lookup-cache)
+    * 10.20. [Metrics Aggregation Cache](#metrics-aggregation-cache)
+    * 10.21. [Plugin Configuration](#plugin-configuration)
+    * 10.22. [Development](#development)
 * 11. [Running](#running)
     * 11.1. [Makefile](#makefile)
     * 11.2. [Script helper](#script-helper)
@@ -154,15 +155,6 @@ For a list of upcoming features, check out the [ContextForge Roadmap](https://ib
 * Sits in front of any MCP server or REST API
 * Lets you choose your MCP protocol version (e.g., `2025-03-26`)
 * Exposes a single, unified interface for diverse backends
-
-</details>
-
-<details>
-<summary><strong>🌐 Federation of Peer Gateways (MCP Registry)</strong></summary>
-
-* Auto-discovers or configures peer gateways (via mDNS or manual)
-* Performs health checks and merges remote registries transparently
-* Supports Redis-backed syncing and fail-over
 
 </details>
 
@@ -2079,11 +2071,7 @@ Automatic management of metrics data to prevent unbounded table growth and maint
 
 | Setting                    | Description            | Default | Options    |
 | -------------------------- | ---------------------- | ------- | ---------- |
-| `FEDERATION_ENABLED`       | Enable federation      | `true`  | bool       |
-| `FEDERATION_DISCOVERY`     | Auto-discover peers    | `false` | bool       |
-| `FEDERATION_PEERS`         | Comma-sep peer URLs    | `[]`    | JSON array |
 | `FEDERATION_TIMEOUT`       | Gateway timeout (secs) | `30`    | int > 0    |
-| `FEDERATION_SYNC_INTERVAL` | Sync interval (secs)   | `300`   | int > 0    |
 
 ### Resources
 
@@ -2117,7 +2105,7 @@ Automatic management of metrics data to prevent unbounded table growth and maint
 | Setting                 | Description                               | Default | Options |
 | ----------------------- | ----------------------------------------- | ------- | ------- |
 | `HEALTH_CHECK_INTERVAL` | Health poll interval (secs)               | `60`    | int > 0 |
-| `HEALTH_CHECK_TIMEOUT`  | Health request timeout (secs)             | `10`    | int > 0 |
+| `HEALTH_CHECK_TIMEOUT`  | Health request timeout (secs)             | `5`     | int > 0 |
 | `GATEWAY_HEALTH_CHECK_TIMEOUT` | Per-check timeout for gateway health check (secs) | `5.0` | float > 0 |
 | `UNHEALTHY_THRESHOLD`   | Fail-count before peer deactivation,      | `3`     | int > 0 |
 |                         | Set to -1 if deactivation is not needed.  |         |         |
@@ -2160,6 +2148,18 @@ Automatic management of metrics data to prevent unbounded table growth and maint
 
 > 🧠 `none` disables caching entirely. Use `memory` for dev, `database` for local persistence, or `redis` for distributed caching across multiple instances.
 
+### Tool Lookup Cache
+
+| Setting                               | Description                                                     | Default | Options          |
+| ------------------------------------- | --------------------------------------------------------------- | ------- | ---------------- |
+| `TOOL_LOOKUP_CACHE_ENABLED`           | Enable tool lookup cache for `invoke_tool` hot path             | `true`  | bool             |
+| `TOOL_LOOKUP_CACHE_TTL_SECONDS`       | Cache TTL (seconds) for tool lookup entries                     | `60`    | int (5-600)      |
+| `TOOL_LOOKUP_CACHE_NEGATIVE_TTL_SECONDS` | Cache TTL (seconds) for missing/inactive/offline entries     | `10`    | int (1-60)       |
+| `TOOL_LOOKUP_CACHE_L1_MAXSIZE`        | Max entries in in-memory L1 cache                               | `10000` | int (100-1000000) |
+| `TOOL_LOOKUP_CACHE_L2_ENABLED`        | Enable Redis-backed L2 cache when `CACHE_TYPE=redis`            | `true`  | bool             |
+
+> ⚡ **Performance**: Eliminates a DB lookup per tool invocation. L1 is always available; L2 activates when `CACHE_TYPE=redis` and `TOOL_LOOKUP_CACHE_L2_ENABLED=true`.
+
 ### Metrics Aggregation Cache
 
 | Setting                     | Description                           | Default | Options    |
@@ -2168,6 +2168,28 @@ Automatic management of metrics data to prevent unbounded table growth and maint
 | `METRICS_CACHE_TTL_SECONDS` | Cache TTL (seconds)                   | `60`    | int (1-300)|
 
 > ⚡ **Performance**: Caches aggregate metrics queries to reduce full table scans. Under high load (3000+ users), setting TTL to 60-120 seconds can reduce database scans by 6-12×. See [Issue #1906](https://github.com/IBM/mcp-context-forge/issues/1906).
+
+### MCP Session Pool
+
+| Setting                                   | Description                                        | Default | Options     |
+| ----------------------------------------- | -------------------------------------------------- | ------- | ----------- |
+| `MCP_SESSION_POOL_ENABLED`                | Enable session pooling (10-20x latency improvement)| `false` | bool        |
+| `MCP_SESSION_POOL_MAX_PER_KEY`            | Max sessions per (URL, identity, transport)        | `10`    | int (1-100) |
+| `MCP_SESSION_POOL_TTL`                    | Session TTL before forced close (seconds)          | `300`   | float       |
+| `MCP_SESSION_POOL_TRANSPORT_TIMEOUT`      | Timeout for all HTTP operations (seconds)          | `30`    | float       |
+| `MCP_SESSION_POOL_HEALTH_CHECK_INTERVAL`  | Idle time before health check (seconds)            | `60`    | float       |
+| `MCP_SESSION_POOL_ACQUIRE_TIMEOUT`        | Timeout waiting for session slot (seconds)         | `30`    | float       |
+| `MCP_SESSION_POOL_CREATE_TIMEOUT`         | Timeout creating new session (seconds)             | `30`    | float       |
+| `MCP_SESSION_POOL_CIRCUIT_BREAKER_THRESHOLD` | Failures before circuit opens                   | `5`     | int         |
+| `MCP_SESSION_POOL_CIRCUIT_BREAKER_RESET`  | Seconds before circuit resets                      | `60`    | float       |
+| `MCP_SESSION_POOL_IDLE_EVICTION`          | Evict idle pool keys after (seconds)               | `600`   | float       |
+| `MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC`    | Force explicit RPC on health checks                | `false` | bool        |
+
+> ⚡ **Performance**: Session pooling reduces per-request overhead from ~20ms to ~1-2ms (10-20x improvement). Sessions are isolated per user/tenant via identity hashing to prevent cross-user session sharing.
+>
+> 🔒 **Security**: Sessions are keyed by `(URL, identity_hash, transport_type)` to ensure different users never share sessions.
+>
+> 🏥 **Health Checks**: By default, the pool's internal staleness check handles health verification. Set `MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC=true` for stricter verification at ~5ms latency cost per check.
 
 ### Database Management
 

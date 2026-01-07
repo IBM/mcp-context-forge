@@ -453,6 +453,32 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     await SharedHttpClient.get_instance()
 
+    # Initialize MCP session pool (for session reuse across tool invocations)
+    if settings.mcp_session_pool_enabled:
+        # First-Party
+        from mcpgateway.services.mcp_session_pool import init_mcp_session_pool  # pylint: disable=import-outside-toplevel
+
+        # Auto-align pool health check interval to min of pool and gateway settings
+        effective_health_check_interval = min(
+            settings.health_check_interval,
+            settings.mcp_session_pool_health_check_interval,
+        )
+        init_mcp_session_pool(
+            max_sessions_per_key=settings.mcp_session_pool_max_per_key,
+            session_ttl_seconds=settings.mcp_session_pool_ttl,
+            health_check_interval_seconds=effective_health_check_interval,
+            acquire_timeout_seconds=settings.mcp_session_pool_acquire_timeout,
+            session_create_timeout_seconds=settings.mcp_session_pool_create_timeout,
+            circuit_breaker_threshold=settings.mcp_session_pool_circuit_breaker_threshold,
+            circuit_breaker_reset_seconds=settings.mcp_session_pool_circuit_breaker_reset,
+            identity_headers=frozenset(settings.mcp_session_pool_identity_headers),
+            idle_pool_eviction_seconds=settings.mcp_session_pool_idle_eviction,
+            # Use dedicated transport timeout (default 30s to match MCP SDK default).
+            # This is separate from health_check_timeout to allow long-running tool calls.
+            default_transport_timeout_seconds=settings.mcp_session_pool_transport_timeout,
+        )
+        logger.info("MCP session pool initialized")
+
     # Initialize LLM chat router Redis client
     # First-Party
     from mcpgateway.routers.llmchat_router import init_redis as init_llmchat_redis  # pylint: disable=import-outside-toplevel
@@ -673,6 +699,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         await shutdown_services(services_to_shutdown)
 
+        # Shutdown MCP session pool (before shared HTTP client)
+        if settings.mcp_session_pool_enabled:
+            # First-Party
+            from mcpgateway.services.mcp_session_pool import close_mcp_session_pool  # pylint: disable=import-outside-toplevel
+
+            await close_mcp_session_pool()
+
         # Shutdown shared HTTP client (after services, before Redis)
         await SharedHttpClient.shutdown()
 
@@ -756,9 +789,6 @@ def validate_security_configuration():
 
     if settings.basic_auth_password.get_secret_value() == "changeme" and settings.mcpgateway_ui_enabled:  # nosec B105 - checking for default value
         critical_issues.append("Admin UI enabled with default password. Set BASIC_AUTH_PASSWORD environment variable!")
-
-    if not settings.auth_required and settings.federation_enabled and not settings.dev_mode:
-        critical_issues.append("Federation enabled without authentication in non-dev mode. This is a critical security risk!")
 
     log_critical_issues(critical_issues)
 
@@ -1402,7 +1432,10 @@ else:
     logger.debug("📊 Database query logging disabled (enable with DB_QUERY_LOG_ENABLED=true)")
 
 # Set up Jinja2 templates and store in app state for later use
-templates = Jinja2Templates(directory=str(settings.templates_dir))
+# auto_reload=False in production prevents re-parsing templates on each request (performance)
+templates = Jinja2Templates(directory=str(settings.templates_dir), auto_reload=settings.templates_auto_reload)
+if not settings.templates_auto_reload:
+    logger.info("🎨 Template auto-reload disabled (production mode)")
 app.state.templates = templates
 
 # Store plugin manager in app state for access in routes
@@ -4304,7 +4337,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 tools = await tool_service.list_server_tools(db, server_id, cursor=cursor)
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
             else:
-                tools, next_cursor = await tool_service.list_tools(db, cursor=cursor)
+                tools, next_cursor = await tool_service.list_tools(db, cursor=cursor, limit=0)
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
                 if next_cursor:
                     result["nextCursor"] = next_cursor
@@ -4313,7 +4346,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 tools = await tool_service.list_server_tools(db, server_id, cursor=cursor)
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
             else:
-                tools, next_cursor = await tool_service.list_tools(db, cursor=cursor)
+                tools, next_cursor = await tool_service.list_tools(db, cursor=cursor, limit=0)
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
                 if next_cursor:
                     result["nextCursor"] = next_cursor
@@ -4328,7 +4361,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 resources = await resource_service.list_server_resources(db, server_id)
                 result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
             else:
-                resources, next_cursor = await resource_service.list_resources(db, cursor=cursor)
+                resources, next_cursor = await resource_service.list_resources(db, cursor=cursor, limit=0)
                 result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
                 if next_cursor:
                     result["nextCursor"] = next_cursor
@@ -4385,7 +4418,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 prompts = await prompt_service.list_server_prompts(db, server_id, cursor=cursor)
                 result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
             else:
-                prompts, next_cursor = await prompt_service.list_prompts(db, cursor=cursor)
+                prompts, next_cursor = await prompt_service.list_prompts(db, cursor=cursor, limit=0)
                 result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
                 if next_cursor:
                     result["nextCursor"] = next_cursor

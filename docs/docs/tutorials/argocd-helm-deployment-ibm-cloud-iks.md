@@ -417,9 +417,6 @@ mcpContextForge:
     - name: CACHE_TYPE
       value: "redis"
 
-    - name: FEDERATION_ENABLED
-      value: "true"
-
   # Resource limits
   resources:
     limits:

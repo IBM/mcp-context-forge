@@ -19,10 +19,7 @@ Environment variables:
 - SKIP_SSL_VERIFY: Disable SSL verification (default: False)
 - AUTH_REQUIRED: Require authentication (default: True)
 - TRANSPORT_TYPE: Transport mechanisms (default: "all")
-- FEDERATION_ENABLED: Enable gateway federation (default: True)
 - DOCS_ALLOW_BASIC_AUTH: Allow basic auth for docs (default: False)
-- FEDERATION_DISCOVERY: Enable auto-discovery (default: False)
-- FEDERATION_PEERS: List of peer gateway URLs (default: [])
 - RESOURCE_CACHE_SIZE: Max cached resources (default: 1000)
 - RESOURCE_CACHE_TTL: Cache TTL in seconds (default: 3600)
 - TOOL_TIMEOUT: Tool invocation timeout (default: 60)
@@ -168,6 +165,11 @@ class Settings(BaseSettings):
     # Absolute paths resolved at import-time (still override-able via env vars)
     templates_dir: Path = Field(default_factory=lambda: Path(str(files("mcpgateway") / "templates")))
     static_dir: Path = Field(default_factory=lambda: Path(str(files("mcpgateway") / "static")))
+
+    # Template auto-reload: False for production (default), True for development
+    # Disabling prevents re-parsing templates on each request, improving performance under load
+    # Use TEMPLATES_AUTO_RELOAD=true for development (make dev sets this automatically)
+    templates_auto_reload: bool = Field(default=False, description="Auto-reload Jinja2 templates on change (enable for development)")
 
     app_root_path: str = ""
 
@@ -682,10 +684,6 @@ class Settings(BaseSettings):
         if self.debug and not self.dev_mode:
             logger.warning("🐛 SECURITY WARNING: Debug mode is enabled in non-dev mode. This may leak sensitive information! Set DEBUG=false for production.")
 
-        # Warn about federation without auth
-        if self.federation_enabled and not self.auth_required:
-            logger.warning("🌐 SECURITY WARNING: Federation is enabled without authentication. This may expose your gateway to unauthorized access.")
-
         return self
 
     def get_security_warnings(self) -> List[str]:
@@ -1037,6 +1035,13 @@ class Settings(BaseSettings):
     registry_cache_gateways_ttl: int = Field(default=20, ge=5, le=300, description="TTL in seconds for gateways list cache")
     registry_cache_catalog_ttl: int = Field(default=300, ge=60, le=600, description="TTL in seconds for catalog servers list cache (external catalog, changes infrequently)")
 
+    # Tool Lookup Cache Configuration (reduces hot-path DB lookups in invoke_tool)
+    tool_lookup_cache_enabled: bool = Field(default=True, description="Enable tool lookup cache (tool name -> tool config)")
+    tool_lookup_cache_ttl_seconds: int = Field(default=60, ge=5, le=600, description="TTL in seconds for tool lookup cache entries")
+    tool_lookup_cache_negative_ttl_seconds: int = Field(default=10, ge=1, le=60, description="TTL in seconds for negative tool lookup cache entries")
+    tool_lookup_cache_l1_maxsize: int = Field(default=10000, ge=100, le=1000000, description="Max entries for in-memory tool lookup cache (L1)")
+    tool_lookup_cache_l2_enabled: bool = Field(default=True, description="Enable Redis-backed tool lookup cache (L2) when cache_type=redis")
+
     # Admin Stats Cache Configuration (reduces dashboard query overhead)
     admin_stats_cache_enabled: bool = Field(default=True, description="Enable caching for admin dashboard statistics")
     admin_stats_cache_system_ttl: int = Field(default=60, ge=10, le=300, description="TTL in seconds for system stats cache")
@@ -1096,64 +1101,11 @@ class Settings(BaseSettings):
     sse_keepalive_enabled: bool = True  # Enable SSE keepalive events
     sse_keepalive_interval: int = 30  # seconds between keepalive events
 
-    # Federation
-    federation_enabled: bool = True
-    federation_discovery: bool = False
-
-    # For federation_peers strip out quotes to ensure we're passing valid JSON via env
-    federation_peers: List[HttpUrl] = Field(default_factory=list)
-
-    @field_validator("federation_peers", mode="before")
-    @classmethod
-    def _parse_federation_peers(cls, v: Any) -> List[str]:
-        """Parse federation peer URLs from environment variable or config value.
-
-        Handles multiple input formats for the federation_peers field:
-        - JSON array string: '["https://gw1.com", "https://gw2.com"]'
-        - Comma-separated string: "https://gw1.com, https://gw2.com"
-        - Already parsed list
-
-        Automatically strips whitespace and removes outer quotes if present.
-        Order is preserved when parsing.
-
-        Args:
-            v: The input value to parse. Can be a string (JSON or CSV), list, or other iterable.
-
-        Returns:
-            List[str]: A list of federation peer URLs.
-
-        Examples:
-            >>> Settings._parse_federation_peers('["https://gw1", "https://gw2"]')
-            ['https://gw1', 'https://gw2']
-            >>> Settings._parse_federation_peers("https://gw3, https://gw4")
-            ['https://gw3', 'https://gw4']
-            >>> Settings._parse_federation_peers('""')
-            []
-            >>> Settings._parse_federation_peers('"https://single-peer.com"')
-            ['https://single-peer.com']
-            >>> Settings._parse_federation_peers(['http://p1.com', 'http://p2.com'])
-            ['http://p1.com', 'http://p2.com']
-            >>> Settings._parse_federation_peers([])
-            []
-        """
-        if v is None:
-            return []  # always return a list
-
-        if isinstance(v, str):
-            v = v.strip()
-            if len(v) > 1 and v[0] in "\"'" and v[-1] == v[0]:
-                v = v[1:-1]
-            try:
-                peers = orjson.loads(v)
-            except orjson.JSONDecodeError:
-                peers = [s.strip() for s in v.split(",") if s.strip()]
-            return peers  # type: ignore[no-any-return]
-
-        # Convert other iterables to list
-        return list(v)
-
-    federation_timeout: int = 120  # seconds
-    federation_sync_interval: int = 300  # seconds
+    # Gateway/Server Connection Timeout
+    # Timeout in seconds for HTTP requests to registered gateways and MCP servers.
+    # Used by: GatewayService, ToolService, ServerService for health checks and tool invocations.
+    # Note: Previously part of federation settings, retained for gateway connectivity.
+    federation_timeout: int = 120
 
     # SSO
     # For sso_issuers strip out quotes to ensure we're passing valid JSON via env
@@ -1219,14 +1171,41 @@ class Settings(BaseSettings):
     tool_rate_limit: int = 100  # requests per minute
     tool_concurrent_limit: int = 10
 
+    # MCP Session Pool - reduces per-request latency from ~20ms to ~1-2ms
+    # Disabled by default for safety. Enable explicitly in production after testing.
+    mcp_session_pool_enabled: bool = False
+    mcp_session_pool_max_per_key: int = 10  # Max sessions per (URL, identity, transport)
+    mcp_session_pool_ttl: float = 300.0  # Session TTL in seconds
+    mcp_session_pool_health_check_interval: float = 60.0  # Idle time before health check (aligned with health_check_interval)
+    mcp_session_pool_acquire_timeout: float = 30.0  # Timeout waiting for session slot
+    mcp_session_pool_create_timeout: float = 30.0  # Timeout creating new session
+    mcp_session_pool_circuit_breaker_threshold: int = 5  # Failures before circuit opens
+    mcp_session_pool_circuit_breaker_reset: float = 60.0  # Seconds before circuit resets
+    mcp_session_pool_idle_eviction: float = 600.0  # Evict idle pool keys after this time
+    # Transport timeout for pooled sessions (default 30s to match MCP SDK default).
+    # This timeout applies to all HTTP operations (connect, read, write) on pooled sessions.
+    # Use a higher value for deployments with long-running tool calls.
+    mcp_session_pool_transport_timeout: float = 30.0
+    # Force explicit RPC (list_tools) on gateway health checks even when session is fresh.
+    # Off by default: pool's internal staleness check (idle > health_check_interval) handles this.
+    # Enable for stricter health verification at the cost of ~5ms latency per check.
+    mcp_session_pool_explicit_health_rpc: bool = False
+    mcp_session_pool_identity_headers: List[str] = [
+        "authorization",
+        "x-tenant-id",
+        "x-user-id",
+        "x-api-key",
+        "cookie",
+    ]
+
     # Prompts
     prompt_cache_size: int = 100
     max_prompt_size: int = 100 * 1024  # 100KB
     prompt_render_timeout: int = 10  # seconds
 
     # Health Checks
-    # Interval in seconds between health checks
-    health_check_interval: int = 300
+    # Interval in seconds between health checks (aligned with mcp_session_pool_health_check_interval)
+    health_check_interval: int = 60
     # Timeout in seconds for each health check request
     health_check_timeout: int = 5
     # Per-check timeout (seconds) to bound total time of one gateway health check

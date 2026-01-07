@@ -1,7 +1,43 @@
 [flake8]
 max-line-length = 600
-jobs = 1
-exclude = mcp-servers
+jobs = auto
+exclude =
+    .venv,
+    .uv-cache,
+    node_modules,
+    mcp-servers,
+    .git,
+    .github,
+    .hypothesis,
+    .pytest_cache,
+    .pylint-cache,
+    .benchmarks,
+    .devcontainer,
+    dist,
+    *.egg-info,
+    __pycache__,
+    .mypy_cache,
+    .ruff_cache,
+    build,
+    htmlcov,
+    .tox,
+    .nox,
+    agent_runtimes,
+    charts,
+    deploy,
+    deployment,
+    docs,
+    examples,
+    infra,
+    llms,
+    logs,
+    paper,
+    plugins_rust,
+    plugin_templates,
+    reports,
+    scripts,
+    tmp,
+    todo
 extend-ignore =
     E203,
     W503

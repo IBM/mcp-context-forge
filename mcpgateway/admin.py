@@ -118,6 +118,7 @@ from mcpgateway.services.import_service import ConflictStrategy
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.mcp_session_pool import get_mcp_session_pool
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.plugin_service import get_plugin_service
@@ -838,6 +839,58 @@ async def get_a2a_stats_cache_stats(
     return a2a_stats_cache.stats()
 
 
+@admin_router.get("/mcp-pool/metrics")
+@rate_limit(requests_per_minute=60)
+async def get_mcp_session_pool_metrics(
+    request: Request,  # pylint: disable=unused-argument
+    _user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Get MCP session pool metrics.
+
+    Returns pool statistics including hits, misses, evictions, hit rate,
+    circuit breaker status, and per-pool details. Useful for monitoring
+    pool effectiveness and diagnosing connection issues.
+
+    Args:
+        request: HTTP request object (required by rate_limit decorator)
+        _user: Authenticated user
+
+    Returns:
+        Dict with pool metrics including:
+        - hits: Number of pool hits (session reuse)
+        - misses: Number of pool misses (new session created)
+        - evictions: Number of sessions evicted due to TTL
+        - health_check_failures: Number of failed health checks
+        - circuit_breaker_trips: Number of circuit breaker activations
+        - pool_keys_evicted: Number of idle pool keys cleaned up
+        - sessions_reaped: Number of stale sessions closed by background reaper
+        - hit_rate: Ratio of hits to total requests (0.0-1.0)
+        - pool_key_count: Number of active pool keys
+        - pools: Per-pool statistics (available, active, max)
+        - circuit_breakers: Circuit breaker status per URL
+
+    Raises:
+        HTTPException: If session pool is not initialized
+
+    Examples:
+        >>> from mcpgateway.admin import get_mcp_session_pool_metrics
+        >>> get_mcp_session_pool_metrics.__name__
+        'get_mcp_session_pool_metrics'
+        >>> import inspect
+        >>> inspect.iscoroutinefunction(get_mcp_session_pool_metrics)
+        True
+    """
+    if not settings.mcp_session_pool_enabled:
+        return {"enabled": False, "message": "MCP session pool is disabled"}
+
+    try:
+        pool = get_mcp_session_pool()
+        metrics = pool.get_metrics()
+        return {"enabled": True, **metrics}
+    except RuntimeError as e:
+        return {"enabled": True, "error": str(e), "message": "Pool not yet initialized"}
+
+
 @admin_router.get("/config/settings")
 async def get_configuration_settings(
     _db: Session = Depends(get_db),
@@ -935,11 +988,8 @@ async def get_configuration_settings(
             "plugins_enabled": settings.plugins_enabled,
             "well_known_enabled": settings.well_known_enabled,
         },
-        "Federation": {
-            "federation_enabled": settings.federation_enabled,
-            "federation_discovery": settings.federation_discovery,
-            "federation_timeout": settings.federation_timeout,
-            "federation_sync_interval": settings.federation_sync_interval,
+        "Connection Timeouts": {
+            "federation_timeout": settings.federation_timeout,  # Gateway/server HTTP request timeout
         },
         "Transport": {
             "transport_type": settings.transport_type,
@@ -1084,6 +1134,9 @@ async def admin_list_servers(
         per_page=per_page,
         user_email=user_email,
     )
+
+    # End the read-only transaction early to avoid idle-in-transaction under load.
+    db.commit()
 
     # Return standardized paginated response
     return {
@@ -2795,6 +2848,9 @@ async def admin_ui(
     # Template variables and context: include selected_team_id so the template and frontend can read it
     root_path = settings.app_root_path
     max_name_length = settings.validation_max_name_length
+
+    # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
+    db.commit()
 
     response = request.app.state.templates.TemplateResponse(
         request,
@@ -5704,6 +5760,9 @@ async def admin_list_tools(
         user_email=user_email,
     )
 
+    # End the read-only transaction early to avoid idle-in-transaction under load.
+    db.commit()
+
     # Return standardized paginated response
     return {
         "data": [tool.model_dump(by_alias=True) for tool in paginated_result["data"]],
@@ -5836,6 +5895,9 @@ async def admin_tools_partial_html(
 
     # Serialize tools
     data = jsonable_encoder(tools_pydantic)
+
+    # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
+    db.commit()
 
     # If render=controls, return only pagination controls
     if render == "controls":
@@ -6165,6 +6227,9 @@ async def admin_prompts_partial_html(
     data = jsonable_encoder(prompts_pydantic)
     base_url = f"{settings.app_root_path}/admin/prompts/partial"
 
+    # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
+    db.commit()
+
     if render == "controls":
         return request.app.state.templates.TemplateResponse(
             "pagination_controls.html",
@@ -6326,6 +6391,9 @@ async def admin_resources_partial_html(
     resources_pydantic = [resource_service.convert_resource_to_read(r, include_metrics=False) for r in resources_db]
 
     data = jsonable_encoder(resources_pydantic)
+
+    # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
+    db.commit()
 
     if render == "controls":
         return request.app.state.templates.TemplateResponse(
@@ -10187,6 +10255,7 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
     """
     # Create a shared queue to aggregate events from all services
     event_queue = asyncio.Queue()
+    heartbeat_interval = 15.0
 
     # Define a generic producer that feeds a specific stream into the queue
     async def stream_to_queue(generator, source_name: str):
@@ -10320,8 +10389,8 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
                 # We use asyncio.wait_for to allow checking request.is_disconnected periodically
                 # or simply rely on queue.get() which is efficient.
                 try:
-                    # Wait for an event
-                    event = await event_queue.get()
+                    # Wait for an event or send a keepalive to avoid idle timeouts
+                    event = await asyncio.wait_for(event_queue.get(), timeout=heartbeat_interval)
 
                     # SSE format
                     event_type = event.get("type", "message")
@@ -10331,6 +10400,8 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
 
                     # Mark task as done in queue (good practice)
                     event_queue.task_done()
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
 
                 except asyncio.CancelledError:
                     LOGGER.debug("SSE Event generator task cancelled")

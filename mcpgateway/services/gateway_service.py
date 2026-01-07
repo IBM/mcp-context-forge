@@ -90,6 +90,7 @@ from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, Prompt
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
@@ -106,6 +107,7 @@ from mcpgateway.validation.tags import validate_tags_field
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
+_TOOL_LOOKUP_CACHE = None
 
 
 def _get_registry_cache():
@@ -121,6 +123,21 @@ def _get_registry_cache():
 
         _REGISTRY_CACHE = registry_cache
     return _REGISTRY_CACHE
+
+
+def _get_tool_lookup_cache():
+    """Get tool lookup cache singleton lazily.
+
+    Returns:
+        ToolLookupCache instance.
+    """
+    global _TOOL_LOOKUP_CACHE  # pylint: disable=global-statement
+    if _TOOL_LOOKUP_CACHE is None:
+        # First-Party
+        from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
+
+        _TOOL_LOOKUP_CACHE = tool_lookup_cache
+    return _TOOL_LOOKUP_CACHE
 
 
 # Initialize logging service first
@@ -1223,6 +1240,18 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 # Still commit to save any updates to existing items
                 db.commit()
 
+            cache = _get_registry_cache()
+            await cache.invalidate_tools()
+            await cache.invalidate_resources()
+            await cache.invalidate_prompts()
+            tool_lookup_cache = _get_tool_lookup_cache()
+            await tool_lookup_cache.invalidate_gateway(str(gateway.id))
+            # Also invalidate tags cache since tool/resource tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
+
             return {"capabilities": capabilities, "tools": tools, "resources": resources, "prompts": prompts}
 
         except GatewayConnectionError as gce:
@@ -1859,6 +1888,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 # Invalidate cache after successful update
                 cache = _get_registry_cache()
                 await cache.invalidate_gateways()
+                tool_lookup_cache = _get_tool_lookup_cache()
+                await tool_lookup_cache.invalidate_gateway(str(gateway.id))
                 # Also invalidate tags cache since gateway tags may have changed
                 # First-Party
                 from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
@@ -2264,6 +2295,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 # Invalidate tools cache once after all tool status changes
                 if tools:
                     await cache.invalidate_tools()
+                    tool_lookup_cache = _get_tool_lookup_cache()
+                    await tool_lookup_cache.invalidate_gateway(str(gateway.id))
 
                 logger.info(f"Gateway status: {gateway.name} - {'enabled' if activate else 'disabled'} and {'accessible' if reachable else 'inaccessible'}")
 
@@ -2459,6 +2492,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Invalidate cache after successful deletion
             cache = _get_registry_cache()
             await cache.invalidate_gateways()
+            tool_lookup_cache = _get_tool_lookup_cache()
+            await tool_lookup_cache.invalidate_gateway(str(gateway_id))
             # Also invalidate tags cache since gateway tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
@@ -3170,14 +3205,40 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             if span:
                                 span.set_attribute("http.status_code", response.status_code)
                     elif (gateway_transport).lower() == "streamablehttp":
-                        async with streamablehttp_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=get_httpx_client_factory) as (
-                            read_stream,
-                            write_stream,
-                            _get_session_id,
-                        ):
-                            async with ClientSession(read_stream, write_stream) as session:
-                                # Initialize the session
-                                response = await session.initialize()
+                        # Use session pool if enabled for faster health checks
+                        use_pool = False
+                        pool = None
+                        if settings.mcp_session_pool_enabled:
+                            try:
+                                pool = get_mcp_session_pool()
+                                use_pool = True
+                            except RuntimeError:
+                                # Pool not initialized (e.g., in tests), fall back to per-call sessions
+                                pass
+
+                        if use_pool and pool is not None:
+                            async with pool.session(
+                                url=gateway_url,
+                                headers=headers,
+                                transport_type=TransportType.STREAMABLE_HTTP,
+                                httpx_client_factory=get_httpx_client_factory,
+                            ) as pooled:
+                                # Optional explicit RPC verification (off by default for performance).
+                                # Pool's internal staleness check handles health via _validate_session.
+                                if settings.mcp_session_pool_explicit_health_rpc:
+                                    await asyncio.wait_for(
+                                        pooled.session.list_tools(),
+                                        timeout=settings.health_check_timeout,
+                                    )
+                        else:
+                            async with streamablehttp_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=get_httpx_client_factory) as (
+                                read_stream,
+                                write_stream,
+                                _get_session_id,
+                            ):
+                                async with ClientSession(read_stream, write_stream) as session:
+                                    # Initialize the session
+                                    response = await session.initialize()
 
                     # Reactivate gateway if it was previously inactive and health check passed now
                     if gateway_enabled and not gateway_reachable:

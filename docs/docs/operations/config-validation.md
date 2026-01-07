@@ -106,7 +106,6 @@ The following field types are strictly validated:
 
 ### URLs and Endpoints
 - `APP_DOMAIN`: Must be valid HTTP/HTTPS URL
-- `FEDERATION_PEERS`: JSON array of valid URLs
 - `SSO_*_ISSUER`: Valid OIDC issuer URLs
 
 ### Enumerations
