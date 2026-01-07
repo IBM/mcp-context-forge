@@ -3680,6 +3680,7 @@ class ToolService:
             db: Database session.
             tool: The tool record that represents the A2A agent.
             arguments: Tool arguments.
+            
 
         Returns:
             Tool result from A2A agent invocation.
