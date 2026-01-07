@@ -118,6 +118,32 @@ async def test_registry_priority_sorting():
     registry.unregister("HighPriority")
     assert registry.plugin_count == 0
 
+@pytest.mark.asyncio
+async def test_registry_has_hooks_for():
+    """Test has_hooks_for method for hook existence checking."""
+    registry = PluginInstanceRegistry()
+
+    assert not registry.has_hooks_for(PromptHookType.PROMPT_PRE_FETCH)
+
+    plugin_config = PluginConfig(
+        name="TestPlugin",
+        description="Test plugin",
+        author="Test",
+        version="1.0",
+        tags=["test"],
+        kind="test.Plugin",
+        hooks=[PromptHookType.PROMPT_PRE_FETCH],
+        config={},
+    )
+
+    plugin = SimplePromptPlugin(plugin_config)
+    registry.register(plugin)
+
+    assert registry.has_hooks_for(PromptHookType.PROMPT_PRE_FETCH)
+
+    registry.unregister("TestPlugin")
+
+    assert not registry.has_hooks_for(PromptHookType.PROMPT_PRE_FETCH)
 
 @pytest.mark.asyncio
 async def test_registry_hook_filtering():

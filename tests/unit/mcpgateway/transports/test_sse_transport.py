@@ -10,6 +10,7 @@ Tests for the MCP Gateway SSE transport implementation.
 # Standard
 import asyncio
 import json
+from typing import Dict
 from unittest.mock import Mock, patch
 
 # Third-Party
@@ -18,7 +19,55 @@ import pytest
 from sse_starlette.sse import EventSourceResponse
 
 # First-Party
-from mcpgateway.transports.sse_transport import SSETransport
+from mcpgateway.transports.sse_transport import _build_sse_frame, SSETransport
+
+
+def parse_sse_frame(frame: bytes) -> Dict[str, str | int]:
+    """Parse an SSE frame from bytes to dict for testing.
+
+    Args:
+        frame: SSE frame as bytes
+
+    Returns:
+        Dict with 'event', 'data', and 'retry' keys
+    """
+    text = frame.decode("utf-8")
+    result = {}
+    for line in text.split("\r\n"):
+        if line.startswith("event: "):
+            result["event"] = line[7:]
+        elif line.startswith("data: "):
+            result["data"] = line[6:]
+        elif line.startswith("retry: "):
+            result["retry"] = int(line[7:])
+    return result
+
+
+class TestBuildSSEFrame:
+    """Tests for the _build_sse_frame helper function."""
+
+    def test_build_sse_frame_message(self):
+        """Test SSE frame construction for message events."""
+        frame = _build_sse_frame(b"message", b'{"test": 1}', 15000)
+        assert frame == b'event: message\r\ndata: {"test": 1}\r\nretry: 15000\r\n\r\n'
+
+    def test_build_sse_frame_keepalive(self):
+        """Test keepalive frame construction."""
+        frame = _build_sse_frame(b"keepalive", b"{}", 15000)
+        assert frame == b"event: keepalive\r\ndata: {}\r\nretry: 15000\r\n\r\n"
+
+    def test_build_sse_frame_error(self):
+        """Test error frame construction."""
+        frame = _build_sse_frame(b"error", b'{"error": "test"}', 5000)
+        assert frame == b'event: error\r\ndata: {"error": "test"}\r\nretry: 5000\r\n\r\n'
+
+    def test_build_sse_frame_endpoint(self):
+        """Test endpoint frame construction."""
+        frame = _build_sse_frame(b"endpoint", b"http://localhost:8000/message?session_id=abc123", 5000)
+        parsed = parse_sse_frame(frame)
+        assert parsed["event"] == "endpoint"
+        assert parsed["data"] == "http://localhost:8000/message?session_id=abc123"
+        assert parsed["retry"] == 5000
 
 
 @pytest.fixture
@@ -149,7 +198,8 @@ class TestSSETransport:
             await gen.__anext__()  # endpoint
             await gen.__anext__()  # keepalive
             # Should yield error event
-            event = await gen.__anext__()
+            frame = await gen.__anext__()
+            event = parse_sse_frame(frame)
             assert event["event"] == "error"
             assert "fail" in event["data"]
             # Should handle CancelledError gracefully and stop
@@ -206,13 +256,15 @@ class TestSSETransport:
         generator = response.body_iterator
 
         # First event should be endpoint
-        event = await generator.__anext__()
+        frame = await generator.__anext__()
+        event = parse_sse_frame(frame)
         assert "event" in event
         assert event["event"] == "endpoint"
         assert sse_transport._session_id in event["data"]
 
         # Second event should be keepalive
-        event = await generator.__anext__()
+        frame = await generator.__anext__()
+        event = parse_sse_frame(frame)
         assert event["event"] == "keepalive"
 
         # Queue a test message
@@ -220,7 +272,8 @@ class TestSSETransport:
         await sse_transport._message_queue.put(test_message)
 
         # Next event should be the message
-        event = await generator.__anext__()
+        frame = await generator.__anext__()
+        event = parse_sse_frame(frame)
         assert event["event"] == "message"
         assert json.loads(event["data"]) == test_message
 
@@ -240,7 +293,8 @@ class TestSSETransport:
             generator = response.body_iterator
 
             # First event should be endpoint
-            event = await generator.__anext__()
+            frame = await generator.__anext__()
+            event = parse_sse_frame(frame)
             assert event["event"] == "endpoint"
 
             # No immediate keepalive should be sent
@@ -249,7 +303,8 @@ class TestSSETransport:
             await sse_transport._message_queue.put(test_message)
 
             # Next event should be the message (no keepalive)
-            event = await generator.__anext__()
+            frame = await generator.__anext__()
+            event = parse_sse_frame(frame)
             assert event["event"] == "message"
 
             sse_transport._client_gone.set()
@@ -267,11 +322,13 @@ class TestSSETransport:
             generator = response.body_iterator
 
             # First event should be endpoint
-            event = await generator.__anext__()
+            frame = await generator.__anext__()
+            event = parse_sse_frame(frame)
             assert event["event"] == "endpoint"
 
             # Second event should be immediate keepalive
-            event = await generator.__anext__()
+            frame = await generator.__anext__()
+            event = parse_sse_frame(frame)
             assert event["event"] == "keepalive"
             assert event["data"] == "{}"
 
@@ -294,7 +351,43 @@ class TestSSETransport:
             await generator.__anext__()  # initial keepalive
 
             # Wait for timeout keepalive (should happen after 1 second)
-            event = await asyncio.wait_for(generator.__anext__(), timeout=2.0)
+            frame = await asyncio.wait_for(generator.__anext__(), timeout=2.0)
+            event = parse_sse_frame(frame)
             assert event["event"] == "keepalive"
 
             sse_transport._client_gone.set()
+
+    @pytest.mark.asyncio
+    async def test_get_message_with_timeout_returns_message(self, sse_transport):
+        """Test _get_message_with_timeout returns message when available."""
+        await sse_transport.connect()
+        test_message = {"jsonrpc": "2.0", "method": "test", "id": 1}
+        await sse_transport._message_queue.put(test_message)
+
+        result = await sse_transport._get_message_with_timeout(timeout=1.0)
+        assert result == test_message
+
+    @pytest.mark.asyncio
+    async def test_get_message_with_timeout_returns_none_on_timeout(self, sse_transport):
+        """Test _get_message_with_timeout returns None on timeout."""
+        await sse_transport.connect()
+        # Don't put any message in the queue
+
+        result = await sse_transport._get_message_with_timeout(timeout=0.1)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_message_with_timeout_no_timeout(self, sse_transport):
+        """Test _get_message_with_timeout with None timeout waits indefinitely."""
+        await sse_transport.connect()
+        test_message = {"jsonrpc": "2.0", "method": "test", "id": 1}
+
+        # Schedule message to be put after a small delay
+        async def put_message():
+            await asyncio.sleep(0.05)
+            await sse_transport._message_queue.put(test_message)
+
+        asyncio.create_task(put_message())
+
+        result = await asyncio.wait_for(sse_transport._get_message_with_timeout(timeout=None), timeout=1.0)
+        assert result == test_message

@@ -1329,10 +1329,12 @@ class PromptService:
 
                 # Try to fetch prompt early for entity context
                 # This allows plugins to have access to entity metadata
-                search_key = str(prompt_id)
-                prompt_db = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id).where(DbPrompt.enabled)).scalar_one_or_none()
-                if not prompt_db:
-                    prompt_db = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_id).where(DbPrompt.enabled)).scalar_one_or_none()
+                prompt_db = None
+                if has_pre_fetch or has_post_fetch:
+                    search_key = str(prompt_id)
+                    prompt_db = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id).where(DbPrompt.enabled)).scalar_one_or_none()
+                    if not prompt_db:
+                        prompt_db = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_id).where(DbPrompt.enabled)).scalar_one_or_none()
 
                 # Initialize plugin context variables only if hooks are registered
                 context_table = None
@@ -1381,8 +1383,12 @@ class PromptService:
                         payload = pre_result.modified_payload
                         arguments = payload.args
 
-                # Use the prompt we already fetched for entity context
-                prompt = prompt_db
+                # Find prompt by ID first, then by name (active prompts only)
+                search_key = str(prompt_id)
+                prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id).where(DbPrompt.enabled)).scalar_one_or_none()
+                if not prompt:
+                    prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_id).where(DbPrompt.enabled)).scalar_one_or_none()
+
                 if not prompt:
                     # Check if an inactive prompt exists
                     inactive_prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id).where(not_(DbPrompt.enabled))).scalar_one_or_none()

@@ -352,6 +352,8 @@ echo "🚀  Starting Gunicorn server..."
 echo "─────────────────────────────────────────────────────────────────────"
 
 # Build command array to handle spaces in paths properly
+# Note: UvicornWorker automatically uses uvloop and httptools when available
+# (installed via uvicorn[standard] extras for 15-30% better performance)
 cmd=(
     gunicorn
     -c gunicorn.config.py

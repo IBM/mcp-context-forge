@@ -754,6 +754,17 @@
           }
           this.availableTags = await response.json();
           console.log('Fetched tags:', this.availableTags);
+
+          // Manually populate datalist since Alpine x-for doesn't work well with datalist
+          const datalist = document.getElementById('tag-suggestions');
+          if (datalist) {
+            datalist.innerHTML = '';
+            this.availableTags.forEach(tag => {
+              const option = document.createElement('option');
+              option.value = tag;
+              datalist.appendChild(option);
+            });
+          }
         } catch (error) {
           console.error('Failed to fetch tags:', error);
           this.availableTags = [];
@@ -1173,9 +1184,7 @@
                     class="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500"
                   />
                   <datalist id="tag-suggestions">
-                    <template x-for="tag in availableTags" :key="tag">
-                      <option :value="tag"></option>
-                    </template>
+                    <!-- Options populated by fetchTags() function -->
                   </datalist>
                   <button
                     @click="addTag()"

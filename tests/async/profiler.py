@@ -178,7 +178,7 @@ class AsyncProfiler:
                         await websocket.send(message)
                         metrics["messages_sent"] += 1
 
-                        response = await websocket.recv()
+                        _response = await websocket.recv()  # noqa: F841
                         metrics["messages_received"] += 1
 
                         latency = time.time() - start_time

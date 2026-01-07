@@ -17,7 +17,7 @@ Fly.io is a global app platform for running containers close to your users, with
 | Fly.io account | [Sign up](https://fly.io) |
 | Fly CLI | Install via Homebrew: `brew install flyctl` or see Fly docs |
 | Docker **or** Podman | For local image builds (optional) |
-| Containerfile | The included Containerfile with psycopg2-binary support |
+| Containerfile | The included Containerfile with psycopg3 (psycopg[binary]) support |
 
 ---
 
@@ -43,11 +43,11 @@ fly postgres create --name your-app-db --region yyz
 fly secrets set JWT_SECRET_KEY=$(openssl rand -hex 32)
 fly secrets set BASIC_AUTH_USER=admin BASIC_AUTH_PASSWORD=your-secure-password
 
-# Set database URL (CRITICAL: use postgresql:// not postgres://)
-fly secrets set DATABASE_URL="postgresql://postgres:YOUR_PASSWORD@your-app-db.flycast:5432/postgres"
+# Set database URL (CRITICAL: use postgresql+psycopg:// for psycopg3)
+fly secrets set DATABASE_URL="postgresql+psycopg://postgres:YOUR_PASSWORD@your-app-db.flycast:5432/postgres"
 ```
 
-**⚠️ Important:** Always use `postgresql://` scheme, not `postgres://`. The latter causes SQLAlchemy dialect loading errors.
+**⚠️ Important:** Always use `postgresql+psycopg://` scheme for psycopg3. Do not use `postgresql://` (requires psycopg2) or `postgres://` (invalid).
 
 ### 2.4 Deploy the app
 ```bash
@@ -64,11 +64,11 @@ Ensure your Containerfile explicitly installs PostgreSQL dependencies:
 # Create virtual environment, upgrade pip and install dependencies
 RUN python3 -m venv /app/.venv && \
 /app/.venv/bin/python3 -m pip install --upgrade pip setuptools pdm uv && \
-/app/.venv/bin/python3 -m pip install psycopg2-binary && \
+/app/.venv/bin/python3 -m pip install 'psycopg[binary]' && \
 /app/.venv/bin/python3 -m uv pip install ".[redis]"
 ```
 
-The explicit `psycopg2-binary` installation is required because uv may not properly install optional dependencies.
+The explicit `psycopg[binary]` (psycopg3) installation is required because uv may not properly install optional dependencies.
 
 ---
 
@@ -139,14 +139,14 @@ sqlalchemy.exc.NoSuchModuleError: Can't load plugin: sqlalchemy.dialects:postgre
 
 **Solutions:**
 
-1. Ensure `psycopg2-binary` is explicitly installed in Containerfile
-2. Use `postgresql://` not `postgres://` in DATABASE_URL
+1. Ensure `psycopg[binary]` is explicitly installed in Containerfile
+2. Use `postgresql+psycopg://` (not `postgresql://` or `postgres://`) in DATABASE_URL
 3. Rebuild with `fly deploy --no-cache`
 
 ### Common Issue 2: Database connection refused
 **Solutions:**
 
-1. Verify DATABASE_URL format: `postgresql://postgres:PASSWORD@your-db.flycast:5432/postgres`
+1. Verify DATABASE_URL format: `postgresql+psycopg://postgres:PASSWORD@your-db.flycast:5432/postgres`
 2. Check postgres app is running: `fly status -a your-app-db`
 3. Verify password matches postgres creation output
 
@@ -219,7 +219,7 @@ fly secrets set BASIC_AUTH_PASSWORD=$PASSWORD
 
 # Get postgres password and set DATABASE_URL
 echo "⚠️  Set your DATABASE_URL manually with the postgres password:"
-echo "fly secrets set DATABASE_URL=\"postgresql://postgres:YOUR_PG_PASSWORD@${DB_NAME}.flycast:5432/postgres\""
+echo "fly secrets set DATABASE_URL=\"postgresql+psycopg://postgres:YOUR_PG_PASSWORD@${DB_NAME}.flycast:5432/postgres\""
 
 # Deploy
 echo "🏗️  Ready to deploy. Run: fly deploy"

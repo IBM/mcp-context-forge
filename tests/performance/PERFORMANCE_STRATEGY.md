@@ -1322,7 +1322,7 @@ services:
   prometheus:
     image: prom/prometheus:latest
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
     ports:
       - "9091:9090"
 

@@ -35,15 +35,15 @@ os.environ["MCPGATEWAY_UI_ENABLED"] = "true"
 os.environ["MCPGATEWAY_A2A_ENABLED"] = "false"  # Disable A2A for e2e tests
 
 # Standard
-import logging
-from unittest.mock import MagicMock
-from urllib.parse import quote
-import uuid
+import logging  # noqa: E402
+from unittest.mock import MagicMock  # noqa: E402
+from urllib.parse import quote  # noqa: E402
+import uuid  # noqa: E402
 
 # Third-Party
-from httpx import AsyncClient
-import pytest
-import pytest_asyncio
+from httpx import AsyncClient  # noqa: E402
+import pytest  # noqa: E402
+import pytest_asyncio  # noqa: E402
 
 
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -83,7 +83,7 @@ TEST_AUTH_HEADER = {"Authorization": f"Bearer {TEST_JWT_TOKEN}"}
 
 # Local
 # Test user for the updated authentication system
-from tests.utils.rbac_mocks import create_mock_email_user
+from tests.utils.rbac_mocks import create_mock_email_user  # noqa: E402
 
 TEST_USER = create_mock_email_user(email="admin@example.com", full_name="Test Admin", is_admin=True, is_active=True)
 
@@ -154,10 +154,10 @@ async def mock_settings():
     # First-Party
     from mcpgateway.config import settings as real_settings
 
-    MockSettings = MagicMock(wrap=real_settings)
+    _mock = MagicMock(wrap=real_settings)  # noqa: F841
 
     # Override specific settings for testing
-    mock_settings.cache_type = "database"
+    _mock.cache_type = "database"
     mock_settings.mcpgateway_admin_api_enabled = True
     mock_settings.mcpgateway_ui_enabled = False
     mock_settings.auth_required = False
@@ -226,7 +226,9 @@ class TestAdminServerAPIs:
 
         # Get all servers and find our server
         response = await client.get("/admin/servers", headers=TEST_AUTH_HEADER)
-        servers = response.json()
+        resp_json = response.json()
+        # Handle paginated response
+        servers = resp_json["data"] if isinstance(resp_json, dict) and "data" in resp_json else resp_json
         server = next((s for s in servers if s["name"] == unique_name), None)
         assert server is not None
         server_id = server["id"]
@@ -478,7 +480,10 @@ class TestAdminPromptAPIs:
         """Test GET /admin/prompts returns empty list initially."""
         response = await client.get("/admin/prompts", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
-        assert response.json() == []
+        resp_json = response.json()
+        # Handle paginated response
+        prompts = resp_json["data"] if isinstance(resp_json, dict) and "data" in resp_json else resp_json
+        assert prompts == []
 
     async def test_admin_prompt_lifecycle(self, client: AsyncClient, mock_settings):
         """Test complete prompt lifecycle through admin UI."""
@@ -497,16 +502,20 @@ class TestAdminPromptAPIs:
 
         # List prompts to verify creation
         response = await client.get("/admin/prompts", headers=TEST_AUTH_HEADER)
-        prompts = response.json()
+        resp_json = response.json()
+        # Handle paginated response
+        prompts = resp_json["data"] if isinstance(resp_json, dict) and "data" in resp_json else resp_json
         assert len(prompts) == 1
         prompt = prompts[0]
-        assert prompt["name"] == "test_admin_prompt"
+        assert prompt["name"] == "test-admin-prompt"
+        assert prompt["originalName"] == "test_admin_prompt"
         prompt_id = prompt["id"]
 
         # Get individual prompt
         response = await client.get(f"/admin/prompts/{prompt_id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
-        assert response.json()["name"] == "test_admin_prompt"
+        assert response.json()["name"] == "test-admin-prompt"
+        assert response.json()["originalName"] == "test_admin_prompt"
 
         # Edit prompt
         edit_data = {
@@ -538,8 +547,11 @@ class TestAdminGatewayAPIs:
         """Test GET /admin/gateways returns list of gateways."""
         response = await client.get("/admin/gateways", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
-        # Don't assume empty - just check it returns a list
-        assert isinstance(response.json(), list)
+        resp_json = response.json()
+        # Handle paginated response
+        assert isinstance(resp_json, (list, dict))
+        if isinstance(resp_json, dict):
+            assert "data" in resp_json
 
     @pytest.mark.skip(reason="Gateway registration requires external connectivity")
     async def test_admin_gateway_lifecycle(self, client: AsyncClient, mock_settings):

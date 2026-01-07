@@ -9,11 +9,11 @@ MCP Gateway - Main module for using and supporting MCP-CF LLM providers in toolo
 This module defines the utility funtions to use MCP-CF supported LLM providers in toolops.
 """
 # Standard
-import json
 import os
 
 # Third-Party
 from dotenv import load_dotenv
+import orjson
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
@@ -252,7 +252,7 @@ def execute_prompt(prompt):
         # logger.info("Successful - Inferencing OpenAI provider LLM")
         return response
     except Exception as e:
-        logger.error("Error in configuring LLM using OpenAI service provider - " + json.dumps({"Error": str(e)}))
+        logger.error("Error in configuring LLM using OpenAI service provider - " + orjson.dumps({"Error": str(e)}).decode())
         return ""
 
 

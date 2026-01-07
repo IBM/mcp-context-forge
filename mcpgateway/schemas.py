@@ -23,13 +23,13 @@ gateway-specific extensions for federation support.
 import base64
 from datetime import datetime, timezone
 from enum import Enum
-import json
 import logging
 import re
-from typing import Any, Dict, List, Literal, Optional, Self, Union
+from typing import Any, Dict, List, Literal, Optional, Pattern, Self, Union
 from urllib.parse import urlparse
 
 # Third-Party
+import orjson
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_validator, ValidationInfo
 
 # First-Party
@@ -45,6 +45,15 @@ from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.validation.tags import validate_tags_field
 
 logger = logging.getLogger(__name__)
+
+# ============================================================================
+# Precompiled regex patterns (compiled once at module load for performance)
+# ============================================================================
+# Note: Only truly static patterns are precompiled here. Settings-based patterns
+# (e.g., from settings.* or SecurityValidator.*) are NOT precompiled because tests
+# override class/settings attributes at runtime via monkeypatch.
+_HOSTNAME_RE: Pattern[str] = re.compile(r"^(https?://)?([a-zA-Z0-9.-]+)(:[0-9]+)?$")
+_SLUG_RE: Pattern[str] = re.compile(r"^[a-z0-9-]+$")
 
 
 def encode_datetime(v: datetime) -> str:
@@ -476,7 +485,12 @@ class ToolCreate(BaseModel):
             >>> from mcpgateway.schemas import ToolCreate
             >>> ToolCreate.validate_json_fields({'a': 1})
             {'a': 1}
+            >>> # Test depth within limit (11 levels, default limit is 30)
             >>> ToolCreate.validate_json_fields({'a': {'b': {'c': {'d': {'e': {'f': {'g': {'h': {'i': {'j': {'k': 1}}}}}}}}}}})
+            {'a': {'b': {'c': {'d': {'e': {'f': {'g': {'h': {'i': {'j': {'k': 1}}}}}}}}}}}
+            >>> # Test exceeding depth limit (31 levels)
+            >>> deep_31 = {'1': {'2': {'3': {'4': {'5': {'6': {'7': {'8': {'9': {'10': {'11': {'12': {'13': {'14': {'15': {'16': {'17': {'18': {'19': {'20': {'21': {'22': {'23': {'24': {'25': {'26': {'27': {'28': {'29': {'30': {'31': 'too deep'}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+            >>> ToolCreate.validate_json_fields(deep_31)
             Traceback (most recent call last):
                 ...
             ValueError: ...
@@ -798,11 +812,11 @@ class ToolCreate(BaseModel):
             return None
         if not isinstance(v, list):
             raise ValueError("allowlist must be a list of host/scheme strings")
-        hostname_regex = re.compile(r"^(https?://)?([a-zA-Z0-9.-]+)(:[0-9]+)?$")
+        # Uses precompiled regex for hostname validation
         for host in v:
             if not isinstance(host, str):
                 raise ValueError(f"Invalid type in allowlist: {host} (must be str)")
-            if not hostname_regex.match(host):
+            if not _HOSTNAME_RE.match(host):
                 raise ValueError(f"Invalid host/scheme in allowlist: {host}")
         return v
 
@@ -1220,11 +1234,11 @@ class ToolUpdate(BaseModelWithConfigDict):
             return None
         if not isinstance(v, list):
             raise ValueError("allowlist must be a list of host/scheme strings")
-        hostname_regex = re.compile(r"^(https?://)?([a-zA-Z0-9.-]+)(:[0-9]+)?$")
+        # Uses precompiled regex for hostname validation
         for host in v:
             if not isinstance(host, str):
                 raise ValueError(f"Invalid type in allowlist: {host} (must be str)")
-            if not hostname_regex.match(host):
+            if not _HOSTNAME_RE.match(host):
                 raise ValueError(f"Invalid host/scheme in allowlist: {host}")
         return v
 
@@ -1391,8 +1405,8 @@ class ToolInvocation(BaseModelWithConfigDict):
         >>> tool_inv.arguments["level1"]["level2"]["level3"]["data"]
         'value'
 
-        >>> # Invalid: Arguments too deeply nested (>10 levels)
-        >>> deep_args = {"a": {"b": {"c": {"d": {"e": {"f": {"g": {"h": {"i": {"j": {"k": "too deep"}}}}}}}}}}}
+        >>> # Invalid: Arguments too deeply nested (>30 levels)
+        >>> deep_args = {"a": {"b": {"c": {"d": {"e": {"f": {"g": {"h": {"i": {"j": {"k": {"l": {"m": {"n": {"o": {"p": {"q": {"r": {"s": {"t": {"u": {"v": {"w": {"x": {"y": {"z": {"aa": {"bb": {"cc": {"dd": {"ee": "too deep"}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
         >>> try:
         ...     ToolInvocation(name="process_data", arguments=deep_args)
         ... except ValidationError as e:
@@ -1632,6 +1646,7 @@ class ResourceCreate(BaseModel):
                 raise ValueError("Content must be UTF-8 decodable")
         else:
             text = v
+        # Runtime pattern matching (not precompiled to allow test monkeypatching)
         if re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, text, re.IGNORECASE):
             raise ValueError("Content contains HTML tags that may cause display issues")
 
@@ -1760,6 +1775,7 @@ class ResourceUpdate(BaseModelWithConfigDict):
                 raise ValueError("Content must be UTF-8 decodable")
         else:
             text = v
+        # Runtime pattern matching (not precompiled to allow test monkeypatching)
         if re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, text, re.IGNORECASE):
             raise ValueError("Content contains HTML tags that may cause display issues")
 
@@ -1787,7 +1803,7 @@ class ResourceRead(BaseModelWithConfigDict):
     created_at: datetime
     updated_at: datetime
     enabled: bool
-    metrics: ResourceMetrics
+    metrics: Optional[ResourceMetrics] = Field(None, description="Resource metrics (may be None in list operations)")
     tags: List[Dict[str, str]] = Field(default_factory=list, description="Tags for categorizing the resource")
 
     # Comprehensive metadata for audit tracking
@@ -2027,7 +2043,7 @@ class PromptArgument(BaseModelWithConfigDict):
     # Use base config; example metadata removed to avoid config merging type issues in static checks
 
 
-class PromptCreate(BaseModel):
+class PromptCreate(BaseModelWithConfigDict):
     """
     Schema for creating a new prompt.
 
@@ -2039,9 +2055,11 @@ class PromptCreate(BaseModel):
         arguments (List[PromptArgument]): List of arguments for the template.
     """
 
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(**dict(BaseModelWithConfigDict.model_config), str_strip_whitespace=True)
 
     name: str = Field(..., description="Unique name for the prompt")
+    custom_name: Optional[str] = Field(None, description="Custom prompt name used for MCP invocation")
+    display_name: Optional[str] = Field(None, description="Display name for the prompt (shown in UI)")
     description: Optional[str] = Field(None, description="Prompt description")
     template: str = Field(..., description="Prompt template text")
     arguments: List[PromptArgument] = Field(default_factory=list, description="List of arguments for the template")
@@ -2077,6 +2095,36 @@ class PromptCreate(BaseModel):
             str: Value if validated as safe
         """
         return SecurityValidator.validate_name(v, "Prompt name")
+
+    @field_validator("custom_name")
+    @classmethod
+    def validate_custom_name(cls, v: Optional[str]) -> Optional[str]:
+        """Ensure custom prompt names follow MCP naming conventions.
+
+        Args:
+            v: Custom prompt name to validate.
+
+        Returns:
+            The validated custom name or None.
+        """
+        if v is None:
+            return v
+        return SecurityValidator.validate_name(v, "Prompt name")
+
+    @field_validator("display_name")
+    @classmethod
+    def validate_display_name(cls, v: Optional[str]) -> Optional[str]:
+        """Ensure display names render safely in UI.
+
+        Args:
+            v: Display name to validate.
+
+        Returns:
+            The validated display name or None.
+        """
+        if v is None:
+            return v
+        return SecurityValidator.sanitize_display_text(v, "Prompt display name")
 
     @field_validator("description")
     @classmethod
@@ -2176,6 +2224,8 @@ class PromptUpdate(BaseModelWithConfigDict):
     """
 
     name: Optional[str] = Field(None, description="Unique name for the prompt")
+    custom_name: Optional[str] = Field(None, description="Custom prompt name used for MCP invocation")
+    display_name: Optional[str] = Field(None, description="Display name for the prompt (shown in UI)")
     description: Optional[str] = Field(None, description="Prompt description")
     template: Optional[str] = Field(None, description="Prompt template text")
     arguments: Optional[List[PromptArgument]] = Field(None, description="List of arguments for the template")
@@ -2212,6 +2262,36 @@ class PromptUpdate(BaseModelWithConfigDict):
             str: Value if validated as safe
         """
         return SecurityValidator.validate_name(v, "Prompt name")
+
+    @field_validator("custom_name")
+    @classmethod
+    def validate_custom_name(cls, v: Optional[str]) -> Optional[str]:
+        """Ensure custom prompt names follow MCP naming conventions.
+
+        Args:
+            v: Custom prompt name to validate.
+
+        Returns:
+            The validated custom name or None.
+        """
+        if v is None:
+            return v
+        return SecurityValidator.validate_name(v, "Prompt name")
+
+    @field_validator("display_name")
+    @classmethod
+    def validate_display_name(cls, v: Optional[str]) -> Optional[str]:
+        """Ensure display names render safely in UI.
+
+        Args:
+            v: Display name to validate.
+
+        Returns:
+            The validated display name or None.
+        """
+        if v is None:
+            return v
+        return SecurityValidator.sanitize_display_text(v, "Prompt display name")
 
     @field_validator("description")
     @classmethod
@@ -2288,6 +2368,11 @@ class PromptRead(BaseModelWithConfigDict):
 
     id: str = Field(description="Unique ID of the prompt")
     name: str
+    original_name: str
+    custom_name: str
+    custom_name_slug: str
+    display_name: Optional[str] = Field(None, description="Display name for the prompt (shown in UI)")
+    gateway_slug: Optional[str] = None
     description: Optional[str]
     template: str
     arguments: List[PromptArgument]
@@ -2296,7 +2381,7 @@ class PromptRead(BaseModelWithConfigDict):
     # is_active: bool
     enabled: bool
     tags: List[Dict[str, str]] = Field(default_factory=list, description="Tags for categorizing the prompt")
-    metrics: PromptMetrics
+    metrics: Optional[PromptMetrics] = Field(None, description="Prompt metrics (may be None in list operations)")
 
     # Comprehensive metadata for audit tracking
     created_by: Optional[str] = Field(None, description="Username who created this entity")
@@ -3210,6 +3295,7 @@ class RPCRequest(BaseModel):
             ValueError: When value is not safe
         """
         SecurityValidator.validate_no_xss(v, "RPC method name")
+        # Runtime pattern matching (not precompiled to allow test monkeypatching)
         if not re.match(settings.validation_tool_method_pattern, v):
             raise ValueError("Invalid method name format")
         if len(v) > settings.validation_max_method_length:
@@ -3234,7 +3320,7 @@ class RPCRequest(BaseModel):
             return v
 
         # Check size limits (MCP recommends max 256KB for params)
-        param_size = len(json.dumps(v))
+        param_size = len(orjson.dumps(v))
         if param_size > settings.validation_max_rpc_param_size:
             raise ValueError(f"Parameters exceed maximum size of {settings.validation_max_rpc_param_size} bytes")
 
@@ -3324,8 +3410,8 @@ class AdminToolCreate(BaseModelWithConfigDict):
         if not v:
             return None
         try:
-            return json.loads(v)
-        except json.JSONDecodeError:
+            return orjson.loads(v)
+        except orjson.JSONDecodeError:
             raise ValueError("Invalid JSON")
 
 
@@ -3723,7 +3809,7 @@ class ServerRead(BaseModelWithConfigDict):
     associated_resources: List[str] = []
     associated_prompts: List[str] = []
     associated_a2a_agents: List[str] = []
-    metrics: ServerMetrics
+    metrics: Optional[ServerMetrics] = Field(None, description="Server metrics (may be None in list operations)")
     tags: List[Dict[str, str]] = Field(default_factory=list, description="Tags for categorizing the server")
 
     # Comprehensive metadata for audit tracking
@@ -4498,7 +4584,7 @@ class A2AAgentRead(BaseModelWithConfigDict):
     updated_at: datetime
     last_interaction: Optional[datetime]
     tags: List[Dict[str, str]] = Field(default_factory=list, description="Tags for categorizing the agent")
-    metrics: A2AAgentMetrics
+    metrics: Optional[A2AAgentMetrics] = Field(None, description="Agent metrics (may be None in list operations)")
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     # Authorizations
     auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers, oauth, or None")
@@ -4753,6 +4839,7 @@ class EmailRegistrationRequest(BaseModel):
         email: User's email address
         password: User's password
         full_name: Optional full name for display
+        is_admin: Whether user should have admin privileges (default: False)
 
     Examples:
         >>> request = EmailRegistrationRequest(
@@ -4764,6 +4851,8 @@ class EmailRegistrationRequest(BaseModel):
         'new@example.com'
         >>> request.full_name
         'New User'
+        >>> request.is_admin
+        False
     """
 
     model_config = ConfigDict(str_strip_whitespace=True)
@@ -4771,6 +4860,7 @@ class EmailRegistrationRequest(BaseModel):
     email: EmailStr = Field(..., description="User's email address")
     password: str = Field(..., min_length=8, description="User's password")
     full_name: Optional[str] = Field(None, max_length=255, description="User's full name")
+    is_admin: bool = Field(False, description="Grant admin privileges to user")
 
     @field_validator("password")
     @classmethod
@@ -5211,7 +5301,8 @@ class TeamCreateRequest(BaseModel):
         if v is None:
             return v
         v = v.strip().lower()
-        if not re.match(r"^[a-z0-9-]+$", v):
+        # Uses precompiled regex for slug validation
+        if not _SLUG_RE.match(v):
             raise ValueError("Slug must contain only lowercase letters, numbers, and hyphens")
         if v.startswith("-") or v.endswith("-"):
             raise ValueError("Slug cannot start or end with hyphens")
@@ -6541,6 +6632,53 @@ class PaginationParams(BaseModel):
     cursor: Optional[str] = Field(None, description="Cursor for cursor-based pagination")
     sort_by: Optional[str] = Field("created_at", description="Sort field")
     sort_order: Optional[str] = Field("desc", pattern="^(asc|desc)$", description="Sort order")
+
+
+# ============================================================================
+# Cursor Pagination Response Schemas (for main API endpoints)
+# ============================================================================
+
+
+class CursorPaginatedToolsResponse(BaseModel):
+    """Cursor-paginated response for tools list endpoint."""
+
+    tools: List["ToolRead"] = Field(..., description="List of tools for this page")
+    next_cursor: Optional[str] = Field(None, alias="nextCursor", description="Cursor for the next page, null if no more pages")
+
+
+class CursorPaginatedServersResponse(BaseModel):
+    """Cursor-paginated response for servers list endpoint."""
+
+    servers: List["ServerRead"] = Field(..., description="List of servers for this page")
+    next_cursor: Optional[str] = Field(None, alias="nextCursor", description="Cursor for the next page, null if no more pages")
+
+
+class CursorPaginatedGatewaysResponse(BaseModel):
+    """Cursor-paginated response for gateways list endpoint."""
+
+    gateways: List["GatewayRead"] = Field(..., description="List of gateways for this page")
+    next_cursor: Optional[str] = Field(None, alias="nextCursor", description="Cursor for the next page, null if no more pages")
+
+
+class CursorPaginatedResourcesResponse(BaseModel):
+    """Cursor-paginated response for resources list endpoint."""
+
+    resources: List["ResourceRead"] = Field(..., description="List of resources for this page")
+    next_cursor: Optional[str] = Field(None, alias="nextCursor", description="Cursor for the next page, null if no more pages")
+
+
+class CursorPaginatedPromptsResponse(BaseModel):
+    """Cursor-paginated response for prompts list endpoint."""
+
+    prompts: List["PromptRead"] = Field(..., description="List of prompts for this page")
+    next_cursor: Optional[str] = Field(None, alias="nextCursor", description="Cursor for the next page, null if no more pages")
+
+
+class CursorPaginatedA2AAgentsResponse(BaseModel):
+    """Cursor-paginated response for A2A agents list endpoint."""
+
+    agents: List["A2AAgentRead"] = Field(..., description="List of A2A agents for this page")
+    next_cursor: Optional[str] = Field(None, alias="nextCursor", description="Cursor for the next page, null if no more pages")
 
 
 # ============================================================================

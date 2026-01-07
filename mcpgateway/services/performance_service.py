@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 import logging
 import os
 import socket
+import threading
 import time
 from typing import Dict, List, Optional
 
@@ -44,6 +45,25 @@ from mcpgateway.schemas import (
     WorkerMetrics,
 )
 from mcpgateway.utils.redis_client import get_redis_client
+
+# Cache import (lazy to avoid circular dependencies)
+_ADMIN_STATS_CACHE = None
+
+
+def _get_admin_stats_cache():
+    """Get admin stats cache singleton lazily.
+
+    Returns:
+        AdminStatsCache instance.
+    """
+    global _ADMIN_STATS_CACHE  # pylint: disable=global-statement
+    if _ADMIN_STATS_CACHE is None:
+        # First-Party
+        from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+        _ADMIN_STATS_CACHE = admin_stats_cache
+    return _ADMIN_STATS_CACHE
+
 
 # Optional psutil import
 try:
@@ -81,6 +101,11 @@ logger = logging.getLogger(__name__)
 APP_START_TIME = time.time()
 HOSTNAME = socket.gethostname()
 
+# Cache for net_connections (throttled to reduce CPU usage)
+_net_connections_cache: int = 0
+_net_connections_cache_time: float = 0.0
+_net_connections_lock = threading.Lock()
+
 
 class PerformanceService:
     """
@@ -102,6 +127,51 @@ class PerformanceService:
         self.db = db
         self._request_count_cache: Dict[str, int] = {}
         self._last_request_time = time.time()
+
+    def _get_net_connections_cached(self) -> int:
+        """Get network connections count with caching to reduce CPU usage.
+
+        Uses module-level cache with configurable TTL to throttle expensive
+        psutil.net_connections() calls. Thread-safe with double-check locking.
+
+        Returns:
+            int: Number of active network connections, or 0 if disabled/unavailable.
+        """
+        global _net_connections_cache, _net_connections_cache_time  # pylint: disable=global-statement
+
+        # Check if net_connections tracking is disabled
+        if not settings.mcpgateway_performance_net_connections_enabled:
+            return 0
+
+        if not PSUTIL_AVAILABLE or psutil is None:
+            return 0
+
+        current_time = time.time()
+        cache_ttl = settings.mcpgateway_performance_net_connections_cache_ttl
+
+        # Return cached value if still valid (fast path, no lock needed)
+        if current_time - _net_connections_cache_time < cache_ttl:
+            return _net_connections_cache
+
+        # Use lock for cache refresh to prevent concurrent expensive calls
+        with _net_connections_lock:
+            # Double-check after acquiring lock (another thread may have refreshed)
+            # Re-read current time in case we waited on the lock
+            current_time = time.time()
+            if current_time - _net_connections_cache_time < cache_ttl:
+                return _net_connections_cache
+
+            # Refresh the cache
+            try:
+                _net_connections_cache = len(psutil.net_connections(kind="inet"))
+            except (psutil.AccessDenied, OSError) as e:
+                logger.debug("Could not get net_connections: %s", e)
+                # Keep stale cache value on error (don't update _net_connections_cache)
+
+            # Update cache time after the call to anchor TTL to actual refresh time
+            _net_connections_cache_time = time.time()
+
+        return _net_connections_cache
 
     def get_system_metrics(self) -> SystemMetricsSchema:
         """Collect current system metrics using psutil.
@@ -145,7 +215,7 @@ class PerformanceService:
 
         # Network metrics
         net_io = psutil.net_io_counters()
-        net_connections = len(psutil.net_connections(kind="inet"))
+        net_connections = self._get_net_connections_cached()
 
         # Boot time
         boot_time = datetime.fromtimestamp(psutil.boot_time(), tz=timezone.utc)
@@ -539,7 +609,7 @@ class PerformanceService:
             db.rollback()
             return 0
 
-    def get_history(
+    async def get_history(
         self,
         db: Session,
         period_type: str = "hourly",
@@ -561,6 +631,18 @@ class PerformanceService:
         Returns:
             PerformanceHistoryResponse: Historical aggregates.
         """
+        # Build cache key from parameters
+        start_str = start_time.isoformat() if start_time else "none"
+        end_str = end_time.isoformat() if end_time else "none"
+        host_str = host or "all"
+        cache_key = f"{period_type}:{start_str}:{end_str}:{host_str}:{limit}"
+
+        # Check cache first
+        cache = _get_admin_stats_cache()
+        cached = await cache.get_performance_history(cache_key)
+        if cached is not None:
+            return PerformanceHistoryResponse.model_validate(cached)
+
         query = db.query(PerformanceAggregate).filter(PerformanceAggregate.period_type == period_type)
 
         if start_time:
@@ -573,11 +655,16 @@ class PerformanceService:
         total_count = query.count()
         aggregates = query.order_by(desc(PerformanceAggregate.period_start)).limit(limit).all()
 
-        return PerformanceHistoryResponse(
+        result = PerformanceHistoryResponse(
             aggregates=[PerformanceAggregateRead.model_validate(a) for a in aggregates],
             period_type=period_type,
             total_count=total_count,
         )
+
+        # Store in cache
+        await cache.set_performance_history(result.model_dump(), cache_key)
+
+        return result
 
     def create_hourly_aggregate(self, db: Session, hour_start: datetime) -> Optional[PerformanceAggregate]:
         """Create an hourly aggregate from snapshots.

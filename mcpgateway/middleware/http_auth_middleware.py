@@ -60,6 +60,13 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
         if not self.plugin_manager:
             return await call_next(request)
 
+        # Skip payload creation if no HTTP hooks registered
+        has_pre = self.plugin_manager.has_hooks_for(HttpHookType.HTTP_PRE_REQUEST)
+        has_post = self.plugin_manager.has_hooks_for(HttpHookType.HTTP_POST_REQUEST)
+
+        if not has_pre and not has_post:
+            return await call_next(request)
+
         # Use correlation ID from CorrelationIDMiddleware if available
         # This ensures all hooks and downstream code see the same unified request ID
         request_id = get_correlation_id()
@@ -84,83 +91,90 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
             client_host = request.client.host
             client_port = request.client.port
 
+        # Initialize context_table for potential use by POST hook
+        context_table = None
+
         # PRE-REQUEST HOOK: Allow plugins to transform headers before authentication
-        try:
-            pre_result, context_table = await self.plugin_manager.invoke_hook(
-                HttpHookType.HTTP_PRE_REQUEST,
-                payload=HttpPreRequestPayload(
-                    path=str(request.url.path),
-                    method=request.method,
-                    headers=HttpHeaderPayload(root=dict(request.headers)),
-                    client_host=client_host,
-                    client_port=client_port,
-                ),
-                global_context=global_context,
-                local_contexts=None,
-                violations_as_exceptions=False,  # Don't block on pre-request violations
-            )
+        # Only create payload and invoke hook if plugins are registered for this hook type
+        if has_pre:
+            try:
+                pre_result, context_table = await self.plugin_manager.invoke_hook(
+                    HttpHookType.HTTP_PRE_REQUEST,
+                    payload=HttpPreRequestPayload(
+                        path=str(request.url.path),
+                        method=request.method,
+                        headers=HttpHeaderPayload(root=dict(request.headers)),
+                        client_host=client_host,
+                        client_port=client_port,
+                    ),
+                    global_context=global_context,
+                    local_contexts=None,
+                    violations_as_exceptions=False,  # Don't block on pre-request violations
+                )
 
-            if context_table:
-                request.state.plugin_context_table = context_table
+                if context_table:
+                    request.state.plugin_context_table = context_table
 
-            if global_context:
-                request.state.plugin_global_context = global_context
+                if global_context:
+                    request.state.plugin_global_context = global_context
 
-            # Apply modified headers if plugin returned them
-            if pre_result.modified_payload:
-                # Modify request headers by updating request.scope["headers"]
-                # This is the proper way to modify headers in Starlette/FastAPI
-                # Reference: https://stackoverflow.com/questions/69934160/python-how-to-manipulate-fastapi-request-headers-to-be-mutable
-                modified_headers_dict = pre_result.modified_payload.root
+                # Apply modified headers if plugin returned them
+                if pre_result.modified_payload:
+                    # Modify request headers by updating request.scope["headers"]
+                    # This is the proper way to modify headers in Starlette/FastAPI
+                    # Reference: https://stackoverflow.com/questions/69934160/python-how-to-manipulate-fastapi-request-headers-to-be-mutable
+                    modified_headers_dict = pre_result.modified_payload.root
 
-                # Merge modified headers with original headers (modified headers take precedence)
-                original_headers = dict(request.headers)
-                merged_headers = {**original_headers, **modified_headers_dict}
+                    # Merge modified headers with original headers (modified headers take precedence)
+                    original_headers = dict(request.headers)
+                    merged_headers = {**original_headers, **modified_headers_dict}
 
-                # Update request.scope["headers"] which is the raw header list Starlette uses
-                # Convert dict to list of (name, value) tuples with lowercase byte keys
-                request.scope["headers"] = [(name.lower().encode(), value.encode()) for name, value in merged_headers.items()]
+                    # Update request.scope["headers"] which is the raw header list Starlette uses
+                    # Convert dict to list of (name, value) tuples with lowercase byte keys
+                    request.scope["headers"] = [(name.lower().encode(), value.encode()) for name, value in merged_headers.items()]
 
-                logger.debug(f"Pre-request hook modified headers: {list(modified_headers_dict.keys())}")
+                    logger.debug(f"Pre-request hook modified headers: {list(modified_headers_dict.keys())}")
 
-        except Exception as e:
-            # Log but don't fail the request if pre-hook has issues
-            logger.warning(f"HTTP_PRE_REQUEST hook failed: {e}", exc_info=True)
+            except Exception as e:
+                # Log but don't fail the request if pre-hook has issues
+                logger.warning(f"HTTP_PRE_REQUEST hook failed: {e}", exc_info=True)
 
         # Process the request through the rest of the application
         response = await call_next(request)
 
         # POST-REQUEST HOOK: Allow plugins to inspect and modify response
-        try:
-            # Extract response headers
-            response_headers = HttpHeaderPayload(root=dict(response.headers))
+        # Only create payload and invoke hook if plugins are registered for this hook type
+        if has_post:
+            try:
+                # Extract response headers
+                response_headers = HttpHeaderPayload(root=dict(response.headers))
 
-            post_result, _ = await self.plugin_manager.invoke_hook(
-                HttpHookType.HTTP_POST_REQUEST,
-                payload=HttpPostRequestPayload(
-                    path=str(request.url.path),
-                    method=request.method,
-                    headers=HttpHeaderPayload(root=dict(request.headers)),
-                    client_host=client_host,
-                    client_port=client_port,
-                    response_headers=response_headers,
-                    status_code=response.status_code,
-                ),
-                global_context=global_context,
-                local_contexts=context_table,  # Pass context from pre-hook
-                violations_as_exceptions=False,  # Don't block on post-request violations
-            )
+                post_result, _ = await self.plugin_manager.invoke_hook(
+                    HttpHookType.HTTP_POST_REQUEST,
+                    payload=HttpPostRequestPayload(
+                        path=str(request.url.path),
+                        method=request.method,
+                        headers=HttpHeaderPayload(root=dict(request.headers)),
+                        client_host=client_host,
+                        client_port=client_port,
+                        response_headers=response_headers,
+                        status_code=response.status_code,
+                    ),
+                    global_context=global_context,
+                    local_contexts=context_table,  # Pass context from pre-hook
+                    violations_as_exceptions=False,  # Don't block on post-request violations
+                )
 
-            # Apply modified response headers if plugin returned them
-            if post_result.modified_payload:
-                modified_response_headers = post_result.modified_payload.root
-                # Update response headers (response.headers is mutable)
-                for header_name, header_value in modified_response_headers.items():
-                    response.headers[header_name] = header_value
-                logger.debug(f"Post-request hook modified response headers: {list(modified_response_headers.keys())}")
+                # Apply modified response headers if plugin returned them
+                if post_result.modified_payload:
+                    modified_response_headers = post_result.modified_payload.root
+                    # Update response headers (response.headers is mutable)
+                    for header_name, header_value in modified_response_headers.items():
+                        response.headers[header_name] = header_value
+                    logger.debug(f"Post-request hook modified response headers: {list(modified_response_headers.keys())}")
 
-        except Exception as e:
-            # Log but don't fail the response if post-hook has issues
-            logger.warning(f"HTTP_POST_REQUEST hook failed: {e}", exc_info=True)
+            except Exception as e:
+                # Log but don't fail the response if post-hook has issues
+                logger.warning(f"HTTP_POST_REQUEST hook failed: {e}", exc_info=True)
 
         return response

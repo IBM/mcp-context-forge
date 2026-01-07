@@ -219,7 +219,8 @@ class PermissionService:
             query = query.where((UserRole.expires_at.is_(None)) | (UserRole.expires_at > now))
 
         result = self.db.execute(query)
-        return result.scalars().all()
+        user_roles = result.scalars().all()
+        return user_roles
 
     async def has_permission_on_resource(self, user_email: str, permission: str, resource_type: str, resource_id: str, team_id: Optional[str] = None) -> bool:
         """Check if user has permission on a specific resource.
@@ -398,7 +399,8 @@ class PermissionService:
         query = query.where((UserRole.expires_at.is_(None)) | (UserRole.expires_at > now))
 
         result = self.db.execute(query)
-        return result.scalars().all()
+        user_roles = result.scalars().all()
+        return user_roles
 
     async def _log_permission_check(
         self,
@@ -541,6 +543,7 @@ class PermissionService:
         from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
 
         member = self.db.execute(select(EmailTeamMember).where(and_(EmailTeamMember.user_email == user_email, EmailTeamMember.team_id == team_id, EmailTeamMember.is_active))).scalar_one_or_none()
+        self.db.commit()  # Release transaction to avoid idle-in-transaction
 
         return member is not None
 
@@ -558,5 +561,6 @@ class PermissionService:
         from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
 
         member = self.db.execute(select(EmailTeamMember).where(and_(EmailTeamMember.user_email == user_email, EmailTeamMember.team_id == team_id, EmailTeamMember.is_active))).scalar_one_or_none()
+        self.db.commit()  # Release transaction to avoid idle-in-transaction
 
         return member.role if member else None

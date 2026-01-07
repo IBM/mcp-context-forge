@@ -18,6 +18,17 @@ from sqlalchemy.orm import Session
 from mcpgateway.services.tag_service import TagService
 
 
+@pytest.fixture(autouse=True)
+def clear_cache():
+    """Clear admin stats cache before each test to prevent cross-test contamination."""
+    # First-Party
+    from mcpgateway.cache.admin_stats_cache import admin_stats_cache
+
+    admin_stats_cache.invalidate_all()
+    yield
+    admin_stats_cache.invalidate_all()
+
+
 @pytest.fixture
 def tag_service():
     """Create a tag service instance."""

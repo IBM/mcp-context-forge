@@ -46,7 +46,7 @@ import os
 import ssl
 import tempfile
 import time
-from typing import Any, AsyncGenerator, cast, Dict, Generator, List, Optional, Set, TYPE_CHECKING
+from typing import Any, AsyncGenerator, cast, Dict, List, Optional, Set, TYPE_CHECKING, Union
 from urllib.parse import urljoin, urlparse, urlunparse
 import uuid
 
@@ -57,9 +57,9 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 from pydantic import ValidationError
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import selectinload, Session
 
 try:
     # Third-Party - check if redis is available
@@ -74,13 +74,15 @@ except ImportError:
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailTeam
+from mcpgateway.db import EmailTeam, fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_db
 from mcpgateway.db import Prompt as DbPrompt
+from mcpgateway.db import PromptMetric
 from mcpgateway.db import Resource as DbResource
-from mcpgateway.db import SessionLocal
+from mcpgateway.db import ResourceMetric, ResourceSubscription, server_prompt_association, server_resource_association, server_tool_association, SessionLocal
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.db import ToolMetric
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, PromptCreate, ResourceCreate, ToolCreate
 
@@ -94,12 +96,32 @@ from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
+from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 from mcpgateway.utils.validate_signature import validate_signature
 from mcpgateway.validation.tags import validate_tags_field
+
+# Cache import (lazy to avoid circular dependencies)
+_REGISTRY_CACHE = None
+
+
+def _get_registry_cache():
+    """Get registry cache singleton lazily.
+
+    Returns:
+        RegistryCache instance.
+    """
+    global _REGISTRY_CACHE  # pylint: disable=global-statement
+    if _REGISTRY_CACHE is None:
+        # First-Party
+        from mcpgateway.cache.registry_cache import registry_cache  # pylint: disable=import-outside-toplevel
+
+        _REGISTRY_CACHE = registry_cache
+    return _REGISTRY_CACHE
+
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -298,6 +320,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         Examples:
             >>> from mcpgateway.services.gateway_service import GatewayService
             >>> from mcpgateway.services.event_service import EventService
+            >>> from mcpgateway.utils.retry_manager import ResilientHttpClient
+            >>> from mcpgateway.services.tool_service import ToolService
             >>> service = GatewayService()
             >>> isinstance(service._event_service, EventService)
             True
@@ -350,8 +374,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             self._leader_ttl = settings.redis_leader_ttl
             self._leader_heartbeat_interval = settings.redis_leader_heartbeat_interval
             self._leader_heartbeat_task: Optional[asyncio.Task] = None
-        elif settings.cache_type != "none":
-            # Fallback: File-based lock
+
+        # Always initialize file lock as fallback (used if Redis connection fails at runtime)
+        if settings.cache_type != "none":
             temp_dir = tempfile.gettempdir()
             user_path = os.path.normpath(settings.filelock_name)
             if os.path.isabs(user_path):
@@ -422,8 +447,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         # Initialize event service with shared Redis client
         await self._event_service.initialize()
 
-        db_gen: Generator = get_db()
-        db: Session = next(db_gen)
+        # NOTE: We intentionally do NOT create a long-lived DB session here.
+        # Health checks use fresh_db_session() only when DB access is actually needed,
+        # avoiding holding connections during HTTP calls to MCP servers.
 
         user_email = settings.platform_admin_email
 
@@ -441,11 +467,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             is_leader = await self._redis_client.set(self._leader_key, self._instance_id, ex=self._leader_ttl, nx=True)
             if is_leader:
                 logger.info("Acquired Redis leadership. Starting health check and heartbeat tasks.")
-                self._health_check_task = asyncio.create_task(self._run_health_checks(db, user_email))
+                self._health_check_task = asyncio.create_task(self._run_health_checks(user_email))
                 self._leader_heartbeat_task = asyncio.create_task(self._run_leader_heartbeat())
         else:
             # Always create the health check task in filelock mode; leader check is handled inside.
-            self._health_check_task = asyncio.create_task(self._run_health_checks(db, user_email))
+            self._health_check_task = asyncio.create_task(self._run_health_checks(user_email))
 
     async def shutdown(self) -> None:
         """Shutdown the service.
@@ -799,6 +825,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             db_prompts = [
                 DbPrompt(
                     name=prompt.name,
+                    original_name=prompt.name,
+                    custom_name=prompt.name,
+                    display_name=prompt.name,
                     description=prompt.description,
                     template=prompt.template if hasattr(prompt, "template") else "",
                     argument_schema={},  # Use argument_schema instead of arguments
@@ -1032,8 +1061,16 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             GatewayConnectionError: If connection or OAuth fails
         """
         try:
-            # Get the gateway
-            gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+            # Get the gateway with eager loading for sync operations to avoid N+1 queries
+            gateway = db.execute(
+                select(DbGateway)
+                .options(
+                    selectinload(DbGateway.tools),
+                    selectinload(DbGateway.resources),
+                    selectinload(DbGateway.prompts),
+                )
+                .where(DbGateway.id == gateway_id)
+            ).scalar_one_or_none()
 
             if not gateway:
                 raise ValueError(f"Gateway {gateway_id} not found")
@@ -1092,30 +1129,52 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             # Count items before cleanup for logging
 
-            # Delete tools that are no longer available from the gateway
-            stale_tools = [tool for tool in gateway.tools if tool.original_name not in new_tool_names]
-            for tool in stale_tools:
-                db.delete(tool)
+            # Bulk delete tools that are no longer available from the gateway
+            # Use chunking to avoid SQLite's 999 parameter limit for IN clauses
+            stale_tool_ids = [tool.id for tool in gateway.tools if tool.original_name not in new_tool_names]
+            if stale_tool_ids:
+                # Delete child records first to avoid FK constraint violations
+                for i in range(0, len(stale_tool_ids), 500):
+                    chunk = stale_tool_ids[i : i + 500]
+                    db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
+                    db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
+                    db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
 
-            # Delete resources that are no longer available from the gateway
-            stale_resources = [resource for resource in gateway.resources if resource.uri not in new_resource_uris]
-            for resource in stale_resources:
-                db.delete(resource)
+            # Bulk delete resources that are no longer available from the gateway
+            stale_resource_ids = [resource.id for resource in gateway.resources if resource.uri not in new_resource_uris]
+            if stale_resource_ids:
+                # Delete child records first to avoid FK constraint violations
+                for i in range(0, len(stale_resource_ids), 500):
+                    chunk = stale_resource_ids[i : i + 500]
+                    db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk)))
+                    db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk)))
+                    db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk)))
+                    db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
 
-            # Delete prompts that are no longer available from the gateway
-            stale_prompts = [prompt for prompt in gateway.prompts if prompt.name not in new_prompt_names]
-            for prompt in stale_prompts:
-                db.delete(prompt)
+            # Bulk delete prompts that are no longer available from the gateway
+            stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.original_name not in new_prompt_names]
+            if stale_prompt_ids:
+                # Delete child records first to avoid FK constraint violations
+                for i in range(0, len(stale_prompt_ids), 500):
+                    chunk = stale_prompt_ids[i : i + 500]
+                    db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk)))
+                    db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
+                    db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
+
+            # Expire gateway to clear cached relationships after bulk deletes
+            # This prevents SQLAlchemy from trying to re-delete already-deleted items
+            if stale_tool_ids or stale_resource_ids or stale_prompt_ids:
+                db.expire(gateway)
 
             # Update gateway relationships to reflect deletions
             gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]
             gateway.resources = [resource for resource in gateway.resources if resource.uri in new_resource_uris]
-            gateway.prompts = [prompt for prompt in gateway.prompts if prompt.name in new_prompt_names]
+            gateway.prompts = [prompt for prompt in gateway.prompts if prompt.original_name in new_prompt_names]
 
             # Log cleanup results
-            tools_removed = len(stale_tools)
-            resources_removed = len(stale_resources)
-            prompts_removed = len(stale_prompts)
+            tools_removed = len(stale_tool_ids)
+            resources_removed = len(stale_resource_ids)
+            prompts_removed = len(stale_prompt_ids)
 
             if tools_removed > 0:
                 logger.info(f"Removed {tools_removed} tools no longer available from gateway")
@@ -1128,20 +1187,31 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             gateway.capabilities = capabilities
             gateway.last_seen = datetime.now(timezone.utc)
 
-            # Add new items to DB
+            # Add new items to DB in chunks to prevent lock escalation
             items_added = 0
+            chunk_size = 50
+
             if tools_to_add:
-                db.add_all(tools_to_add)
+                for i in range(0, len(tools_to_add), chunk_size):
+                    chunk = tools_to_add[i : i + chunk_size]
+                    db.add_all(chunk)
+                    db.flush()  # Flush each chunk to avoid excessive memory usage
                 items_added += len(tools_to_add)
                 logger.info(f"Added {len(tools_to_add)} new tools to database")
 
             if resources_to_add:
-                db.add_all(resources_to_add)
+                for i in range(0, len(resources_to_add), chunk_size):
+                    chunk = resources_to_add[i : i + chunk_size]
+                    db.add_all(chunk)
+                    db.flush()
                 items_added += len(resources_to_add)
                 logger.info(f"Added {len(resources_to_add)} new resources to database")
 
             if prompts_to_add:
-                db.add_all(prompts_to_add)
+                for i in range(0, len(prompts_to_add), chunk_size):
+                    chunk = prompts_to_add[i : i + chunk_size]
+                    db.add_all(chunk)
+                    db.flush()
                 items_added += len(prompts_to_add)
                 logger.info(f"Added {len(prompts_to_add)} new prompts to database")
 
@@ -1163,71 +1233,184 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             logger.error(f"Failed to fetch tools after OAuth for gateway {gateway_id}: {e}")
             raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(e)}")
 
-    async def list_gateways(self, db: Session, include_inactive: bool = False, tags: Optional[List[str]] = None) -> List[GatewayRead]:
-        """List all registered gateways.
+    async def list_gateways(
+        self,
+        db: Session,
+        include_inactive: bool = False,
+        tags: Optional[List[str]] = None,
+        cursor: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        per_page: Optional[int] = None,
+        user_email: Optional[str] = None,
+        team_id: Optional[str] = None,
+        visibility: Optional[str] = None,
+    ) -> Union[tuple[List[GatewayRead], Optional[str]], Dict[str, Any]]:
+        """List all registered gateways with cursor pagination and optional team filtering.
 
         Args:
             db: Database session
             include_inactive: Whether to include inactive gateways
             tags (Optional[List[str]]): Filter resources by tags. If provided, only resources with at least one matching tag will be returned.
+            cursor: Cursor for pagination (encoded last created_at and id).
+            limit: Maximum number of gateways to return. None for default, 0 for unlimited.
+            page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
+            per_page: Items per page for page-based pagination. Defaults to pagination_default_page_size.
+            user_email: Email of user for team-based access control. None for no access control.
+            team_id: Optional team ID to filter by specific team (requires user_email).
+            visibility: Optional visibility filter (private, team, public) (requires user_email).
 
         Returns:
-            List of registered gateways
+            If page is provided: Dict with {"data": [...], "pagination": {...}, "links": {...}}
+            If cursor is provided or neither: tuple of (list of GatewayRead objects, next_cursor).
 
         Examples:
             >>> from mcpgateway.services.gateway_service import GatewayService
-            >>> from unittest.mock import MagicMock
+            >>> from unittest.mock import MagicMock, AsyncMock, patch
             >>> from mcpgateway.schemas import GatewayRead
+            >>> import asyncio
             >>> service = GatewayService()
             >>> db = MagicMock()
             >>> gateway_obj = MagicMock()
             >>> db.execute.return_value.scalars.return_value.all.return_value = [gateway_obj]
-            >>> mocked_gateway_read = MagicMock()
-            >>> mocked_gateway_read.masked.return_value = 'gateway_read'
-            >>> GatewayRead.model_validate = MagicMock(return_value=mocked_gateway_read)
-            >>> import asyncio
-            >>> result = asyncio.run(service.list_gateways(db))
-            >>> result == ['gateway_read']
-            True
-
-            >>> # Test include_inactive parameter
-            >>> result_with_inactive = asyncio.run(service.list_gateways(db, include_inactive=True))
-            >>> result_with_inactive == ['gateway_read']
+            >>> gateway_read_obj = MagicMock(spec=GatewayRead)
+            >>> service.convert_gateway_to_read = MagicMock(return_value=gateway_read_obj)
+            >>> # Mock the cache to bypass caching logic
+            >>> with patch('mcpgateway.services.gateway_service._get_registry_cache') as mock_cache_factory:
+            ...     mock_cache = MagicMock()
+            ...     mock_cache.get = AsyncMock(return_value=None)
+            ...     mock_cache.set = AsyncMock(return_value=None)
+            ...     mock_cache.hash_filters = MagicMock(return_value="hash")
+            ...     mock_cache_factory.return_value = mock_cache
+            ...     gateways, cursor = asyncio.run(service.list_gateways(db))
+            ...     gateways == [gateway_read_obj] and cursor is None
             True
 
             >>> # Test empty result
             >>> db.execute.return_value.scalars.return_value.all.return_value = []
-            >>> empty_result = asyncio.run(service.list_gateways(db))
-            >>> empty_result
-            []
+            >>> with patch('mcpgateway.services.gateway_service._get_registry_cache') as mock_cache_factory:
+            ...     mock_cache = MagicMock()
+            ...     mock_cache.get = AsyncMock(return_value=None)
+            ...     mock_cache.set = AsyncMock(return_value=None)
+            ...     mock_cache.hash_filters = MagicMock(return_value="hash")
+            ...     mock_cache_factory.return_value = mock_cache
+            ...     empty_result, cursor = asyncio.run(service.list_gateways(db))
+            ...     empty_result == [] and cursor is None
+            True
         """
-        query = select(DbGateway)
+        # Check cache for first page only - skip when user_email provided or page based pagination
+        cache = _get_registry_cache()
+        if cursor is None and user_email is None and page is None:
+            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
+            cached = await cache.get("gateways", filters_hash)
+            if cached is not None:
+                # Reconstruct GatewayRead objects from cached dicts
+                cached_gateways = [GatewayRead.model_validate(g) for g in cached["gateways"]]
+                return (cached_gateways, cached.get("next_cursor"))
 
+        # Build base query with ordering
+        query = select(DbGateway).order_by(desc(DbGateway.created_at), desc(DbGateway.id))
+
+        # Apply active/inactive filter
         if not include_inactive:
             query = query.where(DbGateway.enabled)
+        # Apply team-based access control if user_email is provided
+        if user_email:
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email)
+            team_ids = [team.id for team in user_teams]
 
+            if team_id:
+                # User requesting specific team - verify access
+                if team_id not in team_ids:
+                    return ([], None)
+                access_conditions = [
+                    and_(DbGateway.team_id == team_id, DbGateway.visibility.in_(["team", "public"])),
+                    and_(DbGateway.team_id == team_id, DbGateway.owner_email == user_email),
+                ]
+                query = query.where(or_(*access_conditions))
+            else:
+                # General access: user's gateways + public gateways + team gateways
+                access_conditions = [
+                    DbGateway.owner_email == user_email,
+                    DbGateway.visibility == "public",
+                ]
+                if team_ids:
+                    access_conditions.append(and_(DbGateway.team_id.in_(team_ids), DbGateway.visibility.in_(["team", "public"])))
+                query = query.where(or_(*access_conditions))
+
+            if visibility:
+                query = query.where(DbGateway.visibility == visibility)
+
+        # Add tag filtering if tags are provided
         if tags:
             query = query.where(json_contains_expr(db, DbGateway.tags, tags, match_any=True))
+        # Use unified pagination helper - handles both page and cursor pagination
+        pag_result = await unified_paginate(
+            db=db,
+            query=query,
+            page=page,
+            per_page=per_page,
+            cursor=cursor,
+            limit=limit,
+            base_url="/admin/gateways",  # Used for page-based links
+            query_params={"include_inactive": include_inactive} if include_inactive else {},
+        )
 
-        gateways = db.execute(query).scalars().all()
+        next_cursor = None
+        # Extract gateways based on pagination type
+        if page is not None:
+            # Page-based: pag_result is a dict
+            gateways_db = pag_result["data"]
+        else:
+            # Cursor-based: pag_result is a tuple
+            gateways_db, next_cursor = pag_result
 
-        # Batch fetch team names
-        team_ids = {g.team_id for g in gateways if g.team_id}
-        team_names = {}
-        if team_ids:
-            teams = db.query(EmailTeam).filter(EmailTeam.id.in_(team_ids), EmailTeam.is_active.is_(True)).all()
-            team_names = {team.id: team.name for team in teams}
+        # Fetch team names for the gateways (common for both pagination types)
+        team_ids_set = {s.team_id for s in gateways_db if s.team_id}
+        team_map = {}
+        if team_ids_set:
+            teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids_set), EmailTeam.is_active.is_(True))).all()
+            team_map = {team.id: team.name for team in teams}
 
+        db.commit()  # Release transaction to avoid idle-in-transaction
+
+        # Convert to GatewayRead (common for both pagination types)
         result = []
-        for g in gateways:
-            g.team = team_names.get(g.team_id) if g.team_id else None
-            result.append(GatewayRead.model_validate(self._prepare_gateway_for_read(g)).masked())
-        return result
+        for s in gateways_db:
+            s.team = team_map.get(s.team_id) if s.team_id else None
+            result.append(self.convert_gateway_to_read(s))
+
+        # Return appropriate format based on pagination type
+        if page is not None:
+            # Page-based format
+            return {
+                "data": result,
+                "pagination": pag_result["pagination"],
+                "links": pag_result["links"],
+            }
+
+        # Cursor-based format
+
+        # Cache first page results - only for non-user-specific queries
+        if cursor is None and user_email is None:
+            try:
+                cache_data = {"gateways": [s.model_dump(mode="json") for s in result], "next_cursor": next_cursor}
+                await cache.set("gateways", cache_data, filters_hash)
+            except AttributeError:
+                pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)
+
+        return (result, next_cursor)
 
     async def list_gateways_for_user(
         self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
     ) -> List[GatewayRead]:
         """
+        DEPRECATED: Use list_gateways() with user_email parameter instead.
+
+        This method is maintained for backward compatibility but is no longer used.
+        New code should call list_gateways() with user_email, team_id, and visibility parameters.
+
         List gateways user has access to with team filtering.
 
         Args:
@@ -1299,6 +1482,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             teams = db.query(EmailTeam).filter(EmailTeam.id.in_(gateway_team_ids), EmailTeam.is_active.is_(True)).all()
             team_names = {team.id: team.name for team in teams}
 
+        db.commit()  # Release transaction to avoid idle-in-transaction
+
         result = []
         for g in gateways:
             g.team = team_names.get(g.team_id) if g.team_id else None
@@ -1343,8 +1528,16 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             ValidationError: If validation fails
         """
         try:  # pylint: disable=too-many-nested-blocks
-            # Find gateway
-            gateway = db.get(DbGateway, gateway_id)
+            # Find gateway with eager loading for sync operations to avoid N+1 queries
+            gateway = db.execute(
+                select(DbGateway)
+                .options(
+                    selectinload(DbGateway.tools),
+                    selectinload(DbGateway.resources),
+                    selectinload(DbGateway.prompts),
+                )
+                .where(DbGateway.id == gateway_id)
+            ).scalar_one_or_none()
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
@@ -1560,30 +1753,52 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                     # Count items before cleanup for logging
 
-                    # Delete tools that are no longer available from the gateway
-                    stale_tools = [tool for tool in gateway.tools if tool.original_name not in new_tool_names]
-                    for tool in stale_tools:
-                        db.delete(tool)
+                    # Bulk delete tools that are no longer available from the gateway
+                    # Use chunking to avoid SQLite's 999 parameter limit for IN clauses
+                    stale_tool_ids = [tool.id for tool in gateway.tools if tool.original_name not in new_tool_names]
+                    if stale_tool_ids:
+                        # Delete child records first to avoid FK constraint violations
+                        for i in range(0, len(stale_tool_ids), 500):
+                            chunk = stale_tool_ids[i : i + 500]
+                            db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
+                            db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
+                            db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
 
-                    # Delete resources that are no longer available from the gateway
-                    stale_resources = [resource for resource in gateway.resources if resource.uri not in new_resource_uris]
-                    for resource in stale_resources:
-                        db.delete(resource)
+                    # Bulk delete resources that are no longer available from the gateway
+                    stale_resource_ids = [resource.id for resource in gateway.resources if resource.uri not in new_resource_uris]
+                    if stale_resource_ids:
+                        # Delete child records first to avoid FK constraint violations
+                        for i in range(0, len(stale_resource_ids), 500):
+                            chunk = stale_resource_ids[i : i + 500]
+                            db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk)))
+                            db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk)))
+                            db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk)))
+                            db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
 
-                    # Delete prompts that are no longer available from the gateway
-                    stale_prompts = [prompt for prompt in gateway.prompts if prompt.name not in new_prompt_names]
-                    for prompt in stale_prompts:
-                        db.delete(prompt)
+                    # Bulk delete prompts that are no longer available from the gateway
+                    stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.original_name not in new_prompt_names]
+                    if stale_prompt_ids:
+                        # Delete child records first to avoid FK constraint violations
+                        for i in range(0, len(stale_prompt_ids), 500):
+                            chunk = stale_prompt_ids[i : i + 500]
+                            db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk)))
+                            db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
+                            db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
+
+                    # Expire gateway to clear cached relationships after bulk deletes
+                    # This prevents SQLAlchemy from trying to re-delete already-deleted items
+                    if stale_tool_ids or stale_resource_ids or stale_prompt_ids:
+                        db.expire(gateway)
 
                     gateway.capabilities = capabilities
                     gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
                     gateway.resources = [resource for resource in gateway.resources if resource.uri in new_resource_uris]  # keep only still-valid rows
-                    gateway.prompts = [prompt for prompt in gateway.prompts if prompt.name in new_prompt_names]  # keep only still-valid rows
+                    gateway.prompts = [prompt for prompt in gateway.prompts if prompt.original_name in new_prompt_names]  # keep only still-valid rows
 
                     # Log cleanup results
-                    tools_removed = len(stale_tools)
-                    resources_removed = len(stale_resources)
-                    prompts_removed = len(stale_prompts)
+                    tools_removed = len(stale_tool_ids)
+                    resources_removed = len(stale_resource_ids)
+                    prompts_removed = len(stale_prompt_ids)
 
                     if tools_removed > 0:
                         logger.info(f"Removed {tools_removed} tools no longer available during gateway update")
@@ -1594,13 +1809,24 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                     gateway.last_seen = datetime.now(timezone.utc)
 
-                    # Add new items to database session
+                    # Add new items to database session in chunks to prevent lock escalation
+                    chunk_size = 50
+
                     if tools_to_add:
-                        db.add_all(tools_to_add)
+                        for i in range(0, len(tools_to_add), chunk_size):
+                            chunk = tools_to_add[i : i + chunk_size]
+                            db.add_all(chunk)
+                            db.flush()
                     if resources_to_add:
-                        db.add_all(resources_to_add)
+                        for i in range(0, len(resources_to_add), chunk_size):
+                            chunk = resources_to_add[i : i + chunk_size]
+                            db.add_all(chunk)
+                            db.flush()
                     if prompts_to_add:
-                        db.add_all(prompts_to_add)
+                        for i in range(0, len(prompts_to_add), chunk_size):
+                            chunk = prompts_to_add[i : i + chunk_size]
+                            db.add_all(chunk)
+                            db.flush()
 
                     # Update tracking with new URL
                     self._active_gateways.discard(gateway.url)
@@ -1629,6 +1855,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 db.commit()
                 db.refresh(gateway)
+
+                # Invalidate cache after successful update
+                cache = _get_registry_cache()
+                await cache.invalidate_gateways()
+                # Also invalidate tags cache since gateway tags may have changed
+                # First-Party
+                from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+                await admin_stats_cache.invalidate_tags()
 
                 # Notify subscribers
                 await self._notify_gateway_updated(gateway)
@@ -1859,7 +2094,16 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             PermissionError: If user doesn't own the agent.
         """
         try:
-            gateway = db.get(DbGateway, gateway_id)
+            # Get gateway with eager loading for sync operations to avoid N+1 queries
+            gateway = db.execute(
+                select(DbGateway)
+                .options(
+                    selectinload(DbGateway.tools),
+                    selectinload(DbGateway.resources),
+                    selectinload(DbGateway.prompts),
+                )
+                .where(DbGateway.id == gateway_id)
+            ).scalar_one_or_none()
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
@@ -1910,30 +2154,52 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                         # Count items before cleanup for logging
 
-                        # Delete tools that are no longer available from the gateway
-                        stale_tools = [tool for tool in gateway.tools if tool.original_name not in new_tool_names]
-                        for tool in stale_tools:
-                            db.delete(tool)
+                        # Bulk delete tools that are no longer available from the gateway
+                        # Use chunking to avoid SQLite's 999 parameter limit for IN clauses
+                        stale_tool_ids = [tool.id for tool in gateway.tools if tool.original_name not in new_tool_names]
+                        if stale_tool_ids:
+                            # Delete child records first to avoid FK constraint violations
+                            for i in range(0, len(stale_tool_ids), 500):
+                                chunk = stale_tool_ids[i : i + 500]
+                                db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
+                                db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
+                                db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
 
-                        # Delete resources that are no longer available from the gateway
-                        stale_resources = [resource for resource in gateway.resources if resource.uri not in new_resource_uris]
-                        for resource in stale_resources:
-                            db.delete(resource)
+                        # Bulk delete resources that are no longer available from the gateway
+                        stale_resource_ids = [resource.id for resource in gateway.resources if resource.uri not in new_resource_uris]
+                        if stale_resource_ids:
+                            # Delete child records first to avoid FK constraint violations
+                            for i in range(0, len(stale_resource_ids), 500):
+                                chunk = stale_resource_ids[i : i + 500]
+                                db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk)))
+                                db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk)))
+                                db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk)))
+                                db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
 
-                        # Delete prompts that are no longer available from the gateway
-                        stale_prompts = [prompt for prompt in gateway.prompts if prompt.name not in new_prompt_names]
-                        for prompt in stale_prompts:
-                            db.delete(prompt)
+                        # Bulk delete prompts that are no longer available from the gateway
+                        stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.original_name not in new_prompt_names]
+                        if stale_prompt_ids:
+                            # Delete child records first to avoid FK constraint violations
+                            for i in range(0, len(stale_prompt_ids), 500):
+                                chunk = stale_prompt_ids[i : i + 500]
+                                db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk)))
+                                db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
+                                db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
+
+                        # Expire gateway to clear cached relationships after bulk deletes
+                        # This prevents SQLAlchemy from trying to re-delete already-deleted items
+                        if stale_tool_ids or stale_resource_ids or stale_prompt_ids:
+                            db.expire(gateway)
 
                         gateway.capabilities = capabilities
                         gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
                         gateway.resources = [resource for resource in gateway.resources if resource.uri in new_resource_uris]  # keep only still-valid rows
-                        gateway.prompts = [prompt for prompt in gateway.prompts if prompt.name in new_prompt_names]  # keep only still-valid rows
+                        gateway.prompts = [prompt for prompt in gateway.prompts if prompt.original_name in new_prompt_names]  # keep only still-valid rows
 
                         # Log cleanup results
-                        tools_removed = len(stale_tools)
-                        resources_removed = len(stale_resources)
-                        prompts_removed = len(stale_prompts)
+                        tools_removed = len(stale_tool_ids)
+                        resources_removed = len(stale_resource_ids)
+                        prompts_removed = len(stale_prompt_ids)
 
                         if tools_removed > 0:
                             logger.info(f"Removed {tools_removed} tools no longer available during gateway reactivation")
@@ -1944,13 +2210,24 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                         gateway.last_seen = datetime.now(timezone.utc)
 
-                        # Add new items to database session
+                        # Add new items to database session in chunks to prevent lock escalation
+                        chunk_size = 50
+
                         if tools_to_add:
-                            db.add_all(tools_to_add)
+                            for i in range(0, len(tools_to_add), chunk_size):
+                                chunk = tools_to_add[i : i + chunk_size]
+                                db.add_all(chunk)
+                                db.flush()
                         if resources_to_add:
-                            db.add_all(resources_to_add)
+                            for i in range(0, len(resources_to_add), chunk_size):
+                                chunk = resources_to_add[i : i + chunk_size]
+                                db.add_all(chunk)
+                                db.flush()
                         if prompts_to_add:
-                            db.add_all(prompts_to_add)
+                            for i in range(0, len(prompts_to_add), chunk_size):
+                                chunk = prompts_to_add[i : i + chunk_size]
+                                db.add_all(chunk)
+                                db.flush()
                     except Exception as e:
                         logger.warning(f"Failed to initialize reactivated gateway: {e}")
                 else:
@@ -1958,6 +2235,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 db.commit()
                 db.refresh(gateway)
+
+                # Invalidate cache after status change
+                cache = _get_registry_cache()
+                await cache.invalidate_gateways()
 
                 # Notify Subscribers
                 if not gateway.enabled:
@@ -1972,12 +2253,17 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 tools = db.query(DbTool).filter(DbTool.gateway_id == gateway_id).all()
 
+                # Toggle tools with skip_cache_invalidation=True to avoid N invalidations
                 if only_update_reachable:
                     for tool in tools:
-                        await self.tool_service.toggle_tool_status(db, tool.id, tool.enabled, reachable)
+                        await self.tool_service.toggle_tool_status(db, tool.id, tool.enabled, reachable, skip_cache_invalidation=True)
                 else:
                     for tool in tools:
-                        await self.tool_service.toggle_tool_status(db, tool.id, activate, reachable)
+                        await self.tool_service.toggle_tool_status(db, tool.id, activate, reachable, skip_cache_invalidation=True)
+
+                # Invalidate tools cache once after all tool status changes
+                if tools:
+                    await cache.invalidate_tools()
 
                 logger.info(f"Gateway status: {gateway.name} - {'enabled' if activate else 'disabled'} and {'accessible' if reachable else 'inaccessible'}")
 
@@ -2104,8 +2390,16 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             ...     pass
         """
         try:
-            # Find gateway
-            gateway = db.get(DbGateway, gateway_id)
+            # Find gateway with eager loading for deletion to avoid N+1 queries
+            gateway = db.execute(
+                select(DbGateway)
+                .options(
+                    selectinload(DbGateway.tools),
+                    selectinload(DbGateway.resources),
+                    selectinload(DbGateway.prompts),
+                )
+                .where(DbGateway.id == gateway_id)
+            ).scalar_one_or_none()
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
@@ -2123,9 +2417,53 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             gateway_name = gateway.name
             gateway_team_id = gateway.team_id
 
+            # Manually delete children first to avoid FK constraint violations
+            # (passive_deletes=True means ORM won't auto-cascade, we must do it explicitly)
+            # Use chunking to avoid SQLite's 999 parameter limit for IN clauses
+            tool_ids = [t.id for t in gateway.tools]
+            resource_ids = [r.id for r in gateway.resources]
+            prompt_ids = [p.id for p in gateway.prompts]
+
+            # Delete tool children and tools
+            if tool_ids:
+                for i in range(0, len(tool_ids), 500):
+                    chunk = tool_ids[i : i + 500]
+                    db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
+                    db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
+                    db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
+
+            # Delete resource children and resources
+            if resource_ids:
+                for i in range(0, len(resource_ids), 500):
+                    chunk = resource_ids[i : i + 500]
+                    db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk)))
+                    db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk)))
+                    db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk)))
+                    db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
+
+            # Delete prompt children and prompts
+            if prompt_ids:
+                for i in range(0, len(prompt_ids), 500):
+                    chunk = prompt_ids[i : i + 500]
+                    db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk)))
+                    db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
+                    db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
+
+            # Expire gateway to clear cached relationships after bulk deletes
+            db.expire(gateway)
+
             # Hard delete gateway
             db.delete(gateway)
             db.commit()
+
+            # Invalidate cache after successful deletion
+            cache = _get_registry_cache()
+            await cache.invalidate_gateways()
+            # Also invalidate tags cache since gateway tags may have changed
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
 
             # Update tracking
             self._active_gateways.discard(gateway.url)
@@ -2306,7 +2644,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 else:
                                     raise GatewayConnectionError(f"No valid OAuth token for user {app_user_email} and gateway {gateway.name}")
                             finally:
-                                db.close()
+                                # Ensure close() always runs even if commit() fails
+                                # Without this nested try/finally, a commit() failure (e.g., PgBouncer timeout)
+                                # would skip close(), leaving the connection in "idle in transaction" state
+                                try:
+                                    db.commit()  # End read-only transaction cleanly before returning to pool
+                                finally:
+                                    db.close()
                     except Exception as oauth_error:
                         raise GatewayConnectionError(f"Failed to obtain OAuth token for gateway {gateway.name}: {oauth_error}")
                 else:
@@ -2324,8 +2668,16 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 response.raise_for_status()
                 result = response.json()
 
-                # Update last seen timestamp
-                gateway.last_seen = datetime.now(timezone.utc)
+                # Update last seen timestamp using fresh DB session
+                # (gateway object may be detached from original session)
+                try:
+                    with fresh_db_session() as update_db:
+                        db_gateway = update_db.execute(select(DbGateway).where(DbGateway.id == gateway.id)).scalar_one_or_none()
+                        if db_gateway:
+                            db_gateway.last_seen = datetime.now(timezone.utc)
+                            update_db.commit()
+                except Exception as update_error:
+                    logger.warning(f"Failed to update last_seen for gateway {gateway.name}: {update_error}")
 
                 # Record success metrics
                 if span:
@@ -2362,53 +2714,87 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         Raises:
             GatewayConnectionError: If no gateways can handle the request
         """
-        # Get all active gateways
+        # ═══════════════════════════════════════════════════════════════════════════
+        # PHASE 1: Fetch all required data before HTTP calls
+        # ═══════════════════════════════════════════════════════════════════════════
         active_gateways = db.execute(select(DbGateway).where(DbGateway.enabled.is_(True))).scalars().all()
 
         if not active_gateways:
             raise GatewayConnectionError("No active gateways available to forward request")
 
+        # Extract all gateway data to local variables before releasing DB connection
+        gateway_data_list: List[Dict[str, Any]] = []
+        for gateway in active_gateways:
+            gw_data = {
+                "id": gateway.id,
+                "name": gateway.name,
+                "url": gateway.url,
+                "auth_type": getattr(gateway, "auth_type", None),
+                "auth_value": gateway.auth_value,
+                "oauth_config": gateway.oauth_config if hasattr(gateway, "oauth_config") else None,
+            }
+            gateway_data_list.append(gw_data)
+
+        # For OAuth authorization_code flow, we need to fetch tokens while session is open
+        # First-Party
+        from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+
+        for gw_data in gateway_data_list:
+            if gw_data["auth_type"] == "oauth" and gw_data["oauth_config"]:
+                grant_type = gw_data["oauth_config"].get("grant_type", "client_credentials")
+                if grant_type == "authorization_code" and app_user_email:
+                    try:
+                        token_storage = TokenStorageService(db)
+                        access_token = await token_storage.get_user_token(str(gw_data["id"]), app_user_email)
+                        gw_data["_oauth_token"] = access_token
+                    except Exception as e:
+                        logger.warning(f"Failed to get OAuth token for gateway {gw_data['name']}: {e}")
+                        gw_data["_oauth_token"] = None
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls
+        # This prevents connection pool exhaustion during slow upstream requests.
+        # ═══════════════════════════════════════════════════════════════════════════
+        db.commit()  # End read-only transaction cleanly (commit not rollback to avoid inflating rollback stats)
+        db.close()
+
         errors: List[str] = []
 
-        # Try each active gateway in order
-        for gateway in active_gateways:
+        # ═══════════════════════════════════════════════════════════════════════════
+        # PHASE 2: Make HTTP calls (no DB connection held)
+        # ═══════════════════════════════════════════════════════════════════════════
+        for gw_data in gateway_data_list:
             try:
                 # Handle OAuth authentication for the specific gateway
                 headers: Dict[str, str] = {}
 
-                if getattr(gateway, "auth_type", None) == "oauth" and gateway.oauth_config:
+                if gw_data["auth_type"] == "oauth" and gw_data["oauth_config"]:
                     try:
-                        grant_type = gateway.oauth_config.get("grant_type", "client_credentials")
+                        grant_type = gw_data["oauth_config"].get("grant_type", "client_credentials")
 
                         if grant_type == "client_credentials":
                             # Use OAuth manager to get access token for Client Credentials flow
-                            access_token = await self.oauth_manager.get_access_token(gateway.oauth_config)
+                            access_token = await self.oauth_manager.get_access_token(gw_data["oauth_config"])
                             headers = {"Authorization": f"Bearer {access_token}"}
                         elif grant_type == "authorization_code":
-                            # For Authorization Code flow, try to get a stored token
+                            # For Authorization Code flow, use pre-fetched token
                             if not app_user_email:
-                                # System operations cannot use user-specific OAuth tokens
-                                # Skip OAuth authorization code gateways in system context
-                                logger.warning(f"Skipping OAuth authorization code gateway {gateway.name} - user-specific tokens required but no user email provided")
+                                logger.warning(f"Skipping OAuth authorization code gateway {gw_data['name']} - user-specific tokens required but no user email provided")
                                 continue
 
-                            # First-Party
-                            from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
-
-                            token_storage = TokenStorageService(db)
-                            access_token = await token_storage.get_user_token(str(gateway.id), app_user_email)
+                            access_token = gw_data.get("_oauth_token")
                             if access_token:
                                 headers = {"Authorization": f"Bearer {access_token}"}
                             else:
-                                logger.warning(f"No valid OAuth token for user {app_user_email} and gateway {gateway.name}")
+                                logger.warning(f"No valid OAuth token for user {app_user_email} and gateway {gw_data['name']}")
                                 continue
                     except Exception as oauth_error:
-                        logger.warning(f"Failed to obtain OAuth token for gateway {gateway.name}: {oauth_error}")
-                        errors.append(f"Gateway {gateway.name}: OAuth error - {str(oauth_error)}")
+                        logger.warning(f"Failed to obtain OAuth token for gateway {gw_data['name']}: {oauth_error}")
+                        errors.append(f"Gateway {gw_data['name']}: OAuth error - {str(oauth_error)}")
                         continue
                 else:
                     # Handle non-OAuth authentication
-                    auth_data = gateway.auth_value or {}
+                    auth_data = gw_data["auth_value"] or {}
                     if isinstance(auth_data, str):
                         headers = decode_auth(auth_data)
                     elif isinstance(auth_data, dict):
@@ -2422,26 +2808,35 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     request["params"] = params
 
                 # Forward request with proper authentication headers
-                response = await self._http_client.post(urljoin(gateway.url, "/rpc"), json=request, headers=headers)
+                response = await self._http_client.post(urljoin(gw_data["url"], "/rpc"), json=request, headers=headers)
                 response.raise_for_status()
                 result = response.json()
 
-                # Update last seen timestamp
-                gateway.last_seen = datetime.now(timezone.utc)
-
                 # Check for RPC errors
                 if "error" in result:
-                    errors.append(f"Gateway {gateway.name}: {result['error'].get('message', 'Unknown RPC error')}")
+                    errors.append(f"Gateway {gw_data['name']}: {result['error'].get('message', 'Unknown RPC error')}")
                     continue
 
+                # ═══════════════════════════════════════════════════════════════════════════
+                # PHASE 3: Update last_seen using fresh DB session
+                # ═══════════════════════════════════════════════════════════════════════════
+                try:
+                    with fresh_db_session() as update_db:
+                        db_gateway = update_db.execute(select(DbGateway).where(DbGateway.id == gw_data["id"])).scalar_one_or_none()
+                        if db_gateway:
+                            db_gateway.last_seen = datetime.now(timezone.utc)
+                            update_db.commit()
+                except Exception as update_error:
+                    logger.warning(f"Failed to update last_seen for gateway {gw_data['name']}: {update_error}")
+
                 # Success - return the result
-                logger.info(f"Successfully forwarded request to gateway {gateway.name}")
+                logger.info(f"Successfully forwarded request to gateway {gw_data['name']}")
                 return result.get("result")
 
             except Exception as e:
-                error_msg = f"Gateway {gateway.name}: {str(e)}"
+                error_msg = f"Gateway {gw_data['name']}: {str(e)}"
                 errors.append(error_msg)
-                logger.warning(f"Failed to forward request to gateway {gateway.name}: {e}")
+                logger.warning(f"Failed to forward request to gateway {gw_data['name']}: {e}")
                 continue
 
         # If we get here, all gateways failed
@@ -2498,22 +2893,25 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 await self.toggle_gateway_status(db, gateway.id, activate=True, reachable=False, only_update_reachable=True)
                 self._gateway_failure_counts[gateway.id] = 0  # Reset after deactivation
 
-    async def check_health_of_gateways(self, db: Session, gateways: List[DbGateway], user_email: Optional[str] = None) -> bool:
+    async def check_health_of_gateways(self, gateways: List[DbGateway], user_email: Optional[str] = None) -> bool:
         """Check health of a batch of gateways.
 
         Performs an asynchronous health-check for each gateway in `gateways` using
         an Async HTTP client. The function handles different authentication
         modes (OAuth client_credentials and authorization_code, and non-OAuth
         auth headers). When a gateway uses the authorization_code flow, the
-        provided `db` and optional `user_email` are used to look up stored user
-        tokens. On individual failures the service will record the failure and
-        call internal failure handling which may mark a gateway unreachable or
-        deactivate it after repeated failures. If a previously unreachable
-        gateway becomes healthy again the service will attempt to update its
-        reachable status.
+        optional `user_email` is used to look up stored user tokens with
+        fresh_db_session(). On individual failures the service will record the
+        failure and call internal failure handling which may mark a gateway
+        unreachable or deactivate it after repeated failures. If a previously
+        unreachable gateway becomes healthy again the service will attempt to
+        update its reachable status.
+
+        NOTE: This method intentionally does NOT take a db parameter.
+        DB access uses fresh_db_session() only when needed, avoiding holding
+        connections during HTTP calls to MCP servers.
 
         Args:
-            db: Database Session used for token lookups and status updates.
             gateways: List of DbGateway objects to check.
             user_email: Optional MCP gateway user email used to retrieve
                 stored OAuth tokens for gateways using the
@@ -2530,16 +2928,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             >>> from mcpgateway.services.gateway_service import GatewayService
             >>> from unittest.mock import MagicMock
             >>> service = GatewayService()
-            >>> db = MagicMock()
             >>> gateways = [MagicMock()]
             >>> gateways[0].ca_certificate = None
             >>> import asyncio
-            >>> result = asyncio.run(service.check_health_of_gateways(db, gateways))
+            >>> result = asyncio.run(service.check_health_of_gateways(gateways))
             >>> isinstance(result, bool)
             True
 
             >>> # Test empty gateway list
-            >>> empty_result = asyncio.run(service.check_health_of_gateways(db, []))
+            >>> empty_result = asyncio.run(service.check_health_of_gateways([]))
             >>> empty_result
             True
 
@@ -2553,7 +2950,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             ...     gw.reachable = True
             ...     gw.auth_value = {}
             ...     gw.ca_certificate = None
-            >>> multi_result = asyncio.run(service.check_health_of_gateways(db, multiple_gateways))
+            >>> multi_result = asyncio.run(service.check_health_of_gateways(multiple_gateways))
             >>> isinstance(multi_result, bool)
             True
         """
@@ -2576,7 +2973,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 Any exceptions raised during the health check will be propagated to the caller.
             """
             async with semaphore:
-                await self._check_single_gateway_health(db, gateway, user_email)
+                try:
+                    await asyncio.wait_for(
+                        self._check_single_gateway_health(gateway, user_email),
+                        timeout=settings.gateway_health_check_timeout,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(f"Gateway {getattr(gateway, 'name', 'unknown')} health check timed out after {settings.gateway_health_check_timeout}s")
+                    # Treat timeout as a failed health check
+                    await self._handle_gateway_failure(gateway)
 
         # Create trace span for health check batch
         with create_span("gateway.health_check_batch", {"gateway.count": len(gateways), "check.type": "health"}) as batch_span:
@@ -2605,36 +3010,52 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         return True
 
-    async def _check_single_gateway_health(self, db: Session, gateway: DbGateway, user_email: Optional[str] = None) -> None:
+    async def _check_single_gateway_health(self, gateway: DbGateway, user_email: Optional[str] = None) -> None:
         """Check health of a single gateway.
 
+        NOTE: This method intentionally does NOT take a db parameter.
+        DB access uses fresh_db_session() only when needed, avoiding holding
+        connections during HTTP calls to MCP servers.
+
         Args:
-            db: Database session
-            gateway: Gateway to check
+            gateway: Gateway to check (may be detached from session)
             user_email: Optional user email for OAuth token lookup
         """
+        # Extract gateway data upfront (gateway may be detached from session)
+        gateway_id = gateway.id
+        gateway_name = gateway.name
+        gateway_url = gateway.url
+        gateway_transport = gateway.transport
+        gateway_enabled = gateway.enabled
+        gateway_reachable = gateway.reachable
+        gateway_ca_certificate = gateway.ca_certificate
+        gateway_ca_certificate_sig = gateway.ca_certificate_sig
+        gateway_auth_type = gateway.auth_type
+        gateway_oauth_config = gateway.oauth_config
+        gateway_auth_value = gateway.auth_value
+
         # Create span for individual gateway health check
         with create_span(
             "gateway.health_check",
             {
-                "gateway.name": gateway.name,
-                "gateway.id": str(gateway.id),
-                "gateway.url": gateway.url,
-                "gateway.transport": gateway.transport,
-                "gateway.enabled": gateway.enabled,
+                "gateway.name": gateway_name,
+                "gateway.id": str(gateway_id),
+                "gateway.url": gateway_url,
+                "gateway.transport": gateway_transport,
+                "gateway.enabled": gateway_enabled,
                 "http.method": "GET",
-                "http.url": gateway.url,
+                "http.url": gateway_url,
             },
         ) as span:
             valid = False
-            if gateway.ca_certificate:
+            if gateway_ca_certificate:
                 if settings.enable_ed25519_signing:
                     public_key_pem = settings.ed25519_public_key
-                    valid = validate_signature(gateway.ca_certificate.encode(), gateway.ca_certificate_sig, public_key_pem)
+                    valid = validate_signature(gateway_ca_certificate.encode(), gateway_ca_certificate_sig, public_key_pem)
                 else:
                     valid = True
             if valid:
-                ssl_context = self.create_ssl_context(gateway.ca_certificate)
+                ssl_context = self.create_ssl_context(gateway_ca_certificate)
             else:
                 ssl_context = None
 
@@ -2653,22 +3074,36 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 Returns:
                     httpx.AsyncClient: Configured HTTPX async client
                 """
+                # First-Party
+                from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
+
                 return httpx.AsyncClient(
-                    verify=ssl_context if ssl_context else True,
+                    verify=ssl_context if ssl_context else get_default_verify(),
                     follow_redirects=True,
                     headers=headers,
-                    timeout=timeout or httpx.Timeout(30.0),
+                    timeout=timeout if timeout else get_http_timeout(),
                     auth=auth,
+                    limits=httpx.Limits(
+                        max_connections=settings.httpx_max_connections,
+                        max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                        keepalive_expiry=settings.httpx_keepalive_expiry,
+                    ),
                 )
 
-            async with httpx.AsyncClient(verify=ssl_context if ssl_context else True) as client:
-                logger.debug(f"Checking health of gateway: {gateway.name} ({gateway.url})")
+            # Use isolated client for gateway health checks (each gateway may have custom CA cert)
+            # First-Party
+            from mcpgateway.services.http_client_service import get_isolated_http_client  # pylint: disable=import-outside-toplevel
+
+            # Use admin timeout for health checks (fail fast, don't wait 120s for slow upstreams)
+            # Pass ssl_context if present, otherwise let get_isolated_http_client use skip_ssl_verify setting
+            async with get_isolated_http_client(timeout=settings.httpx_admin_read_timeout, verify=ssl_context) as client:
+                logger.debug(f"Checking health of gateway: {gateway_name} ({gateway_url})")
                 try:
                     # Handle different authentication types
                     headers = {}
 
-                    if gateway and gateway.auth_type == "oauth" and gateway.oauth_config:
-                        grant_type = gateway.oauth_config.get("grant_type", "client_credentials")
+                    if gateway_auth_type == "oauth" and gateway_oauth_config:
+                        grant_type = gateway_oauth_config.get("grant_type", "client_credentials")
 
                         if grant_type == "authorization_code":
                             # For Authorization Code flow, try to get stored tokens
@@ -2676,17 +3111,19 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 # First-Party
                                 from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
 
-                                token_storage = TokenStorageService(db)
+                                # Use fresh session for OAuth token lookup
+                                with fresh_db_session() as token_db:
+                                    token_storage = TokenStorageService(token_db)
 
-                                # Get user-specific OAuth token
-                                if not user_email:
-                                    if span:
-                                        span.set_attribute("health.status", "unhealthy")
-                                        span.set_attribute("error.message", "User email required for OAuth token")
-                                    await self._handle_gateway_failure(gateway)
-                                    return
+                                    # Get user-specific OAuth token
+                                    if not user_email:
+                                        if span:
+                                            span.set_attribute("health.status", "unhealthy")
+                                            span.set_attribute("error.message", "User email required for OAuth token")
+                                        await self._handle_gateway_failure(gateway)
+                                        return
 
-                                access_token = await token_storage.get_user_token(gateway.id, user_email)
+                                    access_token = await token_storage.get_user_token(gateway_id, user_email)
 
                                 if access_token:
                                     headers["Authorization"] = f"Bearer {access_token}"
@@ -2697,7 +3134,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                     await self._handle_gateway_failure(gateway)
                                     return
                             except Exception as e:
-                                logger.error(f"Failed to obtain stored OAuth token for gateway {gateway.name}: {e}")
+                                logger.error(f"Failed to obtain stored OAuth token for gateway {gateway_name}: {e}")
                                 if span:
                                     span.set_attribute("health.status", "unhealthy")
                                     span.set_attribute("error.message", "Failed to obtain stored OAuth token")
@@ -2706,7 +3143,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         else:
                             # For Client Credentials flow, get token directly
                             try:
-                                access_token = await self.oauth_manager.get_access_token(gateway.oauth_config)
+                                access_token = await self.oauth_manager.get_access_token(gateway_oauth_config)
                                 headers["Authorization"] = f"Bearer {access_token}"
                             except Exception as e:
                                 if span:
@@ -2716,7 +3153,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 return
                     else:
                         # Handle non-OAuth authentication (existing logic)
-                        auth_data = gateway.auth_value or {}
+                        auth_data = gateway_auth_value or {}
                         if isinstance(auth_data, str):
                             headers = decode_auth(auth_data)
                         elif isinstance(auth_data, dict):
@@ -2725,15 +3162,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             headers = {}
 
                     # Perform the GET and raise on 4xx/5xx
-                    if (gateway.transport).lower() == "sse":
+                    if (gateway_transport).lower() == "sse":
                         timeout = httpx.Timeout(settings.health_check_timeout)
-                        async with client.stream("GET", gateway.url, headers=headers, timeout=timeout) as response:
+                        async with client.stream("GET", gateway_url, headers=headers, timeout=timeout) as response:
                             # This will raise immediately if status is 4xx/5xx
                             response.raise_for_status()
                             if span:
                                 span.set_attribute("http.status_code", response.status_code)
-                    elif (gateway.transport).lower() == "streamablehttp":
-                        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=get_httpx_client_factory) as (
+                    elif (gateway_transport).lower() == "streamablehttp":
+                        async with streamablehttp_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=get_httpx_client_factory) as (
                             read_stream,
                             write_stream,
                             _get_session_id,
@@ -2743,12 +3180,20 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 response = await session.initialize()
 
                     # Reactivate gateway if it was previously inactive and health check passed now
-                    if gateway.enabled and not gateway.reachable:
-                        logger.info(f"Reactivating gateway: {gateway.name}, as it is healthy now")
-                        await self.toggle_gateway_status(db, gateway.id, activate=True, reachable=True, only_update_reachable=True)
+                    if gateway_enabled and not gateway_reachable:
+                        logger.info(f"Reactivating gateway: {gateway_name}, as it is healthy now")
+                        with cast(Any, SessionLocal)() as status_db:
+                            await self.toggle_gateway_status(status_db, gateway_id, activate=True, reachable=True, only_update_reachable=True)
 
-                    # Mark successful check
-                    gateway.last_seen = datetime.now(timezone.utc)
+                    # Update last_seen with fresh session (gateway object is detached)
+                    try:
+                        with fresh_db_session() as update_db:
+                            db_gateway = update_db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+                            if db_gateway:
+                                db_gateway.last_seen = datetime.now(timezone.utc)
+                                update_db.commit()
+                    except Exception as update_error:
+                        logger.warning(f"Failed to update last_seen for gateway {gateway_name}: {update_error}")
 
                     if span:
                         span.set_attribute("health.status", "healthy")
@@ -2760,7 +3205,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         span.set_attribute("error.message", str(e))
 
                     # Set the logger as debug as this check happens for each interval
-                    logger.debug(f"Health check failed for gateway {gateway.name}: {e}")
+                    logger.debug(f"Health check failed for gateway {gateway_name}: {e}")
                     await self._handle_gateway_failure(gateway)
 
     async def aggregate_capabilities(self, db: Session) -> Dict[str, Any]:
@@ -3068,14 +3513,17 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 logger.warning(f"Leader heartbeat error: {e}")
                 # Continue trying - the main health check loop will handle leadership loss
 
-    async def _run_health_checks(self, db: Session, user_email: str) -> None:
+    async def _run_health_checks(self, user_email: str) -> None:
         """Run health checks periodically,
         Uses Redis or FileLock - for multiple workers.
         Uses simple health check for single worker mode.
 
+        NOTE: This method intentionally does NOT take a db parameter.
+        Health checks use fresh_db_session() only when DB access is needed,
+        avoiding holding connections during HTTP calls to MCP servers.
+
         Args:
-            db: Database session to use for health checks
-            user_email: Email of the user to notify in case of issues
+            user_email: Email of the user for OAuth token lookup
 
         Examples:
             >>> service = GatewayService()
@@ -3104,7 +3552,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     # Run health checks
                     gateways = await asyncio.to_thread(self._get_gateways)
                     if gateways:
-                        await self.check_health_of_gateways(db, gateways, user_email)
+                        await self.check_health_of_gateways(gateways, user_email)
 
                     await asyncio.sleep(self._health_check_interval)
 
@@ -3113,7 +3561,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         # For single worker mode, run health checks directly
                         gateways = await asyncio.to_thread(self._get_gateways)
                         if gateways:
-                            await self.check_health_of_gateways(db, gateways, user_email)
+                            await self.check_health_of_gateways(gateways, user_email)
                     except Exception as e:
                         logger.error(f"Health check run failed: {str(e)}")
 
@@ -3128,7 +3576,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         while True:
                             gateways = await asyncio.to_thread(self._get_gateways)
                             if gateways:
-                                await self.check_health_of_gateways(db, gateways, user_email)
+                                await self.check_health_of_gateways(gateways, user_email)
                             await asyncio.sleep(self._health_check_interval)
 
                     except Timeout:
@@ -3280,8 +3728,42 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         }
         await self._publish_event(event)
 
+    def convert_gateway_to_read(self, gateway: DbGateway) -> GatewayRead:
+        """Convert a DbGateway instance to a GatewayRead Pydantic model.
+
+        Args:
+            gateway: Gateway database object
+
+        Returns:
+            GatewayRead: Pydantic model instance
+        """
+        gateway_dict = gateway.__dict__.copy()
+        gateway_dict.pop("_sa_instance_state", None)
+
+        # Ensure auth_value is properly encoded
+        if isinstance(gateway.auth_value, dict):
+            gateway_dict["auth_value"] = encode_auth(gateway.auth_value)
+
+        # Convert tags from List[str] to List[Dict[str, str]] for GatewayRead
+        if gateway.tags:
+            gateway_dict["tags"] = validate_tags_field(gateway.tags)
+        else:
+            gateway_dict["tags"] = []
+
+        # Include metadata fields
+        gateway_dict["created_by"] = getattr(gateway, "created_by", None)
+        gateway_dict["modified_by"] = getattr(gateway, "modified_by", None)
+        gateway_dict["created_at"] = getattr(gateway, "created_at", None)
+        gateway_dict["updated_at"] = getattr(gateway, "updated_at", None)
+        gateway_dict["version"] = getattr(gateway, "version", None)
+        gateway_dict["team"] = getattr(gateway, "team", None)
+
+        return GatewayRead.model_validate(gateway_dict)
+
     def _prepare_gateway_for_read(self, gateway: DbGateway) -> DbGateway:
-        """Prepare a gateway object for GatewayRead validation.
+        """DEPRECATED: Use convert_gateway_to_read instead.
+
+        Prepare a gateway object for GatewayRead validation.
 
         Ensures auth_value is in the correct format (encoded string) for the schema.
         Converts tags from List[str] (database format) to List[Dict[str, str]] (schema format).
@@ -3533,9 +4015,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         if not prompt_names:
             return []
 
-        existing_prompts_query = select(DbPrompt).where(DbPrompt.gateway_id == gateway.id, DbPrompt.name.in_(prompt_names))
+        existing_prompts_query = select(DbPrompt).where(DbPrompt.gateway_id == gateway.id, DbPrompt.original_name.in_(prompt_names))
         existing_prompts = db.execute(existing_prompts_query).scalars().all()
-        existing_prompts_map = {prompt.name: prompt for prompt in existing_prompts}
+        existing_prompts_map = {prompt.original_name: prompt for prompt in existing_prompts}
 
         for prompt in prompts:
             if prompt is None:
@@ -3566,6 +4048,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     # Create new prompt if it doesn't exist
                     db_prompt = DbPrompt(
                         name=prompt.name,
+                        original_name=prompt.name,
+                        custom_name=prompt.name,
+                        display_name=prompt.name,
                         description=prompt.description,
                         template=prompt.template if hasattr(prompt, "template") else "",
                         argument_schema={},  # Use argument_schema instead of arguments
@@ -3574,6 +4059,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         created_via=created_via,
                         visibility=gateway.visibility,
                     )
+                    db_prompt.gateway = gateway
                     prompts_to_add.append(db_prompt)
                     logger.debug(f"Created new prompt: {prompt.name}")
             except Exception as e:
@@ -3806,16 +4292,24 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             Returns:
                 httpx.AsyncClient: Configured HTTPX async client
             """
+            # First-Party
+            from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
+
             if ca_certificate:
                 ctx = self.create_ssl_context(ca_certificate)
             else:
                 ctx = None
             return httpx.AsyncClient(
-                verify=ctx if ctx else True,
+                verify=ctx if ctx else get_default_verify(),
                 follow_redirects=True,
                 headers=headers,
-                timeout=timeout or httpx.Timeout(30.0),
+                timeout=timeout if timeout else get_http_timeout(),
                 auth=auth,
+                limits=httpx.Limits(
+                    max_connections=settings.httpx_max_connections,
+                    max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                    keepalive_expiry=settings.httpx_keepalive_expiry,
+                ),
             )
 
         # Use async with for both sse_client and ClientSession
@@ -3947,16 +4441,24 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             Returns:
                 httpx.AsyncClient: Configured HTTPX async client
             """
+            # First-Party
+            from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
+
             if ca_certificate:
                 ctx = self.create_ssl_context(ca_certificate)
             else:
                 ctx = None
             return httpx.AsyncClient(
-                verify=ctx if ctx else True,
+                verify=ctx if ctx else get_default_verify(),
                 follow_redirects=True,
                 headers=headers,
-                timeout=timeout or httpx.Timeout(30.0),
+                timeout=timeout if timeout else get_http_timeout(),
                 auth=auth,
+                limits=httpx.Limits(
+                    max_connections=settings.httpx_max_connections,
+                    max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                    keepalive_expiry=settings.httpx_keepalive_expiry,
+                ),
             )
 
         async with streamablehttp_client(url=server_url, headers=authentication, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):

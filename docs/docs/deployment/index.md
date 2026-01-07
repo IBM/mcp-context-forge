@@ -32,6 +32,7 @@ MCP Gateway supports multiple deployment strategies:
 | [AWS](aws.md)                         | Deploy on ECS Fargate, EKS, or EC2-hosted containers                                      |
 | [Azure](azure.md)                     | Run on Azure Container Apps, App Service, or AKS                                          |
 | [**Security Guide**](../manage/securing.md)     | **Essential security configurations and best practices for production deployments**        |
+| [**Performance Architecture**](../architecture/performance-architecture.md) | **Visual overview of Rust-powered components, caching layers, and scaling architecture** |
 
 ---
 

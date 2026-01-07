@@ -85,6 +85,21 @@ def _deduplicate_metrics(metrics: List[PerformanceMetric]) -> List[PerformanceMe
     return sorted(deduped.values(), key=lambda m: m.window_start, reverse=True)
 
 
+def _expand_component_filters(components: List[str]) -> List[str]:
+    """Expand component filters to include aliases for backward compatibility.
+
+    Args:
+        components: Component filter values from the request
+
+    Returns:
+        List of component values including aliases
+    """
+    normalized = {component for component in components if component}
+    if "http_gateway" in normalized or "gateway" in normalized:
+        normalized.update({"http_gateway", "gateway"})
+    return list(normalized)
+
+
 def _aggregate_custom_windows(
     aggregator,
     window_minutes: int,
@@ -322,7 +337,8 @@ async def search_logs(request: LogSearchRequest, user=Depends(get_current_user_w
             conditions.append(StructuredLogEntry.level.in_(request.level))
 
         if request.component:
-            conditions.append(StructuredLogEntry.component.in_(request.component))
+            components = _expand_component_filters(request.component)
+            conditions.append(StructuredLogEntry.component.in_(components))
 
         # Note: category field doesn't exist in StructuredLogEntry
         # if request.category:

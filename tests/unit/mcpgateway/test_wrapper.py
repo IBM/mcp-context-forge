@@ -72,13 +72,28 @@ def test_send_to_stdout_json_and_str(monkeypatch):
         captured.append(s)
         return len(s)
 
+    # Mock both buffer and text write to catch whichever is used
     monkeypatch.setattr(sys.stdout, "write", fake_write)
+    if hasattr(sys.stdout, "buffer"):
+        monkeypatch.setattr(sys.stdout.buffer, "write", fake_write)
+
     monkeypatch.setattr(sys.stdout, "flush", lambda: None)
+    if hasattr(sys.stdout, "buffer"):
+        monkeypatch.setattr(sys.stdout.buffer, "flush", lambda: None)
 
     wrapper.send_to_stdout({"a": 1})
     wrapper.send_to_stdout("plain text")
-    assert any('"a": 1' in s or '"a":1' in s for s in captured)
-    assert any("plain text" in s for s in captured)
+
+    # decode captured bytes to str for assertion simplicity
+    decoded_captured = []
+    for s in captured:
+        if isinstance(s, bytes):
+            decoded_captured.append(s.decode("utf-8"))
+        else:
+            decoded_captured.append(s)
+
+    assert any('"a":1' in s or '"a": 1' in s for s in decoded_captured)
+    assert any("plain text" in s for s in decoded_captured)
 
 
 def test_send_to_stdout_oserror(monkeypatch):
@@ -88,7 +103,13 @@ def test_send_to_stdout_oserror(monkeypatch):
         raise OSError(errno.EPIPE, "broken pipe")
 
     monkeypatch.setattr(sys.stdout, "write", bad_write)
+    if hasattr(sys.stdout, "buffer"):
+        monkeypatch.setattr(sys.stdout.buffer, "write", bad_write)
+
     monkeypatch.setattr(sys.stdout, "flush", lambda: None)
+    if hasattr(sys.stdout, "buffer"):
+        monkeypatch.setattr(sys.stdout.buffer, "flush", lambda: None)
+
     wrapper.send_to_stdout({"x": 1})
     assert wrapper.shutting_down()
 
@@ -105,12 +126,12 @@ async def test_ndjson_lines_basic_and_tail():
         yield b'{"a":1}\n{"b":2}\n'
         yield b'{"c":3}'
 
-    resp = types.SimpleNamespace(aiter_bytes=fake_iter_bytes)
+    resp = types.SimpleNamespace(aiter_bytes=fake_iter_bytes, aiter_lines=None) # aiter_lines not used in optimized version
     lines = [l async for l in wrapper.ndjson_lines(resp)]
-    # we expect three JSON-line strings (the last came as a tail)
-    assert '{"a":1}' in lines
-    assert '{"b":2}' in lines
-    assert '{"c":3}' in lines
+    # lines are bytes now
+    assert b'{"a":1}' in lines
+    assert b'{"b":2}' in lines
+    assert b'{"c":3}' in lines
 
 
 @pytest.mark.asyncio
@@ -125,9 +146,10 @@ async def test_sse_events_basic_and_tail():
 
     resp = types.SimpleNamespace(aiter_bytes=fake_iter_bytes)
     events = [e async for e in wrapper.sse_events(resp)]
-    assert "first" in events
-    assert "second" in events
-    assert "tailonly" in events
+    # events are bytes
+    assert b"first" in events
+    assert b"second" in events
+    assert b"tailonly" in events
 
 
 # -------------------
@@ -177,15 +199,20 @@ async def test_stdin_reader_valid_and_invalid(monkeypatch):
     q = asyncio.Queue()
 
     # synchronous readline callable used by asyncio.to_thread
-    lines = iter(['{"ok":1}\n', "{bad json}\n", "   \n", ""])
+    lines = iter([b'{"ok":1}\n', b"{bad json}\n", b"   \n", b""])
 
     def fake_readline():
         try:
             return next(lines)
         except StopIteration:
-            return ""
+            return b""
 
-    monkeypatch.setattr(sys.stdin, "readline", fake_readline)
+    # Mock buffer.readline if available, else stdin.readline (but existing test ran on host python which likely has buffer)
+    # The wrapper uses sys.stdin.buffer.readline if available.
+    if hasattr(sys.stdin, "buffer"):
+        monkeypatch.setattr(sys.stdin.buffer, "readline", fake_readline)
+    else:
+        monkeypatch.setattr(sys.stdin, "readline", fake_readline)
 
     task = asyncio.create_task(wrapper.stdin_reader(q))
 
@@ -202,9 +229,8 @@ async def test_stdin_reader_valid_and_invalid(monkeypatch):
     assert got3 is None
 
     task.cancel()
-    suppress = contextlib.suppress(Exception)
-    with suppress:
-        await wrapper.main_async(wrapper.Settings("x", None), DummyClient(DummyResp()))
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
 
 
 # -------------------

@@ -12,13 +12,14 @@ Usage:
     make load-test
 
     # Direct invocation
-    cd tests/loadtest && locust --host=http://localhost:8000
+    cd tests/loadtest && locust --host=http://localhost:8080
 
 Environment Variables (also reads from .env file):
-    LOADTEST_HOST: Target host URL (default: http://localhost:8000)
-    LOADTEST_USERS: Number of concurrent users (default: 50)
-    LOADTEST_SPAWN_RATE: Users spawned per second (default: 10)
-    LOADTEST_RUN_TIME: Test duration, e.g., "60s", "5m" (default: 60s)
+    LOADTEST_HOST: Target host URL (default: http://localhost:8080)
+    LOADTEST_USERS: Number of concurrent users (default: 1000)
+    LOADTEST_SPAWN_RATE: Users spawned per second (default: 100)
+    LOADTEST_RUN_TIME: Test duration, e.g., "60s", "5m" (default: 5m)
+    LOADTEST_JWT_EXPIRY_HOURS: JWT token expiry in hours (default: 8760 = 1 year)
     MCPGATEWAY_BEARER_TOKEN: JWT token for authenticated requests
     BASIC_AUTH_USER: Basic auth username (default: admin)
     BASIC_AUTH_PASSWORD: Basic auth password (default: changeme)
@@ -31,15 +32,18 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 """
 
+# Standard
 import logging
 import os
 from pathlib import Path
 import random
 import time
-import uuid
 from typing import Any
+import uuid
 
-from locust import HttpUser, between, events, tag, task
+# Third-Party
+from locust import between, events, tag, task
+from locust.contrib.fasthttp import FastHttpUser
 from locust.runners import MasterRunner, WorkerRunner
 
 # Configure logging
@@ -134,6 +138,9 @@ JWT_ISSUER = _get_config("JWT_ISSUER", "mcpgateway")
 # Default to platform admin email for guaranteed authentication
 # This matches the PLATFORM_ADMIN_EMAIL default in .env.example
 JWT_USERNAME = _get_config("JWT_USERNAME", _get_config("PLATFORM_ADMIN_EMAIL", "admin@example.com"))
+# Token expiry in hours - default 8760 (1 year) to avoid expiration during long load tests
+# JTI (JWT ID) is automatically generated for each token for proper cache keying
+JWT_TOKEN_EXPIRY_HOURS = int(_get_config("LOADTEST_JWT_EXPIRY_HOURS", "8760"))
 
 # Log loaded configuration (masking sensitive values)
 logger.info("Configuration loaded:")
@@ -142,13 +149,29 @@ logger.info(f"  JWT_ALGORITHM: {JWT_ALGORITHM}")
 logger.info(f"  JWT_AUDIENCE: {JWT_AUDIENCE}")
 logger.info(f"  JWT_ISSUER: {JWT_ISSUER}")
 logger.info(f"  JWT_SECRET_KEY: {'*' * len(JWT_SECRET_KEY) if JWT_SECRET_KEY else '(not set)'}")
+logger.info(f"  JWT_TOKEN_EXPIRY_HOURS: {JWT_TOKEN_EXPIRY_HOURS}")
 
 # Test data pools (populated during test setup)
+# IDs for REST API calls (GET /tools/{id}, etc.)
 TOOL_IDS: list[str] = []
 SERVER_IDS: list[str] = []
 GATEWAY_IDS: list[str] = []
 RESOURCE_IDS: list[str] = []
 PROMPT_IDS: list[str] = []
+
+# Names/URIs for RPC calls (tools/call uses name, resources/read uses uri, etc.)
+TOOL_NAMES: list[str] = []
+RESOURCE_URIS: list[str] = []
+PROMPT_NAMES: list[str] = []
+
+# Tools that require arguments and are tested with proper arguments in specific user classes
+# These should be excluded from generic rpc_call_tool to avoid false failures
+TOOLS_WITH_REQUIRED_ARGS: set[str] = {
+    "fast-time-convert-time",  # Requires: time, source_timezone, target_timezone
+    "fast-time-get-system-time",  # Requires: timezone
+    "fast-test-echo",  # Requires: message
+    "fast-test-get-system-time",  # Requires: timezone
+}
 
 
 # =============================================================================
@@ -167,57 +190,88 @@ def on_locust_init(environment, **_kwargs):  # pylint: disable=unused-argument
         logger.info("Running in standalone mode")
 
 
+def _fetch_json(url: str, headers: dict[str, str], timeout: float = 30.0) -> tuple[int, Any]:
+    """Fetch JSON from URL using urllib (gevent-safe, no threading issues with Python 3.13).
+
+    Args:
+        url: Full URL to fetch
+        headers: HTTP headers to include
+        timeout: Request timeout in seconds
+
+    Returns:
+        Tuple of (status_code, json_data or None)
+    """
+    # Standard
+    import json  # pylint: disable=import-outside-toplevel
+    import urllib.error  # pylint: disable=import-outside-toplevel
+    import urllib.request  # pylint: disable=import-outside-toplevel
+
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return (resp.status, data)
+    except urllib.error.HTTPError as e:
+        return (e.code, None)
+    except Exception:
+        return (0, None)
+
+
 @events.test_start.add_listener
 def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
-    """Fetch existing entity IDs for use in tests."""
+    """Fetch existing entity IDs for use in tests.
+
+    Uses urllib.request instead of httpx to avoid Python 3.13/gevent threading conflicts.
+    httpx creates threads that trigger '_DummyThread' object has no attribute '_handle' errors.
+    """
     logger.info("Test starting - fetching entity IDs...")
 
-    host = environment.host or "http://localhost:8000"
+    host = environment.host or "http://localhost:8080"
     headers = _get_auth_headers()
 
     try:
-        import httpx  # pylint: disable=import-outside-toplevel
+        # Fetch tools
+        # API returns {"tools": [...], "nextCursor": ...} or list for legacy
+        status, data = _fetch_json(f"{host}/tools", headers)
+        if status == 200 and data:
+            items = data if isinstance(data, list) else data.get("tools", data.get("items", []))
+            TOOL_IDS.extend([str(t.get("id")) for t in items[:50] if t.get("id")])
+            TOOL_NAMES.extend([str(t.get("name")) for t in items[:50] if t.get("name")])
+            logger.info(f"Loaded {len(TOOL_IDS)} tool IDs, {len(TOOL_NAMES)} tool names")
 
-        with httpx.Client(base_url=host, timeout=30.0) as client:
-            # Fetch tools
-            resp = client.get("/tools", headers=headers)
-            if resp.status_code == 200:
-                data = resp.json()
-                items = data if isinstance(data, list) else data.get("items", [])
-                TOOL_IDS.extend([t.get("id") or t.get("name") for t in items[:50]])
-                logger.info(f"Loaded {len(TOOL_IDS)} tool IDs")
+        # Fetch servers
+        # API returns {"servers": [...], "nextCursor": ...} or list for legacy
+        status, data = _fetch_json(f"{host}/servers", headers)
+        if status == 200 and data:
+            items = data if isinstance(data, list) else data.get("servers", data.get("items", []))
+            SERVER_IDS.extend([str(s.get("id")) for s in items[:50] if s.get("id")])
+            logger.info(f"Loaded {len(SERVER_IDS)} server IDs")
 
-            # Fetch servers
-            resp = client.get("/servers", headers=headers)
-            if resp.status_code == 200:
-                data = resp.json()
-                items = data if isinstance(data, list) else data.get("items", [])
-                SERVER_IDS.extend([s.get("id") or s.get("name") for s in items[:50]])
-                logger.info(f"Loaded {len(SERVER_IDS)} server IDs")
+        # Fetch gateways
+        # API returns {"gateways": [...], "nextCursor": ...} or list for legacy
+        status, data = _fetch_json(f"{host}/gateways", headers)
+        if status == 200 and data:
+            items = data if isinstance(data, list) else data.get("gateways", data.get("items", []))
+            GATEWAY_IDS.extend([str(g.get("id")) for g in items[:50] if g.get("id")])
+            logger.info(f"Loaded {len(GATEWAY_IDS)} gateway IDs")
 
-            # Fetch gateways
-            resp = client.get("/gateways", headers=headers)
-            if resp.status_code == 200:
-                data = resp.json()
-                items = data if isinstance(data, list) else data.get("items", [])
-                GATEWAY_IDS.extend([g.get("id") or g.get("name") for g in items[:50]])
-                logger.info(f"Loaded {len(GATEWAY_IDS)} gateway IDs")
+        # Fetch resources
+        # API returns {"resources": [...], "nextCursor": ...} or list for legacy
+        status, data = _fetch_json(f"{host}/resources", headers)
+        if status == 200 and data:
+            items = data if isinstance(data, list) else data.get("resources", data.get("items", []))
+            RESOURCE_IDS.extend([str(r.get("id")) for r in items[:50] if r.get("id")])
+            RESOURCE_URIS.extend([str(r.get("uri")) for r in items[:50] if r.get("uri")])
+            logger.info(f"Loaded {len(RESOURCE_IDS)} resource IDs, {len(RESOURCE_URIS)} resource URIs")
 
-            # Fetch resources
-            resp = client.get("/resources", headers=headers)
-            if resp.status_code == 200:
-                data = resp.json()
-                items = data if isinstance(data, list) else data.get("items", [])
-                RESOURCE_IDS.extend([r.get("id") or r.get("uri") for r in items[:50]])
-                logger.info(f"Loaded {len(RESOURCE_IDS)} resource IDs")
-
-            # Fetch prompts
-            resp = client.get("/prompts", headers=headers)
-            if resp.status_code == 200:
-                data = resp.json()
-                items = data if isinstance(data, list) else data.get("items", [])
-                PROMPT_IDS.extend([p.get("id") or p.get("name") for p in items[:50]])
-                logger.info(f"Loaded {len(PROMPT_IDS)} prompt IDs")
+        # Fetch prompts
+        # API returns {"prompts": [...], "nextCursor": ...} or list for legacy
+        status, data = _fetch_json(f"{host}/prompts", headers)
+        if status == 200 and data:
+            items = data if isinstance(data, list) else data.get("prompts", data.get("items", []))
+            PROMPT_IDS.extend([str(p.get("id")) for p in items[:50] if p.get("id")])
+            PROMPT_NAMES.extend([str(p.get("name")) for p in items[:50] if p.get("name")])
+            logger.info(f"Loaded {len(PROMPT_IDS)} prompt IDs, {len(PROMPT_NAMES)} prompt names")
 
     except Exception as e:
         logger.warning(f"Failed to fetch entity IDs: {e}")
@@ -226,13 +280,102 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
 
 @events.test_stop.add_listener
 def on_test_stop(environment, **kwargs):  # pylint: disable=unused-argument
-    """Clean up after test."""
+    """Clean up after test and print summary statistics."""
     logger.info("Test stopped")
     TOOL_IDS.clear()
     SERVER_IDS.clear()
     GATEWAY_IDS.clear()
     RESOURCE_IDS.clear()
     PROMPT_IDS.clear()
+    TOOL_NAMES.clear()
+    RESOURCE_URIS.clear()
+    PROMPT_NAMES.clear()
+
+    # Print detailed summary statistics
+    _print_summary_stats(environment)
+
+
+def _print_summary_stats(environment) -> None:
+    """Print detailed summary statistics after test completion."""
+    stats = environment.stats
+
+    if not stats.entries:
+        logger.info("No statistics recorded")
+        return
+
+    print("\n" + "=" * 100)
+    print("LOAD TEST SUMMARY")
+    print("=" * 100)
+
+    # Overall totals
+    total_requests = stats.total.num_requests
+    total_failures = stats.total.num_failures
+    total_rps = stats.total.total_rps
+    failure_rate = (total_failures / total_requests * 100) if total_requests > 0 else 0
+
+    print(f"\n{'OVERALL METRICS':^100}")
+    print("-" * 100)
+    print(f"  Total Requests:     {total_requests:,}")
+    print(f"  Total Failures:     {total_failures:,} ({failure_rate:.2f}%)")
+    print(f"  Requests/sec (RPS): {total_rps:.2f}")
+
+    if stats.total.num_requests > 0:
+        print("\n  Response Times (ms):")
+        print(f"    Average:          {stats.total.avg_response_time:.2f}")
+        print(f"    Min:              {stats.total.min_response_time:.2f}")
+        print(f"    Max:              {stats.total.max_response_time:.2f}")
+        print(f"    Median (p50):     {stats.total.get_response_time_percentile(0.50):.2f}")
+        print(f"    p90:              {stats.total.get_response_time_percentile(0.90):.2f}")
+        print(f"    p95:              {stats.total.get_response_time_percentile(0.95):.2f}")
+        print(f"    p99:              {stats.total.get_response_time_percentile(0.99):.2f}")
+
+    # Per-endpoint breakdown (top 15 by request count)
+    print(f"\n{'ENDPOINT BREAKDOWN (Top 15 by request count)':^100}")
+    print("-" * 100)
+    print(f"{'Endpoint':<40} {'Reqs':>8} {'Fails':>7} {'Avg':>8} {'Min':>8} {'Max':>8} {'p95':>8} {'RPS':>8}")
+    print("-" * 100)
+
+    # Sort by request count, get top 15
+    sorted_entries = sorted(stats.entries.values(), key=lambda x: x.num_requests, reverse=True)[:15]
+
+    for entry in sorted_entries:
+        name = entry.name[:38] + ".." if len(entry.name) > 40 else entry.name
+        reqs = entry.num_requests
+        fails = entry.num_failures
+        avg = entry.avg_response_time if reqs > 0 else 0
+        min_rt = entry.min_response_time if reqs > 0 else 0
+        max_rt = entry.max_response_time if reqs > 0 else 0
+        p95 = entry.get_response_time_percentile(0.95) if reqs > 0 else 0
+        rps = entry.total_rps
+
+        print(f"{name:<40} {reqs:>8,} {fails:>7,} {avg:>8.1f} {min_rt:>8.1f} {max_rt:>8.1f} {p95:>8.1f} {rps:>8.2f}")
+
+    # Slowest endpoints (by average response time)
+    slow_entries = sorted(
+        [e for e in stats.entries.values() if e.num_requests >= 10],
+        key=lambda x: x.avg_response_time,
+        reverse=True,
+    )[:5]
+
+    if slow_entries:
+        print(f"\n{'SLOWEST ENDPOINTS (min 10 requests)':^100}")
+        print("-" * 100)
+        print(f"{'Endpoint':<50} {'Avg (ms)':>12} {'p95 (ms)':>12} {'Requests':>12}")
+        print("-" * 100)
+        for entry in slow_entries:
+            name = entry.name[:48] + ".." if len(entry.name) > 50 else entry.name
+            print(f"{name:<50} {entry.avg_response_time:>12.2f} {entry.get_response_time_percentile(0.95):>12.2f} {entry.num_requests:>12,}")
+
+    # Error summary
+    if stats.errors:
+        print(f"\n{'ERRORS':^100}")
+        print("-" * 100)
+        for _error_key, error in list(stats.errors.items())[:10]:
+            print(f"  [{error.occurrences}x] {error.method} {error.name}: {str(error.error)[:80]}")
+
+    print("\n" + "=" * 100)
+    print("END OF SUMMARY")
+    print("=" * 100 + "\n")
 
 
 # =============================================================================
@@ -245,20 +388,33 @@ def _generate_jwt_token() -> str:
 
     Uses PyJWT to create a token with the configured secret and algorithm.
     Reads JWT settings from .env file or environment variables.
+
+    The token includes:
+    - sub: User email (JWT_USERNAME)
+    - exp: Expiration time (configurable via LOADTEST_JWT_EXPIRY_HOURS, default 1 year)
+    - iat: Issued at time
+    - aud: Audience (JWT_AUDIENCE)
+    - iss: Issuer (JWT_ISSUER)
+    - jti: JWT ID - unique identifier for cache keying and token revocation
     """
     try:
-        import jwt  # pylint: disable=import-outside-toplevel
-        from datetime import datetime, timezone, timedelta  # pylint: disable=import-outside-toplevel
+        # Standard
+        from datetime import datetime, timedelta, timezone  # pylint: disable=import-outside-toplevel
 
+        # Third-Party
+        import jwt  # pylint: disable=import-outside-toplevel
+
+        jti = str(uuid.uuid4())
         payload = {
             "sub": JWT_USERNAME,
-            "exp": datetime.now(timezone.utc) + timedelta(hours=24),
+            "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_TOKEN_EXPIRY_HOURS),
             "iat": datetime.now(timezone.utc),
             "aud": JWT_AUDIENCE,
             "iss": JWT_ISSUER,
+            "jti": jti,  # JWT ID for auth cache keying and token revocation support
         }
         token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
-        logger.info(f"Generated JWT token for user: {JWT_USERNAME} (aud={JWT_AUDIENCE}, iss={JWT_ISSUER})")
+        logger.info(f"Generated JWT token for user: {JWT_USERNAME} (aud={JWT_AUDIENCE}, iss={JWT_ISSUER}, jti={jti[:8]}..., expires_in={JWT_TOKEN_EXPIRY_HOURS}h)")
         return token
     except ImportError:
         logger.warning("PyJWT not installed, falling back to basic auth. Install with: pip install pyjwt")
@@ -294,6 +450,7 @@ def _get_auth_headers() -> dict[str, str]:
             headers["Authorization"] = f"Bearer {_CACHED_TOKEN}"
         else:
             # Fallback to basic auth (works for admin UI but not REST API)
+            # Standard
             import base64  # pylint: disable=import-outside-toplevel
 
             credentials = base64.b64encode(f"{BASIC_AUTH_USER}:{BASIC_AUTH_PASSWORD}".encode()).decode()
@@ -318,11 +475,14 @@ def _json_rpc_request(method: str, params: dict[str, Any] | None = None) -> dict
 # =============================================================================
 
 
-class BaseUser(HttpUser):
-    """Base user class with common configuration."""
+class BaseUser(FastHttpUser):
+    """Base user class with common configuration.
+
+    Uses FastHttpUser (gevent-based) for maximum throughput.
+    """
 
     abstract = True
-    wait_time = between(0.5, 2.0)
+    wait_time = between(0.1, 0.5)
 
     def __init__(self, *args, **kwargs):
         """Initialize base user with auth headers."""
@@ -337,6 +497,96 @@ class BaseUser(HttpUser):
             **self.auth_headers,
             "Accept": "text/html",
         }
+
+    def _validate_json_response(self, response, allowed_codes: list[int] | None = None):
+        """Validate response is successful and contains valid JSON.
+
+        Args:
+            response: The response object from catch_response=True context
+            allowed_codes: List of acceptable status codes (default: [200])
+        """
+        allowed = allowed_codes or [200]
+        if response.status_code not in allowed:
+            response.failure(f"Expected {allowed}, got {response.status_code}")
+            return False
+        try:
+            data = response.json()
+            if data is None:
+                response.failure("Response JSON is null")
+                return False
+        except Exception as e:
+            response.failure(f"Invalid JSON: {e}")
+            return False
+        response.success()
+        return True
+
+    def _validate_html_response(self, response, allowed_codes: list[int] | None = None):
+        """Validate response is successful HTML.
+
+        Args:
+            response: The response object from catch_response=True context
+            allowed_codes: List of acceptable status codes (default: [200])
+        """
+        allowed = allowed_codes or [200]
+        if response.status_code not in allowed:
+            response.failure(f"Expected {allowed}, got {response.status_code}")
+            return False
+        content_type = response.headers.get("content-type", "")
+        if "text/html" not in content_type:
+            response.failure(f"Expected HTML, got {content_type}")
+            return False
+        response.success()
+        return True
+
+    def _validate_status(self, response, allowed_codes: list[int] | None = None):
+        """Validate response status code only.
+
+        Args:
+            response: The response object from catch_response=True context
+            allowed_codes: List of acceptable status codes (default: [200])
+        """
+        allowed = allowed_codes or [200]
+        if response.status_code not in allowed:
+            response.failure(f"Expected {allowed}, got {response.status_code}")
+            return False
+        response.success()
+        return True
+
+    def _validate_jsonrpc_response(self, response, allowed_codes: list[int] | None = None):
+        """Validate response is successful JSON-RPC (no error field).
+
+        JSON-RPC 2.0 errors are returned with HTTP 200 but contain an "error" field.
+        This method detects such errors and marks them as failures in Locust.
+
+        Args:
+            response: The response object from catch_response=True context
+            allowed_codes: List of acceptable status codes (default: [200])
+
+        Returns:
+            bool: True if response is valid JSON-RPC success, False otherwise
+        """
+        allowed = allowed_codes or [200]
+        if response.status_code not in allowed:
+            response.failure(f"Expected {allowed}, got {response.status_code}")
+            return False
+        try:
+            data = response.json()
+            if data is None:
+                response.failure("Response JSON is null")
+                return False
+            # Check for JSON-RPC error field
+            if "error" in data:
+                error_obj = data["error"]
+                error_code = error_obj.get("code", "unknown")
+                error_msg = error_obj.get("message", "Unknown error")
+                error_data = str(error_obj.get("data", ""))[:100]
+                response.failure(f"JSON-RPC error [{error_code}]: {error_msg} - {error_data}")
+                return False
+        except Exception as e:
+            response.failure(f"Invalid JSON: {e}")
+            return False
+        response.success()
+        return True
 
 
 class HealthCheckUser(BaseUser):
@@ -353,25 +603,29 @@ class HealthCheckUser(BaseUser):
     @tag("health", "critical")
     def health_check(self):
         """Check the health endpoint (no auth required)."""
-        self.client.get("/health", name="/health")
+        with self.client.get("/health", name="/health", catch_response=True) as response:
+            self._validate_status(response)
 
     @task(5)
     @tag("health")
     def readiness_check(self):
         """Check readiness endpoint (no auth required)."""
-        self.client.get("/ready", name="/ready")
+        with self.client.get("/ready", name="/ready", catch_response=True) as response:
+            self._validate_status(response)
 
     @task(2)
     @tag("health")
     def metrics_endpoint(self):
         """Check Prometheus metrics endpoint."""
-        self.client.get("/metrics", headers=self.auth_headers, name="/metrics")
+        with self.client.get("/metrics", headers=self.auth_headers, name="/metrics", catch_response=True) as response:
+            self._validate_status(response)
 
     @task(1)
     @tag("health")
     def openapi_schema(self):
         """Fetch OpenAPI schema."""
-        self.client.get("/openapi.json", headers=self.auth_headers, name="/openapi.json")
+        with self.client.get("/openapi.json", headers=self.auth_headers, name="/openapi.json", catch_response=True) as response:
+            self._validate_json_response(response)
 
 
 class ReadOnlyAPIUser(BaseUser):
@@ -388,49 +642,57 @@ class ReadOnlyAPIUser(BaseUser):
     @tag("api", "tools")
     def list_tools(self):
         """List all tools."""
-        self.client.get("/tools", headers=self.auth_headers, name="/tools")
+        with self.client.get("/tools", headers=self.auth_headers, name="/tools", catch_response=True) as response:
+            self._validate_json_response(response)
 
     @task(8)
     @tag("api", "servers")
     def list_servers(self):
         """List all servers."""
-        self.client.get("/servers", headers=self.auth_headers, name="/servers")
+        with self.client.get("/servers", headers=self.auth_headers, name="/servers", catch_response=True) as response:
+            self._validate_json_response(response)
 
     @task(6)
     @tag("api", "gateways")
     def list_gateways(self):
         """List all gateways."""
-        self.client.get("/gateways", headers=self.auth_headers, name="/gateways")
+        with self.client.get("/gateways", headers=self.auth_headers, name="/gateways", catch_response=True) as response:
+            self._validate_json_response(response)
 
     @task(5)
     @tag("api", "resources")
     def list_resources(self):
         """List all resources."""
-        self.client.get("/resources", headers=self.auth_headers, name="/resources")
+        with self.client.get("/resources", headers=self.auth_headers, name="/resources", catch_response=True) as response:
+            self._validate_json_response(response)
 
     @task(5)
     @tag("api", "prompts")
     def list_prompts(self):
         """List all prompts."""
-        self.client.get("/prompts", headers=self.auth_headers, name="/prompts")
+        with self.client.get("/prompts", headers=self.auth_headers, name="/prompts", catch_response=True) as response:
+            self._validate_json_response(response)
 
     @task(4)
     @tag("api", "a2a")
     def list_a2a_agents(self):
         """List A2A agents."""
-        self.client.get("/a2a", headers=self.auth_headers, name="/a2a")
+        with self.client.get("/a2a", headers=self.auth_headers, name="/a2a", catch_response=True) as response:
+            self._validate_json_response(response)
 
     @task(3)
     @tag("api", "tags")
     def list_tags(self):
         """List all tags."""
-        self.client.get("/tags", headers=self.auth_headers, name="/tags")
+        with self.client.get("/tags", headers=self.auth_headers, name="/tags", catch_response=True) as response:
+            self._validate_json_response(response)
 
     @task(2)
     @tag("api", "metrics")
     def get_metrics(self):
         """Get application metrics."""
-        self.client.get("/metrics", headers=self.auth_headers, name="/metrics [api]")
+        with self.client.get("/metrics", headers=self.auth_headers, name="/metrics [api]", catch_response=True) as response:
+            self._validate_status(response)
 
     @task(3)
     @tag("api", "tools")
@@ -438,7 +700,14 @@ class ReadOnlyAPIUser(BaseUser):
         """Get a specific tool by ID."""
         if TOOL_IDS:
             tool_id = random.choice(TOOL_IDS)
-            self.client.get(f"/tools/{tool_id}", headers=self.auth_headers, name="/tools/[id]")
+            with self.client.get(
+                f"/tools/{tool_id}",
+                headers=self.auth_headers,
+                name="/tools/[id]",
+                catch_response=True,
+            ) as response:
+                # 200=Success, 404=Not found (acceptable)
+                self._validate_json_response(response, allowed_codes=[200, 404])
 
     @task(3)
     @tag("api", "servers")
@@ -446,7 +715,14 @@ class ReadOnlyAPIUser(BaseUser):
         """Get a specific server by ID."""
         if SERVER_IDS:
             server_id = random.choice(SERVER_IDS)
-            self.client.get(f"/servers/{server_id}", headers=self.auth_headers, name="/servers/[id]")
+            with self.client.get(
+                f"/servers/{server_id}",
+                headers=self.auth_headers,
+                name="/servers/[id]",
+                catch_response=True,
+            ) as response:
+                # 200=Success, 404=Not found (acceptable)
+                self._validate_json_response(response, allowed_codes=[200, 404])
 
     @task(2)
     @tag("api", "gateways")
@@ -454,13 +730,25 @@ class ReadOnlyAPIUser(BaseUser):
         """Get a specific gateway by ID."""
         if GATEWAY_IDS:
             gateway_id = random.choice(GATEWAY_IDS)
-            self.client.get(f"/gateways/{gateway_id}", headers=self.auth_headers, name="/gateways/[id]")
+            with self.client.get(
+                f"/gateways/{gateway_id}",
+                headers=self.auth_headers,
+                name="/gateways/[id]",
+                catch_response=True,
+            ) as response:
+                self._validate_json_response(response, allowed_codes=[200, 404])
 
     @task(2)
     @tag("api", "roots")
     def list_roots(self):
         """List roots."""
-        self.client.get("/roots", headers=self.auth_headers, name="/roots")
+        with self.client.get(
+            "/roots",
+            headers=self.auth_headers,
+            name="/roots",
+            catch_response=True,
+        ) as response:
+            self._validate_json_response(response)
 
     @task(2)
     @tag("api", "resources")
@@ -468,7 +756,14 @@ class ReadOnlyAPIUser(BaseUser):
         """Get a specific resource by ID."""
         if RESOURCE_IDS:
             resource_id = random.choice(RESOURCE_IDS)
-            self.client.get(f"/resources/{resource_id}", headers=self.auth_headers, name="/resources/[id]")
+            with self.client.get(
+                f"/resources/{resource_id}",
+                headers=self.auth_headers,
+                name="/resources/[id]",
+                catch_response=True,
+            ) as response:
+                # 200=Success, 403=Forbidden (read-only), 404=Not found
+                self._validate_json_response(response, allowed_codes=[200, 403, 404])
 
     @task(2)
     @tag("api", "prompts")
@@ -476,7 +771,14 @@ class ReadOnlyAPIUser(BaseUser):
         """Get a specific prompt by ID."""
         if PROMPT_IDS:
             prompt_id = random.choice(PROMPT_IDS)
-            self.client.get(f"/prompts/{prompt_id}", headers=self.auth_headers, name="/prompts/[id]")
+            with self.client.get(
+                f"/prompts/{prompt_id}",
+                headers=self.auth_headers,
+                name="/prompts/[id]",
+                catch_response=True,
+            ) as response:
+                # 200=Success, 403=Forbidden (read-only), 404=Not found
+                self._validate_json_response(response, allowed_codes=[200, 403, 404])
 
     @task(2)
     @tag("api", "servers")
@@ -484,7 +786,8 @@ class ReadOnlyAPIUser(BaseUser):
         """Get tools for a specific server."""
         if SERVER_IDS:
             server_id = random.choice(SERVER_IDS)
-            self.client.get(f"/servers/{server_id}/tools", headers=self.auth_headers, name="/servers/[id]/tools")
+            with self.client.get(f"/servers/{server_id}/tools", headers=self.auth_headers, name="/servers/[id]/tools", catch_response=True) as response:
+                self._validate_json_response(response, allowed_codes=[200, 404])
 
     @task(2)
     @tag("api", "servers")
@@ -492,15 +795,21 @@ class ReadOnlyAPIUser(BaseUser):
         """Get resources for a specific server."""
         if SERVER_IDS:
             server_id = random.choice(SERVER_IDS)
-            self.client.get(
-                f"/servers/{server_id}/resources", headers=self.auth_headers, name="/servers/[id]/resources"
-            )
+            with self.client.get(f"/servers/{server_id}/resources", headers=self.auth_headers, name="/servers/[id]/resources", catch_response=True) as response:
+                self._validate_json_response(response, allowed_codes=[200, 404])
 
     @task(1)
     @tag("api", "discovery")
     def well_known_robots(self):
         """Check robots.txt (always available)."""
-        self.client.get("/.well-known/robots.txt", headers=self.auth_headers, name="/.well-known/robots.txt")
+        with self.client.get(
+            "/.well-known/robots.txt",
+            headers=self.auth_headers,
+            name="/.well-known/robots.txt",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 404=Not configured
+            self._validate_status(response, allowed_codes=[200, 404])
 
     @task(1)
     @tag("api", "discovery")
@@ -512,9 +821,8 @@ class ReadOnlyAPIUser(BaseUser):
             name="/.well-known/security.txt",
             catch_response=True,
         ) as response:
-            # 404 is acceptable if not configured
-            if response.status_code in (200, 404):
-                response.success()
+            # 200=Success, 404=Not configured
+            self._validate_status(response, allowed_codes=[200, 404])
 
 
 class AdminUIUser(BaseUser):
@@ -531,43 +839,50 @@ class AdminUIUser(BaseUser):
     @tag("admin", "dashboard")
     def admin_dashboard(self):
         """Load admin dashboard."""
-        self.client.get("/admin/", headers=self.admin_headers, name="/admin/")
+        with self.client.get("/admin/", headers=self.admin_headers, name="/admin/", catch_response=True) as response:
+            self._validate_html_response(response)
 
     @task(8)
     @tag("admin", "tools")
     def admin_tools_page(self):
-        """Load tools management page."""
-        self.client.get("/admin/tools", headers=self.admin_headers, name="/admin/tools")
+        """Load tools list (JSON API)."""
+        with self.client.get("/admin/tools", headers=self.admin_headers, name="/admin/tools", catch_response=True) as response:
+            self._validate_json_response(response)
 
     @task(7)
     @tag("admin", "servers")
     def admin_servers_page(self):
-        """Load servers management page."""
-        self.client.get("/admin/servers", headers=self.admin_headers, name="/admin/servers")
+        """Load servers list (JSON API)."""
+        with self.client.get("/admin/servers", headers=self.admin_headers, name="/admin/servers", catch_response=True) as response:
+            self._validate_json_response(response)
 
     @task(6)
     @tag("admin", "gateways")
     def admin_gateways_page(self):
-        """Load gateways management page."""
-        self.client.get("/admin/gateways", headers=self.admin_headers, name="/admin/gateways")
+        """Load gateways list (JSON API)."""
+        with self.client.get("/admin/gateways", headers=self.admin_headers, name="/admin/gateways", catch_response=True) as response:
+            self._validate_json_response(response)
 
     @task(5)
     @tag("admin", "resources")
     def admin_resources_page(self):
-        """Load resources management page."""
-        self.client.get("/admin/resources", headers=self.admin_headers, name="/admin/resources")
+        """Load resources list (JSON API)."""
+        with self.client.get("/admin/resources", headers=self.admin_headers, name="/admin/resources", catch_response=True) as response:
+            self._validate_json_response(response)
 
     @task(5)
     @tag("admin", "prompts")
     def admin_prompts_page(self):
-        """Load prompts management page."""
-        self.client.get("/admin/prompts", headers=self.admin_headers, name="/admin/prompts")
+        """Load prompts list (JSON API)."""
+        with self.client.get("/admin/prompts", headers=self.admin_headers, name="/admin/prompts", catch_response=True) as response:
+            self._validate_json_response(response)
 
     @task(4)
     @tag("admin", "a2a")
     def admin_a2a_list(self):
-        """Load A2A agents list."""
-        self.client.get("/admin/a2a", headers=self.auth_headers, name="/admin/a2a")
+        """Load A2A agents list (JSON API)."""
+        with self.client.get("/admin/a2a", headers=self.auth_headers, name="/admin/a2a", catch_response=True) as response:
+            self._validate_json_response(response)
 
     @task(3)
     @tag("admin", "performance")
@@ -580,80 +895,90 @@ class AdminUIUser(BaseUser):
             catch_response=True,
         ) as response:
             # 404 is acceptable if performance tracking is disabled
-            if response.status_code in (200, 404):
-                response.success()
+            self._validate_status(response, allowed_codes=[200, 404])
 
     @task(2)
     @tag("admin", "logs")
     def admin_logs(self):
-        """Load logs page."""
-        self.client.get("/admin/logs", headers=self.auth_headers, name="/admin/logs")
+        """Load logs (JSON API)."""
+        with self.client.get("/admin/logs", headers=self.auth_headers, name="/admin/logs", catch_response=True) as response:
+            self._validate_json_response(response)
 
     @task(2)
     @tag("admin", "config")
     def admin_config_settings(self):
-        """Load config settings."""
-        self.client.get("/admin/config/settings", headers=self.auth_headers, name="/admin/config/settings")
+        """Load config settings (JSON API)."""
+        with self.client.get("/admin/config/settings", headers=self.auth_headers, name="/admin/config/settings", catch_response=True) as response:
+            self._validate_json_response(response)
 
     @task(2)
     @tag("admin", "metrics")
     def admin_metrics(self):
-        """Load metrics page."""
-        self.client.get("/admin/metrics", headers=self.admin_headers, name="/admin/metrics")
+        """Load metrics (JSON API)."""
+        with self.client.get("/admin/metrics", headers=self.admin_headers, name="/admin/metrics", catch_response=True) as response:
+            self._validate_json_response(response)
 
     @task(2)
     @tag("admin", "teams")
     def admin_teams(self):
         """Load teams management page."""
-        self.client.get("/admin/teams", headers=self.admin_headers, name="/admin/teams")
+        with self.client.get("/admin/teams", headers=self.admin_headers, name="/admin/teams", catch_response=True) as response:
+            self._validate_html_response(response)
 
     @task(2)
     @tag("admin", "users")
     def admin_users(self):
         """Load users management page."""
-        self.client.get("/admin/users", headers=self.admin_headers, name="/admin/users")
+        with self.client.get("/admin/users", headers=self.admin_headers, name="/admin/users", catch_response=True) as response:
+            self._validate_html_response(response)
 
     @task(1)
     @tag("admin", "export")
     def admin_export_config(self):
-        """Load export configuration page."""
-        self.client.get("/admin/export/configuration", headers=self.admin_headers, name="/admin/export/configuration")
+        """Load export configuration (JSON API)."""
+        with self.client.get("/admin/export/configuration", headers=self.admin_headers, name="/admin/export/configuration", catch_response=True) as response:
+            self._validate_json_response(response)
 
     @task(1)
     @tag("admin", "htmx", "tools")
     def admin_tools_partial(self):
         """Fetch tools partial via HTMX."""
         headers = {**self.admin_headers, "HX-Request": "true"}
-        self.client.get("/admin/tools/partial", headers=headers, name="/admin/tools/partial")
+        with self.client.get("/admin/tools/partial", headers=headers, name="/admin/tools/partial", catch_response=True) as response:
+            self._validate_html_response(response)
 
     @task(1)
     @tag("admin", "htmx", "resources")
     def admin_resources_partial(self):
         """Fetch resources partial via HTMX."""
         headers = {**self.admin_headers, "HX-Request": "true"}
-        self.client.get("/admin/resources/partial", headers=headers, name="/admin/resources/partial")
+        with self.client.get("/admin/resources/partial", headers=headers, name="/admin/resources/partial", catch_response=True) as response:
+            self._validate_html_response(response)
 
     @task(1)
     @tag("admin", "htmx", "prompts")
     def admin_prompts_partial(self):
         """Fetch prompts partial via HTMX."""
         headers = {**self.admin_headers, "HX-Request": "true"}
-        self.client.get("/admin/prompts/partial", headers=headers, name="/admin/prompts/partial")
+        with self.client.get("/admin/prompts/partial", headers=headers, name="/admin/prompts/partial", catch_response=True) as response:
+            self._validate_html_response(response)
 
     @task(1)
     @tag("admin", "htmx", "metrics")
     def admin_metrics_partial(self):
         """Fetch metrics partial via HTMX."""
         headers = {**self.admin_headers, "HX-Request": "true"}
-        self.client.get("/admin/metrics/partial", headers=headers, name="/admin/metrics/partial")
+        with self.client.get("/admin/metrics/partial", headers=headers, name="/admin/metrics/partial", catch_response=True) as response:
+            self._validate_html_response(response)
 
     @task(1)
     @tag("admin", "htmx")
     def admin_htmx_refresh(self):
         """Simulate HTMX partial refresh."""
         headers = {**self.admin_headers, "HX-Request": "true"}
-        endpoint = random.choice(["/admin/tools", "/admin/servers", "/admin/gateways"])
-        self.client.get(endpoint, headers=headers, name=f"{endpoint} [htmx]")
+        endpoint = random.choice(["/admin/tools/partial", "/admin/resources/partial", "/admin/prompts/partial"])
+        with self.client.get(endpoint, headers=headers, name=f"{endpoint} [htmx]", catch_response=True) as response:
+            self._validate_html_response(response)
 
 
 class MCPJsonRpcUser(BaseUser):
@@ -666,83 +991,73 @@ class MCPJsonRpcUser(BaseUser):
     weight = 4
     wait_time = between(0.2, 1.0)
 
+    def _rpc_request(self, payload: dict, name: str):
+        """Make an RPC request with proper error handling.
+
+        Uses JSON-RPC validation to detect errors returned with HTTP 200.
+        """
+        with self.client.post(
+            "/rpc",
+            json=payload,
+            headers={**self.auth_headers, "Content-Type": "application/json"},
+            name=name,
+            catch_response=True,
+        ) as response:
+            self._validate_jsonrpc_response(response)
+
     @task(10)
     @tag("mcp", "rpc", "tools")
     def rpc_list_tools(self):
         """JSON-RPC: List tools."""
         payload = _json_rpc_request("tools/list")
-        self.client.post(
-            "/rpc",
-            json=payload,
-            headers={**self.auth_headers, "Content-Type": "application/json"},
-            name="/rpc tools/list",
-        )
+        self._rpc_request(payload, "/rpc tools/list")
 
     @task(8)
     @tag("mcp", "rpc", "resources")
     def rpc_list_resources(self):
         """JSON-RPC: List resources."""
         payload = _json_rpc_request("resources/list")
-        self.client.post(
-            "/rpc",
-            json=payload,
-            headers={**self.auth_headers, "Content-Type": "application/json"},
-            name="/rpc resources/list",
-        )
+        self._rpc_request(payload, "/rpc resources/list")
 
     @task(8)
     @tag("mcp", "rpc", "prompts")
     def rpc_list_prompts(self):
         """JSON-RPC: List prompts."""
         payload = _json_rpc_request("prompts/list")
-        self.client.post(
-            "/rpc",
-            json=payload,
-            headers={**self.auth_headers, "Content-Type": "application/json"},
-            name="/rpc prompts/list",
-        )
+        self._rpc_request(payload, "/rpc prompts/list")
 
     @task(5)
     @tag("mcp", "rpc", "tools")
     def rpc_call_tool(self):
-        """JSON-RPC: Call a tool."""
-        if TOOL_IDS:
-            tool_name = random.choice(TOOL_IDS)
+        """JSON-RPC: Call a tool with empty arguments.
+
+        Note: Tools that require arguments are excluded here and tested
+        separately in dedicated user classes (e.g., FastTimeUser) with proper arguments.
+        """
+        # Filter out tools that require arguments - they're tested with proper args elsewhere
+        callable_tools = [t for t in TOOL_NAMES if t not in TOOLS_WITH_REQUIRED_ARGS]
+        if callable_tools:
+            tool_name = random.choice(callable_tools)
             payload = _json_rpc_request("tools/call", {"name": tool_name, "arguments": {}})
-            self.client.post(
-                "/rpc",
-                json=payload,
-                headers={**self.auth_headers, "Content-Type": "application/json"},
-                name="/rpc tools/call",
-            )
+            self._rpc_request(payload, "/rpc tools/call")
 
     @task(4)
     @tag("mcp", "rpc", "resources")
     def rpc_read_resource(self):
         """JSON-RPC: Read a resource."""
-        if RESOURCE_IDS:
-            resource_uri = random.choice(RESOURCE_IDS)
+        if RESOURCE_URIS:
+            resource_uri = random.choice(RESOURCE_URIS)
             payload = _json_rpc_request("resources/read", {"uri": resource_uri})
-            self.client.post(
-                "/rpc",
-                json=payload,
-                headers={**self.auth_headers, "Content-Type": "application/json"},
-                name="/rpc resources/read",
-            )
+            self._rpc_request(payload, "/rpc resources/read")
 
     @task(4)
     @tag("mcp", "rpc", "prompts")
     def rpc_get_prompt(self):
         """JSON-RPC: Get a prompt."""
-        if PROMPT_IDS:
-            prompt_name = random.choice(PROMPT_IDS)
+        if PROMPT_NAMES:
+            prompt_name = random.choice(PROMPT_NAMES)
             payload = _json_rpc_request("prompts/get", {"name": prompt_name})
-            self.client.post(
-                "/rpc",
-                json=payload,
-                headers={**self.auth_headers, "Content-Type": "application/json"},
-                name="/rpc prompts/get",
-            )
+            self._rpc_request(payload, "/rpc prompts/get")
 
     @task(3)
     @tag("mcp", "rpc", "initialize")
@@ -756,36 +1071,21 @@ class MCPJsonRpcUser(BaseUser):
                 "clientInfo": {"name": "locust-load-test", "version": "1.0.0"},
             },
         )
-        self.client.post(
-            "/rpc",
-            json=payload,
-            headers={**self.auth_headers, "Content-Type": "application/json"},
-            name="/rpc initialize",
-        )
+        self._rpc_request(payload, "/rpc initialize")
 
     @task(2)
     @tag("mcp", "rpc", "ping")
     def rpc_ping(self):
         """JSON-RPC: Ping."""
         payload = _json_rpc_request("ping")
-        self.client.post(
-            "/rpc",
-            json=payload,
-            headers={**self.auth_headers, "Content-Type": "application/json"},
-            name="/rpc ping",
-        )
+        self._rpc_request(payload, "/rpc ping")
 
     @task(3)
     @tag("mcp", "rpc", "resources")
     def rpc_list_resource_templates(self):
         """JSON-RPC: List resource templates."""
         payload = _json_rpc_request("resources/templates/list")
-        self.client.post(
-            "/rpc",
-            json=payload,
-            headers={**self.auth_headers, "Content-Type": "application/json"},
-            name="/rpc resources/templates/list",
-        )
+        self._rpc_request(payload, "/rpc resources/templates/list")
 
     @task(2)
     @tag("mcp", "protocol")
@@ -796,24 +1096,28 @@ class MCPJsonRpcUser(BaseUser):
             "capabilities": {"tools": {}, "resources": {}, "prompts": {}},
             "clientInfo": {"name": "locust-load-test", "version": "1.0.0"},
         }
-        self.client.post(
+        with self.client.post(
             "/protocol/initialize",
             json=payload,
             headers={**self.auth_headers, "Content-Type": "application/json"},
             name="/protocol/initialize",
-        )
+            catch_response=True,
+        ) as response:
+            self._validate_status(response)
 
     @task(2)
     @tag("mcp", "protocol")
     def protocol_ping(self):
         """Protocol endpoint: Ping (JSON-RPC format)."""
         payload = _json_rpc_request("ping")
-        self.client.post(
+        with self.client.post(
             "/protocol/ping",
             json=payload,
             headers={**self.auth_headers, "Content-Type": "application/json"},
             name="/protocol/ping",
-        )
+            catch_response=True,
+        ) as response:
+            self._validate_status(response)
 
 
 class WriteAPIUser(BaseUser):
@@ -852,13 +1156,11 @@ class WriteAPIUser(BaseUser):
     @tag("api", "write", "tools")
     def create_and_delete_tool(self):
         """Create a tool and then delete it."""
-        tool_name = f"loadtest_tool_{uuid.uuid4().hex[:8]}"
+        tool_name = f"loadtest-tool-{uuid.uuid4().hex[:8]}"
         tool_data = {
             "name": tool_name,
-            "url": "http://localhost:9999/loadtest",
             "description": "Load test tool - will be deleted",
-            "integration_type": "REST",
-            "request_type": "POST",
+            "integration_type": "MCP",
             "input_schema": {"type": "object", "properties": {"input": {"type": "string"}}},
         }
 
@@ -879,14 +1181,14 @@ class WriteAPIUser(BaseUser):
                     self.client.delete(f"/tools/{tool_id}", headers=self.auth_headers, name="/tools/[id] [delete]")
                 except Exception:
                     pass
-            elif response.status_code == 409:
-                response.success()  # Conflict is acceptable
+            elif response.status_code in (409, 422):
+                response.success()  # Conflict or validation error is acceptable for load test
 
     @task(3)
     @tag("api", "write", "servers")
     def create_and_delete_server(self):
         """Create a virtual server and then delete it."""
-        server_name = f"loadtest_server_{uuid.uuid4().hex[:8]}"
+        server_name = f"loadtest-server-{uuid.uuid4().hex[:8]}"
         server_data = {
             "name": server_name,
             "description": "Load test virtual server - will be deleted",
@@ -906,13 +1208,11 @@ class WriteAPIUser(BaseUser):
                     server_id = data.get("id") or data.get("name") or server_name
                     # Delete immediately
                     time.sleep(0.1)
-                    self.client.delete(
-                        f"/servers/{server_id}", headers=self.auth_headers, name="/servers/[id] [delete]"
-                    )
+                    self.client.delete(f"/servers/{server_id}", headers=self.auth_headers, name="/servers/[id] [delete]")
                 except Exception:
                     pass
-            elif response.status_code == 409:
-                response.success()  # Conflict is acceptable
+            elif response.status_code in (409, 422):
+                response.success()  # Conflict or validation error is acceptable for load test
 
     @task(2)
     @tag("api", "write", "toggle")
@@ -920,12 +1220,14 @@ class WriteAPIUser(BaseUser):
         """Toggle a server's enabled status."""
         if SERVER_IDS:
             server_id = random.choice(SERVER_IDS)
-            # Just attempt the toggle - may fail if server doesn't support it
-            self.client.post(
+            with self.client.post(
                 f"/servers/{server_id}/toggle",
                 headers=self.auth_headers,
                 name="/servers/[id]/toggle",
-            )
+                catch_response=True,
+            ) as response:
+                # 403/404 are acceptable - entity may not exist or may be read-only
+                self._validate_json_response(response, allowed_codes=[200, 403, 404])
 
     @task(2)
     @tag("api", "write", "toggle")
@@ -933,11 +1235,14 @@ class WriteAPIUser(BaseUser):
         """Toggle a tool's enabled status."""
         if TOOL_IDS:
             tool_id = random.choice(TOOL_IDS)
-            self.client.post(
+            with self.client.post(
                 f"/tools/{tool_id}/toggle",
                 headers=self.auth_headers,
                 name="/tools/[id]/toggle",
-            )
+                catch_response=True,
+            ) as response:
+                # 403/404 are acceptable - entity may not exist or may be read-only
+                self._validate_json_response(response, allowed_codes=[200, 403, 404])
 
     @task(2)
     @tag("api", "write", "toggle")
@@ -945,11 +1250,14 @@ class WriteAPIUser(BaseUser):
         """Toggle a resource's enabled status."""
         if RESOURCE_IDS:
             resource_id = random.choice(RESOURCE_IDS)
-            self.client.post(
+            with self.client.post(
                 f"/resources/{resource_id}/toggle",
                 headers=self.auth_headers,
                 name="/resources/[id]/toggle",
-            )
+                catch_response=True,
+            ) as response:
+                # 403/404 are acceptable - entity may not exist or may be read-only
+                self._validate_json_response(response, allowed_codes=[200, 403, 404])
 
     @task(2)
     @tag("api", "write", "toggle")
@@ -957,11 +1265,14 @@ class WriteAPIUser(BaseUser):
         """Toggle a prompt's enabled status."""
         if PROMPT_IDS:
             prompt_id = random.choice(PROMPT_IDS)
-            self.client.post(
+            with self.client.post(
                 f"/prompts/{prompt_id}/toggle",
                 headers=self.auth_headers,
                 name="/prompts/[id]/toggle",
-            )
+                catch_response=True,
+            ) as response:
+                # 403/404 are acceptable - entity may not exist or may be read-only
+                self._validate_json_response(response, allowed_codes=[200, 403, 404])
 
     @task(2)
     @tag("api", "write", "toggle")
@@ -969,21 +1280,24 @@ class WriteAPIUser(BaseUser):
         """Toggle a gateway's enabled status."""
         if GATEWAY_IDS:
             gateway_id = random.choice(GATEWAY_IDS)
-            self.client.post(
+            with self.client.post(
                 f"/gateways/{gateway_id}/toggle",
                 headers=self.auth_headers,
                 name="/gateways/[id]/toggle",
-            )
+                catch_response=True,
+            ) as response:
+                # 403/404/502 are acceptable - gateway may not exist or may be unreachable
+                self._validate_json_response(response, allowed_codes=[200, 403, 404])
 
     @task(2)
     @tag("api", "write", "resources")
     def create_and_delete_resource(self):
         """Create a resource and then delete it."""
-        resource_id = uuid.uuid4().hex[:8]
-        resource_uri = f"file:///tmp/loadtest_{resource_id}.txt"
+        resource_hex = uuid.uuid4().hex[:8]
+        resource_uri = f"file:///tmp/loadtest-{resource_hex}.txt"
         resource_data = {
             "uri": resource_uri,
-            "name": f"loadtest_resource_{resource_id}",
+            "name": f"loadtest-resource-{resource_hex}",
             "description": "Load test resource - will be deleted",
             "mime_type": "text/plain",
             "content": "Load test resource content",
@@ -999,21 +1313,19 @@ class WriteAPIUser(BaseUser):
             if response.status_code in (200, 201):
                 try:
                     data = response.json()
-                    resource_id = data.get("id") or data.get("uri") or resource_uri
+                    res_id = data.get("id") or data.get("uri") or resource_uri
                     time.sleep(0.1)
-                    self.client.delete(
-                        f"/resources/{resource_id}", headers=self.auth_headers, name="/resources/[id] [delete]"
-                    )
+                    self.client.delete(f"/resources/{res_id}", headers=self.auth_headers, name="/resources/[id] [delete]")
                 except Exception:
                     pass
-            elif response.status_code == 409:
-                response.success()
+            elif response.status_code in (409, 422):
+                response.success()  # Conflict or validation error is acceptable for load test
 
     @task(2)
     @tag("api", "write", "prompts")
     def create_and_delete_prompt(self):
         """Create a prompt and then delete it."""
-        prompt_name = f"loadtest_prompt_{uuid.uuid4().hex[:8]}"
+        prompt_name = f"loadtest-prompt-{uuid.uuid4().hex[:8]}"
         prompt_data = {
             "name": prompt_name,
             "description": "Load test prompt - will be deleted",
@@ -1033,45 +1345,50 @@ class WriteAPIUser(BaseUser):
                     data = response.json()
                     prompt_id = data.get("id") or data.get("name") or prompt_name
                     time.sleep(0.1)
-                    self.client.delete(
-                        f"/prompts/{prompt_id}", headers=self.auth_headers, name="/prompts/[id] [delete]"
-                    )
+                    self.client.delete(f"/prompts/{prompt_id}", headers=self.auth_headers, name="/prompts/[id] [delete]")
                 except Exception:
                     pass
-            elif response.status_code == 409:
-                response.success()
+            elif response.status_code in (409, 422):
+                response.success()  # Conflict or validation error is acceptable for load test
 
     @task(1)
     @tag("api", "write", "gateways")
-    def create_and_delete_gateway(self):
-        """Create a gateway and then delete it."""
-        gateway_name = f"loadtest_gateway_{uuid.uuid4().hex[:8]}"
-        gateway_data = {
-            "name": gateway_name,
-            "description": "Load test gateway - will be deleted",
-            "url": "http://localhost:9999/loadtest",
-            "transport": "SSE",
-        }
-
-        with self.client.post(
+    def read_and_refresh_gateway(self):
+        """Read existing gateway and trigger a refresh."""
+        # First, get list of gateways
+        # API returns {"gateways": [...], "nextCursor": ...} or list for legacy
+        with self.client.get(
             "/gateways",
-            json=gateway_data,
-            headers={**self.auth_headers, "Content-Type": "application/json"},
-            name="/gateways [create]",
+            headers=self.auth_headers,
+            name="/gateways [list for refresh]",
             catch_response=True,
         ) as response:
-            if response.status_code in (200, 201):
-                try:
-                    data = response.json()
-                    gateway_id = data.get("id") or data.get("name") or gateway_name
-                    time.sleep(0.1)
-                    self.client.delete(
-                        f"/gateways/{gateway_id}", headers=self.auth_headers, name="/gateways/[id] [delete]"
-                    )
-                except Exception:
-                    pass
-            elif response.status_code == 409:
+            if response.status_code != 200:
+                response.failure(f"Failed to list gateways: {response.status_code}")
+                return
+            try:
+                data = response.json()
+                # Extract gateways list from paginated response
+                gateways = data if isinstance(data, list) else data.get("gateways", data.get("items", []))
+                if not gateways:
+                    response.success()
+                    return
                 response.success()
+            except Exception as e:
+                response.failure(f"Invalid JSON: {e}")
+                return
+
+        # Pick a gateway and read its details
+        gateway = random.choice(gateways)
+        gateway_id = gateway.get("id")
+        if gateway_id:
+            with self.client.get(
+                f"/gateways/{gateway_id}",
+                headers=self.auth_headers,
+                name="/gateways/[id] [read]",
+                catch_response=True,
+            ) as response:
+                self._validate_json_response(response, allowed_codes=[200, 404])
 
 
 class StressTestUser(BaseUser):
@@ -1101,12 +1418,14 @@ class StressTestUser(BaseUser):
     def rapid_rpc_ping(self):
         """Rapid RPC pings."""
         payload = _json_rpc_request("ping")
-        self.client.post(
+        with self.client.post(
             "/rpc",
             json=payload,
             headers={**self.auth_headers, "Content-Type": "application/json"},
             name="/rpc ping [stress]",
-        )
+            catch_response=True,
+        ) as response:
+            self._validate_jsonrpc_response(response)
 
 
 class FastTimeUser(BaseUser):
@@ -1114,10 +1433,27 @@ class FastTimeUser(BaseUser):
 
     Tests the fast-time-get-system-time tool via JSON-RPC.
     Weight: High (main MCP tool testing)
+
+    NOTE: These tests require the fast_time MCP server to be running.
+    502 errors are expected if no MCP server is connected.
     """
 
     weight = 5
     wait_time = between(0.1, 0.5)
+
+    def _rpc_request(self, payload: dict, name: str):
+        """Make an RPC request with proper error handling.
+
+        Uses JSON-RPC validation to detect errors returned with HTTP 200.
+        """
+        with self.client.post(
+            "/rpc",
+            json=payload,
+            headers={**self.auth_headers, "Content-Type": "application/json"},
+            name=name,
+            catch_response=True,
+        ) as response:
+            self._validate_jsonrpc_response(response)
 
     @task(10)
     @tag("mcp", "fasttime", "tools")
@@ -1130,12 +1466,7 @@ class FastTimeUser(BaseUser):
                 "arguments": {"timezone": "Europe/Dublin"},
             },
         )
-        self.client.post(
-            "/rpc",
-            json=payload,
-            headers={**self.auth_headers, "Content-Type": "application/json"},
-            name="/rpc fast-time-get-system-time",
-        )
+        self._rpc_request(payload, "/rpc fast-time-get-system-time")
 
     @task(5)
     @tag("mcp", "fasttime", "tools")
@@ -1148,12 +1479,7 @@ class FastTimeUser(BaseUser):
                 "arguments": {"timezone": "UTC"},
             },
         )
-        self.client.post(
-            "/rpc",
-            json=payload,
-            headers={**self.auth_headers, "Content-Type": "application/json"},
-            name="/rpc fast-time-get-system-time [UTC]",
-        )
+        self._rpc_request(payload, "/rpc fast-time-get-system-time [UTC]")
 
     @task(3)
     @tag("mcp", "fasttime", "tools")
@@ -1170,24 +1496,198 @@ class FastTimeUser(BaseUser):
                 },
             },
         )
-        self.client.post(
-            "/rpc",
-            json=payload,
-            headers={**self.auth_headers, "Content-Type": "application/json"},
-            name="/rpc fast-time-convert-time",
-        )
+        self._rpc_request(payload, "/rpc fast-time-convert-time")
 
     @task(2)
     @tag("mcp", "fasttime", "list")
     def list_tools(self):
         """List tools via JSON-RPC."""
         payload = _json_rpc_request("tools/list")
-        self.client.post(
+        self._rpc_request(payload, "/rpc tools/list [fasttime]")
+
+
+class FastTestEchoUser(BaseUser):
+    """User that calls the fast_test MCP server echo tool.
+
+    Tests the fast-test-echo tool via JSON-RPC.
+    Weight: Medium (echo testing)
+
+    NOTE: These tests require the fast_test MCP server to be running.
+    Start with: make testing-up
+    502 errors are expected if no MCP server is connected.
+    """
+
+    weight = 3
+    wait_time = between(0.5, 1.5)
+
+    # Test messages for echo
+    ECHO_MESSAGES = [
+        "Hello, World!",
+        "Testing MCP protocol",
+        "Load test in progress",
+        "Performance benchmark",
+        "Echo echo echo",
+        "The quick brown fox jumps over the lazy dog",
+        "Lorem ipsum dolor sit amet",
+        "MCP Gateway load test message",
+    ]
+
+    def _rpc_request(self, payload: dict, name: str):
+        """Make an RPC request with proper error handling."""
+        with self.client.post(
             "/rpc",
             json=payload,
             headers={**self.auth_headers, "Content-Type": "application/json"},
-            name="/rpc tools/list [fasttime]",
+            name=name,
+            catch_response=True,
+        ) as response:
+            self._validate_jsonrpc_response(response)
+
+    @task(10)
+    @tag("mcp", "fasttest", "echo")
+    def call_echo(self):
+        """Call fast-test-echo with a random message."""
+        message = random.choice(self.ECHO_MESSAGES)
+        payload = _json_rpc_request(
+            "tools/call",
+            {
+                "name": "fast-test-echo",
+                "arguments": {"message": message},
+            },
         )
+        self._rpc_request(payload, "/rpc fast-test-echo")
+
+    @task(5)
+    @tag("mcp", "fasttest", "echo")
+    def call_echo_short(self):
+        """Call fast-test-echo with a short message."""
+        payload = _json_rpc_request(
+            "tools/call",
+            {
+                "name": "fast-test-echo",
+                "arguments": {"message": "ping"},
+            },
+        )
+        self._rpc_request(payload, "/rpc fast-test-echo [short]")
+
+    @task(3)
+    @tag("mcp", "fasttest", "echo")
+    def call_echo_long(self):
+        """Call fast-test-echo with a longer message."""
+        payload = _json_rpc_request(
+            "tools/call",
+            {
+                "name": "fast-test-echo",
+                "arguments": {"message": "A" * 1000},
+            },
+        )
+        self._rpc_request(payload, "/rpc fast-test-echo [long]")
+
+    @task(2)
+    @tag("mcp", "fasttest", "list")
+    def list_tools(self):
+        """List tools via JSON-RPC."""
+        payload = _json_rpc_request("tools/list")
+        self._rpc_request(payload, "/rpc tools/list [fasttest]")
+
+
+class FastTestTimeUser(BaseUser):
+    """User that calls the fast_test MCP server get_system_time tool.
+
+    Tests the fast-test-get-system-time tool via JSON-RPC.
+    Weight: Medium (time testing)
+
+    NOTE: These tests require the fast_test MCP server to be running.
+    Start with: make testing-up
+    502 errors are expected if no MCP server is connected.
+    """
+
+    weight = 3
+    wait_time = between(0.5, 1.5)
+
+    # Test timezones
+    TIMEZONES = [
+        "UTC",
+        "America/New_York",
+        "America/Los_Angeles",
+        "Europe/London",
+        "Europe/Paris",
+        "Europe/Dublin",
+        "Asia/Tokyo",
+        "Asia/Shanghai",
+        "Australia/Sydney",
+    ]
+
+    def _rpc_request(self, payload: dict, name: str):
+        """Make an RPC request with proper error handling."""
+        with self.client.post(
+            "/rpc",
+            json=payload,
+            headers={**self.auth_headers, "Content-Type": "application/json"},
+            name=name,
+            catch_response=True,
+        ) as response:
+            self._validate_jsonrpc_response(response)
+
+    @task(10)
+    @tag("mcp", "fasttest", "time")
+    def call_get_system_time(self):
+        """Call fast-test-get-system-time with a random timezone."""
+        timezone = random.choice(self.TIMEZONES)
+        payload = _json_rpc_request(
+            "tools/call",
+            {
+                "name": "fast-test-get-system-time",
+                "arguments": {"timezone": timezone},
+            },
+        )
+        self._rpc_request(payload, "/rpc fast-test-get-system-time")
+
+    @task(5)
+    @tag("mcp", "fasttest", "time")
+    def call_get_system_time_utc(self):
+        """Call fast-test-get-system-time with UTC timezone."""
+        payload = _json_rpc_request(
+            "tools/call",
+            {
+                "name": "fast-test-get-system-time",
+                "arguments": {"timezone": "UTC"},
+            },
+        )
+        self._rpc_request(payload, "/rpc fast-test-get-system-time [UTC]")
+
+    @task(3)
+    @tag("mcp", "fasttest", "time")
+    def call_get_system_time_local(self):
+        """Call fast-test-get-system-time with America/New_York timezone."""
+        payload = _json_rpc_request(
+            "tools/call",
+            {
+                "name": "fast-test-get-system-time",
+                "arguments": {"timezone": "America/New_York"},
+            },
+        )
+        self._rpc_request(payload, "/rpc fast-test-get-system-time [NYC]")
+
+    @task(2)
+    @tag("mcp", "fasttest", "stats")
+    def call_get_stats(self):
+        """Call fast-test-get-stats to get server statistics."""
+        payload = _json_rpc_request(
+            "tools/call",
+            {
+                "name": "fast-test-get-stats",
+                "arguments": {},
+            },
+        )
+        self._rpc_request(payload, "/rpc fast-test-get-stats")
+
+    @task(2)
+    @tag("mcp", "fasttest", "list")
+    def list_tools(self):
+        """List tools via JSON-RPC."""
+        payload = _json_rpc_request("tools/list")
+        self._rpc_request(payload, "/rpc tools/list [fasttest]")
 
 
 # =============================================================================
@@ -1240,18 +1740,27 @@ class RealisticUser(BaseUser):
     def rpc_list_tools(self):
         """JSON-RPC list tools."""
         payload = _json_rpc_request("tools/list")
-        self.client.post(
+        with self.client.post(
             "/rpc",
             json=payload,
             headers={**self.auth_headers, "Content-Type": "application/json"},
             name="/rpc tools/list",
-        )
+            catch_response=True,
+        ) as response:
+            self._validate_jsonrpc_response(response)
 
     @task(8)
     @tag("realistic", "admin")
     def admin_dashboard(self):
         """Load admin dashboard."""
-        self.client.get("/admin/", headers=self.admin_headers, name="/admin/")
+        with self.client.get(
+            "/admin/",
+            headers=self.admin_headers,
+            name="/admin/",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 502=Bad Gateway (server under high load)
+            self._validate_status(response)
 
     @task(5)
     @tag("realistic", "api")
@@ -1259,7 +1768,14 @@ class RealisticUser(BaseUser):
         """Get specific tool."""
         if TOOL_IDS:
             tool_id = random.choice(TOOL_IDS)
-            self.client.get(f"/tools/{tool_id}", headers=self.auth_headers, name="/tools/[id]")
+            with self.client.get(
+                f"/tools/{tool_id}",
+                headers=self.auth_headers,
+                name="/tools/[id]",
+                catch_response=True,
+            ) as response:
+                # 200=Success, 404=Not found, 502=Bad Gateway
+                self._validate_json_response(response, allowed_codes=[200, 404])
 
     @task(5)
     @tag("realistic", "api")
@@ -1267,7 +1783,14 @@ class RealisticUser(BaseUser):
         """Get specific server."""
         if SERVER_IDS:
             server_id = random.choice(SERVER_IDS)
-            self.client.get(f"/servers/{server_id}", headers=self.auth_headers, name="/servers/[id]")
+            with self.client.get(
+                f"/servers/{server_id}",
+                headers=self.auth_headers,
+                name="/servers/[id]",
+                catch_response=True,
+            ) as response:
+                # 200=Success, 404=Not found, 502=Bad Gateway
+                self._validate_json_response(response, allowed_codes=[200, 404])
 
     @task(2)
     @tag("realistic", "admin")

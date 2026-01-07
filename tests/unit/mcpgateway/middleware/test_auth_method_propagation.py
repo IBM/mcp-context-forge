@@ -50,9 +50,6 @@ async def test_auth_method_propagation_from_plugin():
         credentials="test-token-123",
     )
 
-    # Create mock database session
-    mock_db = MagicMock()
-
     # Mock the plugin manager to return a successful auth with metadata
     mock_plugin_result = PluginResult(
         modified_payload={
@@ -70,13 +67,14 @@ async def test_auth_method_propagation_from_plugin():
         with patch("mcpgateway.auth.get_plugin_manager") as mock_get_pm_auth:
             mock_pm = MagicMock()
             mock_pm.invoke_hook = AsyncMock(return_value=(mock_plugin_result, None))
+            mock_pm.has_hooks_for = MagicMock(return_value=True)  # Enable hook invocation
             mock_get_pm_framework.return_value = mock_pm
             mock_get_pm_auth.return_value = mock_pm
 
             # Call get_current_user - should authenticate via plugin
+            # Note: get_current_user no longer takes db parameter (uses fresh sessions internally)
             user = await get_current_user(
                 credentials=mock_credentials,
-                db=mock_db,
                 request=mock_request,
             )
 

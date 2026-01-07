@@ -134,7 +134,7 @@ RUN set -euo pipefail \
     && . /etc/profile.d/use-openssl.sh \
     && python3 -m venv /app/.venv \
     && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel pdm uv \
-    && /app/.venv/bin/uv pip install ".[redis,postgres,mysql,observability]" \
+    && /app/.venv/bin/uv pip install ".[redis,postgres,mysql,observability,granian]" \
     && if [ "$ENABLE_RUST" = "true" ] && ls /tmp/rust-wheels/*.whl 1> /dev/null 2>&1; then \
         echo "🦀 Installing Rust plugins..."; \
         /app/.venv/bin/pip install --no-cache-dir /tmp/rust-wheels/mcpgateway_rust-*-manylinux*.whl && \
@@ -155,7 +155,7 @@ RUN set -euo pipefail \
 # Now copy only the application files needed for runtime
 # This ensures code changes don't invalidate the dependency layer
 # ----------------------------------------------------------------------------
-COPY run-gunicorn.sh /app/
+COPY run-gunicorn.sh run-granian.sh /app/
 COPY mcpgateway/ /app/mcpgateway/
 COPY gunicorn.config.py /app/
 COPY plugins/ /app/plugins/
@@ -176,7 +176,7 @@ RUN chmod +x /tmp/download-cdn-assets.sh \
 # ----------------------------------------------------------------------------
 # Ensure executable permissions for scripts
 # ----------------------------------------------------------------------------
-RUN chmod +x /app/run-gunicorn.sh /app/run.sh
+RUN chmod +x /app/run-gunicorn.sh /app/run-granian.sh /app/run.sh
 
 # ----------------------------------------------------------------------------
 # Pre-compile Python bytecode with -OO optimization
@@ -348,4 +348,12 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
 # ----------------------------------------------------------------------------
 # Entrypoint
 # ----------------------------------------------------------------------------
-CMD ["./run-gunicorn.sh"]
+# HTTP server selection via HTTP_SERVER environment variable:
+#   - gunicorn : Python-based with Uvicorn workers (default)
+#   - granian  : Rust-based HTTP server (alternative)
+#
+# Examples:
+#   docker run -e HTTP_SERVER=gunicorn mcpgateway  # Default
+#   docker run -e HTTP_SERVER=granian mcpgateway   # Alternative
+ENV HTTP_SERVER=gunicorn
+CMD ["./docker-entrypoint.sh"]

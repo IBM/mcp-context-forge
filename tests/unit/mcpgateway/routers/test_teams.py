@@ -233,6 +233,8 @@ class TestTeamsRouter:
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.list_teams = AsyncMock(return_value=(teams, total))
+            # Mock the batch cached method for member counts
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={str(mock_team.id): 1})
             MockService.return_value = mock_service
 
             from mcpgateway.routers.teams import list_teams
@@ -252,6 +254,8 @@ class TestTeamsRouter:
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.get_user_teams = AsyncMock(return_value=user_teams)
+            # Mock the batch cached method for member counts
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={str(mock_team.id): 1})
             MockService.return_value = mock_service
 
             from mcpgateway.routers.teams import list_teams
@@ -268,6 +272,7 @@ class TestTeamsRouter:
         """Test listing teams with pagination."""
         # Create multiple mock teams
         teams = []
+        member_counts = {}
         for i in range(10):
             team = MagicMock(spec=EmailTeam)
             team.id = str(uuid4())
@@ -283,10 +288,13 @@ class TestTeamsRouter:
             team.is_active = True
             team.get_member_count = MagicMock(return_value=1)
             teams.append(team)
+            member_counts[str(team.id)] = 1
 
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.get_user_teams = AsyncMock(return_value=teams)
+            # Mock the batch cached method for member counts
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value=member_counts)
             MockService.return_value = mock_service
 
             from mcpgateway.routers.teams import list_teams
@@ -821,6 +829,8 @@ class TestTeamsRouter:
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.discover_public_teams = AsyncMock(return_value=public_teams)
+            # Mock the batch cached method for member counts
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={str(mock_public_team.id): 5})
             MockService.return_value = mock_service
 
             from mcpgateway.routers.teams import discover_public_teams

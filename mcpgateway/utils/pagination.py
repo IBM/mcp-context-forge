@@ -41,12 +41,12 @@ import base64
 import json
 import logging
 import math
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlencode
 
 # Third-Party
 from fastapi import Request
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import Select
 
@@ -290,6 +290,7 @@ async def offset_paginate(
     base_url: str,
     query_params: Optional[Dict[str, Any]] = None,
     include_links: bool = True,
+    total_count: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Paginate query using offset-based pagination.
 
@@ -303,6 +304,7 @@ async def offset_paginate(
         base_url: Base URL for link generation
         query_params: Additional query parameters
         include_links: Whether to include navigation links
+        total_count: Pre-computed total count (avoids duplicate count query)
 
     Returns:
         Dictionary with 'data', 'pagination', and 'links' keys
@@ -329,9 +331,12 @@ async def offset_paginate(
     page = max(1, page)
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
 
-    # Get total count
-    count_query = select(func.count()).select_from(query.alias())
-    total_items = db.execute(count_query).scalar() or 0
+    # Get total count (use pre-computed count if provided to avoid duplicate queries)
+    if total_count is not None:
+        total_items = total_count
+    else:
+        count_query = select(func.count()).select_from(query.alias())
+        total_items = db.execute(count_query).scalar() or 0
 
     # Calculate pagination metadata
     total_pages = math.ceil(total_items / per_page) if total_items > 0 else 0
@@ -386,6 +391,7 @@ async def cursor_paginate(
     cursor_id_field: str = "id",
     query_params: Optional[Dict[str, Any]] = None,
     include_links: bool = True,
+    total_count: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Paginate query using cursor-based pagination.
 
@@ -402,6 +408,7 @@ async def cursor_paginate(
         cursor_id_field: ID field for tie-breaking (default: id)
         query_params: Additional query parameters
         include_links: Whether to include navigation links
+        total_count: Pre-computed total count (avoids duplicate count query)
 
     Returns:
         Dictionary with 'data', 'pagination', and 'links' keys
@@ -427,6 +434,9 @@ async def cursor_paginate(
     # Validate parameters
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
 
+    # Store unfiltered query for total count (before cursor filter)
+    unfiltered_query = query
+
     # Decode cursor if provided
     cursor_data = None
     if cursor:
@@ -438,10 +448,30 @@ async def cursor_paginate(
 
     # Apply cursor filter if provided
     if cursor_data:
-        # For descending order (newest first): WHERE created_at < cursor_value
-        # This assumes the query is already ordered by cursor_field desc
-        # You'll need to add the where clause based on cursor_data
-        pass  # Placeholder for cursor filtering logic
+        cursor_value = cursor_data.get(cursor_field)
+        cursor_id_value = cursor_data.get(cursor_id_field)
+
+        if cursor_value and cursor_id_value:
+            # Parse datetime strings for reliable comparisons
+            # Standard
+            from datetime import datetime
+
+            if isinstance(cursor_value, str):
+                try:
+                    cursor_value = datetime.fromisoformat(cursor_value)
+                except (ValueError, TypeError):
+                    pass  # Keep as string if parsing fails
+
+            # Extract model class from query to access columns
+            entities = query.column_descriptions
+            if entities:
+                model = entities[0]["entity"]
+                cursor_col = getattr(model, cursor_field)
+                id_col = getattr(model, cursor_id_field)
+
+                # Keyset pagination for descending order (created_at DESC, id DESC)
+                # Filter: WHERE created_at < cursor_value OR (created_at = cursor_value AND id < cursor_id)
+                query = query.where(or_(cursor_col < cursor_value, and_(cursor_col == cursor_value, id_col < cursor_id_value)))
 
     # Fetch one extra item to determine if there's a next page
     paginated_query = query.limit(per_page + 1)
@@ -463,9 +493,13 @@ async def cursor_paginate(
             }
         )
 
-    # Get approximate total count (expensive for large tables)
-    count_query = select(func.count()).select_from(query.alias())
-    total_items = db.execute(count_query).scalar() or 0
+    # Get total count (use pre-computed count if provided to avoid duplicate queries)
+    # Use unfiltered_query for count so total_items reflects the full dataset, not remaining items
+    if total_count is not None:
+        total_items = total_count
+    else:
+        count_query = select(func.count()).select_from(unfiltered_query.alias())
+        total_items = db.execute(count_query).scalar() or 0
 
     # Build pagination metadata
     pagination = PaginationMeta(
@@ -509,6 +543,7 @@ async def paginate_query(
     base_url: str = "",
     query_params: Optional[Dict[str, Any]] = None,
     use_cursor_threshold: bool = True,
+    total_count: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Automatically paginate query using best strategy.
 
@@ -524,6 +559,7 @@ async def paginate_query(
         base_url: Base URL for link generation
         query_params: Additional query parameters
         use_cursor_threshold: Whether to auto-switch to cursor-based
+        total_count: Pre-computed total count (avoids duplicate count query)
 
     Returns:
         Dictionary with 'data', 'pagination', and 'links' keys
@@ -560,15 +596,21 @@ async def paginate_query(
             per_page=per_page,
             base_url=base_url,
             query_params=query_params,
+            total_count=total_count,
         )
 
     # Check if we should use cursor-based pagination based on total count
     if use_cursor_threshold and settings.pagination_cursor_enabled:
-        count_query = select(func.count()).select_from(query.alias())
-        total_items = db.execute(count_query).scalar() or 0
+        # Use pre-computed count if provided, otherwise query for it
+        if total_count is not None:
+            total_items = total_count
+        else:
+            count_query = select(func.count()).select_from(query.alias())
+            total_items = db.execute(count_query).scalar() or 0
 
         if total_items > settings.pagination_cursor_threshold:
             logger.info(f"Switching to cursor-based pagination (total_items={total_items} > threshold={settings.pagination_cursor_threshold})")
+            # Pass pre-computed count to cursor_paginate to avoid duplicate query
             return await cursor_paginate(
                 db=db,
                 query=query,
@@ -576,9 +618,21 @@ async def paginate_query(
                 per_page=per_page,
                 base_url=base_url,
                 query_params=query_params,
+                total_count=total_items,
             )
 
-    # Use offset-based pagination
+        # Pass pre-computed count to offset_paginate to avoid duplicate query
+        return await offset_paginate(
+            db=db,
+            query=query,
+            page=page,
+            per_page=per_page,
+            base_url=base_url,
+            query_params=query_params,
+            total_count=total_items,
+        )
+
+    # Use offset-based pagination (no threshold check was performed)
     return await offset_paginate(
         db=db,
         query=query,
@@ -586,7 +640,150 @@ async def paginate_query(
         per_page=per_page,
         base_url=base_url,
         query_params=query_params,
+        total_count=total_count,
     )
+
+
+async def unified_paginate(
+    db: Session,
+    query: Select,
+    page: Optional[int] = None,
+    per_page: Optional[int] = None,
+    cursor: Optional[str] = None,
+    limit: Optional[int] = None,
+    base_url: str = "",
+    query_params: Optional[Dict[str, Any]] = None,
+) -> Union[Dict[str, Any], Tuple[List[Any], Optional[str]]]:
+    """Unified pagination helper that returns cursor or page format based on parameters.
+
+    This function eliminates duplication in service methods by handling both pagination
+    styles in one place. It automatically returns the appropriate format:
+    - Page-based format when `page` is provided: {"data": [...], "pagination": {...}, "links": {...}}
+    - Cursor-based format when `cursor` or neither is provided: (list, next_cursor)
+
+    Args:
+        db: Database session
+        query: SQLAlchemy select query (must include ORDER BY for cursor pagination)
+        page: Page number for page-based pagination (1-indexed)
+        per_page: Items per page for page-based pagination
+        cursor: Cursor for cursor-based pagination
+        limit: Maximum items for cursor-based pagination (overrides default page size)
+        base_url: Base URL for link generation in page-based mode
+        query_params: Additional query parameters for links
+
+    Returns:
+        Union[Dict[str, Any], Tuple[List[Any], Optional[str]]]:
+            If page is provided: Dict with {"data": [...], "pagination": {...}, "links": {...}}
+            Otherwise: tuple of (list, next_cursor) for backward compatibility
+
+    Examples:
+        >>> import asyncio
+        >>> from unittest.mock import MagicMock
+        >>>
+        >>> # Test cursor-based pagination returns tuple format (list, next_cursor)
+        >>> async def test_cursor_based():
+        ...     mock_db = MagicMock()
+        ...     mock_query = MagicMock()
+        ...     mock_query.column_descriptions = []
+        ...     mock_query.limit = MagicMock(return_value=mock_query)
+        ...     mock_db.execute = MagicMock(return_value=MagicMock(
+        ...         scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+        ...     ))
+        ...     result = await unified_paginate(
+        ...         db=mock_db,
+        ...         query=mock_query,
+        ...         cursor=None,
+        ...         limit=50
+        ...     )
+        ...     return isinstance(result, tuple) and len(result) == 2
+        >>> asyncio.run(test_cursor_based())
+        True
+        >>>
+        >>> # Verify return type difference: cursor mode returns tuple, page mode returns dict
+        >>> # Note: Page-based mode testing requires complex SQLAlchemy mocking,
+        >>> # see unit tests in tests/ for comprehensive page-based pagination tests
+    """
+
+    # Determine page size
+    if per_page is None:
+        per_page = limit if limit and limit > 0 else settings.pagination_default_page_size
+
+    # PAGE-BASED PAGINATION
+    if page is not None:
+        # Use existing paginate_query for page-based
+        result = await paginate_query(
+            db=db,
+            query=query,
+            page=page,
+            per_page=per_page,
+            base_url=base_url,
+            query_params=query_params,
+            use_cursor_threshold=False,  # Explicit page-based mode
+        )
+
+        return result
+
+    # CURSOR-BASED PAGINATION
+    # Determine page size from limit parameter
+    if limit is not None:
+        if limit == 0:
+            page_size = None  # No limit, fetch all
+        else:
+            page_size = min(limit, settings.pagination_max_page_size)
+    else:
+        page_size = settings.pagination_default_page_size
+
+    # Decode cursor if provided
+    # Standard
+    from datetime import datetime
+
+    last_id = None
+    last_created = None
+    if cursor:
+        try:
+            cursor_data = decode_cursor(cursor)
+            last_id = cursor_data.get("id")
+            created_str = cursor_data.get("created_at")
+            if created_str:
+                last_created = datetime.fromisoformat(created_str)
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Invalid cursor, ignoring: {e}")
+
+    # Apply cursor filter with keyset pagination (assumes query already has ORDER BY)
+    if last_id and last_created:
+        # Extract model from query to apply filters
+        entities = query.column_descriptions
+        if entities:
+            # Third-Party
+            from sqlalchemy import and_, or_
+
+            model = entities[0]["entity"]
+            # Assumes descending order: created_at DESC, id DESC
+            query = query.where(or_(model.created_at < last_created, and_(model.created_at == last_created, model.id < last_id)))
+
+    # Fetch page_size + 1 to determine if there are more results
+    if page_size is not None:
+        query = query.limit(page_size + 1)
+    items = db.execute(query).scalars().all()
+
+    # Check if there are more results
+    has_more = False
+    if page_size is not None:
+        has_more = len(items) > page_size
+        if has_more:
+            items = items[:page_size]
+
+    # Generate next_cursor if there are more results
+    next_cursor = None
+    if has_more and items:
+        last_item = items[-1]
+        cursor_data = {"created_at": getattr(last_item, "created_at", None), "id": getattr(last_item, "id", None)}
+        # Handle datetime serialization
+        if cursor_data["created_at"]:
+            cursor_data["created_at"] = cursor_data["created_at"].isoformat()
+        next_cursor = encode_cursor(cursor_data)
+
+    return (items, next_cursor)
 
 
 def parse_pagination_params(request: Request) -> Dict[str, Any]:

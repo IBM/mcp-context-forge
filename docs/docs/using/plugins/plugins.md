@@ -82,6 +82,7 @@ Plugins for filtering, validating, and controlling content.
 | [Output Length Guard](https://github.com/IBM/mcp-context-forge/tree/main/plugins/output_length_guard) | Native | Guards tool outputs by length with block or truncate strategies |
 | [Schema Guard](https://github.com/IBM/mcp-context-forge/tree/main/plugins/schema_guard) | Native | Validates tool arguments and results against JSONSchema subset with optional blocking |
 | [Citation Validator](https://github.com/IBM/mcp-context-forge/tree/main/plugins/citation_validator) | Native | Validates citations/links by checking reachability and optional content keywords |
+| [SPARC Syntactic Tool Calls Validator](https://github.com/IBM/mcp-context-forge/tree/main/plugins/sparc_static_validator) | Native | Performs pre-execution syntactic validation of tool calls against their JSON Schemas - checking required parameters, types, enums, and schema constraints - and can automatically suggest or apply safe corrections (e.g., type coercions) before the tool is executed. |
 
 
 ## Compliance & Governance

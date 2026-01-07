@@ -31,12 +31,13 @@ Example Usage:
 # Standard
 import logging
 import re
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 # Third-Party
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import GlobalConfig
@@ -169,6 +170,8 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
     Examples:
         Feature disabled by default (secure by default):
         >>> from unittest.mock import Mock, patch
+        >>> from mcpgateway.cache.global_config_cache import global_config_cache
+        >>> global_config_cache.invalidate()  # Clear cache for isolated test
         >>> with patch(__name__ + ".settings") as mock_settings:
         ...     mock_settings.enable_header_passthrough = False
         ...     mock_settings.default_passthrough_headers = ["X-Tenant-Id"]
@@ -180,6 +183,7 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
         {'Content-Type': 'application/json'}
 
         Enabled with allowlist and conflicts:
+        >>> global_config_cache.invalidate()  # Clear cache for isolated test
         >>> with patch(__name__ + ".settings") as mock_settings:
         ...     mock_settings.enable_header_passthrough = True
         ...     mock_settings.default_passthrough_headers = ["X-Tenant-Id", "Authorization"]
@@ -243,9 +247,9 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
     if settings.enable_overwrite_base_headers:
         logger.debug("Overwriting base headers is enabled via ENABLE_OVERWRITE_BASE_HEADERS flag")
 
-    # Get global passthrough headers first
-    global_config = db.query(GlobalConfig).first()
-    allowed_headers = global_config.passthrough_headers if global_config else settings.default_passthrough_headers
+    # Get global passthrough headers from in-memory cache (Issue #1715)
+    # This eliminates redundant DB queries for static configuration
+    allowed_headers = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
 
     # Gateway specific headers override global config
     if gateway:
@@ -301,6 +305,125 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
                 logger.debug(f"Header {header_name} not found in request headers, skipping passthrough")
 
     logger.debug(f"Final passthrough headers: {list(passthrough_headers.keys())}")
+    return passthrough_headers
+
+
+def compute_passthrough_headers_cached(
+    request_headers: Dict[str, str],
+    base_headers: Dict[str, str],
+    allowed_headers: List[str],
+    gateway_auth_type: Optional[str] = None,
+    gateway_passthrough_headers: Optional[List[str]] = None,
+) -> Dict[str, str]:
+    """Compute passthrough headers without database query.
+
+    Use this when GlobalConfig has already been fetched and cached, to avoid
+    repeated database queries during high-frequency operations like tool invocation.
+
+    This function implements the same header passthrough logic as get_passthrough_headers()
+    but accepts pre-fetched configuration values instead of querying the database.
+
+    Args:
+        request_headers: Headers from the incoming HTTP request.
+        base_headers: Base headers that should always be included (auth, content-type, etc.).
+        allowed_headers: List of header names allowed to pass through (from GlobalConfig).
+        gateway_auth_type: The gateway's auth_type (basic, bearer, oauth, none) if applicable.
+        gateway_passthrough_headers: Gateway-specific passthrough headers override.
+
+    Returns:
+        Combined dictionary of base headers plus allowed passthrough headers.
+
+    Examples:
+        >>> from unittest.mock import patch
+        >>> from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
+        >>> request = {"X-Tenant-Id": "acme", "Authorization": "secret"}
+        >>> base = {"Content-Type": "application/json"}
+        >>> allowed = ["X-Tenant-Id"]
+        >>> with patch("mcpgateway.utils.passthrough_headers.settings") as mock_settings:
+        ...     mock_settings.enable_header_passthrough = True
+        ...     mock_settings.enable_overwrite_base_headers = False
+        ...     result = compute_passthrough_headers_cached(request, base, allowed, gateway_auth_type=None)
+        >>> "X-Tenant-Id" in result
+        True
+        >>> result.get("Authorization") is None  # Not in allowed list
+        True
+    """
+    passthrough_headers = base_headers.copy()
+
+    # Special handling for X-Upstream-Authorization header (always enabled)
+    request_headers_lower = {k.lower(): v for k, v in request_headers.items()} if request_headers else {}
+    upstream_auth = request_headers_lower.get("x-upstream-authorization")
+
+    if upstream_auth:
+        try:
+            sanitized_value = sanitize_header_value(upstream_auth)
+            if sanitized_value:
+                passthrough_headers["Authorization"] = sanitized_value
+                logger.debug("Renamed X-Upstream-Authorization to Authorization for upstream passthrough")
+        except Exception as e:
+            logger.warning(f"Failed to sanitize X-Upstream-Authorization header: {e}")
+    elif gateway_auth_type == "none":
+        # When gateway has no auth, pass through client's Authorization if present
+        client_auth = request_headers_lower.get("authorization")
+        if client_auth and "authorization" not in [h.lower() for h in base_headers.keys()]:
+            try:
+                sanitized_value = sanitize_header_value(client_auth)
+                if sanitized_value:
+                    passthrough_headers["Authorization"] = sanitized_value
+                    logger.debug("Passing through client Authorization header (auth_type=none)")
+            except Exception as e:
+                logger.warning(f"Failed to sanitize Authorization header: {e}")
+
+    # Early return if header passthrough feature is disabled
+    if not settings.enable_header_passthrough:
+        logger.debug("Header passthrough is disabled via ENABLE_HEADER_PASSTHROUGH flag")
+        return passthrough_headers
+
+    # Use gateway-specific headers if provided, otherwise use global allowed_headers
+    effective_allowed = gateway_passthrough_headers if gateway_passthrough_headers is not None else allowed_headers
+
+    # Create case-insensitive lookup for base headers
+    base_headers_keys = {key.lower(): key for key in passthrough_headers.keys()}
+
+    # Copy allowed headers from request
+    if request_headers_lower and effective_allowed:
+        for header_name in effective_allowed:
+            # Validate header name
+            if not validate_header_name(header_name):
+                logger.warning(f"Invalid header name '{header_name}' - skipping (must match pattern: {HEADER_NAME_REGEX.pattern})")
+                continue
+
+            header_lower = header_name.lower()
+            header_value = request_headers_lower.get(header_lower)
+
+            if header_value:
+                # Sanitize header value
+                try:
+                    sanitized_value = sanitize_header_value(header_value)
+                    if not sanitized_value:
+                        logger.warning(f"Header {header_name} value became empty after sanitization - skipping")
+                        continue
+                except Exception as e:
+                    logger.warning(f"Failed to sanitize header {header_name}: {e} - skipping")
+                    continue
+
+                # Skip if header would conflict with existing auth headers
+                if header_lower in base_headers_keys and not settings.enable_overwrite_base_headers:
+                    logger.warning(f"Skipping {header_name} header passthrough as it conflicts with pre-defined headers")
+                    continue
+
+                # Skip if header would conflict with gateway auth
+                if gateway_auth_type in ("basic", "bearer") and header_lower == "authorization":
+                    logger.warning(f"Skipping Authorization header passthrough due to {gateway_auth_type} auth configuration")
+                    continue
+
+                # Use original header name casing from configuration, sanitized value from request
+                passthrough_headers[header_name] = sanitized_value
+                logger.debug(f"Added passthrough header: {header_name}")
+            else:
+                logger.debug(f"Header {header_name} not found in request headers, skipping passthrough")
+
+    logger.debug(f"Final passthrough headers (cached): {list(passthrough_headers.keys())}")
     return passthrough_headers
 
 
@@ -368,6 +491,8 @@ async def set_global_passthrough_headers(db: Session) -> None:
         This function is typically called during application startup to ensure
         global configuration is in place before any gateway operations.
     """
+    # Query DB directly here (not cache) because we need to check if config exists
+    # to decide whether to create it
     global_config = db.query(GlobalConfig).first()
 
     if not global_config:
@@ -384,6 +509,8 @@ async def set_global_passthrough_headers(db: Session) -> None:
         try:
             db.add(GlobalConfig(passthrough_headers=allowed_headers))
             db.commit()
+            # Invalidate cache so next read picks up new config (Issue #1715)
+            global_config_cache.invalidate()
         except Exception as e:
             db.rollback()
             raise PassthroughHeadersError(f"Failed to update passthrough headers: {str(e)}")

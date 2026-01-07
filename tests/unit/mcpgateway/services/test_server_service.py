@@ -207,7 +207,7 @@ class TestServerService:
 
         test_db.query.side_effect = query_side_effect
         server_service._notify_server_updated = AsyncMock()
-        server_service._convert_server_to_read = Mock(
+        server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
                 id="1",
                 name="updated_server",
@@ -292,8 +292,13 @@ class TestServerService:
         def capture_add(server):
             nonlocal added_server
             added_server = server
+            # Standard
+            from datetime import datetime, timezone
+
             # Set up the mock server to be returned later
-            server.id = 1
+            server.id = "1"  # Must be string, not int
+            server.created_at = datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+            server.updated_at = datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
             server.tools = mock_tools
             server.resources = mock_resources
             server.prompts = mock_prompts
@@ -312,16 +317,19 @@ class TestServerService:
             }.get((cls, _id))
         )
 
+        # Standard
+        from datetime import datetime, timezone
+
         # Stub helper that converts to the public schema
         server_service._notify_server_added = AsyncMock()
-        server_service._convert_server_to_read = Mock(
+        server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
                 id="1",
                 name="test_server",
                 description="A test server",
                 icon="server-icon",
-                created_at="2023-01-01T00:00:00",
-                updated_at="2023-01-01T00:00:00",
+                created_at=datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+                updated_at=datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
                 enabled=True,
                 associated_tools=["101"],
                 associated_resources=["201"],
@@ -443,14 +451,16 @@ class TestServerService:
                 "last_execution_time": None,
             },
         )
-        server_service._convert_server_to_read = Mock(return_value=server_read)
+        server_service.convert_server_to_read = Mock(return_value=server_read)
 
         result = await server_service.list_servers(test_db)
 
         # test_db.execute.assert_called_once()
         test_db.execute.call_count = 2
-        assert result == [server_read]
-        server_service._convert_server_to_read.assert_called_once_with(mock_server)
+        servers, cursor = result
+        assert servers == [server_read]
+        assert cursor is None
+        server_service.convert_server_to_read.assert_called_once_with(mock_server, include_metrics=False)
 
     @pytest.mark.asyncio
     async def test_get_server(self, server_service, mock_server, test_db):
@@ -479,7 +489,7 @@ class TestServerService:
                 "last_execution_time": None,
             },
         )
-        server_service._convert_server_to_read = Mock(return_value=server_read)
+        server_service.convert_server_to_read = Mock(return_value=server_read)
 
         result = await server_service.get_server(test_db, 1)
 
@@ -560,7 +570,7 @@ class TestServerService:
         mock_server.prompts = prompt_items
 
         server_service._notify_server_updated = AsyncMock()
-        server_service._convert_server_to_read = Mock(
+        server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
                 id="1",
                 name="updated_server",
@@ -719,7 +729,7 @@ class TestServerService:
 
         server_service._notify_server_activated = AsyncMock()
         server_service._notify_server_deactivated = AsyncMock()
-        server_service._convert_server_to_read = Mock(
+        server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
                 id="1",
                 name="test_server",
@@ -747,7 +757,8 @@ class TestServerService:
         result = await server_service.toggle_server_status(test_db, 1, activate=False)
 
         test_db.get.assert_called_once_with(DbServer, 1)
-        test_db.commit.assert_called_once()
+        # commit called twice: once for status change, once in _get_team_name to release transaction
+        assert test_db.commit.call_count == 2
         test_db.refresh.assert_called_once()
         server_service._notify_server_deactivated.assert_called_once()
         assert result.enabled is False
@@ -768,6 +779,20 @@ class TestServerService:
         server_service._notify_server_deleted.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_delete_server_purge_metrics(self, server_service, mock_server, test_db):
+        test_db.get = Mock(return_value=mock_server)
+        test_db.delete = Mock()
+        test_db.commit = Mock()
+        test_db.execute = Mock()
+        server_service._notify_server_deleted = AsyncMock()
+
+        await server_service.delete_server(test_db, 1, purge_metrics=True)
+
+        assert test_db.execute.call_count == 2
+        test_db.delete.assert_called_once_with(mock_server)
+        test_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_delete_server_not_found(self, server_service, test_db):
         test_db.get = Mock(return_value=None)
         with pytest.raises(ServerError) as exc:
@@ -780,7 +805,7 @@ class TestServerService:
         test_db.execute = Mock()
         test_db.commit = Mock()
         await server_service.reset_metrics(test_db)
-        test_db.execute.assert_called_once()
+        assert test_db.execute.call_count == 2
         test_db.commit.assert_called_once()
 
     # --------------------------- UUID normalization -------------------- #
@@ -813,7 +838,7 @@ class TestServerService:
 
         # Mock service methods
         server_service._notify_server_added = AsyncMock()
-        server_service._convert_server_to_read = Mock(
+        server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
                 id=expected_hex_uuid,
                 name="UUID Normalization Test",
@@ -884,7 +909,7 @@ class TestServerService:
 
         # Mock service methods
         server_service._notify_server_added = AsyncMock()
-        server_service._convert_server_to_read = Mock(
+        server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
                 id=expected_hex_uuid,
                 name="Hex UUID Test",
@@ -948,7 +973,7 @@ class TestServerService:
 
         # Mock service methods
         server_service._notify_server_added = AsyncMock()
-        server_service._convert_server_to_read = Mock(
+        server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
                 id="auto_generated_uuid_32_chars_hex",
                 name="Auto UUID Test",
@@ -1045,7 +1070,7 @@ class TestServerService:
 
         # Mock service methods
         server_service._notify_server_updated = AsyncMock()
-        server_service._convert_server_to_read = Mock(
+        server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
                 id=expected_hex_uuid,
                 name="Updated Server",
@@ -1113,10 +1138,14 @@ class TestServerService:
 
         # Mock query chain
         mock_query = MagicMock()
+        mock_query.options.return_value = mock_query  # For selectinload
         mock_query.where.return_value = mock_query
+        mock_query.order_by.return_value = mock_query
+        mock_query.limit.return_value = mock_query
 
         session = MagicMock()
         session.execute.return_value.scalars.return_value.all.return_value = [mock_server]
+        session.commit.return_value = None
 
         bind = MagicMock()
         bind.dialect = MagicMock()
@@ -1142,6 +1171,9 @@ class TestServerService:
                 assert called_args[2] == ["test", "production"]
                 # and the fake condition returned must have been passed to where()
                 mock_query.where.assert_called_with(fake_condition)
-                # finally, your service should return the list produced by mock_db.execute(...)
-                assert isinstance(result, list)
-                assert len(result) == 1
+                # finally, your service should return a tuple (list, cursor)
+                assert isinstance(result, tuple)
+                servers, cursor = result
+                assert isinstance(servers, list)
+                assert len(servers) == 1
+                assert cursor is None

@@ -17,6 +17,7 @@ This suite provides complete test coverage for:
 
 # Standard
 import asyncio
+import time
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -231,7 +232,7 @@ class TestResourceRegistration:
         with (
             patch.object(resource_service, "_detect_mime_type", return_value="text/plain"),
             patch.object(resource_service, "_notify_resource_added", new_callable=AsyncMock),
-            patch.object(resource_service, "_convert_resource_to_read") as mock_convert,
+            patch.object(resource_service, "convert_resource_to_read") as mock_convert,
         ):
             mock_convert.return_value = ResourceRead(
                 id="39334ce0ed2644d79ede8913a66930c9",
@@ -347,7 +348,7 @@ class TestResourceRegistration:
         with (
             patch.object(resource_service, "_detect_mime_type", return_value="application/octet-stream"),
             patch.object(resource_service, "_notify_resource_added", new_callable=AsyncMock),
-            patch.object(resource_service, "_convert_resource_to_read") as mock_convert,
+            patch.object(resource_service, "convert_resource_to_read") as mock_convert,
         ):
             mock_convert.return_value = ResourceRead(
                 id="39334ce0ed2644d79ede8913a66930c9",
@@ -554,7 +555,7 @@ class TestResourceManagement:
         """Test activating an inactive resource."""
         mock_db.get.return_value = mock_inactive_resource
 
-        with patch.object(resource_service, "_notify_resource_activated", new_callable=AsyncMock), patch.object(resource_service, "_convert_resource_to_read") as mock_convert:
+        with patch.object(resource_service, "_notify_resource_activated", new_callable=AsyncMock), patch.object(resource_service, "convert_resource_to_read") as mock_convert:
             mock_convert.return_value = ResourceRead(
                 id="39334ce0ed2644d79ede8913a66930c9",
                 uri=mock_inactive_resource.uri,
@@ -581,14 +582,15 @@ class TestResourceManagement:
             result = await resource_service.toggle_resource_status(mock_db, 2, activate=True)
 
             assert mock_inactive_resource.enabled is True
-            mock_db.commit.assert_called_once()
+            # commit called twice: once for status change, once in _get_team_name to release transaction
+            assert mock_db.commit.call_count == 2
 
     @pytest.mark.asyncio
     async def test_toggle_resource_status_deactivate(self, resource_service, mock_db, mock_resource):
         """Test deactivating an active resource."""
         mock_db.get.return_value = mock_resource
 
-        with patch.object(resource_service, "_notify_resource_deactivated", new_callable=AsyncMock), patch.object(resource_service, "_convert_resource_to_read") as mock_convert:
+        with patch.object(resource_service, "_notify_resource_deactivated", new_callable=AsyncMock), patch.object(resource_service, "convert_resource_to_read") as mock_convert:
             mock_convert.return_value = ResourceRead(
                 id="39334ce0ed2644d79ede8913a66930c9",
                 uri=mock_resource.uri,
@@ -615,7 +617,8 @@ class TestResourceManagement:
             result = await resource_service.toggle_resource_status(mock_db, 1, activate=False)
 
             assert mock_resource.enabled is False
-            mock_db.commit.assert_called_once()
+            # commit called twice: once for status change, once in _get_team_name to release transaction
+            assert mock_db.commit.call_count == 2
 
     @pytest.mark.asyncio
     async def test_toggle_resource_status_not_found(self, resource_service, mock_db):
@@ -634,7 +637,7 @@ class TestResourceManagement:
         mock_db.get.return_value = mock_resource
         mock_resource.enabled = True
 
-        with patch.object(resource_service, "_convert_resource_to_read") as mock_convert:
+        with patch.object(resource_service, "convert_resource_to_read") as mock_convert:
             mock_convert.return_value = ResourceRead(
                 id="39334ce0ed2644d79ede8913a66930c9",
                 uri=mock_resource.uri,
@@ -661,8 +664,8 @@ class TestResourceManagement:
             # Try to activate already active resource
             result = await resource_service.toggle_resource_status(mock_db, 1, activate=True)
 
-            # Should not commit or notify
-            mock_db.commit.assert_not_called()
+            # No status change commit, but _get_team_name commits to release transaction
+            assert mock_db.commit.call_count == 1
 
     @pytest.mark.asyncio
     async def test_update_resource_success(self, resource_service, mock_db, mock_resource):
@@ -675,7 +678,7 @@ class TestResourceManagement:
         mock_db.execute.return_value = mock_scalar
         mock_db.get.return_value = mock_resource
 
-        with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock), patch.object(resource_service, "_convert_resource_to_read") as mock_convert:
+        with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock), patch.object(resource_service, "convert_resource_to_read") as mock_convert:
             mock_convert.return_value = ResourceRead(
                 id="39334ce0ed2644d79ede8913a66930c9",
                 uri=mock_resource.uri,
@@ -748,7 +751,7 @@ class TestResourceManagement:
         mock_scalar.scalar_one_or_none.return_value = mock_resource
         mock_db.execute.return_value = mock_scalar
 
-        with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock), patch.object(resource_service, "_convert_resource_to_read") as mock_convert:
+        with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock), patch.object(resource_service, "convert_resource_to_read") as mock_convert:
             mock_convert.return_value = ResourceRead(
                 id="",
                 uri=mock_resource.uri,
@@ -848,6 +851,20 @@ class TestResourceDeletion:
         with patch.object(resource_service, "_notify_resource_deleted", new_callable=AsyncMock):
             await resource_service.delete_resource(mock_db, "test://resource")
 
+            mock_db.delete.assert_called_once_with(mock_resource)
+            mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_delete_resource_purge_metrics(self, resource_service, mock_db, mock_resource):
+        """Test resource deletion with metric purge."""
+        mock_scalar = MagicMock()
+        mock_scalar.scalar_one_or_none.return_value = mock_resource
+        mock_db.execute.return_value = mock_scalar
+
+        with patch.object(resource_service, "_notify_resource_deleted", new_callable=AsyncMock):
+            await resource_service.delete_resource(mock_db, "test://resource", purge_metrics=True)
+
+            assert mock_db.execute.call_count == 4
             mock_db.delete.assert_called_once_with(mock_resource)
             mock_db.commit.assert_called_once()
 
@@ -1066,10 +1083,12 @@ class TestResourceTemplates:
         template = "test://resource/{id}/details/{type}"
         uri = "test://resource/123/details/info"
 
-        with patch("mcpgateway.services.resource_service.parse.parse") as mock_parse:
+        with patch("mcpgateway.services.resource_service.parse.compile") as mock_compile:
+            mock_parser = MagicMock()
             mock_result = MagicMock()
             mock_result.named = {"id": "123", "type": "info"}
-            mock_parse.return_value = mock_result
+            mock_parser.parse.return_value = mock_result
+            mock_compile.return_value = mock_parser
 
             params = resource_service._extract_template_params(uri, template)
 
@@ -1080,8 +1099,10 @@ class TestResourceTemplates:
         template = "test://resource/{id}"
         uri = "other://resource/123"
 
-        with patch("mcpgateway.services.resource_service.parse.parse") as mock_parse:
-            mock_parse.return_value = None
+        with patch("mcpgateway.services.resource_service.parse.compile") as mock_compile:
+            mock_parser = MagicMock()
+            mock_parser.parse.return_value = None
+            mock_compile.return_value = mock_parser
 
             params = resource_service._extract_template_params(uri, template)
 
@@ -1210,27 +1231,31 @@ class TestResourceMetrics:
 
     @pytest.mark.asyncio
     async def test_aggregate_metrics(self, resource_service, mock_db):
-        """Test metrics aggregation."""
-        # Mock a single aggregated query result with .one() call
-        mock_result = MagicMock()
-        mock_result.total_executions = 100
-        mock_result.successful_executions = 80
-        mock_result.failed_executions = 20
-        mock_result.min_response_time = 0.1
-        mock_result.max_response_time = 2.5
-        mock_result.avg_response_time = 1.2
-        mock_result.last_execution_time = datetime.now(timezone.utc)
+        """Test metrics aggregation using combined raw + rollup query."""
+        from unittest.mock import patch
+        from mcpgateway.services.metrics_query_service import AggregatedMetrics
 
-        execute_result = MagicMock()
-        execute_result.one.return_value = mock_result
-        mock_db.execute.return_value = execute_result
+        # Create a mock AggregatedMetrics result
+        mock_result = AggregatedMetrics(
+            total_executions=100,
+            successful_executions=80,
+            failed_executions=20,
+            failure_rate=0.2,
+            min_response_time=0.1,
+            max_response_time=2.5,
+            avg_response_time=1.2,
+            last_execution_time=datetime.now(timezone.utc),
+            raw_count=60,
+            rollup_count=40,
+        )
 
-        result = await resource_service.aggregate_metrics(mock_db)
+        with patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", return_value=mock_result):
+            result = await resource_service.aggregate_metrics(mock_db)
 
         assert result.total_executions == 100
         assert result.successful_executions == 80
         assert result.failed_executions == 20
-        assert result.failure_rate == 0.2  # 20/100
+        assert result.failure_rate == 0.2
         assert result.min_response_time == 0.1
         assert result.max_response_time == 2.5
         assert result.avg_response_time == 1.2
@@ -1238,21 +1263,25 @@ class TestResourceMetrics:
     @pytest.mark.asyncio
     async def test_aggregate_metrics_empty(self, resource_service, mock_db):
         """Test metrics aggregation with no data."""
-        # Mock empty database result
-        mock_result = MagicMock()
-        mock_result.total_executions = 0
-        mock_result.successful_executions = 0
-        mock_result.failed_executions = 0
-        mock_result.min_response_time = None
-        mock_result.max_response_time = None
-        mock_result.avg_response_time = None
-        mock_result.last_execution_time = None
+        from unittest.mock import patch
+        from mcpgateway.services.metrics_query_service import AggregatedMetrics
 
-        execute_result = MagicMock()
-        execute_result.one.return_value = mock_result
-        mock_db.execute.return_value = execute_result
+        # Create a mock AggregatedMetrics result with no data
+        mock_result = AggregatedMetrics(
+            total_executions=0,
+            successful_executions=0,
+            failed_executions=0,
+            failure_rate=0.0,
+            min_response_time=None,
+            max_response_time=None,
+            avg_response_time=None,
+            last_execution_time=None,
+            raw_count=0,
+            rollup_count=0,
+        )
 
-        result = await resource_service.aggregate_metrics(mock_db)
+        with patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", return_value=mock_result):
+            result = await resource_service.aggregate_metrics(mock_db)
 
         assert result.total_executions == 0
         assert result.failure_rate == 0.0
@@ -1263,7 +1292,7 @@ class TestResourceMetrics:
         """Test metrics reset."""
         await resource_service.reset_metrics(mock_db)
 
-        mock_db.execute.assert_called_once()
+        assert mock_db.execute.call_count == 2
         mock_db.commit.assert_called_once()
 
 
@@ -1290,7 +1319,7 @@ class TestUtilityMethods:
         result = resource_service._detect_mime_type(uri, content)
         assert result == expected
 
-    def test_convert_resource_to_read(self, resource_service, mock_resource):
+    def testconvert_resource_to_read(self, resource_service, mock_resource):
         """Resource → ResourceRead with populated metrics."""
         # create two mock metric rows
         metric1, metric2 = MagicMock(), MagicMock()
@@ -1299,7 +1328,7 @@ class TestUtilityMethods:
         metric1.timestamp = metric2.timestamp = datetime.now(timezone.utc)
         mock_resource.metrics = [metric1, metric2]
 
-        result = resource_service._convert_resource_to_read(mock_resource)
+        result = resource_service.convert_resource_to_read(mock_resource, include_metrics=True)
         m = result.metrics  # ResourceMetrics model
 
         assert m.total_executions == 2
@@ -1307,20 +1336,20 @@ class TestUtilityMethods:
         assert m.failed_executions == 1
         assert m.failure_rate == 0.5
 
-    def test_convert_resource_to_read_no_metrics(self, resource_service, mock_resource):
+    def testconvert_resource_to_read_no_metrics(self, resource_service, mock_resource):
         """Conversion when metrics list is empty."""
         mock_resource.metrics = []
 
-        m = resource_service._convert_resource_to_read(mock_resource).metrics
+        m = resource_service.convert_resource_to_read(mock_resource, include_metrics=True).metrics
         assert m.total_executions == 0
         assert m.failure_rate == 0.0
         assert m.min_response_time is None
 
-    def test_convert_resource_to_read_none_metrics(self, resource_service, mock_resource):
+    def testconvert_resource_to_read_none_metrics(self, resource_service, mock_resource):
         """Conversion when metrics is None."""
         mock_resource.metrics = None
 
-        m = resource_service._convert_resource_to_read(mock_resource).metrics
+        m = resource_service.convert_resource_to_read(mock_resource, include_metrics=True).metrics
         assert m.total_executions == 0
         assert m.failure_rate == 0.0
         assert m.min_response_time is None
@@ -1544,7 +1573,7 @@ class TestResourceServiceMetricsExtended:
                 # third positional arg is the tags list (signature: session, col, values, match_any=True)
                 assert called_args[2] == ["test", "production"]
                 # and the fake condition returned must have been passed to where()
-                mock_query.where.assert_called_with(fake_condition)
+                mock_query.where.assert_any_call(fake_condition)
                 # finally, your service should return the list produced by mock_db.execute(...)
                 assert isinstance(result, list)
                 assert len(result) == 1
@@ -1629,43 +1658,163 @@ class TestResourceServiceMetricsExtended:
     @pytest.mark.asyncio
     async def test_get_top_resources(self, resource_service, mock_db):
         """Test getting top performing resources."""
-        # Mock query results
-        mock_result1 = MagicMock()
-        mock_result1.id = "39334ce0ed2644d79ede8913a66930c9"
-        mock_result1.name = "resource1"
-        mock_result1.execution_count = 10
-        mock_result1.avg_response_time = 1.5
-        mock_result1.success_rate = 100.0
-        mock_result1.last_execution = "2025-01-10T12:00:00"
+        # Mock the combined query results (TopPerformerResult objects)
+        mock_performer1 = MagicMock()
+        mock_performer1.id = "39334ce0ed2644d79ede8913a66930c9"
+        mock_performer1.name = "resource1"
+        mock_performer1.execution_count = 10
+        mock_performer1.avg_response_time = 1.5
+        mock_performer1.success_rate = 100.0
+        mock_performer1.last_execution = "2025-01-10T12:00:00"
 
-        mock_result2 = MagicMock()
-        mock_result2.id = "2"
-        mock_result2.name = "resource2"
-        mock_result2.execution_count = 7
-        mock_result2.avg_response_time = 2.3
-        mock_result2.success_rate = 71.43
-        mock_result2.last_execution = "2025-01-10T11:00:00"
+        mock_performer2 = MagicMock()
+        mock_performer2.id = "2"
+        mock_performer2.name = "resource2"
+        mock_performer2.execution_count = 7
+        mock_performer2.avg_response_time = 2.3
+        mock_performer2.success_rate = 71.43
+        mock_performer2.last_execution = "2025-01-10T11:00:00"
 
-        # Mock the query chain
-        mock_query = MagicMock()
-        mock_query.outerjoin.return_value = mock_query
-        mock_query.group_by.return_value = mock_query
-        mock_query.order_by.return_value = mock_query
-        mock_query.limit.return_value = mock_query
-        mock_query.all.return_value = [mock_result1, mock_result2]
+        mock_combined_results = [mock_performer1, mock_performer2]
 
-        mock_db.query.return_value = mock_query
+        with patch("mcpgateway.services.metrics_query_service.get_top_performers_combined") as mock_combined:
+            mock_combined.return_value = mock_combined_results
 
-        result = await resource_service.get_top_resources(mock_db, limit=2)
+            result = await resource_service.get_top_resources(mock_db, limit=2)
 
-        assert len(result) == 2
-        assert result[0].name == "resource1"
-        assert result[0].execution_count == 10
-        assert result[0].success_rate == 100.0
+            # Assert get_top_performers_combined was called with correct params
+            mock_combined.assert_called_once()
+            call_kwargs = mock_combined.call_args[1]
+            assert call_kwargs["metric_type"] == "resource"
+            assert call_kwargs["limit"] == 2
+            assert call_kwargs["name_column"] == "uri"  # Resources use URI as display name
+            assert call_kwargs["include_deleted"] is False
 
-        assert result[1].name == "resource2"
-        assert result[1].execution_count == 7
-        assert result[1].success_rate == pytest.approx(71.43, rel=0.01)
+            assert len(result) == 2
+            assert result[0].name == "resource1"
+            assert result[0].execution_count == 10
+            assert result[0].success_rate == 100.0
+
+            assert result[1].name == "resource2"
+            assert result[1].execution_count == 7
+            assert result[1].success_rate == pytest.approx(71.43, rel=0.01)
+
+
+# --------------------------------------------------------------------------- #
+# Template Caching Tests                                                      #
+# --------------------------------------------------------------------------- #
+
+
+class TestResourceTemplateCaching:
+    """Test caching of compiled regex and parse patterns."""
+
+    def test_build_regex_caching(self):
+        """Verify that _build_regex caches compiled patterns."""
+        service = ResourceService()
+        template = "files://root/{path*}/meta/{id}{?expand,debug}"
+
+        # First call - compiles regex
+        regex1 = service._build_regex(template)
+
+        # Second call - should return cached result
+        regex2 = service._build_regex(template)
+
+        # Verify same object returned (cached)
+        assert regex1 is regex2, "Regex should be cached and return same object"
+
+        # Verify pattern works correctly
+        test_uri = "files://root/some/path/meta/123"
+        assert regex1.match(test_uri) is not None
+
+    def test_compile_parse_pattern_caching(self):
+        """Verify that _compile_parse_pattern caches compiled patterns."""
+        service = ResourceService()
+        template = "file:///{name}/{id}"
+
+        # First call - compiles pattern
+        parser1 = service._compile_parse_pattern(template)
+
+        # Second call - should return cached result
+        parser2 = service._compile_parse_pattern(template)
+
+        # Verify same object returned (cached)
+        assert parser1 is parser2, "Parser should be cached and return same object"
+
+    def test_extract_template_params_uses_cache(self):
+        """Verify that _extract_template_params uses cached parse patterns."""
+        service = ResourceService()
+        template = "file:///{name}/{id}"
+        uri = "file:///test_file/42"
+
+        # Multiple calls should use cached parser
+        params1 = service._extract_template_params(uri, template)
+        params2 = service._extract_template_params(uri, template)
+
+        assert params1 == params2
+        assert params1["name"] == "test_file"
+        assert params1["id"] == "42"
+
+    def test_uri_matches_template_uses_cache(self):
+        """Verify that _uri_matches_template uses cached regex."""
+        service = ResourceService()
+        template = "files://{bucket}/{key*}"
+        uri = "files://mybucket/path/to/file.txt"
+
+        # Multiple calls should use cached regex
+        match1 = service._uri_matches_template(uri, template)
+        match2 = service._uri_matches_template(uri, template)
+
+        assert match1 is True
+        assert match2 is True
+
+    def test_caching_performance_improvement(self):
+        """Verify that caching provides performance benefit."""
+        service = ResourceService()
+        template = "files://root/{path*}/meta/{id}{?expand}"
+
+        # Measure first call (compilation)
+        start = time.perf_counter()
+        for _ in range(100):
+            service._build_regex.__wrapped__(template)  # Call without cache
+        uncached_time = time.perf_counter() - start
+
+        # Clear any existing cache
+        service._build_regex.cache_clear()
+
+        # Measure cached calls
+        start = time.perf_counter()
+        for _ in range(100):
+            service._build_regex(template)  # Uses cache after first call
+        cached_time = time.perf_counter() - start
+
+        # Cached should be significantly faster (at least 2x)
+        assert cached_time < uncached_time / 2, f"Cached ({cached_time:.6f}s) should be at least 2x faster than uncached ({uncached_time:.6f}s)"
+
+    def test_different_templates_cached_separately(self):
+        """Verify that different templates are cached separately."""
+        service = ResourceService()
+        template1 = "files://{bucket}/{key}"
+        template2 = "data://{dataset}/{record}"
+
+        regex1 = service._build_regex(template1)
+        regex2 = service._build_regex(template2)
+
+        # Different templates should produce different regex objects
+        assert regex1 is not regex2
+        assert regex1.pattern != regex2.pattern
+
+    def test_cache_size_limit_respected(self):
+        """Verify that LRU cache limit (256) is respected."""
+        service = ResourceService()
+
+        # Generate more than cache size templates (with valid variable names)
+        for i in range(300):
+            template = f"files://bucket/{{var{i}}}/file"
+            service._build_regex(template)
+
+        # Cache should have evicted oldest entries
+        cache_info = service._build_regex.cache_info()
+        assert cache_info.currsize <= 256, "Cache should respect maxsize limit"
 
 
 if __name__ == "__main__":

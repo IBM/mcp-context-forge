@@ -69,7 +69,7 @@ class ResourceGenerator(BaseGenerator):
                     mime_type=random.choice(mime_types),
                     size=random.randint(100, 100000),
                     created_by=user_email,
-                    is_active=True,
+                    enabled=True,
                     tags=[],
                     version=1,
                     visibility=random.choice(["public", "private", "team"]),

@@ -315,6 +315,21 @@ class TeamInvitationService:
 
             self.db.commit()
 
+            # Invalidate auth cache for user's team membership
+            try:
+                # Standard
+                import asyncio  # pylint: disable=import-outside-toplevel
+
+                # First-Party
+                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+                asyncio.create_task(auth_cache.invalidate_team(invitation.email))
+                asyncio.create_task(auth_cache.invalidate_user_role(invitation.email, invitation.team_id))
+                asyncio.create_task(auth_cache.invalidate_user_teams(invitation.email))
+                asyncio.create_task(auth_cache.invalidate_team_membership(invitation.email))
+            except Exception as cache_error:
+                logger.debug(f"Failed to invalidate cache on invitation acceptance: {cache_error}")
+
             logger.info(f"User {invitation.email} accepted invitation to team {invitation.team_id}")
             return True
 

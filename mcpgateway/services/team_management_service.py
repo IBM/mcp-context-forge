@@ -19,10 +19,10 @@ Examples:
 
 # Standard
 from datetime import timedelta
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 # Third-Party
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -218,6 +218,9 @@ class TeamManagementService:
 
             self.db.commit()
 
+            # Invalidate member count cache for the new team
+            await self.invalidate_team_member_count_cache(str(team.id))
+
             logger.info(f"Created team '{team.name}' by {created_by}")
             return team
 
@@ -244,10 +247,11 @@ class TeamManagementService:
         """
         try:
             team = self.db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
-
+            self.db.commit()  # Release transaction to avoid idle-in-transaction
             return team
 
         except Exception as e:
+            self.db.rollback()
             logger.error(f"Failed to get team by ID {team_id}: {e}")
             return None
 
@@ -269,10 +273,11 @@ class TeamManagementService:
         """
         try:
             team = self.db.query(EmailTeam).filter(EmailTeam.slug == slug, EmailTeam.is_active.is_(True)).first()
-
+            self.db.commit()  # Release transaction to avoid idle-in-transaction
             return team
 
         except Exception as e:
+            self.db.rollback()
             logger.error(f"Failed to get team by slug {slug}: {e}")
             return None
 
@@ -388,6 +393,25 @@ class TeamManagementService:
 
             self.db.commit()
 
+            # Invalidate all role caches for this team
+            try:
+                # Standard
+                import asyncio  # pylint: disable=import-outside-toplevel
+
+                # First-Party
+                from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+                asyncio.create_task(auth_cache.invalidate_team_roles(team_id))
+                asyncio.create_task(admin_stats_cache.invalidate_teams())
+                # Also invalidate team cache, teams list cache, and team membership cache for each member
+                for membership in memberships:
+                    asyncio.create_task(auth_cache.invalidate_team(membership.user_email))
+                    asyncio.create_task(auth_cache.invalidate_user_teams(membership.user_email))
+                    asyncio.create_task(auth_cache.invalidate_team_membership(membership.user_email))
+            except Exception as cache_error:
+                logger.debug(f"Failed to invalidate caches on team delete: {cache_error}")
+
             logger.info(f"Deleted team {team_id} by {deleted_by}")
             return True
 
@@ -467,6 +491,26 @@ class TeamManagementService:
                 self.db.commit()
                 self._log_team_member_action(membership.id, team_id, user_email, role, "added", invited_by)
 
+            # Invalidate auth cache for user's team membership and role
+            try:
+                # Standard
+                import asyncio  # pylint: disable=import-outside-toplevel
+
+                # First-Party
+                from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+                asyncio.create_task(auth_cache.invalidate_team(user_email))
+                asyncio.create_task(auth_cache.invalidate_user_role(user_email, team_id))
+                asyncio.create_task(auth_cache.invalidate_user_teams(user_email))
+                asyncio.create_task(auth_cache.invalidate_team_membership(user_email))
+                asyncio.create_task(admin_stats_cache.invalidate_teams())
+            except Exception as cache_error:
+                logger.debug(f"Failed to invalidate cache on team add: {cache_error}")
+
+            # Invalidate member count cache for this team
+            await self.invalidate_team_member_count_cache(str(team_id))
+
             logger.info(f"Added {user_email} to team {team_id} with role {role}")
             return True
 
@@ -523,6 +567,25 @@ class TeamManagementService:
             membership.is_active = False
             self.db.commit()
             self._log_team_member_action(membership.id, team_id, user_email, membership.role, "removed", removed_by)
+
+            # Invalidate auth cache for user's team membership and role
+            try:
+                # Standard
+                import asyncio  # pylint: disable=import-outside-toplevel
+
+                # First-Party
+                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+                asyncio.create_task(auth_cache.invalidate_team(user_email))
+                asyncio.create_task(auth_cache.invalidate_user_role(user_email, team_id))
+                asyncio.create_task(auth_cache.invalidate_user_teams(user_email))
+                asyncio.create_task(auth_cache.invalidate_team_membership(user_email))
+            except Exception as cache_error:
+                logger.debug(f"Failed to invalidate cache on team remove: {cache_error}")
+
+            # Invalidate member count cache for this team
+            await self.invalidate_team_member_count_cache(str(team_id))
+
             logger.info(f"Removed {user_email} from team {team_id} by {removed_by}")
             return True
 
@@ -586,6 +649,18 @@ class TeamManagementService:
             self.db.commit()
             self._log_team_member_action(membership.id, team_id, user_email, new_role, "role_changed", updated_by)
 
+            # Invalidate role cache
+            try:
+                # Standard
+                import asyncio  # pylint: disable=import-outside-toplevel
+
+                # First-Party
+                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+                asyncio.create_task(auth_cache.invalidate_user_role(user_email, team_id))
+            except Exception as cache_error:
+                logger.debug(f"Failed to invalidate cache on role update: {cache_error}")
+
             logger.info(f"Updated role of {user_email} in team {team_id} to {new_role} by {updated_by}")
             return True
 
@@ -597,6 +672,9 @@ class TeamManagementService:
     async def get_user_teams(self, user_email: str, include_personal: bool = True) -> List[EmailTeam]:
         """Get all teams a user belongs to.
 
+        Uses caching to reduce database queries (called 20+ times per request).
+        Cache can be disabled via AUTH_CACHE_TEAMS_ENABLED=false.
+
         Args:
             user_email: Email of the user
             include_personal: Whether to include personal teams
@@ -607,6 +685,26 @@ class TeamManagementService:
         Examples:
             User dashboard showing team memberships.
         """
+        # Check cache first
+        cache = self._get_auth_cache()
+        cache_key = f"{user_email}:{include_personal}"
+
+        if cache:
+            cached_team_ids = await cache.get_user_teams(cache_key)
+            if cached_team_ids is not None:
+                if not cached_team_ids:  # Empty list = user has no teams
+                    return []
+                # Fetch full team objects by IDs (fast indexed lookup)
+                try:
+                    teams = self.db.query(EmailTeam).filter(EmailTeam.id.in_(cached_team_ids), EmailTeam.is_active.is_(True)).all()
+                    self.db.commit()  # Release transaction to avoid idle-in-transaction
+                    return teams
+                except Exception as e:
+                    self.db.rollback()
+                    logger.warning(f"Failed to fetch teams by IDs from cache: {e}")
+                    # Fall through to full query
+
+        # Cache miss or caching disabled - do full query
         try:
             query = self.db.query(EmailTeam).join(EmailTeamMember).filter(EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True), EmailTeam.is_active.is_(True))
 
@@ -614,9 +712,17 @@ class TeamManagementService:
                 query = query.filter(EmailTeam.is_personal.is_(False))
 
             teams = query.all()
+            self.db.commit()  # Release transaction to avoid idle-in-transaction
+
+            # Update cache with team IDs
+            if cache:
+                team_ids = [t.id for t in teams]
+                await cache.set_user_teams(cache_key, team_ids)
+
             return teams
 
         except Exception as e:
+            self.db.rollback()
             logger.error(f"Failed to get teams for user {user_email}: {e}")
             return []
 
@@ -651,7 +757,9 @@ class TeamManagementService:
             try:
                 query = self.db.query(EmailTeam).join(EmailTeamMember).filter(EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True), EmailTeam.is_active.is_(True))
                 user_teams = query.all()
+                self.db.commit()  # Release transaction to avoid idle-in-transaction
             except Exception as e:
+                self.db.rollback()
                 logger.error(f"Failed to get teams for user {user_email}: {e}")
                 return []
 
@@ -665,6 +773,7 @@ class TeamManagementService:
                 if not is_team_present:
                     return []
         except Exception as e:
+            self.db.rollback()
             print(f"An error occurred: {e}")
             if not team_id:
                 team_id = None
@@ -673,6 +782,9 @@ class TeamManagementService:
 
     async def get_team_members(self, team_id: str) -> List[Tuple[EmailUser, EmailTeamMember]]:
         """Get all members of a team.
+
+        Note: This method returns ORM objects and cannot be cached since callers
+        depend on ORM attributes and methods.
 
         Args:
             team_id: ID of the team
@@ -690,15 +802,61 @@ class TeamManagementService:
                 .filter(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True))
                 .all()
             )
-
+            self.db.commit()  # Release transaction to avoid idle-in-transaction
             return members
 
         except Exception as e:
+            self.db.rollback()
             logger.error(f"Failed to get members for team {team_id}: {e}")
             return []
 
+    def count_team_owners(self, team_id: str) -> int:
+        """Count the number of owners in a team using SQL COUNT.
+
+        This is more efficient than loading all members and counting in Python.
+
+        Args:
+            team_id: ID of the team
+
+        Returns:
+            int: Number of active owners in the team
+        """
+        count = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.role == "owner", EmailTeamMember.is_active.is_(True)).count()
+        self.db.commit()  # Release transaction to avoid idle-in-transaction
+        return count
+
+    def _get_auth_cache(self):
+        """Get auth cache instance lazily.
+
+        Returns:
+            AuthCache instance or None if unavailable.
+        """
+        try:
+            # First-Party
+            from mcpgateway.cache.auth_cache import get_auth_cache  # pylint: disable=import-outside-toplevel
+
+            return get_auth_cache()
+        except ImportError:
+            return None
+
+    def _get_admin_stats_cache(self):
+        """Get admin stats cache instance lazily.
+
+        Returns:
+            AdminStatsCache instance or None if unavailable.
+        """
+        try:
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import get_admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            return get_admin_stats_cache()
+        except ImportError:
+            return None
+
     async def get_user_role_in_team(self, user_email: str, team_id: str) -> Optional[str]:
         """Get a user's role in a specific team.
+
+        Uses caching to reduce database queries (called 11+ times per team operation).
 
         Args:
             user_email: Email of the user
@@ -710,17 +868,37 @@ class TeamManagementService:
         Examples:
             Access control and permission checking.
         """
+        # Check cache first
+        cache = self._get_auth_cache()
+        if cache:
+            cached_role = await cache.get_user_role(user_email, team_id)
+            if cached_role is not None:
+                # Empty string means "not a member" (cached None)
+                return cached_role if cached_role else None
+
         try:
             membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.user_email == user_email, EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)).first()
+            self.db.commit()  # Release transaction to avoid idle-in-transaction
 
-            return membership.role if membership else None
+            role = membership.role if membership else None
+
+            # Store in cache
+            if cache:
+                await cache.set_user_role(user_email, team_id, role)
+
+            return role
 
         except Exception as e:
+            self.db.rollback()
             logger.error(f"Failed to get role for {user_email} in team {team_id}: {e}")
             return None
 
     async def list_teams(self, limit: int = 100, offset: int = 0, visibility_filter: Optional[str] = None) -> Tuple[List[EmailTeam], int]:
         """List teams with pagination.
+
+        Note: This method returns ORM objects and cannot be cached since callers
+        depend on ORM methods (e.g., team.get_member_count()) and attributes
+        (created_at, updated_at) that cannot be serialized.
 
         Args:
             limit: Maximum number of teams to return
@@ -741,10 +919,12 @@ class TeamManagementService:
 
             total_count = query.count()
             teams = query.offset(offset).limit(limit).all()
+            self.db.commit()  # Release transaction to avoid idle-in-transaction
 
             return teams, total_count
 
         except Exception as e:
+            self.db.rollback()
             logger.error(f"Failed to list teams: {e}")
             return [], 0
 
@@ -768,9 +948,12 @@ class TeamManagementService:
 
             query = self.db.query(EmailTeam).filter(EmailTeam.visibility == "public", EmailTeam.is_active.is_(True), EmailTeam.is_personal.is_(False), ~EmailTeam.id.in_(user_team_subquery))
 
-            return query.offset(skip).limit(limit).all()
+            teams = query.offset(skip).limit(limit).all()
+            self.db.commit()  # Release transaction to avoid idle-in-transaction
+            return teams
 
         except Exception as e:
+            self.db.rollback()
             logger.error(f"Failed to discover public teams for {user_email}: {e}")
             return []
 
@@ -845,9 +1028,10 @@ class TeamManagementService:
             List[EmailTeamJoinRequest]: List of pending join requests
         """
         try:
-            return (
+            requests = (
                 self.db.query(EmailTeamJoinRequest).filter(EmailTeamJoinRequest.team_id == team_id, EmailTeamJoinRequest.status == "pending").order_by(EmailTeamJoinRequest.requested_at.desc()).all()
             )
+            return requests
 
         except Exception as e:
             logger.error(f"Failed to list join requests for team {team_id}: {e}")
@@ -891,6 +1075,26 @@ class TeamManagementService:
             self._log_team_member_action(member.id, join_request.team_id, join_request.user_email, member.role, "added", approved_by)
 
             self.db.refresh(member)
+
+            # Invalidate auth cache for user's team membership and role
+            try:
+                # Standard
+                import asyncio  # pylint: disable=import-outside-toplevel
+
+                # First-Party
+                from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+                asyncio.create_task(auth_cache.invalidate_team(join_request.user_email))
+                asyncio.create_task(auth_cache.invalidate_user_role(join_request.user_email, join_request.team_id))
+                asyncio.create_task(auth_cache.invalidate_user_teams(join_request.user_email))
+                asyncio.create_task(auth_cache.invalidate_team_membership(join_request.user_email))
+                asyncio.create_task(admin_stats_cache.invalidate_teams())
+            except Exception as cache_error:
+                logger.debug(f"Failed to invalidate caches on join approval: {cache_error}")
+
+            # Invalidate member count cache for this team
+            await self.invalidate_team_member_count_cache(str(join_request.team_id))
 
             logger.info(f"Approved join request {request_id}: user {join_request.user_email} joined team {join_request.team_id}")
             return member
@@ -998,3 +1202,245 @@ class TeamManagementService:
             self.db.rollback()
             logger.error(f"Failed to cancel join request {request_id}: {e}")
             return False
+
+    # ==================================================================================
+    # Batch Query Methods (N+1 Query Elimination - Issue #1892)
+    # ==================================================================================
+
+    def get_member_counts_batch(self, team_ids: List[str]) -> Dict[str, int]:
+        """Get member counts for multiple teams in a single query.
+
+        This is a synchronous method following the existing service pattern.
+        Note: Like other sync SQLAlchemy calls, this will block the event
+        loop in async contexts. For typical team counts this is acceptable.
+
+        Args:
+            team_ids: List of team UUIDs
+
+        Returns:
+            Dict mapping team_id to member count
+
+        Raises:
+            Exception: Re-raises any database errors after rollback
+
+        Examples:
+            >>> from unittest.mock import Mock
+            >>> service = TeamManagementService(Mock())
+            >>> service.get_member_counts_batch([])
+            {}
+        """
+        if not team_ids:
+            return {}
+
+        try:
+            # Single query for all teams
+            results = (
+                self.db.query(EmailTeamMember.team_id, func.count(EmailTeamMember.id).label("count"))  # pylint: disable=not-callable
+                .filter(EmailTeamMember.team_id.in_(team_ids), EmailTeamMember.is_active.is_(True))
+                .group_by(EmailTeamMember.team_id)
+                .all()
+            )
+
+            self.db.commit()  # Release transaction to avoid idle-in-transaction
+
+            # Build result dict, defaulting to 0 for teams with no members
+            counts = {str(row.team_id): row.count for row in results}
+            return {tid: counts.get(tid, 0) for tid in team_ids}
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Failed to get member counts for teams: {e}")
+            raise
+
+    def get_user_roles_batch(self, user_email: str, team_ids: List[str]) -> Dict[str, Optional[str]]:
+        """Get a user's role in multiple teams in a single query.
+
+        Args:
+            user_email: Email of the user
+            team_ids: List of team UUIDs
+
+        Returns:
+            Dict mapping team_id to role (or None if not a member)
+
+        Raises:
+            Exception: Re-raises any database errors after rollback
+        """
+        if not team_ids:
+            return {}
+
+        try:
+            # Single query for all teams
+            results = (
+                self.db.query(EmailTeamMember.team_id, EmailTeamMember.role)
+                .filter(EmailTeamMember.user_email == user_email, EmailTeamMember.team_id.in_(team_ids), EmailTeamMember.is_active.is_(True))
+                .all()
+            )
+
+            self.db.commit()  # Release transaction to avoid idle-in-transaction
+
+            # Build result dict - teams with no membership return None
+            roles = {str(row.team_id): row.role for row in results}
+            return {tid: roles.get(tid) for tid in team_ids}
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Failed to get user roles for {user_email}: {e}")
+            raise
+
+    def get_pending_join_requests_batch(self, user_email: str, team_ids: List[str]) -> Dict[str, Optional[Any]]:
+        """Get pending join requests for a user across multiple teams in a single query.
+
+        Args:
+            user_email: Email of the user
+            team_ids: List of team UUIDs to check
+
+        Returns:
+            Dict mapping team_id to pending EmailTeamJoinRequest (or None if no pending request)
+
+        Raises:
+            Exception: Re-raises any database errors after rollback
+        """
+        if not team_ids:
+            return {}
+
+        try:
+            # Single query for all pending requests across teams
+            results = (
+                self.db.query(EmailTeamJoinRequest).filter(EmailTeamJoinRequest.user_email == user_email, EmailTeamJoinRequest.team_id.in_(team_ids), EmailTeamJoinRequest.status == "pending").all()
+            )
+
+            self.db.commit()  # Release transaction to avoid idle-in-transaction
+
+            # Build result dict - only one pending request per team expected
+            pending_reqs = {str(req.team_id): req for req in results}
+            return {tid: pending_reqs.get(tid) for tid in team_ids}
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Failed to get pending join requests for {user_email}: {e}")
+            raise
+
+    # ==================================================================================
+    # Cached Batch Methods (Redis caching for member counts)
+    # ==================================================================================
+
+    def _get_member_count_cache_key(self, team_id: str) -> str:
+        """Build cache key using settings.cache_prefix for consistency.
+
+        Args:
+            team_id: Team UUID to build cache key for
+
+        Returns:
+            Cache key string in format "{prefix}team:member_count:{team_id}"
+        """
+        cache_prefix = getattr(settings, "cache_prefix", "mcpgw:")
+        return f"{cache_prefix}team:member_count:{team_id}"
+
+    async def get_member_counts_batch_cached(self, team_ids: List[str]) -> Dict[str, int]:
+        """Get member counts for multiple teams, using Redis cache with DB fallback.
+
+        Caching behavior is controlled by settings:
+        - team_member_count_cache_enabled: Enable/disable caching (default: True)
+        - team_member_count_cache_ttl: Cache TTL in seconds (default: 300)
+
+        Args:
+            team_ids: List of team UUIDs
+
+        Returns:
+            Dict mapping team_id to member count
+
+        Raises:
+            Exception: Re-raises any database errors after rollback
+        """
+        if not team_ids:
+            return {}
+
+        cache_enabled = getattr(settings, "team_member_count_cache_enabled", True)
+        cache_ttl = getattr(settings, "team_member_count_cache_ttl", 300)
+
+        # If caching disabled, go straight to batch DB query
+        if not cache_enabled:
+            return self.get_member_counts_batch(team_ids)
+
+        # Import Redis client lazily
+        try:
+            # First-Party
+            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+            redis_client = await get_redis_client()
+        except Exception:
+            redis_client = None
+
+        result: Dict[str, int] = {}
+        cache_misses: List[str] = []
+
+        # Step 1: Check Redis cache for all team IDs
+        if redis_client:
+            try:
+                cache_keys = [self._get_member_count_cache_key(tid) for tid in team_ids]
+                cached_values = await redis_client.mget(cache_keys)
+
+                for tid, cached in zip(team_ids, cached_values):
+                    if cached is not None:
+                        result[tid] = int(cached)
+                    else:
+                        cache_misses.append(tid)
+            except Exception as e:
+                logger.warning(f"Redis cache read failed, falling back to DB: {e}")
+                cache_misses = list(team_ids)
+        else:
+            # No Redis available, fall back to DB
+            cache_misses = list(team_ids)
+
+        # Step 2: Query database for cache misses
+        if cache_misses:
+            try:
+                db_results = (
+                    self.db.query(EmailTeamMember.team_id, func.count(EmailTeamMember.id).label("count"))  # pylint: disable=not-callable
+                    .filter(EmailTeamMember.team_id.in_(cache_misses), EmailTeamMember.is_active.is_(True))
+                    .group_by(EmailTeamMember.team_id)
+                    .all()
+                )
+
+                self.db.commit()
+
+                db_counts = {str(row.team_id): row.count for row in db_results}
+
+                # Fill in results and cache them
+                for tid in cache_misses:
+                    count = db_counts.get(tid, 0)
+                    result[tid] = count
+
+                    # Step 3: Cache the result with configured TTL
+                    if redis_client:
+                        try:
+                            await redis_client.setex(self._get_member_count_cache_key(tid), cache_ttl, str(count))
+                        except Exception as e:
+                            logger.warning(f"Redis cache write failed for team {tid}: {e}")
+
+            except Exception as e:
+                self.db.rollback()
+                logger.error(f"Failed to get member counts for teams: {e}")
+                raise
+
+        return result
+
+    async def invalidate_team_member_count_cache(self, team_id: str) -> None:
+        """Invalidate the cached member count for a team.
+
+        Call this after any membership changes (add/remove/update).
+        No-op if caching is disabled or Redis unavailable.
+
+        Args:
+            team_id: Team UUID to invalidate
+        """
+        cache_enabled = getattr(settings, "team_member_count_cache_enabled", True)
+        if not cache_enabled:
+            return
+
+        try:
+            # First-Party
+            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+            redis_client = await get_redis_client()
+            if redis_client:
+                await redis_client.delete(self._get_member_count_cache_key(team_id))
+        except Exception as e:
+            logger.warning(f"Failed to invalidate member count cache for team {team_id}: {e}")

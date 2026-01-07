@@ -3,6 +3,7 @@ nav:
   - configuration.md
   - api-usage.md
   - scale.md
+  - parallel-session-cleanup.md
   - tuning.md
   - backup.md
   - catalog.md

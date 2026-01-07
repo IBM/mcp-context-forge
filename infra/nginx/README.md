@@ -121,6 +121,183 @@ Cache is automatically bypassed for:
 
 No environment variables required. All configuration is in `nginx.conf`.
 
+### High-Concurrency Tuning
+
+The nginx configuration is optimized for 3000+ concurrent users (e.g., locust load testing). Key settings:
+
+#### Worker Process Settings
+
+```nginx
+# nginx.conf - Main context
+worker_processes auto;              # One worker per CPU core
+worker_rlimit_nofile 65535;         # Max open files per worker
+worker_cpu_affinity auto;           # Bind workers to CPUs
+
+events {
+    worker_connections 8192;        # Connections per worker (default: 1024)
+    use epoll;                      # Linux-optimized event model
+    multi_accept on;                # Accept multiple connections at once
+    accept_mutex off;               # Disable mutex for better parallelism
+}
+```
+
+#### Listen Socket Tuning
+
+```nginx
+# Server block
+listen 80 backlog=4096 reuseport;
+```
+
+- **backlog=4096**: Kernel queue for pending connections (default: 511)
+- **reuseport**: Distribute connections across workers (reduces lock contention)
+
+#### Keepalive Settings
+
+```nginx
+keepalive_timeout 65;               # Client connection timeout
+keepalive_requests 10000;           # Requests per connection (default: 100)
+reset_timedout_connection on;       # Free memory from timed-out connections
+```
+
+### Rate Limiting
+
+Rate limiting is configured for high-concurrency load testing scenarios:
+
+```nginx
+# Zone definition (10MB shared memory, ~160,000 IPs)
+limit_req_zone $binary_remote_addr zone=api_limit:10m rate=3000r/s;
+limit_conn_zone $binary_remote_addr zone=conn_limit:10m;
+
+# Return 429 instead of 503 (semantically correct per RFC 6585)
+limit_req_status 429;
+limit_conn_status 429;
+```
+
+**Applied to API endpoints:**
+
+```nginx
+location ~ ^/(tools|servers|gateways|...)$ {
+    limit_req zone=api_limit burst=3000 nodelay;
+    limit_conn conn_limit 3000;
+    # ...
+}
+```
+
+**How it works:**
+
+| Parameter | Value | Effect |
+|-----------|-------|--------|
+| `rate=3000r/s` | 3000 tokens/second | Sustained request rate |
+| `burst=3000` | 3000 bucket size | Requests that can queue/proceed |
+| `nodelay` | Immediate | Burst requests processed instantly |
+| `limit_conn 3000` | 3000 connections | Max concurrent connections per IP |
+
+**Effective limits:**
+- Sustained: 3000 requests/second continuously
+- Burst: Up to 3000 additional requests can proceed instantly
+- Peak: 6000 requests in first second, then 3000/s sustained
+
+**Excluded from rate limiting:**
+- `/health` endpoint (for monitoring during load tests)
+
+**Tuning for your workload:**
+
+```nginx
+# Lower limits for production (protect backend)
+limit_req_zone $binary_remote_addr zone=api_limit:10m rate=100r/s;
+
+location /api {
+    limit_req zone=api_limit burst=50 nodelay;
+    limit_conn conn_limit 100;
+}
+```
+
+### Upstream Load Balancing
+
+The upstream configuration is optimized for high-throughput scenarios:
+
+```nginx
+upstream gateway_backend {
+    least_conn;                       # Route to backend with fewest connections
+
+    server gateway:4444 max_fails=0;  # Disable failure tracking (always retry)
+
+    keepalive 512;                    # Persistent connections per worker
+    keepalive_requests 100000;        # Requests per keepalive connection
+    keepalive_timeout 60s;            # Connection idle timeout
+}
+```
+
+**Load balancing algorithms:**
+
+| Algorithm | Use Case |
+|-----------|----------|
+| `least_conn` (default) | High-concurrency, uneven request duration |
+| `round_robin` | Even request distribution |
+| `ip_hash` | Session affinity (sticky sessions) |
+
+**Keepalive pool sizing:**
+- Each nginx worker maintains its own pool
+- With 4 workers: 512 × 4 = 2048 reusable connections
+- Remaining connections use short-lived TCP
+
+**Upstream retry configuration:**
+
+```nginx
+proxy_next_upstream error timeout http_502 http_503 http_504;
+proxy_next_upstream_tries 2;
+proxy_next_upstream_timeout 10s;
+```
+
+### Proxy Buffer Tuning
+
+Larger buffers reduce disk I/O for upstream responses:
+
+```nginx
+proxy_buffer_size 16k;              # First response buffer (headers)
+proxy_buffers 8 32k;                # Number and size of buffers per connection
+proxy_busy_buffers_size 64k;        # Max size while sending to client
+proxy_temp_file_write_size 64k;     # Chunk size for temp files
+```
+
+### Open File Cache
+
+Reduces file descriptor overhead for frequently accessed files:
+
+```nginx
+open_file_cache max=10000 inactive=60s;  # Cache up to 10,000 file descriptors
+open_file_cache_valid 30s;               # Revalidate cached info every 30s
+open_file_cache_min_uses 2;              # Cache after 2 accesses
+open_file_cache_errors on;               # Cache lookup errors too
+```
+
+### Access Logging
+
+**Default: Disabled for performance**
+
+```nginx
+# access_log /var/log/nginx/access.log main;  # Uncomment for debugging
+access_log off;                               # Disabled for load testing
+```
+
+Access logging is a major I/O bottleneck under high load. Enable only for debugging:
+
+```bash
+# Edit nginx.conf, uncomment access_log line, then:
+docker-compose restart nginx
+```
+
+The log format includes cache status and timing metrics:
+
+```nginx
+log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                '$status $body_bytes_sent "$http_referer" '
+                '"$http_user_agent" "$http_x_forwarded_for" '
+                'cache_status=$upstream_cache_status '
+                'rt=$request_time uct="$upstream_connect_time" '
+                'uht="$upstream_header_time" urt="$upstream_response_time"';
+```
+
 ### Cache Size Tuning
 
 Edit `nginx/nginx.conf`:

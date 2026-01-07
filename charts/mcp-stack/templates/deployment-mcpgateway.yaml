@@ -50,11 +50,19 @@ spec:
           #   placeholders in the derived URL variables declared below.
           ################################################################
           env:
-            # ---------- POSTGRES ----------
+            # ---------- POSTGRES (via PgBouncer if enabled) ----------
             - name: POSTGRES_HOST
+              {{- if .Values.pgbouncer.enabled }}
+              value: {{ printf "%s-pgbouncer" (include "mcp-stack.fullname" .) }}
+              {{- else }}
               value: {{ printf "%s-postgres" (include "mcp-stack.fullname" .) }}
+              {{- end }}
             - name: POSTGRES_PORT
+              {{- if .Values.pgbouncer.enabled }}
+              value: "{{ .Values.pgbouncer.service.port }}"
+              {{- else }}
               value: "{{ .Values.mcpContextForge.env.postgres.port }}"
+              {{- end }}
             - name: POSTGRES_DB
               value: "{{ .Values.mcpContextForge.env.postgres.db }}"
             - name: POSTGRES_USER
@@ -96,7 +104,7 @@ spec:
             # $(...) placeholders are expanded correctly inside the pod.
             - name: DATABASE_URL
               value: >-
-                postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)
+                postgresql+psycopg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)
             - name: REDIS_URL
               value: "redis://$(REDIS_HOST):$(REDIS_PORT)/0"
 

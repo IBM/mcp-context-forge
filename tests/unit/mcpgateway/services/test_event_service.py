@@ -12,9 +12,9 @@ Comprehensive test suite for EventService with maximum code coverage.
 """
 
 import asyncio
-import json
 from typing import Any, Dict
 from unittest.mock import AsyncMock, MagicMock, Mock, patch, call
+import orjson
 import pytest
 import sys
 
@@ -141,7 +141,7 @@ class TestEventService:
             mock_redis_client.publish.assert_called_once()
             call_args = mock_redis_client.publish.call_args[0]
             assert call_args[0] == "test:channel"
-            assert json.loads(call_args[1]) == event_data
+            assert orjson.loads(call_args[1]) == event_data
 
     @pytest.mark.asyncio
     async def test_publish_event_with_redis_failure_fallback_to_local(
@@ -559,8 +559,8 @@ class TestEventService:
         sse_events, _ = await asyncio.gather(generator_consumer(), publisher())
 
         assert len(sse_events) == 2
-        assert sse_events[0] == f'data: {json.dumps({"event": "sse1", "data": "value1"})}\n\n'
-        assert sse_events[1] == f'data: {json.dumps({"event": "sse2", "data": "value2"})}\n\n'
+        assert sse_events[0] == f'data: {orjson.dumps({"event": "sse1", "data": "value1"}).decode()}\n\n'
+        assert sse_events[1] == f'data: {orjson.dumps({"event": "sse2", "data": "value2"}).decode()}\n\n'
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(5)

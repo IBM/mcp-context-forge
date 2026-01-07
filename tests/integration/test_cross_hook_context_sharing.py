@@ -10,7 +10,6 @@ hook types (HTTP → Tool, HTTP → Resource, HTTP → Prompt, RBAC hooks, etc.)
 """
 
 # Standard
-import os
 from pathlib import Path
 
 # Third-Party

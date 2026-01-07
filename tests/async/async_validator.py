@@ -78,7 +78,7 @@ class AsyncPatternVisitor(ast.NodeVisitor):
         self.suggestions = []
         self.in_async_function = False
 
-    def visit_AsyncFunctionDef(self, node):
+    def visit_AsyncFunctionDef(self, node):  # noqa: N802
         """Visit async function definitions."""
 
         self.in_async_function = True
@@ -92,7 +92,7 @@ class AsyncPatternVisitor(ast.NodeVisitor):
         self.generic_visit(node)
         self.in_async_function = False
 
-    def visit_Call(self, node):
+    def visit_Call(self, node):  # noqa: N802
         """Visit function calls."""
 
         if self.in_async_function:

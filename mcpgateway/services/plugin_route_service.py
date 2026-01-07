@@ -232,12 +232,6 @@ class PluginRouteService:
             return []
 
         matching = []
-        context = RuleMatchContext(
-            name=entity_name,
-            entity_type=entity_type,
-            tags=tags or [],
-        )
-
         for i, rule in enumerate(self.config.routes):
             # Check if rule matches (basic check - no when evaluation)
             if rule.entities:

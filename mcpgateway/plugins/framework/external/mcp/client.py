@@ -12,7 +12,6 @@ Module that contains plugin MCP client code to serve external plugins.
 import asyncio
 from contextlib import AsyncExitStack
 from functools import partial
-import json
 import logging
 import os
 from typing import Any, Awaitable, Callable, Optional
@@ -23,9 +22,11 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.types import TextContent
+import orjson
 
 # First-Party
 from mcpgateway.common.models import TransportType
+from mcpgateway.config import settings
 from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
 from mcpgateway.plugins.framework.constants import CONTEXT, ERROR, GET_PLUGIN_CONFIG, HOOK_TYPE, IGNORE_CONFIG_EXTERNAL, INVOKE_HOOK, NAME, PAYLOAD, PLUGIN_NAME, PYTHON, PYTHON_SUFFIX, RESULT
 from mcpgateway.plugins.framework.errors import convert_exception_to_error, PluginError
@@ -154,14 +155,26 @@ class ExternalPlugin(Plugin):
                 PluginError: If TLS configuration fails.
             """
 
+            # First-Party
+            from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
+
             kwargs: dict[str, Any] = {"follow_redirects": True}
             if headers:
                 kwargs["headers"] = headers
-            kwargs["timeout"] = timeout or httpx.Timeout(30.0)
+            kwargs["timeout"] = timeout if timeout else get_http_timeout()
             if auth is not None:
                 kwargs["auth"] = auth
 
+            # Add connection pool limits
+            kwargs["limits"] = httpx.Limits(
+                max_connections=settings.httpx_max_connections,
+                max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                keepalive_expiry=settings.httpx_keepalive_expiry,
+            )
+
             if not tls_config:
+                # Use skip_ssl_verify setting when no custom TLS config
+                kwargs["verify"] = get_default_verify()
                 return httpx.AsyncClient(**kwargs)
 
             # Create SSL context using the utility function
@@ -242,8 +255,8 @@ class ExternalPlugin(Plugin):
                 if not isinstance(content, TextContent):
                     continue
                 try:
-                    res = json.loads(content.text)
-                except json.decoder.JSONDecodeError:
+                    res = orjson.loads(content.text)
+                except orjson.JSONDecodeError:
                     raise PluginError(error=PluginErrorModel(message=f"Error trying to decode json: {content.text}", code="JSON_DECODE_ERROR", plugin_name=self.name))
                 if CONTEXT in res:
                     cxt = PluginContext.model_validate(res[CONTEXT])
@@ -279,7 +292,7 @@ class ExternalPlugin(Plugin):
             for content in configs.content:
                 if not isinstance(content, TextContent):
                     continue
-                conf = json.loads(content.text)
+                conf = orjson.loads(content.text)
                 return PluginConfig.model_validate(conf)
         except Exception as e:
             logger.exception(e)

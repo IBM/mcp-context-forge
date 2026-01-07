@@ -53,15 +53,75 @@ import logging
 from pathlib import Path
 import re
 import shlex
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Pattern
 from urllib.parse import urlparse
 import uuid
 
 # First-Party
-from mcpgateway.common.config import settings
-from mcpgateway.config import settings as config_settings
+from mcpgateway.config import settings
 
 logger = logging.getLogger(__name__)
+
+# ============================================================================
+# Precompiled regex patterns (compiled once at module load for performance)
+# ============================================================================
+# Note: Settings-based patterns (DANGEROUS_HTML_PATTERN, DANGEROUS_JS_PATTERN,
+# NAME_PATTERN, IDENTIFIER_PATTERN, etc.) are NOT precompiled here because tests
+# override the class attributes at runtime. Only truly static patterns are
+# precompiled at module level.
+
+# Static inline patterns used multiple times
+_HTML_SPECIAL_CHARS_RE: Pattern[str] = re.compile(r'[<>"\'/]')
+_DANGEROUS_TEMPLATE_TAGS_RE: Pattern[str] = re.compile(r"<(script|iframe|object|embed|link|meta|base|form)\b", re.IGNORECASE)
+_EVENT_HANDLER_RE: Pattern[str] = re.compile(r"on\w+\s*=", re.IGNORECASE)
+_MIME_TYPE_RE: Pattern[str] = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*\/[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*$")
+_URI_SCHEME_RE: Pattern[str] = re.compile(r"^[a-zA-Z][a-zA-Z0-9+\-.]*://")
+_SHELL_DANGEROUS_CHARS_RE: Pattern[str] = re.compile(r"[;&|`$(){}\[\]<>]")
+_ANSI_ESCAPE_RE: Pattern[str] = re.compile(r"\x1B\[[0-9;]*[A-Za-z]")
+_CONTROL_CHARS_RE: Pattern[str] = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+
+# Polyglot attack patterns (precompiled with IGNORECASE)
+_POLYGLOT_PATTERNS: List[Pattern[str]] = [
+    re.compile(r"['\"];.*alert\s*\(", re.IGNORECASE),
+    re.compile(r"-->\s*<[^>]+>", re.IGNORECASE),
+    re.compile(r"['\"].*//['\"]", re.IGNORECASE),
+    re.compile(r"<<[A-Z]+>", re.IGNORECASE),
+    re.compile(r"String\.fromCharCode", re.IGNORECASE),
+    re.compile(r"javascript:.*\(", re.IGNORECASE),
+]
+
+# SSTI prevention patterns (precompiled with IGNORECASE)
+_SSTI_PATTERNS: List[Pattern[str]] = [
+    re.compile(r"\{\{.*(__|\.|config|self|request|application|globals|builtins|import).*\}\}", re.IGNORECASE),
+    re.compile(r"\{%.*(__|\.|config|self|request|application|globals|builtins|import).*%\}", re.IGNORECASE),
+    re.compile(r"\$\{.*\}", re.IGNORECASE),
+    re.compile(r"#\{.*\}", re.IGNORECASE),
+    re.compile(r"%\{.*\}", re.IGNORECASE),
+    re.compile(r"\{\{.*\*.*\}\}", re.IGNORECASE),
+    re.compile(r"\{\{.*\/.*\}\}", re.IGNORECASE),
+    re.compile(r"\{\{.*\+.*\}\}", re.IGNORECASE),
+    re.compile(r"\{\{.*\-.*\}\}", re.IGNORECASE),
+]
+
+# Dangerous URL protocol patterns (precompiled with IGNORECASE)
+_DANGEROUS_URL_PATTERNS: List[Pattern[str]] = [
+    re.compile(r"javascript:", re.IGNORECASE),
+    re.compile(r"data:", re.IGNORECASE),
+    re.compile(r"vbscript:", re.IGNORECASE),
+    re.compile(r"about:", re.IGNORECASE),
+    re.compile(r"chrome:", re.IGNORECASE),
+    re.compile(r"file:", re.IGNORECASE),
+    re.compile(r"ftp:", re.IGNORECASE),
+    re.compile(r"mailto:", re.IGNORECASE),
+]
+
+# SQL injection patterns (precompiled with IGNORECASE)
+_SQL_PATTERNS: List[Pattern[str]] = [
+    re.compile(r"[';\"\\]", re.IGNORECASE),
+    re.compile(r"--", re.IGNORECASE),
+    re.compile(r"/\*.*?\*/", re.IGNORECASE),
+    re.compile(r"\b(union|select|insert|update|delete|drop|exec|execute)\b", re.IGNORECASE),
+]
 
 
 class SecurityValidator:
@@ -86,7 +146,7 @@ class SecurityValidator:
     MAX_DESCRIPTION_LENGTH = settings.validation_max_description_length  # Default: 8192 (8KB)
     MAX_TEMPLATE_LENGTH = settings.validation_max_template_length  # Default: 65536
     MAX_CONTENT_LENGTH = settings.validation_max_content_length  # Default: 1048576 (1MB)
-    MAX_JSON_DEPTH = settings.validation_max_json_depth  # Default: 10
+    MAX_JSON_DEPTH = settings.validation_max_json_depth  # Default: 30
     MAX_URL_LENGTH = settings.validation_max_url_length  # Default: 2048
 
     @classmethod
@@ -162,19 +222,9 @@ class SecurityValidator:
         if re.search(cls.DANGEROUS_JS_PATTERN, value, re.IGNORECASE):
             raise ValueError(f"{field_name} contains script patterns that may cause display issues")
 
-        # Check for polyglot patterns - combinations of quotes, semicolons, and parentheses
-        # that could work in multiple contexts
-        polyglot_patterns = [
-            r"['\"];.*alert\s*\(",  # Quotes followed by alert
-            r"-->\s*<[^>]+>",  # HTML comment closers followed by tags
-            r"['\"].*//['\"]",  # Quote, content, comment, quote
-            r"<<[A-Z]+>",  # Double angle brackets (like <<SCRIPT>)
-            r"String\.fromCharCode",  # Character code manipulation
-            r"javascript:.*\(",  # javascript: protocol with function call
-        ]
-
-        for pattern in polyglot_patterns:
-            if re.search(pattern, value, re.IGNORECASE):
+        # Check for polyglot patterns (uses precompiled regex list)
+        for pattern in _POLYGLOT_PATTERNS:
+            if pattern.search(value):
                 raise ValueError(f"{field_name} contains potentially dangerous character sequences")
 
         # Escape HTML entities to ensure proper display
@@ -253,8 +303,8 @@ class SecurityValidator:
         if not re.match(cls.NAME_PATTERN, value):
             raise ValueError(f"{field_name} can only contain letters, numbers, underscore, and hyphen. Special characters like <, >, quotes are not allowed.")
 
-        # Additional check for HTML-like patterns
-        if re.search(r'[<>"\'/]', value):
+        # Additional check for HTML-like patterns (uses precompiled regex)
+        if _HTML_SPECIAL_CHARS_RE.search(value):
             raise ValueError(f"{field_name} cannot contain HTML special characters")
 
         if len(value) > cls.MAX_NAME_LENGTH:
@@ -335,8 +385,8 @@ class SecurityValidator:
         if not re.match(cls.IDENTIFIER_PATTERN, value):
             raise ValueError(f"{field_name} can only contain letters, numbers, underscore, hyphen, and dots")
 
-        # Block HTML-like patterns
-        if re.search(r'[<>"\'/]', value):
+        # Block HTML-like patterns (uses precompiled regex)
+        if _HTML_SPECIAL_CHARS_RE.search(value):
             raise ValueError(f"{field_name} cannot contain HTML special characters")
 
         if len(value) > cls.MAX_NAME_LENGTH:
@@ -444,8 +494,8 @@ class SecurityValidator:
         if not re.match(cls.TOOL_NAME_PATTERN, value):
             raise ValueError("Tool name must start with a letter and contain only letters, numbers, and underscore")
 
-        # Ensure no HTML-like content
-        if re.search(r'[<>"\'/]', value):
+        # Ensure no HTML-like content (uses precompiled regex)
+        if _HTML_SPECIAL_CHARS_RE.search(value):
             raise ValueError("Tool name cannot contain HTML special characters")
 
         if len(value) > cls.MAX_NAME_LENGTH:
@@ -637,30 +687,17 @@ class SecurityValidator:
         if len(value) > cls.MAX_TEMPLATE_LENGTH:
             raise ValueError(f"Template exceeds maximum length of {cls.MAX_TEMPLATE_LENGTH}")
 
-        # Block dangerous tags but allow Jinja2 syntax {{ }} and {% %}
-        dangerous_tags = r"<(script|iframe|object|embed|link|meta|base|form)\b"
-        if re.search(dangerous_tags, value, re.IGNORECASE):
+        # Block dangerous tags but allow Jinja2 syntax {{ }} and {% %} (uses precompiled regex)
+        if _DANGEROUS_TEMPLATE_TAGS_RE.search(value):
             raise ValueError("Template contains HTML tags that may interfere with proper display")
 
-        # Check for event handlers that could cause issues
-        if re.search(r"on\w+\s*=", value, re.IGNORECASE):
+        # Check for event handlers that could cause issues (uses precompiled regex)
+        if _EVENT_HANDLER_RE.search(value):
             raise ValueError("Template contains event handlers that may cause display issues")
 
-        # SSTI Prevention - block dangerous template expressions
-        ssti_patterns = [
-            r"\{\{.*(__|\.|config|self|request|application|globals|builtins|import).*\}\}",  # Jinja2 dangerous patterns
-            r"\{%.*(__|\.|config|self|request|application|globals|builtins|import).*%\}",  # Jinja2 tags
-            r"\$\{.*\}",  # ${} expressions
-            r"#\{.*\}",  # #{} expressions
-            r"%\{.*\}",  # %{} expressions
-            r"\{\{.*\*.*\}\}",  # Math operations in templates (like {{7*7}})
-            r"\{\{.*\/.*\}\}",  # Division operations
-            r"\{\{.*\+.*\}\}",  # Addition operations
-            r"\{\{.*\-.*\}\}",  # Subtraction operations
-        ]
-
-        for pattern in ssti_patterns:
-            if re.search(pattern, value, re.IGNORECASE):
+        # SSTI Prevention - block dangerous template expressions (uses precompiled regex list)
+        for pattern in _SSTI_PATTERNS:
+            if pattern.search(value):
                 raise ValueError("Template contains potentially dangerous expressions")
 
         return value
@@ -851,10 +888,9 @@ class SecurityValidator:
         if not any(value.lower().startswith(scheme.lower()) for scheme in allowed_schemes):
             raise ValueError(f"{field_name} must start with one of: {', '.join(allowed_schemes)}")
 
-        # Block dangerous URL patterns
-        dangerous_patterns = [r"javascript:", r"data:", r"vbscript:", r"about:", r"chrome:", r"file:", r"ftp:", r"mailto:"]
-        for pattern in dangerous_patterns:
-            if re.search(pattern, value, re.IGNORECASE):
+        # Block dangerous URL patterns (uses precompiled regex list)
+        for pattern in _DANGEROUS_URL_PATTERNS:
+            if pattern.search(value):
                 raise ValueError(f"{field_name} contains unsupported or potentially dangerous protocol")
 
         # Block IPv6 URLs (URLs with square brackets)
@@ -907,7 +943,7 @@ class SecurityValidator:
             if result.username or result.password:
                 raise ValueError(f"{field_name} contains credentials which are not allowed")
 
-            # Check for XSS patterns in the entire URL (including query parameters)
+            # Check for XSS patterns in the entire URL
             if re.search(cls.DANGEROUS_HTML_PATTERN, value, re.IGNORECASE):
                 raise ValueError(f"{field_name} contains HTML tags that may cause security issues")
 
@@ -1043,20 +1079,30 @@ class SecurityValidator:
                 ...     {'users': [{'name': 'Alice', 'meta': {'age': 30}}]}
                 ... )
 
-            Exactly at the default limit (10) – allowed: ::
+            At 10 levels of nesting – allowed: ::
 
                 >>> deep_10 = {'1': {'2': {'3': {'4': {'5': {'6': {'7': {'8':
                 ...     {'9': {'10': 'end'}}}}}}}}}}
                 >>> SecurityValidator.validate_json_depth(deep_10)
 
+            At new default limit (30) – allowed: ::
+
+                >>> deep_30 = {'1': {'2': {'3': {'4': {'5': {'6': {'7': {'8':
+                ...     {'9': {'10': {'11': {'12': {'13': {'14': {'15': {'16':
+                ...     {'17': {'18': {'19': {'20': {'21': {'22': {'23': {'24':
+                ...     {'25': {'26': {'27': {'28': {'29': {'30': 'end'}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+                >>> SecurityValidator.validate_json_depth(deep_30)
+
             One level deeper – rejected: ::
 
-                >>> deep_11 = {'1': {'2': {'3': {'4': {'5': {'6': {'7': {'8':
-                ...     {'9': {'10': {'11': 'end'}}}}}}}}}}}
-                >>> SecurityValidator.validate_json_depth(deep_11)
+                >>> deep_31 = {'1': {'2': {'3': {'4': {'5': {'6': {'7': {'8':
+                ...     {'9': {'10': {'11': {'12': {'13': {'14': {'15': {'16':
+                ...     {'17': {'18': {'19': {'20': {'21': {'22': {'23': {'24':
+                ...     {'25': {'26': {'27': {'28': {'29': {'30': {'31': 'end'}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+                >>> SecurityValidator.validate_json_depth(deep_31)
                 Traceback (most recent call last):
                     ...
-                ValueError: JSON structure exceeds maximum depth of 10
+                ValueError: JSON structure exceeds maximum depth of 30
         """
         if max_depth is None:
             max_depth = cls.MAX_JSON_DEPTH
@@ -1178,9 +1224,8 @@ class SecurityValidator:
         if not value:
             return value
 
-        # Basic MIME type pattern
-        mime_pattern = r"^[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*\/[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*$"
-        if not re.match(mime_pattern, value):
+        # Basic MIME type pattern (uses precompiled regex)
+        if not _MIME_TYPE_RE.match(value):
             raise ValueError("Invalid MIME type format")
 
         # Common safe MIME types
@@ -1215,9 +1260,8 @@ class SecurityValidator:
         if not isinstance(value, str):
             raise ValueError("Parameter must be string")
 
-        # Check for dangerous patterns
-        dangerous_chars = re.compile(r"[;&|`$(){}\[\]<>]")
-        if dangerous_chars.search(value):
+        # Check for dangerous patterns (uses precompiled regex)
+        if _SHELL_DANGEROUS_CHARS_RE.search(value):
             # Check if validation is strict
             strict_mode = getattr(settings, "validation_strict", True)
             if strict_mode:
@@ -1250,8 +1294,8 @@ class SecurityValidator:
         if not isinstance(path, str):
             raise ValueError("Path must be string")
 
-        # Skip validation for URI schemes (http://, plugin://, etc.)
-        if re.match(r"^[a-zA-Z][a-zA-Z0-9+\-.]*://", path):
+        # Skip validation for URI schemes (http://, plugin://, etc.) (uses precompiled regex)
+        if _URI_SCHEME_RE.match(path):
             return path
 
         try:
@@ -1294,17 +1338,10 @@ class SecurityValidator:
         if not isinstance(value, str):
             return value
 
-        # Check for SQL injection patterns
-        sql_patterns = [
-            r"[';\"\\]",  # Quote characters
-            r"--",  # SQL comments
-            r"/\\*.*?\\*/",  # Block comments
-            r"\\b(union|select|insert|update|delete|drop|exec|execute)\\b",  # SQL keywords
-        ]
-
-        for pattern in sql_patterns:
-            if re.search(pattern, value, re.IGNORECASE):
-                if getattr(config_settings, "validation_strict", True):
+        # Check for SQL injection patterns (uses precompiled regex list)
+        for pattern in _SQL_PATTERNS:
+            if pattern.search(value):
+                if getattr(settings, "validation_strict", True):
                     raise ValueError("Parameter contains SQL injection patterns")
                 # Basic escaping
                 value = value.replace("'", "''").replace('"', '""')
@@ -1329,7 +1366,7 @@ class SecurityValidator:
             >>> SecurityValidator.validate_parameter_length('short', 10)
             'short'
         """
-        max_len = max_length or getattr(config_settings, "max_param_length", 10000)
+        max_len = max_length or getattr(settings, "max_param_length", 10000)
         if len(value) > max_len:
             raise ValueError(f"Parameter exceeds maximum length of {max_len}")
         return value
@@ -1353,10 +1390,10 @@ class SecurityValidator:
         if not isinstance(text, str):
             return text
 
-        # Remove ANSI escape sequences
-        text = re.sub(r"\x1B\[[0-9;]*[A-Za-z]", "", text)
-        # Remove control characters except newlines and tabs
-        sanitized = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", "", text)
+        # Remove ANSI escape sequences (uses precompiled regex)
+        text = _ANSI_ESCAPE_RE.sub("", text)
+        # Remove control characters except newlines and tabs (uses precompiled regex)
+        sanitized = _CONTROL_CHARS_RE.sub("", text)
         return sanitized
 
     @classmethod

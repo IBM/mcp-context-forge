@@ -238,6 +238,37 @@ plugins:
       result_schemas: {}
       block_on_violation: true
 
+  # SPARC Static Validator - Advanced tool call validation using ALTK
+  # Requires: pip install mcp-contextforge-gateway[altk]
+  - name: "SPARCStaticValidator"
+    kind: "plugins.sparc_static_validator.sparc_static_validator.SPARCStaticValidatorPlugin"
+    description: "SPARC static validation for tool call arguments using ALTK. Validates types, required params, enums, and constraints."
+    version: "0.1.0"
+    author: "Osher Elhadad"
+    hooks: ["tool_pre_invoke"]
+    tags: ["validation", "sparc", "altk", "static", "schema", "type-checking"]
+    mode: "enforce"  # Enable with "enforce" or "permissive"
+    priority: 65  # Run early, after argument normalizer (40) but before schema guard (110)
+    conditions: []
+    config:
+      # Block tool execution when validation fails
+      block_on_violation: true
+      # Attempt automatic type conversion (e.g., "123" -> 123)
+      enable_type_correction: true
+      # Automatically apply type corrections to the payload
+      auto_apply_corrections: false
+      # Include corrected arguments in response metadata
+      include_correction_in_response: true
+      # Log when corrections are available or applied
+      log_corrections: true
+      # Optional per-tool schemas (overrides tool metadata)
+      # tool_schemas:
+      #   my_tool:
+      #     type: object
+      #     required: [param1]
+      #     properties:
+      #       param1: {type: string}
+
   # Cache idempotent tool results (write-through)
   - name: "CachedToolResultPlugin"
     kind: "plugins.cached_tool_result.cached_tool_result.CachedToolResultPlugin"

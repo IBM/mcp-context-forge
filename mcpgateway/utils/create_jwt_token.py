@@ -24,6 +24,8 @@ Library:
 Doctest examples
 ----------------
 >>> from mcpgateway.utils import create_jwt_token as jwt_util
+>>> from mcpgateway.utils.jwt_config_helper import clear_jwt_caches
+>>> clear_jwt_caches()
 >>> jwt_util.settings.jwt_secret_key = 'secret'
 >>> jwt_util.settings.jwt_algorithm = 'HS256'
 >>> token = jwt_util._create_jwt_token({'sub': 'alice'}, expires_in_minutes=1, secret='secret', algorithm='HS256')
@@ -49,6 +51,7 @@ from typing import Any, Dict, List, Sequence
 
 # Third-Party
 import jwt  # PyJWT
+import orjson
 
 # First-Party
 from mcpgateway.config import settings
@@ -170,6 +173,8 @@ async def create_jwt_token(
 
     Doctest:
     >>> from mcpgateway.utils import create_jwt_token as jwt_util
+    >>> from mcpgateway.utils.jwt_config_helper import clear_jwt_caches
+    >>> clear_jwt_caches()
     >>> jwt_util.settings.jwt_secret_key = 'secret'
     >>> jwt_util.settings.jwt_algorithm = 'HS256'
     >>> import asyncio
@@ -335,8 +340,8 @@ def _payload_from_cli(args) -> Dict[str, Any]:
     if args.data is not None:
         # Attempt JSON first
         try:
-            return json.loads(args.data)
-        except json.JSONDecodeError:
+            return orjson.loads(args.data)
+        except orjson.JSONDecodeError:
             pairs = [kv.strip() for kv in args.data.split(",") if kv.strip()]
             payload: Dict[str, Any] = {}
             for pair in pairs:

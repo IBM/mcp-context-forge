@@ -18,15 +18,15 @@ Output files:
 # Standard
 from contextvars import ContextVar
 from datetime import datetime, timezone
-import json
 import logging
 from pathlib import Path
 import re
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Pattern
 
 # Third-Party
+import orjson
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -35,8 +35,18 @@ from starlette.responses import Response
 
 # First-Party
 from mcpgateway.config import get_settings
+from mcpgateway.middleware.path_filter import should_skip_db_query_logging
 
 logger = logging.getLogger(__name__)
+
+# ============================================================================
+# Precompiled regex patterns for query normalization (compiled once at module load)
+# ============================================================================
+_QUOTED_STRING_RE: Pattern[str] = re.compile(r"'[^']*'")
+_NUMBER_RE: Pattern[str] = re.compile(r"\b\d+\b")
+_IN_CLAUSE_RE: Pattern[str] = re.compile(r"IN\s*\([^)]+\)", re.IGNORECASE)
+_WHITESPACE_RE: Pattern[str] = re.compile(r"\s+")
+_TABLE_NAME_RE: Pattern[str] = re.compile(r"(?:FROM|INTO|UPDATE)\s+[\"']?(\w+)[\"']?", re.IGNORECASE)
 
 # Context variable to track queries per request
 _request_context: ContextVar[Optional[Dict[str, Any]]] = ContextVar("db_query_request_context", default=None)
@@ -52,6 +62,7 @@ def _normalize_query(sql: str) -> str:
     """Normalize a SQL query for pattern detection.
 
     Replaces specific values with placeholders to identify similar queries.
+    Uses precompiled regex patterns for performance.
 
     Args:
         sql: The SQL query string
@@ -59,19 +70,21 @@ def _normalize_query(sql: str) -> str:
     Returns:
         Normalized query string
     """
-    # Replace quoted strings
-    normalized = re.sub(r"'[^']*'", "'?'", sql)
-    # Replace numbers
-    normalized = re.sub(r"\b\d+\b", "?", normalized)
-    # Replace IN clauses with multiple values
-    normalized = re.sub(r"IN\s*\([^)]+\)", "IN (?)", normalized, flags=re.IGNORECASE)
-    # Normalize whitespace
-    normalized = re.sub(r"\s+", " ", normalized).strip()
+    # Replace quoted strings (uses precompiled regex)
+    normalized = _QUOTED_STRING_RE.sub("'?'", sql)
+    # Replace numbers (uses precompiled regex)
+    normalized = _NUMBER_RE.sub("?", normalized)
+    # Replace IN clauses with multiple values (uses precompiled regex)
+    normalized = _IN_CLAUSE_RE.sub("IN (?)", normalized)
+    # Normalize whitespace (uses precompiled regex)
+    normalized = _WHITESPACE_RE.sub(" ", normalized).strip()
     return normalized
 
 
 def _extract_table_name(sql: str) -> Optional[str]:
     """Extract the main table name from a SQL query.
+
+    Uses precompiled regex pattern for performance.
 
     Args:
         sql: The SQL query string
@@ -79,8 +92,8 @@ def _extract_table_name(sql: str) -> Optional[str]:
     Returns:
         Table name or None
     """
-    # Match FROM table or INTO table or UPDATE table
-    match = re.search(r"(?:FROM|INTO|UPDATE)\s+[\"']?(\w+)[\"']?", sql, re.IGNORECASE)
+    # Match FROM table or INTO table or UPDATE table (uses precompiled regex)
+    match = _TABLE_NAME_RE.search(sql)
     if match:
         return match.group(1)
     return None
@@ -226,7 +239,7 @@ def _format_json_log(request_data: Dict[str, Any], queries: List[Dict[str, Any]]
         ],
     }
 
-    return json.dumps(log_entry, default=str)
+    return orjson.dumps(log_entry, default=str).decode()
 
 
 def _write_logs(request_data: Dict[str, Any], queries: List[Dict[str, Any]]) -> None:
@@ -395,7 +408,7 @@ class DBQueryLoggingMiddleware(BaseHTTPMiddleware):
 
         # Skip static files and health checks
         path = request.url.path
-        if path.startswith("/static") or path in ("/health", "/healthz", "/ready"):
+        if should_skip_db_query_logging(path):
             return await call_next(request)
 
         # Create request context

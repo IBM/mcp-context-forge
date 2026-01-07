@@ -1,6 +1,7 @@
 <!-- htmlhint doctype-first:false -->
 <!-- Prompt selector items for infinite scroll -->
 {% for prompt in data %}
+{% set prompt_label = prompt.displayName or prompt.originalName or prompt.name or prompt.id %}
 <label
   class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-purple-50 dark:hover:bg-purple-900 rounded-md p-1 prompt-item"
   data-prompt-id="{{ prompt.id }}"
@@ -9,11 +10,11 @@
     type="checkbox"
     name="associatedPrompts"
     value="{{ prompt.id }}"
-    data-prompt-name="{{ prompt.name }}"
+    data-prompt-name="{{ prompt_label }}"
     class="prompt-checkbox form-checkbox h-5 w-5 text-purple-600 dark:bg-gray-800 dark:border-gray-600"
     data-auto-check="true"
   />
-  <span class="select-none">{{ prompt.name }}</span>
+  <span class="select-none">{{ prompt_label }}</span>
 </label>
 {% endfor %}
 

@@ -84,8 +84,9 @@ ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that 
     * 10.16. [Health Checks](#health-checks)
     * 10.17. [Database](#database)
     * 10.18. [Cache Backend](#cache-backend)
-    * 10.19. [Plugin Configuration](#plugin-configuration)
-    * 10.20. [Development](#development)
+    * 10.19. [Metrics Aggregation Cache](#metrics-aggregation-cache)
+    * 10.20. [Plugin Configuration](#plugin-configuration)
+    * 10.21. [Development](#development)
 * 11. [Running](#running)
     * 11.1. [Makefile](#makefile)
     * 11.2. [Script helper](#script-helper)
@@ -1142,12 +1143,32 @@ pip install -e ".[dev]"
 
 You can configure the gateway with SQLite, PostgreSQL (or any other compatible database) in .env.
 
-When using PostgreSQL, you need to install `psycopg2` driver.
+When using PostgreSQL, you need to install the `psycopg` (psycopg3) driver.
+
+**System Dependencies**: The PostgreSQL adapter requires the `libpq` development headers to compile:
 
 ```bash
-uv pip install psycopg2-binary   # dev convenience
+# Debian/Ubuntu
+sudo apt-get install libpq-dev
+
+# RHEL/CentOS/Fedora
+sudo dnf install postgresql-devel
+
+# macOS (Homebrew)
+brew install libpq
+```
+
+Then install the Python package:
+
+```bash
+uv pip install 'psycopg[binary]'   # dev convenience (pre-built wheels)
 # or
-uv pip install psycopg2          # production build
+uv pip install 'psycopg[c]'        # production build (requires compiler)
+```
+
+Connection URL format (must use `+psycopg` for psycopg3):
+```bash
+DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/mcp
 ```
 
 #### Quick Postgres container
@@ -1825,6 +1846,8 @@ MCP Gateway provides flexible logging with **stdout/stderr output by default** a
 | ----------------------- | ---------------------------------- | ----------------- | -------------------------- |
 | `LOG_LEVEL`             | Minimum log level                  | `INFO`            | `DEBUG`...`CRITICAL`       |
 | `LOG_FORMAT`            | Console log format                 | `json`            | `json`, `text`             |
+| `LOG_REQUESTS`          | Enable detailed request logging    | `false`           | `true`, `false`            |
+| `LOG_DETAILED_MAX_BODY_SIZE` | Max request body size to log (bytes) | `16384`       | `1024` - `1048576`         |
 | `LOG_TO_FILE`           | **Enable file logging**            | **`false`**       | **`true`, `false`**        |
 | `LOG_FILE`              | Log filename (when enabled)        | `null`            | `mcpgateway.log`           |
 | `LOG_FOLDER`            | Directory for log files            | `null`            | `logs`, `/var/log/gateway` |
@@ -1840,6 +1863,7 @@ MCP Gateway provides flexible logging with **stdout/stderr output by default** a
 - **Log Rotation**: When `LOG_ROTATION_ENABLED=true`, files rotate at `LOG_MAX_SIZE_MB` with `LOG_BACKUP_COUNT` backup files (e.g., `.log.1`, `.log.2`)
 - **Directory Creation**: Log folder is automatically created if it doesn't exist
 - **Centralized Service**: All modules use the unified `LoggingService` for consistent formatting
+- **Detailed Request Logging**: When `LOG_REQUESTS=true`, payload logging is truncated to `LOG_DETAILED_MAX_BODY_SIZE` and skipped for `/health`, `/healthz`, `/static`, and `/favicon.ico`
 
 **Example Configurations:**
 
@@ -1861,6 +1885,10 @@ LOG_MAX_SIZE_MB=10
 LOG_BACKUP_COUNT=3
 LOG_FOLDER=/var/log/mcpgateway
 LOG_FILE=gateway.log
+
+# Optional: Enable detailed request payload logging (truncated)
+LOG_REQUESTS=true
+LOG_DETAILED_MAX_BODY_SIZE=16384
 ```
 
 **Default Behavior:**
@@ -2002,6 +2030,37 @@ ENABLE_METRICS=false
 >
 > 🎯 **Grafana Integration**: Import metrics into Grafana dashboards using the configured namespace as a filter
 
+### Metrics Cleanup & Rollup
+
+Automatic management of metrics data to prevent unbounded table growth and maintain query performance.
+
+| Setting                              | Description                                      | Default  | Options     |
+| ------------------------------------ | ------------------------------------------------ | -------- | ----------- |
+| `DB_METRICS_RECORDING_ENABLED`       | Enable execution metrics recording (tool/resource/prompt/server/A2A) | `true` | bool |
+| `METRICS_CLEANUP_ENABLED`            | Enable automatic cleanup of old metrics          | `true`   | bool        |
+| `METRICS_RETENTION_DAYS`             | Days to retain raw metrics (fallback)            | `7`      | 1-365       |
+| `METRICS_CLEANUP_INTERVAL_HOURS`     | Hours between automatic cleanup runs             | `1`      | 1-168       |
+| `METRICS_CLEANUP_BATCH_SIZE`         | Batch size for deletion (prevents long locks)    | `10000`  | 100-100000  |
+| `METRICS_ROLLUP_ENABLED`             | Enable hourly metrics rollup                     | `true`   | bool        |
+| `METRICS_ROLLUP_INTERVAL_HOURS`      | Hours between rollup runs                        | `1`      | 1-24        |
+| `METRICS_ROLLUP_RETENTION_DAYS`      | Days to retain hourly rollup data                | `365`    | 30-3650     |
+| `METRICS_ROLLUP_LATE_DATA_HOURS`     | Hours to re-process for late-arriving data       | `1`      | 1-48        |
+| `METRICS_DELETE_RAW_AFTER_ROLLUP`    | Delete raw metrics after rollup exists           | `true`   | bool        |
+| `METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS` | Hours to retain raw when rollup exists        | `1`      | 1-8760      |
+
+**Key Features:**
+- 📊 **Hourly rollup**: Pre-aggregated summaries with p50/p95/p99 percentiles
+- 🗑️ **Batched cleanup**: Prevents long table locks during deletion
+- 📈 **Admin API**: Manual triggers at `/api/metrics/cleanup` and `/api/metrics/rollup`
+- ⚙️ **Configurable retention**: Separate retention for raw and rollup data
+
+**Deletion behavior:**
+- Deleted tools/resources/prompts/servers are removed from Top Performers by default, but historical rollups remain for reporting.
+- To permanently erase metrics for a deleted entity, use the Admin UI delete prompt and choose **Purge metrics**, or call the delete endpoints with `?purge_metrics=true`.
+- Purge deletes use batched deletes sized by `METRICS_CLEANUP_BATCH_SIZE` to reduce long table locks on large datasets.
+
+> 🚀 **Performance**: Reduces storage by 90%+ and query latency from seconds to milliseconds for historical data
+
 ### Transport
 
 | Setting                   | Description                        | Default | Options                         |
@@ -2059,6 +2118,7 @@ ENABLE_METRICS=false
 | ----------------------- | ----------------------------------------- | ------- | ------- |
 | `HEALTH_CHECK_INTERVAL` | Health poll interval (secs)               | `60`    | int > 0 |
 | `HEALTH_CHECK_TIMEOUT`  | Health request timeout (secs)             | `10`    | int > 0 |
+| `GATEWAY_HEALTH_CHECK_TIMEOUT` | Per-check timeout for gateway health check (secs) | `5.0` | float > 0 |
 | `UNHEALTHY_THRESHOLD`   | Fail-count before peer deactivation,      | `3`     | int > 0 |
 |                         | Set to -1 if deactivation is not needed.  |         |         |
 | `GATEWAY_VALIDATION_TIMEOUT` | Gateway URL validation timeout (secs) | `5`     | int > 0 |
@@ -2099,6 +2159,15 @@ ENABLE_METRICS=false
 | `REDIS_LEADER_HEARTBEAT_INTERVAL` | Heartbeat (secs)   | `5`      | int > 0                  |
 
 > 🧠 `none` disables caching entirely. Use `memory` for dev, `database` for local persistence, or `redis` for distributed caching across multiple instances.
+
+### Metrics Aggregation Cache
+
+| Setting                     | Description                           | Default | Options    |
+| --------------------------- | ------------------------------------- | ------- | ---------- |
+| `METRICS_CACHE_ENABLED`     | Enable metrics query caching          | `true`  | bool       |
+| `METRICS_CACHE_TTL_SECONDS` | Cache TTL (seconds)                   | `60`    | int (1-300)|
+
+> ⚡ **Performance**: Caches aggregate metrics queries to reduce full table scans. Under high load (3000+ users), setting TTL to 60-120 seconds can reduce database scans by 6-12×. See [Issue #1906](https://github.com/IBM/mcp-context-forge/issues/1906).
 
 ### Database Management
 
@@ -2151,6 +2220,7 @@ MCP Gateway uses Alembic for database migrations. Common commands:
 | `ENABLE_HEADER_PASSTHROUGH`   | Enable HTTP header passthrough feature (⚠️ Security implications) | `false` | bool |
 | `ENABLE_OVERWRITE_BASE_HEADERS` | Enable overwriting of base headers (⚠️ Advanced usage) | `false` | bool |
 | `DEFAULT_PASSTHROUGH_HEADERS` | Default headers to pass through (JSON array)    | `["X-Tenant-Id", "X-Trace-Id"]` | JSON array |
+| `GLOBAL_CONFIG_CACHE_TTL`     | In-memory cache TTL for GlobalConfig (seconds). Reduces DB queries under load. | `60` | int (5-3600) |
 
 > ⚠️ **Security Warning**: Header passthrough is disabled by default for security. Only enable if you understand the implications and have reviewed which headers should be passed through to backing MCP servers. Authorization headers are not included in defaults.
 
@@ -2422,8 +2492,16 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
          }' \
      http://localhost:4444/tools
 
-# List tools
+# List tools (returns first 50 by default)
 curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools
+
+# List tools with filtering and pagination
+curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     "http://localhost:4444/tools?gateway_id=<id>&limit=100&include_pagination=true"
+
+# Get ALL tools (no pagination limit)
+curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     "http://localhost:4444/tools?limit=0"
 
 # Get tool by ID
 curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools/1

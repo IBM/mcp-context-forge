@@ -215,7 +215,9 @@ async def oauth_callback(
         # Try new base64-encoded JSON format first
         # Standard
         import base64
-        import json
+
+        # Third-Party
+        import orjson
 
         try:
             # Expect state as base64url(payload || signature) where the last 32 bytes
@@ -230,7 +232,7 @@ async def oauth_callback(
 
             # Parse the JSON payload only (not including signature bytes)
             try:
-                state_data = json.loads(payload_bytes.decode())
+                state_data = orjson.loads(payload_bytes)
             except Exception as decode_exc:
                 raise ValueError(f"Failed to parse state payload JSON: {decode_exc}")
 

@@ -13,13 +13,13 @@ to connect and tunnel their local MCP servers through the gateway.
 # Standard
 import asyncio
 from datetime import datetime, timezone
-import json
 from typing import Any, Dict, Optional
 import uuid
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
+import orjson
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -60,7 +60,7 @@ class ReverseProxySession:
         Args:
             message: Message dictionary to send.
         """
-        data = json.dumps(message)
+        data = orjson.dumps(message).decode()
         await self.websocket.send_text(data)
         self.bytes_transferred += len(data)
         self.last_activity = datetime.now(tz=timezone.utc)
@@ -75,7 +75,7 @@ class ReverseProxySession:
         self.bytes_transferred += len(data)
         self.message_count += 1
         self.last_activity = datetime.now(tz=timezone.utc)
-        return json.loads(data)
+        return orjson.loads(data)
 
 
 class ReverseProxyManager:
@@ -220,7 +220,7 @@ async def websocket_endpoint(
             except WebSocketDisconnect:
                 LOGGER.info(f"WebSocket disconnected: {session_id}")
                 break
-            except json.JSONDecodeError as e:
+            except orjson.JSONDecodeError as e:
                 LOGGER.error(f"Invalid JSON from session {session_id}: {e}")
                 await session.send_message({"type": "error", "message": "Invalid JSON format"})
             except Exception as e:
@@ -343,12 +343,12 @@ async def sse_endpoint(
         """
         try:
             # Send initial connection event
-            yield {"event": "connected", "data": json.dumps({"sessionId": session_id, "serverInfo": session.server_info})}
+            yield {"event": "connected", "data": orjson.dumps({"sessionId": session_id, "serverInfo": session.server_info}).decode()}
 
             # TODO: Implement message queue for SSE delivery
             while not await request.is_disconnected():
                 await asyncio.sleep(30)  # Keepalive
-                yield {"event": "keepalive", "data": json.dumps({"timestamp": datetime.now(tz=timezone.utc).isoformat()})}
+                yield {"event": "keepalive", "data": orjson.dumps({"timestamp": datetime.now(tz=timezone.utc).isoformat()}).decode()}
 
         except asyncio.CancelledError:
             pass

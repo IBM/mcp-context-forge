@@ -128,10 +128,10 @@ async def test_register_catalog_server_exception_mapping(service):
 async def test_check_server_availability_success(service):
     fake_catalog = {"catalog_servers": [{"id": "1", "url": "http://a"}]}
     with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
-        with patch("mcpgateway.services.catalog_service.httpx.AsyncClient") as mock_client:
+        with patch("mcpgateway.services.http_client_service.get_http_client") as mock_get_client:
             mock_instance = AsyncMock()
             mock_instance.get.return_value.status_code = 200
-            mock_client.return_value.__aenter__.return_value = mock_instance
+            mock_get_client.return_value = mock_instance
             result = await service.check_server_availability("1")
             assert result.is_available
 
@@ -146,7 +146,7 @@ async def test_check_server_availability_not_found(service):
 async def test_check_server_availability_exception(service):
     fake_catalog = {"catalog_servers": [{"id": "1", "url": "http://a"}]}
     with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
-        with patch("mcpgateway.services.catalog_service.httpx.AsyncClient", side_effect=Exception("fail")):
+        with patch("mcpgateway.services.http_client_service.get_http_client", side_effect=Exception("fail")):
             result = await service.check_server_availability("1")
             assert not result.is_available
 

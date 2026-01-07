@@ -20,9 +20,11 @@ Structure:
 """
 
 # Standard
-import json
 import os
 from typing import Any
+
+# Third-Party
+import orjson
 
 try:
     # Third-Party
@@ -106,7 +108,7 @@ def custom_mcp_cf_execute_prompt(prompt, client=None, gen_mode=None, parameters=
         response = llm_response.content
         return response
     except Exception as e:
-        logger.error("Error in LLM Inference call usinf MCP-CF LLM provider - " + json.dumps({"Error": str(e)}))
+        logger.error("Error in LLM Inference call usinf MCP-CF LLM provider - " + orjson.dumps({"Error": str(e)}).decode())
         return ""
 
 
@@ -148,7 +150,9 @@ async def validation_generate_test_cases(tool_id, tool_service: ToolService, db:
         tool_schema: ToolRead = await tool_service.get_tool(db, tool_id)
         # check if test case generation is required
         if mode == "generate":
-            logger.info("Generating test cases for tool - " + str(tool_id) + "," + json.dumps({"number_of_test_cases": number_of_test_cases, "number_of_nl_variations": number_of_nl_variations}))
+            logger.info(
+                "Generating test cases for tool - " + str(tool_id) + "," + orjson.dumps({"number_of_test_cases": number_of_test_cases, "number_of_nl_variations": number_of_nl_variations}).decode()
+            )
             mcp_cf_tool = tool_schema.to_dict(use_alias=True)
             if mcp_cf_tool is not None:
                 wxo_tool_spec = convert_to_toolops_spec(mcp_cf_tool)

@@ -30,9 +30,11 @@ Note:
 
 # Standard
 import asyncio
-import json
 import sys
 from typing import Any, AsyncGenerator, Dict, Optional
+
+# Third-Party
+import orjson
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
@@ -173,8 +175,9 @@ class StdioTransport(Transport):
             raise RuntimeError("Transport not connected")
 
         try:
-            data = json.dumps(message)
-            self._stdout_writer.write(f"{data}\n".encode())
+            # Write bytes directly, avoiding decode/encode roundtrip for performance
+            data = orjson.dumps(message)
+            self._stdout_writer.write(data + b"\n")
             await self._stdout_writer.drain()
         except Exception as e:
             logger.error(f"Failed to send message: {e}")
@@ -220,7 +223,7 @@ class StdioTransport(Transport):
                     break
 
                 # Parse JSON message
-                message = json.loads(line.decode().strip())
+                message = orjson.loads(line.strip())
                 yield message
 
             except asyncio.CancelledError:

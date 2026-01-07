@@ -24,13 +24,13 @@ try:
     from pydantic import ValidationError
 
     # First-Party
-    from mcpgateway.config import get_settings, Settings
+    from mcpgateway.config import Settings
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
 
 
-def TestOneInput(data: bytes) -> None:
+def TestOneInput(data: bytes) -> None:  # noqa: N802
     """Fuzz target for configuration parsing.
 
     Args:

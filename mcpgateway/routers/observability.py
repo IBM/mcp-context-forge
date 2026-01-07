@@ -14,6 +14,8 @@ from typing import List, Optional
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query
+import orjson
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -27,12 +29,28 @@ router = APIRouter(prefix="/observability", tags=["Observability"])
 def get_db():
     """Database session dependency.
 
+    Commits the transaction on successful completion to avoid implicit rollbacks
+    for read-only operations. Rolls back explicitly on exception.
+
     Yields:
         Session: SQLAlchemy database session
+
+    Raises:
+        Exception: Re-raises any exception after rolling back the transaction.
     """
     db = SessionLocal()
     try:
         yield db
+        db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
+        raise
     finally:
         db.close()
 
@@ -560,10 +578,7 @@ def export_traces(
                     str: A JSON-encoded line (with trailing newline) for a trace.
                 """
                 for t in traces:
-                    # Standard
-                    import json
-
-                    yield json.dumps(
+                    yield orjson.dumps(
                         {
                             "trace_id": t.trace_id,
                             "name": t.name,
@@ -574,7 +589,7 @@ def export_traces(
                             "http_status_code": t.http_status_code,
                             "user_email": t.user_email,
                         }
-                    ) + "\n"
+                    ).decode() + "\n"
 
             return StreamingResponse(generate(), media_type="application/x-ndjson", headers={"Content-Disposition": "attachment; filename=traces.ndjson"})
 
@@ -600,7 +615,13 @@ def get_query_performance(hours: int = Query(24, ge=1, le=168, description="Time
 
     Examples:
         >>> import mcpgateway.routers.observability as obs
+        >>> class MockDialect:
+        ...     name = "sqlite"
+        >>> class MockBind:
+        ...     dialect = MockDialect()
         >>> class EmptyDB:
+        ...     def get_bind(self):
+        ...         return MockBind()
         ...     def query(self, *a, **k):
         ...         return self
         ...     def filter(self, *a, **k):
@@ -611,6 +632,8 @@ def get_query_performance(hours: int = Query(24, ge=1, le=168, description="Time
         0
 
         >>> class SmallDB:
+        ...     def get_bind(self):
+        ...         return MockBind()
         ...     def query(self, *a, **k):
         ...         return self
         ...     def filter(self, *a, **k):
@@ -623,15 +646,89 @@ def get_query_performance(hours: int = Query(24, ge=1, le=168, description="Time
 
     """
 
-    # Third-Party
-
     # First-Party
-    from mcpgateway.db import ObservabilityTrace
 
     ObservabilityService()
     cutoff_time = datetime.now() - timedelta(hours=hours)
 
-    # Get duration percentiles using SQL
+    # Use SQL aggregation for PostgreSQL, Python fallback for SQLite
+    dialect_name = db.get_bind().dialect.name
+    if dialect_name == "postgresql":
+        return _get_query_performance_postgresql(db, cutoff_time, hours)
+    return _get_query_performance_python(db, cutoff_time, hours)
+
+
+def _get_query_performance_postgresql(db: Session, cutoff_time: datetime, hours: int) -> dict:
+    """Compute query performance using PostgreSQL percentile_cont.
+
+    Args:
+        db: Database session
+        cutoff_time: Start time for analysis
+        hours: Time window in hours
+
+    Returns:
+        dict: Performance analytics computed via SQL
+    """
+    stats_sql = text(
+        """
+        SELECT
+            COUNT(*) as total_traces,
+            percentile_cont(0.50) WITHIN GROUP (ORDER BY duration_ms) as p50,
+            percentile_cont(0.75) WITHIN GROUP (ORDER BY duration_ms) as p75,
+            percentile_cont(0.90) WITHIN GROUP (ORDER BY duration_ms) as p90,
+            percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) as p95,
+            percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms) as p99,
+            AVG(duration_ms) as avg_duration,
+            MIN(duration_ms) as min_duration,
+            MAX(duration_ms) as max_duration
+        FROM observability_traces
+        WHERE start_time >= :cutoff_time AND duration_ms IS NOT NULL
+        """
+    )
+
+    result = db.execute(stats_sql, {"cutoff_time": cutoff_time}).fetchone()
+
+    if not result or result.total_traces == 0:
+        return {
+            "time_window_hours": hours,
+            "total_traces": 0,
+            "percentiles": {},
+            "avg_duration_ms": 0,
+            "min_duration_ms": 0,
+            "max_duration_ms": 0,
+        }
+
+    return {
+        "time_window_hours": hours,
+        "total_traces": result.total_traces,
+        "percentiles": {
+            "p50": round(float(result.p50), 2) if result.p50 else 0,
+            "p75": round(float(result.p75), 2) if result.p75 else 0,
+            "p90": round(float(result.p90), 2) if result.p90 else 0,
+            "p95": round(float(result.p95), 2) if result.p95 else 0,
+            "p99": round(float(result.p99), 2) if result.p99 else 0,
+        },
+        "avg_duration_ms": round(float(result.avg_duration), 2) if result.avg_duration else 0,
+        "min_duration_ms": round(float(result.min_duration), 2) if result.min_duration else 0,
+        "max_duration_ms": round(float(result.max_duration), 2) if result.max_duration else 0,
+    }
+
+
+def _get_query_performance_python(db: Session, cutoff_time: datetime, hours: int) -> dict:
+    """Compute query performance using Python (fallback for SQLite).
+
+    Args:
+        db: Database session
+        cutoff_time: Start time for analysis
+        hours: Time window in hours
+
+    Returns:
+        dict: Performance analytics computed in Python
+    """
+    # First-Party
+    from mcpgateway.db import ObservabilityTrace
+
+    # Get duration percentiles
     traces_with_duration = db.query(ObservabilityTrace.duration_ms).filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.duration_ms.isnot(None)).all()
 
     durations = sorted([t[0] for t in traces_with_duration if t[0] is not None])
@@ -647,6 +744,15 @@ def get_query_performance(hours: int = Query(24, ge=1, le=168, description="Time
         }
 
     def percentile(data, p):
+        """Compute percentile using linear interpolation matching PostgreSQL percentile_cont.
+
+        Args:
+            data: Sorted list of numeric values.
+            p: Percentile value between 0 and 1.
+
+        Returns:
+            Interpolated percentile value.
+        """
         n = len(data)
         if n == 0:
             return 0

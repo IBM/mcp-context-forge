@@ -855,9 +855,9 @@ class TestEmailAuthServiceUserListing:
 
     @pytest.mark.asyncio
     async def test_count_users_success(self, service, mock_db, mock_users):
-        """Test counting total users."""
+        """Test counting total users using func.count()."""
         mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = mock_users
+        mock_result.scalar.return_value = 5  # func.count() returns scalar
         mock_db.execute.return_value = mock_result
 
         result = await service.count_users()

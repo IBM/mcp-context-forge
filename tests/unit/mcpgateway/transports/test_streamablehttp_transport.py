@@ -1219,3 +1219,117 @@ async def test_session_manager_wrapper_handle_streamable_http_exception(monkeypa
         await wrapper.handle_streamable_http(scope, None, send)
     await wrapper.shutdown()
     assert "Error handling streamable HTTP request" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Ring buffer and per-stream sequence tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_event_store_sequence_per_stream():
+    """Per-stream sequence numbers should be independent across streams."""
+    store = InMemoryEventStore(max_events_per_stream=10)
+    eid1 = await store.store_event("s1", {"id": 1})  # seq 0 for s1
+    eid2 = await store.store_event("s2", {"id": 2})  # seq 0 for s2
+    eid3 = await store.store_event("s1", {"id": 3})  # seq 1 for s1
+
+    assert store.event_index[eid1].seq_num == 0
+    assert store.event_index[eid2].seq_num == 0  # Different stream, same seq
+    assert store.event_index[eid3].seq_num == 1
+
+
+@pytest.mark.asyncio
+async def test_event_store_replay_wraps_ring():
+    """Replay should work correctly after ring buffer wrap-around."""
+    store = InMemoryEventStore(max_events_per_stream=3)
+    stream_id = "wrap"
+    # Store 5 events; first 2 will be evicted
+    ids = [await store.store_event(stream_id, {"id": i}) for i in range(5)]
+    sent: List[tr.EventMessage] = []
+
+    async def collector(msg):
+        sent.append(msg)
+
+    # Replay after event at index 2 (id=2), should get events 3 and 4
+    await store.replay_events_after(ids[2], collector)
+    assert [msg.message["id"] for msg in sent] == [3, 4]
+
+
+@pytest.mark.asyncio
+async def test_event_store_interleaved_streams():
+    """Interleaved storage across streams should not affect replay correctness."""
+    store = InMemoryEventStore(max_events_per_stream=5)
+    # Interleave events across two streams
+    s1_ids = []
+    s2_ids = []
+    for i in range(4):
+        s1_ids.append(await store.store_event("s1", {"stream": "s1", "idx": i}))
+        s2_ids.append(await store.store_event("s2", {"stream": "s2", "idx": i}))
+
+    # Replay s1 from event 1 (should get events 2, 3)
+    s1_sent: List[tr.EventMessage] = []
+
+    async def s1_collector(msg):
+        s1_sent.append(msg)
+
+    result = await store.replay_events_after(s1_ids[1], s1_collector)
+    assert result == "s1"
+    assert len(s1_sent) == 2
+    assert [m.message["idx"] for m in s1_sent] == [2, 3]
+
+    # Replay s2 from event 0 (should get events 1, 2, 3)
+    s2_sent: List[tr.EventMessage] = []
+
+    async def s2_collector(msg):
+        s2_sent.append(msg)
+
+    result = await store.replay_events_after(s2_ids[0], s2_collector)
+    assert result == "s2"
+    assert len(s2_sent) == 3
+    assert [m.message["idx"] for m in s2_sent] == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_event_store_evicted_event_returns_none():
+    """Replaying from an evicted event should return None."""
+    store = InMemoryEventStore(max_events_per_stream=2)
+    eid1 = await store.store_event("s", {"id": 1})
+    await store.store_event("s", {"id": 2})
+    await store.store_event("s", {"id": 3})  # Evicts eid1
+
+    sent: List[tr.EventMessage] = []
+
+    async def collector(msg):
+        sent.append(msg)
+
+    # eid1 is no longer in event_index
+    result = await store.replay_events_after(eid1, collector)
+    assert result is None
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_event_store_last_event_in_stream():
+    """Replaying from the last event should return stream_id with no events."""
+    store = InMemoryEventStore(max_events_per_stream=10)
+    await store.store_event("s", {"id": 1})
+    eid2 = await store.store_event("s", {"id": 2})
+
+    sent: List[tr.EventMessage] = []
+
+    async def collector(msg):
+        sent.append(msg)
+
+    result = await store.replay_events_after(eid2, collector)
+    assert result == "s"
+    assert sent == []  # No events after the last one
+
+
+@pytest.mark.asyncio
+async def test_stream_buffer_len():
+    """StreamBuffer.__len__ should return the count of events."""
+    buffer = tr.StreamBuffer(entries=[None, None, None])
+    assert len(buffer) == 0
+    buffer.count = 2
+    assert len(buffer) == 2

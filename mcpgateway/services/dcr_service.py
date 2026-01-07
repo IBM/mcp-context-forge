@@ -14,12 +14,12 @@ This module handles OAuth 2.0 Dynamic Client Registration (DCR) including:
 
 # Standard
 from datetime import datetime, timezone
-import json
 import logging
 from typing import Any, Dict, List
 
 # Third-Party
 import aiohttp
+import orjson
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -182,9 +182,9 @@ class DcrService:
             issuer=issuer,
             client_id=registration_response["client_id"],
             client_secret_encrypted=client_secret_encrypted,
-            redirect_uris=json.dumps(registration_response.get("redirect_uris", [redirect_uri])),
-            grant_types=json.dumps(registration_response.get("grant_types", ["authorization_code"])),
-            response_types=json.dumps(registration_response.get("response_types", ["code"])),
+            redirect_uris=orjson.dumps(registration_response.get("redirect_uris", [redirect_uri])).decode(),
+            grant_types=orjson.dumps(registration_response.get("grant_types", ["authorization_code"])).decode(),
+            response_types=orjson.dumps(registration_response.get("response_types", ["code"])).decode(),
             scope=registration_response.get("scope", " ".join(scopes)),
             token_endpoint_auth_method=registration_response.get("token_endpoint_auth_method", self.settings.dcr_token_endpoint_auth_method),
             registration_client_uri=registration_response.get("registration_client_uri"),
@@ -264,7 +264,7 @@ class DcrService:
         registration_access_token = encryption.decrypt_secret(client_record.registration_access_token_encrypted)
 
         # Build update request
-        update_request = {"client_id": client_record.client_id, "redirect_uris": json.loads(client_record.redirect_uris), "grant_types": json.loads(client_record.grant_types)}
+        update_request = {"client_id": client_record.client_id, "redirect_uris": orjson.loads(client_record.redirect_uris), "grant_types": orjson.loads(client_record.grant_types)}
 
         # Send update request
         try:

@@ -7,7 +7,7 @@ MCP Gateway supports multiple database backends with full feature parity across 
 | Database    | Support Level | Production Ready | Connection String Example                                    | Notes                          |
 |-------------|---------------|------------------|--------------------------------------------------------------|--------------------------------|
 | SQLite      | ✅ Full       | ✅ Yes           | `sqlite:///./mcp.db`                                        | Default, file-based            |
-| PostgreSQL  | ✅ Full       | ✅ Yes           | `postgresql://postgres:changeme@localhost:5432/mcp`         | Recommended for production     |
+| PostgreSQL  | ✅ Full       | ✅ Yes           | `postgresql+psycopg://postgres:changeme@localhost:5432/mcp` | Recommended for production     |
 | MariaDB     | ✅ Full       | ✅ Yes           | `mysql+pymysql://mysql:changeme@localhost:3306/mcp`         | **36+ tables**, MariaDB 10.6+ |
 | MySQL       | ✅ Full       | ✅ Yes           | `mysql+pymysql://admin:changeme@localhost:3306/mcp`         | Alternative MySQL variant      |
 
@@ -112,7 +112,7 @@ MariaDB is fully compatible with PostgreSQL schemas used by MCP Gateway. Simply 
 
 ```bash
 # Change from PostgreSQL
-# DATABASE_URL=postgresql://postgres:changeme@localhost:5432/mcp
+# DATABASE_URL=postgresql+psycopg://postgres:changeme@localhost:5432/mcp
 
 # To MariaDB
 DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp

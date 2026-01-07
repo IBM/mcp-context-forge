@@ -106,6 +106,7 @@ class TestHttpAuthMiddlewareIntegration:
         # Patch the get_plugin_manager in auth.py to return our mock
         mock_plugin_manager = MagicMock()
         mock_plugin_manager.invoke_hook = mock_invoke_hook
+        mock_plugin_manager.has_hooks_for = MagicMock(return_value=True)  # Enable hook invocation
 
         # Patch where get_plugin_manager is USED (in auth.py)
         with patch("mcpgateway.auth.get_plugin_manager", return_value=mock_plugin_manager):

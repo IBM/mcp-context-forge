@@ -50,12 +50,28 @@ bearer_scheme = HTTPBearer(auto_error=False)
 def get_db():
     """Database dependency.
 
+    Commits the transaction on successful completion to avoid implicit rollbacks
+    for read-only operations. Rolls back explicitly on exception.
+
     Yields:
         Session: SQLAlchemy database session
+
+    Raises:
+        Exception: Re-raises any exception after rolling back the transaction.
     """
     db = SessionLocal()
     try:
         yield db
+        db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
+        raise
     finally:
         db.close()
 
@@ -246,6 +262,8 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
             access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
         )  # nosec B106 - OAuth2 token type, not a password
 
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions as-is (401, 403, etc.)
     except Exception as e:
         logger.error(f"Login error for {login_request.email}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Authentication service error")
@@ -511,7 +529,7 @@ async def create_user(user_request: EmailRegistrationRequest, current_user_ctx: 
             email=user_request.email,
             password=user_request.password,
             full_name=user_request.full_name,
-            is_admin=getattr(user_request, "is_admin", False),
+            is_admin=user_request.is_admin,
             auth_provider="local",
         )
 
@@ -560,6 +578,8 @@ async def get_user(user_email: str, current_user_ctx: dict = Depends(get_current
 
         return EmailUserResponse.from_email_user(user)
 
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions as-is (401, 403, 404, etc.)
     except Exception as e:
         logger.error(f"Error retrieving user {user_email}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve user")
@@ -617,6 +637,8 @@ async def update_user(user_email: str, user_request: EmailRegistrationRequest, c
 
         return EmailUserResponse.from_email_user(user)
 
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions as-is (401, 403, 404, etc.)
     except Exception as e:
         logger.error(f"Error updating user {user_email}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update user")
@@ -656,6 +678,8 @@ async def delete_user(user_email: str, current_user_ctx: dict = Depends(get_curr
 
         return SuccessResponse(success=True, message=f"User {user_email} has been deleted")
 
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions as-is (401, 403, 404, etc.)
     except Exception as e:
         logger.error(f"Error deleting user {user_email}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete user")

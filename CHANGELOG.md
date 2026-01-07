@@ -4,6 +4,31 @@
 
 ---
 
+## [1.0.0-BETA-2] - TBD
+
+### Added
+
+#### **🎛️ Execution Metrics Recording Switch** ([#1804](https://github.com/IBM/mcp-context-forge/issues/1804))
+* **New setting** `DB_METRICS_RECORDING_ENABLED` - Disable execution metrics database writes
+  - Controls tool/resource/prompt/server/A2A metrics recording (one DB row per operation)
+  - Set `DB_METRICS_RECORDING_ENABLED=false` to disable when using external observability
+  - Does NOT affect log aggregation (`METRICS_AGGREGATION_ENABLED`) or Prometheus (`ENABLE_METRICS`)
+  - Default: `true` (existing behavior unchanged)
+
+### Changed
+
+#### **⚡ Metrics Performance Defaults** ([#1799](https://github.com/IBM/mcp-context-forge/issues/1799))
+* **Changed default behavior** - Raw metrics now deleted after hourly rollups exist (1 hour retention)
+  - `METRICS_DELETE_RAW_AFTER_ROLLUP`: `false` → `true`
+  - `METRICS_DELETE_RAW_AFTER_ROLLUP_DAYS` → `METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS` (units now hours)
+  - `METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS`: `168` → `1`
+  - `METRICS_ROLLUP_LATE_DATA_HOURS`: `4` → `1`
+  - `METRICS_CLEANUP_INTERVAL_HOURS`: `24` → `1`
+  - `METRICS_RETENTION_DAYS`: `30` → `7`
+* **Rationale**: Prevents unbounded table growth under sustained load while preserving analytics in hourly rollups
+* **Opt-out**: Set `METRICS_DELETE_RAW_AFTER_ROLLUP=false` to preserve previous behavior
+* **External observability**: If using ELK, Datadog, or similar platforms, raw metrics are redundant - the new defaults are optimal
+
 ## [1.0.0-BETA-1] - 2025-12-16 - Multi-Architecture Containers, gRPC Translation, Performance & Security Enhancements
 
 ### Overview
@@ -1816,7 +1841,7 @@ This release represents a true community effort with contributions from develope
   ```bash
   VALIDATION_MAX_NAME_LENGTH=255
   VALIDATION_MAX_DESCRIPTION_LENGTH=4096
-  VALIDATION_MAX_JSON_DEPTH=10
+  VALIDATION_MAX_JSON_DEPTH=30
   VALIDATION_ALLOWED_URL_SCHEMES=["http://", "https://", "ws://", "wss://"]
   ```
 

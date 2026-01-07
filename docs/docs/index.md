@@ -899,12 +899,17 @@ pip install -e ".[dev]"
 
 You can configure the gateway with SQLite, PostgreSQL (or any other compatible database) in .env.
 
-When using PostgreSQL, you need to install `psycopg2` driver.
+When using PostgreSQL, you need to install the `psycopg` (psycopg3) driver.
 
 ```bash
-uv pip install psycopg2-binary   # dev convenience
+uv pip install 'psycopg[binary]'   # dev convenience (pre-built wheels)
 # or
-uv pip install psycopg2          # production build
+uv pip install 'psycopg[c]'        # production build (requires compiler)
+```
+
+Connection URL format (must use `+psycopg` for psycopg3):
+```bash
+DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/mcp
 ```
 
 #### Quick Postgres container
@@ -1062,6 +1067,7 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 
 - `MCPGATEWAY_A2A_ENABLED=false`: Completely disables A2A features (API endpoints return 404, admin tab hidden)
 - `MCPGATEWAY_A2A_METRICS_ENABLED=false`: Disables metrics collection while keeping functionality
+- `DB_METRICS_RECORDING_ENABLED=false`: Disables all execution metrics (tool/resource/prompt/server/A2A) database writes
 
 ### Email-Based Authentication & User Management
 

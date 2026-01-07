@@ -29,6 +29,7 @@ Structure:
 import asyncio
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime
+from functools import lru_cache
 import json
 import os as _os  # local alias to avoid collisions
 from pathlib import Path
@@ -48,6 +49,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jsonpath_ng.ext import parse
 from jsonpath_ng.jsonpath import JSONPath
+import orjson
 from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -81,11 +83,18 @@ from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 from mcpgateway.observability import init_telemetry
 from mcpgateway.plugins.framework import PluginError, PluginManager, PluginViolationError
+from mcpgateway.routers.plugin_admin import plugin_admin_router
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
     A2AAgentCreate,
     A2AAgentRead,
     A2AAgentUpdate,
+    CursorPaginatedA2AAgentsResponse,
+    CursorPaginatedGatewaysResponse,
+    CursorPaginatedPromptsResponse,
+    CursorPaginatedResourcesResponse,
+    CursorPaginatedServersResponse,
+    CursorPaginatedToolsResponse,
     GatewayCreate,
     GatewayRead,
     GatewayUpdate,
@@ -283,10 +292,26 @@ def get_user_email(user):
 resource_cache = ResourceCache(max_size=settings.resource_cache_size, ttl=settings.resource_cache_ttl)
 
 
+@lru_cache(maxsize=512)
+def _parse_jsonpath(jsonpath: str) -> JSONPath:
+    """Cache parsed JSONPath expression.
+
+    Args:
+        jsonpath: The JSONPath expression string.
+
+    Returns:
+        Parsed JSONPath object.
+
+    Raises:
+        Exception: If the JSONPath expression is invalid.
+    """
+    return parse(jsonpath)
+
+
 def jsonpath_modifier(data: Any, jsonpath: str = "$[*]", mappings: Optional[Dict[str, str]] = None) -> Union[List, Dict]:
     """
     Applies the given JSONPath expression and mappings to the data.
-    Only return data that is required by the user dynamically.
+    Uses cached parsed expressions for performance.
 
     Args:
         data: The JSON data to query.
@@ -314,7 +339,7 @@ def jsonpath_modifier(data: Any, jsonpath: str = "$[*]", mappings: Optional[Dict
         jsonpath = "$[*]"
 
     try:
-        main_expr: JSONPath = parse(jsonpath)
+        main_expr: JSONPath = _parse_jsonpath(jsonpath)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid main JSONPath expression: {e}")
 
@@ -336,8 +361,8 @@ def jsonpath_modifier(data: Any, jsonpath: str = "$[*]", mappings: Optional[Dict
 
 def transform_data_with_mappings(data: list[Any], mappings: dict[str, str]) -> list[Any]:
     """
-    Applies the given JSONPath expression and mappings to the data.
-    Only return data that is required by the user dynamically.
+    Applies mappings to data using cached JSONPath expressions.
+    Parses each mapping expression once per call, not per item.
 
     Args:
         data: The set of data to apply mappings to.
@@ -353,16 +378,18 @@ def transform_data_with_mappings(data: list[Any], mappings: dict[str, str]) -> l
         >>> transform_data_with_mappings([{'first_name': "Bruce", 'second_name': "Wayne"},{'first_name': "Diana", 'second_name': "Prince"}], {"n": "$.first_name"})
         [{'n': 'Bruce'}, {'n': 'Diana'}]
     """
+    # Pre-parse all mapping expressions once (not per item)
+    parsed_mappings: Dict[str, JSONPath] = {}
+    for new_key, mapping_expr_str in mappings.items():
+        try:
+            parsed_mappings[new_key] = _parse_jsonpath(mapping_expr_str)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid mapping JSONPath for key '{new_key}': {e}")
 
     mapped_results = []
     for item in data:
         mapped_item = {}
-        for new_key, mapping_expr_str in mappings.items():
-            try:
-                mapping_expr = parse(mapping_expr_str)
-            except Exception as e:
-                raise HTTPException(status_code=400, detail=f"Invalid mapping JSONPath for key '{new_key}': {e}")
-
+        for new_key, mapping_expr in parsed_mappings.items():
             try:
                 mapping_matches = mapping_expr.find(item)
             except Exception as e:
@@ -427,6 +454,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # Initialize Redis client early (shared pool for all services)
     await get_redis_client()
 
+    # Initialize shared HTTP client (connection pool for all outbound requests)
+    # First-Party
+    from mcpgateway.services.http_client_service import SharedHttpClient  # pylint: disable=import-outside-toplevel
+
+    await SharedHttpClient.get_instance()
+
     # Initialize LLM chat router Redis client
     # First-Party
     from mcpgateway.routers.llmchat_router import init_redis as init_llmchat_redis  # pylint: disable=import-outside-toplevel
@@ -473,6 +506,36 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             elicitation_service = get_elicitation_service()
             await elicitation_service.start()
             logger.info("Elicitation service initialized")
+
+        # Initialize metrics buffer service for batching metric writes
+        if settings.metrics_buffer_enabled:
+            # First-Party
+            from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
+
+            metrics_buffer_service = get_metrics_buffer_service()
+            await metrics_buffer_service.start()
+            if settings.db_metrics_recording_enabled:
+                logger.info("Metrics buffer service initialized")
+            else:
+                logger.info("Metrics buffer service initialized (recording disabled)")
+
+        # Initialize metrics cleanup service for automatic deletion of old metrics
+        if settings.metrics_cleanup_enabled:
+            # First-Party
+            from mcpgateway.services.metrics_cleanup_service import get_metrics_cleanup_service  # pylint: disable=import-outside-toplevel
+
+            metrics_cleanup_service = get_metrics_cleanup_service()
+            await metrics_cleanup_service.start()
+            logger.info("Metrics cleanup service initialized (retention: %d days)", settings.metrics_retention_days)
+
+        # Initialize metrics rollup service for hourly aggregation
+        if settings.metrics_rollup_enabled:
+            # First-Party
+            from mcpgateway.services.metrics_rollup_service import get_metrics_rollup_service  # pylint: disable=import-outside-toplevel
+
+            metrics_rollup_service = get_metrics_rollup_service()
+            await metrics_rollup_service.start()
+            logger.info("Metrics rollup service initialized (interval: %dh)", settings.metrics_rollup_interval_hours)
 
         refresh_slugs_on_startup()
 
@@ -591,7 +654,34 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             elicitation_service = get_elicitation_service()
             services_to_shutdown.insert(5, elicitation_service)
 
+        # Add metrics buffer service if enabled (flush remaining metrics before shutdown)
+        if settings.metrics_buffer_enabled:
+            # First-Party
+            from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
+
+            metrics_buffer_service = get_metrics_buffer_service()
+            services_to_shutdown.insert(0, metrics_buffer_service)  # Shutdown first to flush metrics
+
+        # Add metrics rollup service if enabled (shutdown before cleanup)
+        if settings.metrics_rollup_enabled:
+            # First-Party
+            from mcpgateway.services.metrics_rollup_service import get_metrics_rollup_service  # pylint: disable=import-outside-toplevel
+
+            metrics_rollup_service = get_metrics_rollup_service()
+            services_to_shutdown.insert(1, metrics_rollup_service)
+
+        # Add metrics cleanup service if enabled
+        if settings.metrics_cleanup_enabled:
+            # First-Party
+            from mcpgateway.services.metrics_cleanup_service import get_metrics_cleanup_service  # pylint: disable=import-outside-toplevel
+
+            metrics_cleanup_service = get_metrics_cleanup_service()
+            services_to_shutdown.insert(2, metrics_cleanup_service)
+
         await shutdown_services(services_to_shutdown)
+
+        # Shutdown shared HTTP client (after services, before Redis)
+        await SharedHttpClient.shutdown()
 
         # Close Redis client last (after all services that use it)
         await close_redis_client()
@@ -627,6 +717,7 @@ async def setup_passthrough_headers():
     try:
         await set_global_passthrough_headers(db)
     finally:
+        db.commit()  # End transaction cleanly
         db.close()
 
 
@@ -798,7 +889,7 @@ async def validation_exception_handler(_request: Request, exc: ValidationError):
         ...     result.status_code
         422
     """
-    return JSONResponse(status_code=422, content=ErrorFormatter.format_validation_error(exc))
+    return ORJSONResponse(status_code=422, content=ErrorFormatter.format_validation_error(exc))
 
 
 @app.exception_handler(RequestValidationError)
@@ -832,7 +923,7 @@ async def request_validation_exception_handler(_request: Request, exc: RequestVa
             error_details.append(error_detail)
 
         response_content = {"detail": error_details}
-        return JSONResponse(status_code=422, content=response_content)
+        return ORJSONResponse(status_code=422, content=response_content)
     return await fastapi_default_validation_handler(_request, exc)
 
 
@@ -868,7 +959,7 @@ async def database_exception_handler(_request: Request, exc: IntegrityError):
         >>> hasattr(result, 'body')
         True
     """
-    return JSONResponse(status_code=409, content=ErrorFormatter.format_database_error(exc))
+    return ORJSONResponse(status_code=409, content=ErrorFormatter.format_database_error(exc))
 
 
 @app.exception_handler(PluginViolationError)
@@ -927,7 +1018,7 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
         if exc.violation.plugin_name:
             violation_details["plugin_name"] = exc.violation.plugin_name
     json_rpc_error = PydanticJSONRPCError(code=status_code, message="Plugin Violation: " + message, data=violation_details)
-    return JSONResponse(status_code=200, content={"error": json_rpc_error.model_dump()})
+    return ORJSONResponse(status_code=200, content={"error": json_rpc_error.model_dump()})
 
 
 @app.exception_handler(PluginError)
@@ -984,7 +1075,7 @@ async def plugin_exception_handler(_request: Request, exc: PluginError):
         if exc.error.plugin_name:
             error_details["plugin_name"] = exc.error.plugin_name
     json_rpc_error = PydanticJSONRPCError(code=status_code, message="Plugin Error: " + message, data=error_details)
-    return JSONResponse(status_code=200, content={"error": json_rpc_error.model_dump()})
+    return ORJSONResponse(status_code=200, content={"error": json_rpc_error.model_dump()})
 
 
 class DocsAuthMiddleware(BaseHTTPMiddleware):
@@ -1052,7 +1143,7 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
                 # Use dedicated docs authentication that bypasses global auth settings
                 await require_docs_auth_override(token, cookie_token)
             except HTTPException as e:
-                return JSONResponse(status_code=e.status_code, content={"detail": e.detail}, headers=e.headers if e.headers else None)
+                return ORJSONResponse(status_code=e.status_code, content={"detail": e.detail}, headers=e.headers if e.headers else None)
 
         # Proceed to next middleware or route
         return await call_next(request)
@@ -1267,9 +1358,7 @@ if plugin_manager:
 # IMPORTANT: Must be registered BEFORE CorrelationIDMiddleware so it executes AFTER correlation ID is set
 # Gateway boundary logging (request_started/completed) runs regardless of log_requests setting
 # Detailed payload logging only runs if log_detailed_requests=True
-app.add_middleware(
-    RequestLoggingMiddleware, enable_gateway_logging=True, log_detailed_requests=settings.log_requests, log_level=settings.log_level, max_body_size=settings.log_max_size_mb * 1024 * 1024
-)  # Convert MB to bytes
+app.add_middleware(RequestLoggingMiddleware, enable_gateway_logging=True, log_detailed_requests=settings.log_requests, log_level=settings.log_level, max_body_size=settings.log_detailed_max_body_size)
 
 # Add custom DocsAuthMiddleware
 app.add_middleware(DocsAuthMiddleware)
@@ -1356,8 +1445,20 @@ def get_db():
     """
     Dependency function to provide a database session.
 
+    Commits the transaction on successful completion to avoid implicit rollbacks
+    for read-only operations. Rolls back explicitly on exception.
+
+    This function handles connection failures gracefully by invalidating broken
+    connections. When a connection is broken (e.g., due to PgBouncer timeout or
+    network issues), the rollback will fail. In this case, we invalidate the
+    session to ensure the broken connection is discarded from the pool rather
+    than being returned in a bad state.
+
     Yields:
         Session: A SQLAlchemy session object for interacting with the database.
+
+    Raises:
+        Exception: Re-raises any exception after rolling back the transaction.
 
     Ensures:
         The database session is closed after the request completes, even in the case of an exception.
@@ -1376,11 +1477,24 @@ def get_db():
         ...         next(db_gen)
         ...     except StopIteration:
         ...         pass  # Expected - generator cleanup
-        'Session'
+        'ResilientSession'
     """
     db = SessionLocal()
     try:
         yield db
+        db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            # Connection is broken - invalidate to remove from pool
+            # This handles cases like PgBouncer query_wait_timeout where
+            # the connection is dead and rollback itself fails
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
+        raise
     finally:
         db.close()
 
@@ -1654,14 +1768,14 @@ async def ping(request: Request, user=Depends(get_current_user)) -> JSONResponse
         logger.debug(f"Authenticated user {user} sent ping request.")
         # Return an empty result per the MCP ping specification.
         response: dict = {"jsonrpc": "2.0", "id": req_id, "result": {}}
-        return JSONResponse(content=response)
+        return ORJSONResponse(content=response)
     except Exception as e:
         error_response: dict = {
             "jsonrpc": "2.0",
             "id": req_id,  # Now req_id is always defined
             "error": {"code": -32603, "message": "Internal error", "data": str(e)},
         }
-        return JSONResponse(status_code=500, content=error_response)
+        return ORJSONResponse(status_code=500, content=error_response)
 
 
 @protocol_router.post("/notifications")
@@ -1731,23 +1845,29 @@ async def handle_sampling(request: Request, db: Session = Depends(get_db), user=
 ###############
 # Server APIs #
 ###############
-@server_router.get("", response_model=List[ServerRead])
-@server_router.get("/", response_model=List[ServerRead])
+@server_router.get("", response_model=Union[List[ServerRead], CursorPaginatedServersResponse])
+@server_router.get("/", response_model=Union[List[ServerRead], CursorPaginatedServersResponse])
 @require_permission("servers.read")
 async def list_servers(
     request: Request,
+    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
+    limit: Optional[int] = Query(None, ge=0, description="Maximum number of servers to return"),
     include_inactive: bool = False,
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> List[ServerRead]:
+) -> Union[List[ServerRead], Dict[str, Any]]:
     """
-    Lists servers accessible to the user, with team filtering support.
+    Lists servers accessible to the user, with team filtering and cursor pagination support.
 
     Args:
         request (Request): The incoming request object for team_id retrieval.
+        cursor (Optional[str]): Cursor for pagination.
+        include_pagination (bool): Include cursor pagination metadata in response.
+        limit (Optional[int]): Maximum number of servers to return.
         include_inactive (bool): Whether to include inactive servers in the response.
         tags (Optional[str]): Comma-separated list of tags to filter by.
         team_id (Optional[str]): Filter by specific team ID.
@@ -1756,7 +1876,7 @@ async def list_servers(
         user (str): The authenticated user making the request.
 
     Returns:
-        List[ServerRead]: A list of server objects the user has access to.
+        Union[List[ServerRead], Dict[str, Any]]: A list of server objects or paginated response with nextCursor.
     """
     # Parse tags parameter if provided
     tags_list = None
@@ -1770,7 +1890,7 @@ async def list_servers(
 
     # Check for team ID mismatch
     if team_id is not None and token_team_id is not None and team_id != token_team_id:
-        return JSONResponse(
+        return ORJSONResponse(
             content={"message": "Access issue: This API token does not have the required permissions for this team."},
             status_code=status.HTTP_403_FORBIDDEN,
         )
@@ -1778,15 +1898,24 @@ async def list_servers(
     # Determine final team ID
     team_id = team_id or token_team_id
 
-    # Use team-filtered server listing
-    if team_id or visibility:
-        data = await server_service.list_servers_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
-        # Apply tag filtering to team-filtered results if needed
-        if tags_list:
-            data = [server for server in data if any(tag in server.tags for tag in tags_list)]
-    else:
-        # Use existing method for backward compatibility when no team filtering
-        data = await server_service.list_servers(db, include_inactive=include_inactive, tags=tags_list)
+    # Use consolidated server listing with optional team filtering
+    logger.debug(f"User: {user_email} requested server list with include_inactive={include_inactive}, tags={tags_list}, team_id={team_id}, visibility={visibility}")
+    data, next_cursor = await server_service.list_servers(
+        db=db,
+        cursor=cursor,
+        limit=limit,
+        include_inactive=include_inactive,
+        tags=tags_list,
+        user_email=user_email if (team_id or visibility) else None,
+        team_id=team_id,
+        visibility=visibility,
+    )
+
+    if include_pagination:
+        payload = {"servers": [server.model_dump(by_alias=True) for server in data]}
+        if next_cursor:
+            payload["nextCursor"] = next_cursor
+        return payload
     return data
 
 
@@ -1853,7 +1982,7 @@ async def create_server(
 
         # Check for team ID mismatch
         if team_id is not None and token_team_id is not None and team_id != token_team_id:
-            return JSONResponse(
+            return ORJSONResponse(
                 content={"message": "Access issue: This API token does not have the required permissions for this team."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
@@ -1980,12 +2109,18 @@ async def toggle_server_status(
 
 @server_router.delete("/{server_id}", response_model=Dict[str, str])
 @require_permission("servers.delete")
-async def delete_server(server_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_server(
+    server_id: str,
+    purge_metrics: bool = Query(False, description="Purge raw + rollup metrics for this server"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, str]:
     """
     Deletes a server by its ID.
 
     Args:
         server_id (str): The ID of the server to delete.
+        purge_metrics (bool): Whether to delete raw + hourly rollup metrics for this server.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
@@ -1999,7 +2134,7 @@ async def delete_server(server_id: str, db: Session = Depends(get_db), user=Depe
         logger.debug(f"User {user} is deleting server with ID {server_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         await server_service.get_server(db, server_id)
-        await server_service.delete_server(db, server_id, user_email=user_email)
+        await server_service.delete_server(db, server_id, user_email=user_email, purge_metrics=purge_metrics)
         return {
             "status": "success",
             "message": f"Server {server_id} deleted successfully",
@@ -2106,7 +2241,7 @@ async def message_endpoint(request: Request, server_id: str, user=Depends(get_cu
                 message=message,
             )
 
-        return JSONResponse(content={"status": "success"}, status_code=202)
+        return ORJSONResponse(content={"status": "success"}, status_code=202)
     except ValueError as e:
         logger.error(f"Invalid message format: {e}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -2209,56 +2344,76 @@ async def server_get_prompts(
 ##################
 # A2A Agent APIs #
 ##################
-@a2a_router.get("", response_model=List[A2AAgentRead])
-@a2a_router.get("/", response_model=List[A2AAgentRead])
+@a2a_router.get("", response_model=Union[List[A2AAgentRead], CursorPaginatedA2AAgentsResponse])
+@a2a_router.get("/", response_model=Union[List[A2AAgentRead], CursorPaginatedA2AAgentsResponse])
 @require_permission("a2a.read")
 async def list_a2a_agents(
     include_inactive: bool = False,
     tags: Optional[str] = None,
     team_id: Optional[str] = Query(None, description="Filter by team ID"),
     visibility: Optional[str] = Query(None, description="Filter by visibility (private, team, public)"),
-    skip: int = Query(0, ge=0, description="Number of agents to skip for pagination"),
-    limit: int = Query(100, ge=1, le=1000, description="Maximum number of agents to return"),
+    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
+    limit: Optional[int] = Query(None, description="Maximum number of agents to return"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> List[A2AAgentRead]:
+) -> Union[List[A2AAgentRead], Dict[str, Any]]:
     """
-    Lists A2A agents user has access to with team filtering.
+    Lists A2A agents user has access to with cursor pagination and team filtering.
 
     Args:
         include_inactive (bool): Whether to include inactive agents in the response.
         tags (Optional[str]): Comma-separated list of tags to filter by.
         team_id (Optional[str]): Team ID to filter by.
         visibility (Optional[str]): Visibility level to filter by.
-        skip (int): Number of agents to skip for pagination.
-        limit (int): Maximum number of agents to return.
+        cursor (Optional[str]): Cursor for pagination.
+        include_pagination (bool): Include cursor pagination metadata in response.
+        limit (Optional[int]): Maximum number of agents to return.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
     Returns:
-        List[A2AAgentRead]: A list of A2A agent objects the user has access to.
+        Union[List[A2AAgentRead], Dict[str, Any]]: A list of A2A agent objects or paginated response with nextCursor.
 
     Raises:
         HTTPException: If A2A service is not available.
     """
-    # Parse tags parameter if provided (keeping for backward compatibility)
+    # Parse tags parameter if provided
     tags_list = None
     if tags:
         tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
 
-    logger.debug(f"User {user} requested A2A agent list with team_id={team_id}, visibility={visibility}, tags={tags_list}")
     user_email: Optional[str] = "Unknown"
-
     if hasattr(user, "email"):
         user_email = getattr(user, "email", "Unknown")
     elif isinstance(user, dict):
         user_email = str(user.get("email", "Unknown"))
     else:
-        user_email = "Uknown"
-    # Use team-aware filtering
+        user_email = "Unknown"
+
+    logger.debug(f"User: {user_email} requested A2A agent list with team_id={team_id}, visibility={visibility}, tags={tags_list}, cursor={cursor}")
+
     if a2a_service is None:
         raise HTTPException(status_code=503, detail="A2A service not available")
-    return await a2a_service.list_agents_for_user(db, user_info=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive, skip=skip, limit=limit)
+
+    # Use consolidated agent listing with optional team filtering
+    data, next_cursor = await a2a_service.list_agents(
+        db=db,
+        cursor=cursor,
+        include_inactive=include_inactive,
+        tags=tags_list,
+        limit=limit,
+        user_email=user_email if (team_id or visibility) else None,
+        team_id=team_id,
+        visibility=visibility,
+    )
+
+    if include_pagination:
+        payload = {"agents": [agent.model_dump(by_alias=True) for agent in data]}
+        if next_cursor:
+            payload["nextCursor"] = next_cursor
+        return payload
+    return data
 
 
 @a2a_router.get("/{agent_id}", response_model=A2AAgentRead)
@@ -2326,7 +2481,7 @@ async def create_a2a_agent(
 
         # Check for team ID mismatch
         if team_id is not None and token_team_id is not None and team_id != token_team_id:
-            return JSONResponse(
+            return ORJSONResponse(
                 content={"message": "Access issue: This API token does not have the required permissions for this team."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
@@ -2460,12 +2615,18 @@ async def toggle_a2a_agent_status(
 
 @a2a_router.delete("/{agent_id}", response_model=Dict[str, str])
 @require_permission("a2a.delete")
-async def delete_a2a_agent(agent_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_a2a_agent(
+    agent_id: str,
+    purge_metrics: bool = Query(False, description="Purge raw + rollup metrics for this agent"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, str]:
     """
     Deletes an A2A agent by its ID.
 
     Args:
         agent_id (str): The ID of the agent to delete.
+        purge_metrics (bool): Whether to delete raw + hourly rollup metrics for this agent.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
@@ -2480,7 +2641,7 @@ async def delete_a2a_agent(agent_id: str, db: Session = Depends(get_db), user=De
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        await a2a_service.delete_agent(db, agent_id, user_email=user_email)
+        await a2a_service.delete_agent(db, agent_id, user_email=user_email, purge_metrics=purge_metrics)
         return {
             "status": "success",
             "message": f"A2A Agent {agent_id} deleted successfully",
@@ -2545,12 +2706,14 @@ async def invoke_a2a_agent(
 #############
 # Tool APIs #
 #############
-@tool_router.get("", response_model=Union[List[ToolRead], List[Dict], Dict, List])
-@tool_router.get("/", response_model=Union[List[ToolRead], List[Dict], Dict, List])
+@tool_router.get("", response_model=Union[List[ToolRead], CursorPaginatedToolsResponse])
+@tool_router.get("/", response_model=Union[List[ToolRead], CursorPaginatedToolsResponse])
 @require_permission("tools.read")
 async def list_tools(
     request: Request,
     cursor: Optional[str] = None,
+    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
+    limit: Optional[int] = Query(None, ge=0, description="Maximum number of tools to return. 0 means all (no limit). Default uses pagination_default_page_size."),
     include_inactive: bool = False,
     tags: Optional[str] = None,
     team_id: Optional[str] = Query(None, description="Filter by team ID"),
@@ -2565,6 +2728,9 @@ async def list_tools(
     Args:
         request (Request): The FastAPI request object for team_id retrieval
         cursor: Pagination cursor for fetching the next set of results
+        include_pagination: Whether to include cursor pagination metadata in the response
+        limit: Maximum number of tools to return. Use 0 for all tools (no limit).
+            If not specified, uses pagination_default_page_size (default: 50).
         include_inactive: Whether to include inactive tools in the results
         tags: Comma-separated list of tags to filter by (e.g., "api,data")
         team_id: Optional team ID to filter tools by specific team
@@ -2591,7 +2757,7 @@ async def list_tools(
 
     # Check for team ID mismatch
     if team_id is not None and token_team_id is not None and team_id != token_team_id:
-        return JSONResponse(
+        return ORJSONResponse(
             content={"message": "Access issue: This API token does not have the required permissions for this team."},
             status_code=status.HTTP_403_FORBIDDEN,
         )
@@ -2599,22 +2765,26 @@ async def list_tools(
     # Determine final team ID
     team_id = team_id or token_team_id
 
-    # Use team-filtered tool listing
-    if team_id or visibility:
-        data = await tool_service.list_tools_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
-
-        # Apply tag filtering to team-filtered results if needed
-        if tags_list:
-            data = [tool for tool in data if any(tag in tool.tags for tag in tags_list)]
-    else:
-        # Use existing method for backward compatibility when no team filtering
-        data, _ = await tool_service.list_tools(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
-
-    # Apply gateway_id filtering if provided
-    if gateway_id:
-        data = [tool for tool in data if str(tool.gateway_id) == gateway_id]
+    # Use unified list_tools() with optional team filtering
+    # When team_id or visibility is specified, user_email enables team-based access control
+    data, next_cursor = await tool_service.list_tools(
+        db=db,
+        cursor=cursor,
+        include_inactive=include_inactive,
+        tags=tags_list,
+        gateway_id=gateway_id,
+        limit=limit,
+        user_email=user_email if (team_id or visibility) else None,
+        team_id=team_id,
+        visibility=visibility,
+    )
 
     if apijsonpath is None:
+        if include_pagination:
+            payload = {"tools": [tool.model_dump(by_alias=True) for tool in data]}
+            if next_cursor:
+                payload["nextCursor"] = next_cursor
+            return payload
         return data
 
     tools_dict_list = [tool.to_dict(use_alias=True) for tool in data]
@@ -2659,7 +2829,7 @@ async def create_tool(
 
         # Check for team ID mismatch
         if team_id is not None and token_team_id is not None and team_id != token_team_id:
-            return JSONResponse(
+            return ORJSONResponse(
                 content={"message": "Access issue: This API token does not have the required permissions for this team."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
@@ -2803,12 +2973,18 @@ async def update_tool(
 
 @tool_router.delete("/{tool_id}")
 @require_permission("tools.delete")
-async def delete_tool(tool_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_tool(
+    tool_id: str,
+    purge_metrics: bool = Query(False, description="Purge raw + rollup metrics for this tool"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, str]:
     """
     Permanently deletes a tool by ID.
 
     Args:
         tool_id (str): The ID of the tool to delete.
+        purge_metrics (bool): Whether to delete raw + hourly rollup metrics for this tool.
         db (Session): The database session dependency.
         user (str): The authenticated user making the request.
 
@@ -2821,7 +2997,7 @@ async def delete_tool(tool_id: str, db: Session = Depends(get_db), user=Depends(
     try:
         logger.debug(f"User {user} is deleting tool with ID {tool_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        await tool_service.delete_tool(db, tool_id, user_email=user_email)
+        await tool_service.delete_tool(db, tool_id, user_email=user_email, purge_metrics=purge_metrics)
         return {"status": "success", "message": f"Tool {tool_id} permanently deleted"}
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -2865,6 +3041,8 @@ async def toggle_tool_status(
         }
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
+    except ToolNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -2929,29 +3107,35 @@ async def toggle_resource_status(
         }
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
+    except ResourceNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
-@resource_router.get("", response_model=List[ResourceRead])
-@resource_router.get("/", response_model=List[ResourceRead])
+@resource_router.get("", response_model=Union[List[ResourceRead], CursorPaginatedResourcesResponse])
+@resource_router.get("/", response_model=Union[List[ResourceRead], CursorPaginatedResourcesResponse])
 @require_permission("resources.read")
 async def list_resources(
     request: Request,
-    cursor: Optional[str] = None,
+    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
+    limit: Optional[int] = Query(None, ge=0, description="Maximum number of resources to return"),
     include_inactive: bool = False,
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> List[Dict[str, Any]]:
+) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
     """
-    Retrieve a list of resources accessible to the user, with team filtering support.
+    Retrieve a list of resources accessible to the user, with team filtering and cursor pagination support.
 
     Args:
         request (Request): The FastAPI request object for team_id retrieval
-        cursor (Optional[str]): Optional cursor for pagination.
+        cursor (Optional[str]): Cursor for pagination.
+        include_pagination (bool): Include cursor pagination metadata in response.
+        limit (Optional[int]): Maximum number of resources to return.
         include_inactive (bool): Whether to include inactive resources.
         tags (Optional[str]): Comma-separated list of tags to filter by.
         team_id (Optional[str]): Filter by specific team ID.
@@ -2960,7 +3144,7 @@ async def list_resources(
         user (str): Authenticated user.
 
     Returns:
-        List[ResourceRead]: List of resources the user has access to.
+        Union[List[ResourceRead], Dict[str, Any]]: List of resources or paginated response with nextCursor.
     """
     # Parse tags parameter if provided
     tags_list = None
@@ -2974,7 +3158,7 @@ async def list_resources(
 
     # Check for team ID mismatch
     if team_id is not None and token_team_id is not None and team_id != token_team_id:
-        return JSONResponse(
+        return ORJSONResponse(
             content={"message": "Access issue: This API token does not have the required permissions for this team."},
             status_code=status.HTTP_403_FORBIDDEN,
         )
@@ -2982,19 +3166,25 @@ async def list_resources(
     # Determine final team ID
     team_id = team_id or token_team_id
 
-    # Use team-filtered resource listing
-    if team_id or visibility:
-        data = await resource_service.list_resources_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
-        # Apply tag filtering to team-filtered results if needed
-        if tags_list:
-            data = [resource for resource in data if any(tag in resource.tags for tag in tags_list)]
-    else:
-        # Use existing method for backward compatibility when no team filtering
-        logger.debug(f"User {user_email} requested resource list with cursor {cursor}, include_inactive={include_inactive}, tags={tags_list}")
-        if cached := resource_cache.get("resource_list"):
-            return cached
-        data, _ = await resource_service.list_resources(db, include_inactive=include_inactive, tags=tags_list)
-        resource_cache.set("resource_list", data)
+    # Use unified list_resources() with optional team filtering
+    # When team_id or visibility is specified, user_email enables team-based access control
+    logger.debug(f"User {user_email} requested resource list with cursor {cursor}, include_inactive={include_inactive}, tags={tags_list}, team_id={team_id}, visibility={visibility}")
+    data, next_cursor = await resource_service.list_resources(
+        db=db,
+        cursor=cursor,
+        limit=limit,
+        include_inactive=include_inactive,
+        tags=tags_list,
+        user_email=user_email if (team_id or visibility) else None,
+        team_id=team_id,
+        visibility=visibility,
+    )
+
+    if include_pagination:
+        payload = {"resources": [resource.model_dump(by_alias=True) if hasattr(resource, "model_dump") else resource for resource in data]}
+        if next_cursor:
+            payload["nextCursor"] = next_cursor
+        return payload
     return data
 
 
@@ -3037,7 +3227,7 @@ async def create_resource(
 
         # Check for team ID mismatch
         if team_id is not None and token_team_id is not None and team_id != token_team_id:
-            return JSONResponse(
+            return ORJSONResponse(
                 content={"message": "Access issue: This API token does not have the required permissions for this team."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
@@ -3206,12 +3396,18 @@ async def update_resource(
 
 @resource_router.delete("/{resource_id}")
 @require_permission("resources.delete")
-async def delete_resource(resource_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_resource(
+    resource_id: str,
+    purge_metrics: bool = Query(False, description="Purge raw + rollup metrics for this resource"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, str]:
     """
     Delete a resource by its ID.
 
     Args:
         resource_id (str): ID of the resource to delete.
+        purge_metrics (bool): Whether to delete raw + hourly rollup metrics for this resource.
         db (Session): Database session.
         user (str): Authenticated user.
 
@@ -3224,7 +3420,7 @@ async def delete_resource(resource_id: str, db: Session = Depends(get_db), user=
     try:
         logger.debug(f"User {user} is deleting resource with id {resource_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        await resource_service.delete_resource(db, resource_id, user_email=user_email)
+        await resource_service.delete_resource(db, resource_id, user_email=user_email, purge_metrics=purge_metrics)
         await invalidate_resource_cache(resource_id)
         return {"status": "success", "message": f"Resource {resource_id} deleted"}
     except PermissionError as e:
@@ -3288,29 +3484,35 @@ async def toggle_prompt_status(
         }
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
+    except PromptNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
-@prompt_router.get("", response_model=List[PromptRead])
-@prompt_router.get("/", response_model=List[PromptRead])
+@prompt_router.get("", response_model=Union[List[PromptRead], CursorPaginatedPromptsResponse])
+@prompt_router.get("/", response_model=Union[List[PromptRead], CursorPaginatedPromptsResponse])
 @require_permission("prompts.read")
 async def list_prompts(
     request: Request,
-    cursor: Optional[str] = None,
+    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
+    limit: Optional[int] = Query(None, ge=0, description="Maximum number of prompts to return"),
     include_inactive: bool = False,
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> List[Dict[str, Any]]:
+) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
     """
-    List prompts accessible to the user, with team filtering support.
+    List prompts accessible to the user, with team filtering and cursor pagination support.
 
     Args:
         request (Request): The FastAPI request object for team_id retrieval
-        cursor: Cursor for pagination.
+        cursor (Optional[str]): Cursor for pagination.
+        include_pagination (bool): Include cursor pagination metadata in response.
+        limit (Optional[int]): Maximum number of prompts to return.
         include_inactive: Include inactive prompts.
         tags: Comma-separated list of tags to filter by.
         team_id: Filter by specific team ID.
@@ -3319,7 +3521,7 @@ async def list_prompts(
         user: Authenticated user.
 
     Returns:
-        List of prompt records the user has access to.
+        Union[List[Dict[str, Any]], Dict[str, Any]]: List of prompt records or paginated response with nextCursor.
     """
     # Parse tags parameter if provided
     tags_list = None
@@ -3333,7 +3535,7 @@ async def list_prompts(
 
     # Check for team ID mismatch
     if team_id is not None and token_team_id is not None and team_id != token_team_id:
-        return JSONResponse(
+        return ORJSONResponse(
             content={"message": "Access issue: This API token does not have the required permissions for this team."},
             status_code=status.HTTP_403_FORBIDDEN,
         )
@@ -3341,16 +3543,24 @@ async def list_prompts(
     # Determine final team ID
     team_id = team_id or token_team_id
 
-    # Use team-filtered prompt listing
-    if team_id or visibility:
-        data = await prompt_service.list_prompts_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
-        # Apply tag filtering to team-filtered results if needed
-        if tags_list:
-            data = [prompt for prompt in data if any(tag in prompt.tags for tag in tags_list)]
-    else:
-        # Use existing method for backward compatibility when no team filtering
-        logger.debug(f"User: {user_email} requested prompt list with include_inactive={include_inactive}, cursor={cursor}, tags={tags_list}")
-        data, _ = await prompt_service.list_prompts(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
+    # Use consolidated prompt listing with optional team filtering
+    logger.debug(f"User: {user_email} requested prompt list with include_inactive={include_inactive}, cursor={cursor}, tags={tags_list}, team_id={team_id}, visibility={visibility}")
+    data, next_cursor = await prompt_service.list_prompts(
+        db=db,
+        cursor=cursor,
+        limit=limit,
+        include_inactive=include_inactive,
+        tags=tags_list,
+        user_email=user_email if (team_id or visibility) else None,
+        team_id=team_id,
+        visibility=visibility,
+    )
+
+    if include_pagination:
+        payload = {"prompts": [prompt.model_dump(by_alias=True) if hasattr(prompt, "model_dump") else prompt for prompt in data]}
+        if next_cursor:
+            payload["nextCursor"] = next_cursor
+        return payload
     return data
 
 
@@ -3395,7 +3605,7 @@ async def create_prompt(
 
         # Check for team ID mismatch
         if team_id is not None and token_team_id is not None and team_id != token_team_id:
-            return JSONResponse(
+            return ORJSONResponse(
                 content={"message": "Access issue: This API token does not have the required permissions for this team."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
@@ -3485,10 +3695,10 @@ async def get_prompt(
         logger.error(f"Could not retrieve prompt {prompt_id}: {ex}")
         if isinstance(ex, PluginViolationError):
             # Return the actual plugin violation message
-            return JSONResponse(content={"message": ex.message, "details": str(ex.violation) if hasattr(ex, "violation") else None}, status_code=422)
+            return ORJSONResponse(content={"message": ex.message, "details": str(ex.violation) if hasattr(ex, "violation") else None}, status_code=422)
         if isinstance(ex, (ValueError, PromptError)):
             # Return the actual error message
-            return JSONResponse(content={"message": str(ex)}, status_code=422)
+            return ORJSONResponse(content={"message": str(ex)}, status_code=422)
         raise
 
     return result
@@ -3516,7 +3726,7 @@ async def get_prompt_no_args(
         The prompt template information
 
     Raises:
-        Exception: Re-raised from prompt service.
+        HTTPException: 404 if prompt not found, 403 if permission denied.
     """
     logger.debug(f"User: {user} requested prompt: {prompt_id} with no arguments")
 
@@ -3524,13 +3734,18 @@ async def get_prompt_no_args(
     plugin_context_table = getattr(request.state, "plugin_context_table", None)
     plugin_global_context = getattr(request.state, "plugin_global_context", None)
 
-    return await prompt_service.get_prompt(
-        db,
-        prompt_id,
-        {},
-        plugin_context_table=plugin_context_table,
-        plugin_global_context=plugin_global_context,
-    )
+    try:
+        return await prompt_service.get_prompt(
+            db,
+            prompt_id,
+            {},
+            plugin_context_table=plugin_context_table,
+            plugin_global_context=plugin_global_context,
+        )
+    except PromptNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
 
 
 @prompt_router.put("/{prompt_id}", response_model=PromptRead)
@@ -3599,12 +3814,18 @@ async def update_prompt(
 
 @prompt_router.delete("/{prompt_id}")
 @require_permission("prompts.delete")
-async def delete_prompt(prompt_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_prompt(
+    prompt_id: str,
+    purge_metrics: bool = Query(False, description="Purge raw + rollup metrics for this prompt"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, str]:
     """
     Delete a prompt by ID.
 
     Args:
         prompt_id: ID of the prompt.
+        purge_metrics: Whether to delete raw + hourly rollup metrics for this prompt.
         db: Database session.
         user: Authenticated user.
 
@@ -3617,7 +3838,7 @@ async def delete_prompt(prompt_id: str, db: Session = Depends(get_db), user=Depe
     logger.debug(f"User: {user} requested deletion of prompt {prompt_id}")
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        await prompt_service.delete_prompt(db, prompt_id, user_email=user_email)
+        await prompt_service.delete_prompt(db, prompt_id, user_email=user_email, purge_metrics=purge_metrics)
         return {"status": "success", "message": f"Prompt {prompt_id} deleted"}
     except Exception as e:
         if isinstance(e, PermissionError):
@@ -3677,26 +3898,34 @@ async def toggle_gateway_status(
         }
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
+    except GatewayNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
-@gateway_router.get("", response_model=List[GatewayRead])
-@gateway_router.get("/", response_model=List[GatewayRead])
+@gateway_router.get("", response_model=Union[List[GatewayRead], CursorPaginatedGatewaysResponse])
+@gateway_router.get("/", response_model=Union[List[GatewayRead], CursorPaginatedGatewaysResponse])
 @require_permission("gateways.read")
 async def list_gateways(
     request: Request,
+    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
+    limit: Optional[int] = Query(None, ge=0, description="Maximum number of gateways to return"),
     include_inactive: bool = False,
     team_id: Optional[str] = Query(None, description="Filter by team ID"),
     visibility: Optional[str] = Query(None, description="Filter by visibility: private, team, public"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> List[GatewayRead]:
+) -> Union[List[GatewayRead], Dict[str, Any]]:
     """
-    List all gateways.
+    List all gateways with cursor pagination support.
 
     Args:
         request (Request): The FastAPI request object for team_id retrieval
+        cursor (Optional[str]): Cursor for pagination.
+        include_pagination (bool): Include cursor pagination metadata in response.
+        limit (Optional[int]): Maximum number of gateways to return.
         include_inactive: Include inactive gateways.
         team_id (Optional): Filter by specific team ID.
         visibility (Optional): Filter by visibility (private, team, public).
@@ -3704,7 +3933,7 @@ async def list_gateways(
         user: Authenticated user.
 
     Returns:
-        List of gateway records.
+        Union[List[GatewayRead], Dict[str, Any]]: List of gateway records or paginated response with nextCursor.
     """
     logger.debug(f"User '{user}' requested list of gateways with include_inactive={include_inactive}")
 
@@ -3715,7 +3944,7 @@ async def list_gateways(
 
     # Check for team ID mismatch
     if team_id is not None and token_team_id is not None and team_id != token_team_id:
-        return JSONResponse(
+        return ORJSONResponse(
             content={"message": "Access issue: This API token does not have the required permissions for this team."},
             status_code=status.HTTP_403_FORBIDDEN,
         )
@@ -3723,10 +3952,24 @@ async def list_gateways(
     # Determine final team ID
     team_id = team_id or token_team_id
 
-    if team_id or visibility:
-        return await gateway_service.list_gateways_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
+    # Use consolidated gateway listing with optional team filtering
+    logger.debug(f"User: {user_email} requested gateway list with include_inactive={include_inactive}, team_id={team_id}, visibility={visibility}")
+    data, next_cursor = await gateway_service.list_gateways(
+        db=db,
+        cursor=cursor,
+        limit=limit,
+        include_inactive=include_inactive,
+        user_email=user_email if (team_id or visibility) else None,
+        team_id=team_id,
+        visibility=visibility,
+    )
 
-    return await gateway_service.list_gateways(db, include_inactive=include_inactive)
+    if include_pagination:
+        payload = {"gateways": [gateway.model_dump(by_alias=True) for gateway in data]}
+        if next_cursor:
+            payload["nextCursor"] = next_cursor
+        return payload
+    return data
 
 
 @gateway_router.post("", response_model=GatewayRead)
@@ -3763,7 +4006,7 @@ async def register_gateway(
 
         # Check for team ID mismatch
         if gateway_team_id is not None and token_team_id is not None and gateway_team_id != token_team_id:
-            return JSONResponse(
+            return ORJSONResponse(
                 content={"message": "Access issue: This API token does not have the required permissions for this team."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
@@ -3787,20 +4030,20 @@ async def register_gateway(
         )
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
-            return JSONResponse(content={"message": "Unable to connect to gateway"}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+            return ORJSONResponse(content={"message": "Unable to connect to gateway"}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
         if isinstance(ex, ValueError):
-            return JSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
+            return ORJSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, GatewayNameConflictError):
-            return JSONResponse(content={"message": "Gateway name already exists"}, status_code=status.HTTP_409_CONFLICT)
+            return ORJSONResponse(content={"message": "Gateway name already exists"}, status_code=status.HTTP_409_CONFLICT)
         if isinstance(ex, GatewayDuplicateConflictError):
-            return JSONResponse(content={"message": "Gateway already exists"}, status_code=status.HTTP_409_CONFLICT)
+            return ORJSONResponse(content={"message": "Gateway already exists"}, status_code=status.HTTP_409_CONFLICT)
         if isinstance(ex, RuntimeError):
-            return JSONResponse(content={"message": "Error during execution"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return ORJSONResponse(content={"message": "Error during execution"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
         if isinstance(ex, ValidationError):
-            return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
+            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
         if isinstance(ex, IntegrityError):
-            return JSONResponse(status_code=status.HTTP_409_CONFLICT, content=ErrorFormatter.format_database_error(ex))
-        return JSONResponse(content={"message": "Unexpected error"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return ORJSONResponse(status_code=status.HTTP_409_CONFLICT, content=ErrorFormatter.format_database_error(ex))
+        return ORJSONResponse(content={"message": "Unexpected error"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @gateway_router.get("/{gateway_id}", response_model=GatewayRead)
@@ -3816,9 +4059,15 @@ async def get_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depen
 
     Returns:
         Gateway data.
+
+    Raises:
+        HTTPException: 404 if gateway not found.
     """
     logger.debug(f"User '{user}' requested gateway {gateway_id}")
-    return await gateway_service.get_gateway(db, gateway_id)
+    try:
+        return await gateway_service.get_gateway(db, gateway_id)
+    except GatewayNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
 @gateway_router.put("/{gateway_id}", response_model=GatewayRead)
@@ -3861,24 +4110,24 @@ async def update_gateway(
         )
     except Exception as ex:
         if isinstance(ex, PermissionError):
-            return JSONResponse(content={"message": str(ex)}, status_code=403)
+            return ORJSONResponse(content={"message": str(ex)}, status_code=403)
         if isinstance(ex, GatewayNotFoundError):
-            return JSONResponse(content={"message": "Gateway not found"}, status_code=status.HTTP_404_NOT_FOUND)
+            return ORJSONResponse(content={"message": "Gateway not found"}, status_code=status.HTTP_404_NOT_FOUND)
         if isinstance(ex, GatewayConnectionError):
-            return JSONResponse(content={"message": "Unable to connect to gateway"}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+            return ORJSONResponse(content={"message": "Unable to connect to gateway"}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
         if isinstance(ex, ValueError):
-            return JSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
+            return ORJSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, GatewayNameConflictError):
-            return JSONResponse(content={"message": "Gateway name already exists"}, status_code=status.HTTP_409_CONFLICT)
+            return ORJSONResponse(content={"message": "Gateway name already exists"}, status_code=status.HTTP_409_CONFLICT)
         if isinstance(ex, GatewayDuplicateConflictError):
-            return JSONResponse(content={"message": "Gateway already exists"}, status_code=status.HTTP_409_CONFLICT)
+            return ORJSONResponse(content={"message": "Gateway already exists"}, status_code=status.HTTP_409_CONFLICT)
         if isinstance(ex, RuntimeError):
-            return JSONResponse(content={"message": "Error during execution"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return ORJSONResponse(content={"message": "Error during execution"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
         if isinstance(ex, ValidationError):
-            return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
+            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
         if isinstance(ex, IntegrityError):
-            return JSONResponse(status_code=status.HTTP_409_CONFLICT, content=ErrorFormatter.format_database_error(ex))
-        return JSONResponse(content={"message": "Unexpected error"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return ORJSONResponse(status_code=status.HTTP_409_CONFLICT, content=ErrorFormatter.format_database_error(ex))
+        return ORJSONResponse(content={"message": "Unexpected error"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @gateway_router.delete("/{gateway_id}")
@@ -4004,7 +4253,7 @@ async def subscribe_roots_changes(
             str: SSE-formatted event data.
         """
         async for event in root_service.subscribe_changes():
-            yield f"data: {json.dumps(event)}\n\n"
+            yield f"data: {orjson.dumps(event).decode()}\n\n"
 
     return StreamingResponse(generate_events(), media_type="text/event-stream")
 
@@ -4365,7 +4614,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         return {"jsonrpc": "2.0", "error": error["error"], "id": req_id}
     except Exception as e:
         if isinstance(e, ValueError):
-            return JSONResponse(content={"message": "Method invalid"}, status_code=422)
+            return ORJSONResponse(content={"message": "Method invalid"}, status_code=422)
         logger.error(f"RPC error: {str(e)}")
         return {
             "jsonrpc": "2.0",
@@ -4425,21 +4674,21 @@ async def websocket_endpoint(websocket: WebSocket):
                 async with ResilientHttpClient(client_args=client_args) as client:
                     response = await client.post(
                         f"http://localhost:{settings.port}{settings.app_root_path}/rpc",
-                        json=json.loads(data),
+                        json=orjson.loads(data),
                         headers={"Content-Type": "application/json"},
                     )
                     await websocket.send_text(response.text)
             except JSONRPCError as e:
-                await websocket.send_text(json.dumps(e.to_dict()))
-            except json.JSONDecodeError:
+                await websocket.send_text(orjson.dumps(e.to_dict()).decode())
+            except orjson.JSONDecodeError:
                 await websocket.send_text(
-                    json.dumps(
+                    orjson.dumps(
                         {
                             "jsonrpc": "2.0",
                             "error": {"code": -32700, "message": "Parse error"},
                             "id": None,
                         }
-                    )
+                    ).decode()
                 )
             except Exception as e:
                 logger.error(f"WebSocket error: {str(e)}")
@@ -4525,7 +4774,7 @@ async def utility_message_endpoint(request: Request, user=Depends(get_current_us
             message=message,
         )
 
-        return JSONResponse(content={"status": "success"}, status_code=202)
+        return ORJSONResponse(content={"status": "success"}, status_code=202)
 
     except ValueError as e:
         logger.error("Invalid message format: %s", e)
@@ -4678,11 +4927,11 @@ async def readiness_check(db: Session = Depends(get_db)):
     try:
         # Run the blocking DB check in a thread to avoid blocking the event loop
         await asyncio.to_thread(db.execute, text("SELECT 1"))
-        return JSONResponse(content={"status": "ready"}, status_code=200)
+        return ORJSONResponse(content={"status": "ready"}, status_code=200)
     except Exception as e:
         error_message = f"Readiness check failed: {str(e)}"
         logger.error(error_message)
-        return JSONResponse(content={"status": "not ready", "error": error_message}, status_code=503)
+        return ORJSONResponse(content={"status": "not ready", "error": error_message}, status_code=503)
 
 
 @app.get("/health/security", tags=["health"])
@@ -5134,6 +5383,14 @@ if settings.observability_enabled:
 else:
     logger.info("Observability router not included - observability disabled")
 
+# Conditionally include metrics maintenance router if cleanup or rollup is enabled
+if settings.metrics_cleanup_enabled or settings.metrics_rollup_enabled:
+    # First-Party
+    from mcpgateway.routers.metrics_maintenance import router as metrics_maintenance_router
+
+    app.include_router(metrics_maintenance_router)
+    logger.info("Metrics maintenance router included - cleanup/rollup API endpoints enabled")
+
 # Conditionally include A2A router if A2A features are enabled
 if settings.mcpgateway_a2a_enabled:
     app.include_router(a2a_router)
@@ -5276,6 +5533,7 @@ logger.info(f"Admin API enabled: {ADMIN_API_ENABLED}")
 if ADMIN_API_ENABLED:
     logger.info("Including admin_router - Admin API enabled")
     app.include_router(admin_router)  # Admin routes imported from admin.py
+    app.include_router(plugin_admin_router)  # Plugin administration routes
 else:
     logger.warning("Admin API routes not mounted - Admin API disabled via MCPGATEWAY_ADMIN_API_ENABLED=False")
 

@@ -127,8 +127,8 @@ async def test_export_configuration_basic(export_service, mock_db, sample_tool, 
     """Test basic configuration export."""
     # Setup mocks
     export_service.tool_service.list_tools.return_value = ([sample_tool], None)
-    export_service.gateway_service.list_gateways.return_value = [sample_gateway]
-    export_service.server_service.list_servers.return_value = []
+    export_service.gateway_service.list_gateways.return_value = ([sample_gateway], None)
+    export_service.server_service.list_servers.return_value = ([], None)
     export_service.prompt_service.list_prompts.return_value = ([], None)
     export_service.resource_service.list_resources.return_value = ([], None)
     export_service.root_service.list_roots.return_value = []
@@ -163,8 +163,8 @@ async def test_export_configuration_with_filters(export_service, mock_db):
     """Test export with filtering options."""
     # Setup mocks
     export_service.tool_service.list_tools.return_value = ([], None)
-    export_service.gateway_service.list_gateways.return_value = []
-    export_service.server_service.list_servers.return_value = []
+    export_service.gateway_service.list_gateways.return_value = ([], None)
+    export_service.server_service.list_servers.return_value = ([], None)
     export_service.prompt_service.list_prompts.return_value = ([], None)
     export_service.resource_service.list_resources.return_value = ([], None)
     export_service.root_service.list_roots.return_value = []
@@ -172,9 +172,9 @@ async def test_export_configuration_with_filters(export_service, mock_db):
     # Execute export with filters
     result = await export_service.export_configuration(db=mock_db, include_types=["tools", "gateways"], tags=["production"], include_inactive=True, exported_by="test_user")
 
-    # Verify service calls with filters
-    export_service.tool_service.list_tools.assert_called_once_with(mock_db, tags=["production"], include_inactive=True)
-    export_service.gateway_service.list_gateways.assert_called_once_with(mock_db, include_inactive=True)
+    # Verify service calls with filters (cursor=None for pagination)
+    export_service.tool_service.list_tools.assert_called_once_with(mock_db, tags=["production"], include_inactive=True, cursor=None)
+    export_service.gateway_service.list_gateways.assert_called_once_with(mock_db, tags=["production"], include_inactive=True, cursor=None)
 
     # Should not call other services
     export_service.server_service.list_servers.assert_not_called()
@@ -291,8 +291,8 @@ async def test_export_validation_error(export_service, mock_db):
     """Test export validation error handling."""
     # Mock services to return invalid data that will cause validation to fail
     export_service.tool_service.list_tools.return_value = ([], None)
-    export_service.gateway_service.list_gateways.return_value = []
-    export_service.server_service.list_servers.return_value = []
+    export_service.gateway_service.list_gateways.return_value = ([], None)
+    export_service.server_service.list_servers.return_value = ([], None)
     export_service.prompt_service.list_prompts.return_value = ([], None)
     export_service.resource_service.list_resources.return_value = ([], None)
     export_service.root_service.list_roots.return_value = []
@@ -401,15 +401,13 @@ async def test_export_with_masked_auth_data(export_service, mock_db):
     # Mock service and database
     export_service.tool_service.list_tools.return_value = ([tool_with_masked_auth], None)
 
-    # Mock database query to return raw auth value
-    mock_db_tool = MagicMock()
-    mock_db_tool.auth_value = "encrypted_raw_auth_value"
-    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_db_tool
+    # Mock database batch query to return raw auth values (id, auth_type, auth_value tuples)
+    mock_db.execute.return_value.all.return_value = [("tool1", "bearer", "encrypted_raw_auth_value")]
 
     # Execute export
     tools = await export_service._export_tools(mock_db, None, False)
 
-    # Should get raw auth value from database
+    # Should get raw auth value from database via batch query
     assert len(tools) == 1
     assert tools[0]["auth_type"] == "bearer"
     assert tools[0]["auth_value"] == "encrypted_raw_auth_value"
@@ -430,8 +428,8 @@ async def test_export_empty_entities(export_service, mock_db):
     """Test export with empty entity lists."""
     # Setup mocks to return empty lists
     export_service.tool_service.list_tools.return_value = ([], None)
-    export_service.gateway_service.list_gateways.return_value = []
-    export_service.server_service.list_servers.return_value = []
+    export_service.gateway_service.list_gateways.return_value = ([], None)
+    export_service.server_service.list_servers.return_value = ([], None)
     export_service.prompt_service.list_prompts.return_value = ([], None)
     export_service.resource_service.list_resources.return_value = ([], None)
     export_service.root_service.list_roots.return_value = []
@@ -454,8 +452,8 @@ async def test_export_with_exclude_types(export_service, mock_db):
     """Test export with excluded entity types."""
     # Setup mocks
     export_service.tool_service.list_tools.return_value = ([], None)
-    export_service.gateway_service.list_gateways.return_value = []
-    export_service.server_service.list_servers.return_value = []
+    export_service.gateway_service.list_gateways.return_value = ([], None)
+    export_service.server_service.list_servers.return_value = ([], None)
     export_service.prompt_service.list_prompts.return_value = ([], None)
     export_service.resource_service.list_resources.return_value = ([], None)
     export_service.root_service.list_roots.return_value = []
@@ -501,8 +499,8 @@ async def test_export_with_include_inactive(export_service, mock_db):
     """Test export with include_inactive flag."""
     # Setup mocks
     export_service.tool_service.list_tools.return_value = ([], None)
-    export_service.gateway_service.list_gateways.return_value = []
-    export_service.server_service.list_servers.return_value = []
+    export_service.gateway_service.list_gateways.return_value = ([], None)
+    export_service.server_service.list_servers.return_value = ([], None)
     export_service.prompt_service.list_prompts.return_value = ([], None)
     export_service.resource_service.list_resources.return_value = ([], None)
     export_service.root_service.list_roots.return_value = []
@@ -513,8 +511,8 @@ async def test_export_with_include_inactive(export_service, mock_db):
     export_options = result["metadata"]["export_options"]
     assert export_options["include_inactive"] == True
 
-    # Verify service calls included the flag
-    export_service.tool_service.list_tools.assert_called_with(mock_db, tags=None, include_inactive=True)
+    # Verify service calls included the flag (cursor=None for pagination)
+    export_service.tool_service.list_tools.assert_called_with(mock_db, tags=None, include_inactive=True, cursor=None)
 
 
 @pytest.mark.asyncio
@@ -619,10 +617,14 @@ async def test_export_gateways_with_tag_filtering(export_service, mock_db):
         passthrough_headers=None,
     )
 
-    export_service.gateway_service.list_gateways.return_value = [gateway_with_matching_tags, gateway_without_matching_tags]
+    # Mock list_gateways to return only the gateway with matching tags (service layer does the filtering)
+    export_service.gateway_service.list_gateways.return_value = ([gateway_with_matching_tags], None)
 
     # Execute export with tag filter
     gateways = await export_service._export_gateways(mock_db, ["production"], False)
+
+    # Verify the service was called with the tag filter
+    export_service.gateway_service.list_gateways.assert_called_once_with(mock_db, tags=["production"], include_inactive=False, cursor=None)
 
     # Should only include gateway with matching tags
     assert len(gateways) == 1
@@ -660,17 +662,15 @@ async def test_export_gateways_with_masked_auth(export_service, mock_db):
         passthrough_headers=None,
     )
 
-    export_service.gateway_service.list_gateways.return_value = [gateway_with_masked_auth]
+    export_service.gateway_service.list_gateways.return_value = ([gateway_with_masked_auth], None)
 
-    # Mock database query to return raw auth value
-    mock_db_gateway = MagicMock()
-    mock_db_gateway.auth_value = "encrypted_raw_gateway_auth"
-    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_db_gateway
+    # Mock database batch query to return raw auth values (id, auth_type, auth_value tuples)
+    mock_db.execute.return_value.all.return_value = [("gw1", "bearer", "encrypted_raw_gateway_auth")]
 
     # Execute export
     gateways = await export_service._export_gateways(mock_db, None, False)
 
-    # Should get raw auth value from database
+    # Should get raw auth value from database via batch query
     assert len(gateways) == 1
     assert gateways[0]["auth_type"] == "bearer"
     assert gateways[0]["auth_value"] == "encrypted_raw_gateway_auth"
@@ -706,7 +706,7 @@ async def test_export_gateways_with_non_masked_auth(export_service, mock_db):
     # Manually set auth_value to bypass encryption
     gateway_with_auth.auth_value = "encrypted_auth_value"
 
-    export_service.gateway_service.list_gateways.return_value = [gateway_with_auth]
+    export_service.gateway_service.list_gateways.return_value = ([gateway_with_auth], None)
 
     # Execute export
     gateways = await export_service._export_gateways(mock_db, None, False)
@@ -729,7 +729,7 @@ async def test_export_servers_with_data(export_service, mock_db):
     mock_server.enabled = True
     mock_server.tags = ["test", "api"]
 
-    export_service.server_service.list_servers.return_value = [mock_server]
+    export_service.server_service.list_servers.return_value = ([mock_server], None)
 
     # Execute export
     servers = await export_service._export_servers(mock_db, None, False)
@@ -764,6 +764,9 @@ async def test_export_prompts_with_arguments(export_service, mock_db):
 
     mock_prompt = MagicMock()
     mock_prompt.name = "test_prompt"
+    mock_prompt.original_name = "test_prompt"
+    mock_prompt.custom_name = "test_prompt"
+    mock_prompt.display_name = "Test Prompt"
     mock_prompt.template = "Process {{user_input}} with {{context}}"
     mock_prompt.description = "Test prompt"
     mock_prompt.arguments = [mock_arg1, mock_arg2]
@@ -935,6 +938,10 @@ async def test_export_selective_all_entity_types(export_service, mock_db):
     sample_prompt = PromptRead(
         id="ca627760127d409080fdefc309147e08",
         name="test_prompt",
+        original_name="test_prompt",
+        custom_name="test_prompt",
+        custom_name_slug="test-prompt",
+        display_name="Test Prompt",
         template="Test template",
         description="Test prompt",
         arguments=[],
@@ -963,9 +970,9 @@ async def test_export_selective_all_entity_types(export_service, mock_db):
     export_service.tool_service.get_tool.return_value = sample_tool
     export_service.tool_service.list_tools.return_value = ([sample_tool], None)
     export_service.gateway_service.get_gateway.return_value = sample_gateway
-    export_service.gateway_service.list_gateways.return_value = [sample_gateway]
+    export_service.gateway_service.list_gateways.return_value = ([sample_gateway], None)
     export_service.server_service.get_server.return_value = sample_server
-    export_service.server_service.list_servers.return_value = [sample_server]
+    export_service.server_service.list_servers.return_value = ([sample_server], None)
     export_service.prompt_service.get_prompt.return_value = sample_prompt
     export_service.prompt_service.list_prompts.return_value = ([sample_prompt], None)
     export_service.resource_service.list_resources.return_value = ([sample_resource], None)
@@ -1039,7 +1046,7 @@ async def test_export_selected_gateways(export_service, mock_db):
     )
 
     export_service.gateway_service.get_gateway.return_value = sample_gateway
-    export_service.gateway_service.list_gateways.return_value = [sample_gateway]
+    export_service.gateway_service.list_gateways.return_value = ([sample_gateway], None)
 
     gateways = await export_service._export_selected_gateways(mock_db, ["gw1"])
 
@@ -1078,7 +1085,7 @@ async def test_export_selected_servers(export_service, mock_db):
     )
 
     export_service.server_service.get_server.return_value = sample_server
-    export_service.server_service.list_servers.return_value = [sample_server]
+    export_service.server_service.list_servers.return_value = ([sample_server], None)
 
     servers = await export_service._export_selected_servers(mock_db, ["server1"])
 
@@ -1105,6 +1112,10 @@ async def test_export_selected_prompts(export_service, mock_db):
     sample_prompt = PromptRead(
         id="ca627760127d409080fdefc309147e08",
         name="test_prompt",
+        original_name="test_prompt",
+        custom_name="test_prompt",
+        custom_name_slug="test-prompt",
+        display_name="Test Prompt",
         template="Test template",
         description="Test prompt",
         arguments=[],

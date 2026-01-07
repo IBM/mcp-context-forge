@@ -622,6 +622,17 @@
               "description": "Log format",
               "default": "json"
             },
+            "LOG_REQUESTS": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable request payload logging with sensitive data masking",
+              "default": "false"
+            },
+            "LOG_DETAILED_MAX_BODY_SIZE": {
+              "type": "string",
+              "description": "Maximum request body size to log in detailed mode (bytes)",
+              "default": "16384"
+            },
             "TRANSPORT_TYPE": {
               "type": "string",
               "description": "Transport types (comma-separated)",
@@ -736,6 +747,11 @@
               "description": "Health check timeout in seconds",
               "default": "10"
             },
+            "GATEWAY_HEALTH_CHECK_TIMEOUT": {
+              "type": "string",
+              "description": "Per-check timeout to bound total time of one gateway health check (seconds)",
+              "default": "5.0"
+            },
             "UNHEALTHY_THRESHOLD": {
               "type": "string",
               "description": "Unhealthy threshold",
@@ -830,6 +846,18 @@
             "REDIS_URL": {
               "type": "string",
               "description": "Redis URL override"
+            },
+            "METRICS_CACHE_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable metrics aggregation query caching (reduces full table scans)",
+              "default": "true"
+            },
+            "METRICS_CACHE_TTL_SECONDS": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,2}$",
+              "description": "TTL for cached metrics in seconds (1-300, default: 60)",
+              "default": "60"
             }
           },
           "additionalProperties": true
@@ -1105,6 +1133,143 @@
               "type": "boolean",
               "description": "Flag to indicate if backup has been completed to prevent re-running",
               "default": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "pgbouncer": {
+      "type": "object",
+      "description": "PgBouncer connection pooler configuration",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable PgBouncer connection pooling",
+          "default": false
+        },
+        "image": {
+          "type": "object",
+          "description": "PgBouncer image configuration",
+          "properties": {
+            "repository": {
+              "type": "string",
+              "description": "Image repository",
+              "default": "edoburu/pgbouncer"
+            },
+            "tag": {
+              "type": "string",
+              "description": "Image tag",
+              "default": "latest"
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": ["Always", "IfNotPresent", "Never"],
+              "description": "Image pull policy",
+              "default": "IfNotPresent"
+            }
+          },
+          "additionalProperties": false
+        },
+        "service": {
+          "type": "object",
+          "description": "PgBouncer service configuration",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["ClusterIP", "NodePort", "LoadBalancer"],
+              "description": "Service type",
+              "default": "ClusterIP"
+            },
+            "port": {
+              "type": "integer",
+              "description": "Service port",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 6432
+            }
+          },
+          "additionalProperties": false
+        },
+        "pool": {
+          "type": "object",
+          "description": "Pool configuration",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": ["transaction", "session", "statement"],
+              "description": "Pool mode",
+              "default": "transaction"
+            },
+            "maxClientConn": {
+              "type": "integer",
+              "description": "Max client connections",
+              "default": 3000
+            },
+            "defaultPoolSize": {
+              "type": "integer",
+              "description": "Default pool size",
+              "default": 120
+            },
+            "minPoolSize": {
+              "type": "integer",
+              "description": "Minimum pool size",
+              "default": 10
+            },
+            "reservePoolSize": {
+              "type": "integer",
+              "description": "Reserve pool size",
+              "default": 25
+            },
+            "reservePoolTimeout": {
+              "type": "integer",
+              "description": "Reserve pool timeout in seconds",
+              "default": 5
+            },
+            "maxDbConnections": {
+              "type": "integer",
+              "description": "Max database connections",
+              "default": 200
+            },
+            "maxUserConnections": {
+              "type": "integer",
+              "description": "Max user connections",
+              "default": 200
+            },
+            "serverLifetime": {
+              "type": "integer",
+              "description": "Server lifetime in seconds",
+              "default": 3600
+            },
+            "serverIdleTimeout": {
+              "type": "integer",
+              "description": "Server idle timeout in seconds",
+              "default": 600
+            }
+          },
+          "additionalProperties": false
+        },
+        "authType": {
+          "type": "string",
+          "description": "Authentication type",
+          "default": "scram-sha-256"
+        },
+        "resources": {
+          "$ref": "#/$defs/resources",
+          "description": "Resource limits and requests"
+        },
+        "probes": {
+          "type": "object",
+          "description": "PgBouncer health probes",
+          "properties": {
+            "readiness": {
+              "$ref": "#/$defs/probe",
+              "description": "Readiness probe"
+            },
+            "liveness": {
+              "$ref": "#/$defs/probe",
+              "description": "Liveness probe"
             }
           },
           "additionalProperties": false

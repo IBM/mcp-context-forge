@@ -31,6 +31,8 @@ services:
     command:
       - "postgres"
 {postgres_config_commands}
+    networks:
+      - mcpnet
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -46,15 +48,21 @@ services:
 volumes:
   postgres_data:
 {redis_volume}
+
+networks:
+  mcpnet:
+    driver: bridge
 """
 
 GATEWAY_SERVICE_TEMPLATE = """  gateway{instance_suffix}:
     build:
-      context: ../../..
+      context: .
       dockerfile: Containerfile.lite
     container_name: gateway{instance_suffix}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/mcpgateway
+      - DATABASE_URL=postgresql+psycopg://postgres:postgres@postgres:5432/mcpgateway
 {redis_url}
       - HOST=0.0.0.0
       - PORT=4444
@@ -71,6 +79,8 @@ GATEWAY_SERVICE_TEMPLATE = """  gateway{instance_suffix}:
       - MCPGATEWAY_UI_ENABLED=true
     ports:
       - "{port_mapping}:4444"
+    networks:
+      - mcpnet
     depends_on:
       postgres:
         condition: service_healthy
@@ -87,6 +97,8 @@ REDIS_SERVICE = """  redis:
     container_name: redis_perf
     ports:
       - "6379:6379"
+    networks:
+      - mcpnet
     command: redis-server{redis_config}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -98,8 +110,12 @@ REDIS_SERVICE = """  redis:
 NGINX_LOAD_BALANCER = """  nginx:
     image: nginx:alpine
     container_name: nginx_lb
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8000:80"
+    networks:
+      - mcpnet
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
@@ -261,7 +277,7 @@ class DockerComposeGenerator:
         depends = []
         for i in range(num_instances):
             suffix = f"_{i + 1}"
-            depends.append(f"      - gateway{suffix}")
+            depends.append(f"      gateway{suffix}:\n        condition: service_healthy")
 
         return NGINX_LOAD_BALANCER.format(nginx_depends="\n".join(depends))
 
@@ -273,7 +289,7 @@ class DockerComposeGenerator:
         upstreams = []
         for i in range(num_instances):
             suffix = f"_{i + 1}"
-            upstreams.append(f"        server gateway{suffix}:4444;")
+            upstreams.append(f"        server gateway{suffix}:4444 max_fails=3 fail_timeout=30s;")
 
         nginx_conf = f"""events {{
     worker_connections 1024;
@@ -289,10 +305,14 @@ http {{
 
         location / {{
             proxy_pass http://gateway_backend;
-            proxy_set_header Host $host;
+            proxy_set_header Host $http_host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Host $http_host;
+
+            # Disable redirect rewriting to preserve backend URLs
+            proxy_redirect off;
 
             # Timeouts
             proxy_connect_timeout 60s;

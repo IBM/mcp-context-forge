@@ -13,9 +13,34 @@ MCP Gateway supports multiple database backends with full feature parity across 
 | Database    | Support Level | Connection String Example                                    | Notes                          |
 |-------------|---------------|--------------------------------------------------------------|--------------------------------|
 | SQLite      | ✅ Full       | `sqlite:///./mcp.db`                                        | Default, file-based            |
-| PostgreSQL  | ✅ Full       | `postgresql://postgres:changeme@localhost:5432/mcp`         | Recommended for production     |
+| PostgreSQL  | ✅ Full       | `postgresql+psycopg://postgres:changeme@localhost:5432/mcp` | Recommended for production     |
 | MariaDB     | ✅ Full       | `mysql+pymysql://mysql:changeme@localhost:3306/mcp`         | **36+ tables**, MariaDB 10.6+ |
 | MySQL       | ✅ Full       | `mysql+pymysql://admin:changeme@localhost:3306/mcp`         | Alternative MySQL variant      |
+
+### PostgreSQL System Dependencies
+
+!!! warning "Required: libpq Development Headers"
+    The PostgreSQL adapter (`psycopg[c]`) requires the `libpq` development headers to compile. Install them before running `pip install .[postgres]`:
+
+    === "Debian/Ubuntu"
+        ```bash
+        sudo apt-get install libpq-dev
+        ```
+
+    === "RHEL/CentOS/Fedora"
+        ```bash
+        sudo dnf install postgresql-devel
+        ```
+
+    === "macOS (Homebrew)"
+        ```bash
+        brew install libpq
+        ```
+
+    After installing the system dependencies, install the Python package:
+    ```bash
+    pip install .[postgres]
+    ```
 
 ### MariaDB/MySQL Setup Details
 
@@ -154,15 +179,31 @@ DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
 # Database connection (choose one)
 DATABASE_URL=sqlite:///./mcp.db                                        # SQLite (default)
 DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp          # MariaDB/MySQL
-DATABASE_URL=postgresql://postgres:changeme@localhost:5432/mcp          # PostgreSQL
+DATABASE_URL=postgresql+psycopg://postgres:changeme@localhost:5432/mcp  # PostgreSQL
 
 # Connection pool settings (optional)
-DB_POOL_SIZE=200
-DB_MAX_OVERFLOW=5
-DB_POOL_TIMEOUT=60
-DB_POOL_RECYCLE=3600
-DB_MAX_RETRIES=5
-DB_RETRY_INTERVAL_MS=2000
+DB_POOL_SIZE=200                   # Pool size (QueuePool only)
+DB_MAX_OVERFLOW=5                  # Max overflow connections (QueuePool only)
+DB_POOL_TIMEOUT=60                 # Wait timeout for connection
+DB_POOL_RECYCLE=3600               # Recycle connections after N seconds
+DB_MAX_RETRIES=5                   # Retry attempts on connection failure
+DB_RETRY_INTERVAL_MS=2000          # Delay between retries
+
+# Connection pool class selection
+# - "auto": NullPool with PgBouncer, QueuePool otherwise (default)
+# - "null": Always NullPool (recommended with PgBouncer)
+# - "queue": Always QueuePool (application-side pooling)
+DB_POOL_CLASS=auto
+
+# Pre-ping connections before checkout (validates connection is alive)
+# - "auto": Enabled for non-PgBouncer setups (default)
+# - "true": Always enable (adds SELECT 1 overhead but catches stale connections)
+# - "false": Always disable
+DB_POOL_PRE_PING=auto
+
+# psycopg3 auto-prepared statements (PostgreSQL only)
+# Queries executed N+ times are prepared server-side for performance
+DB_PREPARE_THRESHOLD=5
 ```
 
 ### Server Configuration
@@ -174,11 +215,14 @@ PORT=4444
 ENVIRONMENT=development
 APP_DOMAIN=localhost
 APP_ROOT_PATH=
+
+# HTTP Server selection (for containers)
+HTTP_SERVER=gunicorn              # Options: gunicorn (default), granian
 ```
 
-### Gunicorn Production Server
+### Gunicorn Production Server (Default)
 
-The production server uses Gunicorn with UVicorn workers. Configure via environment variables or `.env` file:
+The production server uses Gunicorn with UVicorn workers by default. Configure via environment variables or `.env` file:
 
 ```bash
 # Worker Configuration
@@ -226,6 +270,57 @@ DISABLE_ACCESS_LOG=true ./run-gunicorn.sh
     - **I/O-bound workloads**: 4-12 × CPU cores
     - **Memory-constrained**: Start with 2 and monitor
     - **Auto mode**: Uses formula `min(2*CPU+1, 16)`
+
+### Granian Production Server (Alternative)
+
+Granian is a Rust-based HTTP server with native backpressure for overload protection. Under load, excess requests receive immediate 503 responses instead of queuing indefinitely.
+
+```bash
+# Worker Configuration
+GRANIAN_WORKERS=auto              # Number of workers (auto = CPU cores, max 16)
+GRANIAN_RUNTIME_MODE=auto         # Runtime mode: auto, mt (multi-threaded), st (single-threaded)
+GRANIAN_RUNTIME_THREADS=1         # Runtime threads per worker
+GRANIAN_BLOCKING_THREADS=1        # Blocking threads per worker (must be 1 for ASGI)
+
+# Backpressure Configuration (overload protection)
+GRANIAN_BACKLOG=4096              # OS socket backlog for pending connections
+GRANIAN_BACKPRESSURE=64           # Max concurrent requests per worker before 503
+# Total capacity = WORKERS × BACKPRESSURE (e.g., 16 × 64 = 1024 concurrent requests)
+
+# Performance Options
+GRANIAN_HTTP=auto                 # HTTP version: auto, 1, 2
+GRANIAN_LOOP=uvloop               # Event loop: uvloop, asyncio, rloop
+GRANIAN_HTTP1_BUFFER_SIZE=524288  # HTTP/1 buffer size (512KB)
+GRANIAN_RESPAWN_FAILED=true       # Auto-restart failed workers
+GRANIAN_DEV_MODE=false            # Enable hot reload
+DISABLE_ACCESS_LOG=true           # Disable access logs for performance
+
+# TLS/SSL (same as Gunicorn)
+SSL=false
+CERT_FILE=certs/cert.pem
+KEY_FILE=certs/key.pem
+```
+
+**Starting with Granian:**
+
+```bash
+# Local development
+make serve-granian
+
+# With HTTP/2 + TLS
+make serve-granian-http2
+
+# Container with Granian
+docker run -e HTTP_SERVER=granian mcpgateway/mcpgateway
+```
+
+!!! info "When to use Granian"
+    - **Load spike protection**: Backpressure rejects excess requests with 503 instead of queuing
+    - **Bursty traffic**: Graceful degradation under unpredictable load
+    - **Native HTTP/2**: Without reverse proxy
+    - **High concurrency**: 1000+ concurrent users
+
+    See [ADR-0025](../architecture/adr/025-granian-http-server.md) for detailed comparison and [Tuning Guide](tuning.md#backpressure-for-overload-protection) for backpressure configuration.
 
 ### Authentication & Security
 
@@ -335,11 +430,204 @@ REDIS_RETRY_ON_TIMEOUT=true         # Retry commands on timeout
 REDIS_HEALTH_CHECK_INTERVAL=30      # Health check interval (seconds, 0=disabled)
 REDIS_DECODE_RESPONSES=true         # Return strings instead of bytes
 
+# Redis Parser (ADR-026 - performance optimization)
+REDIS_PARSER=auto                   # auto, hiredis, python (auto uses hiredis if available)
+
 # Redis Leader Election (multi-node deployments)
 REDIS_LEADER_TTL=15                 # Leader TTL (seconds)
 REDIS_LEADER_KEY=gateway_service_leader
 REDIS_LEADER_HEARTBEAT_INTERVAL=5   # Heartbeat interval (seconds)
+
+# Authentication Cache (ADR-028 - reduces DB queries per auth from 3-4 to 0-1)
+AUTH_CACHE_ENABLED=true             # Enable auth data caching (user, team, revocation)
+AUTH_CACHE_USER_TTL=60              # User data cache TTL in seconds (10-300)
+AUTH_CACHE_REVOCATION_TTL=30        # Token revocation cache TTL (5-120, security-critical)
+AUTH_CACHE_TEAM_TTL=60              # Team membership cache TTL in seconds (10-300)
+AUTH_CACHE_BATCH_QUERIES=true       # Batch auth DB queries into single call
 ```
+
+#### Authentication Cache
+
+When `AUTH_CACHE_ENABLED=true` (default), authentication data is cached to reduce database queries:
+
+- **User data**: Cached for `AUTH_CACHE_USER_TTL` seconds (default: 60)
+- **Team memberships**: Cached for `AUTH_CACHE_TEAM_TTL` seconds (default: 60)
+- **User roles in teams**: Cached for `AUTH_CACHE_ROLE_TTL` seconds (default: 60)
+- **User teams list**: Cached for `AUTH_CACHE_TEAMS_TTL` seconds (default: 60) when `AUTH_CACHE_TEAMS_ENABLED=true`
+- **Token revocations**: Cached for `AUTH_CACHE_REVOCATION_TTL` seconds (default: 30)
+
+The cache uses Redis when available (`CACHE_TYPE=redis`) and falls back to in-memory caching.
+
+When `AUTH_CACHE_BATCH_QUERIES=true` (default), the 3 separate authentication database queries are batched into a single query, reducing thread pool contention and connection overhead.
+
+**Performance Note**: The role cache (`AUTH_CACHE_ROLE_TTL`) caches `get_user_role_in_team()` which is called 11+ times per team operation. The teams list cache (`AUTH_CACHE_TEAMS_TTL`) caches `get_user_teams()` which is called 20+ times per request for authorization checks. Together, these can reduce "idle in transaction" connections by 50-70% under high load.
+
+**Security Note**: Keep `AUTH_CACHE_REVOCATION_TTL` short (30s default) to limit the window where revoked tokens may still work.
+
+See [ADR-028](../architecture/adr/028-auth-caching.md) for implementation details.
+
+#### Registry Cache
+
+```bash
+# Registry Cache (ADR-029 - caches list endpoints for tools, prompts, resources, etc.)
+REGISTRY_CACHE_ENABLED=true         # Enable registry list caching
+REGISTRY_CACHE_TOOLS_TTL=20         # Tools list cache TTL in seconds (5-300)
+REGISTRY_CACHE_PROMPTS_TTL=15       # Prompts list cache TTL in seconds (5-300)
+REGISTRY_CACHE_RESOURCES_TTL=15     # Resources list cache TTL in seconds (5-300)
+REGISTRY_CACHE_AGENTS_TTL=20        # Agents list cache TTL in seconds (5-300)
+REGISTRY_CACHE_SERVERS_TTL=20       # Servers list cache TTL in seconds (5-300)
+REGISTRY_CACHE_GATEWAYS_TTL=20      # Gateways list cache TTL in seconds (5-300)
+REGISTRY_CACHE_CATALOG_TTL=300      # Catalog servers cache TTL in seconds (60-600)
+```
+
+When `REGISTRY_CACHE_ENABLED=true` (default), the first page of registry list results is cached:
+
+- **Tools**: Cached for `REGISTRY_CACHE_TOOLS_TTL` seconds (default: 20)
+- **Prompts**: Cached for `REGISTRY_CACHE_PROMPTS_TTL` seconds (default: 15)
+- **Resources**: Cached for `REGISTRY_CACHE_RESOURCES_TTL` seconds (default: 15)
+- **Agents**: Cached for `REGISTRY_CACHE_AGENTS_TTL` seconds (default: 20)
+- **Servers**: Cached for `REGISTRY_CACHE_SERVERS_TTL` seconds (default: 20)
+- **Gateways**: Cached for `REGISTRY_CACHE_GATEWAYS_TTL` seconds (default: 20)
+- **Catalog**: Cached for `REGISTRY_CACHE_CATALOG_TTL` seconds (default: 300, longer since external catalog changes infrequently)
+
+Cache is automatically invalidated when items are created, updated, or deleted.
+
+#### Admin Stats Cache
+
+```bash
+# Admin Stats Cache (ADR-029 - caches admin dashboard statistics)
+ADMIN_STATS_CACHE_ENABLED=true      # Enable admin stats caching
+ADMIN_STATS_CACHE_SYSTEM_TTL=60     # System stats cache TTL in seconds (10-300)
+ADMIN_STATS_CACHE_OBSERVABILITY_TTL=30  # Observability stats TTL (10-120)
+```
+
+When `ADMIN_STATS_CACHE_ENABLED=true` (default), admin dashboard statistics are cached:
+
+- **System stats**: Cached for `ADMIN_STATS_CACHE_SYSTEM_TTL` seconds (default: 60)
+- **Observability**: Cached for `ADMIN_STATS_CACHE_OBSERVABILITY_TTL` seconds (default: 30)
+
+See [ADR-029](../architecture/adr/029-registry-admin-stats-caching.md) for implementation details.
+
+#### Team Member Count Cache
+
+```bash
+# Team member count cache (reduces N+1 queries in admin UI)
+TEAM_MEMBER_COUNT_CACHE_ENABLED=true  # Enable team member count caching
+TEAM_MEMBER_COUNT_CACHE_TTL=300       # Cache TTL in seconds (30-3600)
+```
+
+When `TEAM_MEMBER_COUNT_CACHE_ENABLED=true` (default), team member counts are cached in Redis:
+
+- **Member counts**: Cached for `TEAM_MEMBER_COUNT_CACHE_TTL` seconds (default: 300)
+
+Cache is automatically invalidated when team members are added, removed, or their `is_active` status changes.
+
+**Performance Note**: This cache eliminates N+1 query patterns in the admin UI team listings, reducing `/admin/` P95 latency from ~14s to <500ms under load.
+
+#### Metrics Aggregation Cache
+
+```bash
+# Metrics aggregation cache (reduces full table scans, see #1906)
+METRICS_CACHE_ENABLED=true       # Enable metrics query caching (default: true)
+METRICS_CACHE_TTL_SECONDS=60     # Cache TTL in seconds (1-300, default: 60)
+```
+
+When `METRICS_CACHE_ENABLED=true` (default), aggregate metrics queries are cached in memory:
+
+- **Aggregated metrics**: Cached for `METRICS_CACHE_TTL_SECONDS` seconds (default: 60)
+- **Top performers**: Cached separately with the same TTL
+
+Cache is automatically invalidated when metrics are recorded.
+
+**Performance Note**: This cache reduces full table scans on metrics tables. Under high load (3000+ users), increasing TTL to 60-120 seconds can reduce sequential scans by 6-12×. See [Issue #1906](https://github.com/IBM/mcp-context-forge/issues/1906) for details.
+
+### Session Registry Polling (Database Backend)
+
+When using `CACHE_TYPE=database`, sessions poll the database to check for incoming messages. Adaptive backoff reduces database load by ~90% during idle periods while maintaining responsiveness when messages arrive.
+
+```bash
+# Adaptive backoff polling configuration
+POLL_INTERVAL=1.0          # Initial polling interval in seconds (default: 1.0)
+MAX_INTERVAL=5.0           # Maximum polling interval cap in seconds (default: 5.0)
+BACKOFF_FACTOR=1.5         # Multiplier for exponential backoff (default: 1.5)
+```
+
+**How Adaptive Backoff Works:**
+
+1. Polling starts at `POLL_INTERVAL` (1.0s by default)
+2. When no message is found, interval increases by `BACKOFF_FACTOR` (1.5×)
+3. Interval continues growing until it reaches `MAX_INTERVAL` (5.0s cap)
+4. When a message arrives, interval immediately resets to `POLL_INTERVAL`
+
+**Example Progression:**
+
+```
+1.0s → 1.5s → 2.25s → 3.375s → 5.0s (capped) → 5.0s → ...
+         ↓ message arrives
+         1.0s (reset)
+```
+
+**Tuning Guide:**
+
+| Use Case | POLL_INTERVAL | MAX_INTERVAL | BACKOFF_FACTOR |
+|----------|---------------|--------------|----------------|
+| Real-time (<1s latency) | 0.1-0.5 | 2.0-5.0 | 1.5 |
+| Standard (default) | 1.0 | 5.0 | 1.5 |
+| Batch workloads | 1.0-2.0 | 10.0-30.0 | 2.0 |
+| Minimal DB load | 2.0 | 30.0 | 2.0 |
+
+**Per-Session Database Impact:**
+
+| Configuration | Idle Queries/Min | Active Queries/Min |
+|---------------|------------------|-------------------|
+| Default (1.0s/5.0s) | 12 | 60 |
+| Aggressive (0.1s/2.0s) | 30-600 | 600 |
+| Conservative (2.0s/30.0s) | 2 | 30 |
+
+!!! tip "Redis Eliminates Polling"
+    With `CACHE_TYPE=redis`, sessions use Redis Pub/Sub for instant message delivery with zero polling overhead. Redis is recommended for production deployments with many concurrent sessions.
+
+### HTTPX Client Connection Pool
+
+MCP Gateway uses HTTP client connection pooling for outbound requests, providing ~20x better performance than per-request clients by reusing TCP connections. These settings affect federation, health checks, A2A agent calls, SSO, MCP server connections, and catalog operations.
+
+!!! note "Shared vs Factory Clients"
+    Most requests use a shared singleton client for optimal connection reuse. SSE/streaming MCP connections use factory-created clients with the same settings, as they require dedicated long-lived connections for proper lifecycle management.
+
+```bash
+# Connection Pool Limits
+HTTPX_MAX_CONNECTIONS=200              # Total connections in pool (10-1000, default: 200)
+HTTPX_MAX_KEEPALIVE_CONNECTIONS=100    # Keepalive connections (1-500, default: 100)
+HTTPX_KEEPALIVE_EXPIRY=30.0            # Idle connection expiry in seconds (5.0-300.0)
+
+# Timeout Configuration
+HTTPX_CONNECT_TIMEOUT=5.0              # TCP connection timeout in seconds (default: 5, fast for LAN)
+HTTPX_READ_TIMEOUT=120.0               # Response read timeout in seconds (default: 120, high for slow tools)
+HTTPX_WRITE_TIMEOUT=30.0               # Request write timeout in seconds (default: 30)
+HTTPX_POOL_TIMEOUT=10.0                # Wait for available connection in seconds (default: 10, fail fast)
+
+# Protocol Configuration
+HTTPX_HTTP2_ENABLED=false              # Enable HTTP/2 (requires server support)
+
+# Admin Operations Timeout
+HTTPX_ADMIN_READ_TIMEOUT=30.0          # Admin UI operations timeout (default: 30, fail fast)
+```
+
+**Sizing Guidelines:**
+
+| Deployment Size | `HTTPX_MAX_CONNECTIONS` | `HTTPX_MAX_KEEPALIVE_CONNECTIONS` | Notes |
+|----------------|------------------------|----------------------------------|-------|
+| Development    | 50                     | 25                               | Minimal footprint |
+| Production     | 200                    | 100                              | Default, handles typical load |
+| High-traffic   | 300-500                | 150-250                          | Heavy federation/A2A usage |
+
+**Formula:** `HTTPX_MAX_CONNECTIONS = concurrent_outbound_requests × 1.5`
+
+!!! tip "Connection Pool vs Per-Request Clients"
+    The shared connection pool eliminates TCP handshake and TLS negotiation overhead for each request. In benchmarks, this provides ~20x improvement in throughput compared to creating a new client per request.
+
+!!! warning "HTTP/2 Support"
+    HTTP/2 (`HTTPX_HTTP2_ENABLED=true`) enables multiplexing over a single connection but requires upstream servers to support HTTP/2. Leave disabled unless all upstream services support HTTP/2.
 
 ### Logging Settings
 
@@ -358,7 +646,25 @@ LOG_FORMAT=json                     # json, plain
 
 # Database Log Persistence (disabled by default for performance)
 STRUCTURED_LOGGING_DATABASE_ENABLED=false
+
+# Audit Trail Logging (disabled by default for performance)
+AUDIT_TRAIL_ENABLED=false
+
+# Security Event Logging (disabled by default for performance)
+SECURITY_LOGGING_ENABLED=false
+SECURITY_LOGGING_LEVEL=failures_only  # all, failures_only, high_severity
 ```
+
+#### Audit Trail Logging
+
+When `AUDIT_TRAIL_ENABLED=true`, all CRUD operations (create, read, update, delete) on resources are logged to the `audit_trails` database table. This provides:
+
+- **Compliance logging** for SOC2, HIPAA, and other regulatory requirements
+- **Data access tracking** - who accessed what resources and when
+- **Change history** - before/after values for updates and deletes
+- **Admin UI Audit Log Viewer** - browse and filter audit entries
+
+**Warning:** Enabling audit trails causes a database write on **every API request**, which can significantly impact performance. During load testing, this can generate millions of rows. Only enable for production compliance requirements.
 
 #### Structured Log Database Persistence
 
@@ -682,16 +988,152 @@ spec:
 
 ```bash
 # Database connection pool
-DB_POOL_SIZE=200
-DB_MAX_OVERFLOW=5
-DB_POOL_TIMEOUT=60
-DB_POOL_RECYCLE=3600
+DB_POOL_CLASS=auto               # auto, null (PgBouncer), or queue
+DB_POOL_SIZE=200                 # Pool size (QueuePool only)
+DB_MAX_OVERFLOW=5                # Overflow connections (QueuePool only)
+DB_POOL_TIMEOUT=60               # Connection wait timeout
+DB_POOL_RECYCLE=3600             # Recycle connections (seconds)
+DB_POOL_PRE_PING=auto            # Validate connections: auto, true, false
 
 # Tool execution
 TOOL_TIMEOUT=120
 MAX_TOOL_RETRIES=5
 TOOL_CONCURRENT_LIMIT=10
 ```
+
+### Execution Metrics Recording
+
+Control whether execution metrics are recorded to the database:
+
+```bash
+DB_METRICS_RECORDING_ENABLED=true   # Record execution metrics (default)
+DB_METRICS_RECORDING_ENABLED=false  # Disable execution metrics database writes
+```
+
+**What are execution metrics?**
+
+Each MCP operation (tool call, resource read, prompt get, etc.) records one database row with:
+
+- Entity ID (tool_id, resource_id, etc.)
+- Timestamp
+- Response time (seconds)
+- Success/failure status
+- Error message (if failed)
+- Interaction type (A2A metrics only)
+
+**When disabled:**
+
+- No new rows written to `ToolMetric`, `ResourceMetric`, `PromptMetric`, `ServerMetric`, `A2AAgentMetric` tables
+- Existing metrics remain queryable until cleanup removes them
+- Cleanup and rollup services still run (they process existing data)
+- Admin UI metrics pages show no new data
+
+**Use cases for disabling:**
+
+- External observability platforms handle all metrics (ELK, Datadog, Splunk, Grafana)
+- Minimal database footprint deployments
+- High-throughput environments where per-operation DB writes are costly
+
+**Related settings (separate systems):**
+
+| Setting | What it controls |
+|---------|------------------|
+| `METRICS_AGGREGATION_ENABLED` | Log aggregation into `PerformanceMetric` table |
+| `ENABLE_METRICS` | Prometheus `/metrics` endpoint |
+| `OBSERVABILITY_METRICS_ENABLED` | Internal observability system |
+
+To fully minimize metrics database writes, disable both:
+
+```bash
+DB_METRICS_RECORDING_ENABLED=false   # Disable execution metrics
+METRICS_AGGREGATION_ENABLED=false    # Disable log aggregation
+```
+
+### Metrics Cleanup and Rollup
+
+!!! tip "Automatic Metrics Management"
+    MCP Gateway automatically manages metrics data to prevent unbounded table growth while preserving historical analytics through hourly rollups.
+
+#### Understanding Raw vs Rollup Metrics
+
+**Raw metrics** store individual execution events (timestamp, response time, success/failure, error message). **Hourly rollups** aggregate these into summary statistics (counts, averages, p50/p95/p99 percentiles).
+
+| Use Case | Raw Metrics Needed? |
+|----------|---------------------|
+| Dashboard charts (latency percentiles) | No - rollups have p50/p95/p99 |
+| Error rate monitoring | No - rollups have success/failure counts |
+| Debugging specific failures | Yes - need exact error messages |
+| Identifying slowest requests | Yes - need individual rows |
+
+#### External Observability Integration
+
+If you use external observability platforms (ELK Stack, Datadog, Splunk, Grafana/Loki, CloudWatch, OpenTelemetry), raw metrics in the gateway database are typically redundant. Your external platform handles:
+
+- Detailed request logs and traces
+- Error message search and filtering
+- Individual request debugging
+- Compliance audit trails
+
+With external observability, the gateway's hourly rollups provide efficient aggregated analytics, while raw metrics can be deleted quickly (1 hour default).
+
+#### Configuration Reference
+
+**Cleanup Settings:**
+
+```bash
+METRICS_CLEANUP_ENABLED=true           # Enable automatic cleanup (default: true)
+METRICS_CLEANUP_INTERVAL_HOURS=1       # Hours between cleanup runs (default: 1)
+METRICS_RETENTION_DAYS=7               # Fallback retention when rollup disabled (default: 7)
+METRICS_CLEANUP_BATCH_SIZE=10000       # Batch size for deletion (default: 10000)
+```
+
+**Rollup Settings:**
+
+```bash
+METRICS_ROLLUP_ENABLED=true            # Enable hourly rollup (default: true)
+METRICS_ROLLUP_INTERVAL_HOURS=1        # Hours between rollup runs (default: 1)
+METRICS_ROLLUP_RETENTION_DAYS=365      # Rollup data retention (default: 365)
+METRICS_ROLLUP_LATE_DATA_HOURS=1       # Hours to re-process for late data (default: 1)
+```
+
+**Raw Metrics Deletion (when rollups exist):**
+
+```bash
+METRICS_DELETE_RAW_AFTER_ROLLUP=true   # Delete raw after rollup (default: true)
+METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS=1  # Hours before deletion (default: 1)
+```
+
+#### Configuration Examples
+
+**Default (recommended for most deployments):**
+Raw metrics deleted after 1 hour, hourly rollups retained for 1 year.
+
+**Without external observability (need debugging from raw data):**
+```bash
+METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS=168  # Keep raw data 7 days for debugging
+```
+
+**Disable raw deletion (compliance/audit requirements):**
+```bash
+METRICS_DELETE_RAW_AFTER_ROLLUP=false   # Keep all raw metrics
+METRICS_RETENTION_DAYS=90               # Delete raw after 90 days via cleanup
+```
+
+**Admin API Endpoints:**
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/metrics/cleanup` | POST | Trigger manual cleanup |
+| `/api/metrics/rollup` | POST | Trigger manual rollup |
+| `/api/metrics/stats` | GET | Get cleanup/rollup statistics |
+| `/api/metrics/config` | GET | Get current configuration |
+
+**Deletion behavior:**
+- Deleted tools/resources/prompts/servers are removed from Top Performers by default, but historical rollups remain for reporting.
+- To permanently erase metrics for a deleted entity, use the Admin UI delete prompt and choose **Purge metrics**, or call the delete endpoints with `?purge_metrics=true`.
+- Purge deletes use batched deletes sized by `METRICS_CLEANUP_BATCH_SIZE` to reduce long table locks on large datasets.
+
+See [ADR-030: Metrics Cleanup and Rollup](../architecture/adr/030-metrics-cleanup-rollup.md) for architecture details.
 
 ### Security Hardening
 
