@@ -11,19 +11,18 @@ dnf install -y  postgresql-devel
 
 echo "############# Running Install ################"
 make install-dev
-echo "############# Running Install psycogpg ################"
+echo "############# Running Install dependencies ################"
 . $HOME/.venv/mcpgateway/bin/activate && \
     python3 -m uv pip install 'psycopg[c]' && \
     python3 -m uv pip install 'psycopg2' && \
+    python3 -m uv pip install 'ruff' && \
+    python3 -m uv pip install 'black' && \
+    python3 -m uv pip install 'isort' && \
     python3 -m uv pip install 'openpyxl' && \
     python3 -m uv pip install 'copier'   
 echo "############# Running Install DB ################"
 make install-db
 echo "############# Running Linting ##################"
-. $HOME/.venv/mcpgateway/bin/activate && \
-    python3 -m pip install 'ruff' && \
-    python3 -m pip install 'black' && \
-    python3 -m pip install 'isort' 
 make lint-quick
 echo "############# Running Tests and Coverage ##################"
 source $HOME/.venv/mcpgateway/bin/activate && \
