@@ -3,6 +3,7 @@
 
 # Third-Party
 import pytest
+from unittest.mock import AsyncMock
 
 # First-Party
 from mcpgateway.cache.tool_lookup_cache import ToolLookupCache
@@ -62,6 +63,18 @@ async def test_tool_lookup_cache_invalidate_gateway(tool_lookup_cache_instance):
 
     assert await tool_lookup_cache_instance.get("tool-a") is None
     assert await tool_lookup_cache_instance.get("tool-b") == payload_g2
+
+
+@pytest.mark.asyncio
+async def test_tool_lookup_cache_l2_unavailable(tool_lookup_cache_instance):
+    tool_lookup_cache_instance._l2_enabled = True
+    tool_lookup_cache_instance._get_redis_client = AsyncMock(return_value=None)
+
+    assert await tool_lookup_cache_instance.get("tool-missing") is None
+
+    payload = {"status": "active", "tool": {"name": "tool-a"}}
+    await tool_lookup_cache_instance.set("tool-a", payload)
+    assert await tool_lookup_cache_instance.get("tool-a") == payload
 
 
 def test_tool_lookup_cache_reset_stats(tool_lookup_cache_instance):
