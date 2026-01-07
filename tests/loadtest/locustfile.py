@@ -42,7 +42,7 @@ from typing import Any
 import uuid
 
 # Third-Party
-from locust import between, events, tag, task
+from locust import between, constant_throughput, events, tag, task
 from locust.contrib.fasthttp import FastHttpUser
 from locust.runners import MasterRunner, WorkerRunner
 
@@ -479,10 +479,15 @@ class BaseUser(FastHttpUser):
     """Base user class with common configuration.
 
     Uses FastHttpUser (gevent-based) for maximum throughput.
+    Optimized for 4000+ concurrent users.
     """
 
     abstract = True
     wait_time = between(0.1, 0.5)
+
+    # Connection tuning for high concurrency
+    connection_timeout = 30.0
+    network_timeout = 30.0
 
     def __init__(self, *args, **kwargs):
         """Initialize base user with auth headers."""
@@ -1392,14 +1397,19 @@ class WriteAPIUser(BaseUser):
 
 
 class StressTestUser(BaseUser):
-    """User for stress testing with rapid requests.
+    """User for stress testing with predictable request rate.
 
-    Simulates high-load scenarios with minimal wait times.
+    Uses constant_throughput for predictable RPS instead of minimal wait times.
     Weight: Very low (only for stress tests)
+
+    Target RPS calculation: rps_per_user = target_total_rps / num_users
+    Example: 8000 RPS target with 4000 users = constant_throughput(2)
     """
 
     weight = 1
-    wait_time = between(0.05, 0.2)
+    # 2 requests/second per user. With 4000 users = 8000 RPS theoretical max.
+    # Adjust based on server capacity. Start conservative and increase.
+    wait_time = constant_throughput(2)
 
     @task(10)
     @tag("stress", "health")

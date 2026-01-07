@@ -950,8 +950,8 @@ performance-clean:                         ## Stop and remove all performance da
 # 🔥 HTTP LOAD TESTING - Locust-based traffic generation
 # =============================================================================
 # help: 🔥 HTTP LOAD TESTING (Locust)
-# help: load-test             - Run HTTP load test (50 users, 60s, headless)
-# help: load-test-ui          - Start Locust web UI (distributed, auto-detect CPUs)
+# help: load-test             - Run HTTP load test (4000 users, 5m, headless)
+# help: load-test-ui          - Start Locust web UI (4000 users, 200 spawn/s)
 # help: load-test-light       - Light load test (10 users, 30s)
 # help: load-test-heavy       - Heavy load test (200 users, 120s)
 # help: load-test-sustained   - Sustained load test (25 users, 300s)
@@ -963,33 +963,52 @@ performance-clean:                         ## Stop and remove all performance da
 # help: load-test-1000        - High-load test (1000 users, 120s)
 # help: load-test-summary     - Parse CSV reports and show summary statistics
 
-# Default load test configuration
+# Default load test configuration (optimized for 4000+ users)
 LOADTEST_HOST ?= http://localhost:8080
-LOADTEST_USERS ?= 1000
-LOADTEST_SPAWN_RATE ?= 100
+LOADTEST_USERS ?= 4000
+LOADTEST_SPAWN_RATE ?= 200
 LOADTEST_RUN_TIME ?= 5m
+LOADTEST_PROCESSES ?= -1
 LOADTEST_LOCUSTFILE := tests/loadtest/locustfile.py
 LOADTEST_HTML_REPORT := reports/locust_report.html
 LOADTEST_CSV_PREFIX := reports/locust
+# Auto-detect c-ares resolver availability (empty string if unavailable)
+LOADTEST_GEVENT_RESOLVER := $(shell python3 -c "from gevent.resolver.cares import Resolver; print('ares')" 2>/dev/null || echo "")
 
-load-test:                                 ## Run HTTP load test (50 users, 60s, headless)
+load-test:                                 ## Run HTTP load test (4000 users, 5m, headless)
 	@echo "🔥 Running HTTP load test with Locust..."
 	@echo "   Host: $(LOADTEST_HOST)"
 	@echo "   Users: $(LOADTEST_USERS)"
 	@echo "   Spawn rate: $(LOADTEST_SPAWN_RATE)/s"
 	@echo "   Duration: $(LOADTEST_RUN_TIME)"
+	@echo "   Workers: $(LOADTEST_PROCESSES) (-1 = auto-detect CPUs)"
 	@echo ""
+	@# Check ulimits and warn if below threshold
+	@NOFILE=$$(ulimit -n 2>/dev/null || echo 0); \
+	NPROC=$$(ulimit -u 2>/dev/null || echo 0); \
+	if [ "$$NOFILE" -lt 10000 ]; then \
+		echo "   ⚠️  WARNING: ulimit -n ($$NOFILE) is below 10000 - may cause connection failures"; \
+		echo "   💡 Fix: Add to /etc/security/limits.conf and restart shell"; \
+		echo ""; \
+	fi; \
+	if [ "$$NPROC" -lt 10000 ]; then \
+		echo "   ⚠️  WARNING: ulimit -u ($$NPROC) is below 10000 - may limit worker processes"; \
+		echo ""; \
+	fi
 	@echo "   💡 Tip: Start server first with 'make dev' in another terminal"
-	@echo "   💡 Tip: Enable performance tab: MCPGATEWAY_PERFORMANCE_TRACKING=true"
+	@echo "   💡 Tip: For best results, run: sudo scripts/tune-loadtest.sh"
 	@echo ""
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p reports
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		ulimit -n 65536 2>/dev/null || true && \
+		$(if $(LOADTEST_GEVENT_RESOLVER),GEVENT_RESOLVER=$(LOADTEST_GEVENT_RESOLVER)) \
 		locust -f $(LOADTEST_LOCUSTFILE) \
 			--host=$(LOADTEST_HOST) \
 			--users=$(LOADTEST_USERS) \
 			--spawn-rate=$(LOADTEST_SPAWN_RATE) \
 			--run-time=$(LOADTEST_RUN_TIME) \
+			--processes=$(LOADTEST_PROCESSES) \
 			--headless \
 			--html=$(LOADTEST_HTML_REPORT) \
 			--csv=$(LOADTEST_CSV_PREFIX) \
@@ -1000,24 +1019,41 @@ load-test:                                 ## Run HTTP load test (50 users, 60s,
 	@echo "📊 CSV Reports: $(LOADTEST_CSV_PREFIX)_*.csv"
 
 load-test-ui:                              ## Start Locust web UI at http://localhost:8089
-	@echo "🔥 Starting Locust Web UI (distributed, auto-detect CPUs)..."
+	@echo "🔥 Starting Locust Web UI (optimized for 4000+ users)..."
 	@echo "   🌐 Open http://localhost:8089 in your browser"
 	@echo "   🎯 Default host: $(LOADTEST_HOST)"
 	@echo "   👥 Default users: $(LOADTEST_USERS), spawn rate: $(LOADTEST_SPAWN_RATE)/s"
 	@echo "   ⏱️  Default run time: $(LOADTEST_RUN_TIME)"
-	@echo "   🚀 Workers: auto-detect (1 per CPU core)"
+	@echo "   🚀 Workers: $(LOADTEST_PROCESSES) (-1 = auto-detect CPUs)"
 	@echo ""
+	@# Check ulimits and warn if below threshold
+	@NOFILE=$$(ulimit -n 2>/dev/null || echo 0); \
+	NPROC=$$(ulimit -u 2>/dev/null || echo 0); \
+	if [ "$$NOFILE" -lt 10000 ]; then \
+		echo "   ⚠️  WARNING: ulimit -n ($$NOFILE) is below 10000 - may cause connection failures"; \
+		echo "   💡 Fix: Add to /etc/security/limits.conf and restart shell:"; \
+		echo "      *  soft  nofile  65536"; \
+		echo "      *  hard  nofile  65536"; \
+		echo ""; \
+	fi; \
+	if [ "$$NPROC" -lt 10000 ]; then \
+		echo "   ⚠️  WARNING: ulimit -u ($$NPROC) is below 10000 - may limit worker processes"; \
+		echo ""; \
+	fi
+	@echo "   💡 For best results, run: sudo scripts/tune-loadtest.sh"
 	@echo "   💡 Use 'User classes' dropdown to select FastTimeUser, etc."
 	@echo "   💡 Start server first with 'make dev' or 'docker compose up'"
 	@echo ""
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		ulimit -n 65536 2>/dev/null || true && \
+		$(if $(LOADTEST_GEVENT_RESOLVER),GEVENT_RESOLVER=$(LOADTEST_GEVENT_RESOLVER)) \
 		locust -f $(LOADTEST_LOCUSTFILE) \
 			--host=$(LOADTEST_HOST) \
 			--users=$(LOADTEST_USERS) \
 			--spawn-rate=$(LOADTEST_SPAWN_RATE) \
 			--run-time=$(LOADTEST_RUN_TIME) \
-			--processes=-1 \
+			--processes=$(LOADTEST_PROCESSES) \
 			--class-picker"
 
 load-test-light:                           ## Light load test (10 users, 30s)
