@@ -132,7 +132,7 @@ For production deployments, always include JTI in issued tokens to enable proper
 - [ ] **Disable unused surfaces.** Leave `MCPGATEWAY_UI_ENABLED=false`, `MCPGATEWAY_ADMIN_API_ENABLED=false`, `MCPGATEWAY_BULK_IMPORT_ENABLED=false`, `MCPGATEWAY_A2A_ENABLED=false`, and `MCPGATEWAY_CATALOG_ENABLED=false` unless you actively use them.
 - [ ] **Leave header passthrough off.** `ENABLE_HEADER_PASSTHROUGH=false` (default) should only change after reviewing downstream requirements and allowlists.
 - [ ] **Secure the data plane.** Terminate TLS with real certificates (`make certs`/`make serve-ssl` or a fronting proxy), and prefer PostgreSQL/MySQL with TLS over SQLite in production.
-- [ ] **Monitor activity.** Ship `token_usage_logs`, `email_auth_events`, audit trails, and structured logs to your SIEM/observability stack; alert on repeated failures or blocked requests. 
+- [ ] **Monitor activity.** Ship `token_usage_logs`, `email_auth_events`, audit trails, and structured logs to your SIEM/observability stack; alert on repeated failures or blocked requests.
 - [ ] **Automate security checks.** Integrate the security Make targets into CI/CD so images, dependencies, and IaC are scanned before deployment.
 
 ## Planned & In-Progress Enhancements (🚧 Planned)

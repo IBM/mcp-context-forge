@@ -93,4 +93,3 @@ tests:
     request_body: ""
     expected_status: 204
     expected_response: "Peer gateway unregistered successfully"
-
