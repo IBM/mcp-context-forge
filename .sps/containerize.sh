@@ -29,6 +29,10 @@ else
   IMAGE_PREFIX="Dev"
 fi
 
+source $WORKSPACE/$PIPELINE_CONFIG_REPO_PATH/scripts/utilities/go_utils.sh
+source $WORKSPACE/$PIPELINE_CONFIG_REPO_PATH/scripts/utilities/github_utils.sh
+source $WORKSPACE/$PIPELINE_CONFIG_REPO_PATH/scripts/utilities/logger.sh
+
 IMAGE_NAME="$(get_env app-name)"
 # If it's CI build then the image tag eg: Dev_<COMMIT>_<DATE>
 # If it's PR build then the image tag eg: Ft_<COMMIT>_<DATE>
@@ -38,14 +42,10 @@ IMAGE_TAG=${IMAGE_TAG////_}
 IMAGE_BASE="${REGISTRY_URL}/${IMAGE_NAME}"
 IMAGE="${IMAGE_BASE}:${IMAGE_TAG}"
 
-make CONTAINER_FILE=./Containerfile.cyberfraud container-build
-
-source $WORKSPACE/$PIPELINE_CONFIG_REPO_PATH/scripts/utilities/go_utils.sh
-source $WORKSPACE/$PIPELINE_CONFIG_REPO_PATH/scripts/utilities/github_utils.sh
-source $WORKSPACE/$PIPELINE_CONFIG_REPO_PATH/scripts/utilities/logger.sh
-
-docker tag mcpgateway/mcpgateway:latest "${IMAGE}"
-docker push "${IMAGE}"
+make IMAGE_TAG='base' CONTAINER_FILE=./Containerfile container-build && \
+    make IMAGE_TAG='$IMAGE_TAG' CONTAINER_FILE=./Containerfile.cyperfraud container-build && \
+    docker tag "mcpgateway/mcpgateway:$IMAGE_TAG" "${IMAGE}" && \
+    docker push "${IMAGE}"
 
 DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "${IMAGE}" | awk -F@ '{print $2}')"
 

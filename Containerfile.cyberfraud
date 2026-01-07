@@ -1,4 +1,4 @@
-FROM ./Containerfile
+FROM mcpgateway/mcpgateway:base
 
 USER root 
 # Install missing psycopg2 dependency for postgres support 
