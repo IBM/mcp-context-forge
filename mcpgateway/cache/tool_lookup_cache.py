@@ -31,7 +31,11 @@ class CacheEntry:
     expiry: float
 
     def is_expired(self) -> bool:
-        """Return True if the cache entry has expired."""
+        """Return True if the cache entry has expired.
+
+        Returns:
+            True if expired, otherwise False.
+        """
         return time.time() >= self.expiry
 
 
@@ -83,19 +87,41 @@ class ToolLookupCache:
 
     @property
     def enabled(self) -> bool:
-        """Return True if the cache is enabled."""
+        """Return True if the cache is enabled.
+
+        Returns:
+            True if enabled, otherwise False.
+        """
         return self._enabled
 
     def _redis_key(self, name: str) -> str:
-        """Build the Redis key for a tool name."""
+        """Build the Redis key for a tool name.
+
+        Args:
+            name: Tool name.
+
+        Returns:
+            Redis key for the tool lookup entry.
+        """
         return f"{self._cache_prefix}tool_lookup:{name}"
 
     def _gateway_set_key(self, gateway_id: str) -> str:
-        """Build the Redis set key for tools in a gateway."""
+        """Build the Redis set key for tools in a gateway.
+
+        Args:
+            gateway_id: Gateway ID.
+
+        Returns:
+            Redis set key for gateway tool names.
+        """
         return f"{self._cache_prefix}tool_lookup:gateway:{gateway_id}"
 
     async def _get_redis_client(self):
-        """Return a Redis client if L2 is enabled and available."""
+        """Return a Redis client if L2 is enabled and available.
+
+        Returns:
+            Redis client instance or None.
+        """
         if not self._l2_enabled:
             return None
         try:
@@ -114,7 +140,14 @@ class ToolLookupCache:
             return None
 
     def _get_l1(self, name: str) -> Optional[Dict[str, Any]]:
-        """Fetch a cached payload from L1 if present and not expired."""
+        """Fetch a cached payload from L1 if present and not expired.
+
+        Args:
+            name: Tool name.
+
+        Returns:
+            Cached payload dict or None.
+        """
         with self._lock:
             entry = self._cache.get(name)
             if entry and not entry.is_expired():
@@ -128,7 +161,13 @@ class ToolLookupCache:
         return None
 
     def _set_l1(self, name: str, value: Dict[str, Any], ttl: int) -> None:
-        """Store a payload in the L1 cache with TTL."""
+        """Store a payload in the L1 cache with TTL.
+
+        Args:
+            name: Tool name.
+            value: Payload to cache.
+            ttl: Time to live in seconds.
+        """
         with self._lock:
             if name in self._cache:
                 self._cache.pop(name, None)
@@ -137,7 +176,14 @@ class ToolLookupCache:
             self._cache[name] = CacheEntry(value=value, expiry=time.time() + ttl)
 
     async def get(self, name: str) -> Optional[Dict[str, Any]]:
-        """Get cached payload for a tool name, checking L1 then L2."""
+        """Get cached payload for a tool name, checking L1 then L2.
+
+        Args:
+            name: Tool name.
+
+        Returns:
+            Cached payload dict or None.
+        """
         if not self._enabled:
             return None
 
@@ -162,7 +208,14 @@ class ToolLookupCache:
         return None
 
     async def set(self, name: str, payload: Dict[str, Any], ttl: Optional[int] = None, gateway_id: Optional[str] = None) -> None:
-        """Store a payload in cache and update gateway index if provided."""
+        """Store a payload in cache and update gateway index if provided.
+
+        Args:
+            name: Tool name.
+            payload: Payload to cache.
+            ttl: Time to live in seconds (defaults to configured TTL).
+            gateway_id: Gateway ID for invalidation set tracking.
+        """
         if not self._enabled:
             return
 
@@ -183,12 +236,22 @@ class ToolLookupCache:
             logger.debug("ToolLookupCache Redis set failed: %s", exc)
 
     async def set_negative(self, name: str, status: str) -> None:
-        """Store a negative cache entry for a tool name."""
+        """Store a negative cache entry for a tool name.
+
+        Args:
+            name: Tool name.
+            status: Negative status (missing, inactive, offline).
+        """
         payload = {"status": status}
         await self.set(name=name, payload=payload, ttl=self._negative_ttl_seconds)
 
     async def invalidate(self, name: str, gateway_id: Optional[str] = None) -> None:
-        """Invalidate a tool cache entry by name."""
+        """Invalidate a tool cache entry by name.
+
+        Args:
+            name: Tool name.
+            gateway_id: Gateway ID for invalidation set tracking.
+        """
         if not self._enabled:
             return
 
@@ -207,7 +270,11 @@ class ToolLookupCache:
             logger.debug("ToolLookupCache Redis invalidate failed: %s", exc)
 
     async def invalidate_gateway(self, gateway_id: str) -> None:
-        """Invalidate all cached tools for a gateway."""
+        """Invalidate all cached tools for a gateway.
+
+        Args:
+            gateway_id: Gateway ID.
+        """
         if not self._enabled:
             return
 
@@ -237,7 +304,11 @@ class ToolLookupCache:
             self._cache.clear()
 
     def stats(self) -> Dict[str, Any]:
-        """Return cache hit/miss statistics and configuration."""
+        """Return cache hit/miss statistics and configuration.
+
+        Returns:
+            Cache stats and settings.
+        """
         total_l1 = self._l1_hit_count + self._l1_miss_count
         total_l2 = self._l2_hit_count + self._l2_miss_count
         return {
