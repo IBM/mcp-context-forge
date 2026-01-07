@@ -29,7 +29,7 @@ Environment Variables (also reads from .env file):
     JWT_ISSUER: JWT issuer claim
     LOADTEST_BENCHMARK_START_PORT: First port for benchmark servers (default: 9000)
     LOADTEST_BENCHMARK_SERVER_COUNT: Number of benchmark servers available (default: 1000)
-    LOADTEST_BENCHMARK_HOST: Host where benchmark servers run (default: localhost)
+    LOADTEST_BENCHMARK_HOST: Host where benchmark servers run (default: benchmark_server for Docker, use localhost for native)
 
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
@@ -148,7 +148,8 @@ JWT_TOKEN_EXPIRY_HOURS = int(_get_config("LOADTEST_JWT_EXPIRY_HOURS", "8760"))
 # Benchmark server configuration for gateway registration testing
 BENCHMARK_START_PORT = int(_get_config("LOADTEST_BENCHMARK_START_PORT", "9000"))
 BENCHMARK_SERVER_COUNT = int(_get_config("LOADTEST_BENCHMARK_SERVER_COUNT", "10"))
-BENCHMARK_HOST = _get_config("LOADTEST_BENCHMARK_HOST", "localhost")
+# Default to benchmark_server for Docker networking, override with localhost for native runs
+BENCHMARK_HOST = _get_config("LOADTEST_BENCHMARK_HOST", "benchmark_server")
 
 # Log loaded configuration (masking sensitive values)
 logger.info("Configuration loaded:")
@@ -1442,7 +1443,7 @@ class WriteAPIUser(BaseUser):
         # Register the gateway
         gateway_data = {
             "name": gateway_name,
-            "url": f"http://{BENCHMARK_HOST}:{port}/",
+            "url": f"http://{BENCHMARK_HOST}:{port}/mcp",
             "transport": "STREAMABLEHTTP",
         }
 
