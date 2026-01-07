@@ -412,7 +412,7 @@ def _preregister_gateways(host: str, headers: dict[str, str]) -> None:
     logger.info("Pre-registering fast-test gateway...")
     fast_test_data = {
         "name": "fast-test",
-        "url": "http://fast_test_server:9080/mcp",
+        "url": "http://fast_test_server:8880/mcp",
         "transport": "STREAMABLEHTTP",
     }
 
