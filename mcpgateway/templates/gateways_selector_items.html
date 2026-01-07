@@ -1,9 +1,24 @@
 <!-- htmlhint doctype-first:false -->
 <!-- gateway selector items for infinite scroll -->
+{% if pagination.page == 1 %}
+<!-- Special checkbox for RestTool (no gateway id) -->
+<label
+  class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1 tool-item"
+>
+  <input
+    type="checkbox"
+    name="associatedGateways"
+    value=""
+    data-gateway-null="true"
+    class="mcpserver-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+  />
+  <span class="select-none">REST/A2A</span>
+</label>
+{% endif %}
 {% for gateway in data %}
 {% set gateway_label = gateway.displayName or gateway.originalName or gateway.name or gateway.id %}
 <label
-  class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-purple-50 dark:hover:bg-purple-900 rounded-md p-1 gateway-item"
+  class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-purple-50 dark:hover:bg-purple-900 rounded-md p-1 tool-item"
   data-gateway-id="{{ gateway.id }}"
 >
   <input

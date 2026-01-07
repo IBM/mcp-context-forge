@@ -6032,7 +6032,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             } %}
 
             {# build the refresh URL for controls #}
-            {% set controls_url = root_path + '/admin/agents/partial'
+            {% set controls_url = root_path + '/admin/a2a/partial'
               + '?render=controls'
               + '&page=' + page|string
               + '&per_page=' + per_page|string
@@ -6046,7 +6046,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 hx-indicator="#agents-loading">
 
               {# helpers used by pagination_controls.html #}
-              {% set base_url = root_path + '/admin/agents/partial' %}
+              {% set base_url = root_path + '/admin/a2a/partial' %}
               {% set hx_target = '#agents-table' %}
               {% set hx_indicator = '#agents-loading' %}
               {% set query_params = {'include_inactive': include_inactive} %}
