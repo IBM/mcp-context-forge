@@ -1,0 +1,10 @@
+FROM mcpgateway/mcpgateway:base
+
+USER root 
+# Install missing psycopg2 dependency for postgres support 
+RUN /app/.venv/bin/python3 -m uv pip install 'psycopg2'
+# update the user permissions
+RUN chown -R 1001:0 /app && \
+    chmod -R g=u /app
+# Set the runtime user
+USER 1001
