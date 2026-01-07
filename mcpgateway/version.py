@@ -832,7 +832,7 @@ async def version_endpoint(
     payload = _build_payload(redis_version, redis_ok)
     if partial:
         # Return partial HTML fragment for HTMX embedding
-        templates = Jinja2Templates(directory=str(settings.templates_dir))
+        templates = Jinja2Templates(directory=str(settings.templates_dir), auto_reload=settings.templates_auto_reload)
         return templates.TemplateResponse(request, "version_info_partial.html", {"request": request, "payload": payload})
     wants_html = fmt == "html" or "text/html" in request.headers.get("accept", "")
     if wants_html:
