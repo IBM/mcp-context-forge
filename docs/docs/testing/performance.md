@@ -374,6 +374,127 @@ For testing with 4000+ concurrent users:
 
 ---
 
+## 🎯 Benchmark Server Stack
+
+MCP Gateway includes a high-performance Go-based benchmark server that can spawn multiple MCP servers in a single process for load testing gateway registration, federation, and tool invocation at scale.
+
+### Quick Start
+
+```bash
+# Start benchmark stack (10 MCP servers by default)
+make benchmark-up
+
+# Verify servers are running
+curl http://localhost:9000/health
+curl http://localhost:9009/health
+
+# Run load tests against registered gateways
+make load-test-ui
+```
+
+### Make Targets
+
+| Target | Description |
+|--------|-------------|
+| `make benchmark-up` | Start benchmark servers + auto-register as gateways |
+| `make benchmark-down` | Stop benchmark servers |
+| `make benchmark-clean` | Stop and remove all benchmark data (volumes) |
+| `make benchmark-status` | Show status of benchmark services |
+| `make benchmark-logs` | View benchmark server logs |
+
+### Configuration
+
+Configure the number of servers via environment variables:
+
+```bash
+# Start 50 benchmark servers (ports 9000-9049)
+BENCHMARK_SERVER_COUNT=50 make benchmark-up
+
+# Start 100 servers on a different port range
+BENCHMARK_SERVER_COUNT=100 BENCHMARK_START_PORT=9000 make benchmark-up
+```
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BENCHMARK_SERVER_COUNT` | 10 | Number of MCP servers to spawn |
+| `BENCHMARK_START_PORT` | 9000 | Starting port number |
+
+### Architecture
+
+The benchmark stack consists of:
+
+1. **benchmark_server** - A single Go binary that spawns multiple HTTP servers
+   - Each server exposes MCP endpoints on a unique port (9000-9099)
+   - Default: 50 tools, 20 resources, 10 prompts per server
+   - Supports graceful shutdown via SIGINT/SIGTERM
+
+2. **register_benchmark** - Auto-registration service
+   - Registers all benchmark servers as gateways at compose startup
+   - No manual registration required
+
+### Endpoints per Server
+
+Each benchmark server (e.g., `http://localhost:9000`) exposes:
+
+| Endpoint | Description |
+|----------|-------------|
+| `/mcp` | MCP Streamable HTTP endpoint |
+| `/health` | Health check (`{"status": "healthy"}`) |
+| `/version` | Version information |
+
+### Resource Limits
+
+The benchmark server is configured with reasonable resource limits:
+
+| Servers | CPU Limit | Memory Limit |
+|---------|-----------|--------------|
+| 1-10 | 2 cores | 1 GB |
+| 10-50 | 2 cores | 1 GB |
+| 50-100 | 2 cores | 1 GB |
+
+For larger deployments (100+ servers), consider increasing limits in `docker-compose.yml`.
+
+### Example: Load Testing with 50 Gateways
+
+```bash
+# 1. Start 50 benchmark servers
+BENCHMARK_SERVER_COUNT=50 make benchmark-up
+
+# 2. Verify registration
+curl -s http://localhost:8080/gateways -H "Authorization: Bearer $TOKEN" | jq 'length'
+# Output: 52 (50 benchmark + fast_time + fast_test)
+
+# 3. Run load test
+make load-test-ui
+# Open http://localhost:8089
+# Select user classes and start swarming
+```
+
+### Standalone Usage (Without Docker)
+
+```bash
+# Build the benchmark server
+cd mcp-servers/go/benchmark-server
+make build
+
+# Run single server
+./dist/benchmark-server -transport=http -port=9000 -tools=100
+
+# Run multi-server mode
+./dist/benchmark-server -transport=http -server-count=10 -start-port=9000
+```
+
+### Performance Characteristics
+
+The Go benchmark server is optimized for:
+
+- **Low memory footprint**: ~5-10 MB per server
+- **Fast startup**: All servers ready in <1 second
+- **High throughput**: 10,000+ req/s per server
+- **Graceful shutdown**: Clean termination on SIGINT/SIGTERM
+
+---
+
 ## 🚀 JSON Serialization Performance: orjson
 
 MCP Gateway uses **orjson** for high-performance JSON serialization, providing **5-6x faster serialization** and **1.5-2x faster deserialization** compared to Python's standard library `json` module.
