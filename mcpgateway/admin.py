@@ -1184,7 +1184,7 @@ async def admin_servers_partial_html(
         encoded server data when templates expect it.
     """
     LOGGER.debug(f"User {get_user_email(user)} requested servers HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render})")
-    
+
     # Normalize per_page within configured bounds
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
 
@@ -6582,6 +6582,7 @@ async def admin_get_all_gateways_ids(
     gateway_ids = [row[0] for row in db.execute(query).all()]
     return {"gateway_ids": gateway_ids, "count": len(gateway_ids)}
 
+
 @admin_router.get("/gateways/search", response_class=JSONResponse)
 async def admin_search_gateways(
     q: str = Query("", description="Search query"),
@@ -7235,6 +7236,7 @@ async def admin_search_prompts(
         )
 
     return {"prompts": prompts, "count": len(prompts)}
+
 
 @admin_router.get("/a2a/partial", response_class=HTMLResponse)
 async def admin_a2a_partial_html(
