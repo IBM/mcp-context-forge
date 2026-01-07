@@ -116,7 +116,7 @@ BENCHMARK_SERVER_TEMPLATE = """  benchmark_server:
     container_name: benchmark_server
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    command: ["-transport=http", "-server-count={server_count}", "-start-port={start_port}", "-tools=100", "-resources=10", "-prompts=5"]
+    command: ["-transport=http", "-server-count={server_count}", "-start-port={start_port}", "-tools=1", "-resources=1", "-prompts=1"]
     ports:
       - "{port_range}"
     networks:

@@ -146,8 +146,76 @@ JWT_USERNAME = _get_config("JWT_USERNAME", _get_config("PLATFORM_ADMIN_EMAIL", "
 JWT_TOKEN_EXPIRY_HOURS = int(_get_config("LOADTEST_JWT_EXPIRY_HOURS", "8760"))
 
 # Benchmark server configuration for gateway registration testing
+def _detect_benchmark_servers() -> tuple[bool, int]:
+    """Auto-detect if benchmark server is running and how many servers it has.
+
+    Returns:
+        Tuple of (is_running, server_count)
+    """
+    # Method 1: Query running Docker container for exposed ports
+    try:
+        import subprocess  # pylint: disable=import-outside-toplevel
+
+        # Get port mappings from running benchmark_server container
+        result = subprocess.run(
+            ["docker", "port", "benchmark_server"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False
+        )
+
+        if result.returncode == 0 and result.stdout:
+            # Parse output like "9000/tcp -> 0.0.0.0:9000" to find port range
+            ports = []
+            for line in result.stdout.strip().split("\n"):
+                if "/tcp" in line:
+                    # Extract container port from "9000/tcp -> ..."
+                    container_port = line.split("/tcp")[0].strip()
+                    if container_port.isdigit():
+                        ports.append(int(container_port))
+
+            if ports:
+                count = max(ports) - min(ports) + 1
+                logger.info(f"✅ Benchmark server is running with {count} servers (ports {min(ports)}-{max(ports)})")
+                return (True, count)
+        else:
+            logger.info("❌ Benchmark server container is not running - benchmark gateway registration will be skipped")
+            return (False, 0)
+    except Exception as e:
+        logger.debug(f"Could not query Docker container: {e}")
+
+    # Method 2: Fall back to reading docker-compose.perf.yml (but mark as not running)
+    try:
+        import yaml  # pylint: disable=import-outside-toplevel
+
+        compose_file = Path(__file__).parent.parent.parent / "docker-compose.perf.yml"
+        if compose_file.exists():
+            with open(compose_file) as f:
+                compose = yaml.safe_load(f)
+                benchmark_service = compose.get("services", {}).get("benchmark_server", {})
+                ports = benchmark_service.get("ports", [])
+
+                # Parse port range like "9000-9099:9000-9099"
+                for port_mapping in ports:
+                    if isinstance(port_mapping, str) and "-" in port_mapping:
+                        host_range = port_mapping.split(":")[0]
+                        if "-" in host_range:
+                            start, end = host_range.split("-")
+                            count = int(end) - int(start) + 1
+                            logger.warning(f"⚠️  Found docker-compose.perf.yml with {count} servers, but container not running - benchmark tasks disabled")
+                            return (False, count)
+    except Exception as e:
+        logger.debug(f"Could not read docker-compose.perf.yml: {e}")
+
+    logger.info("ℹ️  No benchmark server configuration found - benchmark gateway registration disabled")
+    return (False, 0)
+
+
+# Detect benchmark server status
+BENCHMARK_SERVER_ENABLED, _detected_count = _detect_benchmark_servers()
 BENCHMARK_START_PORT = int(_get_config("LOADTEST_BENCHMARK_START_PORT", "9000"))
-BENCHMARK_SERVER_COUNT = int(_get_config("LOADTEST_BENCHMARK_SERVER_COUNT", "10"))
+BENCHMARK_SERVER_COUNT = int(_get_config("LOADTEST_BENCHMARK_SERVER_COUNT", str(_detected_count if BENCHMARK_SERVER_ENABLED else 10)))
 # Default to benchmark_server for Docker networking, override with localhost for native runs
 BENCHMARK_HOST = _get_config("LOADTEST_BENCHMARK_HOST", "benchmark_server")
 
@@ -1435,6 +1503,10 @@ class WriteAPIUser(BaseUser):
         This tests the gateway registration workflow by adding gateways one by one
         during the load test, rather than pre-registering them.
         """
+        # Skip if benchmark server container is not running
+        if not BENCHMARK_SERVER_ENABLED:
+            return
+
         # Pick a random port from the configured benchmark server range
         port_offset = random.randint(0, BENCHMARK_SERVER_COUNT - 1)
         port = BENCHMARK_START_PORT + port_offset
