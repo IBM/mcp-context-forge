@@ -57,10 +57,6 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.ENABLE_METRICS | string | `"true"` |  |
 | mcpContextForge.config.ENABLE_OVERWRITE_BASE_HEADERS | string | `"false"` |  |
 | mcpContextForge.config.ENVIRONMENT | string | `"development"` |  |
-| mcpContextForge.config.FEDERATION_DISCOVERY | string | `"false"` |  |
-| mcpContextForge.config.FEDERATION_ENABLED | string | `"true"` |  |
-| mcpContextForge.config.FEDERATION_PEERS | string | `"[]"` |  |
-| mcpContextForge.config.FEDERATION_SYNC_INTERVAL | string | `"300"` |  |
 | mcpContextForge.config.FEDERATION_TIMEOUT | string | `"120"` |  |
 | mcpContextForge.config.FILELOCK_NAME | string | `"gateway_healthcheck_init.lock"` |  |
 | mcpContextForge.config.GATEWAY_MODEL | string | `"gpt-4o"` |  |

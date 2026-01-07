@@ -43,7 +43,6 @@ gateway:
     MCPGATEWAY_ADMIN_API_ENABLED: "true"
     MCPGATEWAY_A2A_ENABLED: "true"
     AUTH_REQUIRED: "false"
-    MCPGATEWAY_ENABLE_FEDERATION: "false"
 
   # mTLS client configuration (gateway connects to plugins)
   mtls_enabled: true

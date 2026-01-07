@@ -158,15 +158,6 @@ For a list of upcoming features, check out the [ContextForge Roadmap](https://ib
 </details>
 
 <details>
-<summary><strong>🌐 Federation of Peer Gateways (MCP Registry)</strong></summary>
-
-* Auto-discovers or configures peer gateways (via mDNS or manual)
-* Performs health checks and merges remote registries transparently
-* Supports Redis-backed syncing and fail-over
-
-</details>
-
-<details>
 <summary><strong>🧩 Virtualization of REST/gRPC Services</strong></summary>
 
 * Wraps non-MCP services as virtual MCP servers
@@ -2079,11 +2070,7 @@ Automatic management of metrics data to prevent unbounded table growth and maint
 
 | Setting                    | Description            | Default | Options    |
 | -------------------------- | ---------------------- | ------- | ---------- |
-| `FEDERATION_ENABLED`       | Enable federation      | `true`  | bool       |
-| `FEDERATION_DISCOVERY`     | Auto-discover peers    | `false` | bool       |
-| `FEDERATION_PEERS`         | Comma-sep peer URLs    | `[]`    | JSON array |
 | `FEDERATION_TIMEOUT`       | Gateway timeout (secs) | `30`    | int > 0    |
-| `FEDERATION_SYNC_INTERVAL` | Sync interval (secs)   | `300`   | int > 0    |
 
 ### Resources
 

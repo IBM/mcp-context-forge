@@ -15,6 +15,19 @@
   - Does NOT affect log aggregation (`METRICS_AGGREGATION_ENABLED`) or Prometheus (`ENABLE_METRICS`)
   - Default: `true` (existing behavior unchanged)
 
+### Deprecated
+
+#### **🔌 Federation Auto-Discovery & Forwarding Services** ([#1912](https://github.com/IBM/mcp-context-forge/issues/1912))
+* **Removed `DiscoveryService`** - mDNS/Zeroconf auto-discovery is no longer supported
+* **Removed `ForwardingService`** - Functionality consolidated into `ToolService` with improved OAuth, plugin, and SSE support
+* **Deprecated environment variables:**
+  - `FEDERATION_ENABLED` - No longer used
+  - `FEDERATION_DISCOVERY` - No longer used
+  - `FEDERATION_PEERS` - No longer used
+  - `FEDERATION_SYNC_INTERVAL` - No longer used
+* **Retained:** `FEDERATION_TIMEOUT` for gateway request timeouts
+* **Unaffected:** Gateway peer management via `/gateways` REST API remains fully functional
+
 ### Changed
 
 #### **⚡ Metrics Performance Defaults** ([#1799](https://github.com/IBM/mcp-context-forge/issues/1799))

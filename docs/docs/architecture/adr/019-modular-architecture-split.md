@@ -148,7 +148,6 @@ All gateway features are configurable via environment variables:
 MCPGATEWAY_UI_ENABLED=true
 MCPGATEWAY_ADMIN_API_ENABLED=true
 MCPGATEWAY_A2A_ENABLED=true
-MCPGATEWAY_ENABLE_FEDERATION=true
 
 # Performance features
 COMPRESSION_ENABLED=true

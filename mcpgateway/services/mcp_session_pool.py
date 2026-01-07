@@ -294,10 +294,7 @@ class MCPSessionPool:
         """
         if not headers:
             self._anonymous_identity_count += 1
-            logger.debug(
-                "Session pool identity collapsed to 'anonymous' (no headers provided). "
-                + "Sessions will be shared. Ensure this is intentional for stateless MCP servers."
-            )
+            logger.debug("Session pool identity collapsed to 'anonymous' (no headers provided). " + "Sessions will be shared. Ensure this is intentional for stateless MCP servers.")
             return "anonymous"
 
         # Try custom identity extractor first (for rotating tokens like JWTs)
@@ -320,8 +317,7 @@ class MCPSessionPool:
         if not identity_parts:
             self._anonymous_identity_count += 1
             logger.debug(
-                "Session pool identity collapsed to 'anonymous' (no identity headers found). "
-                + "Expected headers: %s. Sessions will be shared.",
+                "Session pool identity collapsed to 'anonymous' (no identity headers found). " + "Expected headers: %s. Sessions will be shared.",
                 list(self._identity_headers),
             )
             return "anonymous"
