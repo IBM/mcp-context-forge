@@ -11,6 +11,8 @@ dnf install -y  postgresql-devel
 
 echo "############# Running Install ################"
 make install-dev
+echo "############# Running Linting ##################"
+echo "make lint-quick"
 echo "############# Running Install dependencies ################"
 . $HOME/.venv/mcpgateway/bin/activate && \
     python3 -m uv pip install 'psycopg[c]' && \
@@ -19,12 +21,6 @@ echo "############# Running Install dependencies ################"
     python3 -m uv pip install 'copier'   
 echo "############# Running Install DB ################"
 make install-db
-#echo "############# Running Linting ##################"
-#. $HOME/.venv/mcpgateway/bin/activate && \
-#    python3 -m uv pip install --force-reinstall 'ruff' && \
-#    python3 -m uv pip install --force-reinstall 'black' && \
-#    python3 -m uv pip install --force-reinstall 'isort'
-#make lint-quick
 echo "############# Running Tests and Coverage ##################"
 source $HOME/.venv/mcpgateway/bin/activate && \
 		export DATABASE_URL='sqlite:///:memory:' && \
