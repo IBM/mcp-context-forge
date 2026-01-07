@@ -471,7 +471,7 @@ When using a MCP Client such as Claude with stdio:
 ## Quick Start - Containers
 
 Use the official OCI image from GHCR with **Docker** *or* **Podman**.
-Please note: Currently, arm64 is not supported. If you are e.g. running on MacOS, install via PyPi.
+Please note: Currently, arm64 is not supported on production. If you are e.g. running on MacOS with Apple Silicon chips (M1, M2, etc), you can run the containers using Rosetta or install via PyPi instead.
 
 ### 🚀 Quick Start - Docker Compose
 
