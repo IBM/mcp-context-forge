@@ -617,7 +617,7 @@ def _get_span_entity_performance(
         )
 
     items.sort(key=lambda x: x.get("avg_duration_ms", 0), reverse=True)
-    return items
+    return items[:limit]
 
 
 def get_user_id(user: Union[str, dict[str, Any], object] = None) -> str:
