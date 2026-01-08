@@ -265,6 +265,7 @@ class ResourceCache:
         """
 
         async def _run_once() -> None:
+            """Execute a single cleanup pass, catching and logging any errors."""
             try:
                 await asyncio.to_thread(self._cleanup_once)
             except Exception as e:
