@@ -139,7 +139,7 @@ class ResourceCache:
                 self._rlock.acquire()
                 return self
 
-            def __exit__(self, exc_type, exc, tb):
+            def __exit__(self, exc_type, exc, _tb):
                 self._rlock.release()
 
             # Async context manager
@@ -148,7 +148,7 @@ class ResourceCache:
                 await loop.run_in_executor(None, self._rlock.acquire)
                 return self
 
-            async def __aexit__(self, exc_type, exc, tb):
+            async def __aexit__(self, exc_type, exc, _tb):
                 # Release on the same executor thread where we acquired
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, self._rlock.release)
