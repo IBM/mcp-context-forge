@@ -442,6 +442,48 @@ class TestToolService:
         tool_service._notify_tool_added.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_create_tool_from_a2a_agent_passes_scope_fields(self, tool_service, test_db):
+        """Ensure A2A tool creation carries team/owner/visibility to register_tool."""
+        agent = MagicMock()
+        agent.slug = "agent-slug"
+        agent.name = "Agent Name"
+        agent.endpoint_url = "https://example.com/a2a"
+        agent.description = "Agent description"
+        agent.agent_type = "custom"
+        agent.auth_type = "bearer"
+        agent.auth_value = "secret"
+        agent.tags = ["alpha"]
+        agent.id = "agent-123"
+        agent.team_id = "team-123"
+        agent.owner_email = "owner@example.com"
+        agent.visibility = "team"
+
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = None
+        test_db.execute = Mock(return_value=mock_scalar)
+
+        tool_read = MagicMock()
+        tool_read.id = "tool-1"
+        tool_service.register_tool = AsyncMock(return_value=tool_read)
+
+        tool_db = MagicMock()
+        test_db.get = Mock(return_value=tool_db)
+
+        result = await tool_service.create_tool_from_a2a_agent(
+            test_db,
+            agent,
+            created_by="creator@example.com",
+        )
+
+        tool_service.register_tool.assert_awaited_once()
+        _, kwargs = tool_service.register_tool.call_args
+        assert kwargs["team_id"] == agent.team_id
+        assert kwargs["owner_email"] == agent.owner_email
+        assert kwargs["visibility"] == agent.visibility
+        test_db.get.assert_called_once_with(DbTool, tool_read.id)
+        assert result == tool_db
+
+    @pytest.mark.asyncio
     async def test_register_tool_with_gateway_id(self, tool_service, mock_tool, test_db):
         """Test tool registration with name conflict and gateway."""
         # Mock DB to return existing tool
