@@ -131,6 +131,14 @@ class ResourceCache:
         # can also `async with` the lock in tests or elsewhere.
 
         class DualLock:
+            """Re-entrant lock supporting sync and async context managers.
+
+            This wrapper exposes both `__enter__/__exit__` and
+            `__aenter__/__aexit__` so the same lock can be used from
+            synchronous code paths and `async with` contexts (tests
+            and the cleanup task).
+            """
+
             def __init__(self) -> None:
                 self._rlock = threading.RLock()
 
