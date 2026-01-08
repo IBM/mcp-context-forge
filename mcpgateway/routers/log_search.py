@@ -157,14 +157,38 @@ def _aggregate_custom_windows(
 
     reference_end = datetime.now(timezone.utc)
 
+    # Collect all window starts for the full range, then perform a single batched aggregation
+    window_starts: List[datetime] = []
     while current_start < reference_end:
-        current_end = current_start + window_delta
-        aggregator.aggregate_all_components(
-            window_start=current_start,
-            window_end=current_end,
-            db=db,
+        window_starts.append(current_start)
+        current_start = current_start + window_delta
+
+    # Limit to prevent memory issues; keep most recent windows (trim oldest)
+    max_windows = 10000
+    if len(window_starts) > max_windows:
+        logger.warning(
+            "Window list truncated from %d to %d windows; keeping most recent",
+            len(window_starts),
+            max_windows,
         )
-        current_start = current_end
+        window_starts = window_starts[-max_windows:]
+
+    # Delegate to aggregator batch method to avoid per-window recomputation
+    # Note: window_starts must be contiguous and aligned; sparse lists will generate extra windows
+    if window_starts:
+        batch_succeeded = False
+        if hasattr(aggregator, "aggregate_all_components_batch"):
+            try:
+                aggregator.aggregate_all_components_batch(window_starts=window_starts, window_minutes=window_minutes, db=db)
+                batch_succeeded = True
+            except Exception:
+                logger.exception("Batch aggregation failed; falling back to per-window aggregation")
+                # Rollback failed transaction before attempting fallback (required for PostgreSQL)
+                db.rollback()
+        if not batch_succeeded:
+            # Backwards-compatible fallback: iterate windows (less efficient)
+            for ws in window_starts:
+                aggregator.aggregate_all_components(window_start=ws, window_end=ws + window_delta, db=db)
 
 
 # Request/Response Models
