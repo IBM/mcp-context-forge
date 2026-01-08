@@ -2465,6 +2465,7 @@ class ToolService:
         if trace_id and observability_service:
             try:
                 # Re-open database session for span creation (original was closed at line 2285)
+                # Use commit=False since fresh_db_session() handles commits on exit
                 with fresh_db_session() as span_db:
                     db_span_id = observability_service.start_span(
                         db=span_db,
@@ -2482,6 +2483,7 @@ class ToolService:
                             "arguments_count": len(arguments) if arguments else 0,
                             "has_headers": bool(request_headers),
                         },
+                        commit=False,
                     )
                     logger.debug(f"✓ Created tool.invoke span: {db_span_id} for tool: {name}")
             except Exception as e:
@@ -2993,6 +2995,7 @@ class ToolService:
                 duration_ms = (time.monotonic() - start_time) * 1000
 
                 # End database span for observability_spans table
+                # Use commit=False since fresh_db_session() handles commits on exit
                 if db_span_id and observability_service and not db_span_ended:
                     try:
                         with fresh_db_session() as span_db:
@@ -3005,6 +3008,7 @@ class ToolService:
                                     "success": success,
                                     "duration_ms": duration_ms,
                                 },
+                                commit=False,
                             )
                             db_span_ended = True
                             logger.debug(f"✓ Ended tool.invoke span: {db_span_id}")

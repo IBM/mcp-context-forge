@@ -564,17 +564,18 @@ def _get_span_entity_performance(
 
         return items
 
-    # Fallback: Python aggregation (SQLite or other DBs)
+    # Fallback: Python aggregation (SQLite or other DBs, or PostgreSQL with USE_POSTGRESDB_PERCENTILES=False)
+    # Pass dialect_name to extract_json_field to ensure correct SQL syntax for the actual database
     spans = (
         db.query(
-            extract_json_field(ObservabilitySpan.attributes, f'$."{json_key}"').label("entity"),
+            extract_json_field(ObservabilitySpan.attributes, f'$."{json_key}"', dialect_name=dialect_name).label("entity"),
             ObservabilitySpan.duration_ms,
         )
         .filter(
             ObservabilitySpan.name.in_(span_names),
             ObservabilitySpan.start_time >= cutoff_time_naive,
             ObservabilitySpan.duration_ms.isnot(None),
-            extract_json_field(ObservabilitySpan.attributes, f'$."{json_key}"').isnot(None),
+            extract_json_field(ObservabilitySpan.attributes, f'$."{json_key}"', dialect_name=dialect_name).isnot(None),
         )
         .all()
     )
