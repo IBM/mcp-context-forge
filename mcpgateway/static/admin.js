@@ -6731,6 +6731,23 @@ function showTab(tabName) {
         // Debounced content loading
         tabSwitchTimeout = setTimeout(() => {
             try {
+                if (tabName === "overview") {
+                    // Load overview content if not already loaded
+                    const overviewPanel = safeGetElement("overview-panel");
+                    if (overviewPanel) {
+                        const hasLoadingMessage =
+                            overviewPanel.innerHTML.includes(
+                                "Loading overview",
+                            );
+                        if (hasLoadingMessage) {
+                            // Trigger HTMX load manually if HTMX is available
+                            if (window.htmx && window.htmx.trigger) {
+                                window.htmx.trigger(overviewPanel, "load");
+                            }
+                        }
+                    }
+                }
+
                 if (tabName === "metrics") {
                     // Only load if we're still on the metrics tab
                     if (!panel.classList.contains("hidden")) {
