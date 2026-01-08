@@ -8975,9 +8975,9 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         error_ctx = [str(err["ctx"]["error"]) for err in ex.errors()]
         return ORJSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
 
-    except RuntimeError as re:
-        # --- Getting only the custom message from the ValueError ---
-        error_ctx = [str(re)]
+    except RuntimeError as err:
+        # --- Getting only the custom message from the RuntimeError ---
+        error_ctx = [str(err)]
         return ORJSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
 
     user_email = get_user_email(user)
