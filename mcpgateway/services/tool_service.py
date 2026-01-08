@@ -3638,6 +3638,9 @@ class ToolService:
             created_from_ip=created_from_ip,
             created_via=created_via or "a2a_integration",
             created_user_agent=created_user_agent,
+            team_id=agent.team_id,
+            owner_email=agent.owner_email,
+            visibility=agent.visibility,
         )
 
         # Return the DbTool object for relationship assignment
