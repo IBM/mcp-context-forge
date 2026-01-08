@@ -334,6 +334,7 @@ class ObservabilityService:
         resource_type: Optional[str] = None,
         resource_id: Optional[str] = None,
         attributes: Optional[Dict[str, Any]] = None,
+        commit: bool = True,
     ) -> str:
         """Start a new span within a trace.
 
@@ -347,6 +348,8 @@ class ObservabilityService:
             resource_type: Resource type (tool, resource, prompt, etc.)
             resource_id: Resource ID
             attributes: Additional span attributes
+            commit: Whether to commit the transaction (default True).
+                Set to False when using fresh_db_session() which handles commits.
 
         Returns:
             Span ID (UUID string)
@@ -376,7 +379,8 @@ class ObservabilityService:
             created_at=utc_now(),
         )
         db.add(span)
-        db.commit()
+        if commit:
+            db.commit()
         logger.debug(f"Started span {span_id}: {name} (trace={trace_id})")
         return span_id
 
@@ -387,6 +391,7 @@ class ObservabilityService:
         status: str = "ok",
         status_message: Optional[str] = None,
         attributes: Optional[Dict[str, Any]] = None,
+        commit: bool = True,
     ) -> None:
         """End a span.
 
@@ -396,6 +401,8 @@ class ObservabilityService:
             status: Span status (ok, error)
             status_message: Optional status message
             attributes: Additional attributes to merge
+            commit: Whether to commit the transaction (default True).
+                Set to False when using fresh_db_session() which handles commits.
 
         Examples:
             >>> service.end_span(db, span_id, status="ok")  # doctest: +SKIP
@@ -415,7 +422,8 @@ class ObservabilityService:
         if attributes:
             span.attributes = {**(span.attributes or {}), **attributes}
 
-        db.commit()
+        if commit:
+            db.commit()
         logger.debug(f"Ended span {span_id}: {status} ({duration_ms:.2f}ms)")
 
     @contextmanager
