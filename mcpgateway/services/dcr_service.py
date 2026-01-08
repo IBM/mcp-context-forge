@@ -45,7 +45,7 @@ class DcrService:
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create shared httpx client with connection pooling.
-        
+
         Returns:
             Configured httpx.AsyncClient instance
         """
