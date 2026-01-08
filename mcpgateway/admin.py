@@ -48,7 +48,7 @@ import httpx
 import orjson
 from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
-from sqlalchemy import and_, bindparam, case, cast, desc, func, or_, select, String, text
+from sqlalchemy import and_, bindparam, case, cast, desc, false, func, or_, select, String, text
 from sqlalchemy.exc import IntegrityError, InvalidRequestError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session
 from sqlalchemy.sql.functions import coalesce
@@ -1481,6 +1481,7 @@ async def admin_servers_partial_html(
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -1499,6 +1500,7 @@ async def admin_servers_partial_html(
         per_page (int): Number of items per page (bounded by settings).
         include_inactive (bool): If True, include inactive servers in results.
         render (Optional[str]): Render mode; one of None, "controls", "selector".
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
@@ -1508,7 +1510,7 @@ async def admin_servers_partial_html(
         items depending on ``render``. The response contains JSON-serializable
         encoded server data when templates expect it.
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested servers HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render})")
+    LOGGER.debug(f"User {get_user_email(user)} requested servers HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render}, team_id={team_id})")
 
     # Normalize per_page within configured bounds
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
@@ -1540,6 +1542,17 @@ async def admin_servers_partial_html(
 
     query = query.where(or_(*access_conditions))
 
+    # Apply team_id filter if provided (restrict to specific team)
+    if team_id:
+        # Only show servers from the specified team if user is a member
+        if team_id in team_ids:
+            query = query.where(DbServer.team_id == team_id)
+            LOGGER.debug(f"Filtering servers by team_id: {team_id}")
+        else:
+            # User is not a member of this team, return no results using SQLAlchemy's false()
+            LOGGER.warning(f"User {user_email} attempted to filter by team {team_id} but is not a member")
+            query = query.where(false())
+
     # Apply pagination ordering for cursor support
     query = query.order_by(desc(DbServer.created_at), desc(DbServer.id))
 
@@ -1547,6 +1560,8 @@ async def admin_servers_partial_html(
     query_params = {}
     if include_inactive:
         query_params["include_inactive"] = "true"
+    if team_id:
+        query_params["team_id"] = team_id
 
     # Use unified pagination function
     paginated_result = await paginate_query(
@@ -6240,6 +6255,7 @@ async def admin_tools_partial_html(
     include_inactive: bool = False,
     render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -6255,6 +6271,7 @@ async def admin_tools_partial_html(
         per_page (int): Items per page (1-500). Default: 50.
         include_inactive (bool): Whether to include inactive tools in the results.
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
+        team_id (Optional[str]): Filter by team ID.
         render (str): Render mode - 'controls' returns only pagination controls.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -6262,7 +6279,7 @@ async def admin_tools_partial_html(
     Returns:
         HTMLResponse with tools table rows and pagination controls.
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested tools HTML partial (page={page}, per_page={per_page}, render={render}, gateway_id={gateway_id})")
+    LOGGER.debug(f"User {get_user_email(user)} requested tools HTML partial (page={page}, per_page={per_page}, render={render}, gateway_id={gateway_id}, team_id={team_id})")
 
     user_email = get_user_email(user)
 
@@ -6311,6 +6328,17 @@ async def admin_tools_partial_html(
 
     query = query.where(or_(*access_conditions))
 
+    # Apply team_id filter if provided (restrict to specific team)
+    if team_id:
+        # Only show tools from the specified team if user is a member
+        if team_id in team_ids:
+            query = query.where(DbTool.team_id == team_id)
+            LOGGER.debug(f"Filtering tools by team_id: {team_id}")
+        else:
+            # User is not a member of this team, return no results using SQLAlchemy's false()
+            LOGGER.warning(f"User {user_email} attempted to filter by team {team_id} but is not a member")
+            query = query.where(false())
+
     # Apply sorting: alphabetical by URL, then name, then ID (for UI display)
     # Different from JSON endpoint which uses created_at DESC
     query = query.order_by(DbTool.url, DbTool.original_name, DbTool.id)
@@ -6322,6 +6350,8 @@ async def admin_tools_partial_html(
         query_params_dict["include_inactive"] = "true"
     if gateway_id:
         query_params_dict["gateway_id"] = gateway_id
+    if team_id:
+        query_params_dict["team_id"] = team_id
 
     paginated_result = await paginate_query(
         db=db,
@@ -6564,6 +6594,7 @@ async def admin_prompts_partial_html(
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -6583,6 +6614,7 @@ async def admin_prompts_partial_html(
         include_inactive (bool): If True, include inactive prompts in results.
         render (Optional[str]): Render mode; one of None, "controls", "selector".
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
@@ -6592,7 +6624,9 @@ async def admin_prompts_partial_html(
         items depending on ``render``. The response contains JSON-serializable
         encoded prompt data when templates expect it.
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested prompts HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render}, gateway_id={gateway_id})")
+    LOGGER.debug(
+        f"User {get_user_email(user)} requested prompts HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render}, gateway_id={gateway_id}, team_id={team_id})"
+    )
     # Normalize per_page within configured bounds
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
 
@@ -6633,6 +6667,17 @@ async def admin_prompts_partial_html(
 
     query = query.where(or_(*access_conditions))
 
+    # Apply team_id filter if provided (restrict to specific team)
+    if team_id:
+        # Only show prompts from the specified team if user is a member
+        if team_id in team_ids:
+            query = query.where(DbPrompt.team_id == team_id)
+            LOGGER.debug(f"Filtering prompts by team_id: {team_id}")
+        else:
+            # User is not a member of this team, return no results using SQLAlchemy's false()
+            LOGGER.warning(f"User {user_email} attempted to filter by team {team_id} but is not a member")
+            query = query.where(false())
+
     # Apply pagination ordering for cursor support
     query = query.order_by(desc(DbPrompt.created_at), desc(DbPrompt.id))
 
@@ -6642,6 +6687,8 @@ async def admin_prompts_partial_html(
         query_params["include_inactive"] = "true"
     if gateway_id:
         query_params["gateway_id"] = gateway_id
+    if team_id:
+        query_params["team_id"] = team_id
 
     # Use unified pagination function
     paginated_result = await paginate_query(
@@ -6727,6 +6774,7 @@ async def admin_gateways_partial_html(
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -6745,6 +6793,7 @@ async def admin_gateways_partial_html(
         per_page (int): Number of items per page (bounded by settings).
         include_inactive (bool): If True, include inactive gateways in results.
         render (Optional[str]): Render mode; one of None, "controls", "selector".
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
@@ -6754,7 +6803,7 @@ async def admin_gateways_partial_html(
         items depending on ``render``. The response contains JSON-serializable
         encoded gateway data when templates expect it.
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested gateways HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render})")
+    LOGGER.debug(f"User {get_user_email(user)} requested gateways HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render}, team_id={team_id})")
     # Normalize per_page within configured bounds
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
 
@@ -6779,6 +6828,17 @@ async def admin_gateways_partial_html(
 
     query = query.where(or_(*access_conditions))
 
+    # Apply team_id filter if provided (restrict to specific team)
+    if team_id:
+        # Only show gateways from the specified team if user is a member
+        if team_id in team_ids:
+            query = query.where(DbGateway.team_id == team_id)
+            LOGGER.debug(f"Filtering gateways by team_id: {team_id}")
+        else:
+            # User is not a member of this team, return no results using SQLAlchemy's false()
+            LOGGER.warning(f"User {user_email} attempted to filter by team {team_id} but is not a member")
+            query = query.where(false())
+
     # Apply pagination ordering for cursor support
     query = query.order_by(desc(DbGateway.created_at), desc(DbGateway.id))
 
@@ -6786,6 +6846,8 @@ async def admin_gateways_partial_html(
     query_params = {}
     if include_inactive:
         query_params["include_inactive"] = "true"
+    if team_id:
+        query_params["team_id"] = team_id
 
     # Use unified pagination function
     paginated_result = await paginate_query(
@@ -7097,6 +7159,7 @@ async def admin_resources_partial_html(
     include_inactive: bool = False,
     render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7115,6 +7178,7 @@ async def admin_resources_partial_html(
             pagination controls. Other supported value: "selector" for selector
             items used by infinite scroll selectors.
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
@@ -7124,7 +7188,9 @@ async def admin_resources_partial_html(
         items depending on the ``render`` parameter.
     """
 
-    LOGGER.debug(f"[RESOURCES FILTER DEBUG] User {get_user_email(user)} requested resources HTML partial (page={page}, per_page={per_page}, render={render}, gateway_id={gateway_id})")
+    LOGGER.debug(
+        f"[RESOURCES FILTER DEBUG] User {get_user_email(user)} requested resources HTML partial (page={page}, per_page={per_page}, render={render}, gateway_id={gateway_id}, team_id={team_id})"
+    )
 
     # Normalize per_page
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
@@ -7169,6 +7235,17 @@ async def admin_resources_partial_html(
 
     query = query.where(or_(*access_conditions))
 
+    # Apply team_id filter if provided (restrict to specific team)
+    if team_id:
+        # Only show resources from the specified team if user is a member
+        if team_id in team_ids:
+            query = query.where(DbResource.team_id == team_id)
+            LOGGER.debug(f"Filtering resources by team_id: {team_id}")
+        else:
+            # User is not a member of this team, return no results using SQLAlchemy's false()
+            LOGGER.warning(f"User {user_email} attempted to filter by team {team_id} but is not a member")
+            query = query.where(false())
+
     # Add sorting for consistent pagination
     query = query.order_by(desc(DbResource.created_at), desc(DbResource.id))
 
@@ -7178,6 +7255,8 @@ async def admin_resources_partial_html(
         query_params["include_inactive"] = "true"
     if gateway_id:
         query_params["gateway_id"] = gateway_id
+    if team_id:
+        query_params["team_id"] = team_id
 
     # Use unified pagination function
     paginated_result = await paginate_query(
@@ -7556,6 +7635,7 @@ async def admin_a2a_partial_html(
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7575,6 +7655,7 @@ async def admin_a2a_partial_html(
         include_inactive (bool): If True, include inactive a2a agents in results.
         render (Optional[str]): Render mode; one of None, "controls", "selector".
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
@@ -7584,7 +7665,9 @@ async def admin_a2a_partial_html(
         items depending on ``render``. The response contains JSON-serializable
         encoded a2a agent data when templates expect it.
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested a2a_agents HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render}, gateway_id={gateway_id})")
+    LOGGER.debug(
+        f"User {get_user_email(user)} requested a2a_agents HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render}, gateway_id={gateway_id}, team_id={team_id})"
+    )
     # Normalize per_page within configured bounds
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
 
@@ -7612,6 +7695,17 @@ async def admin_a2a_partial_html(
 
     query = query.where(or_(*access_conditions))
 
+    # Apply team_id filter if provided (restrict to specific team)
+    if team_id:
+        # Only show a2a agents from the specified team if user is a member
+        if team_id in team_ids:
+            query = query.where(DbA2AAgent.team_id == team_id)
+            LOGGER.debug(f"Filtering a2a agents by team_id: {team_id}")
+        else:
+            # User is not a member of this team, return no results using SQLAlchemy's false()
+            LOGGER.warning(f"User {user_email} attempted to filter by team {team_id} but is not a member")
+            query = query.where(false())
+
     # Apply pagination ordering for cursor support
     query = query.order_by(desc(DbA2AAgent.created_at), desc(DbA2AAgent.id))
 
@@ -7621,6 +7715,8 @@ async def admin_a2a_partial_html(
         query_params["include_inactive"] = "true"
     if gateway_id:
         query_params["gateway_id"] = gateway_id
+    if team_id:
+        query_params["team_id"] = team_id
 
     # Use unified pagination function
     paginated_result = await paginate_query(
