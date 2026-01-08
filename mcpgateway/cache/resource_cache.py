@@ -50,6 +50,8 @@ Examples:
 import asyncio
 from collections import OrderedDict
 from dataclasses import dataclass
+import heapq
+import threading
 import time
 from typing import Any, Optional
 
@@ -124,7 +126,35 @@ class ResourceCache:
         self.max_size = max_size
         self.ttl = ttl
         self._cache: OrderedDict[str, CacheEntry] = OrderedDict()
-        self._lock = asyncio.Lock()
+        # Use a re-entrant threading lock wrapper so synchronous cache methods
+        # keep the same (non-async) signatures while the async cleanup
+        # can also `async with` the lock in tests or elsewhere.
+        class DualLock:
+            def __init__(self) -> None:
+                self._rlock = threading.RLock()
+
+            # Sync context manager
+            def __enter__(self):
+                self._rlock.acquire()
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                self._rlock.release()
+
+            # Async context manager
+            async def __aenter__(self):
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, self._rlock.acquire)
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                # Release on the same executor thread where we acquired
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, self._rlock.release)
+
+        self._lock = DualLock()
+        # Min-heap of (expires_at, key) for efficient expiration cleanup
+        self._expiry_heap: list[tuple[float, str]] = []
 
     async def initialize(self) -> None:
         """Initialize cache service."""
@@ -199,13 +229,18 @@ class ResourceCache:
             >>> cache.get('a')
             1
         """
-        if key in self._cache:
-            self._cache.move_to_end(key)
-        elif len(self._cache) >= self.max_size:
-            self._cache.popitem(last=False)
+        expires_at = time.time() + self.ttl
+        with self._lock:
+            if key in self._cache:
+                self._cache.move_to_end(key)
+            elif len(self._cache) >= self.max_size:
+                # Evict LRU
+                self._cache.popitem(last=False)
 
-        # Add new entry
-        self._cache[key] = CacheEntry(value=value, expires_at=time.time() + self.ttl)
+            # Add / update entry
+            self._cache[key] = CacheEntry(value=value, expires_at=expires_at)
+            # Push expiry into heap; stale heap entries are ignored later
+            heapq.heappush(self._expiry_heap, (expires_at, key))
 
     def delete(self, key: str) -> None:
         """
@@ -222,7 +257,10 @@ class ResourceCache:
             >>> cache.get('a') is None
             True
         """
-        self._cache.pop(key, None)
+        with self._lock:
+            self._cache.pop(key, None)
+            # We don't remove entries from the heap here; they'll be ignored
+            # by the cleanup when popped if missing or timestamp differs.
 
     def clear(self) -> None:
         """
@@ -236,25 +274,48 @@ class ResourceCache:
             >>> cache.get('a') is None
             True
         """
-        self._cache.clear()
+        with self._lock:
+            self._cache.clear()
+            self._expiry_heap.clear()
 
     async def _cleanup_loop(self) -> None:
-        """Background task to clean expired entries."""
-        while True:
+        """Background task to clean expired entries efficiently.
+
+        Uses a min-heap of expiration timestamps to avoid scanning the
+        entire cache on each run. The actual cleanup work runs under the
+        same threading lock as sync methods by delegating to a thread via
+        `asyncio.to_thread` so we don't block the event loop.
+        """
+        async def _run_once() -> None:
             try:
-                async with self._lock:
-                    now = time.time()
-                    expired = [key for key, entry in self._cache.items() if now > entry.expires_at]
-                    for key in expired:
-                        del self._cache[key]
-
-                    if expired:
-                        logger.debug(f"Cleaned {len(expired)} expired cache entries")
-
+                await asyncio.to_thread(self._cleanup_once)
             except Exception as e:
                 logger.error(f"Cache cleanup error: {e}")
 
+        while True:
+            await _run_once()
             await asyncio.sleep(60)  # Run every minute
+
+    def _cleanup_once(self) -> None:
+        """Synchronous cleanup routine executed in a thread.
+
+        Pops entries from the expiry heap until the next non-expired
+        timestamp is reached. Each popped entry is validated against
+        the current cache entry to avoid removing updated entries.
+        """
+        now = time.time()
+        removed = 0
+        with self._lock:
+            while self._expiry_heap and self._expiry_heap[0][0] <= now:
+                expires_at, key = heapq.heappop(self._expiry_heap)
+                entry = self._cache.get(key)
+                # If entry is present and timestamps match, remove it
+                if entry is not None and entry.expires_at == expires_at:
+                    del self._cache[key]
+                    removed += 1
+
+        if removed:
+            logger.debug(f"Cleaned {removed} expired cache entries")
 
     def __len__(self) -> int:
         """
