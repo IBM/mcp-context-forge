@@ -289,6 +289,15 @@ class LogAggregator:
 
             # helper to align timestamp to window start
             def _align_to_window_local(dt: datetime, minutes: int) -> datetime:
+                """Align a datetime to the start of its aggregation window.
+
+                Args:
+                    dt: The datetime to align.
+                    minutes: The window size in minutes.
+
+                Returns:
+                    The datetime aligned to the start of the window.
+                """
                 ts = dt.astimezone(timezone.utc)
                 total_minutes = int(ts.timestamp() // 60)
                 aligned_minutes = (total_minutes // minutes) * minutes
