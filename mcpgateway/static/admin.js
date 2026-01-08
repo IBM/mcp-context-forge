@@ -247,7 +247,7 @@ function validatePassthroughHeader(name, value) {
  */
 function validateInputName(name, type = "input") {
     if (!name || typeof name !== "string") {
-        return { valid: false, error: `${type} name is required` };
+        return { valid: false, error: `${type} is required` };
     }
 
     // Remove any HTML tags
@@ -266,20 +266,20 @@ function validateInputName(name, type = "input") {
         if (pattern.test(name)) {
             return {
                 valid: false,
-                error: `${type} name contains invalid characters`,
+                error: `${type} contains invalid characters`,
             };
         }
     }
 
     // Length validation
     if (cleaned.length < 1) {
-        return { valid: false, error: `${type} name cannot be empty` };
+        return { valid: false, error: `${type} cannot be empty` };
     }
 
     if (cleaned.length > window.MAX_NAME_LENGTH) {
         return {
             valid: false,
-            error: `${type} name must be ${window.MAX_NAME_LENGTH} characters or less`,
+            error: `${type} must be ${window.MAX_NAME_LENGTH} characters or less`,
         };
     }
 
@@ -322,9 +322,9 @@ function extractContent(content, fallback = "") {
 /**
  * SECURITY: Validate URL inputs
  */
-function validateUrl(url) {
+function validateUrl(url, label = "") {
     if (!url || typeof url !== "string") {
-        return { valid: false, error: "URL is required" };
+        return { valid: false, error: `${label || "URL"} is required` };
     }
 
     try {
@@ -14843,12 +14843,39 @@ function setupFormValidation() {
         );
         nameFields.forEach((field) => {
             field.addEventListener("blur", function () {
-                const validation = validateInputName(this.value, "name");
+                const parentNode = this.parentNode;
+                const inputLabel = parentNode?.querySelector(
+                    `label[for="${this.id}"]`,
+                );
+                const errorMessageElement = parentNode?.querySelector(
+                    'p[data-error-for="name-error-message"]',
+                );
+                const validation = validateInputName(
+                    this.value,
+                    inputLabel?.innerText,
+                );
                 if (!validation.valid) {
-                    this.setCustomValidity(validation.error);
+                    this.classList.add(
+                        "border-red-500",
+                        "focus:ring-red-500",
+                        "dark:border-red-500",
+                        "dark:ring-red-500",
+                    );
+                    if (errorMessageElement) {
+                        errorMessageElement.innerText = validation.error;
+                        errorMessageElement.classList.remove("invisible");
+                    }
                 } else {
-                    this.setCustomValidity("");
                     this.value = validation.value;
+                    this.classList.remove(
+                        "border-red-500",
+                        "focus:ring-red-500",
+                        "dark:border-red-500",
+                        "dark:ring-red-500",
+                    );
+                    if (errorMessageElement) {
+                        errorMessageElement.classList.add("invisible");
+                    }
                 }
             });
         });
@@ -14859,13 +14886,39 @@ function setupFormValidation() {
         );
         urlFields.forEach((field) => {
             field.addEventListener("blur", function () {
-                if (this.value) {
-                    const validation = validateUrl(this.value);
-                    if (!validation.valid) {
-                        this.setCustomValidity(validation.error);
-                    } else {
-                        this.setCustomValidity("");
-                        this.value = validation.value;
+                const parentNode = this.parentNode;
+                const inputLabel = parentNode?.querySelector(
+                    `label[for="${this.id}"]`,
+                );
+                const errorMessageElement = parentNode?.querySelector(
+                    'p[data-error-for="url-error-message"]',
+                );
+                const validation = validateUrl(
+                    this.value,
+                    inputLabel.innerText,
+                );
+                if (!validation.valid) {
+                    this.setCustomValidity(validation.error);
+                    this.classList.add(
+                        "border-red-500",
+                        "focus:ring-red-500",
+                        "dark:border-red-500",
+                        "dark:ring-red-500",
+                    );
+                    if (errorMessageElement) {
+                        errorMessageElement.innerText = validation.error;
+                        errorMessageElement.classList.remove("invisible");
+                    }
+                } else {
+                    this.value = validation.value;
+                    this.classList.remove(
+                        "border-red-500",
+                        "focus:ring-red-500",
+                        "dark:border-red-500",
+                        "dark:ring-red-500",
+                    );
+                    if (errorMessageElement) {
+                        errorMessageElement.classList.add("invisible");
                     }
                 }
             });
@@ -14877,12 +14930,32 @@ function setupFormValidation() {
         );
         promptNameFields.forEach((field) => {
             field.addEventListener("blur", function () {
+                const errorMessageElement = this.parentNode?.querySelector(
+                    'p[data-error-for="prompt-name-error-message"]',
+                );
                 const validation = validateInputName(this.value, "prompt");
                 if (!validation.valid) {
-                    this.setCustomValidity(validation.error);
+                    this.classList.add(
+                        "border-red-500",
+                        "focus:ring-red-500",
+                        "dark:border-red-500",
+                        "dark:ring-red-500",
+                    );
+                    if (errorMessageElement) {
+                        errorMessageElement.innerText = validation.error;
+                        errorMessageElement.classList.remove("invisible");
+                    }
                 } else {
-                    this.setCustomValidity("");
                     this.value = validation.value;
+                    this.classList.remove(
+                        "border-red-500",
+                        "focus:ring-red-500",
+                        "dark:border-red-500",
+                        "dark:ring-red-500",
+                    );
+                    if (errorMessageElement) {
+                        errorMessageElement.classList.add("invisible");
+                    }
                 }
             });
         });
