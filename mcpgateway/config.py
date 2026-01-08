@@ -1740,6 +1740,15 @@ Disallow: /
     # Passthrough headers configuration
     default_passthrough_headers: List[str] = Field(default_factory=list)
 
+    # Passthrough headers source priority
+    # - "env": Environment variable always wins (ideal for Kubernetes/containerized deployments)
+    # - "db": Database take precedence if configured, env as fallback (default)
+    # - "merge": Union of both sources - env provides base, other configuration in DB can add more headers
+    passthrough_headers_source: Literal["env", "db", "merge"] = Field(
+        default="db",
+        description="Source priority for passthrough headers: env (environment always wins), db (database wins, default), merge (combine both)",
+    )
+
     # ===================================
     # Pagination Configuration
     # ===================================
