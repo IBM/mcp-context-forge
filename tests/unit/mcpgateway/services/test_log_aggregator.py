@@ -311,3 +311,306 @@ class TestCalculateErrorCount:
 
         result = LogAggregator._calculate_error_count(entries)
         assert result == 1
+
+
+class TestAggregateAllComponentsBatch:
+    """Tests for aggregate_all_components_batch method."""
+
+    def test_batch_returns_empty_when_disabled(self):
+        """Test batch aggregation returns empty list when disabled."""
+        with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
+            aggregator = LogAggregator()
+            aggregator.enabled = False
+
+            window_starts = [datetime.now(timezone.utc) - timedelta(hours=1)]
+            result = aggregator.aggregate_all_components_batch(window_starts=window_starts, window_minutes=5)
+            assert result == []
+
+    def test_batch_returns_empty_when_no_windows(self):
+        """Test batch aggregation returns empty list when no windows provided."""
+        with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
+            aggregator = LogAggregator()
+
+            result = aggregator.aggregate_all_components_batch(window_starts=[], window_minutes=5)
+            assert result == []
+
+    def test_batch_postgresql_path_called(self):
+        """Test batch aggregation uses PostgreSQL path when available."""
+        with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=True):
+            aggregator = LogAggregator()
+
+            with patch("mcpgateway.services.log_aggregator.SessionLocal") as mock_session:
+                mock_db = MagicMock()
+                mock_session.return_value = mock_db
+                # Mock empty result set
+                mock_db.execute.return_value.fetchall.return_value = []
+
+                window_starts = [datetime.now(timezone.utc) - timedelta(hours=1)]
+                result = aggregator.aggregate_all_components_batch(window_starts=window_starts, window_minutes=5)
+
+                assert result == []
+                # Verify SQL was executed (PostgreSQL path)
+                mock_db.execute.assert_called()
+
+    def test_batch_postgresql_with_data(self):
+        """Test PostgreSQL batch aggregation with mocked SQL results."""
+        with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=True):
+            aggregator = LogAggregator()
+
+            with patch("mcpgateway.services.log_aggregator.SessionLocal") as mock_session:
+                mock_db = MagicMock()
+                mock_session.return_value = mock_db
+
+                # Create mock row result
+                window_start = datetime.now(timezone.utc) - timedelta(hours=1)
+                mock_row = MagicMock()
+                mock_row.window_start = window_start
+                mock_row.component = "test_component"
+                mock_row.operation_type = "test_op"
+                mock_row.cnt = 50
+                mock_row.avg_duration = 25.5
+                mock_row.min_duration = 1.0
+                mock_row.max_duration = 100.0
+                mock_row.p50 = 25.0
+                mock_row.p95 = 90.0
+                mock_row.p99 = 98.0
+                mock_row.error_count = 2
+
+                mock_db.execute.return_value.fetchall.return_value = [mock_row]
+
+                # Mock _upsert_metric to return a mock metric
+                mock_metric = MagicMock()
+                with patch.object(aggregator, "_upsert_metric", return_value=mock_metric):
+                    result = aggregator.aggregate_all_components_batch(
+                        window_starts=[window_start],
+                        window_minutes=5,
+                        db=mock_db,
+                    )
+
+                    assert len(result) == 1
+                    assert result[0] == mock_metric
+
+    def test_batch_python_fallback_path(self):
+        """Test batch aggregation uses Python fallback for non-PostgreSQL."""
+        with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
+            aggregator = LogAggregator()
+
+            with patch("mcpgateway.services.log_aggregator.SessionLocal") as mock_session:
+                mock_db = MagicMock()
+                mock_session.return_value = mock_db
+
+                # Mock empty pairs result (no component/operation combinations)
+                mock_db.execute.return_value.all.return_value = []
+
+                window_starts = [datetime.now(timezone.utc) - timedelta(hours=1)]
+                result = aggregator.aggregate_all_components_batch(window_starts=window_starts, window_minutes=5)
+
+                assert result == []
+
+    def test_batch_python_fallback_with_data(self):
+        """Test Python fallback batch aggregation with mocked entries."""
+        with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
+            aggregator = LogAggregator()
+
+            mock_db = MagicMock()
+
+            # Mock pairs query result
+            mock_db.execute.return_value.all.return_value = [("test_component", "test_op")]
+
+            # Create mock log entries with timestamps in the window
+            window_start = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+            mock_entries = []
+            for i in range(10):
+                entry = MagicMock()
+                entry.duration_ms = float(i + 1)  # 1 to 10
+                entry.level = "INFO"
+                entry.error_details = None
+                entry.timestamp = window_start + timedelta(minutes=i % 5)  # Within window
+                mock_entries.append(entry)
+
+            # Add one error entry
+            mock_entries[5].level = "ERROR"
+
+            # Mock scalars().all() for entries query
+            mock_scalars = MagicMock()
+            mock_scalars.all.return_value = mock_entries
+            mock_db.execute.return_value.scalars.return_value = mock_scalars
+
+            # Mock _upsert_metric
+            mock_metric = MagicMock()
+            upsert_called = False
+
+            def track_upsert(**kwargs):
+                nonlocal upsert_called
+                upsert_called = True
+                return mock_metric
+
+            with patch.object(aggregator, "_upsert_metric", side_effect=track_upsert):
+                result = aggregator.aggregate_all_components_batch(
+                    window_starts=[window_start],
+                    window_minutes=5,
+                    db=mock_db,
+                )
+
+                # Verify upsert was called and metric was returned
+                assert upsert_called, "Expected _upsert_metric to be called"
+                assert len(result) == 1
+                assert result[0] == mock_metric
+
+    def test_batch_error_count_consistency_with_duration_filter(self):
+        """Test that error_count only includes entries with duration_ms (consistency with per-window path)."""
+        with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
+            aggregator = LogAggregator()
+
+            mock_db = MagicMock()
+
+            # Mock pairs
+            mock_db.execute.return_value.all.return_value = [("comp", "op")]
+
+            window_start = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+            # Create entries - some with duration_ms, some without
+            mock_entries = []
+
+            # Entry with duration_ms and ERROR level - should be counted
+            entry1 = MagicMock()
+            entry1.duration_ms = 10.0
+            entry1.level = "ERROR"
+            entry1.error_details = None
+            entry1.timestamp = window_start + timedelta(minutes=1)
+            mock_entries.append(entry1)
+
+            # Entry with duration_ms and INFO level - should NOT be counted as error
+            entry2 = MagicMock()
+            entry2.duration_ms = 20.0
+            entry2.level = "INFO"
+            entry2.error_details = None
+            entry2.timestamp = window_start + timedelta(minutes=2)
+            mock_entries.append(entry2)
+
+            # Note: The query already filters for duration_ms IS NOT NULL,
+            # so entries without duration_ms won't be in the result set
+
+            mock_scalars = MagicMock()
+            mock_scalars.all.return_value = mock_entries
+            mock_db.execute.return_value.scalars.return_value = mock_scalars
+
+            # Capture the upsert call to verify error_count
+            upsert_calls = []
+
+            def capture_upsert(**kwargs):
+                upsert_calls.append(kwargs)
+                return MagicMock()
+
+            with patch.object(aggregator, "_upsert_metric", side_effect=capture_upsert):
+                aggregator.aggregate_all_components_batch(
+                    window_starts=[window_start],
+                    window_minutes=5,
+                    db=mock_db,
+                )
+
+            # Verify upsert was called with correct error_count
+            assert len(upsert_calls) == 1, f"Expected 1 upsert call, got {len(upsert_calls)}"
+            assert upsert_calls[0]["error_count"] == 1, "error_count should only count ERROR entry"
+            assert upsert_calls[0]["request_count"] == 2, "request_count should include both entries"
+
+    def test_batch_large_range_warning_logged(self):
+        """Test that large aggregation ranges log a warning."""
+        with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
+            aggregator = LogAggregator()
+
+            with patch("mcpgateway.services.log_aggregator.SessionLocal") as mock_session:
+                mock_db = MagicMock()
+                mock_session.return_value = mock_db
+                mock_db.execute.return_value.all.return_value = []
+
+                # Create window starts spanning more than 168 hours (1 week)
+                now = datetime.now(timezone.utc)
+                window_starts = [
+                    now - timedelta(hours=200),  # Start 200 hours ago
+                    now,  # End now
+                ]
+
+                with patch("mcpgateway.services.log_aggregator.logger") as mock_logger:
+                    aggregator.aggregate_all_components_batch(window_starts=window_starts, window_minutes=5)
+
+                    # Verify warning was logged for large range
+                    mock_logger.warning.assert_called()
+                    warning_call = mock_logger.warning.call_args
+                    assert "Large aggregation range" in warning_call[0][0]
+
+
+class TestAggregateCustomWindowsFallback:
+    """Tests for fallback behavior in _aggregate_custom_windows."""
+
+    def test_fallback_on_batch_exception(self):
+        """Test that per-window fallback is used when batch aggregation fails."""
+        from mcpgateway.routers.log_search import _aggregate_custom_windows
+
+        mock_aggregator = MagicMock()
+        mock_aggregator.aggregate_all_components_batch.side_effect = Exception("Batch failed")
+        mock_db = MagicMock()
+
+        # Mock the prerequisite queries
+        mock_db.execute.return_value.first.return_value = None
+        mock_db.execute.return_value.scalar.return_value = datetime.now(timezone.utc) - timedelta(hours=1)
+
+        with patch("mcpgateway.routers.log_search.logger"):
+            _aggregate_custom_windows(
+                aggregator=mock_aggregator,
+                window_minutes=5,
+                db=mock_db,
+            )
+
+        # Verify batch was attempted
+        mock_aggregator.aggregate_all_components_batch.assert_called_once()
+
+        # Verify rollback was called
+        mock_db.rollback.assert_called_once()
+
+        # Verify fallback to per-window aggregation was used
+        assert mock_aggregator.aggregate_all_components.call_count > 0
+
+    def test_no_fallback_when_batch_succeeds(self):
+        """Test that per-window fallback is not used when batch succeeds."""
+        from mcpgateway.routers.log_search import _aggregate_custom_windows
+
+        mock_aggregator = MagicMock()
+        mock_aggregator.aggregate_all_components_batch.return_value = [MagicMock()]
+        mock_db = MagicMock()
+
+        # Mock the prerequisite queries
+        mock_db.execute.return_value.first.return_value = None
+        mock_db.execute.return_value.scalar.return_value = datetime.now(timezone.utc) - timedelta(hours=1)
+
+        _aggregate_custom_windows(
+            aggregator=mock_aggregator,
+            window_minutes=5,
+            db=mock_db,
+        )
+
+        # Verify batch was called
+        mock_aggregator.aggregate_all_components_batch.assert_called_once()
+
+        # Verify per-window fallback was NOT called
+        mock_aggregator.aggregate_all_components.assert_not_called()
+
+    def test_fallback_when_batch_method_missing(self):
+        """Test fallback to per-window when aggregator lacks batch method."""
+        from mcpgateway.routers.log_search import _aggregate_custom_windows
+
+        mock_aggregator = MagicMock(spec=["aggregate_all_components"])  # No batch method
+        mock_db = MagicMock()
+
+        # Mock the prerequisite queries
+        mock_db.execute.return_value.first.return_value = None
+        mock_db.execute.return_value.scalar.return_value = datetime.now(timezone.utc) - timedelta(hours=1)
+
+        _aggregate_custom_windows(
+            aggregator=mock_aggregator,
+            window_minutes=5,
+            db=mock_db,
+        )
+
+        # Verify per-window aggregation was used as fallback
+        assert mock_aggregator.aggregate_all_components.call_count > 0
