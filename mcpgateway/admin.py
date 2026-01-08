@@ -54,6 +54,9 @@ from sqlalchemy.sql.functions import coalesce
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 # First-Party
+from mcpgateway import __version__
+from mcpgateway import version as version_module
+
 # Authentication and password-related imports
 from mcpgateway.auth import get_current_user
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
@@ -626,6 +629,170 @@ admin_router = APIRouter(prefix="/admin", tags=["Admin UI"])
 ####################
 # Admin UI Routes  #
 ####################
+
+
+@admin_router.get("/overview/partial")
+async def get_overview_partial(
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
+    """Render the overview dashboard partial HTML template.
+
+    This endpoint returns a rendered HTML partial containing an architecture
+    diagram showing ContextForge inputs (Virtual Servers), middleware (Plugins),
+    and outputs (A2A Agents, MCP Gateways, Tools, etc.) along with key metrics.
+
+    Args:
+        request: FastAPI request object
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        HTMLResponse with rendered overview partial template
+    """
+    LOGGER.debug(f"User {get_user_email(user)} requested overview partial")
+
+    try:
+        # Gather counts for all entity types
+        # Note: SQLAlchemy func.count requires pylint disable=not-callable
+        # Virtual Servers (inputs) - uses 'enabled' field
+        servers_total = db.query(func.count(DbServer.id)).scalar() or 0  # pylint: disable=not-callable
+        servers_active = db.query(func.count(DbServer.id)).filter(DbServer.enabled.is_(True)).scalar() or 0  # pylint: disable=not-callable
+
+        # MCP Gateways - uses 'enabled' field
+        gateways_total = db.query(func.count(DbGateway.id)).scalar() or 0  # pylint: disable=not-callable
+        gateways_active = db.query(func.count(DbGateway.id)).filter(DbGateway.enabled.is_(True)).scalar() or 0  # pylint: disable=not-callable
+
+        # A2A Agents (if enabled) - uses 'enabled' field
+        a2a_total = 0
+        a2a_active = 0
+        if settings.mcpgateway_a2a_enabled:
+            a2a_total = db.query(func.count(DbA2AAgent.id)).scalar() or 0  # pylint: disable=not-callable
+            a2a_active = db.query(func.count(DbA2AAgent.id)).filter(DbA2AAgent.enabled.is_(True)).scalar() or 0  # pylint: disable=not-callable
+
+        # Tools - uses 'enabled' field
+        tools_total = db.query(func.count(DbTool.id)).scalar() or 0  # pylint: disable=not-callable
+        tools_active = db.query(func.count(DbTool.id)).filter(DbTool.enabled.is_(True)).scalar() or 0  # pylint: disable=not-callable
+
+        # Prompts - uses 'enabled' field
+        prompts_total = db.query(func.count(DbPrompt.id)).scalar() or 0  # pylint: disable=not-callable
+        prompts_active = db.query(func.count(DbPrompt.id)).filter(DbPrompt.enabled.is_(True)).scalar() or 0  # pylint: disable=not-callable
+
+        # Resources - uses 'enabled' field
+        resources_total = db.query(func.count(DbResource.id)).scalar() or 0  # pylint: disable=not-callable
+        resources_active = db.query(func.count(DbResource.id)).filter(DbResource.enabled.is_(True)).scalar() or 0  # pylint: disable=not-callable
+
+        # Plugin stats
+        overview_plugin_service = get_plugin_service()
+        plugin_manager = getattr(request.app.state, "plugin_manager", None)
+        if plugin_manager:
+            overview_plugin_service.set_plugin_manager(plugin_manager)
+        plugin_stats = await overview_plugin_service.get_plugin_statistics()
+
+        # Infrastructure status (database, cache, uptime)
+        _, db_reachable = version_module._database_version()  # pylint: disable=protected-access
+        db_dialect = version_module.engine.dialect.name
+        cache_type = settings.cache_type
+        uptime_seconds = int(time.time() - version_module.START_TIME)
+
+        # Redis status (if applicable)
+        redis_available = version_module.REDIS_AVAILABLE
+        redis_reachable = False
+        if redis_available and cache_type.lower() == "redis" and settings.redis_url:
+            try:
+                # First-Party
+                from mcpgateway.utils.redis_client import is_redis_available  # pylint: disable=import-outside-toplevel
+
+                redis_reachable = await is_redis_available()
+            except Exception:
+                redis_reachable = False
+
+        # Aggregate metrics from services
+        overview_tool_service = ToolService()
+        overview_server_service = ServerService()
+        overview_prompt_service = PromptService()
+        overview_resource_service = ResourceService()
+
+        tool_metrics = await overview_tool_service.aggregate_metrics(db)
+        server_metrics = await overview_server_service.aggregate_metrics(db)
+        prompt_metrics = await overview_prompt_service.aggregate_metrics(db)
+        resource_metrics = await overview_resource_service.aggregate_metrics(db)
+
+        # Calculate totals
+        total_executions = (
+            (tool_metrics.get("total_executions", 0) if isinstance(tool_metrics, dict) else getattr(tool_metrics, "total_executions", 0))
+            + (server_metrics.total_executions if hasattr(server_metrics, "total_executions") else server_metrics.get("total_executions", 0))
+            + (prompt_metrics.get("total_executions", 0) if isinstance(prompt_metrics, dict) else getattr(prompt_metrics, "total_executions", 0))
+            + (resource_metrics.total_executions if hasattr(resource_metrics, "total_executions") else resource_metrics.get("total_executions", 0))
+        )
+
+        successful_executions = (
+            (tool_metrics.get("successful_executions", 0) if isinstance(tool_metrics, dict) else getattr(tool_metrics, "successful_executions", 0))
+            + (server_metrics.successful_executions if hasattr(server_metrics, "successful_executions") else server_metrics.get("successful_executions", 0))
+            + (prompt_metrics.get("successful_executions", 0) if isinstance(prompt_metrics, dict) else getattr(prompt_metrics, "successful_executions", 0))
+            + (resource_metrics.successful_executions if hasattr(resource_metrics, "successful_executions") else resource_metrics.get("successful_executions", 0))
+        )
+
+        success_rate = (successful_executions / total_executions * 100) if total_executions > 0 else 100.0
+
+        # Calculate average latency across all services
+        latencies = []
+        for m in [tool_metrics, server_metrics, prompt_metrics, resource_metrics]:
+            avg_time = m.get("avg_response_time") if isinstance(m, dict) else getattr(m, "avg_response_time", None)
+            if avg_time is not None:
+                latencies.append(avg_time)
+        avg_latency = sum(latencies) / len(latencies) if latencies else 0.0
+
+        # Prepare context
+        context = {
+            "request": request,
+            "root_path": request.scope.get("root_path", ""),
+            # Inputs
+            "servers_total": servers_total,
+            "servers_active": servers_active,
+            # Outputs
+            "gateways_total": gateways_total,
+            "gateways_active": gateways_active,
+            "a2a_total": a2a_total,
+            "a2a_active": a2a_active,
+            "a2a_enabled": settings.mcpgateway_a2a_enabled,
+            "tools_total": tools_total,
+            "tools_active": tools_active,
+            "prompts_total": prompts_total,
+            "prompts_active": prompts_active,
+            "resources_total": resources_total,
+            "resources_active": resources_active,
+            # Plugins (plugin_stats can be dict or PluginStatsResponse)
+            "plugins_total": plugin_stats.get("total_plugins", 0) if isinstance(plugin_stats, dict) else getattr(plugin_stats, "total_plugins", 0),
+            "plugins_enabled": plugin_stats.get("enabled_plugins", 0) if isinstance(plugin_stats, dict) else getattr(plugin_stats, "enabled_plugins", 0),
+            "plugins_by_hook": plugin_stats.get("plugins_by_hook", {}) if isinstance(plugin_stats, dict) else getattr(plugin_stats, "plugins_by_hook", {}),
+            # Metrics
+            "total_executions": total_executions,
+            "success_rate": success_rate,
+            "avg_latency_ms": avg_latency * 1000 if avg_latency else 0.0,
+            # Version
+            "version": __version__,
+            # Infrastructure
+            "db_dialect": db_dialect,
+            "db_reachable": db_reachable,
+            "cache_type": cache_type,
+            "redis_available": redis_available,
+            "redis_reachable": redis_reachable,
+            "uptime_seconds": uptime_seconds,
+        }
+
+        return request.app.state.templates.TemplateResponse("overview_partial.html", context)
+
+    except Exception as e:
+        LOGGER.error(f"Error rendering overview partial: {e}")
+        error_html = f"""
+        <div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 px-4 py-3 rounded">
+            <strong class="font-bold">Error loading overview:</strong>
+            <span class="block sm:inline">{html.escape(str(e))}</span>
+        </div>
+        """
+        return HTMLResponse(content=error_html, status_code=500)
 
 
 @admin_router.get("/config/passthrough-headers", response_model=GlobalConfigRead)
