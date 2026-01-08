@@ -66,7 +66,7 @@ from mcpgateway.plugins.framework import (
     ToolPreInvokePayload,
 )
 from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
-from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
+from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
@@ -3703,8 +3703,7 @@ class ToolService:
             displayName=generate_display_name(agent.name),
             url=agent.endpoint_url,
             description=f"A2A Agent: {agent.description or agent.name}",
-            auth_type=agent.auth_type,
-            auth_value=agent.auth_value,
+            auth=AuthenticationValues(auth_type=agent.auth_type, auth_value=agent.auth_value) if agent.auth_type else None,
             tags=normalized_tags,
             visibility=tool.visibility,  # Preserve existing visibility
             team_id=tool.team_id,  # Preserve existing team assignment
