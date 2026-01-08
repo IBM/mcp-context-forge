@@ -129,6 +129,7 @@ class ResourceCache:
         # Use a re-entrant threading lock wrapper so synchronous cache methods
         # keep the same (non-async) signatures while the async cleanup
         # can also `async with` the lock in tests or elsewhere.
+
         class DualLock:
             def __init__(self) -> None:
                 self._rlock = threading.RLock()
