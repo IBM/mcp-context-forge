@@ -53,6 +53,11 @@ Set global default headers using the `DEFAULT_PASSTHROUGH_HEADERS` environment v
 # JSON array format (recommended)
 DEFAULT_PASSTHROUGH_HEADERS=["X-Tenant-Id", "X-Trace-Id"]
 
+# or
+
+# For Mac OS
+DEFAULT_PASSTHROUGH_HEADERS='["X-Tenant-Id", "X-Trace-Id"]'
+
 # Comma-separated format (also supported)
 DEFAULT_PASSTHROUGH_HEADERS=X-Tenant-Id,X-Trace-Id
 
@@ -66,6 +71,29 @@ DEFAULT_PASSTHROUGH_HEADERS=["X-Tenant-Id", "X-Trace-Id"]
 - Only add `Authorization` if you fully understand the token leakage risks
 - Header names are validated against pattern: `^[A-Za-z0-9-]+$`
 - Header values are sanitized (newlines removed, length limited to 4KB)
+
+### Configuration Source Priority
+
+Control how the gateway resolves passthrough headers using `PASSTHROUGH_HEADERS_SOURCE`:
+
+| Mode | Behavior | Use Case |
+|------|----------|----------|
+| `db` | Database wins if configured, env as fallback (**default**) | Traditional deployments with Admin UI management |
+| `env` | Environment variable always wins, ignores database | Kubernetes/container deployments (ConfigMaps) |
+| `merge` | Union of both sources (DB values override for duplicates) | Hybrid deployments needing both env and UI config |
+
+```bash
+# Kubernetes deployment - environment always wins
+PASSTHROUGH_HEADERS_SOURCE=env
+DEFAULT_PASSTHROUGH_HEADERS=["X-Tenant-Id", "X-Trace-Id"]
+
+# Hybrid - base config from env, admins can add more via UI
+PASSTHROUGH_HEADERS_SOURCE=merge
+DEFAULT_PASSTHROUGH_HEADERS=["X-Tenant-Id"]
+```
+
+> [!TIP]
+> Use `env` mode in containerized deployments where configuration should come from ConfigMaps or environment variables rather than database state.
 
 ### Base Headers Override (Advanced)
 
