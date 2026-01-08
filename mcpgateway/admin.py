@@ -507,11 +507,19 @@ def _get_span_entity_performance(
 
     # Use database-native percentiles only if enabled in config and using PostgreSQL
     if dialect_name == "postgresql" and settings.use_postgresdb_percentiles:
-        names_sql = ",".join(f"'{n}'" for n in span_names)
+        # Avoid interpolating user-controlled values into SQL text to mitigate
+        # SQL injection risk. Validate the json_key and use SQLAlchemy's
+        # expanding parameter for the IN-list.
+        import re
+        from sqlalchemy import bindparam
+
+        if not isinstance(json_key, str) or not re.match(r"^[A-Za-z0-9_.-]+$", json_key):
+            raise ValueError("Invalid json_key for percentile query")
+
         stats_sql = text(
-            f"""
+            """
             SELECT
-                (attributes->> '{json_key}') AS entity,
+                (attributes->> :json_key) AS entity,
                 COUNT(*) AS count,
                 AVG(duration_ms) AS avg_duration_ms,
                 MIN(duration_ms) AS min_duration_ms,
@@ -521,17 +529,20 @@ def _get_span_entity_performance(
                 percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) AS p95,
                 percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms) AS p99
             FROM observability_spans
-            WHERE name IN ({names_sql})
+            WHERE name IN :names
               AND start_time >= :cutoff_time
               AND duration_ms IS NOT NULL
-              AND (attributes->> '{json_key}') IS NOT NULL
+              AND (attributes->> :json_key) IS NOT NULL
             GROUP BY entity
             ORDER BY avg_duration_ms DESC
             LIMIT :limit
             """
-        )
+        ).bindparams(bindparam("names", expanding=True))
 
-        results = db.execute(stats_sql, {"cutoff_time": cutoff_time, "limit": limit}).fetchall()
+        results = db.execute(
+            stats_sql,
+            {"cutoff_time": cutoff_time, "limit": limit, "names": span_names, "json_key": json_key},
+        ).fetchall()
 
         items: List[dict] = []
         for row in results:
