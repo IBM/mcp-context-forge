@@ -14848,7 +14848,7 @@ function setupFormValidation() {
                     `label[for="${this.id}"]`,
                 );
                 const errorMessageElement = parentNode?.querySelector(
-                    'p[data-error-for="name-error-message"]',
+                    'p[data-error-message-for="name"]',
                 );
                 const validation = validateInputName(
                     this.value,
@@ -14891,11 +14891,11 @@ function setupFormValidation() {
                     `label[for="${this.id}"]`,
                 );
                 const errorMessageElement = parentNode?.querySelector(
-                    'p[data-error-for="url-error-message"]',
+                    'p[data-error-message-for="url"]',
                 );
                 const validation = validateUrl(
                     this.value,
-                    inputLabel.innerText,
+                    inputLabel?.innerText,
                 );
                 if (!validation.valid) {
                     this.setCustomValidity(validation.error);
@@ -14910,6 +14910,7 @@ function setupFormValidation() {
                         errorMessageElement.classList.remove("invisible");
                     }
                 } else {
+                    this.setCustomValidity("");
                     this.value = validation.value;
                     this.classList.remove(
                         "border-red-500",
@@ -14931,7 +14932,7 @@ function setupFormValidation() {
         promptNameFields.forEach((field) => {
             field.addEventListener("blur", function () {
                 const errorMessageElement = this.parentNode?.querySelector(
-                    'p[data-error-for="prompt-name-error-message"]',
+                    'p[data-error-message-for="prompt-name"]',
                 );
                 const validation = validateInputName(this.value, "prompt");
                 if (!validation.valid) {
