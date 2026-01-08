@@ -485,15 +485,33 @@ class ServerService:
                 created_user_agent=created_user_agent,
                 version=1,
             )
-            # Check for existing server with the same name
+            # Check for existing server with the same name (with row locking to prevent race conditions)
             if visibility.lower() == "public":
                 # Check for existing public server with the same name
-                existing_server = db.execute(select(DbServer).where(DbServer.name == server_in.name, DbServer.visibility == "public",DbServer.id != server_in.id if server_in.id else True)).scalar_one_or_none()
+                existing_server = get_for_update(
+                    db,
+                    DbServer,
+                    where=and_(
+                        DbServer.name == server_in.name,
+                        DbServer.visibility == "public",
+                        DbServer.id != server_in.id if server_in.id else True
+                    ),
+                    skip_locked=True
+                )
                 if existing_server:
                     raise ServerNameConflictError(server_in.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
             elif visibility.lower() == "team" and team_id:
                 # Check for existing team server with the same name
-                existing_server = db.execute(select(DbServer).where(DbServer.name == server_in.name, DbServer.visibility == "team", DbServer.team_id == team_id)).scalar_one_or_none()
+                existing_server = get_for_update(
+                    db,
+                    DbServer,
+                    where=and_(
+                        DbServer.name == server_in.name,
+                        DbServer.visibility == "team",
+                        DbServer.team_id == team_id
+                    ),
+                    skip_locked=True
+                )
                 if existing_server:
                     raise ServerNameConflictError(server_in.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
             # Set custom UUID if provided

@@ -1871,7 +1871,6 @@ class PromptService:
             ...     pass
         """
         try:
-            prompt = db.get(DbPrompt, prompt_id)
             prompt = get_for_update(db, DbPrompt, prompt_id)    
             if not prompt:
                 raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
