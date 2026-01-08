@@ -161,6 +161,54 @@ def test_cleanup_once_ignores_deleted_entries():
     assert cache.get("foo") is None
 
 
+def test_heap_compaction_bounds_memory():
+    """Test that heap compaction triggers when heap grows too large."""
+    cache = ResourceCache(max_size=3, ttl=60)
+
+    # Repeatedly update the same key to create stale heap entries
+    for i in range(10):
+        cache.set("key1", i)
+
+    # Heap should have 10 entries (one per set call), but cache has 1 entry
+    assert len(cache._expiry_heap) == 10
+    assert len(cache) == 1
+
+    # Heap exceeds 2 * max_size (6), so compaction triggers
+    cache._cleanup_once()
+
+    # After compaction, heap should equal cache size
+    assert len(cache._expiry_heap) == 1
+
+
+def test_heap_compaction_preserves_valid_entries():
+    """Test that heap compaction preserves all valid cache entries."""
+    cache = ResourceCache(max_size=5, ttl=60)
+
+    # Add entries and create stale heap entries via updates
+    cache.set("a", 1)
+    cache.set("b", 2)
+    cache.set("c", 3)
+
+    # Update same keys multiple times to bloat heap beyond 2 * max_size (10)
+    for _ in range(4):
+        cache.set("a", 1)
+        cache.set("b", 2)
+        cache.set("c", 3)
+
+    # Heap has 15 entries (3 initial + 12 updates), exceeds 2 * 5 = 10
+    assert len(cache._expiry_heap) == 15
+    assert len(cache) == 3
+
+    # Trigger compaction
+    cache._cleanup_once()
+
+    # After compaction, heap should only have 3 valid entries
+    assert len(cache._expiry_heap) == 3
+    assert cache.get("a") == 1
+    assert cache.get("b") == 2
+    assert cache.get("c") == 3
+
+
 class DummyLogger:
     def info(self, msg):
         pass

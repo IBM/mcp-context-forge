@@ -79,7 +79,7 @@ class ResourceCache:
         max_size: Maximum number of entries
         ttl: Time-to-live in seconds
         _cache: Cache storage
-        _lock: Async lock for thread safety
+        _lock: Threading lock for thread safety
 
     Examples:
         >>> from mcpgateway.cache.resource_cache import ResourceCache
@@ -281,6 +281,7 @@ class ResourceCache:
         Pops entries from the expiry heap until the next non-expired
         timestamp is reached. Each popped entry is validated against
         the current cache entry to avoid removing updated entries.
+        Also compacts the heap if it grows too large relative to cache size.
         """
         now = time.time()
         removed = 0
@@ -293,8 +294,25 @@ class ResourceCache:
                     del self._cache[key]
                     removed += 1
 
+            # Compact heap if it has grown too large (stale entries from updates/deletes)
+            # This bounds heap memory to O(max_size) in steady state
+            if len(self._expiry_heap) > 2 * self.max_size:
+                self._compact_heap()
+
         if removed:
             logger.debug(f"Cleaned {removed} expired cache entries")
+
+    def _compact_heap(self) -> None:
+        """Rebuild the expiry heap with only valid (current) entries.
+
+        Called when heap grows too large due to stale entries from
+        key updates or deletions. Must be called while holding _lock.
+        """
+        valid_entries = [(entry.expires_at, key) for key, entry in self._cache.items()]
+        heapq.heapify(valid_entries)
+        old_size = len(self._expiry_heap)
+        self._expiry_heap = valid_entries
+        logger.debug(f"Compacted expiry heap: {old_size} -> {len(self._expiry_heap)} entries")
 
     def __len__(self) -> int:
         """
