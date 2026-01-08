@@ -521,7 +521,9 @@ test:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		uv run --active pytest -n auto --maxfail=0 -v --ignore=tests/fuzz"
+		export ARGON2ID_TIME_COST=1 && \
+		export ARGON2ID_MEMORY_COST=1024 && \
+		uv run --active pytest -n 16 --maxfail=0 -v --ignore=tests/fuzz"
 
 test-altk:
 	@echo "🧪 Running tests with ALTK (agent-lifecycle-toolkit)..."
@@ -531,7 +533,9 @@ test-altk:
 		uv pip install -q '.[altk]' && \
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		uv run --active pytest -n auto --maxfail=0 -v --ignore=tests/fuzz"
+		export ARGON2ID_TIME_COST=1 && \
+		export ARGON2ID_MEMORY_COST=1024 && \
+		uv run --active pytest -n 16 --maxfail=0 -v --ignore=tests/fuzz"
 
 test-profile:
 	@echo "🧪 Running tests with profiling (showing slowest tests)..."
@@ -539,7 +543,9 @@ test-profile:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		uv run --active pytest -n auto --durations=20 --durations-min=1.0 --disable-warnings -v --ignore=tests/fuzz"
+		export ARGON2ID_TIME_COST=1 && \
+		export ARGON2ID_MEMORY_COST=1024 && \
+		uv run --active pytest -n 16 --durations=20 --durations-min=1.0 --disable-warnings -v --ignore=tests/fuzz"
 
 coverage:
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
@@ -593,14 +599,14 @@ doctest:
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		export JWT_SECRET_KEY=secret && \
-		python3 -m pytest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py --tb=short --no-cov --disable-warnings -n auto"
+		python3 -m pytest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py --tb=short --no-cov --disable-warnings -n 4"
 
 doctest-verbose:
 	@echo "🧪 Running doctest with verbose output..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		export JWT_SECRET_KEY=secret && \
-		python3 -m pytest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py -v --tb=short --no-cov --disable-warnings -n auto"
+		python3 -m pytest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py -v --tb=short --no-cov --disable-warnings -n 4"
 
 doctest-coverage:
 	@echo "📊 Generating doctest coverage report..."
