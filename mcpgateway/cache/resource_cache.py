@@ -295,6 +295,7 @@ class ResourceCache:
         same threading lock as sync methods by delegating to a thread via
         `asyncio.to_thread` so we don't block the event loop.
         """
+
         async def _run_once() -> None:
             try:
                 await asyncio.to_thread(self._cleanup_once)
