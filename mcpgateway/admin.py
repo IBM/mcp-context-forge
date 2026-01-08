@@ -509,17 +509,15 @@ def _get_span_entity_performance(
         Uses PostgreSQL `percentile_cont` when available and enabled via USE_POSTGRESDB_PERCENTILES config,
         otherwise falls back to Python aggregation.
     """
+    # Validate json_key to prevent SQL injection in both PostgreSQL and SQLite paths
+    if not isinstance(json_key, str) or not re.match(r"^[A-Za-z0-9_.-]+$", json_key):
+        raise ValueError("Invalid json_key for percentile query")
+
     dialect_name = db.get_bind().dialect.name
 
     # Use database-native percentiles only if enabled in config and using PostgreSQL
     if dialect_name == "postgresql" and settings.use_postgresdb_percentiles:
-        # Avoid interpolating user-controlled values into SQL text to mitigate
-        # SQL injection risk. Validate the json_key and use SQLAlchemy's
-        # expanding parameter for the IN-list.
-
-        if not isinstance(json_key, str) or not re.match(r"^[A-Za-z0-9_.-]+$", json_key):
-            raise ValueError("Invalid json_key for percentile query")
-
+        # Safe: uses SQLAlchemy's bindparam for the IN-list
         stats_sql = text(
             """
             SELECT
