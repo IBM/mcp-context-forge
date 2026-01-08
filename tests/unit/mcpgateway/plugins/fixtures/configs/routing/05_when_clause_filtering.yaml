@@ -1,0 +1,49 @@
+# Config demonstrating when clause runtime filtering
+plugin_settings:
+  enable_plugin_routing: true
+plugins:
+  - name: size_checker
+    description: Checks payload size
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [tool_pre_invoke]
+    tags: []
+
+  - name: admin_checker
+    description: Checks admin operations
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [tool_pre_invoke]
+    tags: []
+
+  - name: tenant_checker
+    description: Checks tenant-specific operations
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [tool_pre_invoke]
+    tags: []
+
+routes:
+  - entities: [tool]
+    name: conditional_tool
+    when: "args.size > 1000"  # Only applies when size > 1000
+    plugins:
+      - name: size_checker
+        priority: 10
+
+  - entities: [tool]
+    name: admin_tool
+    when: "user == 'admin'"  # Only applies for admin user
+    plugins:
+      - name: admin_checker
+        priority: 10
+
+  - entities: [tool]
+    tags: [multi-tenant]
+    when: "tenant_id != null"  # Only applies when tenant is specified
+    plugins:
+      - name: tenant_checker
+        priority: 10

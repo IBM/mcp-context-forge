@@ -199,6 +199,11 @@ class FieldSelector:
         """Extract a single path from source into result.
 
         Handles dot notation, array indexing, and wildcards.
+
+        Args:
+            source: The original json object on which we overlay the path to the desired item.
+            path:  The path to the desired object within the dictionary. For example "data.point" would look in: source["data"]["point"]
+            result: Dictionary containing the extracted object based on the path.
         """
         parts = FieldSelector._parse_path(path)
         FieldSelector._extract_parts(source, parts, result, parts)
@@ -211,7 +216,15 @@ class FieldSelector:
         full_parts: list[str],
         current_depth: int = 0,
     ):
-        """Recursively extract parts from source into result."""
+        """Recursively extract parts from source into result.
+
+        Args:
+            source: The original json object on which we overlay the path to the desired item.
+            path:  The path to the desired object within the dictionary. For example "data.point" would look in: source["data"]["point"]
+            result: Dictionary containing the extracted object based on the path.
+            full_parts: Keeps track of all the parts of the path or key.
+            current_depth: The current depth of the recursion.
+        """
         if current_depth >= len(parts):
             return
 
@@ -282,13 +295,26 @@ class FieldSelector:
 
     @staticmethod
     def _merge_path(target: dict[str, Any], source: dict[str, Any], path: str):
-        """Merge a single path from source into target."""
+        """Merge a single path from source into target.
+
+        Args:
+            target: The target object where the merge takes place.
+            source: The original json object on which we overlay the path to the desired item.
+            path:  The path to the desired object within the dictionary. For example "data.point" would look in: source["data"]["point"]
+        """
         parts = FieldSelector._parse_path(path)
         FieldSelector._merge_parts(target, source, parts, 0)
 
     @staticmethod
     def _merge_parts(target: Any, source: Any, parts: list[str], current_depth: int):
-        """Recursively merge parts from source into target."""
+        """Recursively merge parts from source into target.
+
+        Args:
+            target: The target object where the merge takes place.
+            source: The original json object on which we overlay the path to the desired item.
+            path:  The path to the desired object within the dictionary. For example "data.point" would look in: source["data"]["point"]
+            current_depth: The current depth of the recursion.
+        """
         if current_depth >= len(parts):
             return
 
@@ -337,6 +363,12 @@ class FieldSelector:
         """Parse a dot-notation path into parts.
 
         Handles array notation like args.customers[0].email or args.items[*].name.
+
+        Args:
+            path: The path to be parsed.
+
+        Returns:
+            The parsed path into a list.
 
         Examples:
             >>> FieldSelector._parse_path("args.query")

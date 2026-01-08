@@ -1,0 +1,61 @@
+# Config demonstrating config merging with deep merge and override
+plugin_settings:
+  enable_plugin_routing: true
+plugins:
+  - name: configurable_base
+    description: Configurable plugin with base config
+    author: test
+    kind: configurable_plugin.ConfigurablePlugin
+    version: "1.0"
+    hooks: [tool_pre_invoke, tool_post_invoke]
+    tags: []
+    config:
+      action: log
+      threshold: 100
+      message: base_message
+      nested:
+        level1:
+          level2: base_value
+          keep_this: true
+
+routes:
+  # Deep merge: merges rule config with base config
+  - entities: [tool]
+    name: merge_tool
+    plugins:
+      - name: configurable_base
+        priority: 10
+        config:
+          threshold: 500  # Overrides base threshold
+          message: merged_message  # Overrides base message
+          nested:
+            level1:
+              level2: merged_value  # Deep merge: overrides this nested value
+              # keep_this: true is preserved from base config
+
+  # Override: completely replaces base config
+  - entities: [tool]
+    name: override_tool
+    plugins:
+      - name: configurable_base
+        priority: 10
+        override: true  # Completely replace base config
+        config:
+          action: modify
+          threshold: 1000
+          message: override_message
+          # No nested config - base nested config is NOT merged
+
+  # Multiple instances with different configs
+  - entities: [tool]
+    name: multi_instance_tool
+    plugins:
+      - name: configurable_base
+        priority: 10
+        config:
+          message: instance_1
+      - name: configurable_base  # Same plugin, different config
+        priority: 20
+        config:
+          message: instance_2
+          threshold: 200

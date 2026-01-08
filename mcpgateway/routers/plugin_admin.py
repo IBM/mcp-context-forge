@@ -53,6 +53,14 @@ async def get_routing_rules(
     """Get the list of plugin routing rules.
 
     Returns HTML fragment showing all routing rules from the plugin routing config.
+
+    Args:
+        request: FastAPI request object.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        TemplateResponse with routing rules list HTML or HTMLResponse with error.
     """
     try:
         # First-Party
@@ -151,6 +159,9 @@ async def get_entities_by_type(
 
     Returns:
         JSON response with entities grouped by type.
+
+    Raises:
+        HTTPException: If there's an error fetching entities from the database.
     """
     try:
         # First-Party
@@ -202,6 +213,9 @@ async def get_all_entity_tags(
         db: Database session.
         user: Authenticated user.
 
+    Raises:
+        HTTPException: If there's an error fetching entities from the database.
+
     Returns:
         JSON response with sorted list of unique tags.
     """
@@ -212,7 +226,12 @@ async def get_all_entity_tags(
         all_tags = set()
 
         def add_tags_safely(entity_type, tags):
-            """Safely add tags to set, handling various formats."""
+            """Safely add tags to set, handling various formats.
+
+            Args:
+                entity_type: Type of entity for logging purposes.
+                tags: Tags to add (can be list of strings or list of dicts with id/label fields).
+            """
             if not tags:
                 LOGGER.info(f"{entity_type}: No tags (tags is None or empty)")
                 return
@@ -808,7 +827,21 @@ async def _add_entity_plugin_handler(
     db: Session,
     plugins_ui_getter: Callable,
 ):
-    """Generic handler to add a plugin to any entity type."""
+    """Generic handler to add a plugin to any entity type.
+
+    Args:
+        request: The HTTP request object.
+        entity_type: The type of entity: prompt, tool, resource, etc.
+        entity_id: The entity id.
+        db: The database session, which stores metadata about the entity.
+        plugins_ui_getter: The specific function that returns the proper plugin modal depending on the entity type.
+
+    Returns:
+        Updated plugins UI HTML response from plugins_ui_getter.
+
+    Raises:
+        HTTPException: if there is no plugin name provided or the plugin configuration is not valid.
+    """
     try:
         # First-Party
         from mcpgateway.services.plugin_route_service import get_plugin_route_service
@@ -878,7 +911,23 @@ async def _remove_entity_plugin_handler(
     db: Session,
     plugins_ui_getter: Callable,
 ):
-    """Generic handler to remove a plugin from any entity type."""
+    """Generic handler to remove a plugin from any entity type.
+
+    Args:
+        request: The HTTP request object.
+        entity_type: The type of entity: prompt, tool, resource, etc.
+        entity_id: The entity id.
+        plugin_name: The name of the plugin to remove.
+        hook: The hook on which to remove the plugin (optional).
+        db: The database session, which stores metadata about the entity.
+        plugins_ui_getter: The specific function that returns the proper plugin modal depending on the entity type.
+
+    Returns:
+        Updated plugins UI HTML response from plugins_ui_getter.
+
+    Raises:
+        HTTPException: If unable to remove the plugin.
+    """
     try:
         # First-Party
         from mcpgateway.services.plugin_route_service import get_plugin_route_service
@@ -927,7 +976,21 @@ async def _toggle_entity_reverse_post_hooks_handler(
     db: Session,
     plugins_ui_getter: Callable,
 ):
-    """Generic handler to toggle reverse_order_on_post for any entity type."""
+    """Generic handler to toggle reverse_order_on_post for any entity type.
+
+    Args:
+        request: The HTTP request object.
+        entity_type: The type of entity: prompt, tool, resource, etc.
+        entity_id: The entity id.
+        db: The database session, which stores metadata about the entity.
+        plugins_ui_getter: The specific function that returns the proper plugin modal depending on the entity type.
+
+    Returns:
+        Updated plugins UI HTML response from plugins_ui_getter.
+
+    Raises:
+        HTTPException: If unable to toggle reverse order on a plugin.
+    """
     try:
         # First-Party
         from mcpgateway.services.plugin_route_service import get_plugin_route_service
@@ -966,7 +1029,24 @@ async def _change_entity_plugin_priority_handler(
     db: Session,
     plugins_ui_getter: Callable,
 ):
-    """Generic handler to change plugin priority (up/down) for any entity type."""
+    """Generic handler to change plugin priority (up/down) for any entity type.
+
+    Args:
+        request: The HTTP request object.
+        entity_type: The type of entity: prompt, tool, resource, etc.
+        entity_id: The entity id.
+        plugin_name: The name of the plugin to change priority for.
+        hook: The name of the hook to which the priority is being changed.
+        direction: Up or down.
+        db: The database session, which stores metadata about the entity.
+        plugins_ui_getter: The specific function that returns the proper plugin modal depending on the entity type.
+
+    Returns:
+        Updated plugins UI HTML response from plugins_ui_getter.
+
+    Raises:
+        HTTPException: If unable to change the priority on a plugin.
+    """
     try:
         # First-Party
         from mcpgateway.services.plugin_route_service import get_plugin_route_service
@@ -1013,7 +1093,23 @@ async def _set_entity_plugin_priority_handler(
     db: Session,
     plugins_ui_getter: Callable,
 ):
-    """Generic handler to set plugin priority to absolute value for any entity type."""
+    """Generic handler to set plugin priority to absolute value for any entity type.
+
+    Args:
+        request: The HTTP request object.
+        entity_type: The type of entity: prompt, tool, resource, etc.
+        entity_id: The entity id.
+        plugin_name: the name of the plugin.
+        hook: The name of the hook to which the priority is being changed.
+        db: The database session, which stores metadata about the entity.
+        plugins_ui_getter: The specific function that returns the proper plugin modal depending on the entity type.
+
+    Returns:
+        Updated plugins UI HTML response from plugins_ui_getter.
+
+    Raises:
+        HTTPException: If unable to set the priority on a plugin.
+    """
     try:
         # First-Party
         from mcpgateway.services.plugin_route_service import get_plugin_route_service
@@ -1065,6 +1161,17 @@ async def get_tool_plugins(
 
     Returns both pre-invoke and post-invoke plugins with their execution order.
     Post-hooks are shown in their actual execution order (may be reversed based on config).
+
+    Args:
+        _request: HTTP request object.
+        tool_id: The id of the tool to get the plugins for.
+        db: The database session from which to return the tool metadata.
+
+    Returns:
+        Dictionary with tool_id, tool_name, pre_hooks list, and post_hooks list.
+
+    Raises:
+        HTTPException: If tool not found or error retrieving plugin information.
     """
     try:
         # First-Party
@@ -1149,6 +1256,9 @@ async def get_bulk_plugin_status(
 
     Returns:
         JSON with plugin status breakdown
+
+    Raises:
+        HTTPException: If error occurs while retrieving plugin status.
     """
     try:
         # First-Party
@@ -1303,7 +1413,20 @@ async def get_bulk_plugin_status_prompts(
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
 ):
-    """Get plugin configuration status for multiple prompts."""
+    """Get plugin configuration status for multiple prompts.
+
+    Args:
+        request: FastAPI request object
+        prompt_ids: Comma-separated prompt IDs
+        db: Database session
+        _user: Current authenticated user
+
+    Returns:
+        JSON response with plugin status breakdown for prompts.
+
+    Raises:
+        HTTPException: If error occurs while retrieving plugin status.
+    """
     try:
         # First-Party
         from mcpgateway.plugins.framework import get_plugin_manager
@@ -1438,7 +1561,20 @@ async def get_bulk_plugin_status_resources(
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
 ):
-    """Get plugin configuration status for multiple resources."""
+    """Get plugin configuration status for multiple resources.
+
+    Args:
+        request: FastAPI request object
+        resource_ids: Comma-separated resource IDs
+        db: Database session
+        _user: Current authenticated user
+
+    Returns:
+        JSON response with plugin status breakdown for resources.
+
+    Raises:
+        HTTPException: If error occurs while retrieving plugin status.
+    """
     try:
         # First-Party
         from mcpgateway.plugins.framework import get_plugin_manager
@@ -1581,6 +1717,9 @@ async def add_bulk_plugins(
 
     Returns:
         JSON response with success/failure counts
+
+    Raises:
+        HTTPException: If error occurs during bulk plugin addition.
     """
     try:
         # Parse form data manually
@@ -1701,6 +1840,9 @@ async def remove_bulk_plugins(
 
     Returns:
         JSON response with success/failure counts
+
+    Raises:
+        HTTPException: If error occurs during bulk plugin removal.
     """
     # Parse form data manually to debug
     form_data = await request.form()
@@ -1873,6 +2015,9 @@ async def update_bulk_plugin_priority(
 
     Returns:
         JSON response with success/failure counts
+
+    Raises:
+        HTTPException: If error occurs during bulk priority update.
     """
     try:
         # Parse form data
@@ -1966,7 +2111,17 @@ async def add_tool_plugin(
 
     Creates a simple name-based routing rule.
     Accepts form data from HTMX forms.
-    Returns updated plugins UI HTML.
+
+    Args:
+        request: The HTTP request object.
+        tool_id: The id of the tool to add the plugin to.
+        db: The database session.
+
+    Returns:
+        Updated plugins UI HTML response.
+
+    Raises:
+        HTTPException: If plugin name is missing, config is invalid, or error occurs.
     """
     try:
         # First-Party
@@ -2040,7 +2195,19 @@ async def remove_tool_plugin(
 
     Removes the plugin from simple name-based routing rules only.
     If hook is specified, only removes from that specific hook type.
-    Returns updated plugins UI HTML.
+
+    Args:
+        request: The HTTP request object.
+        tool_id: The id of the tool to remove the plugin from.
+        plugin_name: The name of the plugin to remove.
+        hook: Specific hook to remove (e.g., tool_pre_invoke or tool_post_invoke).
+        db: The database session.
+
+    Returns:
+        Updated plugins UI HTML response.
+
+    Raises:
+        HTTPException: If error occurs during plugin removal.
     """
     try:
         # First-Party
@@ -2092,7 +2259,17 @@ async def toggle_reverse_post_hooks(
     """Toggle reverse_order_on_post for all plugin rules of a tool.
 
     When enabled, post-hooks execute in reverse order (LIFO - last added runs first).
-    Returns updated plugins UI HTML.
+
+    Args:
+        request: The HTTP request object.
+        tool_id: The id of the tool to toggle reverse post hooks for.
+        db: The database session.
+
+    Returns:
+        Updated plugins UI HTML response.
+
+    Raises:
+        HTTPException: If error occurs during toggle operation.
     """
     try:
         # First-Party
@@ -2134,7 +2311,20 @@ async def change_tool_plugin_priority(
     """Change a plugin's priority (move up or down in execution order).
 
     Moving 'up' decreases priority (runs earlier), 'down' increases priority (runs later).
-    After changing, returns the updated plugins UI.
+
+    Args:
+        request: The HTTP request object.
+        tool_id: The id of the tool whose plugin priority to change.
+        plugin_name: The name of the plugin to change priority for.
+        hook: Hook type (tool_pre_invoke or tool_post_invoke).
+        direction: Direction to move: 'up' or 'down'.
+        db: The database session.
+
+    Returns:
+        Updated plugins UI HTML response.
+
+    Raises:
+        HTTPException: If error occurs during priority change.
     """
     try:
         # First-Party
@@ -2184,7 +2374,19 @@ async def set_tool_plugin_priority(
     """Set a plugin's priority to an absolute value.
 
     Accepts form data with 'priority' field.
-    After updating, returns the updated plugins UI.
+
+    Args:
+        request: The HTTP request object.
+        tool_id: The id of the tool whose plugin priority to set.
+        plugin_name: The name of the plugin to set priority for.
+        hook: Hook type (tool_pre_invoke or tool_post_invoke).
+        db: The database session.
+
+    Returns:
+        Updated plugins UI HTML response.
+
+    Raises:
+        HTTPException: If plugin not found or error occurs.
     """
     try:
         # First-Party
@@ -2238,6 +2440,17 @@ async def get_tool_plugins_ui(
     - Current pre-invoke and post-invoke plugins with execution order
     - Form to add new plugins
     - Buttons to remove plugins
+
+    Args:
+        request: The HTTP request object.
+        tool_id: The id of the tool to get plugin UI for.
+        db: The database session.
+
+    Returns:
+        HTML fragment for plugin management UI.
+
+    Raises:
+        HTTPException: If error occurs while rendering UI.
     """
     try:
         context = await _get_entity_plugins_ui_context(request, "tool", tool_id, db)
@@ -2261,7 +2474,19 @@ async def get_resource_plugins_ui(
     resource_id: str,
     db: Session = Depends(get_db),
 ):
-    """Get the plugin management UI for a resource (returns HTML fragment for HTMX)."""
+    """Get the plugin management UI for a resource (returns HTML fragment for HTMX).
+
+    Args:
+        request: The HTTP request object.
+        resource_id: The id of the resource to get plugin UI for.
+        db: The database session.
+
+    Returns:
+        HTML fragment for plugin management UI.
+
+    Raises:
+        HTTPException: If error occurs while rendering UI.
+    """
     try:
         context = await _get_entity_plugins_ui_context(request, "resource", resource_id, db)
         return request.app.state.templates.TemplateResponse("entity_plugins_partial.html", context)
@@ -2280,7 +2505,16 @@ async def add_bulk_plugins_to_resources(
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
 ):
-    """Add a plugin to multiple resources at once (bulk operation)."""
+    """Add a plugin to multiple resources at once (bulk operation).
+
+    Args:
+        request: The HTTP request for bulk adding plugins to resources.
+        db: The MCP gateway database session for grabbing metadata.
+        _user: user authentication object.
+
+    Returns:
+        A JSON Response indicating the success or failure of the operation.
+    """
     # First-Party
     from mcpgateway.admin_helpers import (
         bulk_add_plugin_to_entities,
@@ -2343,7 +2577,16 @@ async def remove_bulk_plugins_from_resources(
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
 ):
-    """Remove a plugin from multiple resources at once (bulk operation)."""
+    """Remove a plugin from multiple resources at once (bulk operation).
+
+    Args:
+        request: The HTTP request for bulk removing plugins from resources.
+        db: The MCP gateway database session for grabbing metadata.
+        _user: user authentication object.
+
+    Returns:
+        An JSON Response showing the success or failure of the operation.
+    """
     # First-Party
     from mcpgateway.admin_helpers import (
         bulk_remove_plugin_from_entities,
@@ -2461,7 +2704,19 @@ async def update_bulk_plugin_priority_for_resources(
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
 ):
-    """Update plugin priority for multiple resources at once (bulk operation)."""
+    """Update plugin priority for multiple resources at once (bulk operation).
+
+    Args:
+         request: The HTTP request for updating plugin priority for resources.
+         db: The MCP gateway database session for grabbing metadata.
+         _user: user authentication object.
+
+     Raises:
+         HTTPException: if there is an error retrieving and filling the UI template.
+
+     Returns:
+         An JSON Response showing the success or failure of the operation.
+    """
     # First-Party
     from mcpgateway.admin_helpers import (
         bulk_update_plugin_priority_for_entities,
@@ -2508,7 +2763,19 @@ async def add_resource_plugin(
     resource_id: str,
     db: Session = Depends(get_db),
 ):
-    """Add a plugin to a resource."""
+    """Add a plugin to a resource.
+
+    Args:
+        request: The HTTP request object.
+        resource_id: The resource ID on which to add the plugin.
+        db: The MCP gateway database session for grabbing metadata.
+
+    Raises:
+        HTTPException: if there is an error retrieving and filling the UI template.
+
+    Returns:
+        An HTML UI object to be rendered.
+    """
     try:
         # First-Party
         from mcpgateway.services.plugin_route_service import get_plugin_route_service
@@ -2587,7 +2854,21 @@ async def remove_resource_plugin(
     hook: Optional[str] = Query(None, description="Specific hook to remove"),
     db: Session = Depends(get_db),
 ):
-    """Remove a plugin from a resource."""
+    """Remove a plugin from a resource.
+
+    Args:
+        request: The HTTP request object.
+        resource_id: The resource ID on which to remove the resource plugin.
+        plugin_name: The name of the plugin.
+        hook: The name of the hook to remove.
+        db: The MCP gateway database session for grabbing metadata.
+
+    Raises:
+        HTTPException: if there is an error retrieving and filling the UI template.
+
+    Returns:
+        An HTML UI object to be rendered.
+    """
     try:
         # First-Party
         from mcpgateway.services.plugin_route_service import get_plugin_route_service
@@ -2627,7 +2908,19 @@ async def toggle_resource_reverse_post_hooks(
     resource_id: str,
     db: Session = Depends(get_db),
 ):
-    """Toggle reverse order for post-invoke hooks on a resource."""
+    """Toggle reverse order for post-invoke hooks on a resource.
+
+    Args:
+        request: The HTTP request object.
+        resource_id: The resource ID on which to set the reverse order.
+        db: The MCP gateway database session for grabbing metadata.
+
+    Raises:
+        HTTPException: if there is an error retrieving and filling the UI template.
+
+    Returns:
+        An HTML UI object to be rendered.
+    """
     try:
         # First-Party
         from mcpgateway.services.plugin_route_service import get_plugin_route_service
@@ -2665,7 +2958,22 @@ async def change_resource_plugin_priority(
     direction: str = Query(..., description="Direction to move: 'up' or 'down'"),
     db: Session = Depends(get_db),
 ):
-    """Change a plugin's priority (move up/down) for a resource."""
+    """Change a plugin's priority (move up/down) for a resource.
+
+    Args:
+        request: The HTTP request object.
+        resource_id: The resource ID on which to set the priority.
+        plugin_name: The name of the plugin to set the priority.
+        hook: The name of the hook to change the priority.
+        direction: The direction to change the priority up or down.
+        db: The MCP gateway database session for grabbing metadata.
+
+    Raises:
+        HTTPException: if there is an error retrieving and filling the UI template.
+
+    Returns:
+        An HTML UI object to be rendered.
+    """
     try:
         # First-Party
         from mcpgateway.services.plugin_route_service import get_plugin_route_service
@@ -2708,7 +3016,21 @@ async def set_resource_plugin_priority(
     hook: str = Query(..., description="Hook type (e.g., resource_pre_invoke or resource_post_invoke)"),
     db: Session = Depends(get_db),
 ):
-    """Set a specific priority value for a plugin on a resource."""
+    """Set a specific priority value for a plugin on a resource.
+
+    Args:
+        request: The HTTP request object.
+        resource_id: The resource ID on which to set the priority.
+        plugin_name: The name of the plugin to set the priority.
+        hook: The name of the hook to change the priority.
+        db: The MCP gateway database session for grabbing metadata.
+
+    Raises:
+        HTTPException: if there is an error retrieving and filling the UI template.
+
+    Returns:
+        An HTML UI object to be rendered.
+    """
     try:
         # First-Party
         from mcpgateway.services.plugin_route_service import get_plugin_route_service
@@ -2758,7 +3080,19 @@ async def get_prompt_plugins_ui(
     prompt_id: str,
     db: Session = Depends(get_db),
 ):
-    """Get the plugin management UI for a prompt (returns HTML fragment for HTMX)."""
+    """Get the plugin management UI for a prompt (returns HTML fragment for HTMX).
+
+    Args:
+        request: The HTTP request object.
+        prompt_id: The prompt ID for which to return the associated UI.
+        db: The MCP gateway database session for grabbing metadata.
+
+    Raises:
+        HTTPException: if there is an error retrieving and filling the UI template.
+
+    Returns:
+        An HTML UI object to be rendered.
+    """
     try:
         context = await _get_entity_plugins_ui_context(request, "prompt", prompt_id, db)
         return request.app.state.templates.TemplateResponse("entity_plugins_partial.html", context)
@@ -2782,7 +3116,16 @@ async def add_bulk_plugins_to_prompts(
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
 ):
-    """Add a plugin to multiple prompts at once (bulk operation)."""
+    """Add a plugin to multiple prompts at once (bulk operation).
+
+    Args:
+        request: The HTTP request for bulk adding of prompts.
+        db: The MCP gateway database session for grabbing metadata.
+        _user: A user authentication object.
+
+    Returns:
+        A JSON Response object indicating the success or failure of the operation.
+    """
     # First-Party
     from mcpgateway.admin_helpers import (
         bulk_add_plugin_to_entities,
@@ -2845,7 +3188,16 @@ async def remove_bulk_plugins_from_prompts(
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
 ):
-    """Remove a plugin from multiple prompts at once (bulk operation)."""
+    """Remove a plugin from multiple prompts at once (bulk operation).
+
+    Args:
+        request: The HTTP request for bulk removing plugins from prompts.
+        db: The MCP gateway database session for grabbing metadata.
+        _user: A user authentication object.
+
+    Returns:
+        A JSON Response object indicating the success or failure of the operation.
+    """
     # First-Party
     from mcpgateway.admin_helpers import (
         bulk_remove_plugin_from_entities,
@@ -2963,7 +3315,16 @@ async def update_bulk_plugin_priority_for_prompts(
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
 ):
-    """Update plugin priority for multiple prompts at once (bulk operation)."""
+    """Update plugin priority for multiple prompts at once (bulk operation).
+
+    Args:
+        request: The HTTP request for updating plugin priority for prompts.
+        db: The MCP gateway database session for grabbing metadata.
+        _user: A user authentication object.
+
+    Returns:
+        A JSON Response object indicating the success or failure of the operation.
+    """
     # First-Party
     from mcpgateway.admin_helpers import (
         bulk_update_plugin_priority_for_entities,

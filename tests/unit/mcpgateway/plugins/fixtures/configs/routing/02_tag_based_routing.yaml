@@ -1,0 +1,32 @@
+# Config demonstrating tag-based routing
+plugin_settings:
+  enable_plugin_routing: true
+plugins:
+  - name: pii_tracker
+    description: Tracks PII operations
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [tool_pre_invoke, tool_post_invoke]
+    tags: []
+
+  - name: customer_tracker
+    description: Tracks customer operations
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [tool_pre_invoke, tool_post_invoke]
+    tags: []
+
+routes:
+  - entities: [tool]
+    tags: [pii]  # Match any tool with 'pii' tag
+    plugins:
+      - name: pii_tracker
+        priority: 10
+
+  - entities: [tool]
+    tags: [customer, crm]  # Match tools with 'customer' OR 'crm' tags
+    plugins:
+      - name: customer_tracker
+        priority: 20

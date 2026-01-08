@@ -78,6 +78,9 @@ class PluginRouteService:
         3. Modifications happen on fresh state
         4. Save persists changes atomically
 
+        Yields:
+            None: Control is yielded to the caller for config modifications.
+
         Usage:
             with self._config_write_lock():
                 # modify self.config
@@ -312,6 +315,9 @@ class PluginRouteService:
             when: Optional runtime condition expression
             override: If True, replace inherited config instead of merging
             mode: Optional execution mode override (normal, passthrough, observe)
+
+        Raises:
+            RuntimeError: If config is not loaded.
         """
         with self._config_write_lock():
             if not self.config:
@@ -891,6 +897,9 @@ class PluginRouteService:
 
         Performs atomic write with backup to prevent data loss.
         Also clears the PluginManager routing cache to ensure changes take effect immediately.
+
+        Raises:
+            Exception: Any exception during save is re-raised after attempting backup restoration.
         """
         if not self.config:
             logger.warning("No config to save")

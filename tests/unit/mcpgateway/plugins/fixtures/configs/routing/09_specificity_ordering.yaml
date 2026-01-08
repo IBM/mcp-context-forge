@@ -1,0 +1,59 @@
+# Config demonstrating specificity ordering (name > tags > entity type)
+# Uses merge_all strategy to combine plugins from all matching rules
+plugin_settings:
+  enable_plugin_routing: true
+  rule_merge_strategy: "merge_all"
+plugins:
+  - name: general_tracker
+    description: General purpose tracker
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [tool_pre_invoke]
+    tags: []
+
+  - name: tag_tracker
+    description: Tag-based tracker
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [tool_pre_invoke]
+    tags: []
+
+  - name: specific_tracker
+    description: Name-specific tracker
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [tool_pre_invoke]
+    tags: []
+
+routes:
+  # Least specific: matches all tools
+  - entities: [tool]
+    priority: 300  # Explicit priority (lower priority)
+    plugins:
+      - name: general_tracker
+        priority: 30
+
+  # Medium specific: matches tools with 'customer' tag
+  - entities: [tool]
+    tags: [customer]
+    priority: 200  # Explicit priority (medium priority)
+    plugins:
+      - name: tag_tracker
+        priority: 20
+
+  # Most specific: matches exact tool name
+  - entities: [tool]
+    name: create_customer
+    priority: 100  # Explicit priority (highest priority)
+    plugins:
+      - name: specific_tracker
+        priority: 10
+
+# Expected behavior for "create_customer" tool with "customer" tag:
+# 1. All three rules match
+# 2. Rules are ordered by explicit rule priority (100, 200, 300)
+# 3. Plugins from all matching rules are collected
+# 4. Final order: specific_tracker (p10), tag_tracker (p20), general_tracker (p30)

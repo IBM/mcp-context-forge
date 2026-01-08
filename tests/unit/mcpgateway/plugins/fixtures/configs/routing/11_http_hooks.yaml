@@ -1,0 +1,111 @@
+# Config demonstrating HTTP-level hook filtering
+# Shows how to use hooks filter for HTTP requests before entity resolution
+plugin_settings:
+  enable_plugin_routing: true
+  rule_merge_strategy: "merge_all"
+
+plugins:
+  - name: global_auth
+    description: Global authentication checker
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [http_pre_request]
+    tags: []
+
+  - name: request_logger
+    description: Request logging
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [http_pre_request, http_post_request]
+    tags: []
+
+  - name: post_processor
+    description: Response post-processor
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [http_post_request]
+    tags: []
+
+  - name: rate_limiter
+    description: Rate limiting for POST requests
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [http_pre_request]
+    tags: []
+
+  - name: ldap_auth
+    description: LDAP authentication resolver
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [http_auth_resolve_user]
+    tags: []
+
+  - name: mtls_auth
+    description: mTLS authentication resolver
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [http_auth_resolve_user]
+    tags: []
+
+  - name: admin_permission_checker
+    description: Admin permission checker
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [http_auth_check_permission]
+    tags: []
+
+routes:
+  # Apply to all HTTP pre-requests
+  - hooks: [http_pre_request]
+    plugins:
+      - name: global_auth
+        priority: 10
+
+  # Apply to both pre and post HTTP requests
+  - hooks: [http_pre_request, http_post_request]
+    plugins:
+      - name: request_logger
+        priority: 20
+
+  # Apply only to POST requests
+  - hooks: [http_pre_request]
+    when: "payload.method == 'POST'"
+    plugins:
+      - name: rate_limiter
+        priority: 30
+
+  # Apply only to HTTP post-requests
+  - hooks: [http_post_request]
+    plugins:
+      - name: post_processor
+        priority: 40
+
+  # Auth hooks - custom user resolution
+  - hooks: [http_auth_resolve_user]
+    plugins:
+      - name: ldap_auth
+        priority: 50
+      - name: mtls_auth
+        priority: 60
+
+  # Auth hooks - permission checking
+  - hooks: [http_auth_check_permission]
+    when: "permission.startswith('admin.')"
+    plugins:
+      - name: admin_permission_checker
+        priority: 70
+
+# Expected behavior for http_pre_request hook:
+# Plugins: global_auth (10), request_logger (20), rate_limiter (30) if POST
+# Order: global_auth -> request_logger -> rate_limiter (for POST)
+
+# Expected behavior for http_post_request hook:
+# Plugins: request_logger (20), post_processor (40)
+# Order: request_logger -> post_processor

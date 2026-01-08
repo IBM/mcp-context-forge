@@ -475,12 +475,13 @@ def hash_config(config: dict[str, Any]) -> str:
     """Create a stable hash of a configuration dictionary.
 
     Uses JSON serialization with sorted keys to ensure deterministic hashing.
+    This hash is used for cache keys and instance identification, NOT for security.
 
     Args:
         config: Configuration dictionary to hash.
 
     Returns:
-        SHA256 hash of the config as hex string.
+        SHA1 hash of the config as hex string.
 
     Examples:
         >>> config1 = {"timeout": 30, "retry": 3}
@@ -496,5 +497,6 @@ def hash_config(config: dict[str, Any]) -> str:
     """
     # Serialize with sorted keys for stability
     config_json = json.dumps(config, sort_keys=True, default=str)
-    # Use SHA1 for shorter hashes (collision risk is acceptable here)
-    return hashlib.sha1(config_json.encode()).hexdigest()
+    # Use SHA1 for shorter hashes (collision risk is acceptable for cache keys)
+    # nosec B324 - SHA1 is acceptable here as this is used for cache key generation, not security
+    return hashlib.sha1(config_json.encode()).hexdigest()  # nosec

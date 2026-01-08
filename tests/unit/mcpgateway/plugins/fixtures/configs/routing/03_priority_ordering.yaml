@@ -1,0 +1,38 @@
+# Config demonstrating priority ordering
+plugin_settings:
+  enable_plugin_routing: true
+plugins:
+  - name: tracker_low
+    description: Low priority tracker
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [tool_pre_invoke, tool_post_invoke]
+    tags: []
+
+  - name: tracker_medium
+    description: Medium priority tracker
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [tool_pre_invoke, tool_post_invoke]
+    tags: []
+
+  - name: tracker_high
+    description: High priority tracker
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [tool_pre_invoke, tool_post_invoke]
+    tags: []
+
+routes:
+  - entities: [tool]
+    name: ordered_tool
+    plugins:
+      - name: tracker_low
+        priority: 30  # Runs last (higher number = lower priority)
+      - name: tracker_medium
+        priority: 20  # Runs second
+      - name: tracker_high
+        priority: 10  # Runs first (lower number = higher priority)

@@ -1,0 +1,32 @@
+# Config demonstrating exact name-based routing
+plugin_settings:
+  enable_plugin_routing: true
+plugins:
+  - name: tracker_a
+    description: Tracker plugin A
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [tool_pre_invoke, tool_post_invoke]
+    tags: []
+
+  - name: tracker_b
+    description: Tracker plugin B
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [tool_pre_invoke, tool_post_invoke]
+    tags: []
+
+routes:
+  - entities: [tool]
+    name: create_customer  # Exact name match
+    plugins:
+      - name: tracker_a
+        priority: 10
+
+  - entities: [tool]
+    name: [delete_customer, update_customer]  # List of names
+    plugins:
+      - name: tracker_b
+        priority: 10

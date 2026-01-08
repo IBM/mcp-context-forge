@@ -220,13 +220,27 @@ class PolicyEvaluator:
         # Add 'is_defined' function to check if a variable exists and is not None
         # Usage: is_defined(args.user_query)
         def is_defined_func(value):
-            """Check if value is defined (not None)."""
+            """Check if value is defined (not None).
+
+            Args:
+                value: the value to check if defined (not None).
+
+            Returns:
+                True if the value is defined.
+            """
             return value is not None
 
         # Add 'contains' function: contains(list, value)
         # Usage: contains(entity.tags, "production")
         def contains_func(container, value):
-            """Check if container contains value."""
+            """Check if container contains value.
+
+            Args:
+                value: the value to check for in the container.
+
+            Returns:
+                True if container contains value.
+            """
             if container is None:
                 return False
             if isinstance(container, (list, tuple, set)):
@@ -375,6 +389,9 @@ class PolicyEvaluator:
 
         Returns:
             True if the expression evaluates to True, False otherwise.
+
+        Raises:
+            ValueError: If the compiled expression fails to evaluate.
 
         Examples:
             >>> evaluator = PolicyEvaluator()
