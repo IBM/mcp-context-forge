@@ -5335,7 +5335,7 @@ def patch_string_columns_for_mariadb(base, engine_) -> None:
                 column.type = VARCHAR(255)
 
 
-def extract_json_field(column, json_path: str):
+def extract_json_field(column, json_path: str, dialect_name: Optional[str] = None):
     """Extract a JSON field in a database-agnostic way.
 
     This function provides cross-database compatibility for JSON field extraction,
@@ -5344,6 +5344,9 @@ def extract_json_field(column, json_path: str):
     Args:
         column: SQLAlchemy column containing JSON data
         json_path: JSON path in SQLite format (e.g., '$.\"tool.name\"')
+        dialect_name: Optional database dialect name to override global backend.
+            If not provided, uses the global backend from DATABASE_URL.
+            Use this when querying a different database than the default.
 
     Returns:
         SQLAlchemy expression for extracting the JSON field as text
@@ -5353,8 +5356,9 @@ def extract_json_field(column, json_path: str):
         - For PostgreSQL: Uses column ->> 'key' operator
         - Backend-specific behavior is tested via unit tests in test_db.py
     """
+    effective_backend = dialect_name if dialect_name is not None else backend
 
-    if backend == "postgresql":
+    if effective_backend == "postgresql":
         # PostgreSQL uses ->> operator for text extraction
         # Convert $.\"key\" or $.\"nested.key\" format to just the key
         # Handle both simple keys and nested keys with dots

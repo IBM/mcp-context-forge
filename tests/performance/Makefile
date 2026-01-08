@@ -24,6 +24,7 @@ help:
 	@echo "  make test-database         - Database connection pool tests"
 	@echo "  make test-gateway-core     - Gateway core functionality tests"
 	@echo "  make test-all-scenarios    - Run all test scenarios"
+	@echo "  make test-percentile       - PostgreSQL percentile performance benchmark"
 	@echo ""
 	@echo "Baseline Management:"
 	@echo "  make baseline              - Save current as baseline"
@@ -209,6 +210,26 @@ clean-all: clean-results
 	@echo "Cleaning baselines and reports..."
 	@rm -rf baselines/*.json reports/*.html 2>/dev/null || true
 	@echo "✅ Deep clean complete"
+
+# PostgreSQL Percentile Performance Benchmark
+test-percentile:
+	@echo "🚀 Running PostgreSQL Percentile Performance Benchmark..."
+	@echo ""
+	@if [ -f run_percentile_benchmark.sh ]; then \
+		bash run_percentile_benchmark.sh; \
+	else \
+		echo "Running pytest directly..."; \
+		pytest  test_postgresql_percentile_performance.py -v -s; \
+	fi
+
+test-percentile-quick:
+	@echo "🚀 Running Quick PostgreSQL Percentile Test..."
+	@pytest test_postgresql_percentile_performance.py -v -s -k "10-100"
+
+test-percentile-accuracy:
+	@echo "🚀 Testing Percentile Calculation Accuracy..."
+	@pytest test_postgresql_percentile_performance.py::TestPostgreSQLPercentilePerformance::test_percentile_accuracy -v -s
+
 
 # Documentation
 docs:
