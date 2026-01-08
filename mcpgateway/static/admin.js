@@ -6736,7 +6736,9 @@ function showTab(tabName) {
                     const overviewPanel = safeGetElement("overview-panel");
                     if (overviewPanel) {
                         const hasLoadingMessage =
-                            overviewPanel.innerHTML.includes("Loading overview");
+                            overviewPanel.innerHTML.includes(
+                                "Loading overview",
+                            );
                         if (hasLoadingMessage) {
                             // Trigger HTMX load manually if HTMX is available
                             if (window.htmx && window.htmx.trigger) {
