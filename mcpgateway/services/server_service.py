@@ -254,7 +254,9 @@ class ServerService:
             ...     created_at=now, updated_at=now, enabled=True,
             ...     associated_tools=[], associated_resources=[], associated_prompts=[], associated_a2a_agents=[],
             ...     tags=[], metrics=[m1, m2],
-            ...     tools=[], resources=[], prompts=[], a2a_agents=[]
+            ...     tools=[], resources=[], prompts=[], a2a_agents=[],
+            ...     team_id=None, owner_email=None, visibility=None,
+            ...     created_by=None, modified_by=None
             ... )
             >>> result = svc.convert_server_to_read(server, include_metrics=True)
             >>> result.metrics.total_executions
@@ -262,8 +264,32 @@ class ServerService:
             >>> result.metrics.successful_executions
             1
         """
-        server_dict = server.__dict__.copy()
-        server_dict.pop("_sa_instance_state", None)
+        # Build dict explicitly from attributes to ensure SQLAlchemy populates them
+        # (using __dict__.copy() can return empty dict with certain query patterns)
+        server_dict = {
+            "id": server.id,
+            "name": server.name,
+            "description": server.description,
+            "icon": server.icon,
+            "enabled": server.enabled,
+            "created_at": server.created_at,
+            "updated_at": server.updated_at,
+            "team_id": server.team_id,
+            "owner_email": server.owner_email,
+            "visibility": server.visibility,
+            "created_by": server.created_by,
+            "created_from_ip": getattr(server, "created_from_ip", None),
+            "created_via": getattr(server, "created_via", None),
+            "created_user_agent": getattr(server, "created_user_agent", None),
+            "modified_by": server.modified_by,
+            "modified_from_ip": getattr(server, "modified_from_ip", None),
+            "modified_via": getattr(server, "modified_via", None),
+            "modified_user_agent": getattr(server, "modified_user_agent", None),
+            "import_batch_id": getattr(server, "import_batch_id", None),
+            "federation_source": getattr(server, "federation_source", None),
+            "version": getattr(server, "version", None),
+            "tags": server.tags or [],
+        }
 
         # Compute aggregated metrics only if requested (avoids N+1 queries in list operations)
         if include_metrics:
@@ -310,19 +336,13 @@ class ServerService:
             }
         else:
             server_dict["metrics"] = None
-        # Also update associated IDs (if not already done)
+        # Add associated IDs from relationships
         server_dict["associated_tools"] = [tool.name for tool in server.tools] if server.tools else []
         server_dict["associated_resources"] = [res.id for res in server.resources] if server.resources else []
         server_dict["associated_prompts"] = [prompt.id for prompt in server.prompts] if server.prompts else []
         server_dict["associated_a2a_agents"] = [agent.id for agent in server.a2a_agents] if server.a2a_agents else []
-        server_dict["tags"] = server.tags or []
 
-        # Include metadata fields for proper API response
-        server_dict["created_by"] = getattr(server, "created_by", None)
-        server_dict["modified_by"] = getattr(server, "modified_by", None)
-        server_dict["created_at"] = getattr(server, "created_at", None)
-        server_dict["updated_at"] = getattr(server, "updated_at", None)
-        server_dict["version"] = getattr(server, "version", None)
+        # Team name is loaded via server.team property from email_team relationship
         server_dict["team"] = getattr(server, "team", None)
 
         return ServerRead.model_validate(server_dict)
@@ -934,7 +954,17 @@ class ServerService:
             >>> asyncio.run(service.get_server(db, 'server_id'))
             'server_read'
         """
-        server = db.get(DbServer, server_id)
+        server = db.get(
+            DbServer,
+            server_id,
+            options=[
+                selectinload(DbServer.tools),
+                selectinload(DbServer.resources),
+                selectinload(DbServer.prompts),
+                selectinload(DbServer.a2a_agents),
+                joinedload(DbServer.email_team),
+            ],
+        )
         if not server:
             raise ServerNotFoundError(f"Server not found: {server_id}")
         server_data = {
@@ -1045,7 +1075,17 @@ class ServerService:
             'server_read'
         """
         try:
-            server = db.get(DbServer, server_id)
+            server = db.get(
+                DbServer,
+                server_id,
+                options=[
+                    selectinload(DbServer.tools),
+                    selectinload(DbServer.resources),
+                    selectinload(DbServer.prompts),
+                    selectinload(DbServer.a2a_agents),
+                    joinedload(DbServer.email_team),
+                ],
+            )
             if not server:
                 raise ServerNotFoundError(f"Server not found: {server_id}")
 

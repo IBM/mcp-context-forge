@@ -8,7 +8,7 @@ Tests for server service implementation.
 """
 
 # Standard
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
 import pytest
@@ -88,10 +88,22 @@ def mock_server(mock_tool, mock_resource, mock_prompt):
     server.team = None  # Team name loaded via email_team relationship
     server.visibility = "public"
 
+    # Optional tracking fields (must be explicitly set to avoid MagicMock auto-creation)
+    server.created_from_ip = None
+    server.created_via = None
+    server.created_user_agent = None
+    server.modified_from_ip = None
+    server.modified_via = None
+    server.modified_user_agent = None
+    server.import_batch_id = None
+    server.federation_source = None
+    server.version = 1
+
     # Associated objects -------------------------------------------------- #
     server.tools = [mock_tool]
     server.resources = [mock_resource]
     server.prompts = [mock_prompt]
+    server.a2a_agents = []
 
     # Dummy metrics
     server.metrics = []
@@ -545,7 +557,7 @@ class TestServerService:
 
         result = await server_service.get_server(test_db, 1)
 
-        test_db.get.assert_called_once_with(DbServer, 1)
+        test_db.get.assert_called_once_with(DbServer, 1, options=ANY)
         assert result == server_read
 
     @pytest.mark.asyncio
@@ -573,8 +585,8 @@ class TestServerService:
         new_prompt.name = "new_prompt"
         new_prompt._sa_instance_state = MagicMock()
 
-        # db.get is still used to retrieve the Server itself
-        test_db.get = Mock(side_effect=lambda cls, _id: (mock_server if (cls, _id) == (DbServer, 1) else None))
+        # db.get is still used to retrieve the Server itself (now with eager loading options)
+        test_db.get = Mock(side_effect=lambda cls, _id, options=None: (mock_server if (cls, _id) == (DbServer, 1) else None))
 
         # FIX: Configure db.execute to handle both the conflict check and the bulk item fetches
         mock_db_result = MagicMock()
@@ -803,7 +815,6 @@ class TestServerService:
         result = await server_service.toggle_server_status(test_db, 1, activate=False)
 
         test_db.get.assert_called_once_with(DbServer, 1)
-        # commit called once for status change (team name loaded via email_team relationship property)
         assert test_db.commit.call_count == 1
         test_db.refresh.assert_called_once()
         server_service._notify_server_deactivated.assert_called_once()
@@ -1104,7 +1115,7 @@ class TestServerService:
         expected_hex_uuid = str(uuid_module.UUID(new_standard_uuid)).replace("-", "")
 
         # Mock db.get to return existing server for the initial lookup, then None for the UUID check
-        test_db.get = Mock(side_effect=lambda cls, _id: existing_server if _id == "oldserverid" else None)
+        test_db.get = Mock(side_effect=lambda cls, _id, options=None: existing_server if _id == "oldserverid" else None)
 
         # Mock name conflict check
         mock_scalar = Mock()

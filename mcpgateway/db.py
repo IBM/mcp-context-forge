@@ -4251,7 +4251,7 @@ class Server(Base):
 
     @property
     def team(self) -> Optional[str]:
-        """Return the team name from the eagerly-loaded email_team relationship.
+        """Return the team name from the `email_team` relationship.
 
         Returns:
             Optional[str]: The team name if the server belongs to an active team, otherwise None.
