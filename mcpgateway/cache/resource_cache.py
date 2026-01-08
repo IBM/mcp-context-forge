@@ -13,14 +13,26 @@ resource content in the MCP Gateway. Features:
 
 Examples:
     >>> from mcpgateway.cache.resource_cache import ResourceCache
+    >>> from unittest.mock import patch
     >>> cache = ResourceCache(max_size=2, ttl=1)
     >>> cache.set('a', 1)
     >>> cache.get('a')
     1
-    >>> import time
-    >>> time.sleep(1.1)  # Wait for TTL expiration
-    >>> cache.get('a') is None  # doctest: +SKIP
+
+    Test TTL expiration using mocked time (no actual sleep):
+
+    >>> with patch("time.time") as mock_time:
+    ...     mock_time.return_value = 1000
+    ...     cache2 = ResourceCache(max_size=2, ttl=1)
+    ...     cache2.set('x', 100)
+    ...     cache2.get('x')  # Before expiration
+    ...     mock_time.return_value = 1002  # Advance past TTL
+    ...     cache2.get('x') is None  # After expiration
+    100
     True
+
+    Test LRU eviction:
+
     >>> cache.set('a', 1)
     >>> cache.set('b', 2)
     >>> cache.set('c', 3)  # LRU eviction
@@ -69,14 +81,26 @@ class ResourceCache:
 
     Examples:
         >>> from mcpgateway.cache.resource_cache import ResourceCache
+        >>> from unittest.mock import patch
         >>> cache = ResourceCache(max_size=2, ttl=1)
         >>> cache.set('a', 1)
         >>> cache.get('a')
         1
-        >>> import time
-        >>> time.sleep(1.5)  # Use 1.5s to ensure expiration
-        >>> cache.get('a') is None  # doctest: +SKIP
+
+        Test TTL expiration using mocked time (no actual sleep):
+
+        >>> with patch("time.time") as mock_time:
+        ...     mock_time.return_value = 1000
+        ...     cache2 = ResourceCache(max_size=2, ttl=1)
+        ...     cache2.set('x', 100)
+        ...     cache2.get('x')  # Before expiration
+        ...     mock_time.return_value = 1002  # Advance past TTL
+        ...     cache2.get('x') is None  # After expiration
+        100
         True
+
+        Test LRU eviction:
+
         >>> cache.set('a', 1)
         >>> cache.set('b', 2)
         >>> cache.set('c', 3)  # LRU eviction
