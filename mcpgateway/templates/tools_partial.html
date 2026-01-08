@@ -3,18 +3,15 @@
   <thead class="bg-gray-50 dark:bg-gray-700">
     <tr>
       <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-12">S. No.</th>
-      <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-36">Gateway Name</th>
+      <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-36">Source</th>
       <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-24">Name</th>
-      <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-24">URL</th>
-      <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-12">Type</th>
       <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-12">Request Type</th>
       <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Description</th>
       <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-24">Annotations</th>
       <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-20">Tags</th>
       <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-20">Owner</th>
       <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-20">Team</th>
-      <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-16">Visibility</th>
-      <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-12">Status</th>
+      <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-20">Status</th>
       <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-48">Actions</th>
     </tr>
   </thead>
@@ -29,25 +26,14 @@
     >
       {{ (pagination.page - 1) * pagination.per_page + loop.index }}
     </td>
-    <td
-      class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300 w-36"
-    >
-      {{ tool.gatewaySlug }}
+    <td class="px-2 py-4 text-sm w-36">
+      <div class="font-medium text-gray-900 dark:text-gray-100">{{ tool.gatewaySlug }}</div>
+      <div class="text-xs text-gray-500 dark:text-gray-400 break-words">{{ tool.url }}</div>
     </td>
     <td
       class="px-2 py-4 whitespace-nowrap text-sm font-medium text-gray-900 w-24 dark:text-gray-100"
     >
       {{ tool.name }}
-    </td>
-    <td
-      class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300 w-24"
-    >
-      {{ tool.url }}
-    </td>
-    <td
-      class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300 w-12"
-    >
-      {{ tool.integrationType }}
     </td>
     <td
       class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300 w-12"
@@ -110,83 +96,27 @@
         >None</span
       >{% endif %}
     </td>
-    <td
-      class="px-2 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 w-16"
-    >
-      {% if tool.visibility == "public" %}
-      <span
-        class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800"
-        >🌍 Public</span
-      >
-      {% elif tool.visibility == "team" %}
-      <span
-        class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800"
-        >👥 Team</span
-      >
-      {% else %}
-      <span
-        class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800"
-        >🔒 Private</span
-      >
-      {% endif %}
-    </td>
-    <td class="px-2 py-4 whitespace-nowrap text-sm w-12">
-      <div class="relative group">
-        {% set enabled = tool.enabled %} {% set reachable =
-        tool.reachable %}
-        <span
-          class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium {% if enabled and reachable %}bg-green-100 text-green-800{% elif enabled %}bg-yellow-100 text-yellow-800{% else %}bg-red-100 text-red-800{% endif %}"
-        >
-          {% if enabled and reachable %}
-          <!-- Online label with green checkmark -->
-          Online
-          <svg
-            class="ml-1 h-4 w-4 text-green-600"
-            fill="currentColor"
-            viewBox="0 0 20 20"
-          >
-            <path
-              fill-rule="evenodd"
-              d="M16.707 5.293a1 1 0 00-1.414 0L9 11.586 6.707 9.293a1 1 0 00-1.414 1.414l3 3a1 1 0 001.414 0l7-7a1 1 0 000-1.414z"
-              clip-rule="evenodd"
-            />
-          </svg>
-          {% elif enabled %}
-          <!-- Offline label with yellow warning -->
-          Offline
-          <svg
-            class="ml-1 h-4 w-4 text-yellow-600"
-            fill="currentColor"
-            viewBox="0 0 20 20"
-          >
-            <path
-              fill-rule="evenodd"
-              d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-10h2v4h-2V8zm0 6h2v2h-2v-2z"
-              clip-rule="evenodd"
-            />
-          </svg>
-          {% else %}
-          <!-- Inactive label with red cross -->
-          Inactive
-          <svg
-            class="ml-1 h-4 w-4 text-red-600"
-            fill="currentColor"
-            viewBox="0 0 20 20"
-          >
-            <path
-              fill-rule="evenodd"
-              d="M6.293 6.293a1 1 0 011.414 0L10 8.586l2.293-2.293a1 1 0 111.414 1.414L11.414 10l2.293 2.293a1 1 0 11-1.414 1.414L10 11.414l-2.293 2.293a1 1 0 11-1.414-1.414L8.586 10 6.293 7.707a1 1 0 010-1.414z"
-              clip-rule="evenodd"
-            />
-          </svg>
-          {% endif %}
-        </span>
-        <div
-          class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow"
-        >
-          {% if not enabled %} 💡Tool is Manually Deactivated. {% elif not
-          reachable %} 💡The host gateway for this tool is unreachable. {%
-          else %} 💡Everything stable. {% endif %}
+    <td class="px-2 py-4 whitespace-nowrap text-sm w-20">
+      <div class="flex flex-col gap-1">
+        <!-- Type badge -->
+        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 w-fit">{{ tool.integrationType }}</span>
+        <!-- Visibility badge -->
+        {% if tool.visibility == "public" %}
+        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 w-fit">🌍 Public</span>
+        {% elif tool.visibility == "team" %}
+        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200 w-fit">👥 Team</span>
+        {% else %}
+        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200 w-fit">🔒 Private</span>
+        {% endif %}
+        <!-- Status badge with tooltip -->
+        <div class="relative group">
+          {% set enabled = tool.enabled %}{% set reachable = tool.reachable %}
+          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium w-fit {% if enabled and reachable %}bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200{% elif enabled %}bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200{% else %}bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200{% endif %}">
+            {% if enabled and reachable %}● Online{% elif enabled %}● Offline{% else %}● Inactive{% endif %}
+          </span>
+          <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">
+            {% if not enabled %}Tool is Manually Deactivated{% elif not reachable %}Gateway unreachable{% else %}Everything stable{% endif %}
+          </div>
         </div>
       </div>
     </td>
