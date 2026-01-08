@@ -49,7 +49,7 @@ from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
 from sqlalchemy import and_, case, cast, desc, func, or_, select, String, text
 from sqlalchemy.exc import IntegrityError, InvalidRequestError, OperationalError
-from sqlalchemy.orm import joinedload, Session
+from sqlalchemy.orm import joinedload, selectinload, Session
 from sqlalchemy.sql.functions import coalesce
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
@@ -60,9 +60,13 @@ from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
-from mcpgateway.db import EmailTeam, extract_json_field, get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
+from mcpgateway.db import A2AAgent as DbA2AAgent
+from mcpgateway.db import EmailTeam, extract_json_field
+from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
+from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import utc_now
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
@@ -1146,6 +1150,155 @@ async def admin_list_servers(
     }
 
 
+@admin_router.get("/servers/partial", response_class=HTMLResponse)
+async def admin_servers_partial_html(
+    request: Request,
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    include_inactive: bool = False,
+    render: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Return paginated servers HTML partials for the admin UI.
+
+    This HTMX endpoint returns only the partial HTML used by the admin UI for
+    servers. It supports three render modes:
+
+    - default: full table partial (rows + controls)
+    - ``render="controls"``: return only pagination controls
+    - ``render="selector"``: return selector items for infinite scroll
+
+    Args:
+        request (Request): FastAPI request object used by the template engine.
+        page (int): Page number (1-indexed).
+        per_page (int): Number of items per page (bounded by settings).
+        include_inactive (bool): If True, include inactive servers in results.
+        render (Optional[str]): Render mode; one of None, "controls", "selector".
+        db (Session): Database session (dependency-injected).
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        Union[HTMLResponse, TemplateResponse]: A rendered template response
+        containing either the table partial, pagination controls, or selector
+        items depending on ``render``. The response contains JSON-serializable
+        encoded server data when templates expect it.
+    """
+    LOGGER.debug(f"User {get_user_email(user)} requested servers HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render})")
+
+    # Normalize per_page within configured bounds
+    per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
+
+    user_email = get_user_email(user)
+
+    # Team scoping
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    # Build base query with eager loading to avoid N+1 queries
+    query = select(DbServer).options(
+        selectinload(DbServer.tools),
+        selectinload(DbServer.resources),
+        selectinload(DbServer.prompts),
+        selectinload(DbServer.a2a_agents),
+    )
+
+    if not include_inactive:
+        query = query.where(DbServer.enabled.is_(True))
+
+    # Access conditions: owner, team, public
+    access_conditions = [DbServer.owner_email == user_email]
+    if team_ids:
+        access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
+    access_conditions.append(DbServer.visibility == "public")
+
+    query = query.where(or_(*access_conditions))
+
+    # Apply pagination ordering for cursor support
+    query = query.order_by(desc(DbServer.created_at), desc(DbServer.id))
+
+    # Build query params for pagination links
+    query_params = {}
+    if include_inactive:
+        query_params["include_inactive"] = "true"
+
+    # Use unified pagination function
+    paginated_result = await paginate_query(
+        db=db,
+        query=query,
+        page=page,
+        per_page=per_page,
+        cursor=None,  # HTMX partials use page-based navigation
+        base_url=f"{settings.app_root_path}/admin/servers/partial",
+        query_params=query_params,
+        use_cursor_threshold=False,  # Disable auto-cursor switching for UI
+    )
+
+    # Extract paginated servers (DbServer objects)
+    servers_db = paginated_result["data"]
+    pagination = paginated_result["pagination"]
+    links = paginated_result["links"]
+
+    # Batch fetch team names for the servers to avoid N+1 queries
+    team_ids_set = {p.team_id for p in servers_db if p.team_id}
+    team_map = {}
+    if team_ids_set:
+        teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids_set), EmailTeam.is_active.is_(True))).all()
+        team_map = {team.id: team.name for team in teams}
+
+    # Apply team names to DB objects before conversion
+    for p in servers_db:
+        p.team = team_map.get(p.team_id) if p.team_id else None
+
+    # Batch convert to Pydantic models using server service
+    # This eliminates the N+1 query problem from calling get_server_details() in a loop
+    servers_pydantic = [server_service.convert_server_to_read(p, include_metrics=False) for p in servers_db]
+
+    data = jsonable_encoder(servers_pydantic)
+    base_url = f"{settings.app_root_path}/admin/servers/partial"
+
+    # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
+    db.commit()
+
+    if render == "controls":
+        return request.app.state.templates.TemplateResponse(
+            "pagination_controls.html",
+            {
+                "request": request,
+                "pagination": pagination.model_dump(),
+                "base_url": base_url,
+                "hx_target": "#servers-table-body",
+                "hx_indicator": "#servers-loading",
+                "query_params": query_params,
+                "root_path": request.scope.get("root_path", ""),
+            },
+        )
+
+    if render == "selector":
+        return request.app.state.templates.TemplateResponse(
+            "servers_selector_items.html",
+            {
+                "request": request,
+                "data": data,
+                "pagination": pagination.model_dump(),
+                "root_path": request.scope.get("root_path", ""),
+            },
+        )
+
+    return request.app.state.templates.TemplateResponse(
+        "servers_partial.html",
+        {
+            "request": request,
+            "data": data,
+            "pagination": pagination.model_dump(),
+            "links": links.model_dump() if links else None,
+            "root_path": request.scope.get("root_path", ""),
+            "include_inactive": include_inactive,
+        },
+    )
+
+
 @admin_router.get("/servers/{server_id}", response_model=ServerRead)
 async def admin_get_server(server_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
@@ -2190,35 +2343,6 @@ async def admin_list_gateways(
         "pagination": paginated_result["pagination"].model_dump(),
         "links": paginated_result["links"].model_dump() if paginated_result["links"] else None,
     }
-
-
-@admin_router.get("/gateways/ids")
-async def admin_list_gateway_ids(
-    include_inactive: bool = False,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-) -> Dict[str, Any]:
-    """
-    Return a JSON object containing a list of all gateway IDs.
-
-    This endpoint is used by the admin UI to support the "Select All" action
-    for gateways. It returns a simple JSON payload with a single key
-    `gateway_ids` containing an array of gateway identifiers.
-
-    Args:
-        include_inactive (bool): Whether to include inactive gateways in the results.
-        db (Session): Database session dependency.
-        user: Authenticated user dependency.
-
-    Returns:
-        Dict[str, Any]: JSON object containing the `gateway_ids` list and metadata.
-    """
-    user_email = get_user_email(user)
-    LOGGER.debug(f"User {user_email} requested gateway ids list")
-    gateways, _ = await gateway_service.list_gateways(db, include_inactive=include_inactive, user_email=user_email, limit=0)
-    ids = [str(g.id) for g in gateways]
-    LOGGER.info(f"Gateway IDs retrieved: {ids}")
-    return {"gateway_ids": ids}
 
 
 @admin_router.post("/gateways/{gateway_id}/toggle")
@@ -6259,6 +6383,375 @@ async def admin_prompts_partial_html(
     )
 
 
+@admin_router.get("/gateways/partial", response_class=HTMLResponse)
+async def admin_gateways_partial_html(
+    request: Request,
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    include_inactive: bool = False,
+    render: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Return paginated gateways HTML partials for the admin UI.
+
+    This HTMX endpoint returns only the partial HTML used by the admin UI for
+    gateways. It supports three render modes:
+
+    - default: full table partial (rows + controls)
+    - ``render="controls"``: return only pagination controls
+    - ``render="selector"``: return selector items for infinite scroll
+
+    Args:
+        request (Request): FastAPI request object used by the template engine.
+        page (int): Page number (1-indexed).
+        per_page (int): Number of items per page (bounded by settings).
+        include_inactive (bool): If True, include inactive gateways in results.
+        render (Optional[str]): Render mode; one of None, "controls", "selector".
+        db (Session): Database session (dependency-injected).
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        Union[HTMLResponse, TemplateResponse]: A rendered template response
+        containing either the table partial, pagination controls, or selector
+        items depending on ``render``. The response contains JSON-serializable
+        encoded gateway data when templates expect it.
+    """
+    LOGGER.debug(f"User {get_user_email(user)} requested gateways HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render})")
+    # Normalize per_page within configured bounds
+    per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
+
+    user_email = get_user_email(user)
+
+    # Team scoping
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    # Build base query
+    query = select(DbGateway)
+
+    if not include_inactive:
+        query = query.where(DbGateway.enabled.is_(True))
+
+    # Access conditions: owner, team, public
+    access_conditions = [DbGateway.owner_email == user_email]
+    if team_ids:
+        access_conditions.append(and_(DbGateway.team_id.in_(team_ids), DbGateway.visibility.in_(["team", "public"])))
+    access_conditions.append(DbGateway.visibility == "public")
+
+    query = query.where(or_(*access_conditions))
+
+    # Apply pagination ordering for cursor support
+    query = query.order_by(desc(DbGateway.created_at), desc(DbGateway.id))
+
+    # Build query params for pagination links
+    query_params = {}
+    if include_inactive:
+        query_params["include_inactive"] = "true"
+
+    # Use unified pagination function
+    paginated_result = await paginate_query(
+        db=db,
+        query=query,
+        page=page,
+        per_page=per_page,
+        cursor=None,  # HTMX partials use page-based navigation
+        base_url=f"{settings.app_root_path}/admin/gateways/partial",
+        query_params=query_params,
+        use_cursor_threshold=False,  # Disable auto-cursor switching for UI
+    )
+
+    # Extract paginated gateways (DbGateway objects)
+    gateways_db = paginated_result["data"]
+    pagination = paginated_result["pagination"]
+    links = paginated_result["links"]
+
+    # Batch fetch team names for the gateways to avoid N+1 queries
+    team_ids_set = {p.team_id for p in gateways_db if p.team_id}
+    team_map = {}
+    if team_ids_set:
+        teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids_set), EmailTeam.is_active.is_(True))).all()
+        team_map = {team.id: team.name for team in teams}
+
+    # Apply team names to DB objects before conversion
+    for p in gateways_db:
+        p.team = team_map.get(p.team_id) if p.team_id else None
+
+    # Batch convert to Pydantic models using gateway service
+    # This eliminates the N+1 query problem from calling get_gateway_details() in a loop
+    gateways_pydantic = [gateway_service.convert_gateway_to_read(p) for p in gateways_db]
+
+    data = jsonable_encoder(gateways_pydantic)
+    base_url = f"{settings.app_root_path}/admin/gateways/partial"
+
+    # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
+    db.commit()
+
+    if render == "controls":
+        return request.app.state.templates.TemplateResponse(
+            "pagination_controls.html",
+            {
+                "request": request,
+                "pagination": pagination.model_dump(),
+                "base_url": base_url,
+                "hx_target": "#gateways-table-body",
+                "hx_indicator": "#gateways-loading",
+                "query_params": query_params,
+                "root_path": request.scope.get("root_path", ""),
+            },
+        )
+
+    if render == "selector":
+        return request.app.state.templates.TemplateResponse(
+            "gateways_selector_items.html",
+            {"request": request, "data": data, "pagination": pagination.model_dump(), "root_path": request.scope.get("root_path", "")},
+        )
+
+    return request.app.state.templates.TemplateResponse(
+        "gateways_partial.html",
+        {
+            "request": request,
+            "data": data,
+            "pagination": pagination.model_dump(),
+            "links": links.model_dump() if links else None,
+            "root_path": request.scope.get("root_path", ""),
+            "include_inactive": include_inactive,
+        },
+    )
+
+
+@admin_router.get("/gateways/ids", response_class=JSONResponse)
+async def admin_get_all_gateways_ids(
+    include_inactive: bool = False,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Return all gateway IDs accessible to the current user (select-all helper).
+
+    This endpoint is used by UI "Select All" helpers to fetch only the IDs
+    of gateways the requesting user can access (owner, team, or public).
+
+    Args:
+        include_inactive (bool): When True include prompts that are inactive.
+        db (Session): Database session (injected dependency).
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        dict: A dictionary containing two keys:
+            - "prompt_ids": List[str] of accessible prompt IDs.
+            - "count": int number of IDs returned.
+    """
+    user_email = get_user_email(user)
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    query = select(DbGateway.id)
+
+    if not include_inactive:
+        query = query.where(DbGateway.enabled.is_(True))
+
+    access_conditions = [DbGateway.owner_email == user_email, DbGateway.visibility == "public"]
+    if team_ids:
+        access_conditions.append(and_(DbGateway.team_id.in_(team_ids), DbGateway.visibility.in_(["team", "public"])))
+
+    query = query.where(or_(*access_conditions))
+    gateway_ids = [row[0] for row in db.execute(query).all()]
+    return {"gateway_ids": gateway_ids, "count": len(gateway_ids)}
+
+
+@admin_router.get("/gateways/search", response_class=JSONResponse)
+async def admin_search_gateways(
+    q: str = Query("", description="Search query"),
+    include_inactive: bool = False,
+    limit: int = Query(100, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Search gateways by name or description for selector search.
+
+    Performs a case-insensitive search over prompt names and descriptions
+    and returns a limited list of matching gateways suitable for selector
+    UIs (id, name, description).
+
+    Args:
+        q (str): Search query string.
+        include_inactive (bool): When True include gateways that are inactive.
+        limit (int): Maximum number of results to return (bounded by the query parameter).
+        db (Session): Database session (injected dependency).
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        dict: A dictionary containing:
+            - "gateways": List[dict] where each dict has keys "id", "name", "description".
+            - "count": int number of matched gateways returned.
+    """
+    user_email = get_user_email(user)
+    search_query = q.strip().lower()
+    if not search_query:
+        return {"gateways": [], "count": 0}
+
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    query = select(DbGateway.id, DbGateway.name, DbGateway.url, DbGateway.description)
+
+    if not include_inactive:
+        query = query.where(DbGateway.enabled.is_(True))
+
+    access_conditions = [DbGateway.owner_email == user_email, DbGateway.visibility == "public"]
+    if team_ids:
+        access_conditions.append(and_(DbGateway.team_id.in_(team_ids), DbGateway.visibility.in_(["team", "public"])))
+
+    query = query.where(or_(*access_conditions))
+
+    search_conditions = [
+        func.lower(DbGateway.name).contains(search_query),
+        func.lower(coalesce(DbGateway.url, "")).contains(search_query),
+        func.lower(coalesce(DbGateway.description, "")).contains(search_query),
+    ]
+    query = query.where(or_(*search_conditions))
+
+    query = query.order_by(
+        case(
+            (func.lower(DbGateway.name).startswith(search_query), 1),
+            (func.lower(coalesce(DbGateway.url, "")).startswith(search_query), 1),
+            else_=2,
+        ),
+        func.lower(DbGateway.name),
+    ).limit(limit)
+
+    results = db.execute(query).all()
+    gateways = []
+    for row in results:
+        gateways.append(
+            {
+                "id": row.id,
+                "name": row.name,
+                "url": row.url,
+                "description": row.description,
+            }
+        )
+
+    return {"gateways": gateways, "count": len(gateways)}
+
+
+@admin_router.get("/servers/ids", response_class=JSONResponse)
+async def admin_get_all_server_ids(
+    include_inactive: bool = False,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Return all server IDs accessible to the current user (select-all helper).
+
+    This endpoint is used by UI "Select All" helpers to fetch only the IDs
+    of servers the requesting user can access (owner, team, or public).
+
+    Args:
+        include_inactive (bool): When True include servers that are inactive.
+        db (Session): Database session (injected dependency).
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        dict: A dictionary containing two keys:
+            - "server_ids": List[str] of accessible server IDs.
+            - "count": int number of IDs returned.
+    """
+    user_email = get_user_email(user)
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    query = select(DbServer.id)
+
+    if not include_inactive:
+        query = query.where(DbServer.enabled.is_(True))
+
+    access_conditions = [DbServer.owner_email == user_email, DbServer.visibility == "public"]
+    if team_ids:
+        access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
+
+    query = query.where(or_(*access_conditions))
+    server_ids = [row[0] for row in db.execute(query).all()]
+    return {"server_ids": server_ids, "count": len(server_ids)}
+
+
+@admin_router.get("/servers/search", response_class=JSONResponse)
+async def admin_search_servers(
+    q: str = Query("", description="Search query"),
+    include_inactive: bool = False,
+    limit: int = Query(100, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Search servers by name or description for selector search.
+
+    Performs a case-insensitive search over prompt names and descriptions
+    and returns a limited list of matching servers suitable for selector
+    UIs (id, name, description).
+
+    Args:
+        q (str): Search query string.
+        include_inactive (bool): When True include servers that are inactive.
+        limit (int): Maximum number of results to return (bounded by the query parameter).
+        db (Session): Database session (injected dependency).
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        dict: A dictionary containing:
+            - "servers": List[dict] where each dict has keys "id", "name", "description".
+            - "count": int number of matched servers returned.
+    """
+    user_email = get_user_email(user)
+    search_query = q.strip().lower()
+    if not search_query:
+        return {"servers": [], "count": 0}
+
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    query = select(DbServer.id, DbServer.name, DbServer.description)
+
+    if not include_inactive:
+        query = query.where(DbServer.enabled.is_(True))
+
+    access_conditions = [DbServer.owner_email == user_email, DbServer.visibility == "public"]
+    if team_ids:
+        access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
+
+    query = query.where(or_(*access_conditions))
+
+    search_conditions = [
+        func.lower(DbServer.name).contains(search_query),
+        func.lower(coalesce(DbServer.description, "")).contains(search_query),
+    ]
+    query = query.where(or_(*search_conditions))
+
+    query = query.order_by(
+        case(
+            (func.lower(DbServer.name).startswith(search_query), 1),
+            else_=2,
+        ),
+        func.lower(DbServer.name),
+    ).limit(limit)
+
+    results = db.execute(query).all()
+    servers = []
+    for row in results:
+        servers.append(
+            {
+                "id": row.id,
+                "name": row.name,
+                "description": row.description,
+            }
+        )
+
+    return {"servers": servers, "count": len(servers)}
+
+
 @admin_router.get("/resources/partial", response_class=HTMLResponse)
 async def admin_resources_partial_html(
     request: Request,
@@ -6716,6 +7209,274 @@ async def admin_search_prompts(
         )
 
     return {"prompts": prompts, "count": len(prompts)}
+
+
+@admin_router.get("/a2a/partial", response_class=HTMLResponse)
+async def admin_a2a_partial_html(
+    request: Request,
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    include_inactive: bool = False,
+    render: Optional[str] = Query(None),
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Return paginated a2a agents HTML partials for the admin UI.
+
+    This HTMX endpoint returns only the partial HTML used by the admin UI for
+    a2a agents. It supports three render modes:
+
+    - default: full table partial (rows + controls)
+    - ``render="controls"``: return only pagination controls
+    - ``render="selector"``: return selector items for infinite scroll
+
+    Args:
+        request (Request): FastAPI request object used by the template engine.
+        page (int): Page number (1-indexed).
+        per_page (int): Number of items per page (bounded by settings).
+        include_inactive (bool): If True, include inactive a2a agents in results.
+        render (Optional[str]): Render mode; one of None, "controls", "selector".
+        gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
+        db (Session): Database session (dependency-injected).
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        Union[HTMLResponse, TemplateResponse]: A rendered template response
+        containing either the table partial, pagination controls, or selector
+        items depending on ``render``. The response contains JSON-serializable
+        encoded a2a agent data when templates expect it.
+    """
+    LOGGER.debug(f"User {get_user_email(user)} requested a2a_agents HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render}, gateway_id={gateway_id})")
+    # Normalize per_page within configured bounds
+    per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
+
+    user_email = get_user_email(user)
+
+    # Team scoping
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    # Build base query
+    query = select(DbA2AAgent)
+
+    # Note: A2A agents don't have gateway_id field, they connect directly via endpoint_url
+    # The gateway_id parameter is ignored for A2A agents
+
+    if not include_inactive:
+        query = query.where(DbA2AAgent.enabled.is_(True))
+
+    # Access conditions: owner, team, public
+    access_conditions = [DbA2AAgent.owner_email == user_email]
+    if team_ids:
+        access_conditions.append(and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])))
+    access_conditions.append(DbA2AAgent.visibility == "public")
+
+    query = query.where(or_(*access_conditions))
+
+    # Apply pagination ordering for cursor support
+    query = query.order_by(desc(DbA2AAgent.created_at), desc(DbA2AAgent.id))
+
+    # Build query params for pagination links
+    query_params = {}
+    if include_inactive:
+        query_params["include_inactive"] = "true"
+    if gateway_id:
+        query_params["gateway_id"] = gateway_id
+
+    # Use unified pagination function
+    paginated_result = await paginate_query(
+        db=db,
+        query=query,
+        page=page,
+        per_page=per_page,
+        cursor=None,  # HTMX partials use page-based navigation
+        base_url=f"{settings.app_root_path}/admin/a2a/partial",
+        query_params=query_params,
+        use_cursor_threshold=False,  # Disable auto-cursor switching for UI
+    )
+
+    # Extract paginated a2a_agents (DbA2AAgent objects)
+    a2a_agents_db = paginated_result["data"]
+    pagination = paginated_result["pagination"]
+    links = paginated_result["links"]
+
+    # Batch fetch team names for the a2a_agents to avoid N+1 queries
+    team_ids_set = {p.team_id for p in a2a_agents_db if p.team_id}
+    team_map = {}
+    if team_ids_set:
+        teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids_set), EmailTeam.is_active.is_(True))).all()
+        team_map = {team.id: team.name for team in teams}
+
+    # Apply team names to DB objects before conversion
+    for p in a2a_agents_db:
+        p.team = team_map.get(p.team_id) if p.team_id else None
+
+    # Batch convert to Pydantic models using a2a service
+    # This eliminates the N+1 query problem from calling get_a2a_details() in a loop
+    a2a_agents_pydantic = [a2a_service.convert_agent_to_read(p, include_metrics=False) for p in a2a_agents_db]
+
+    data = jsonable_encoder(a2a_agents_pydantic)
+    base_url = f"{settings.app_root_path}/admin/a2a/partial"
+
+    # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
+    db.commit()
+
+    if render == "controls":
+        return request.app.state.templates.TemplateResponse(
+            "pagination_controls.html",
+            {
+                "request": request,
+                "pagination": pagination.model_dump(),
+                "base_url": base_url,
+                "hx_target": "#agents-table-body",
+                "hx_indicator": "#agents-loading",
+                "query_params": query_params,
+                "root_path": request.scope.get("root_path", ""),
+            },
+        )
+
+    if render == "selector":
+        return request.app.state.templates.TemplateResponse(
+            "agents_selector_items.html",
+            {
+                "request": request,
+                "data": data,
+                "pagination": pagination.model_dump(),
+                "root_path": request.scope.get("root_path", ""),
+                "gateway_id": gateway_id,
+            },
+        )
+
+    return request.app.state.templates.TemplateResponse(
+        "agents_partial.html",
+        {
+            "request": request,
+            "data": data,
+            "pagination": pagination.model_dump(),
+            "links": links.model_dump() if links else None,
+            "root_path": request.scope.get("root_path", ""),
+            "include_inactive": include_inactive,
+        },
+    )
+
+
+@admin_router.get("/a2a/ids", response_class=JSONResponse)
+async def admin_get_all_agent_ids(
+    include_inactive: bool = False,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Return all agent IDs accessible to the current user (select-all helper).
+
+    This endpoint is used by UI "Select All" helpers to fetch only the IDs
+    of a2a agents the requesting user can access (owner, team, or public).
+
+    Args:
+        include_inactive (bool): When True include a2a agents that are inactive.
+        db (Session): Database session (injected dependency).
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        dict: A dictionary containing two keys:
+            - "agent_ids": List[str] of accessible agent IDs.
+            - "count": int number of IDs returned.
+    """
+    user_email = get_user_email(user)
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    query = select(DbA2AAgent.id)
+
+    if not include_inactive:
+        query = query.where(DbA2AAgent.enabled.is_(True))
+
+    access_conditions = [DbA2AAgent.owner_email == user_email, DbA2AAgent.visibility == "public"]
+    if team_ids:
+        access_conditions.append(and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])))
+
+    query = query.where(or_(*access_conditions))
+    agent_ids = [row[0] for row in db.execute(query).all()]
+    return {"agent_ids": agent_ids, "count": len(agent_ids)}
+
+
+@admin_router.get("/a2a/search", response_class=JSONResponse)
+async def admin_search_a2a_agents(
+    q: str = Query("", description="Search query"),
+    include_inactive: bool = False,
+    limit: int = Query(100, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Search a2a agents by name or description for selector search.
+
+    Performs a case-insensitive search over prompt names and descriptions
+    and returns a limited list of matching a2a agents suitable for selector
+    UIs (id, name, description).
+
+    Args:
+        q (str): Search query string.
+        include_inactive (bool): When True include a2a agents that are inactive.
+        limit (int): Maximum number of results to return (bounded by the query parameter).
+        db (Session): Database session (injected dependency).
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        dict: A dictionary containing:
+            - "agents": List[dict] where each dict has keys "id", "name", "description".
+            - "count": int number of matched a2a agents returned.
+    """
+    user_email = get_user_email(user)
+    search_query = q.strip().lower()
+    if not search_query:
+        return {"agents": [], "count": 0}
+
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    query = select(DbA2AAgent.id, DbA2AAgent.name, DbA2AAgent.endpoint_url, DbA2AAgent.description)
+
+    if not include_inactive:
+        query = query.where(DbA2AAgent.enabled.is_(True))
+
+    access_conditions = [DbA2AAgent.owner_email == user_email, DbA2AAgent.visibility == "public"]
+    if team_ids:
+        access_conditions.append(and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])))
+
+    query = query.where(or_(*access_conditions))
+
+    search_conditions = [
+        func.lower(DbA2AAgent.name).contains(search_query),
+        func.lower(coalesce(DbA2AAgent.endpoint_url, "")).contains(search_query),
+        func.lower(coalesce(DbA2AAgent.description, "")).contains(search_query),
+    ]
+    query = query.where(or_(*search_conditions))
+
+    query = query.order_by(
+        case(
+            (func.lower(DbA2AAgent.name).startswith(search_query), 1),
+            (func.lower(coalesce(DbA2AAgent.endpoint_url, "")).startswith(search_query), 1),
+            else_=2,
+        ),
+        func.lower(DbA2AAgent.name),
+    ).limit(limit)
+
+    results = db.execute(query).all()
+    agents = []
+    for row in results:
+        agents.append(
+            {
+                "id": row.id,
+                "name": row.name,
+                "endpoint_url": row.endpoint_url,
+                "description": row.description,
+            }
+        )
+
+    return {"agents": agents, "count": len(agents)}
 
 
 @admin_router.get("/tools/{tool_id}", response_model=ToolRead)

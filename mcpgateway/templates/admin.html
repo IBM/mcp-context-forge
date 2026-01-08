@@ -2041,6 +2041,79 @@
 
         <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
           <div class="overflow-x-auto">
+            <!-- Table will be loaded via HTMX -->
+            <div id="servers-table"
+                 hx-get="{{ root_path }}/admin/servers/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}"
+                 hx-trigger="load"
+                 hx-swap="outerHTML"
+                 hx-indicator="#servers-loading">
+              <!-- Loading placeholder -->
+              <div class="flex items-center justify-center p-8">
+                <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span class="ml-3 text-gray-600 dark:text-gray-400">Loading servers...</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Loading Indicator for HTMX -->
+          <div id="servers-loading" class="htmx-indicator">
+            <div class="flex items-center justify-center p-4">
+              <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span class="ml-2 text-gray-600 dark:text-gray-400">Loading servers...</span>
+            </div>
+          </div>
+
+          <!-- Pagination Controls -->
+          {# ---- compute safe pagination values first ---- #}
+          {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
+          {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
+          {% set total_items = (pagination.total_items if pagination is defined else (total_items if total_items is defined else (servers|length if servers is defined else 0))) %}
+          {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
+          {% set has_prev = page > 1 %}
+          {% set has_next = (page * per_page) < total_items %}
+
+          {% set pagination = {
+            'page': page,
+            'per_page': per_page,
+            'total_items': total_items,
+            'total_pages': total_pages,
+            'has_prev': has_prev,
+            'has_next': has_next
+          } %}
+
+          {# build the refresh URL for controls #}
+          {% set controls_url = root_path + '/admin/servers/partial'
+            + '?render=controls'
+            + '&page=' + page|string
+            + '&per_page=' + per_page|string
+            + '&include_inactive=' + (include_inactive|default(false)|string|lower) %}
+
+          <div id="servers-pagination-controls"
+              hx-get="{{ controls_url }}"
+              hx-trigger="refreshControls"
+              hx-target="#servers-pagination-controls"
+              hx-swap="outerHTML"
+              hx-indicator="#servers-loading">
+
+            {# helpers used by pagination_controls.html #}
+            {% set base_url = root_path + '/admin/servers/partial' %}
+            {% set hx_target = '#servers-table' %}
+            {% set hx_indicator = '#servers-loading' %}
+            {% set query_params = {'include_inactive': include_inactive} %}
+
+            {% include 'pagination_controls.html' %}
+          </div>
+        </div>
+
+        <!-- Old table for reference (hidden) -->
+        <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800" style="display: none;">
+          <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200">
               <thead class="bg-gray-50 dark:bg-gray-700">
                 <tr>
@@ -2420,44 +2493,14 @@
                   <div
                     id="associatedGateways"
                     class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
+                    hx-get="{{ root_path }}/admin/gateways/partial?page=1&per_page=50&render=selector"
+                    hx-trigger="load"
+                    hx-swap="innerHTML"
                   >
-                    {% for gateway in gateways %}
-                    <label
-                      class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1 tool-item"
-                    >
-                      <input
-                        type="checkbox"
-                        name="associatedGateways"
-                        value="{{ gateway.id }}"
-                        class="mcpserver-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                      />
-                      <span class="select-none"
-                        >{{ gateway.slug or gateway.name
-                        }}</span
-                      >
-                    </label>
-                    {% endfor %}
-
-                    <!-- Special checkbox for RestTool (no gateway id) -->
-                    <label
-                      class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1 tool-item"
-                    >
-                      <input
-                        type="checkbox"
-                        name="associatedGateways"
-                        value=""
-                        data-gateway-null="true"
-                        class="mcpserver-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                      />
-                      <span class="select-none">REST/A2A</span>
-                    </label>
-                    <p
-                      id="noGatewayMessage"
-                      class="text-gray-700 dark:text-gray-300"
-                      style="display: none"
-                    >
-                      No MCP server found containing "<span id="searchQueryServers"></span>"
-                    </p>
+                    <!-- Gateway checkboxes will be loaded here via HTMX -->
+                    <div class="flex items-center justify-center p-4">
+                      <span class="text-gray-500 dark:text-gray-400 text-sm">Loading MCP servers...</span>
+                    </div>
                   </div>
                   <div class="flex justify-end mt-3 gap-2">
                     <button
@@ -4345,6 +4388,77 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
         <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
           <div class="overflow-x-auto">
+            <!-- Table will be loaded via HTMX -->
+            <div id="gateways-table"
+                 hx-get="{{ root_path }}/admin/gateways/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}"
+                 hx-trigger="load"
+                 hx-swap="outerHTML"
+                 hx-indicator="#gateways-loading">
+              <!-- Loading placeholder -->
+              <div class="flex items-center justify-center p-8">
+                <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span class="ml-3 text-gray-600 dark:text-gray-400">Loading gateways...</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Loading Indicator for HTMX -->
+          <div id="gateways-loading" class="htmx-indicator">
+            <div class="flex items-center justify-center p-4">
+              <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span class="ml-2 text-gray-600 dark:text-gray-400">Loading gateways...</span>
+            </div>
+          </div>
+
+          <!-- Pagination Controls -->
+          {# ---- compute safe pagination values first ---- #}
+          {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
+          {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
+          {% set total_items = (pagination.total_items if pagination is defined else (total_items if total_items is defined else (gateways|length if gateways is defined else 0))) %}
+          {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
+          {% set has_prev = page > 1 %}
+          {% set has_next = (page * per_page) < total_items %}
+
+          {% set pagination = {
+            'page': page,
+            'per_page': per_page,
+            'total_items': total_items,
+            'total_pages': total_pages,
+            'has_prev': has_prev,
+            'has_next': has_next
+          } %}
+
+          {# build the refresh URL for controls #}
+          {% set controls_url = root_path + '/admin/gateways/partial'
+            + '?render=controls'
+            + '&page=' + page|string
+            + '&per_page=' + per_page|string
+            + '&include_inactive=' + (include_inactive|default(false)|string|lower) %}
+
+          <div id="gateways-pagination-controls"
+              hx-get="{{ controls_url }}"
+              hx-trigger="refreshControls"
+              hx-target="#gateways-pagination-controls"
+              hx-swap="outerHTML"
+              hx-indicator="#gateways-loading">
+
+            {# helpers used by pagination_controls.html #}
+            {% set base_url = root_path + '/admin/gateways/partial' %}
+            {% set hx_target = '#gateways-table' %}
+            {% set hx_indicator = '#gateways-loading' %}
+            {% set query_params = {'include_inactive': include_inactive} %}
+
+            {% include 'pagination_controls.html' %}
+          </div>
+        </div>
+        <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800" style="display: none;">
+          <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200">
               <thead class="bg-gray-50 dark:bg-gray-700">
                 <tr>
@@ -4667,7 +4781,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           </div>
         </div>
 
-        <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
+        <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800 mt-8">
           <h3 class="text-lg font-bold mb-4 dark:text-gray-200">
             Add New MCP Server or Gateway
           </h3>
@@ -5871,6 +5985,86 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               Registered A2A Agents
             </h3>
             <div class="overflow-x-auto">
+              <!-- Table will be loaded via HTMX -->
+              <div id="agents-table"
+                   hx-get="{{ root_path }}/admin/a2a/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}"
+                   hx-trigger="load"
+                   hx-swap="outerHTML"
+                   hx-indicator="#agents-loading">
+                <!-- Loading placeholder -->
+                <div class="flex items-center justify-center p-8">
+                  <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span class="ml-3 text-gray-600 dark:text-gray-400">Loading agents...</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Loading Indicator for HTMX -->
+            <div id="agents-loading" class="htmx-indicator">
+              <div class="flex items-center justify-center p-4">
+                <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span class="ml-2 text-gray-600 dark:text-gray-400">Loading agents...</span>
+              </div>
+            </div>
+
+            <!-- Pagination Controls -->
+            {# ---- compute safe pagination values first ---- #}
+            {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
+            {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
+            {% set total_items = (pagination.total_items if pagination is defined else (total_items if total_items is defined else (a2a_agents|length if a2a_agents is defined else 0))) %}
+            {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
+            {% set has_prev = page > 1 %}
+            {% set has_next = (page * per_page) < total_items %}
+
+            {% set pagination = {
+              'page': page,
+              'per_page': per_page,
+              'total_items': total_items,
+              'total_pages': total_pages,
+              'has_prev': has_prev,
+              'has_next': has_next
+            } %}
+
+            {# build the refresh URL for controls #}
+            {% set controls_url = root_path + '/admin/a2a/partial'
+              + '?render=controls'
+              + '&page=' + page|string
+              + '&per_page=' + per_page|string
+              + '&include_inactive=' + (include_inactive|default(false)|string|lower) %}
+
+            <div id="agents-pagination-controls"
+                hx-get="{{ controls_url }}"
+                hx-trigger="refreshControls"
+                hx-target="#agents-pagination-controls"
+                hx-swap="outerHTML"
+                hx-indicator="#agents-loading">
+
+              {# helpers used by pagination_controls.html #}
+              {% set base_url = root_path + '/admin/a2a/partial' %}
+              {% set hx_target = '#agents-table' %}
+              {% set hx_indicator = '#agents-loading' %}
+              {% set query_params = {'include_inactive': include_inactive} %}
+
+              {% include 'pagination_controls.html' %}
+            </div>
+          </div>
+        </div>
+
+        <!-- Old table for reference (hidden) -->
+        <div class="bg-white shadow rounded-lg p-4 mb-4 dark:bg-gray-800" style="display: none;">
+          <div class="p-0">
+            <h3
+              class="text-lg font-medium text-gray-900 dark:text-gray-200 mb-4"
+            >
+              Registered A2A Agents
+            </h3>
+            <div class="overflow-x-auto">
               <table class="min-w-full divide-y divide-gray-200">
                 <thead class="bg-gray-50 dark:bg-gray-700">
                   <tr>
@@ -6022,7 +6216,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         </div>
 
         <!-- A2A Agent Add Form -->
-        <div class="bg-white shadow rounded-lg p-6 mb-6 dark:bg-gray-800">
+        <div class="bg-white shadow rounded-lg p-6 mb-6 dark:bg-gray-800 mt-8">
           <h3 class="text-lg font-medium text-gray-900 dark:text-gray-200 mb-4">
             Add New A2A Agent
           </h3>
@@ -9982,44 +10176,14 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   <div
                     id="associatedEditGateways"
                     class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
+                    hx-get="{{ root_path }}/admin/gateways/partial?page=1&per_page=50&render=selector"
+                    hx-trigger="load"
+                    hx-swap="innerHTML"
                   >
-                    {% for gateway in gateways %}
-                    <label
-                      class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1 tool-item"
-                    >
-                      <input
-                        type="checkbox"
-                        name="associatedEditGateways"
-                        value="{{ gateway.id }}"
-                        class="mcpserver-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                      />
-                      <span class="select-none"
-                        >{{ gateway.slug or gateway.name
-                        }}</span
-                      >
-                    </label>
-                    {% endfor %}
-
-                    <!-- Special checkbox for RestTool (no gateway id) -->
-                    <label
-                      class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1 tool-item"
-                    >
-                      <input
-                        type="checkbox"
-                        name="associatedEditGateways"
-                        value=""
-                        data-gateway-null="true"
-                        class="mcpserver-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                      />
-                      <span class="select-none">REST/A2A</span>
-                    </label>
-                    <p
-                      id="noGatewayEditMessage"
-                      class="text-gray-700 dark:text-gray-300"
-                      style="display: none"
-                    >
-                      No MCP server found containing "<span id="searchEditQueryServers"></span>"
-                    </p>
+                    <!-- Gateway checkboxes will be loaded here via HTMX -->
+                    <div class="flex items-center justify-center p-4">
+                      <span class="text-gray-500 dark:text-gray-400 text-sm">Loading MCP servers...</span>
+                    </div>
                   </div>
                   <div class="flex justify-end mt-3 gap-2">
                     <button
