@@ -585,6 +585,7 @@ def _get_span_entity_performance(
         durations_by_entity[span.entity].append(span.duration_ms)
 
     def percentile(data: List[float], p: float) -> float:
+        """Calculate percentile using linear interpolation (matches PostgreSQL percentile_cont)."""
         if not data:
             return 0.0
         n = len(data)
