@@ -7927,12 +7927,17 @@ function initToolSelect(
                     const selectedGatewayIds = getSelectedGatewayIds
                         ? getSelectedGatewayIds()
                         : [];
-                    const gatewayParam =
-                        selectedGatewayIds && selectedGatewayIds.length
-                            ? `?gateway_id=${encodeURIComponent(selectedGatewayIds.join(","))}`
-                            : "";
+                    const selectedTeamId = getCurrentTeamId();
+                    const params = new URLSearchParams();
+                    if (selectedGatewayIds && selectedGatewayIds.length) {
+                        params.set("gateway_id", selectedGatewayIds.join(","));
+                    }
+                    if (selectedTeamId) {
+                        params.set("team_id", selectedTeamId);
+                    }
+                    const queryString = params.toString();
                     const response = await fetch(
-                        `${window.ROOT_PATH}/admin/tools/ids${gatewayParam}`,
+                        `${window.ROOT_PATH}/admin/tools/ids${queryString ? `?${queryString}` : ""}`,
                     );
                     if (!response.ok) {
                         throw new Error("Failed to fetch tool IDs");
@@ -8370,12 +8375,17 @@ function initResourceSelect(
                     const selectedGatewayIds = getSelectedGatewayIds
                         ? getSelectedGatewayIds()
                         : [];
-                    const gatewayParam =
-                        selectedGatewayIds && selectedGatewayIds.length
-                            ? `?gateway_id=${encodeURIComponent(selectedGatewayIds.join(","))}`
-                            : "";
+                    const selectedTeamId = getCurrentTeamId();
+                    const params = new URLSearchParams();
+                    if (selectedGatewayIds && selectedGatewayIds.length) {
+                        params.set("gateway_id", selectedGatewayIds.join(","));
+                    }
+                    if (selectedTeamId) {
+                        params.set("team_id", selectedTeamId);
+                    }
+                    const queryString = params.toString();
                     const resp = await fetch(
-                        `${window.ROOT_PATH}/admin/resources/ids${gatewayParam}`,
+                        `${window.ROOT_PATH}/admin/resources/ids${queryString ? `?${queryString}` : ""}`,
                     );
                     if (!resp.ok) {
                         throw new Error("Failed to fetch resource IDs");
@@ -8798,12 +8808,17 @@ function initPromptSelect(
                     const selectedGatewayIds = getSelectedGatewayIds
                         ? getSelectedGatewayIds()
                         : [];
-                    const gatewayParam =
-                        selectedGatewayIds && selectedGatewayIds.length
-                            ? `?gateway_id=${encodeURIComponent(selectedGatewayIds.join(","))}`
-                            : "";
+                    const selectedTeamId = getCurrentTeamId();
+                    const params = new URLSearchParams();
+                    if (selectedGatewayIds && selectedGatewayIds.length) {
+                        params.set("gateway_id", selectedGatewayIds.join(","));
+                    }
+                    if (selectedTeamId) {
+                        params.set("team_id", selectedTeamId);
+                    }
+                    const queryString = params.toString();
                     const resp = await fetch(
-                        `${window.ROOT_PATH}/admin/prompts/ids${gatewayParam}`,
+                        `${window.ROOT_PATH}/admin/prompts/ids${queryString ? `?${queryString}` : ""}`,
                     );
                     if (!resp.ok) {
                         throw new Error("Failed to fetch prompt IDs");
@@ -9201,8 +9216,14 @@ function initGatewaySelect(
 
             try {
                 // Fetch all gateway IDs from the server
+                const selectedTeamId = getCurrentTeamId();
+                const params = new URLSearchParams();
+                if (selectedTeamId) {
+                    params.set("team_id", selectedTeamId);
+                }
+                const queryString = params.toString();
                 const response = await fetch(
-                    `${window.ROOT_PATH}/admin/gateways/ids`,
+                    `${window.ROOT_PATH}/admin/gateways/ids${queryString ? `?${queryString}` : ""}`,
                 );
                 if (!response.ok) {
                     throw new Error("Failed to fetch gateway IDs");
@@ -24372,10 +24393,18 @@ async function serverSideToolSearch(searchTerm) {
     }
 
     try {
-        // Call the search API with gateway filter
-        const searchUrl = gatewayIdParam
-            ? `${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100&gateway_id=${encodeURIComponent(gatewayIdParam)}`
-            : `${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
+        // Call the search API with gateway and team filters
+        const selectedTeamId = getCurrentTeamId();
+        const params = new URLSearchParams();
+        params.set("q", searchTerm);
+        params.set("limit", "100");
+        if (gatewayIdParam) {
+            params.set("gateway_id", gatewayIdParam);
+        }
+        if (selectedTeamId) {
+            params.set("team_id", selectedTeamId);
+        }
+        const searchUrl = `${window.ROOT_PATH}/admin/tools/search?${params.toString()}`;
 
         console.log(`[Tool Search] Searching tools with URL: ${searchUrl}`);
 
@@ -24792,10 +24821,18 @@ async function serverSidePromptSearch(searchTerm) {
     }
 
     try {
-        // Call the search API with gateway filter
-        const searchUrl = gatewayIdParam
-            ? `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100&gateway_id=${encodeURIComponent(gatewayIdParam)}`
-            : `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
+        // Call the search API with gateway and team filters
+        const selectedTeamId = getCurrentTeamId();
+        const params = new URLSearchParams();
+        params.set("q", searchTerm);
+        params.set("limit", "100");
+        if (gatewayIdParam) {
+            params.set("gateway_id", gatewayIdParam);
+        }
+        if (selectedTeamId) {
+            params.set("team_id", selectedTeamId);
+        }
+        const searchUrl = `${window.ROOT_PATH}/admin/prompts/search?${params.toString()}`;
 
         console.log(`[Prompt Search] Searching prompts with URL: ${searchUrl}`);
 
@@ -25099,10 +25136,18 @@ async function serverSideResourceSearch(searchTerm) {
     }
 
     try {
-        // Call the search API with gateway filter
-        const searchUrl = gatewayIdParam
-            ? `${window.ROOT_PATH}/admin/resources/search?q=${encodeURIComponent(searchTerm)}&limit=100&gateway_id=${encodeURIComponent(gatewayIdParam)}`
-            : `${window.ROOT_PATH}/admin/resources/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
+        // Call the search API with gateway and team filters
+        const selectedTeamId = getCurrentTeamId();
+        const params = new URLSearchParams();
+        params.set("q", searchTerm);
+        params.set("limit", "100");
+        if (gatewayIdParam) {
+            params.set("gateway_id", gatewayIdParam);
+        }
+        if (selectedTeamId) {
+            params.set("team_id", selectedTeamId);
+        }
+        const searchUrl = `${window.ROOT_PATH}/admin/resources/search?${params.toString()}`;
 
         console.log(
             `[Resource Search] Searching resources with URL: ${searchUrl}`,
@@ -25407,10 +25452,18 @@ async function serverSideEditToolSearch(searchTerm) {
     }
 
     try {
-        // Call the search API with gateway filter
-        const searchUrl = gatewayIdParam
-            ? `${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100&gateway_id=${encodeURIComponent(gatewayIdParam)}`
-            : `${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
+        // Call the search API with gateway and team filters
+        const selectedTeamId = getCurrentTeamId();
+        const params = new URLSearchParams();
+        params.set("q", searchTerm);
+        params.set("limit", "100");
+        if (gatewayIdParam) {
+            params.set("gateway_id", gatewayIdParam);
+        }
+        if (selectedTeamId) {
+            params.set("team_id", selectedTeamId);
+        }
+        const searchUrl = `${window.ROOT_PATH}/admin/tools/search?${params.toString()}`;
 
         console.log(
             `[Edit Tool Search] Searching tools with URL: ${searchUrl}`,
@@ -25682,10 +25735,18 @@ async function serverSideEditPromptsSearch(searchTerm) {
     }
 
     try {
-        // Call the search API with gateway filter
-        const searchUrl = gatewayIdParam
-            ? `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100&gateway_id=${encodeURIComponent(gatewayIdParam)}`
-            : `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
+        // Call the search API with gateway and team filters
+        const selectedTeamId = getCurrentTeamId();
+        const params = new URLSearchParams();
+        params.set("q", searchTerm);
+        params.set("limit", "100");
+        if (gatewayIdParam) {
+            params.set("gateway_id", gatewayIdParam);
+        }
+        if (selectedTeamId) {
+            params.set("team_id", selectedTeamId);
+        }
+        const searchUrl = `${window.ROOT_PATH}/admin/prompts/search?${params.toString()}`;
 
         console.log(
             `[Edit Prompt Search] Searching prompts with URL: ${searchUrl}`,
@@ -25965,10 +26026,18 @@ async function serverSideEditResourcesSearch(searchTerm) {
     }
 
     try {
-        // Call the search API with gateway filter
-        const searchUrl = gatewayIdParam
-            ? `${window.ROOT_PATH}/admin/resources/search?q=${encodeURIComponent(searchTerm)}&limit=100&gateway_id=${encodeURIComponent(gatewayIdParam)}`
-            : `${window.ROOT_PATH}/admin/resources/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
+        // Call the search API with gateway and team filters
+        const selectedTeamId = getCurrentTeamId();
+        const params = new URLSearchParams();
+        params.set("q", searchTerm);
+        params.set("limit", "100");
+        if (gatewayIdParam) {
+            params.set("gateway_id", gatewayIdParam);
+        }
+        if (selectedTeamId) {
+            params.set("team_id", selectedTeamId);
+        }
+        const searchUrl = `${window.ROOT_PATH}/admin/resources/search?${params.toString()}`;
 
         console.log(
             `[Edit Resource Search] Searching resources with URL: ${searchUrl}`,

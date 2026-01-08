@@ -6426,6 +6426,7 @@ async def admin_tools_partial_html(
 async def admin_get_all_tool_ids(
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -6437,6 +6438,7 @@ async def admin_get_all_tool_ids(
     Args:
         include_inactive (bool): Whether to include inactive tools in the results
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated. Accepts the literal value 'null' to indicate NULL gateway_id (local tools).
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session dependency
         user: Current user making the request
 
@@ -6473,8 +6475,24 @@ async def admin_get_all_tool_ids(
                 LOGGER.debug(f"Filtering tools by gateway IDs: {non_null_ids}")
 
     # Build access conditions
-    access_conditions = [DbTool.owner_email == user_email, DbTool.visibility == "public"]
-    if team_ids:
+    access_conditions = []
+
+    # 1. User's owned tools
+    access_conditions.append(DbTool.owner_email == user_email)
+
+    # 2. Public tools
+    access_conditions.append(DbTool.visibility == "public")
+
+    # 3. Team-scoped tools with team visibility
+    if team_id:
+        # Filter by specific team if user is a member
+        if team_id in team_ids:
+            access_conditions.append(and_(DbTool.team_id == team_id, DbTool.visibility.in_(["team", "public"])))
+            LOGGER.debug(f"Filtering tool IDs by team_id: {team_id}")
+        else:
+            LOGGER.warning(f"User {user_email} attempted to filter tool IDs by team {team_id} but is not a member")
+    elif team_ids:
+        # Filter by all user's teams
         access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
 
     query = query.where(or_(*access_conditions))
@@ -6491,6 +6509,7 @@ async def admin_search_tools(
     include_inactive: bool = False,
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of results to return"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -6505,6 +6524,7 @@ async def admin_search_tools(
         include_inactive (bool): Whether to include inactive tools in the search results
         limit (int): Maximum number of results to return (1-1000)
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated
+        team_id (Optional[str]): Filter by team ID
         db (Session): Database session dependency
         user: Current user making the request
 
@@ -6547,8 +6567,24 @@ async def admin_search_tools(
         query = query.where(DbTool.enabled.is_(True))
 
     # Build access conditions
-    access_conditions = [DbTool.owner_email == user_email, DbTool.visibility == "public"]
-    if team_ids:
+    access_conditions = []
+
+    # 1. User's owned tools
+    access_conditions.append(DbTool.owner_email == user_email)
+
+    # 2. Public tools
+    access_conditions.append(DbTool.visibility == "public")
+
+    # 3. Team-scoped tools with team visibility
+    if team_id:
+        # Filter by specific team if user is a member
+        if team_id in team_ids:
+            access_conditions.append(and_(DbTool.team_id == team_id, DbTool.visibility.in_(["team", "public"])))
+            LOGGER.debug(f"Filtering tool search by team_id: {team_id}")
+        else:
+            LOGGER.warning(f"User {user_email} attempted to filter tool search by team {team_id} but is not a member")
+    elif team_ids:
+        # Filter by all user's teams
         access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
 
     query = query.where(or_(*access_conditions))
@@ -6923,6 +6959,7 @@ async def admin_gateways_partial_html(
 @admin_router.get("/gateways/ids", response_class=JSONResponse)
 async def admin_get_all_gateways_ids(
     include_inactive: bool = False,
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -6933,6 +6970,7 @@ async def admin_get_all_gateways_ids(
 
     Args:
         include_inactive (bool): When True include prompts that are inactive.
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -6951,11 +6989,22 @@ async def admin_get_all_gateways_ids(
     if not include_inactive:
         query = query.where(DbGateway.enabled.is_(True))
 
-    access_conditions = [DbGateway.owner_email == user_email, DbGateway.visibility == "public"]
-    if team_ids:
+    # Build access conditions
+    access_conditions = []
+    access_conditions.append(DbGateway.owner_email == user_email)
+    access_conditions.append(DbGateway.visibility == "public")
+
+    if team_id:
+        if team_id in team_ids:
+            access_conditions.append(and_(DbGateway.team_id == team_id, DbGateway.visibility.in_(["team", "public"])))
+            LOGGER.debug(f"Filtering gateway IDs by team_id: {team_id}")
+        else:
+            LOGGER.warning(f"User {user_email} attempted to filter gateway IDs by team {team_id} but is not a member")
+    elif team_ids:
         access_conditions.append(and_(DbGateway.team_id.in_(team_ids), DbGateway.visibility.in_(["team", "public"])))
 
     query = query.where(or_(*access_conditions))
+
     gateway_ids = [row[0] for row in db.execute(query).all()]
     return {"gateway_ids": gateway_ids, "count": len(gateway_ids)}
 
@@ -6965,6 +7014,7 @@ async def admin_search_gateways(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
     limit: int = Query(100, ge=1, le=1000),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -6978,6 +7028,7 @@ async def admin_search_gateways(
         q (str): Search query string.
         include_inactive (bool): When True include gateways that are inactive.
         limit (int): Maximum number of results to return (bounded by the query parameter).
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -7000,8 +7051,18 @@ async def admin_search_gateways(
     if not include_inactive:
         query = query.where(DbGateway.enabled.is_(True))
 
-    access_conditions = [DbGateway.owner_email == user_email, DbGateway.visibility == "public"]
-    if team_ids:
+    # Build access conditions
+    access_conditions = []
+    access_conditions.append(DbGateway.owner_email == user_email)
+    access_conditions.append(DbGateway.visibility == "public")
+
+    if team_id:
+        if team_id in team_ids:
+            access_conditions.append(and_(DbGateway.team_id == team_id, DbGateway.visibility.in_(["team", "public"])))
+            LOGGER.debug(f"Filtering gateway search by team_id: {team_id}")
+        else:
+            LOGGER.warning(f"User {user_email} attempted to filter gateway search by team {team_id} but is not a member")
+    elif team_ids:
         access_conditions.append(and_(DbGateway.team_id.in_(team_ids), DbGateway.visibility.in_(["team", "public"])))
 
     query = query.where(or_(*access_conditions))
@@ -7040,6 +7101,7 @@ async def admin_search_gateways(
 @admin_router.get("/servers/ids", response_class=JSONResponse)
 async def admin_get_all_server_ids(
     include_inactive: bool = False,
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7050,6 +7112,7 @@ async def admin_get_all_server_ids(
 
     Args:
         include_inactive (bool): When True include servers that are inactive.
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -7068,8 +7131,18 @@ async def admin_get_all_server_ids(
     if not include_inactive:
         query = query.where(DbServer.enabled.is_(True))
 
-    access_conditions = [DbServer.owner_email == user_email, DbServer.visibility == "public"]
-    if team_ids:
+    # Build access conditions
+    access_conditions = []
+    access_conditions.append(DbServer.owner_email == user_email)
+    access_conditions.append(DbServer.visibility == "public")
+
+    if team_id:
+        if team_id in team_ids:
+            access_conditions.append(and_(DbServer.team_id == team_id, DbServer.visibility.in_(["team", "public"])))
+            LOGGER.debug(f"Filtering server IDs by team_id: {team_id}")
+        else:
+            LOGGER.warning(f"User {user_email} attempted to filter server IDs by team {team_id} but is not a member")
+    elif team_ids:
         access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
 
     query = query.where(or_(*access_conditions))
@@ -7082,6 +7155,7 @@ async def admin_search_servers(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
     limit: int = Query(100, ge=1, le=1000),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7095,6 +7169,7 @@ async def admin_search_servers(
         q (str): Search query string.
         include_inactive (bool): When True include servers that are inactive.
         limit (int): Maximum number of results to return (bounded by the query parameter).
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -7117,8 +7192,18 @@ async def admin_search_servers(
     if not include_inactive:
         query = query.where(DbServer.enabled.is_(True))
 
-    access_conditions = [DbServer.owner_email == user_email, DbServer.visibility == "public"]
-    if team_ids:
+    # Build access conditions
+    access_conditions = []
+    access_conditions.append(DbServer.owner_email == user_email)
+    access_conditions.append(DbServer.visibility == "public")
+
+    if team_id:
+        if team_id in team_ids:
+            access_conditions.append(and_(DbServer.team_id == team_id, DbServer.visibility.in_(["team", "public"])))
+            LOGGER.debug(f"Filtering server search by team_id: {team_id}")
+        else:
+            LOGGER.warning(f"User {user_email} attempted to filter server search by team {team_id} but is not a member")
+    elif team_ids:
         access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
 
     query = query.where(or_(*access_conditions))
@@ -7337,6 +7422,7 @@ async def admin_resources_partial_html(
 async def admin_get_all_prompt_ids(
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7348,6 +7434,7 @@ async def admin_get_all_prompt_ids(
     Args:
         include_inactive (bool): When True include prompts that are inactive.
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated. Accepts the literal value 'null' to indicate NULL gateway_id (local prompts).
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -7382,8 +7469,18 @@ async def admin_get_all_prompt_ids(
     if not include_inactive:
         query = query.where(DbPrompt.enabled.is_(True))
 
-    access_conditions = [DbPrompt.owner_email == user_email, DbPrompt.visibility == "public"]
-    if team_ids:
+    # Build access conditions
+    access_conditions = []
+    access_conditions.append(DbPrompt.owner_email == user_email)
+    access_conditions.append(DbPrompt.visibility == "public")
+
+    if team_id:
+        if team_id in team_ids:
+            access_conditions.append(and_(DbPrompt.team_id == team_id, DbPrompt.visibility.in_(["team", "public"])))
+            LOGGER.debug(f"Filtering prompts by team_id: {team_id}")
+        else:
+            LOGGER.warning(f"User {user_email} attempted to filter prompts by team {team_id} but is not a member")
+    elif team_ids:
         access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
 
     query = query.where(or_(*access_conditions))
@@ -7395,6 +7492,7 @@ async def admin_get_all_prompt_ids(
 async def admin_get_all_resource_ids(
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7406,6 +7504,7 @@ async def admin_get_all_resource_ids(
     Args:
         include_inactive (bool): Whether to include inactive resources in the results.
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated. Accepts the literal value 'null' to indicate NULL gateway_id (local resources).
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session dependency.
         user: Authenticated user object from dependency injection.
 
@@ -7440,8 +7539,18 @@ async def admin_get_all_resource_ids(
     if not include_inactive:
         query = query.where(DbResource.enabled.is_(True))
 
-    access_conditions = [DbResource.owner_email == user_email, DbResource.visibility == "public"]
-    if team_ids:
+    # Build access conditions
+    access_conditions = []
+    access_conditions.append(DbResource.owner_email == user_email)
+    access_conditions.append(DbResource.visibility == "public")
+
+    if team_id:
+        if team_id in team_ids:
+            access_conditions.append(and_(DbResource.team_id == team_id, DbResource.visibility.in_(["team", "public"])))
+            LOGGER.debug(f"Filtering resources by team_id: {team_id}")
+        else:
+            LOGGER.warning(f"User {user_email} attempted to filter resources by team {team_id} but is not a member")
+    elif team_ids:
         access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
 
     query = query.where(or_(*access_conditions))
@@ -7455,6 +7564,7 @@ async def admin_search_resources(
     include_inactive: bool = False,
     limit: int = Query(100, ge=1, le=1000),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7469,6 +7579,7 @@ async def admin_search_resources(
         include_inactive (bool): When True include resources that are inactive.
         limit (int): Maximum number of results to return (bounded by the query parameter).
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -7537,6 +7648,7 @@ async def admin_search_prompts(
     include_inactive: bool = False,
     limit: int = Query(100, ge=1, le=1000),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7551,6 +7663,7 @@ async def admin_search_prompts(
         include_inactive (bool): When True include prompts that are inactive.
         limit (int): Maximum number of results to return (bounded by the query parameter).
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -7589,8 +7702,18 @@ async def admin_search_prompts(
     if not include_inactive:
         query = query.where(DbPrompt.enabled.is_(True))
 
-    access_conditions = [DbPrompt.owner_email == user_email, DbPrompt.visibility == "public"]
-    if team_ids:
+    # Build access conditions
+    access_conditions = []
+    access_conditions.append(DbPrompt.owner_email == user_email)
+    access_conditions.append(DbPrompt.visibility == "public")
+
+    if team_id:
+        if team_id in team_ids:
+            access_conditions.append(and_(DbPrompt.team_id == team_id, DbPrompt.visibility.in_(["team", "public"])))
+            LOGGER.debug(f"Filtering prompts by team_id: {team_id}")
+        else:
+            LOGGER.warning(f"User {user_email} attempted to filter prompts by team {team_id} but is not a member")
+    elif team_ids:
         access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
 
     query = query.where(or_(*access_conditions))
@@ -7798,6 +7921,7 @@ async def admin_a2a_partial_html(
 @admin_router.get("/a2a/ids", response_class=JSONResponse)
 async def admin_get_all_agent_ids(
     include_inactive: bool = False,
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7808,6 +7932,7 @@ async def admin_get_all_agent_ids(
 
     Args:
         include_inactive (bool): When True include a2a agents that are inactive.
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -7826,8 +7951,18 @@ async def admin_get_all_agent_ids(
     if not include_inactive:
         query = query.where(DbA2AAgent.enabled.is_(True))
 
-    access_conditions = [DbA2AAgent.owner_email == user_email, DbA2AAgent.visibility == "public"]
-    if team_ids:
+    # Build access conditions
+    access_conditions = []
+    access_conditions.append(DbA2AAgent.owner_email == user_email)
+    access_conditions.append(DbA2AAgent.visibility == "public")
+
+    if team_id:
+        if team_id in team_ids:
+            access_conditions.append(and_(DbA2AAgent.team_id == team_id, DbA2AAgent.visibility.in_(["team", "public"])))
+            LOGGER.debug(f"Filtering A2A agents by team_id: {team_id}")
+        else:
+            LOGGER.warning(f"User {user_email} attempted to filter A2A agents by team {team_id} but is not a member")
+    elif team_ids:
         access_conditions.append(and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])))
 
     query = query.where(or_(*access_conditions))
@@ -7840,6 +7975,7 @@ async def admin_search_a2a_agents(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
     limit: int = Query(100, ge=1, le=1000),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7853,6 +7989,7 @@ async def admin_search_a2a_agents(
         q (str): Search query string.
         include_inactive (bool): When True include a2a agents that are inactive.
         limit (int): Maximum number of results to return (bounded by the query parameter).
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -7875,8 +8012,18 @@ async def admin_search_a2a_agents(
     if not include_inactive:
         query = query.where(DbA2AAgent.enabled.is_(True))
 
-    access_conditions = [DbA2AAgent.owner_email == user_email, DbA2AAgent.visibility == "public"]
-    if team_ids:
+    # Build access conditions
+    access_conditions = []
+    access_conditions.append(DbA2AAgent.owner_email == user_email)
+    access_conditions.append(DbA2AAgent.visibility == "public")
+
+    if team_id:
+        if team_id in team_ids:
+            access_conditions.append(and_(DbA2AAgent.team_id == team_id, DbA2AAgent.visibility.in_(["team", "public"])))
+            LOGGER.debug(f"Filtering A2A agents by team_id: {team_id}")
+        else:
+            LOGGER.warning(f"User {user_email} attempted to filter A2A agents by team {team_id} but is not a member")
+    elif team_ids:
         access_conditions.append(and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])))
 
     query = query.where(or_(*access_conditions))
