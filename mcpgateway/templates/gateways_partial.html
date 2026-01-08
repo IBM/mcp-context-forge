@@ -40,10 +40,10 @@
       {% endif %}
     </td>
     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">
-      {% if gateway.last_seen %}{{ gateway.last_seen[:19] if gateway.last_seen is string else gateway.last_seen.strftime('%Y-%m-%d %H:%M:%S') }}{% else %}Never{% endif %}
+      {% if gateway.lastSeen %}{{ gateway.lastSeen[:19] if gateway.lastSeen is string else gateway.lastSeen.strftime('%Y-%m-%d %H:%M:%S') }}{% else %}Never{% endif %}
     </td>
     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">
-      {% if gateway.owner_email %}{{ gateway.owner_email }}{% else %}<span class="text-gray-400">N/A</span>{% endif %}
+      {% if gateway.ownerEmail %}{{ gateway.ownerEmail }}{% else %}<span class="text-gray-400">N/A</span>{% endif %}
     </td>
     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">
       {% if gateway.team %}{{ gateway.team }}{% else %}<span class="text-gray-400 dark:text-gray-600 text-xs">None</span>{% endif %}

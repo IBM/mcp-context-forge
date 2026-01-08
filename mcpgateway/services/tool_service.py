@@ -3694,8 +3694,10 @@ class ToolService:
         normalized_tags = normalized_tags + ["a2a", "agent"]
 
         # Prepare update data matching the agent's current state
-        # IMPORTANT: Preserve the existing tool's visibility and team_id to avoid
-        # unintentionally making private/team tools public (ToolUpdate defaults to "public")
+        # IMPORTANT: Preserve the existing tool's visibility to avoid unintentionally
+        # making private/team tools public (ToolUpdate defaults to "public")
+        # Note: team_id is not a field on ToolUpdate schema, so team assignment is preserved
+        # implicitly by not changing visibility (team tools stay team-scoped)
         new_tool_name = f"a2a_{agent.slug}"
         tool_update = ToolUpdate(
             name=new_tool_name,
@@ -3706,7 +3708,6 @@ class ToolService:
             auth=AuthenticationValues(auth_type=agent.auth_type, auth_value=agent.auth_value) if agent.auth_type else None,
             tags=normalized_tags,
             visibility=tool.visibility,  # Preserve existing visibility
-            team_id=tool.team_id,  # Preserve existing team assignment
         )
 
         # Update the tool
