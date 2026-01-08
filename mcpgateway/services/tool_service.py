@@ -66,7 +66,7 @@ from mcpgateway.plugins.framework import (
     ToolPreInvokePayload,
 )
 from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
-from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
+from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
@@ -3562,7 +3562,7 @@ class ToolService:
         created_from_ip: Optional[str] = None,
         created_via: Optional[str] = None,
         created_user_agent: Optional[str] = None,
-    ) -> ToolRead:
+    ) -> DbTool:
         """Create a tool entry from an A2A agent for virtual server integration.
 
         Args:
@@ -3574,7 +3574,7 @@ class ToolService:
             created_user_agent: User agent of creation request.
 
         Returns:
-            The created tool.
+            The created tool database object.
 
         Raises:
             ToolNameConflictError: If a tool with the same name already exists.
@@ -3586,7 +3586,7 @@ class ToolService:
 
         if existing_tool:
             # Tool already exists, return it
-            return self.convert_tool_to_read(existing_tool)
+            return existing_tool
 
         # Create tool entry for the A2A agent
         logger.debug(f"agent.tags: {agent.tags} for agent: {agent.name} (ID: {agent.id})")
@@ -3631,7 +3631,7 @@ class ToolService:
             tags=normalized_tags,
         )
 
-        return await self.register_tool(
+        tool_read = await self.register_tool(
             db,
             tool_data,
             created_by=created_by,
@@ -3639,6 +3639,110 @@ class ToolService:
             created_via=created_via or "a2a_integration",
             created_user_agent=created_user_agent,
         )
+
+        # Return the DbTool object for relationship assignment
+        tool_db = db.get(DbTool, tool_read.id)
+        return tool_db
+
+    async def update_tool_from_a2a_agent(
+        self,
+        db: Session,
+        agent: DbA2AAgent,
+        modified_by: Optional[str] = None,
+        modified_from_ip: Optional[str] = None,
+        modified_via: Optional[str] = None,
+        modified_user_agent: Optional[str] = None,
+    ) -> Optional[ToolRead]:
+        """Update the tool associated with an A2A agent when the agent is updated.
+
+        Args:
+            db: Database session.
+            agent: Updated A2A agent.
+            modified_by: Username who modified this tool.
+            modified_from_ip: IP address of modifier.
+            modified_via: Modification method.
+            modified_user_agent: User agent of modification request.
+
+        Returns:
+            The updated tool, or None if no associated tool exists.
+        """
+        # Use the tool_id from the agent for efficient lookup
+        if not agent.tool_id:
+            logger.debug(f"No tool_id found for A2A agent {agent.id}, skipping tool update")
+            return None
+
+        tool = db.get(DbTool, agent.tool_id)
+        if not tool:
+            logger.warning(f"Tool {agent.tool_id} not found for A2A agent {agent.id}, resetting tool_id")
+            agent.tool_id = None
+            db.commit()
+            return None
+
+        # Normalize tags: if agent.tags contains dicts like {'id':..,'label':..},
+        # extract the human-friendly label. If tags are already strings, keep them.
+        normalized_tags: list[str] = []
+        for t in agent.tags or []:
+            if isinstance(t, dict):
+                # Prefer 'label', fall back to 'id' or stringified dict
+                normalized_tags.append(t.get("label") or t.get("id") or str(t))
+            elif hasattr(t, "label"):
+                normalized_tags.append(getattr(t, "label"))
+            else:
+                normalized_tags.append(str(t))
+
+        # Ensure we include identifying A2A tags
+        normalized_tags = normalized_tags + ["a2a", "agent"]
+
+        # Prepare update data matching the agent's current state
+        # IMPORTANT: Preserve the existing tool's visibility to avoid unintentionally
+        # making private/team tools public (ToolUpdate defaults to "public")
+        # Note: team_id is not a field on ToolUpdate schema, so team assignment is preserved
+        # implicitly by not changing visibility (team tools stay team-scoped)
+        new_tool_name = f"a2a_{agent.slug}"
+        tool_update = ToolUpdate(
+            name=new_tool_name,
+            custom_name=new_tool_name,  # Also set custom_name to ensure name update works
+            displayName=generate_display_name(agent.name),
+            url=agent.endpoint_url,
+            description=f"A2A Agent: {agent.description or agent.name}",
+            auth=AuthenticationValues(auth_type=agent.auth_type, auth_value=agent.auth_value) if agent.auth_type else None,
+            tags=normalized_tags,
+            visibility=tool.visibility,  # Preserve existing visibility
+        )
+
+        # Update the tool
+        return await self.update_tool(
+            db=db,
+            tool_id=tool.id,
+            tool_update=tool_update,
+            modified_by=modified_by,
+            modified_from_ip=modified_from_ip,
+            modified_via=modified_via or "a2a_sync",
+            modified_user_agent=modified_user_agent,
+        )
+
+    async def delete_tool_from_a2a_agent(self, db: Session, agent: DbA2AAgent, user_email: Optional[str] = None, purge_metrics: bool = False) -> None:
+        """Delete the tool associated with an A2A agent when the agent is deleted.
+
+        Args:
+            db: Database session.
+            agent: The A2A agent being deleted.
+            user_email: Email of user performing delete (for ownership check).
+            purge_metrics: If True, delete raw + rollup metrics for this tool.
+        """
+        # Use the tool_id from the agent for efficient lookup
+        if not agent.tool_id:
+            logger.debug(f"No tool_id found for A2A agent {agent.id}, skipping tool deletion")
+            return
+
+        tool = db.get(DbTool, agent.tool_id)
+        if not tool:
+            logger.warning(f"Tool {agent.tool_id} not found for A2A agent {agent.id}")
+            return
+
+        # Delete the tool
+        await self.delete_tool(db=db, tool_id=tool.id, user_email=user_email, purge_metrics=purge_metrics)
+        logger.info(f"Deleted tool {tool.id} associated with A2A agent {agent.id}")
 
     async def _invoke_a2a_tool(self, db: Session, tool: DbTool, arguments: Dict[str, Any]) -> ToolResult:
         """Invoke an A2A agent through its corresponding tool.

@@ -6789,13 +6789,34 @@ function showTab(tabName) {
                     updateTeamScopingWarning();
                 }
 
+                if (tabName === "catalog") {
+                    // Load servers list if not already loaded
+                    const serversList = safeGetElement("servers-table");
+                    if (serversList) {
+                        const hasLoadingMessage =
+                            serversList.innerHTML.includes(
+                                "Loading servers...",
+                            );
+                        if (hasLoadingMessage) {
+                            // Trigger HTMX load manually if HTMX is available
+                            if (window.htmx && window.htmx.trigger) {
+                                window.htmx.trigger(serversList, "load");
+                            }
+                        }
+                    }
+                }
+
                 if (tabName === "a2a-agents") {
                     // Load A2A agents list if not already loaded
-                    const agentsList = safeGetElement("a2a-agents-list");
-                    if (agentsList && agentsList.innerHTML.trim() === "") {
-                        // Trigger HTMX load manually if HTMX is available
-                        if (window.htmx && window.htmx.trigger) {
-                            window.htmx.trigger(agentsList, "load");
+                    const agentsList = safeGetElement("agents-table");
+                    if (agentsList) {
+                        const hasLoadingMessage =
+                            agentsList.innerHTML.includes("Loading agents...");
+                        if (hasLoadingMessage) {
+                            // Trigger HTMX load manually if HTMX is available
+                            if (window.htmx && window.htmx.trigger) {
+                                window.htmx.trigger(agentsList, "load");
+                            }
                         }
                     }
                 }
@@ -6866,15 +6887,17 @@ function showTab(tabName) {
                 }
 
                 if (tabName === "gateways") {
-                    // Reload gateways list to show any newly registered servers
-                    const gatewaysSection = safeGetElement("gateways-panel");
-                    if (gatewaysSection) {
-                        const gatewaysTbody =
-                            gatewaysSection.querySelector("tbody");
-                        if (gatewaysTbody) {
-                            // Trigger HTMX reload if available
+                    // Load gateways list if not already loaded
+                    const gatewaysList = safeGetElement("gateways-table");
+                    if (gatewaysList) {
+                        const hasLoadingMessage =
+                            gatewaysList.innerHTML.includes(
+                                "Loading gateways...",
+                            );
+                        if (hasLoadingMessage) {
+                            // Trigger HTMX load manually if HTMX is available
                             if (window.htmx && window.htmx.trigger) {
-                                window.htmx.trigger(gatewaysTbody, "load");
+                                window.htmx.trigger(gatewaysList, "load");
                             } else {
                                 // Fallback: reload the page section via fetch
                                 const rootPath = window.ROOT_PATH || "";
@@ -6887,16 +6910,17 @@ function showTab(tabName) {
                                             html,
                                             "text/html",
                                         );
-                                        const newTbody = doc.querySelector(
-                                            "#gateways-section tbody",
-                                        );
-                                        if (newTbody) {
-                                            gatewaysTbody.innerHTML =
-                                                newTbody.innerHTML;
+                                        const newTable =
+                                            doc.querySelector(
+                                                "#gateways-table",
+                                            );
+                                        if (newTable) {
+                                            gatewaysList.innerHTML =
+                                                newTable.innerHTML;
                                             // Process any HTMX attributes in the new content
                                             if (window.htmx) {
                                                 window.htmx.process(
-                                                    gatewaysTbody,
+                                                    gatewaysList,
                                                 );
                                             }
                                         }
@@ -15755,9 +15779,14 @@ function setupSelectorSearch() {
  */
 function filterServerTable(searchText) {
     try {
-        const tbody = document.querySelector(
-            'tbody[data-testid="server-list"]',
-        );
+        // Try to find the table using multiple strategies
+        let tbody = document.querySelector("#servers-table-body");
+
+        // Fallback to data-testid selector for backward compatibility
+        if (!tbody) {
+            tbody = document.querySelector('tbody[data-testid="server-list"]');
+        }
+
         if (!tbody) {
             console.warn("Server table not found");
             return;
@@ -15932,7 +15961,14 @@ function filterPromptsTable(searchText) {
  */
 function filterA2AAgentsTable(searchText) {
     try {
-        const tbody = document.querySelector("#a2a-agents-panel tbody");
+        // Try to find the table using multiple strategies
+        let tbody = document.querySelector("#agents-table tbody");
+
+        // Fallback to panel selector for backward compatibility
+        if (!tbody) {
+            tbody = document.querySelector("#a2a-agents-panel tbody");
+        }
+
         if (!tbody) {
             console.warn("A2A Agents table body not found");
             return;
