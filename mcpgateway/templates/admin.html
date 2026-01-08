@@ -222,13 +222,24 @@
 
         <!-- Sidebar Navigation -->
         <nav class="flex-1 overflow-y-auto py-4 sidebar-scroll">
+          <!-- Overview Section -->
+          <div class="space-y-1 px-2 mb-4">
+            <a href="#overview" id="tab-overview" data-testid="overview-tab"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors active"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('overview')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📊</span>
+              <span x-show="!sidebarCollapsed">Overview</span>
+            </a>
+          </div>
+
           <!-- MCP Section -->
           <div class="sidebar-section" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">MCP</span>
           </div>
           <div class="space-y-1 px-2">
             <a href="#gateways" id="tab-gateways" data-testid="gateways-tab"
-               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors active"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                onclick="showTab('gateways')">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🖥️</span>
@@ -4332,6 +4343,22 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               </button>
             </div>
           </form>
+        </div>
+      </div>
+
+      <!-- Overview Panel -->
+      <div id="overview-panel" class="tab-panel"
+           hx-get="{{ root_path }}/admin/overview/partial"
+           hx-trigger="load"
+           hx-swap="innerHTML">
+        <div class="flex items-center justify-center py-12">
+          <div class="animate-pulse flex items-center space-x-2 text-gray-400 dark:text-gray-500">
+            <svg class="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span>Loading overview...</span>
+          </div>
         </div>
       </div>
 
