@@ -613,7 +613,7 @@ class TestIssuerValidation:
             patch.object(dcr_service, "discover_as_metadata") as mock_discover,
         ):
             mock_discover.return_value = {"registration_endpoint": "https://as-issuer-auth.example.com/register"}
-            
+
             mock_response = MagicMock()
             mock_response.status_code = 201
             mock_response.json = MagicMock(return_value={"client_id": "test-issuer-auth", "redirect_uris": []})

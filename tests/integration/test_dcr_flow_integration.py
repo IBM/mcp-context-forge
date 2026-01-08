@@ -11,12 +11,17 @@ These tests validate the complete DCR flow with PKCE, including:
 Tests will FAIL until implementation is complete (TDD Red Phase).
 """
 
-import pytest
+# Standard
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime, timezone, timedelta
-from mcpgateway.db import RegisteredOAuthClient, OAuthState, Gateway
-from mcpgateway.services.oauth_manager import OAuthManager
+
+# Third-Party
+import pytest
+
+# First-Party
+from mcpgateway.db import Gateway, OAuthState, RegisteredOAuthClient
 from mcpgateway.services.dcr_service import DcrService
+from mcpgateway.services.oauth_manager import OAuthManager
 
 
 @pytest.mark.integration
@@ -26,10 +31,13 @@ class TestPKCEFlowIntegration:
     @pytest.mark.asyncio
     async def test_complete_pkce_flow_with_state_storage(self, test_db):
         """Test complete PKCE flow from initiation to token exchange."""
-        from mcpgateway.services.token_storage_service import TokenStorageService
-        from mcpgateway.db import OAuthState
+        # Standard
         from datetime import datetime, timedelta, timezone
         from unittest.mock import patch
+
+        # First-Party
+        from mcpgateway.db import OAuthState
+        from mcpgateway.services.token_storage_service import TokenStorageService
 
         # Mock get_db() to return the test_db session
         def mock_get_db():
@@ -80,32 +88,23 @@ class TestPKCEFlowIntegration:
 
                 mock_token_response = {"access_token": "test-access-token", "token_type": "Bearer", "expires_in": 3600}
 
-                with patch("aiohttp.ClientSession") as mock_session_class:
-                    # Create mock response
-                    mock_response_obj = AsyncMock()
-                    mock_response_obj.status = 200
-                    mock_response_obj.json = AsyncMock(return_value=mock_token_response)
-                    mock_response_obj.raise_for_status = MagicMock()
-                    mock_response_obj.headers = {"content-type": "application/json"}
+                # Create mock httpx response
+                mock_response = MagicMock()
+                mock_response.status_code = 200
+                mock_response.json = MagicMock(return_value=mock_token_response)
+                mock_response.raise_for_status = MagicMock()
+                mock_response.headers = {"content-type": "application/json"}
 
-                    # Create mock post that returns the response
-                    mock_post = MagicMock(return_value=mock_response_obj)
-                    mock_post.return_value.__aenter__ = AsyncMock(return_value=mock_response_obj)
-                    mock_post.return_value.__aexit__ = AsyncMock(return_value=None)
+                # Create mock httpx client
+                mock_client = AsyncMock()
+                mock_client.post = AsyncMock(return_value=mock_response)
 
-                    # Create mock session
-                    mock_session = MagicMock()
-                    mock_session.post = mock_post
-                    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-                    mock_session.__aexit__ = AsyncMock(return_value=None)
-
-                    mock_session_class.return_value = mock_session
-
+                with patch.object(oauth_manager, "_get_client", return_value=mock_client):
                     # Complete flow
                     _result = await oauth_manager.complete_authorization_code_flow(gateway_id="test-gateway-123", code=code, state=state, credentials=credentials)  # noqa: F841
 
                 # Verify code_verifier was included in token request
-                call_kwargs = mock_post.call_args[1]
+                call_kwargs = mock_client.post.call_args[1]
                 assert call_kwargs["data"]["code_verifier"] == code_verifier
 
                 # Verify state is consumed (single-use)
@@ -151,19 +150,21 @@ class TestDCRFlowIntegration:
             "registration_access_token": "registration-access-token-abc",
         }
 
-        with patch("aiohttp.ClientSession.get") as mock_get, patch("aiohttp.ClientSession.post") as mock_post:
-            # Mock metadata discovery
-            mock_get_response = AsyncMock()
-            mock_get_response.status = 200
-            mock_get_response.json = AsyncMock(return_value=mock_metadata)
-            mock_get.return_value.__aenter__.return_value = mock_get_response
+        # Create mock httpx responses
+        mock_get_response = MagicMock()
+        mock_get_response.status_code = 200
+        mock_get_response.json = MagicMock(return_value=mock_metadata)
 
-            # Mock DCR registration
-            mock_post_response = AsyncMock()
-            mock_post_response.status = 201
-            mock_post_response.json = AsyncMock(return_value=mock_registration)
-            mock_post.return_value.__aenter__.return_value = mock_post_response
+        mock_post_response = MagicMock()
+        mock_post_response.status_code = 201
+        mock_post_response.json = MagicMock(return_value=mock_registration)
 
+        # Create mock httpx client
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_get_response)
+        mock_client.post = AsyncMock(return_value=mock_post_response)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
             # Step 1: Register client via DCR
             registered_client = await dcr_service.register_client(
                 gateway_id="test-gw-456",
@@ -254,6 +255,7 @@ class TestPKCESecurityIntegration:
     @pytest.mark.asyncio
     async def test_state_cannot_be_reused(self, test_db):
         """Test that state can only be used once (replay attack prevention)."""
+        # First-Party
         from mcpgateway.services.token_storage_service import TokenStorageService
 
         token_storage = TokenStorageService(test_db)
@@ -308,6 +310,7 @@ class TestPKCESecurityIntegration:
     @pytest.mark.asyncio
     async def test_code_verifier_matches_challenge(self, test_db):
         """Test that code_verifier correctly validates against code_challenge."""
+        # Standard
         import base64
         import hashlib
 
@@ -344,12 +347,17 @@ class TestDCRErrorHandling:
             # No registration_endpoint
         }
 
-        with patch("aiohttp.ClientSession.get") as mock_get:
-            mock_response = AsyncMock()
-            mock_response.status = 200
-            mock_response.json = AsyncMock(return_value=mock_metadata)
-            mock_get.return_value.__aenter__.return_value = mock_response
+        # Create mock httpx response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value=mock_metadata)
 
+        # Create mock httpx client
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            # First-Party
             from mcpgateway.services.dcr_service import DcrError
 
             with pytest.raises(DcrError, match="does not support Dynamic Client Registration"):
@@ -360,6 +368,7 @@ class TestDCRErrorHandling:
     @pytest.mark.asyncio
     async def test_dcr_handles_invalid_issuer(self, test_db):
         """Test validation of issuer in metadata."""
+        # First-Party
         from mcpgateway.services import dcr_service as dcr_module
 
         # Clear metadata cache to ensure test isolation
@@ -373,25 +382,17 @@ class TestDCRErrorHandling:
             "authorization_endpoint": "https://as.example.com/authorize",
         }
 
-        with patch("aiohttp.ClientSession") as mock_session_class:
-            # Create mock response
-            mock_response_obj = AsyncMock()
-            mock_response_obj.status = 200
-            mock_response_obj.json = AsyncMock(return_value=mock_metadata)
+        # Create mock httpx response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value=mock_metadata)
 
-            # Create mock get that returns the response
-            mock_get = MagicMock(return_value=mock_response_obj)
-            mock_get.return_value.__aenter__ = AsyncMock(return_value=mock_response_obj)
-            mock_get.return_value.__aexit__ = AsyncMock(return_value=None)
+        # Create mock httpx client
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
 
-            # Create mock session
-            mock_session = MagicMock()
-            mock_session.get = mock_get
-            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session.__aexit__ = AsyncMock(return_value=None)
-
-            mock_session_class.return_value = mock_session
-
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            # First-Party
             from mcpgateway.services.dcr_service import DcrError
 
             with pytest.raises(DcrError, match="issuer mismatch"):

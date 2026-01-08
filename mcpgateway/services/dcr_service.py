@@ -54,6 +54,7 @@ class DcrService:
                 timeout=httpx.Timeout(self.settings.oauth_request_timeout),
                 limits=httpx.Limits(max_keepalive_connections=20, max_connections=100),
                 http2=True,
+                follow_redirects=True,
             )
         return self._client
 
