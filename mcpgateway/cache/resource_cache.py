@@ -285,6 +285,8 @@ class ResourceCache:
         """
         now = time.time()
         removed = 0
+        needs_compaction = False
+
         with self._lock:
             while self._expiry_heap and self._expiry_heap[0][0] <= now:
                 expires_at, key = heapq.heappop(self._expiry_heap)
@@ -294,24 +296,41 @@ class ResourceCache:
                     del self._cache[key]
                     removed += 1
 
-            # Compact heap if it has grown too large (stale entries from updates/deletes)
-            # This bounds heap memory to O(max_size) in steady state
-            if len(self._expiry_heap) > 2 * self.max_size:
-                self._compact_heap()
+            # Check if heap needs compaction (done outside lock)
+            needs_compaction = len(self._expiry_heap) > 2 * self.max_size
 
         if removed:
             logger.debug(f"Cleaned {removed} expired cache entries")
+
+        # Compact heap outside the main lock to minimize contention
+        if needs_compaction:
+            self._compact_heap()
 
     def _compact_heap(self) -> None:
         """Rebuild the expiry heap with only valid (current) entries.
 
         Called when heap grows too large due to stale entries from
-        key updates or deletions. Must be called while holding _lock.
+        key updates or deletions. Minimizes lock contention by doing
+        the O(n) heapify outside the lock.
         """
-        valid_entries = [(entry.expires_at, key) for key, entry in self._cache.items()]
-        heapq.heapify(valid_entries)
-        old_size = len(self._expiry_heap)
-        self._expiry_heap = valid_entries
+        # Snapshot current entries under lock (fast dict iteration)
+        with self._lock:
+            entries = [(entry.expires_at, key) for key, entry in self._cache.items()]
+            old_size = len(self._expiry_heap)
+            # Track max expiry in snapshot to identify entries added during compaction
+            max_snapshot_expiry = max((e[0] for e in entries), default=0.0)
+
+        # Build heap outside lock - O(n) work doesn't block get/set
+        heapq.heapify(entries)
+
+        # Swap back under lock, preserving entries added during compaction
+        with self._lock:
+            # Keep heap entries with expiry > max_snapshot_expiry (added via set() during compaction)
+            new_entries = [(exp, k) for exp, k in self._expiry_heap if exp > max_snapshot_expiry]
+            self._expiry_heap = entries
+            for entry in new_entries:
+                heapq.heappush(self._expiry_heap, entry)
+
         logger.debug(f"Compacted expiry heap: {old_size} -> {len(self._expiry_heap)} entries")
 
     def __len__(self) -> int:
