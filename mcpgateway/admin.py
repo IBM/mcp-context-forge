@@ -566,6 +566,8 @@ def _get_span_entity_performance(
 
     # Fallback: Python aggregation (SQLite or other DBs, or PostgreSQL with USE_POSTGRESDB_PERCENTILES=False)
     # Pass dialect_name to extract_json_field to ensure correct SQL syntax for the actual database
+    # Use timezone-aware cutoff for PostgreSQL to avoid timezone drift, naive for SQLite
+    effective_cutoff = cutoff_time if dialect_name == "postgresql" else cutoff_time_naive
     spans = (
         db.query(
             extract_json_field(ObservabilitySpan.attributes, f'$."{json_key}"', dialect_name=dialect_name).label("entity"),
@@ -573,7 +575,7 @@ def _get_span_entity_performance(
         )
         .filter(
             ObservabilitySpan.name.in_(span_names),
-            ObservabilitySpan.start_time >= cutoff_time_naive,
+            ObservabilitySpan.start_time >= effective_cutoff,
             ObservabilitySpan.duration_ms.isnot(None),
             extract_json_field(ObservabilitySpan.attributes, f'$."{json_key}"', dialect_name=dialect_name).isnot(None),
         )
@@ -585,7 +587,15 @@ def _get_span_entity_performance(
         durations_by_entity[span.entity].append(span.duration_ms)
 
     def percentile(data: List[float], p: float) -> float:
-        """Calculate percentile using linear interpolation (matches PostgreSQL percentile_cont)."""
+        """Calculate percentile using linear interpolation (matches PostgreSQL percentile_cont).
+
+        Args:
+            data: Sorted list of numeric values.
+            p: Percentile to calculate (0.0 to 1.0).
+
+        Returns:
+            float: The interpolated percentile value, or 0.0 if data is empty.
+        """
         if not data:
             return 0.0
         n = len(data)
