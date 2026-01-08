@@ -230,35 +230,38 @@ class TestA2AAgentService:
         # Set version attribute to avoid TypeError
         sample_db_agent.version = 1
 
-        # Mock database queries
-        mock_db.execute.return_value.scalar_one_or_none.side_effect = [sample_db_agent, None]  # Agent exists, no name conflict
-        mock_db.commit = MagicMock()
-        mock_db.refresh = MagicMock()
+        # Mock get_for_update to return the agent
+        with patch("mcpgateway.services.a2a_service.get_for_update") as mock_get_for_update:
+            mock_get_for_update.return_value = sample_db_agent
+            
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
 
-        # Mock the convert_agent_to_read method properly
-        with patch.object(service, "convert_agent_to_read") as mock_schema:
-            mock_schema.return_value = MagicMock()
+            # Mock the convert_agent_to_read method properly
+            with patch.object(service, "convert_agent_to_read") as mock_schema:
+                mock_schema.return_value = MagicMock()
 
-            # Create update data
-            update_data = A2AAgentUpdate(description="Updated description")
+                # Create update data
+                update_data = A2AAgentUpdate(description="Updated description")
 
             # Execute
             await service.update_agent(mock_db, sample_db_agent.id, update_data)
 
-            # Verify
-            mock_db.commit.assert_called_once()
-            assert mock_schema.called
-            assert sample_db_agent.version == 2  # Should be incremented
+                # Verify
+                mock_db.commit.assert_called_once()
+                assert mock_schema.called
+                assert sample_db_agent.version == 2  # Should be incremented
 
     async def test_update_agent_not_found(self, service, mock_db):
         """Test updating non-existent agent."""
-        # Mock database query returning None
-        mock_db.execute.return_value.scalar_one_or_none.return_value = None
-        update_data = A2AAgentUpdate(description="Updated description")
+        # Mock get_for_update to return None (agent not found)
+        with patch("mcpgateway.services.a2a_service.get_for_update") as mock_get_for_update:
+            mock_get_for_update.return_value = None
+            update_data = A2AAgentUpdate(description="Updated description")
 
-        # Execute and verify exception
-        with pytest.raises(A2AAgentNotFoundError):
-            await service.update_agent(mock_db, "non-existent-id", update_data)
+            # Execute and verify exception
+            with pytest.raises(A2AAgentNotFoundError):
+                await service.update_agent(mock_db, "non-existent-id", update_data)
 
     async def test_toggle_agent_status_success(self, service, mock_db, sample_db_agent):
         """Test successful agent status toggle."""
@@ -365,11 +368,20 @@ class TestA2AAgentService:
         disabled_agent = MagicMock()
         disabled_agent.enabled = False
         disabled_agent.name = sample_db_agent.name
-        service.get_agent_by_name = AsyncMock(return_value=disabled_agent)
+        disabled_agent.id = sample_db_agent.id
+        
+        # Mock the database query to return agent ID
+        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent.id
+        
+        # Mock get_for_update to return the disabled agent
+        with patch("mcpgateway.services.a2a_service.get_for_update") as mock_get_for_update:
+            mock_get_for_update.return_value = disabled_agent
+            mock_db.commit = MagicMock()
+            mock_db.close = MagicMock()
 
-        # Execute and verify exception
-        with pytest.raises(A2AAgentError, match="disabled"):
-            await service.invoke_agent(mock_db, sample_db_agent.name, {"test": "data"})
+            # Execute and verify exception
+            with pytest.raises(A2AAgentError, match="disabled"):
+                await service.invoke_agent(mock_db, sample_db_agent.name, {"test": "data"})
 
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")

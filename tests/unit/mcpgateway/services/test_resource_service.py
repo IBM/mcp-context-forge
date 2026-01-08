@@ -935,12 +935,10 @@ class TestResourceSubscriptions:
         """Subscribing to a resource that exists but is inactive."""
         subscription = ResourceSubscription(uri="test://inactive", subscriber_id="subscriber1")
 
-        # Active lookup → None, inactive lookup → object
-        mock_scalar1 = MagicMock()
-        mock_scalar1.scalar_one_or_none.return_value = None
-        mock_scalar2 = MagicMock()
-        mock_scalar2.scalar_one_or_none.return_value = mock_inactive_resource
-        mock_db.execute.side_effect = [mock_scalar1, mock_scalar2]
+        # Mock single query that returns the inactive resource
+        mock_scalar = MagicMock()
+        mock_scalar.scalar_one_or_none.return_value = mock_inactive_resource
+        mock_db.execute.return_value = mock_scalar
 
         with pytest.raises(ResourceError) as exc_info:
             await resource_service.subscribe_resource(mock_db, subscription)

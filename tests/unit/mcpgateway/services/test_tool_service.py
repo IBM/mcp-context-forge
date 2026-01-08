@@ -1503,14 +1503,10 @@ class TestToolService:
         # Set tool to inactive
         mock_tool.enabled = False
 
-        # Mock DB to return inactive tool for first query, None for second query
-        mock_scalar1 = Mock()
-        mock_scalar1.scalar_one_or_none.return_value = None
-
-        mock_scalar2 = Mock()
-        mock_scalar2.scalar_one_or_none.return_value = mock_tool
-
-        test_db.execute = Mock(side_effect=[mock_scalar1, mock_scalar2])
+        # Mock DB to return inactive tool in single query
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = mock_tool
+        test_db.execute = Mock(return_value=mock_scalar)
 
         # Should raise NotFoundError with "inactive" message
         with pytest.raises(ToolNotFoundError) as exc_info:
