@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
-import aiohttp
+import httpx
 from pydantic import SecretStr
 import pytest
 
@@ -44,33 +44,17 @@ class TestOAuthManager:
         manager = OAuthManager()
         credentials = {"grant_type": "client_credentials", "client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "scopes": ["read", "write"]}
 
-        with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-            # Create mock session instance
-            mock_session_instance = MagicMock()
+        # Create mock response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"access_token": "test_token_123"})
+        mock_response.raise_for_status = MagicMock()
 
-            # Create mock post method
-            mock_post = MagicMock()
-            mock_session_instance.post = mock_post
+        # Create mock client
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
 
-            # Create mock response
-            mock_response = MagicMock()
-            mock_response.status = 200
-            mock_response.json = AsyncMock(return_value={"access_token": "test_token_123"})
-            mock_response.raise_for_status = MagicMock()
-
-            # Async context manager for response
-            mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_response.__aexit__ = AsyncMock(return_value=None)
-
-            # Post returns response
-            mock_post.return_value = mock_response
-
-            # Session instance context manager
-            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-
-            mock_session_class.return_value = mock_session_instance
-
+        with patch.object(manager, "_get_client", return_value=mock_client):
             result = await manager.get_access_token(credentials)
             assert result == "test_token_123"
 
@@ -88,40 +72,24 @@ class TestOAuthManager:
             "scopes": ["openid", "profile"],
         }
 
-        with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-            # Create mock session instance
-            mock_session_instance = MagicMock()
+        # Create mock response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "application/json"}
+        mock_response.json = MagicMock(return_value={"access_token": "password_token_456", "token_type": "Bearer", "expires_in": 3600})
+        mock_response.raise_for_status = MagicMock()
 
-            # Create mock post method
-            mock_post = MagicMock()
-            mock_session_instance.post = mock_post
+        # Create mock client
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
 
-            # Create mock response
-            mock_response = MagicMock()
-            mock_response.status = 200
-            mock_response.headers = {"content-type": "application/json"}
-            mock_response.json = AsyncMock(return_value={"access_token": "password_token_456", "token_type": "Bearer", "expires_in": 3600})
-            mock_response.raise_for_status = MagicMock()
-
-            # Async context manager for response
-            mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_response.__aexit__ = AsyncMock(return_value=None)
-
-            # Post returns response
-            mock_post.return_value = mock_response
-
-            # Session instance context manager
-            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-
-            mock_session_class.return_value = mock_session_instance
-
+        with patch.object(manager, "_get_client", return_value=mock_client):
             result = await manager.get_access_token(credentials)
             assert result == "password_token_456"
 
             # Verify the request was made with correct form data
-            mock_post.assert_called_once()
-            call_args = mock_post.call_args
+            mock_client.post.assert_called_once()
+            call_args = mock_client.post.call_args
             assert call_args[0][0] == "https://keycloak.example.com/auth/realms/myrealm/protocol/openid-connect/token"
             assert call_args[1]["data"]["grant_type"] == "password"
             assert call_args[1]["data"]["username"] == "systemadmin@system.com"
@@ -153,27 +121,18 @@ class TestOAuthManager:
             "password": "secret",
         }
 
-        with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-            mock_session_instance = MagicMock()
-            mock_post = MagicMock()
-            mock_session_instance.post = mock_post
+        # Create mock response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "application/x-www-form-urlencoded"}
+        mock_response.text = "access_token=encoded_token_789&token_type=Bearer&expires_in=7200"
+        mock_response.raise_for_status = MagicMock()
 
-            mock_response = MagicMock()
-            mock_response.status = 200
-            mock_response.headers = {"content-type": "application/x-www-form-urlencoded"}
-            mock_response.text = AsyncMock(return_value="access_token=encoded_token_789&token_type=Bearer&expires_in=7200")
-            mock_response.raise_for_status = MagicMock()
+        # Create mock client
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
 
-            mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_response.__aexit__ = AsyncMock(return_value=None)
-
-            mock_post.return_value = mock_response
-
-            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-
-            mock_session_class.return_value = mock_session_instance
-
+        with patch.object(manager, "_get_client", return_value=mock_client):
             result = await manager.get_access_token(credentials)
             assert result == "encoded_token_789"
 
@@ -205,24 +164,17 @@ class TestOAuthManager:
         manager = OAuthManager()
         credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
 
-        with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-            mock_session_instance = MagicMock()
-            mock_post = MagicMock()
-            mock_session_instance.post = mock_post
+        # Create mock response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"access_token": "exchanged_token_456"})
+        mock_response.raise_for_status = MagicMock()
 
-            mock_response = MagicMock()
-            mock_response.status = 200
-            mock_response.json = AsyncMock(return_value={"access_token": "exchanged_token_456"})
-            mock_response.raise_for_status = MagicMock()
-            mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_response.__aexit__ = AsyncMock(return_value=None)
+        # Create mock client
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
 
-            mock_post.return_value = mock_response
-
-            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_session_class.return_value = mock_session_instance
-
+        with patch.object(manager, "_get_client", return_value=mock_client):
             result = await manager.exchange_code_for_token(credentials, "auth_code_123", "state_456")
             assert result == "exchanged_token_456"
 
@@ -238,23 +190,17 @@ class TestOAuthManager:
         manager = OAuthManager()
         credentials = {"grant_type": "authorization_code", "client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "scopes": ["read", "write"]}
 
-        with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-            mock_session_instance = MagicMock()
-            mock_post = MagicMock()
-            mock_session_instance.post = mock_post
+        # Create mock response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"access_token": "fallback_token"})
+        mock_response.raise_for_status = MagicMock()
 
-            mock_response = MagicMock()
-            mock_response.status = 200
-            mock_response.json = AsyncMock(return_value={"access_token": "fallback_token"})
-            mock_response.raise_for_status = MagicMock()
-            mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_response.__aexit__ = AsyncMock(return_value=None)
+        # Create mock client
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
 
-            mock_post.return_value = mock_response
-            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_session_class.return_value = mock_session_instance
-
+        with patch.object(manager, "_get_client", return_value=mock_client):
             result = await manager.get_access_token(credentials)
             assert result == "fallback_token"
 
@@ -264,22 +210,16 @@ class TestOAuthManager:
         manager = OAuthManager(max_retries=1)  # Reduce retries for faster test execution
         credentials = {"grant_type": "authorization_code", "client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token"}
 
-        with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-            mock_session_instance = MagicMock()
-            mock_post = MagicMock()
-            mock_session_instance.post = mock_post
+        # Create mock response
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        mock_response.raise_for_status = MagicMock(side_effect=httpx.HTTPStatusError("HTTP Error", request=MagicMock(), response=MagicMock(status_code=401)))
 
-            mock_response = MagicMock()
-            mock_response.status = 401
-            mock_response.raise_for_status = MagicMock(side_effect=aiohttp.ClientResponseError(request_info=MagicMock(), history=(), status=401, message="Unauthorized"))
-            mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_response.__aexit__ = AsyncMock(return_value=None)
+        # Create mock client
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
 
-            mock_post.return_value = mock_response
-            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_session_class.return_value = mock_session_instance
-
+        with patch.object(manager, "_get_client", return_value=mock_client):
             with pytest.raises(OAuthError, match="Authorization code flow cannot be used"):
                 await manager.get_access_token(credentials)
 
@@ -303,23 +243,17 @@ class TestOAuthManager:
                 mock_encryption.decrypt_secret.return_value = "decrypted_secret"
                 mock_get_encryption.return_value = mock_encryption
 
-                with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-                    mock_session_instance = MagicMock()
-                    mock_post = MagicMock()
-                    mock_session_instance.post = mock_post
+                # Create mock response
+                mock_response = MagicMock()
+                mock_response.status_code = 200
+                mock_response.json = MagicMock(return_value={"access_token": "decrypted_token"})
+                mock_response.raise_for_status = MagicMock()
 
-                    mock_response = MagicMock()
-                    mock_response.status = 200
-                    mock_response.json = AsyncMock(return_value={"access_token": "decrypted_token"})
-                    mock_response.raise_for_status = MagicMock()
-                    mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-                    mock_response.__aexit__ = AsyncMock(return_value=None)
+                # Create mock client
+                mock_client = AsyncMock()
+                mock_client.post = AsyncMock(return_value=mock_response)
 
-                    mock_post.return_value = mock_response
-                    mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-                    mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-                    mock_session_class.return_value = mock_session_instance
-
+                with patch.object(manager, "_get_client", return_value=mock_client):
                     result = await manager._client_credentials_flow(credentials)
                     assert result == "decrypted_token"
                     mock_encryption.decrypt_secret.assert_called_once_with(encrypted_secret)
@@ -337,23 +271,17 @@ class TestOAuthManager:
             mock_get_settings.side_effect = ImportError("No encryption")
 
             # Should fallback to using encrypted secret directly
-            with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-                mock_session_instance = MagicMock()
-                mock_post = MagicMock()
-                mock_session_instance.post = mock_post
+            # Create mock response
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json = MagicMock(return_value={"access_token": "direct_token"})
+            mock_response.raise_for_status = MagicMock()
 
-                mock_response = MagicMock()
-                mock_response.status = 200
-                mock_response.json = AsyncMock(return_value={"access_token": "direct_token"})
-                mock_response.raise_for_status = MagicMock()
-                mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-                mock_response.__aexit__ = AsyncMock(return_value=None)
+            # Create mock client
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=mock_response)
 
-                mock_post.return_value = mock_response
-                mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-                mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-                mock_session_class.return_value = mock_session_instance
-
+            with patch.object(manager, "_get_client", return_value=mock_client):
                 result = await manager._client_credentials_flow(credentials)
                 assert result == "direct_token"
 
@@ -377,24 +305,18 @@ class TestOAuthManager:
                 mock_encryption.decrypt_secret.return_value = None
                 mock_get_encryption.return_value = mock_encryption
 
-                with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-                    mock_session_instance = MagicMock()
-                    mock_post = MagicMock()
-                    mock_session_instance.post = mock_post
+                # Create mock response
+                mock_response = MagicMock()
+                mock_response.status_code = 200
+                mock_response.headers = {"content-type": "application/json"}
+                mock_response.json = MagicMock(return_value={"access_token": "fallback_token"})
+                mock_response.raise_for_status = MagicMock()
 
-                    mock_response = MagicMock()
-                    mock_response.status = 200
-                    mock_response.headers = {"content-type": "application/json"}
-                    mock_response.json = AsyncMock(return_value={"access_token": "fallback_token"})
-                    mock_response.raise_for_status = MagicMock()
-                    mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-                    mock_response.__aexit__ = AsyncMock(return_value=None)
+                # Create mock client
+                mock_client = AsyncMock()
+                mock_client.post = AsyncMock(return_value=mock_response)
 
-                    mock_post.return_value = mock_response
-                    mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-                    mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-                    mock_session_class.return_value = mock_session_instance
-
+                with patch.object(manager, "_get_client", return_value=mock_client):
                     result = await manager._client_credentials_flow(credentials)
                     assert result == "fallback_token"
                     mock_encryption.decrypt_secret.assert_called_once_with(encrypted_secret)
@@ -406,25 +328,19 @@ class TestOAuthManager:
 
         credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token"}
 
-        with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-            mock_session_instance = MagicMock()
-            mock_post = MagicMock()
-            mock_session_instance.post = mock_post
+        # Create mock response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "application/x-www-form-urlencoded"}
+        # Form-encoded response that hits lines 133-138
+        mock_response.text = "access_token=test_form_token&token_type=bearer&expires_in=3600"
+        mock_response.raise_for_status = MagicMock()
 
-            mock_response = MagicMock()
-            mock_response.status = 200
-            mock_response.headers = {"content-type": "application/x-www-form-urlencoded"}
-            # Form-encoded response that hits lines 133-138
-            mock_response.text = AsyncMock(return_value="access_token=test_form_token&token_type=bearer&expires_in=3600")
-            mock_response.raise_for_status = MagicMock()
-            mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_response.__aexit__ = AsyncMock(return_value=None)
+        # Create mock client
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
 
-            mock_post.return_value = mock_response
-            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_session_class.return_value = mock_session_instance
-
+        with patch.object(manager, "_get_client", return_value=mock_client):
             result = await manager._client_credentials_flow(credentials)
             assert result == "test_form_token"
 
@@ -435,26 +351,20 @@ class TestOAuthManager:
 
         credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token"}
 
-        with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-            mock_session_instance = MagicMock()
-            mock_post = MagicMock()
-            mock_session_instance.post = mock_post
+        # Create mock response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "application/json"}
+        # JSON parsing fails, should fallback to text parsing (lines 143-147)
+        mock_response.json = MagicMock(side_effect=ValueError("Invalid JSON"))
+        mock_response.text = "malformed response but contains access_token=fallback_token"
+        mock_response.raise_for_status = MagicMock()
 
-            mock_response = MagicMock()
-            mock_response.status = 200
-            mock_response.headers = {"content-type": "application/json"}
-            # JSON parsing fails, should fallback to text parsing (lines 143-147)
-            mock_response.json = AsyncMock(side_effect=ValueError("Invalid JSON"))
-            mock_response.text = AsyncMock(return_value="malformed response but contains access_token=fallback_token")
-            mock_response.raise_for_status = MagicMock()
-            mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_response.__aexit__ = AsyncMock(return_value=None)
+        # Create mock client
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
 
-            mock_post.return_value = mock_response
-            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_session_class.return_value = mock_session_instance
-
+        with patch.object(manager, "_get_client", return_value=mock_client):
             # This should raise an error because access_token won't be parsed from raw response
             with pytest.raises(OAuthError, match="No access_token in response"):
                 await manager._client_credentials_flow(credentials)
@@ -466,25 +376,19 @@ class TestOAuthManager:
 
         credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token"}
 
-        with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-            mock_session_instance = MagicMock()
-            mock_post = MagicMock()
-            mock_session_instance.post = mock_post
+        # Create mock response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "application/json"}
+        # Response without access_token - line 150
+        mock_response.json = MagicMock(return_value={"token_type": "bearer", "expires_in": 3600})
+        mock_response.raise_for_status = MagicMock()
 
-            mock_response = MagicMock()
-            mock_response.status = 200
-            mock_response.headers = {"content-type": "application/json"}
-            # Response without access_token - line 150
-            mock_response.json = AsyncMock(return_value={"token_type": "bearer", "expires_in": 3600})
-            mock_response.raise_for_status = MagicMock()
-            mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_response.__aexit__ = AsyncMock(return_value=None)
+        # Create mock client
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
 
-            mock_post.return_value = mock_response
-            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_session_class.return_value = mock_session_instance
-
+        with patch.object(manager, "_get_client", return_value=mock_client):
             with pytest.raises(OAuthError, match="No access_token in response"):
                 await manager._client_credentials_flow(credentials)
 
@@ -495,17 +399,11 @@ class TestOAuthManager:
 
         credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token"}
 
-        with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-            mock_session_instance = MagicMock()
-            mock_post = MagicMock()
-            mock_session_instance.post = mock_post
+        # Create mock client that raises RuntimeError
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=RuntimeError("Unexpected error"))
 
-            # Mock a non-ClientError exception that doesn't get caught in the retry loop
-            mock_post.side_effect = RuntimeError("Unexpected error")
-            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_session_class.return_value = mock_session_instance
-
+        with patch.object(manager, "_get_client", return_value=mock_client):
             # This should reach the final fallback error on line 162
             with pytest.raises(OAuthError, match="Failed to obtain access token after all retry attempts"):
                 await manager._client_credentials_flow(credentials)
@@ -517,30 +415,21 @@ class TestOAuthManager:
 
         credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token"}
 
-        with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-            mock_session_instance = MagicMock()
-            mock_post = MagicMock()
-            mock_session_instance.post = mock_post
+        # First two calls fail, third succeeds
+        fail_response = MagicMock()
+        fail_response.status_code = 500
+        fail_response.raise_for_status = MagicMock(side_effect=httpx.HTTPStatusError("HTTP Error", request=MagicMock(), response=MagicMock(status_code=500)))
 
-            # First two calls fail, third succeeds
-            fail_response = MagicMock()
-            fail_response.status = 500
-            fail_response.raise_for_status = MagicMock(side_effect=aiohttp.ClientResponseError(request_info=MagicMock(), history=(), status=500, message="Server Error"))
-            fail_response.__aenter__ = AsyncMock(return_value=fail_response)
-            fail_response.__aexit__ = AsyncMock(return_value=None)
+        success_response = MagicMock()
+        success_response.status_code = 200
+        success_response.json = MagicMock(return_value={"access_token": "retry_success_token"})
+        success_response.raise_for_status = MagicMock()
 
-            success_response = MagicMock()
-            success_response.status = 200
-            success_response.json = AsyncMock(return_value={"access_token": "retry_success_token"})
-            success_response.raise_for_status = MagicMock()
-            success_response.__aenter__ = AsyncMock(return_value=success_response)
-            success_response.__aexit__ = AsyncMock(return_value=None)
+        # Create mock client with side_effect for multiple calls
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=[fail_response, fail_response, success_response])
 
-            mock_post.side_effect = [fail_response, fail_response, success_response]
-            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_session_class.return_value = mock_session_instance
-
+        with patch.object(manager, "_get_client", return_value=mock_client):
             with patch("asyncio.sleep") as mock_sleep:
                 result = await manager._client_credentials_flow(credentials)
                 assert result == "retry_success_token"
@@ -553,22 +442,15 @@ class TestOAuthManager:
 
         credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token"}
 
-        with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-            mock_session_instance = MagicMock()
-            mock_post = MagicMock()
-            mock_session_instance.post = mock_post
+        fail_response = MagicMock()
+        fail_response.status_code = 500
+        fail_response.raise_for_status = MagicMock(side_effect=httpx.HTTPStatusError("HTTP Error", request=MagicMock(), response=MagicMock(status_code=500)))
 
-            fail_response = MagicMock()
-            fail_response.status = 500
-            fail_response.raise_for_status = MagicMock(side_effect=aiohttp.ClientResponseError(request_info=MagicMock(), history=(), status=500, message="Server Error"))
-            fail_response.__aenter__ = AsyncMock(return_value=fail_response)
-            fail_response.__aexit__ = AsyncMock(return_value=None)
+        # Create mock client
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=fail_response)
 
-            mock_post.return_value = fail_response
-            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_session_class.return_value = mock_session_instance
-
+        with patch.object(manager, "_get_client", return_value=mock_client):
             with patch("asyncio.sleep"):
                 with pytest.raises(OAuthError, match="Failed to obtain access token after 1 attempts"):
                     await manager._client_credentials_flow(credentials)
@@ -829,23 +711,17 @@ class TestOAuthManager:
 
         expected_response = {"access_token": "access123", "refresh_token": "refresh123", "expires_in": 3600}
 
-        with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-            mock_session_instance = MagicMock()
-            mock_post = MagicMock()
-            mock_session_instance.post = mock_post
+        # Create mock response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value=expected_response)
+        mock_response.raise_for_status = MagicMock()
 
-            mock_response = MagicMock()
-            mock_response.status = 200
-            mock_response.json = AsyncMock(return_value=expected_response)
-            mock_response.raise_for_status = MagicMock()
-            mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_response.__aexit__ = AsyncMock(return_value=None)
+        # Create mock client
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
 
-            mock_post.return_value = mock_response
-            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_session_class.return_value = mock_session_instance
-
+        with patch.object(manager, "_get_client", return_value=mock_client):
             result = await manager._exchange_code_for_tokens(credentials, code)
 
             assert result == expected_response
@@ -858,22 +734,16 @@ class TestOAuthManager:
         credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
         code = "invalid_code"
 
-        with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-            mock_session_instance = MagicMock()
-            mock_post = MagicMock()
-            mock_session_instance.post = mock_post
+        # Create mock response
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        mock_response.raise_for_status = MagicMock(side_effect=httpx.HTTPStatusError("HTTP Error", request=MagicMock(), response=MagicMock(status_code=400)))
 
-            mock_response = MagicMock()
-            mock_response.status = 400
-            mock_response.raise_for_status = MagicMock(side_effect=aiohttp.ClientResponseError(request_info=MagicMock(), history=(), status=400, message="Bad Request"))
-            mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_response.__aexit__ = AsyncMock(return_value=None)
+        # Create mock client
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
 
-            mock_post.return_value = mock_response
-            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_session_class.return_value = mock_session_instance
-
+        with patch.object(manager, "_get_client", return_value=mock_client):
             with pytest.raises(OAuthError, match="Failed to exchange code for token after"):
                 await manager._exchange_code_for_tokens(credentials, code)
 
@@ -896,24 +766,18 @@ class TestOAuthManager:
                 mock_encryption.decrypt_secret.return_value = None
                 mock_get_encryption.return_value = mock_encryption
 
-                with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-                    mock_session_instance = MagicMock()
-                    mock_post = MagicMock()
-                    mock_session_instance.post = mock_post
+                # Create mock response
+                mock_response = MagicMock()
+                mock_response.status_code = 200
+                mock_response.headers = {"content-type": "application/json"}
+                mock_response.json = MagicMock(return_value={"access_token": "internal_exchange_token"})
+                mock_response.raise_for_status = MagicMock()
 
-                    mock_response = MagicMock()
-                    mock_response.status = 200
-                    mock_response.headers = {"content-type": "application/json"}
-                    mock_response.json = AsyncMock(return_value={"access_token": "internal_exchange_token"})
-                    mock_response.raise_for_status = MagicMock()
-                    mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-                    mock_response.__aexit__ = AsyncMock(return_value=None)
+                # Create mock client
+                mock_client = AsyncMock()
+                mock_client.post = AsyncMock(return_value=mock_response)
 
-                    mock_post.return_value = mock_response
-                    mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-                    mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-                    mock_session_class.return_value = mock_session_instance
-
+                with patch.object(manager, "_get_client", return_value=mock_client):
                     result = await manager._exchange_code_for_tokens(credentials, "auth_code")
                     assert result["access_token"] == "internal_exchange_token"
                     mock_encryption.decrypt_secret.assert_called_once_with(encrypted_secret)
@@ -987,24 +851,18 @@ class TestOAuthManager:
                 mock_encryption.decrypt_secret.return_value = None
                 mock_get_encryption.return_value = mock_encryption
 
-                with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-                    mock_session_instance = MagicMock()
-                    mock_post = MagicMock()
-                    mock_session_instance.post = mock_post
+                # Create mock response
+                mock_response = MagicMock()
+                mock_response.status_code = 200
+                mock_response.headers = {"content-type": "application/json"}
+                mock_response.json = MagicMock(return_value={"access_token": "exchange_token"})
+                mock_response.raise_for_status = MagicMock()
 
-                    mock_response = MagicMock()
-                    mock_response.status = 200
-                    mock_response.headers = {"content-type": "application/json"}
-                    mock_response.json = AsyncMock(return_value={"access_token": "exchange_token"})
-                    mock_response.raise_for_status = MagicMock()
-                    mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-                    mock_response.__aexit__ = AsyncMock(return_value=None)
+                # Create mock client
+                mock_client = AsyncMock()
+                mock_client.post = AsyncMock(return_value=mock_response)
 
-                    mock_post.return_value = mock_response
-                    mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-                    mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-                    mock_session_class.return_value = mock_session_instance
-
+                with patch.object(manager, "_get_client", return_value=mock_client):
                     result = await manager.exchange_code_for_token(credentials, "auth_code", "state")
                     assert result == "exchange_token"
                     mock_encryption.decrypt_secret.assert_called_once_with(encrypted_secret)
@@ -1016,25 +874,19 @@ class TestOAuthManager:
 
         credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
 
-        with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-            mock_session_instance = MagicMock()
-            mock_post = MagicMock()
-            mock_session_instance.post = mock_post
+        # Create mock response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "application/x-www-form-urlencoded"}
+        # Form-encoded response that hits lines 241-246
+        mock_response.text = "access_token=exchange_form_token&refresh_token=refresh123"
+        mock_response.raise_for_status = MagicMock()
 
-            mock_response = MagicMock()
-            mock_response.status = 200
-            mock_response.headers = {"content-type": "application/x-www-form-urlencoded"}
-            # Form-encoded response that hits lines 241-246
-            mock_response.text = AsyncMock(return_value="access_token=exchange_form_token&refresh_token=refresh123")
-            mock_response.raise_for_status = MagicMock()
-            mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_response.__aexit__ = AsyncMock(return_value=None)
+        # Create mock client
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
 
-            mock_post.return_value = mock_response
-            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_session_class.return_value = mock_session_instance
-
+        with patch.object(manager, "_get_client", return_value=mock_client):
             result = await manager.exchange_code_for_token(credentials, "auth_code", "state")
             assert result == "exchange_form_token"
 
@@ -1045,26 +897,20 @@ class TestOAuthManager:
 
         credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
 
-        with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-            mock_session_instance = MagicMock()
-            mock_post = MagicMock()
-            mock_session_instance.post = mock_post
+        # Create mock response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "application/json"}
+        # JSON parsing fails, should fallback to text parsing (lines 251-255)
+        mock_response.json = MagicMock(side_effect=ValueError("Invalid JSON"))
+        mock_response.text = "malformed exchange response"
+        mock_response.raise_for_status = MagicMock()
 
-            mock_response = MagicMock()
-            mock_response.status = 200
-            mock_response.headers = {"content-type": "application/json"}
-            # JSON parsing fails, should fallback to text parsing (lines 251-255)
-            mock_response.json = AsyncMock(side_effect=ValueError("Invalid JSON"))
-            mock_response.text = AsyncMock(return_value="malformed exchange response")
-            mock_response.raise_for_status = MagicMock()
-            mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_response.__aexit__ = AsyncMock(return_value=None)
+        # Create mock client
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
 
-            mock_post.return_value = mock_response
-            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_session_class.return_value = mock_session_instance
-
+        with patch.object(manager, "_get_client", return_value=mock_client):
             # This should raise an error because access_token won't be found in raw response
             with pytest.raises(OAuthError, match="No access_token in response"):
                 await manager.exchange_code_for_token(credentials, "auth_code", "state")
@@ -1076,25 +922,19 @@ class TestOAuthManager:
 
         credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
 
-        with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-            mock_session_instance = MagicMock()
-            mock_post = MagicMock()
-            mock_session_instance.post = mock_post
+        # Create mock response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "application/json"}
+        # Response without access_token - line 258
+        mock_response.json = MagicMock(return_value={"refresh_token": "refresh123", "expires_in": 3600})
+        mock_response.raise_for_status = MagicMock()
 
-            mock_response = MagicMock()
-            mock_response.status = 200
-            mock_response.headers = {"content-type": "application/json"}
-            # Response without access_token - line 258
-            mock_response.json = AsyncMock(return_value={"refresh_token": "refresh123", "expires_in": 3600})
-            mock_response.raise_for_status = MagicMock()
-            mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_response.__aexit__ = AsyncMock(return_value=None)
+        # Create mock client
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
 
-            mock_post.return_value = mock_response
-            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_session_class.return_value = mock_session_instance
-
+        with patch.object(manager, "_get_client", return_value=mock_client):
             with pytest.raises(OAuthError, match="No access_token in response"):
                 await manager.exchange_code_for_token(credentials, "auth_code", "state")
 
@@ -1105,37 +945,26 @@ class TestOAuthManager:
 
         credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
 
-        with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-            mock_session_instance = MagicMock()
-            mock_post = MagicMock()
-            mock_session_instance.post = mock_post
+        # First call fails with ClientError
+        fail_response = MagicMock()
+        fail_response.raise_for_status = MagicMock(side_effect=httpx.HTTPStatusError("HTTP Error", request=MagicMock(), response=MagicMock(status_code=500)))
 
-            # First call fails with ClientError
-            fail_response = MagicMock()
-            fail_response.raise_for_status = MagicMock(side_effect=aiohttp.ClientResponseError(request_info=MagicMock(), history=(), status=500, message="Server Error"))
-            fail_response.__aenter__ = AsyncMock(return_value=fail_response)
-            fail_response.__aexit__ = AsyncMock(return_value=None)
+        # Second call succeeds
+        success_response = MagicMock()
+        success_response.status_code = 200
+        success_response.headers = {"content-type": "application/json"}
+        success_response.json = MagicMock(return_value={"access_token": "retry_success_token"})
+        success_response.raise_for_status = MagicMock()
 
-            # Second call succeeds
-            success_response = MagicMock()
-            success_response.status = 200
-            success_response.headers = {"content-type": "application/json"}
-            success_response.json = AsyncMock(return_value={"access_token": "retry_success_token"})
-            success_response.raise_for_status = MagicMock()
-            success_response.__aenter__ = AsyncMock(return_value=success_response)
-            success_response.__aexit__ = AsyncMock(return_value=None)
+        # Create mock client with side_effect for multiple calls
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=[fail_response, success_response])
 
-            mock_post.side_effect = [fail_response, success_response]
-            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_session_class.return_value = mock_session_instance
-
+        with patch.object(manager, "_get_client", return_value=mock_client):
             with patch("asyncio.sleep") as mock_sleep:
                 result = await manager.exchange_code_for_token(credentials, "auth_code", "state")
                 assert result == "retry_success_token"
-                # Should sleep once before retry (lines 263-267)
-                mock_sleep.assert_called_once_with(1)  # 2^0 = 1
-
+                assert mock_sleep.call_count == 1  # Should sleep before retry
     @pytest.mark.asyncio
     async def test_exchange_code_for_token_max_retries_exceeded(self):
         """Test exchange code for token when all retries are exhausted (lines 265-266)."""
@@ -1143,21 +972,14 @@ class TestOAuthManager:
 
         credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
 
-        with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-            mock_session_instance = MagicMock()
-            mock_post = MagicMock()
-            mock_session_instance.post = mock_post
+        fail_response = MagicMock()
+        fail_response.raise_for_status = MagicMock(side_effect=httpx.HTTPStatusError("HTTP Error", request=MagicMock(), response=MagicMock(status_code=500)))
 
-            fail_response = MagicMock()
-            fail_response.raise_for_status = MagicMock(side_effect=aiohttp.ClientResponseError(request_info=MagicMock(), history=(), status=500, message="Server Error"))
-            fail_response.__aenter__ = AsyncMock(return_value=fail_response)
-            fail_response.__aexit__ = AsyncMock(return_value=None)
+        # Create mock client
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=fail_response)
 
-            mock_post.return_value = fail_response
-            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_session_class.return_value = mock_session_instance
-
+        with patch.object(manager, "_get_client", return_value=mock_client):
             with patch("asyncio.sleep"):
                 with pytest.raises(OAuthError, match="Failed to exchange code for token after 1 attempts"):
                     await manager.exchange_code_for_token(credentials, "auth_code", "state")
@@ -1169,17 +991,11 @@ class TestOAuthManager:
 
         credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
 
-        with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-            mock_session_instance = MagicMock()
-            mock_post = MagicMock()
-            mock_session_instance.post = mock_post
+        # Create mock client that raises RuntimeError
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=RuntimeError("Unexpected error"))
 
-            # Mock a non-ClientError exception that doesn't get caught in the retry loop
-            mock_post.side_effect = RuntimeError("Unexpected error")
-            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_session_class.return_value = mock_session_instance
-
+        with patch.object(manager, "_get_client", return_value=mock_client):
             # This should reach the final fallback error on line 270
             with pytest.raises(OAuthError, match="Failed to exchange code for token after all retry attempts"):
                 await manager.exchange_code_for_token(credentials, "auth_code", "state")
@@ -1266,24 +1082,18 @@ class TestOAuthManager:
                 mock_encryption.decrypt_secret.return_value = "decrypted_secret"
                 mock_get_encryption.return_value = mock_encryption
 
-                with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-                    mock_session_instance = MagicMock()
-                    mock_post = MagicMock()
-                    mock_session_instance.post = mock_post
+                # Create mock response
+                mock_response = MagicMock()
+                mock_response.status_code = 200
+                mock_response.headers = {"content-type": "application/json"}
+                mock_response.json = MagicMock(return_value={"access_token": "success_token"})
+                mock_response.raise_for_status = MagicMock()
 
-                    mock_response = MagicMock()
-                    mock_response.status = 200
-                    mock_response.headers = {"content-type": "application/json"}
-                    mock_response.json = AsyncMock(return_value={"access_token": "success_token"})
-                    mock_response.raise_for_status = MagicMock()
-                    mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-                    mock_response.__aexit__ = AsyncMock(return_value=None)
+                # Create mock client
+                mock_client = AsyncMock()
+                mock_client.post = AsyncMock(return_value=mock_response)
 
-                    mock_post.return_value = mock_response
-                    mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-                    mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-                    mock_session_class.return_value = mock_session_instance
-
+                with patch.object(manager, "_get_client", return_value=mock_client):
                     result = await manager._exchange_code_for_tokens(credentials, "auth_code")
                     assert result["access_token"] == "success_token"
                     mock_encryption.decrypt_secret.assert_called_once_with(encrypted_secret)
@@ -1307,24 +1117,18 @@ class TestOAuthManager:
                 mock_encryption.decrypt_secret.side_effect = ValueError("Decryption failed")
                 mock_get_encryption.return_value = mock_encryption
 
-                with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-                    mock_session_instance = MagicMock()
-                    mock_post = MagicMock()
-                    mock_session_instance.post = mock_post
+                # Create mock response
+                mock_response = MagicMock()
+                mock_response.status_code = 200
+                mock_response.headers = {"content-type": "application/json"}
+                mock_response.json = MagicMock(return_value={"access_token": "exception_token"})
+                mock_response.raise_for_status = MagicMock()
 
-                    mock_response = MagicMock()
-                    mock_response.status = 200
-                    mock_response.headers = {"content-type": "application/json"}
-                    mock_response.json = AsyncMock(return_value={"access_token": "exception_token"})
-                    mock_response.raise_for_status = MagicMock()
-                    mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-                    mock_response.__aexit__ = AsyncMock(return_value=None)
+                # Create mock client
+                mock_client = AsyncMock()
+                mock_client.post = AsyncMock(return_value=mock_response)
 
-                    mock_post.return_value = mock_response
-                    mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-                    mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-                    mock_session_class.return_value = mock_session_instance
-
+                with patch.object(manager, "_get_client", return_value=mock_client):
                     result = await manager._exchange_code_for_tokens(credentials, "auth_code")
                     assert result["access_token"] == "exception_token"
                     mock_encryption.decrypt_secret.assert_called_once_with(encrypted_secret)
@@ -1336,25 +1140,19 @@ class TestOAuthManager:
 
         credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
 
-        with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-            mock_session_instance = MagicMock()
-            mock_post = MagicMock()
-            mock_session_instance.post = mock_post
+        # Create mock response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "application/x-www-form-urlencoded"}
+        # Form-encoded response that hits lines 463-468
+        mock_response.text = "access_token=internal_form_token&refresh_token=refresh123&expires_in=3600"
+        mock_response.raise_for_status = MagicMock()
 
-            mock_response = MagicMock()
-            mock_response.status = 200
-            mock_response.headers = {"content-type": "application/x-www-form-urlencoded"}
-            # Form-encoded response that hits lines 463-468
-            mock_response.text = AsyncMock(return_value="access_token=internal_form_token&refresh_token=refresh123&expires_in=3600")
-            mock_response.raise_for_status = MagicMock()
-            mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_response.__aexit__ = AsyncMock(return_value=None)
+        # Create mock client
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
 
-            mock_post.return_value = mock_response
-            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_session_class.return_value = mock_session_instance
-
+        with patch.object(manager, "_get_client", return_value=mock_client):
             result = await manager._exchange_code_for_tokens(credentials, "auth_code")
             assert result["access_token"] == "internal_form_token"
             assert result["refresh_token"] == "refresh123"
@@ -1366,26 +1164,20 @@ class TestOAuthManager:
 
         credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
 
-        with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-            mock_session_instance = MagicMock()
-            mock_post = MagicMock()
-            mock_session_instance.post = mock_post
+        # Create mock response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "application/json"}
+        # JSON parsing fails, should fallback to text parsing (lines 473-477)
+        mock_response.json = MagicMock(side_effect=ValueError("Invalid JSON"))
+        mock_response.text = "malformed internal response"
+        mock_response.raise_for_status = MagicMock()
 
-            mock_response = MagicMock()
-            mock_response.status = 200
-            mock_response.headers = {"content-type": "application/json"}
-            # JSON parsing fails, should fallback to text parsing (lines 473-477)
-            mock_response.json = AsyncMock(side_effect=ValueError("Invalid JSON"))
-            mock_response.text = AsyncMock(return_value="malformed internal response")
-            mock_response.raise_for_status = MagicMock()
-            mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_response.__aexit__ = AsyncMock(return_value=None)
+        # Create mock client
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
 
-            mock_post.return_value = mock_response
-            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_session_class.return_value = mock_session_instance
-
+        with patch.object(manager, "_get_client", return_value=mock_client):
             # This should raise an error because access_token won't be found in raw response
             with pytest.raises(OAuthError, match="No access_token in response"):
                 await manager._exchange_code_for_tokens(credentials, "auth_code")
@@ -1397,25 +1189,19 @@ class TestOAuthManager:
 
         credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
 
-        with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-            mock_session_instance = MagicMock()
-            mock_post = MagicMock()
-            mock_session_instance.post = mock_post
+        # Create mock response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "application/json"}
+        # Response without access_token - line 480
+        mock_response.json = MagicMock(return_value={"refresh_token": "refresh123", "expires_in": 3600})
+        mock_response.raise_for_status = MagicMock()
 
-            mock_response = MagicMock()
-            mock_response.status = 200
-            mock_response.headers = {"content-type": "application/json"}
-            # Response without access_token - line 480
-            mock_response.json = AsyncMock(return_value={"refresh_token": "refresh123", "expires_in": 3600})
-            mock_response.raise_for_status = MagicMock()
-            mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_response.__aexit__ = AsyncMock(return_value=None)
+        # Create mock client
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
 
-            mock_post.return_value = mock_response
-            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_session_class.return_value = mock_session_instance
-
+        with patch.object(manager, "_get_client", return_value=mock_client):
             with pytest.raises(OAuthError, match="No access_token in response"):
                 await manager._exchange_code_for_tokens(credentials, "auth_code")
 
@@ -1426,17 +1212,11 @@ class TestOAuthManager:
 
         credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
 
-        with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-            mock_session_instance = MagicMock()
-            mock_post = MagicMock()
-            mock_session_instance.post = mock_post
+        # Create mock client that raises RuntimeError
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=RuntimeError("Unexpected error"))
 
-            # Mock a non-ClientError exception that doesn't get caught in the retry loop
-            mock_post.side_effect = RuntimeError("Unexpected error")
-            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_session_class.return_value = mock_session_instance
-
+        with patch.object(manager, "_get_client", return_value=mock_client):
             # This should reach the final fallback error on line 492
             with pytest.raises(OAuthError, match="Failed to exchange code for token after all retry attempts"):
                 await manager._exchange_code_for_tokens(credentials, "auth_code")
@@ -1460,24 +1240,18 @@ class TestOAuthManager:
                 mock_encryption.decrypt_secret.return_value = "decrypted_secret"
                 mock_get_encryption.return_value = mock_encryption
 
-                with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-                    mock_session_instance = MagicMock()
-                    mock_post = MagicMock()
-                    mock_session_instance.post = mock_post
+                # Create mock response
+                mock_response = MagicMock()
+                mock_response.status_code = 200
+                mock_response.headers = {"content-type": "application/json"}
+                mock_response.json = MagicMock(return_value={"access_token": "exchange_success_token"})
+                mock_response.raise_for_status = MagicMock()
 
-                    mock_response = MagicMock()
-                    mock_response.status = 200
-                    mock_response.headers = {"content-type": "application/json"}
-                    mock_response.json = AsyncMock(return_value={"access_token": "exchange_success_token"})
-                    mock_response.raise_for_status = MagicMock()
-                    mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-                    mock_response.__aexit__ = AsyncMock(return_value=None)
+                # Create mock client
+                mock_client = AsyncMock()
+                mock_client.post = AsyncMock(return_value=mock_response)
 
-                    mock_post.return_value = mock_response
-                    mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-                    mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-                    mock_session_class.return_value = mock_session_instance
-
+                with patch.object(manager, "_get_client", return_value=mock_client):
                     result = await manager.exchange_code_for_token(credentials, "auth_code", "state")
                     assert result == "exchange_success_token"
                     mock_encryption.decrypt_secret.assert_called_once_with(encrypted_secret)
@@ -1501,24 +1275,18 @@ class TestOAuthManager:
                 mock_encryption.decrypt_secret.side_effect = ValueError("Decryption failed")
                 mock_get_encryption.return_value = mock_encryption
 
-                with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-                    mock_session_instance = MagicMock()
-                    mock_post = MagicMock()
-                    mock_session_instance.post = mock_post
+                # Create mock response
+                mock_response = MagicMock()
+                mock_response.status_code = 200
+                mock_response.headers = {"content-type": "application/json"}
+                mock_response.json = MagicMock(return_value={"access_token": "exchange_exception_token"})
+                mock_response.raise_for_status = MagicMock()
 
-                    mock_response = MagicMock()
-                    mock_response.status = 200
-                    mock_response.headers = {"content-type": "application/json"}
-                    mock_response.json = AsyncMock(return_value={"access_token": "exchange_exception_token"})
-                    mock_response.raise_for_status = MagicMock()
-                    mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-                    mock_response.__aexit__ = AsyncMock(return_value=None)
+                # Create mock client
+                mock_client = AsyncMock()
+                mock_client.post = AsyncMock(return_value=mock_response)
 
-                    mock_post.return_value = mock_response
-                    mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-                    mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-                    mock_session_class.return_value = mock_session_instance
-
+                with patch.object(manager, "_get_client", return_value=mock_client):
                     result = await manager.exchange_code_for_token(credentials, "auth_code", "state")
                     assert result == "exchange_exception_token"
                     mock_encryption.decrypt_secret.assert_called_once_with(encrypted_secret)
@@ -1530,30 +1298,24 @@ class TestOAuthManager:
 
         credentials = {"token_url": "https://oauth.example.com/token", "client_id": "test_client", "client_secret": "test_secret"}
 
-        with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-            mock_session_instance = MagicMock()
-            mock_post = MagicMock()
-            mock_session_instance.post = mock_post
+        # Create mock response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"access_token": "new_access_token", "refresh_token": "new_refresh_token", "expires_in": 7200})
+        mock_response.raise_for_status = MagicMock()
 
-            mock_response = MagicMock()
-            mock_response.status = 200
-            mock_response.json = AsyncMock(return_value={"access_token": "new_access_token", "refresh_token": "new_refresh_token", "expires_in": 7200})
-            mock_response.raise_for_status = MagicMock()
-            mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_response.__aexit__ = AsyncMock(return_value=None)
+        # Create mock client
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
 
-            mock_post.return_value = mock_response
-            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_session_class.return_value = mock_session_instance
-
+        with patch.object(manager, "_get_client", return_value=mock_client):
             result = await manager.refresh_token("old_refresh_token", credentials)
 
             assert result == {"access_token": "new_access_token", "refresh_token": "new_refresh_token", "expires_in": 7200}
 
             # Verify the correct data was sent
-            mock_post.assert_called_once()
-            call_args = mock_post.call_args
+            mock_client.post.assert_called_once()
+            call_args = mock_client.post.call_args
             assert call_args[0][0] == "https://oauth.example.com/token"
             assert call_args[1]["data"]["grant_type"] == "refresh_token"
             assert call_args[1]["data"]["refresh_token"] == "old_refresh_token"
@@ -1566,27 +1328,21 @@ class TestOAuthManager:
 
         credentials = {"token_url": "https://oauth.example.com/token", "client_id": "test_client", "client_secret": "test_secret"}
 
-        with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-            mock_session_instance = MagicMock()
-            mock_post = MagicMock()
-            mock_session_instance.post = mock_post
+        # Create mock response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"access_token": "new_token"})
+        mock_response.raise_for_status = MagicMock()
 
-            mock_response = MagicMock()
-            mock_response.status = 200
-            mock_response.json = AsyncMock(return_value={"access_token": "new_token"})
-            mock_response.raise_for_status = MagicMock()
-            mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_response.__aexit__ = AsyncMock(return_value=None)
+        # Create mock client
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
 
-            mock_post.return_value = mock_response
-            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_session_class.return_value = mock_session_instance
-
+        with patch.object(manager, "_get_client", return_value=mock_client):
             await manager.refresh_token("refresh_token", credentials)
 
             # Verify client secret was included
-            call_args = mock_post.call_args
+            call_args = mock_client.post.call_args
             assert call_args[1]["data"]["client_secret"] == "test_secret"
 
     @pytest.mark.asyncio
@@ -1596,24 +1352,18 @@ class TestOAuthManager:
 
         credentials = {"token_url": "https://oauth.example.com/token", "client_id": "test_client"}
 
-        with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-            mock_session_instance = MagicMock()
-            mock_post = MagicMock()
-            mock_session_instance.post = mock_post
+        # Create mock response
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        mock_response.json = MagicMock(return_value={"error": "invalid_grant"})
+        mock_response.text = '{"error": "invalid_grant"}'
+        mock_response.raise_for_status = MagicMock(side_effect=httpx.HTTPStatusError("HTTP Error", request=MagicMock(), response=MagicMock(status_code=400)))
 
-            mock_response = MagicMock()
-            mock_response.status = 400
-            mock_response.json = AsyncMock(return_value={"error": "invalid_grant"})
-            mock_response.text = AsyncMock(return_value='{"error": "invalid_grant"}')
-            mock_response.raise_for_status = MagicMock(side_effect=aiohttp.ClientResponseError(request_info=MagicMock(), history=(), status=400))
-            mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_response.__aexit__ = AsyncMock(return_value=None)
+        # Create mock client
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
 
-            mock_post.return_value = mock_response
-            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_session_class.return_value = mock_session_instance
-
+        with patch.object(manager, "_get_client", return_value=mock_client):
             with pytest.raises(OAuthError) as exc_info:
                 await manager.refresh_token("invalid_token", credentials)
 
@@ -1626,23 +1376,17 @@ class TestOAuthManager:
 
         credentials = {"token_url": "https://oauth.example.com/token", "client_id": "test_client"}
 
-        with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
-            mock_session_instance = MagicMock()
-            mock_post = MagicMock()
-            mock_session_instance.post = mock_post
+        # Create mock response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"expires_in": 3600})  # Missing access_token
+        mock_response.raise_for_status = MagicMock()
 
-            mock_response = MagicMock()
-            mock_response.status = 200
-            mock_response.json = AsyncMock(return_value={"expires_in": 3600})  # Missing access_token
-            mock_response.raise_for_status = MagicMock()
-            mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_response.__aexit__ = AsyncMock(return_value=None)
+        # Create mock client
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
 
-            mock_post.return_value = mock_response
-            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
-            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
-            mock_session_class.return_value = mock_session_instance
-
+        with patch.object(manager, "_get_client", return_value=mock_client):
             with pytest.raises(OAuthError) as exc_info:
                 await manager.refresh_token("refresh_token", credentials)
 

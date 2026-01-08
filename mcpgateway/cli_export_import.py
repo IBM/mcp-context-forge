@@ -27,7 +27,7 @@ import sys
 from typing import Any, Dict, Optional
 
 # Third-Party
-import aiohttp
+import httpx
 
 # First-Party
 from mcpgateway import __version__
@@ -92,16 +92,16 @@ async def make_authenticated_request(method: str, url: str, json_data: Optional[
     gateway_url = f"http://{settings.host}:{settings.port}"
     full_url = f"{gateway_url}{url}"
 
-    async with aiohttp.ClientSession() as session:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(300.0), follow_redirects=True) as client:
         try:
-            async with session.request(method=method, url=full_url, json=json_data, params=params, headers=headers) as response:
-                if response.status >= 400:
-                    error_text = await response.text()
-                    raise CLIError(f"API request failed ({response.status}): {error_text}")
+            response = await client.request(method=method, url=full_url, json=json_data, params=params, headers=headers)
+            if response.status_code >= 400:
+                error_text = response.text
+                raise CLIError(f"API request failed ({response.status_code}): {error_text}")
 
-                return await response.json()
+            return response.json()
 
-        except aiohttp.ClientError as e:
+        except httpx.HTTPError as e:
             raise CLIError(f"Failed to connect to gateway at {gateway_url}: {str(e)}")
 
 
