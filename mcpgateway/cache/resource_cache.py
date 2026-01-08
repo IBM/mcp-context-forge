@@ -126,42 +126,9 @@ class ResourceCache:
         self.max_size = max_size
         self.ttl = ttl
         self._cache: OrderedDict[str, CacheEntry] = OrderedDict()
-        # Use a re-entrant threading lock wrapper so synchronous cache methods
-        # keep the same (non-async) signatures while the async cleanup
-        # can also `async with` the lock in tests or elsewhere.
-
-        class DualLock:
-            """Re-entrant lock supporting sync and async context managers.
-
-            This wrapper exposes both `__enter__/__exit__` and
-            `__aenter__/__aexit__` so the same lock can be used from
-            synchronous code paths and `async with` contexts (tests
-            and the cleanup task).
-            """
-
-            def __init__(self) -> None:
-                self._rlock = threading.RLock()
-
-            # Sync context manager
-            def __enter__(self):
-                self._rlock.acquire()
-                return self
-
-            def __exit__(self, exc_type, exc, _tb):
-                self._rlock.release()
-
-            # Async context manager
-            async def __aenter__(self):
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, self._rlock.acquire)
-                return self
-
-            async def __aexit__(self, exc_type, exc, _tb):
-                # Release on the same executor thread where we acquired
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, self._rlock.release)
-
-        self._lock = DualLock()
+        # Use a threading lock for thread-safe operations across sync methods
+        # and the background cleanup thread.
+        self._lock = threading.Lock()
         # Min-heap of (expires_at, key) for efficient expiration cleanup
         self._expiry_heap: list[tuple[float, str]] = []
 
@@ -208,20 +175,21 @@ class ResourceCache:
             2
             True
         """
-        if key not in self._cache:
-            return None
+        with self._lock:
+            if key not in self._cache:
+                return None
 
-        entry = self._cache[key]
-        now = time.time()
+            entry = self._cache[key]
+            now = time.time()
 
-        # Check expiration
-        if now > entry.expires_at:
-            del self._cache[key]
-            return None
+            # Check expiration
+            if now > entry.expires_at:
+                del self._cache[key]
+                return None
 
-        self._cache.move_to_end(key)
+            self._cache.move_to_end(key)
 
-        return entry.value
+            return entry.value
 
     def set(self, key: str, value: Any) -> None:
         """
@@ -344,4 +312,5 @@ class ResourceCache:
             >>> len(cache)
             1
         """
-        return len(self._cache)
+        with self._lock:
+            return len(self._cache)
