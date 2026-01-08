@@ -872,15 +872,20 @@ class A2AAgentService:
             await admin_stats_cache.invalidate_tags()
 
             # Update the associated tool if it exists
-            tool_service = ToolService()
-            await tool_service.update_tool_from_a2a_agent(
-                db=db,
-                agent=agent,
-                modified_by=modified_by,
-                modified_from_ip=modified_from_ip,
-                modified_via=modified_via,
-                modified_user_agent=modified_user_agent,
-            )
+            # Wrap in try/except to handle tool sync failures gracefully - the agent
+            # update is the primary operation and should succeed even if tool sync fails
+            try:
+                tool_service = ToolService()
+                await tool_service.update_tool_from_a2a_agent(
+                    db=db,
+                    agent=agent,
+                    modified_by=modified_by,
+                    modified_from_ip=modified_from_ip,
+                    modified_via=modified_via,
+                    modified_user_agent=modified_user_agent,
+                )
+            except Exception as tool_err:
+                logger.warning(f"Failed to sync tool for A2A agent {agent.id}: {tool_err}. Agent update succeeded but tool may be out of sync.")
 
             logger.info(f"Updated A2A agent: {agent.name} (ID: {agent.id})")
             return self.convert_agent_to_read(agent, db=db)
