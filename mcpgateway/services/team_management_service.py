@@ -26,6 +26,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.cache.admin_stats_cache import admin_stats_cache
+from mcpgateway.cache.auth_cache import auth_cache
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailTeamMemberHistory, EmailUser, utc_now
 from mcpgateway.services.logging_service import LoggingService
@@ -220,6 +222,16 @@ class TeamManagementService:
 
             # Invalidate member count cache for the new team
             await self.invalidate_team_member_count_cache(str(team.id))
+
+            # Invalidate auth cache for creator's team membership
+            # Without this, the cache won't know the user belongs to this new team
+            try:
+                await auth_cache.invalidate_user_teams(created_by)
+                await auth_cache.invalidate_team_membership(created_by)
+                await auth_cache.invalidate_user_role(created_by, str(team.id))
+                await admin_stats_cache.invalidate_teams()
+            except Exception as cache_error:
+                logger.debug(f"Failed to invalidate cache on team create: {cache_error}")
 
             logger.info(f"Created team '{team.name}' by {created_by}")
             return team

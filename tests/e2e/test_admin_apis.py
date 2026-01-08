@@ -717,6 +717,303 @@ class TestAdminIncludeInactive:
     #     assert "include_inactive=true" in response.headers["location"]
 
 
+@pytest.mark.asyncio
+class TestTeamFiltering:
+    """Test team_id filtering across partial, search, and ids endpoints."""
+
+    async def test_tools_partial_with_team_id(self, client, app_with_temp_db):
+        """Test that /admin/tools/partial respects team_id parameter."""
+        # First-Party
+        from mcpgateway.db import get_db
+        from mcpgateway.services.team_management_service import TeamManagementService
+
+        # Get db session from app's dependency overrides or directly from get_db
+        # (which uses the patched SessionLocal in tests)
+        test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
+        db = next(test_db_dependency())
+
+        # Create two teams (creator is automatically added as owner)
+        team_service = TeamManagementService(db)
+        team1 = await team_service.create_team(name="Team 1", description="First team", created_by="admin@example.com", visibility="private")
+        team2 = await team_service.create_team(name="Team 2", description="Second team", created_by="admin@example.com", visibility="private")
+
+        # Create tools in different teams
+        # Note: tool names get normalized to use hyphens instead of underscores
+        tool1_name = f"team1-tool-{uuid.uuid4().hex[:8]}"
+        tool2_name = f"team2-tool-{uuid.uuid4().hex[:8]}"
+        tool1_data = {
+            "name": tool1_name,
+            "url": "http://example.com/tool1",
+            "description": "Tool in team 1",
+            "visibility": "team",
+            "team_id": team1.id,
+        }
+        tool2_data = {
+            "name": tool2_name,
+            "url": "http://example.com/tool2",
+            "description": "Tool in team 2",
+            "visibility": "team",
+            "team_id": team2.id,
+        }
+
+        # Create the tools
+        await client.post("/admin/tools/", data=tool1_data, headers=TEST_AUTH_HEADER)
+        await client.post("/admin/tools/", data=tool2_data, headers=TEST_AUTH_HEADER)
+
+        # Test filtering by team1 - should only return tool1
+        response = await client.get(f"/admin/tools/partial?team_id={team1.id}", headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
+        html = response.text
+        assert tool1_name in html
+        assert tool2_name not in html
+
+        # Test filtering by team2 - should only return tool2
+        response = await client.get(f"/admin/tools/partial?team_id={team2.id}", headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
+        html = response.text
+        assert tool2_name in html
+        assert tool1_name not in html
+
+        # Test without team_id filter - should return both
+        response = await client.get("/admin/tools/partial", headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
+        html = response.text
+        assert tool1_name in html
+        assert tool2_name in html
+
+    async def test_tools_ids_with_team_id(self, client, app_with_temp_db):
+        """Test that /admin/tools/ids respects team_id parameter."""
+        # First-Party
+        from mcpgateway.db import get_db
+        from mcpgateway.services.team_management_service import TeamManagementService
+
+        # Get db session from app's dependency overrides or directly from get_db
+        # (which uses the patched SessionLocal in tests)
+        test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
+        db = next(test_db_dependency())
+
+        # Create team (creator is automatically added as owner)
+        team_service = TeamManagementService(db)
+        team = await team_service.create_team(name="Test Team", description="Test", created_by="admin@example.com", visibility="private")
+
+        # Create tools in team and outside team
+        team_tool_data = {
+            "name": f"team_tool_{uuid.uuid4().hex[:8]}",
+            "url": "http://example.com/team",
+            "description": "Team tool",
+            "visibility": "team",
+            "team_id": team.id,
+        }
+        private_tool_data = {
+            "name": f"private_tool_{uuid.uuid4().hex[:8]}",
+            "url": "http://example.com/private",
+            "description": "Private tool",
+            "visibility": "private",
+        }
+
+        team_tool_response = await client.post("/admin/tools/", data=team_tool_data, headers=TEST_AUTH_HEADER)
+        team_tool_id = team_tool_response.json()["id"]
+
+        private_tool_response = await client.post("/admin/tools/", data=private_tool_data, headers=TEST_AUTH_HEADER)
+        private_tool_id = private_tool_response.json()["id"]
+
+        # Test filtering by team - should only return team tool
+        response = await client.get(f"/admin/tools/ids?team_id={team.id}", headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
+        data = response.json()
+        assert team_tool_id in data["tool_ids"]
+        assert private_tool_id not in data["tool_ids"]
+
+        # Test without filter - should return both
+        response = await client.get("/admin/tools/ids", headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
+        data = response.json()
+        assert team_tool_id in data["tool_ids"]
+        assert private_tool_id in data["tool_ids"]
+
+    async def test_tools_search_with_team_id(self, client, app_with_temp_db):
+        """Test that /admin/tools/search respects team_id parameter."""
+        # First-Party
+        from mcpgateway.db import get_db
+        from mcpgateway.services.team_management_service import TeamManagementService
+
+        # Get db session from app's dependency overrides or directly from get_db
+        # (which uses the patched SessionLocal in tests)
+        test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
+        db = next(test_db_dependency())
+
+        # Create team (creator is automatically added as owner)
+        team_service = TeamManagementService(db)
+        team = await team_service.create_team(name="Search Team", description="Test", created_by="admin@example.com", visibility="private")
+
+        # Create searchable tools
+        search_term = f"searchable_{uuid.uuid4().hex[:8]}"
+        team_tool_data = {
+            "name": f"{search_term}_team",
+            "url": "http://example.com/team",
+            "description": "Searchable team tool",
+            "visibility": "team",
+            "team_id": team.id,
+        }
+        private_tool_data = {
+            "name": f"{search_term}_private",
+            "url": "http://example.com/private",
+            "description": "Searchable private tool",
+            "visibility": "private",
+        }
+
+        await client.post("/admin/tools/", data=team_tool_data, headers=TEST_AUTH_HEADER)
+        await client.post("/admin/tools/", data=private_tool_data, headers=TEST_AUTH_HEADER)
+
+        # Test search with team filter
+        response = await client.get(f"/admin/tools/search?q={search_term}&team_id={team.id}", headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
+        data = response.json()
+        tool_names = [tool["name"] for tool in data["tools"]]
+        assert team_tool_data["name"] in tool_names
+        assert private_tool_data["name"] not in tool_names
+
+        # Test search without team filter
+        response = await client.get(f"/admin/tools/search?q={search_term}", headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
+        data = response.json()
+        tool_names = [tool["name"] for tool in data["tools"]]
+        assert team_tool_data["name"] in tool_names
+        assert private_tool_data["name"] in tool_names
+
+    async def test_unauthorized_team_access(self, client, app_with_temp_db):
+        """Test that users cannot filter by teams they're not members of."""
+        # First-Party
+        from mcpgateway.db import get_db
+        from mcpgateway.services.team_management_service import TeamManagementService
+
+        # Get db session from app's dependency overrides or directly from get_db
+        # (which uses the patched SessionLocal in tests)
+        test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
+        db = next(test_db_dependency())
+
+        # Create a team but DON'T add the user to it
+        team_service = TeamManagementService(db)
+        other_team = await team_service.create_team(name="Other Team", description="Test", created_by="other@example.com", visibility="private")
+
+        # Create a tool in that team
+        tool_data = {
+            "name": f"other_team_tool_{uuid.uuid4().hex[:8]}",
+            "url": "http://example.com/other",
+            "description": "Tool in other team",
+            "visibility": "team",
+            "team_id": other_team.id,
+            "owner_email": "other@example.com",
+        }
+
+        # Manually insert the tool since we can't POST as another user
+        from mcpgateway.models import Tool as DbTool
+        from mcpgateway.utils.ids import generate_id
+
+        db_tool = DbTool(
+            id=generate_id(),
+            original_name=tool_data["name"],
+            url=tool_data["url"],
+            description=tool_data["description"],
+            visibility=tool_data["visibility"],
+            team_id=tool_data["team_id"],
+            owner_email=tool_data["owner_email"],
+            enabled=True,
+        )
+        db.add(db_tool)
+        db.commit()
+
+        # Try to filter by the other team - should return no results (user not a member)
+        response = await client.get(f"/admin/tools/partial?team_id={other_team.id}", headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
+        html = response.text
+        assert tool_data["name"] not in html
+
+        # Same for /ids endpoint
+        response = await client.get(f"/admin/tools/ids?team_id={other_team.id}", headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["tool_ids"]) == 0
+
+    async def test_resources_partial_with_team_id(self, client, app_with_temp_db):
+        """Test that /admin/resources/partial respects team_id parameter."""
+        # First-Party
+        from mcpgateway.db import get_db
+        from mcpgateway.services.team_management_service import TeamManagementService
+
+        # Get db session from app's dependency overrides or directly from get_db
+        # (which uses the patched SessionLocal in tests)
+        test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
+        db = next(test_db_dependency())
+
+        # Create team (creator is automatically added as owner)
+        team_service = TeamManagementService(db)
+        team = await team_service.create_team(name="Resource Team", description="Test", created_by="admin@example.com", visibility="private")
+
+        # Create resources
+        team_resource = {
+            "name": f"team_resource_{uuid.uuid4().hex[:8]}",
+            "uri": "file:///team",
+            "description": "Team resource",
+            "visibility": "team",
+            "team_id": team.id,
+        }
+        private_resource = {
+            "name": f"private_resource_{uuid.uuid4().hex[:8]}",
+            "uri": "file:///private",
+            "description": "Private resource",
+            "visibility": "private",
+        }
+
+        await client.post("/admin/resources/", data=team_resource, headers=TEST_AUTH_HEADER)
+        await client.post("/admin/resources/", data=private_resource, headers=TEST_AUTH_HEADER)
+
+        # Test with team filter
+        response = await client.get(f"/admin/resources/partial?team_id={team.id}", headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
+        html = response.text
+        assert team_resource["name"] in html
+        assert private_resource["name"] not in html
+
+    async def test_prompts_partial_with_team_id(self, client, app_with_temp_db):
+        """Test that /admin/prompts/partial respects team_id parameter."""
+        # First-Party
+        from mcpgateway.db import get_db
+        from mcpgateway.services.team_management_service import TeamManagementService
+
+        # Get db session from app's dependency overrides or directly from get_db
+        # (which uses the patched SessionLocal in tests)
+        test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
+        db = next(test_db_dependency())
+
+        # Create team (creator is automatically added as owner)
+        team_service = TeamManagementService(db)
+        team = await team_service.create_team(name="Prompt Team", description="Test", created_by="admin@example.com", visibility="private")
+
+        # Create prompts
+        team_prompt = {
+            "name": f"team_prompt_{uuid.uuid4().hex[:8]}",
+            "description": "Team prompt",
+            "visibility": "team",
+            "team_id": team.id,
+        }
+        private_prompt = {
+            "name": f"private_prompt_{uuid.uuid4().hex[:8]}",
+            "description": "Private prompt",
+            "visibility": "private",
+        }
+
+        await client.post("/admin/prompts/", data=team_prompt, headers=TEST_AUTH_HEADER)
+        await client.post("/admin/prompts/", data=private_prompt, headers=TEST_AUTH_HEADER)
+
+        # Test with team filter
+        response = await client.get(f"/admin/prompts/partial?team_id={team.id}", headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
+        html = response.text
+        assert team_prompt["name"] in html
+        assert private_prompt["name"] not in html
+
+
 # Run tests with pytest
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
