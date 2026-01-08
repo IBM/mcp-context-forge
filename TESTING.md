@@ -358,9 +358,6 @@ ENVIRONMENT=production AUTH_REQUIRED=true make test
 
 # Test with Redis caching
 CACHE_TYPE=redis REDIS_URL=redis://localhost:6379 make test
-
-# Test with federation enabled
-FEDERATION_ENABLED=true FEDERATION_PEERS='["http://peer1:4444"]' make test
 ```
 
 ## Performance Testing

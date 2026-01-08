@@ -306,6 +306,12 @@ docker exec mcp-context-forge-redis-1 redis-cli dbsize
 docker exec mcp-context-forge-redis-1 redis-cli keys "mcpgw:*" | head -20
 ```
 
+Tool lookup cache keys (invoke hot path):
+
+```bash
+docker exec mcp-context-forge-redis-1 redis-cli keys "mcpgw:tool_lookup:*" | head -20
+```
+
 ---
 
 ## Gateway Log Analysis

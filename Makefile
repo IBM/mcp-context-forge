@@ -217,12 +217,12 @@ serve-granian-http2: certs       ## Run Granian with HTTP/2 and TLS
 	SSL=true GRANIAN_HTTP=2 CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-granian.sh
 
 dev:
-	@$(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
+	@TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
 
 dev-echo:                        ## Run dev server with SQL query logging enabled
 	@echo "🔍 Starting dev server with SQL query logging (N+1 detection)"
 	@echo "   Docs: docs/docs/development/db-performance.md"
-	@SQLALCHEMY_ECHO=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
+	@SQLALCHEMY_ECHO=true TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
 
 stop:                            ## Stop all mcpgateway server processes
 	@echo "Stopping all mcpgateway processes..."
@@ -646,7 +646,7 @@ dev-query-log:                   ## Run dev server with query logging to file
 	@echo "   Use 'make query-log-tail' in another terminal to watch queries"
 	@echo "   Docs: docs/docs/development/db-performance.md"
 	@mkdir -p logs
-	@DB_QUERY_LOG_ENABLED=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
+	@DB_QUERY_LOG_ENABLED=true TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
 
 query-log-tail:                  ## Tail the database query log file
 	@echo "📊 Tailing logs/db-queries.log (Ctrl+C to stop)"
@@ -778,6 +778,24 @@ COMPOSE_CMD_MONITOR := $(shell \
 
 monitoring-up:                             ## Start monitoring stack (Prometheus, Grafana, exporters)
 	@echo "📊 Starting monitoring stack..."
+	@echo "🔎 Preflight: checking host port 8080 (nginx)"
+	@if command -v ss >/dev/null 2>&1; then \
+		if ss -H -ltn 'sport = :8080' | grep -q .; then \
+			echo "⚠️  Port 8080 already in use; nginx can't bind to it."; \
+			ss -ltnp 'sport = :8080' || ss -ltn 'sport = :8080'; \
+			echo "   Stop the process or change the nginx host port mapping."; \
+			exit 1; \
+		fi; \
+	elif command -v lsof >/dev/null 2>&1; then \
+		if lsof -nP -iTCP:8080 -sTCP:LISTEN >/dev/null 2>&1; then \
+			echo "⚠️  Port 8080 already in use; nginx can't bind to it."; \
+			lsof -nP -iTCP:8080 -sTCP:LISTEN || true; \
+			echo "   Stop the process or change the nginx host port mapping."; \
+			exit 1; \
+		fi; \
+	else \
+		echo "ℹ️  Skipping port check (ss/lsof not found)."; \
+	fi
 	$(COMPOSE_CMD_MONITOR) --profile monitoring up -d
 	@echo "⏳ Waiting for Grafana to be ready..."
 	@for i in 1 2 3 4 5 6 7 8 9 10; do \
@@ -822,6 +840,42 @@ monitoring-clean:                          ## Stop and remove all monitoring dat
 	@echo "📊 Stopping and cleaning monitoring stack..."
 	$(COMPOSE_CMD_MONITOR) --profile monitoring down -v
 	@echo "✅ Monitoring stack stopped and volumes removed."
+
+# =============================================================================
+# help: 🧪 TESTING STACK (Rust fast-test-server)
+# help: testing-up            - Start testing stack (fast_test_server + auto-registration)
+# help: testing-down          - Stop testing stack
+# help: testing-status        - Show status of testing services
+# help: testing-logs          - Show testing stack logs
+
+testing-up:                                ## Start testing stack (fast_test_server + registration)
+	@echo "🧪 Starting testing stack (fast_test_server)..."
+	$(COMPOSE_CMD_MONITOR) --profile testing up -d
+	@echo ""
+	@echo "✅ Testing stack started!"
+	@echo ""
+	@echo "   🦀 Fast Test Server: http://localhost:9080"
+	@echo "      • MCP endpoint:  http://localhost:9080/mcp"
+	@echo "      • REST echo:     http://localhost:9080/api/echo"
+	@echo "      • REST time:     http://localhost:9080/api/time"
+	@echo "      • Health:        http://localhost:9080/health"
+	@echo ""
+	@echo "   📝 Registered as 'fast_test' gateway in MCP Gateway"
+	@echo ""
+	@echo "   Run load test: cd mcp-servers/rust/fast-test-server && make locust-mcp"
+
+testing-down:                              ## Stop testing stack
+	@echo "🧪 Stopping testing stack..."
+	$(COMPOSE_CMD_MONITOR) --profile testing down
+	@echo "✅ Testing stack stopped."
+
+testing-status:                            ## Show status of testing services
+	@echo "🧪 Testing stack status:"
+	@$(COMPOSE_CMD_MONITOR) ps | grep -E "(fast_test)" || \
+		echo "   No testing services running. Start with 'make testing-up'"
+
+testing-logs:                              ## Show testing stack logs
+	$(COMPOSE_CMD_MONITOR) --profile testing logs -f --tail=100
 
 # =============================================================================
 # 🚀 PERFORMANCE TESTING STACK - High-capacity configuration
@@ -896,8 +950,8 @@ performance-clean:                         ## Stop and remove all performance da
 # 🔥 HTTP LOAD TESTING - Locust-based traffic generation
 # =============================================================================
 # help: 🔥 HTTP LOAD TESTING (Locust)
-# help: load-test             - Run HTTP load test (50 users, 60s, headless)
-# help: load-test-ui          - Start Locust web UI (distributed, auto-detect CPUs)
+# help: load-test             - Run HTTP load test (4000 users, 5m, headless)
+# help: load-test-ui          - Start Locust web UI (4000 users, 200 spawn/s)
 # help: load-test-light       - Light load test (10 users, 30s)
 # help: load-test-heavy       - Heavy load test (200 users, 120s)
 # help: load-test-sustained   - Sustained load test (25 users, 300s)
@@ -909,33 +963,52 @@ performance-clean:                         ## Stop and remove all performance da
 # help: load-test-1000        - High-load test (1000 users, 120s)
 # help: load-test-summary     - Parse CSV reports and show summary statistics
 
-# Default load test configuration
+# Default load test configuration (optimized for 4000+ users)
 LOADTEST_HOST ?= http://localhost:8080
-LOADTEST_USERS ?= 1000
-LOADTEST_SPAWN_RATE ?= 100
+LOADTEST_USERS ?= 4000
+LOADTEST_SPAWN_RATE ?= 200
 LOADTEST_RUN_TIME ?= 5m
+LOADTEST_PROCESSES ?= -1
 LOADTEST_LOCUSTFILE := tests/loadtest/locustfile.py
 LOADTEST_HTML_REPORT := reports/locust_report.html
 LOADTEST_CSV_PREFIX := reports/locust
+# Auto-detect c-ares resolver availability (empty string if unavailable)
+LOADTEST_GEVENT_RESOLVER := $(shell python3 -c "from gevent.resolver.cares import Resolver; print('ares')" 2>/dev/null || echo "")
 
-load-test:                                 ## Run HTTP load test (50 users, 60s, headless)
+load-test:                                 ## Run HTTP load test (4000 users, 5m, headless)
 	@echo "🔥 Running HTTP load test with Locust..."
 	@echo "   Host: $(LOADTEST_HOST)"
 	@echo "   Users: $(LOADTEST_USERS)"
 	@echo "   Spawn rate: $(LOADTEST_SPAWN_RATE)/s"
 	@echo "   Duration: $(LOADTEST_RUN_TIME)"
+	@echo "   Workers: $(LOADTEST_PROCESSES) (-1 = auto-detect CPUs)"
 	@echo ""
+	@# Check ulimits and warn if below threshold
+	@NOFILE=$$(ulimit -n 2>/dev/null || echo 0); \
+	NPROC=$$(ulimit -u 2>/dev/null || echo 0); \
+	if [ "$$NOFILE" -lt 10000 ]; then \
+		echo "   ⚠️  WARNING: ulimit -n ($$NOFILE) is below 10000 - may cause connection failures"; \
+		echo "   💡 Fix: Add to /etc/security/limits.conf and restart shell"; \
+		echo ""; \
+	fi; \
+	if [ "$$NPROC" -lt 10000 ]; then \
+		echo "   ⚠️  WARNING: ulimit -u ($$NPROC) is below 10000 - may limit worker processes"; \
+		echo ""; \
+	fi
 	@echo "   💡 Tip: Start server first with 'make dev' in another terminal"
-	@echo "   💡 Tip: Enable performance tab: MCPGATEWAY_PERFORMANCE_TRACKING=true"
+	@echo "   💡 Tip: For best results, run: sudo scripts/tune-loadtest.sh"
 	@echo ""
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p reports
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		ulimit -n 65536 2>/dev/null || true && \
+		$(if $(LOADTEST_GEVENT_RESOLVER),GEVENT_RESOLVER=$(LOADTEST_GEVENT_RESOLVER)) \
 		locust -f $(LOADTEST_LOCUSTFILE) \
 			--host=$(LOADTEST_HOST) \
 			--users=$(LOADTEST_USERS) \
 			--spawn-rate=$(LOADTEST_SPAWN_RATE) \
 			--run-time=$(LOADTEST_RUN_TIME) \
+			--processes=$(LOADTEST_PROCESSES) \
 			--headless \
 			--html=$(LOADTEST_HTML_REPORT) \
 			--csv=$(LOADTEST_CSV_PREFIX) \
@@ -946,24 +1019,41 @@ load-test:                                 ## Run HTTP load test (50 users, 60s,
 	@echo "📊 CSV Reports: $(LOADTEST_CSV_PREFIX)_*.csv"
 
 load-test-ui:                              ## Start Locust web UI at http://localhost:8089
-	@echo "🔥 Starting Locust Web UI (distributed, auto-detect CPUs)..."
+	@echo "🔥 Starting Locust Web UI (optimized for 4000+ users)..."
 	@echo "   🌐 Open http://localhost:8089 in your browser"
 	@echo "   🎯 Default host: $(LOADTEST_HOST)"
 	@echo "   👥 Default users: $(LOADTEST_USERS), spawn rate: $(LOADTEST_SPAWN_RATE)/s"
 	@echo "   ⏱️  Default run time: $(LOADTEST_RUN_TIME)"
-	@echo "   🚀 Workers: auto-detect (1 per CPU core)"
+	@echo "   🚀 Workers: $(LOADTEST_PROCESSES) (-1 = auto-detect CPUs)"
 	@echo ""
+	@# Check ulimits and warn if below threshold
+	@NOFILE=$$(ulimit -n 2>/dev/null || echo 0); \
+	NPROC=$$(ulimit -u 2>/dev/null || echo 0); \
+	if [ "$$NOFILE" -lt 10000 ]; then \
+		echo "   ⚠️  WARNING: ulimit -n ($$NOFILE) is below 10000 - may cause connection failures"; \
+		echo "   💡 Fix: Add to /etc/security/limits.conf and restart shell:"; \
+		echo "      *  soft  nofile  65536"; \
+		echo "      *  hard  nofile  65536"; \
+		echo ""; \
+	fi; \
+	if [ "$$NPROC" -lt 10000 ]; then \
+		echo "   ⚠️  WARNING: ulimit -u ($$NPROC) is below 10000 - may limit worker processes"; \
+		echo ""; \
+	fi
+	@echo "   💡 For best results, run: sudo scripts/tune-loadtest.sh"
 	@echo "   💡 Use 'User classes' dropdown to select FastTimeUser, etc."
 	@echo "   💡 Start server first with 'make dev' or 'docker compose up'"
 	@echo ""
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		ulimit -n 65536 2>/dev/null || true && \
+		$(if $(LOADTEST_GEVENT_RESOLVER),GEVENT_RESOLVER=$(LOADTEST_GEVENT_RESOLVER)) \
 		locust -f $(LOADTEST_LOCUSTFILE) \
 			--host=$(LOADTEST_HOST) \
 			--users=$(LOADTEST_USERS) \
 			--spawn-rate=$(LOADTEST_SPAWN_RATE) \
 			--run-time=$(LOADTEST_RUN_TIME) \
-			--processes=-1 \
+			--processes=$(LOADTEST_PROCESSES) \
 			--class-picker"
 
 load-test-light:                           ## Light load test (10 users, 30s)
@@ -3217,6 +3307,7 @@ container-dev: container-check-image container-validate
 		--env-file=.env \
 		-e DEBUG=true \
 		-e LOG_LEVEL=DEBUG \
+		-e TEMPLATES_AUTO_RELOAD=true \
 		-v $(PWD)/mcpgateway:/app/mcpgateway:ro$(if $(filter podman,$(CONTAINER_RUNTIME)),$(COMMA)Z,) \
 		-p 8000:8000 \
 		--memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \

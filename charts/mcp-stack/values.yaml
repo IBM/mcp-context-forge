@@ -221,6 +221,13 @@ mcpContextForge:
     REGISTRY_CACHE_GATEWAYS_TTL: "20"  # Gateways list cache TTL (seconds)
     REGISTRY_CACHE_CATALOG_TTL: "300" # Catalog servers cache TTL (seconds, longer since external)
 
+    # ─ Tool Lookup Cache (reduces DB queries in invoke_tool) ─
+    TOOL_LOOKUP_CACHE_ENABLED: "true"           # Enable tool lookup caching
+    TOOL_LOOKUP_CACHE_TTL_SECONDS: "60"         # Cache TTL (seconds)
+    TOOL_LOOKUP_CACHE_NEGATIVE_TTL_SECONDS: "10" # Negative cache TTL (seconds)
+    TOOL_LOOKUP_CACHE_L1_MAXSIZE: "10000"       # In-memory L1 cache size
+    TOOL_LOOKUP_CACHE_L2_ENABLED: "true"        # Enable Redis L2 cache when CACHE_TYPE=redis
+
     # ─ Admin Stats Cache (reduces aggregate queries for dashboard) ─
     ADMIN_STATS_CACHE_ENABLED: "true"  # Enable admin stats caching
     ADMIN_STATS_CACHE_SYSTEM_TTL: "60" # System stats cache TTL (seconds)
@@ -364,12 +371,8 @@ mcpContextForge:
     USE_STATEFUL_SESSIONS: "false"   # true = use event store; false = stateless
     JSON_RESPONSE_ENABLED: "true"    # default to JSON; false for SSE stream
 
-    # ─ Federation ─
-    FEDERATION_ENABLED: "true"       # enable federated mode
-    FEDERATION_DISCOVERY: "false"    # advertise & discover peers automatically
-    FEDERATION_PEERS: '[]'           # explicit peer list (JSON array)
-    FEDERATION_TIMEOUT: "120"        # seconds before peer request timeout
-    FEDERATION_SYNC_INTERVAL: "300"  # seconds between peer syncs
+    # ─ Gateway/Server Connection Timeout ─
+    FEDERATION_TIMEOUT: "120"        # HTTP timeout (seconds) for gateway and MCP server requests
 
     # ─ Resource cache ─
     RESOURCE_CACHE_SIZE: "1000"      # max resources kept in memory cache
@@ -390,15 +393,32 @@ mcpContextForge:
 
     # ─ Health checks ─
     HEALTH_CHECK_INTERVAL: "60"      # seconds between peer health checks
-    HEALTH_CHECK_TIMEOUT: "10"       # request timeout per health check
+    HEALTH_CHECK_TIMEOUT: "5"        # request timeout per health check
     GATEWAY_HEALTH_CHECK_TIMEOUT: "5.0" # per-check timeout to bound total time of one gateway health check
     UNHEALTHY_THRESHOLD: "3"         # failed checks before peer marked unhealthy
     GATEWAY_VALIDATION_TIMEOUT: "5"  # gateway URL validation timeout (seconds)
     FILELOCK_NAME: gateway_healthcheck_init.lock # lock file used at start-up
 
+    # ─ MCP Session Pool ─
+    # Session pooling reduces per-request overhead from ~20ms to ~1-2ms (10-20x improvement)
+    # Sessions are isolated per user/tenant via identity hashing
+    # Disabled by default for safety; enable explicitly in production after testing
+    MCP_SESSION_POOL_ENABLED: "false"             # enable session pooling
+    MCP_SESSION_POOL_MAX_PER_KEY: "10"            # max sessions per (URL, identity, transport)
+    MCP_SESSION_POOL_TTL: "300.0"                 # session TTL in seconds
+    MCP_SESSION_POOL_HEALTH_CHECK_INTERVAL: "60.0" # idle time before health check
+    MCP_SESSION_POOL_ACQUIRE_TIMEOUT: "30.0"      # timeout waiting for session slot
+    MCP_SESSION_POOL_CREATE_TIMEOUT: "30.0"       # timeout creating new session
+    MCP_SESSION_POOL_CIRCUIT_BREAKER_THRESHOLD: "5" # failures before circuit opens
+    MCP_SESSION_POOL_CIRCUIT_BREAKER_RESET: "60.0"  # seconds before circuit resets
+    MCP_SESSION_POOL_IDLE_EVICTION: "600.0"       # evict idle pool keys after (seconds)
+    MCP_SESSION_POOL_TRANSPORT_TIMEOUT: "30.0"   # timeout for all HTTP operations (connect, read, write)
+    MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC: "false" # force RPC on health checks (off for performance)
+
     # ─ Development toggles ─
     DEV_MODE: "false"                # enable dev-mode features
     RELOAD: "false"                  # auto-reload code on changes
+    TEMPLATES_AUTO_RELOAD: "false"   # auto-reload Jinja2 templates (disable for production perf)
     DEBUG: "false"                   # verbose debug traces
 
     # ─ HTTP Retry Configuration ─

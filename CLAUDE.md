@@ -140,12 +140,6 @@ MCPGATEWAY_A2A_DEFAULT_TIMEOUT=30      # HTTP timeout (seconds)
 MCPGATEWAY_A2A_METRICS_ENABLED=true    # Metrics collection
 ```
 
-### Federation & Discovery
-```bash
-MCPGATEWAY_ENABLE_FEDERATION=true
-MCPGATEWAY_ENABLE_MDNS_DISCOVERY=true  # mDNS/Zeroconf discovery
-```
-
 ### Logging
 ```bash
 LOG_LEVEL=INFO
