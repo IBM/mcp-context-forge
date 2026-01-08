@@ -30,6 +30,7 @@ import logging
 import math
 import os
 from pathlib import Path
+import re
 import tempfile
 import time
 from typing import Any
@@ -47,7 +48,7 @@ import httpx
 import orjson
 from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
-from sqlalchemy import and_, case, cast, desc, func, or_, select, String, text
+from sqlalchemy import and_, bindparam, case, cast, desc, func, or_, select, String, text
 from sqlalchemy.exc import IntegrityError, InvalidRequestError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session
 from sqlalchemy.sql.functions import coalesce
@@ -499,6 +500,11 @@ def _get_span_entity_performance(
     Returns:
         List[dict]: List of dicts with entity key and performance metrics (count, avg, min, max, percentiles).
 
+    Raises:
+        ValueError: If `json_key` is not a valid identifier (only letters, digits, underscore, dot or hyphen),
+            this function will raise a ValueError to prevent unsafe SQL interpolation when using
+            PostgreSQL native percentile queries.
+
     Note:
         Uses PostgreSQL `percentile_cont` when available and enabled via USE_POSTGRESDB_PERCENTILES config,
         otherwise falls back to Python aggregation.
@@ -510,8 +516,6 @@ def _get_span_entity_performance(
         # Avoid interpolating user-controlled values into SQL text to mitigate
         # SQL injection risk. Validate the json_key and use SQLAlchemy's
         # expanding parameter for the IN-list.
-        import re
-        from sqlalchemy import bindparam
 
         if not isinstance(json_key, str) or not re.match(r"^[A-Za-z0-9_.-]+$", json_key):
             raise ValueError("Invalid json_key for percentile query")
