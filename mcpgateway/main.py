@@ -141,7 +141,7 @@ from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
 from mcpgateway.utils.redis_client import close_redis_client, get_redis_client
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
-from mcpgateway.utils.verify_credentials import require_auth, require_docs_auth_override, verify_jwt_token
+from mcpgateway.utils.verify_credentials import require_docs_auth_override, verify_jwt_token
 from mcpgateway.validation.jsonrpc import JSONRPCError
 
 # Import the admin routes from the new module
@@ -279,6 +279,133 @@ def get_user_email(user):
         # First try 'email', then 'sub' (JWT standard claim)
         return user.get("email") or user.get("sub") or "unknown"
     return str(user) if user else "unknown"
+
+
+def _normalize_token_teams(teams: Optional[List]) -> List[str]:
+    """
+    Normalize token teams to list of team IDs.
+
+    SSO tokens may contain team dicts like {"id": "...", "name": "..."}.
+    This normalizes to just IDs for consistent filtering.
+
+    Args:
+        teams: Raw teams from token payload (may be None, list of IDs, or list of dicts)
+
+    Returns:
+        List of team ID strings (empty list if None)
+
+    Examples:
+        >>> from mcpgateway import main
+        >>> main._normalize_token_teams(None)
+        []
+        >>> main._normalize_token_teams([])
+        []
+        >>> main._normalize_token_teams(["team_a", "team_b"])
+        ['team_a', 'team_b']
+        >>> main._normalize_token_teams([{"id": "team_a", "name": "Team A"}])
+        ['team_a']
+        >>> main._normalize_token_teams([{"id": "t1"}, "t2", {"name": "no_id"}])
+        ['t1', 't2']
+    """
+    if not teams:
+        return []
+
+    normalized = []
+    for team in teams:
+        if isinstance(team, dict):
+            team_id = team.get("id")
+            if team_id:
+                normalized.append(team_id)
+        elif isinstance(team, str):
+            normalized.append(team)
+    return normalized
+
+
+def _get_token_teams_from_request(request: Request) -> Optional[List[str]]:
+    """
+    Extract and normalize teams from verified JWT token.
+
+    Uses cached verified payload from request.state to avoid re-decoding.
+
+    Args:
+        request: FastAPI request object
+
+    Returns:
+        List of normalized team IDs if JWT payload exists (may be empty list),
+        or None if no verified JWT payload (triggers DB team lookup in services)
+
+    Examples:
+        >>> from mcpgateway import main
+        >>> from unittest.mock import MagicMock
+        >>> req = MagicMock()
+        >>> req.state = MagicMock()
+        >>> req.state._jwt_verified_payload = ("token", {"teams": ["team_a"]})
+        >>> main._get_token_teams_from_request(req)
+        ['team_a']
+        >>> req.state._jwt_verified_payload = ("token", {"teams": []})
+        >>> main._get_token_teams_from_request(req)
+        []
+        >>> req.state._jwt_verified_payload = None
+        >>> main._get_token_teams_from_request(req) is None
+        True
+    """
+    # Use cached verified payload (set by verify_jwt_token_cached)
+    cached = getattr(request.state, "_jwt_verified_payload", None)
+    if cached and isinstance(cached, tuple) and len(cached) == 2:
+        _, payload = cached
+        if payload:
+            # JWT exists - return normalized teams (may be empty list)
+            return _normalize_token_teams(payload.get("teams"))
+
+    # No JWT payload - return None to trigger DB team lookup
+    return None
+
+
+def _get_rpc_filter_context(request: Request, user) -> tuple:
+    """
+    Extract user_email, token_teams, and is_admin for RPC filtering.
+
+    Args:
+        request: FastAPI request object
+        user: User object from auth dependency
+
+    Returns:
+        Tuple of (user_email, token_teams, is_admin)
+
+    Examples:
+        >>> from mcpgateway import main
+        >>> from unittest.mock import MagicMock
+        >>> req = MagicMock()
+        >>> req.state = MagicMock()
+        >>> req.state._jwt_verified_payload = ("token", {"teams": ["t1"]})
+        >>> user = {"email": "test@x.com", "is_admin": True}
+        >>> email, teams, is_admin = main._get_rpc_filter_context(req, user)
+        >>> email
+        'test@x.com'
+        >>> teams
+        ['t1']
+        >>> is_admin
+        True
+    """
+    # Get user email
+    if hasattr(user, "email"):
+        user_email = getattr(user, "email", None)
+    elif isinstance(user, dict):
+        user_email = user.get("sub") or user.get("email")
+    else:
+        user_email = str(user) if user else None
+
+    # Get normalized teams from verified token
+    token_teams = _get_token_teams_from_request(request)
+
+    # Check if user is admin (for unrestricted access)
+    is_admin = False
+    if hasattr(user, "is_admin"):
+        is_admin = getattr(user, "is_admin", False)
+    elif isinstance(user, dict):
+        is_admin = user.get("is_admin", False) or user.get("user", {}).get("is_admin", False)
+
+    return user_email, token_teams, is_admin
 
 
 # Initialize cache
@@ -2200,7 +2327,35 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
         await session_registry.add_session(transport.session_id, transport)
         response = await transport.create_sse_response(request)
 
-        asyncio.create_task(session_registry.respond(server_id, user, session_id=transport.session_id, base_url=base_url))
+        # Extract auth token from request (header OR cookie, like get_current_user_with_permissions)
+        auth_token = None
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.lower().startswith("bearer "):
+            auth_token = auth_header[7:]
+        elif hasattr(request, "cookies") and request.cookies:
+            # Cookie auth (admin UI sessions)
+            auth_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
+
+        # Extract and normalize token teams
+        # Returns None if no JWT payload (non-JWT auth), or list if JWT exists
+        token_teams_or_none = _get_token_teams_from_request(request)
+        # Coerce to list for downstream consumers that expect a list
+        token_teams = token_teams_or_none if token_teams_or_none is not None else []
+
+        # Preserve is_admin from user object (for cookie-authenticated admins)
+        is_admin = False
+        if hasattr(user, "is_admin"):
+            is_admin = getattr(user, "is_admin", False)
+        elif isinstance(user, dict):
+            is_admin = user.get("is_admin", False) or user.get("user", {}).get("is_admin", False)
+
+        # Create enriched user dict
+        user_with_token = dict(user) if isinstance(user, dict) else {"email": getattr(user, "email", str(user))}
+        user_with_token["auth_token"] = auth_token
+        user_with_token["token_teams"] = token_teams  # Always a list, never None
+        user_with_token["is_admin"] = is_admin  # Preserve admin status for fallback token
+
+        asyncio.create_task(session_registry.respond(server_id, user_with_token, session_id=transport.session_id, base_url=base_url))
 
         tasks = BackgroundTasks()
         tasks.add_task(session_registry.remove_session, transport.session_id)
@@ -2281,6 +2436,7 @@ async def message_endpoint(request: Request, server_id: str, user=Depends(get_cu
 @server_router.get("/{server_id}/tools", response_model=List[ToolRead])
 @require_permission("servers.read")
 async def server_get_tools(
+    request: Request,
     server_id: str,
     include_inactive: bool = False,
     include_metrics: bool = False,
@@ -2295,6 +2451,7 @@ async def server_get_tools(
     that have been deactivated but not deleted from the system.
 
     Args:
+        request (Request): FastAPI request object.
         server_id (str): ID of the server
         include_inactive (bool): Whether to include inactive tools in the results.
         include_metrics (bool): Whether to include metrics in the tools results.
@@ -2305,13 +2462,18 @@ async def server_get_tools(
         List[ToolRead]: A list of tool records formatted with by_alias=True.
     """
     logger.debug(f"User: {user} has listed tools for the server_id: {server_id}")
-    tools = await tool_service.list_server_tools(db, server_id=server_id, include_inactive=include_inactive, include_metrics=include_metrics)
+    user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+    if is_admin:
+        user_email = None
+        token_teams = None
+    tools = await tool_service.list_server_tools(db, server_id=server_id, include_inactive=include_inactive, include_metrics=include_metrics, user_email=user_email, token_teams=token_teams)
     return [tool.model_dump(by_alias=True) for tool in tools]
 
 
 @server_router.get("/{server_id}/resources", response_model=List[ResourceRead])
 @require_permission("servers.read")
 async def server_get_resources(
+    request: Request,
     server_id: str,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
@@ -2325,6 +2487,7 @@ async def server_get_resources(
     to view or manage resources that have been deactivated but not deleted.
 
     Args:
+        request (Request): FastAPI request object.
         server_id (str): ID of the server
         include_inactive (bool): Whether to include inactive resources in the results.
         db (Session): Database session dependency.
@@ -2334,13 +2497,18 @@ async def server_get_resources(
         List[ResourceRead]: A list of resource records formatted with by_alias=True.
     """
     logger.debug(f"User: {user} has listed resources for the server_id: {server_id}")
-    resources = await resource_service.list_server_resources(db, server_id=server_id, include_inactive=include_inactive)
+    user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+    if is_admin:
+        user_email = None
+        token_teams = None
+    resources = await resource_service.list_server_resources(db, server_id=server_id, include_inactive=include_inactive, user_email=user_email, token_teams=token_teams)
     return [resource.model_dump(by_alias=True) for resource in resources]
 
 
 @server_router.get("/{server_id}/prompts", response_model=List[PromptRead])
 @require_permission("servers.read")
 async def server_get_prompts(
+    request: Request,
     server_id: str,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
@@ -2354,6 +2522,7 @@ async def server_get_prompts(
     prompts that have been deactivated but not deleted from the system.
 
     Args:
+        request (Request): FastAPI request object.
         server_id (str): ID of the server
         include_inactive (bool): Whether to include inactive prompts in the results.
         db (Session): Database session dependency.
@@ -2363,7 +2532,11 @@ async def server_get_prompts(
         List[PromptRead]: A list of prompt records formatted with by_alias=True.
     """
     logger.debug(f"User: {user} has listed prompts for the server_id: {server_id}")
-    prompts = await prompt_service.list_server_prompts(db, server_id=server_id, include_inactive=include_inactive)
+    user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+    if is_admin:
+        user_email = None
+        token_teams = None
+    prompts = await prompt_service.list_server_prompts(db, server_id=server_id, include_inactive=include_inactive, user_email=user_email, token_teams=token_teams)
     return [prompt.model_dump(by_alias=True) for prompt in prompts]
 
 
@@ -4289,7 +4462,7 @@ async def subscribe_roots_changes(
 ##################
 @utility_router.post("/rpc/")
 @utility_router.post("/rpc")
-async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depends(require_auth)):
+async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
     """Handle RPC requests.
 
     Args:
@@ -4333,20 +4506,29 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             if hasattr(result, "model_dump"):
                 result = result.model_dump(by_alias=True, exclude_none=True)
         elif method == "tools/list":
+            user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+            # Admin bypass - unrestricted access
+            if is_admin:
+                user_email = None
+                token_teams = None
             if server_id:
-                tools = await tool_service.list_server_tools(db, server_id, cursor=cursor)
+                tools = await tool_service.list_server_tools(db, server_id, cursor=cursor, user_email=user_email, token_teams=token_teams)
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
             else:
-                tools, next_cursor = await tool_service.list_tools(db, cursor=cursor, limit=0)
+                tools, next_cursor = await tool_service.list_tools(db, cursor=cursor, limit=0, user_email=user_email, token_teams=token_teams)
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
                 if next_cursor:
                     result["nextCursor"] = next_cursor
         elif method == "list_tools":  # Legacy endpoint
+            user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+            if is_admin:
+                user_email = None
+                token_teams = None
             if server_id:
-                tools = await tool_service.list_server_tools(db, server_id, cursor=cursor)
+                tools = await tool_service.list_server_tools(db, server_id, cursor=cursor, user_email=user_email, token_teams=token_teams)
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
             else:
-                tools, next_cursor = await tool_service.list_tools(db, cursor=cursor, limit=0)
+                tools, next_cursor = await tool_service.list_tools(db, cursor=cursor, limit=0, user_email=user_email, token_teams=token_teams)
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
                 if next_cursor:
                     result["nextCursor"] = next_cursor
@@ -4357,11 +4539,15 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             roots = await root_service.list_roots()
             result = {"roots": [r.model_dump(by_alias=True, exclude_none=True) for r in roots]}
         elif method == "resources/list":
+            user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+            if is_admin:
+                user_email = None
+                token_teams = None
             if server_id:
-                resources = await resource_service.list_server_resources(db, server_id)
+                resources = await resource_service.list_server_resources(db, server_id, user_email=user_email, token_teams=token_teams)
                 result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
             else:
-                resources, next_cursor = await resource_service.list_resources(db, cursor=cursor, limit=0)
+                resources, next_cursor = await resource_service.list_resources(db, cursor=cursor, limit=0, user_email=user_email, token_teams=token_teams)
                 result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
                 if next_cursor:
                     result["nextCursor"] = next_cursor
@@ -4414,11 +4600,15 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             await resource_service.unsubscribe_resource(db, subscription)
             result = {}
         elif method == "prompts/list":
+            user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+            if is_admin:
+                user_email = None
+                token_teams = None
             if server_id:
-                prompts = await prompt_service.list_server_prompts(db, server_id, cursor=cursor)
+                prompts = await prompt_service.list_server_prompts(db, server_id, cursor=cursor, user_email=user_email, token_teams=token_teams)
                 result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
             else:
-                prompts, next_cursor = await prompt_service.list_prompts(db, cursor=cursor, limit=0)
+                prompts, next_cursor = await prompt_service.list_prompts(db, cursor=cursor, limit=0, user_email=user_email, token_teams=token_teams)
                 result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
                 if next_cursor:
                     result["nextCursor"] = next_cursor
@@ -4755,7 +4945,35 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
         await transport.connect()
         await session_registry.add_session(transport.session_id, transport)
 
-        asyncio.create_task(session_registry.respond(None, user, session_id=transport.session_id, base_url=base_url))
+        # Extract auth token from request (header OR cookie, like get_current_user_with_permissions)
+        auth_token = None
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.lower().startswith("bearer "):
+            auth_token = auth_header[7:]
+        elif hasattr(request, "cookies") and request.cookies:
+            # Cookie auth (admin UI sessions)
+            auth_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
+
+        # Extract and normalize token teams
+        # Returns None if no JWT payload (non-JWT auth), or list if JWT exists
+        token_teams_or_none = _get_token_teams_from_request(request)
+        # Coerce to list for downstream consumers that expect a list
+        token_teams = token_teams_or_none if token_teams_or_none is not None else []
+
+        # Preserve is_admin from user object (for cookie-authenticated admins)
+        is_admin = False
+        if hasattr(user, "is_admin"):
+            is_admin = getattr(user, "is_admin", False)
+        elif isinstance(user, dict):
+            is_admin = user.get("is_admin", False) or user.get("user", {}).get("is_admin", False)
+
+        # Create enriched user dict
+        user_with_token = dict(user) if isinstance(user, dict) else {"email": getattr(user, "email", str(user))}
+        user_with_token["auth_token"] = auth_token
+        user_with_token["token_teams"] = token_teams  # Always a list, never None
+        user_with_token["is_admin"] = is_admin  # Preserve admin status for fallback token
+
+        asyncio.create_task(session_registry.respond(None, user_with_token, session_id=transport.session_id, base_url=base_url))
 
         response = await transport.create_sse_response(request)
         tasks = BackgroundTasks()
