@@ -5407,6 +5407,7 @@ async def admin_users_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    render: Optional[str] = Query(None, description="Render mode: 'selector' for user selector items, 'controls' for pagination controls"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Response:
@@ -5420,6 +5421,7 @@ async def admin_users_partial_html(
         request: FastAPI request object
         page: Page number (1-indexed). Default: 1.
         per_page: Items per page (1-500). Default: 50.
+        render: Render mode - 'selector' returns user selector items, 'controls' returns pagination controls.
         db: Database session
         user: Current authenticated user context
 
@@ -5471,6 +5473,32 @@ async def admin_users_partial_html(
 
         # End the read-only transaction early to avoid idle-in-transaction under load
         db.commit()
+
+        if render == "selector":
+            return request.app.state.templates.TemplateResponse(
+                "users_selector_items.html",
+                {
+                    "request": request,
+                    "data": users_data,
+                    "pagination": pagination.model_dump(),
+                    "root_path": request.scope.get("root_path", ""),
+                },
+            )
+
+        if render == "controls":
+            base_url = f"{settings.app_root_path}/admin/users/partial"
+            return request.app.state.templates.TemplateResponse(
+                "pagination_controls.html",
+                {
+                    "request": request,
+                    "pagination": pagination.model_dump(),
+                    "base_url": base_url,
+                    "hx_target": "#users-table-body",
+                    "hx_indicator": "#users-loading",
+                    "query_params": {},
+                    "root_path": request.scope.get("root_path", ""),
+                },
+            )
 
         # Render template with paginated data
         return request.app.state.templates.TemplateResponse(
