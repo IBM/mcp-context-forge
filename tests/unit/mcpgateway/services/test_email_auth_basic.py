@@ -649,6 +649,26 @@ class TestEmailAuthServiceUserManagement:
         mock_db.commit.assert_called()
 
     @pytest.mark.asyncio
+    async def test_change_password_clears_password_change_required_flag(self, service, mock_db, mock_user, mock_password_service):
+        """Test that password change clears password_change_required flag (regression test for #1842)."""
+        service.password_service = mock_password_service
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
+
+        # User initially has password_change_required = True
+        mock_user.password_change_required = True
+
+        # Make verify return True for old password, False for new (different)
+        mock_password_service.verify_password.side_effect = [True, False]
+        mock_password_service.hash_password.return_value = "new_hashed_password"
+
+        result = await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass123!", ip_address="192.168.1.1")
+
+        assert result is True
+        # Verify the flag was cleared - this is the key assertion for #1842
+        assert mock_user.password_change_required is False
+        mock_db.commit.assert_called()
+
+    @pytest.mark.asyncio
     async def test_change_password_wrong_old_password(self, service, mock_db, mock_user, mock_password_service):
         """Test password change with incorrect old password."""
         service.password_service = mock_password_service
