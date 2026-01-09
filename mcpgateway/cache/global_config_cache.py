@@ -187,7 +187,7 @@ class GlobalConfigCache:
             >>> # "db" mode (default): When no config exists, returns default
             >>> mock_db.query.return_value.first.return_value = None
             >>> cache.invalidate()  # Clear any cached value
-            >>> with patch("mcpgateway.cache.global_config_cache.settings") as mock_settings:
+            >>> with patch("mcpgateway.config.settings") as mock_settings:
             ...     mock_settings.passthrough_headers_source = "db"
             ...     cache.get_passthrough_headers(mock_db, ["X-Default"])
             ['X-Default']
@@ -197,19 +197,19 @@ class GlobalConfigCache:
             >>> mock_config.passthrough_headers = ["Authorization"]
             >>> mock_db.query.return_value.first.return_value = mock_config
             >>> cache.invalidate()
-            >>> with patch("mcpgateway.cache.global_config_cache.settings") as mock_settings:
+            >>> with patch("mcpgateway.config.settings") as mock_settings:
             ...     mock_settings.passthrough_headers_source = "env"
             ...     cache.get_passthrough_headers(mock_db, ["X-Default"])
             ['X-Default']
 
             >>> # "merge" mode: Combines both sources
             >>> cache.invalidate()
-            >>> with patch("mcpgateway.cache.global_config_cache.settings") as mock_settings:
+            >>> with patch("mcpgateway.config.settings") as mock_settings:
             ...     mock_settings.passthrough_headers_source = "merge"
             ...     result = cache.get_passthrough_headers(mock_db, ["X-Default"])
             ...     "X-Default" in result and "Authorization" in result
             True
-        """
+            """
         # Import here to avoid circular imports
         # First-Party
         from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
