@@ -20,7 +20,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 import httpx
 from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import selectinload, Session
+from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
 from mcpgateway.config import settings
@@ -254,7 +254,9 @@ class ServerService:
             ...     created_at=now, updated_at=now, enabled=True,
             ...     associated_tools=[], associated_resources=[], associated_prompts=[], associated_a2a_agents=[],
             ...     tags=[], metrics=[m1, m2],
-            ...     tools=[], resources=[], prompts=[], a2a_agents=[]
+            ...     tools=[], resources=[], prompts=[], a2a_agents=[],
+            ...     team_id=None, owner_email=None, visibility=None,
+            ...     created_by=None, modified_by=None
             ... )
             >>> result = svc.convert_server_to_read(server, include_metrics=True)
             >>> result.metrics.total_executions
@@ -262,8 +264,32 @@ class ServerService:
             >>> result.metrics.successful_executions
             1
         """
-        server_dict = server.__dict__.copy()
-        server_dict.pop("_sa_instance_state", None)
+        # Build dict explicitly from attributes to ensure SQLAlchemy populates them
+        # (using __dict__.copy() can return empty dict with certain query patterns)
+        server_dict = {
+            "id": server.id,
+            "name": server.name,
+            "description": server.description,
+            "icon": server.icon,
+            "enabled": server.enabled,
+            "created_at": server.created_at,
+            "updated_at": server.updated_at,
+            "team_id": server.team_id,
+            "owner_email": server.owner_email,
+            "visibility": server.visibility,
+            "created_by": server.created_by,
+            "created_from_ip": getattr(server, "created_from_ip", None),
+            "created_via": getattr(server, "created_via", None),
+            "created_user_agent": getattr(server, "created_user_agent", None),
+            "modified_by": server.modified_by,
+            "modified_from_ip": getattr(server, "modified_from_ip", None),
+            "modified_via": getattr(server, "modified_via", None),
+            "modified_user_agent": getattr(server, "modified_user_agent", None),
+            "import_batch_id": getattr(server, "import_batch_id", None),
+            "federation_source": getattr(server, "federation_source", None),
+            "version": getattr(server, "version", None),
+            "tags": server.tags or [],
+        }
 
         # Compute aggregated metrics only if requested (avoids N+1 queries in list operations)
         if include_metrics:
@@ -310,19 +336,13 @@ class ServerService:
             }
         else:
             server_dict["metrics"] = None
-        # Also update associated IDs (if not already done)
+        # Add associated IDs from relationships
         server_dict["associated_tools"] = [tool.name for tool in server.tools] if server.tools else []
         server_dict["associated_resources"] = [res.id for res in server.resources] if server.resources else []
         server_dict["associated_prompts"] = [prompt.id for prompt in server.prompts] if server.prompts else []
         server_dict["associated_a2a_agents"] = [agent.id for agent in server.a2a_agents] if server.a2a_agents else []
-        server_dict["tags"] = server.tags or []
 
-        # Include metadata fields for proper API response
-        server_dict["created_by"] = getattr(server, "created_by", None)
-        server_dict["modified_by"] = getattr(server, "modified_by", None)
-        server_dict["created_at"] = getattr(server, "created_at", None)
-        server_dict["updated_at"] = getattr(server, "updated_at", None)
-        server_dict["version"] = getattr(server, "version", None)
+        # Team name is loaded via server.team property from email_team relationship
         server_dict["team"] = getattr(server, "team", None)
 
         return ServerRead.model_validate(server_dict)
@@ -377,22 +397,6 @@ class ServerService:
             "a2a_agents": a2a_agents or [],
             "gateways": gateways or [],
         }
-
-    def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
-        """Retrieve the team name given a team ID.
-
-        Args:
-            db (Session): Database session for querying teams.
-            team_id (Optional[str]): The ID of the team.
-
-        Returns:
-            Optional[str]: The name of the team if found, otherwise None.
-        """
-        if not team_id:
-            return None
-        team = db.query(DbEmailTeam).filter(DbEmailTeam.id == team_id, DbEmailTeam.is_active.is_(True)).first()
-        db.commit()  # Release transaction to avoid idle-in-transaction
-        return team.name if team else None
 
     async def register_server(
         self,
@@ -634,7 +638,7 @@ class ServerService:
                 user_email=created_by,
             )
 
-            db_server.team = self._get_team_name(db, db_server.team_id)
+            # Team name is loaded via db_server.team property from email_team relationship
             return self.convert_server_to_read(db_server)
         except IntegrityError as ie:
             db.rollback()
@@ -747,6 +751,7 @@ class ServerService:
                 selectinload(DbServer.resources),
                 selectinload(DbServer.prompts),
                 selectinload(DbServer.a2a_agents),
+                joinedload(DbServer.email_team),
             )
             .order_by(desc(DbServer.created_at), desc(DbServer.id))
         )
@@ -808,19 +813,12 @@ class ServerService:
             # Cursor-based: pag_result is a tuple
             servers_db, next_cursor = pag_result
 
-        # Fetch team names for the servers (common for both pagination types)
-        team_ids_set = {s.team_id for s in servers_db if s.team_id}
-        team_map = {}
-        if team_ids_set:
-            teams = db.execute(select(DbEmailTeam.id, DbEmailTeam.name).where(DbEmailTeam.id.in_(team_ids_set), DbEmailTeam.is_active.is_(True))).all()
-            team_map = {team.id: team.name for team in teams}
-
         db.commit()  # Release transaction to avoid idle-in-transaction
 
         # Convert to ServerRead (common for both pagination types)
+        # Team names are loaded via joinedload(DbServer.email_team)
         result = []
         for s in servers_db:
-            s.team = team_map.get(s.team_id) if s.team_id else None
             result.append(self.convert_server_to_read(s, include_metrics=False))
 
         # Return appropriate format based on pagination type
@@ -878,6 +876,7 @@ class ServerService:
             selectinload(DbServer.resources),
             selectinload(DbServer.prompts),
             selectinload(DbServer.a2a_agents),
+            joinedload(DbServer.email_team),
         )
 
         # Apply active/inactive filter
@@ -921,19 +920,12 @@ class ServerService:
 
         servers = db.execute(query).scalars().all()
 
-        # Fetch all team names
-        server_team_ids = [s.team_id for s in servers if s.team_id]
-        team_map = {}
-        if server_team_ids:
-            teams = db.execute(select(DbEmailTeam.id, DbEmailTeam.name).where(DbEmailTeam.id.in_(server_team_ids), DbEmailTeam.is_active.is_(True))).all()
-            team_map = {team.id: team.name for team in teams}
-
         db.commit()  # Release transaction to avoid idle-in-transaction
 
         # Skip metrics to avoid N+1 queries in list operations
+        # Team names are loaded via joinedload(DbServer.email_team)
         result = []
         for s in servers:
-            s.team = team_map.get(s.team_id) if s.team_id else None
             result.append(self.convert_server_to_read(s, include_metrics=False))
         return result
 
@@ -962,7 +954,17 @@ class ServerService:
             >>> asyncio.run(service.get_server(db, 'server_id'))
             'server_read'
         """
-        server = db.get(DbServer, server_id)
+        server = db.get(
+            DbServer,
+            server_id,
+            options=[
+                selectinload(DbServer.tools),
+                selectinload(DbServer.resources),
+                selectinload(DbServer.prompts),
+                selectinload(DbServer.a2a_agents),
+                joinedload(DbServer.email_team),
+            ],
+        )
         if not server:
             raise ServerNotFoundError(f"Server not found: {server_id}")
         server_data = {
@@ -978,7 +980,7 @@ class ServerService:
             "associated_prompts": [prompt.id for prompt in server.prompts],
         }
         logger.debug(f"Server Data: {server_data}")
-        server.team = self._get_team_name(db, server.team_id) if server else None
+        # Team name is loaded via server.team property from email_team relationship
         server_read = self.convert_server_to_read(server)
 
         self._structured_logger.log(
@@ -1073,7 +1075,17 @@ class ServerService:
             'server_read'
         """
         try:
-            server = db.get(DbServer, server_id)
+            server = db.get(
+                DbServer,
+                server_id,
+                options=[
+                    selectinload(DbServer.tools),
+                    selectinload(DbServer.resources),
+                    selectinload(DbServer.prompts),
+                    selectinload(DbServer.a2a_agents),
+                    joinedload(DbServer.email_team),
+                ],
+            )
             if not server:
                 raise ServerNotFoundError(f"Server not found: {server_id}")
 
@@ -1257,12 +1269,13 @@ class ServerService:
             )
 
             # Build a dictionary with associated IDs
+            # Team name is loaded via server.team property from email_team relationship
             server_data = {
                 "id": server.id,
                 "name": server.name,
                 "description": server.description,
                 "icon": server.icon,
-                "team": self._get_team_name(db, server.team_id),
+                "team": server.team,
                 "created_at": server.created_at,
                 "updated_at": server.updated_at,
                 "enabled": server.enabled,
@@ -1359,7 +1372,17 @@ class ServerService:
             'server_read'
         """
         try:
-            server = db.get(DbServer, server_id)
+            server = db.get(
+                DbServer,
+                server_id,
+                options=[
+                    selectinload(DbServer.tools),
+                    selectinload(DbServer.resources),
+                    selectinload(DbServer.prompts),
+                    selectinload(DbServer.a2a_agents),
+                    joinedload(DbServer.email_team),
+                ],
+            )
             if not server:
                 raise ServerNotFoundError(f"Server not found: {server_id}")
 
@@ -1412,12 +1435,13 @@ class ServerService:
                     user_email=user_email,
                 )
 
+            # Team name is loaded via server.team property from email_team relationship
             server_data = {
                 "id": server.id,
                 "name": server.name,
                 "description": server.description,
                 "icon": server.icon,
-                "team": self._get_team_name(db, server.team_id),
+                "team": server.team,
                 "created_at": server.created_at,
                 "updated_at": server.updated_at,
                 "enabled": server.enabled,
