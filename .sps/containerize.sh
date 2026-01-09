@@ -47,9 +47,9 @@ make IMAGE_TAG="base" docker-prod
     docker tag "mcpgateway/mcpgateway:${IMAGE_TAG}" "${IMAGE}" && \
     docker push "${IMAGE}"
 
-GH_USER=ISC-REL
-GH_TOKEN=$(get_env gh-token)"
-GH_URL=https://github.ibm.com/cyberfraud/cyberfraud-mcp-management-service.git
+GH_USER="ISC-REL"
+GH_TOKEN="$(get_env gh-token)"
+GH_URL="https://github.ibm.com/cyberfraud/cyberfraud-mcp-management-service.git"
 source ./clone_repo.sh
 source ./run_smoke_test.sh
 
