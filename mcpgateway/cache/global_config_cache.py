@@ -165,40 +165,80 @@ class GlobalConfigCache:
 
     def get_passthrough_headers(self, db, default: list[str]) -> list[str]:
         """
-        Get passthrough headers from cache with fallback to default.
+        Get passthrough headers based on PASSTHROUGH_HEADERS_SOURCE setting.
 
-        Convenience method that handles the common pattern of getting
-        passthrough headers with a fallback value.
+        Supports three modes:
+        - "env": Environment variable always wins (ignore database)
+        - "db": Database wins if configured, fallback to env (default, backward compatible)
+        - "merge": Union of env and database headers (DB overrides for duplicates)
 
         Args:
             db: SQLAlchemy database session
-            default: Default headers to use if GlobalConfig is not configured
+            default: Default headers from environment variable (settings.default_passthrough_headers)
 
         Returns:
             List of allowed passthrough header names
 
         Examples:
-            >>> from unittest.mock import Mock
+            >>> from unittest.mock import Mock, patch
             >>> cache = GlobalConfigCache(ttl_seconds=60)
             >>> mock_db = Mock()
 
-            >>> # When no config exists, returns default
+            >>> # "db" mode (default): When no config exists, returns default
             >>> mock_db.query.return_value.first.return_value = None
             >>> cache.invalidate()  # Clear any cached value
-            >>> cache.get_passthrough_headers(mock_db, ["X-Default"])
+            >>> with patch("mcpgateway.config.settings") as mock_settings:
+            ...     mock_settings.passthrough_headers_source = "db"
+            ...     cache.get_passthrough_headers(mock_db, ["X-Default"])
             ['X-Default']
 
-            >>> # When config exists, returns configured headers
+            >>> # "env" mode: Always returns default, ignores database
             >>> mock_config = Mock()
             >>> mock_config.passthrough_headers = ["Authorization"]
             >>> mock_db.query.return_value.first.return_value = mock_config
             >>> cache.invalidate()
-            >>> cache.get_passthrough_headers(mock_db, ["X-Default"])
-            ['Authorization']
+            >>> with patch("mcpgateway.config.settings") as mock_settings:
+            ...     mock_settings.passthrough_headers_source = "env"
+            ...     cache.get_passthrough_headers(mock_db, ["X-Default"])
+            ['X-Default']
+
+            >>> # "merge" mode: Combines both sources
+            >>> cache.invalidate()
+            >>> with patch("mcpgateway.config.settings") as mock_settings:
+            ...     mock_settings.passthrough_headers_source = "merge"
+            ...     result = cache.get_passthrough_headers(mock_db, ["X-Default"])
+            ...     "X-Default" in result and "Authorization" in result
+            True
         """
+        # Import here to avoid circular imports
+        # First-Party
+        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+        source = settings.passthrough_headers_source
+
+        if source == "env":
+            # Environment always wins - don't query database at all
+            logger.debug("Passthrough headers source=env: using environment variable only")
+            return default if default else []
+
         config = self.get(db)
+
+        if source == "merge":
+            # Union of both sources, preserving original casing
+            # Use lowercase keys for deduplication, original casing for values
+            env_headers = {h.lower(): h for h in (default or [])}
+            db_headers = {h.lower(): h for h in (config.passthrough_headers or [])} if config else {}
+            # DB values override env for same header (handles case differences)
+            merged = {**env_headers, **db_headers}
+            result = list(merged.values())
+            logger.debug(f"Passthrough headers source=merge: combined {len(result)} headers from env and db")
+            return result
+
+        # Default "db" mode - current behavior for backward compatibility
         if config and config.passthrough_headers:
+            logger.debug("Passthrough headers source=db: using database configuration")
             return config.passthrough_headers
+        logger.debug("Passthrough headers source=db: no database config, using environment default")
         return default
 
     def invalidate(self) -> None:
