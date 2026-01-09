@@ -6845,6 +6845,22 @@ function showTab(tabName) {
                     }
                 }
 
+                if (tabName === "gateways") {
+                    // Load Gateways table if not already loaded
+                    const gatewaysTable = safeGetElement("gateways-table");
+                    if (gatewaysTable) {
+                        const hasLoadingMessage =
+                            gatewaysTable.innerHTML.includes("Loading gateways...");
+                        const isEmpty = gatewaysTable.innerHTML.trim() === "";
+                        if (hasLoadingMessage || isEmpty) {
+                            // Trigger HTMX load manually if HTMX is available
+                            if (window.htmx && window.htmx.trigger) {
+                                window.htmx.trigger(gatewaysTable, "load");
+                            }
+                        }
+                    }
+                }
+
                 if (tabName === "tokens") {
                     // Load Tokens list and set up form handling
                     const tokensList = safeGetElement("tokens-list");

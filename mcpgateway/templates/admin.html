@@ -10840,17 +10840,23 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       function updateTeamContext(teamId) {
         // Prevent double-invocation if user clicks rapidly
         if (window.__teamSwitchingInProgress) {
+          console.log('Team switch already in progress, ignoring');
           return;
         }
         window.__teamSwitchingInProgress = true;
 
         try {
           const url = new URL(window.location.href);
+          console.log('Current URL:', url.toString());
+          console.log('Switching to team_id:', teamId);
+
           if (teamId && teamId !== '') {
             url.searchParams.set('team_id', teamId);
           } else {
             url.searchParams.delete('team_id');
           }
+
+          console.log('New URL:', url.toString());
 
           // Use assign so browser navigates and we get a brand-new initial render
           // (pushState + DOM replacements is the root cause of the stack overflow).
