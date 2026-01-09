@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 pushd
 cd cyberfraud-mcp-management-service
 
