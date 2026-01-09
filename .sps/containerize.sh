@@ -50,7 +50,7 @@ make IMAGE_TAG="base" docker-prod
 GH_USER="ISC-REL"
 GH_TOKEN="$(get_env git-token)"
 GH_URL="https://github.ibm.com/cyberfraud/cyberfraud-mcp-management-service.git"
-git clone "http://${GH_USER}:${GH_TOKEN}@cyberfraud/cyberfraud-mcp-management-service.git"
+git clone "http://${GH_USER}:${GH_TOKEN}@github.ibm.com/cyberfraud/cyberfraud-mcp-management-service.git"
 source ./run_smoke_test.sh
 
 DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "${IMAGE}" | awk -F@ '{print $2}')"
