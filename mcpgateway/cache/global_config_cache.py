@@ -209,7 +209,7 @@ class GlobalConfigCache:
             ...     result = cache.get_passthrough_headers(mock_db, ["X-Default"])
             ...     "X-Default" in result and "Authorization" in result
             True
-            """
+        """
         # Import here to avoid circular imports
         # First-Party
         from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel

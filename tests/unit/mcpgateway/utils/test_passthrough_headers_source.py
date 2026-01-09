@@ -43,22 +43,22 @@ class TestPassthroughHeadersSource:
         mock_config = Mock()
         mock_config.passthrough_headers = ["X-From-DB"]
         mock_db.query.return_value.first.return_value = mock_config
-        
+
         env_headers = ["X-From-Env"]
-        
+
         with patch("mcpgateway.config.settings.passthrough_headers_source", "env"):
             # Execute
             result = global_config_cache.get_passthrough_headers(mock_db, env_headers)
-            
+
             # Verify
             assert result == ["X-From-Env"]
-    
+
     def test_env_mode_empty_defaults(self, mock_db):
         """Test 'env' mode with empty defaults returns empty list."""
         mock_config = Mock()
         mock_config.passthrough_headers = ["X-From-DB"]
         mock_db.query.return_value.first.return_value = mock_config
-        
+
         with patch("mcpgateway.config.settings.passthrough_headers_source", "env"):
             result = global_config_cache.get_passthrough_headers(mock_db, [])
             assert result == []
@@ -69,12 +69,12 @@ class TestPassthroughHeadersSource:
         mock_config = Mock()
         mock_config.passthrough_headers = ["X-Common", "X-Only-DB"]
         mock_db.query.return_value.first.return_value = mock_config
-        
+
         env_headers = ["X-Common", "X-Only-Env"]
-        
+
         with patch("mcpgateway.config.settings.passthrough_headers_source", "merge"):
             result = global_config_cache.get_passthrough_headers(mock_db, env_headers)
-            
+
             # Verify contents (order doesn't matter for correctness, but list is returned)
             assert len(result) == 3
             assert "X-Common" in result
@@ -87,12 +87,12 @@ class TestPassthroughHeadersSource:
         mock_config = Mock()
         mock_config.passthrough_headers = ["X-COMMON-HEADER"] # DB has uppercase
         mock_db.query.return_value.first.return_value = mock_config
-        
+
         env_headers = ["x-common-header"] # Env has lowercase
-        
+
         with patch("mcpgateway.config.settings.passthrough_headers_source", "merge"):
             result = global_config_cache.get_passthrough_headers(mock_db, env_headers)
-            
+
             # Should contain only one entry
             assert len(result) == 1
             # Should match DB casing
@@ -101,22 +101,22 @@ class TestPassthroughHeadersSource:
     def test_merge_mode_no_db_config(self, mock_db):
         """Test 'merge' mode works when DB result is None."""
         mock_db.query.return_value.first.return_value = None
-        
+
         env_headers = ["X-Env-Only"]
-        
+
         with patch("mcpgateway.config.settings.passthrough_headers_source", "merge"):
             result = global_config_cache.get_passthrough_headers(mock_db, env_headers)
-            
+
             assert result == ["X-Env-Only"]
 
     def test_db_mode_fallback(self, mock_db):
         """Test 'db' mode falls back to env if DB config is missing."""
         mock_db.query.return_value.first.return_value = None
         env_headers = ["X-Fallback"]
-        
+
         with patch("mcpgateway.config.settings.passthrough_headers_source", "db"):
             result = global_config_cache.get_passthrough_headers(mock_db, env_headers)
-            
+
             assert result == ["X-Fallback"]
 
     def test_db_mode_priority(self, mock_db):
@@ -124,12 +124,12 @@ class TestPassthroughHeadersSource:
         mock_config = Mock()
         mock_config.passthrough_headers = ["X-DB"]
         mock_db.query.return_value.first.return_value = mock_config
-        
+
         env_headers = ["X-Env"]
-        
+
         with patch("mcpgateway.config.settings.passthrough_headers_source", "db"):
             result = global_config_cache.get_passthrough_headers(mock_db, env_headers)
-            
+
             assert result == ["X-DB"]
 
 
@@ -143,9 +143,9 @@ class TestSetGlobalPassthroughHeaders:
 
         with patch("mcpgateway.utils.passthrough_headers.settings") as mock_settings:
             mock_settings.passthrough_headers_source = "env"
-            
+
             await set_global_passthrough_headers(mock_db)
-            
+
             # Should NOT query or write to database
             mock_db.query.assert_not_called()
             mock_db.add.assert_not_called()
