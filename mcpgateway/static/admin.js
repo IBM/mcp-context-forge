@@ -740,6 +740,24 @@ function resetModalState(modalId) {
                 // Clear any error messages
                 const errorElements = form.querySelectorAll(".error-message");
                 errorElements.forEach((el) => el.remove());
+                // Clear inline validation error styling
+                const inlineErrors = form.querySelectorAll(
+                    "p[data-error-message-for]",
+                );
+                inlineErrors.forEach((el) => el.classList.add("invisible"));
+                // Clear red border styling from inputs
+                const invalidInputs = form.querySelectorAll(
+                    ".border-red-500, .focus\\:ring-red-500, .dark\\:border-red-500, .dark\\:ring-red-500",
+                );
+                invalidInputs.forEach((el) => {
+                    el.classList.remove(
+                        "border-red-500",
+                        "focus:ring-red-500",
+                        "dark:border-red-500",
+                        "dark:ring-red-500",
+                    );
+                    el.setCustomValidity("");
+                });
             } catch (error) {
                 console.error("Error resetting form:", error);
             }
@@ -14855,49 +14873,6 @@ function setupFormValidation() {
                     inputLabel?.innerText,
                 );
                 if (!validation.valid) {
-                    this.classList.add(
-                        "border-red-500",
-                        "focus:ring-red-500",
-                        "dark:border-red-500",
-                        "dark:ring-red-500",
-                    );
-                    if (errorMessageElement) {
-                        errorMessageElement.innerText = validation.error;
-                        errorMessageElement.classList.remove("invisible");
-                    }
-                } else {
-                    this.value = validation.value;
-                    this.classList.remove(
-                        "border-red-500",
-                        "focus:ring-red-500",
-                        "dark:border-red-500",
-                        "dark:ring-red-500",
-                    );
-                    if (errorMessageElement) {
-                        errorMessageElement.classList.add("invisible");
-                    }
-                }
-            });
-        });
-
-        // Add validation to URL fields
-        const urlFields = form.querySelectorAll(
-            'input[name*="url"], input[name*="URL"]',
-        );
-        urlFields.forEach((field) => {
-            field.addEventListener("blur", function () {
-                const parentNode = this.parentNode;
-                const inputLabel = parentNode?.querySelector(
-                    `label[for="${this.id}"]`,
-                );
-                const errorMessageElement = parentNode?.querySelector(
-                    'p[data-error-message-for="url"]',
-                );
-                const validation = validateUrl(
-                    this.value,
-                    inputLabel?.innerText,
-                );
-                if (!validation.valid) {
                     this.setCustomValidity(validation.error);
                     this.classList.add(
                         "border-red-500",
@@ -14925,17 +14900,42 @@ function setupFormValidation() {
             });
         });
 
-        // Special validation for prompt name fields
-        const promptNameFields = form.querySelectorAll(
-            'input[name="prompt-name"], input[name="edit-prompt-name"]',
+        // Add validation to URL fields
+        const urlFields = form.querySelectorAll(
+            'input[name*="url"], input[name*="URL"]',
         );
-        promptNameFields.forEach((field) => {
+        urlFields.forEach((field) => {
             field.addEventListener("blur", function () {
-                const errorMessageElement = this.parentNode?.querySelector(
-                    'p[data-error-message-for="prompt-name"]',
+                // Skip validation for empty optional URL fields
+                if (!this.value && !this.required) {
+                    this.setCustomValidity("");
+                    this.classList.remove(
+                        "border-red-500",
+                        "focus:ring-red-500",
+                        "dark:border-red-500",
+                        "dark:ring-red-500",
+                    );
+                    const errorMessageElement = this.parentNode?.querySelector(
+                        'p[data-error-message-for="url"]',
+                    );
+                    if (errorMessageElement) {
+                        errorMessageElement.classList.add("invisible");
+                    }
+                    return;
+                }
+                const parentNode = this.parentNode;
+                const inputLabel = parentNode?.querySelector(
+                    `label[for="${this.id}"]`,
                 );
-                const validation = validateInputName(this.value, "prompt");
+                const errorMessageElement = parentNode?.querySelector(
+                    'p[data-error-message-for="url"]',
+                );
+                const validation = validateUrl(
+                    this.value,
+                    inputLabel?.innerText,
+                );
                 if (!validation.valid) {
+                    this.setCustomValidity(validation.error);
                     this.classList.add(
                         "border-red-500",
                         "focus:ring-red-500",
@@ -14947,6 +14947,7 @@ function setupFormValidation() {
                         errorMessageElement.classList.remove("invisible");
                     }
                 } else {
+                    this.setCustomValidity("");
                     this.value = validation.value;
                     this.classList.remove(
                         "border-red-500",
