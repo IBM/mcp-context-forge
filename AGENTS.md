@@ -1,68 +1,161 @@
-# Repository Guidelines
+# AGENTS.md
 
-For specific tasks, see also: llms/api.md  llms/helm.md  llms/mcpgateway.md  llms/mcp-server-go.md  llms/mcp-server-python.md  llms/mkdocs.md  llms/plugins-llms.md  llms/testing.md
+Guidelines for AI coding assistants working with this repository.
 
-## Project Structure & Module Organization
-- `mcpgateway/`: FastAPI gateway source (entry `main.py`, `cli.py`, services, transports, templates/static, Alembic).
-- Services: `mcpgateway/services/` (gateway, server, tool, resource, prompt logic).
-- Transports: `mcpgateway/transports/` (SSE, WebSocket, stdio, streamable HTTP).
-- Plugins: `plugins/` (`framework/`, plugin configs in `plugins/config.yaml`).
-- Plugins: `plugins/` (built-in filters and utilities like `pii_filter/`, `deny_filter/`, `regex_filter/`, `resource_filter/`; main configuration in `plugins/config.yaml`).
-- Tests: `tests/unit`, `tests/integration`, `tests/e2e`, `tests/playwright`.
-- Docs & ops: `docs/`, `deployment/`, `charts/`, `examples/`. Build artefacts: `build/`, `dist/`.
+For domain-specific guidance, see subdirectory AGENTS.md files:
+- `tests/AGENTS.md` - Testing conventions and workflows
+- `plugins/AGENTS.md` - Plugin framework and development
+- `charts/AGENTS.md` - Helm chart operations
+- `deployment/AGENTS.md` - Infrastructure and deployment
+- `docs/AGENTS.md` - Documentation authoring
+- `mcp-servers/AGENTS.md` - MCP server implementation
 
-## Build, Test, and Development Commands
-- Pre-commit: `make autoflake isort black pre-commit`
-- Setup: `make venv`, `make install-dev`.
-- Run: `make dev` (hot reload on :8000), `make serve` (gunicorn), or `mcpgateway --host 0.0.0.0 --port 4444`.
-- Quality: `make lint`, `make lint-web`, `make check-manifest`.
-- Tests: `make test`, `make doctest`, `make htmlcov` (HTML to `docs/docs/coverage/index.html`).
-- Final check: `make doctest test htmlcov smoketest lint-web flake8 bandit interrogate pylint verify`
+**Note:** The `llms/` directory contains guidance for LLMs *using* the Context Forge solution (end-user runtime guidance), not for code agents working on this codebase.
 
-## Makefile Quick Reference
-- `make dev`: Run fast-reload dev server on `:8000`.
-- `make serve`: Run production Gunicorn server on `:4444`.
-- `make certs`: Generate self-signed TLS certs in `./certs/`.
-- `make serve-ssl`: Run Gunicorn behind HTTPS on `:4444` (uses `./certs`).
-- `make lint`: Run full lint suite; `make install-web-linters` once before `make lint-web`.
-- `make test`: Run unit tests; `make coverage` writes HTML to `docs/docs/coverage/`.
-- `make doctest`: Run doctests across `mcpgateway/` modules.
-- `make check-env`: Verify `.env` keys match `.env.example`.
-- `make clean`: Remove caches, build artefacts, venv, coverage, docs, certs.
+## Project Overview
 
-MCP helpers
-- JWT token: `python -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret KEY`.
-- Expose stdio server: `python -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000`.
+MCP Gateway (ContextForge) is a production-grade gateway, proxy, and registry for Model Context Protocol (MCP) servers and A2A Agents. It federates MCP and REST services, providing unified discovery, auth, rate-limiting, observability, virtual servers, multi-transport protocols, and an optional Admin UI.
 
-## Coding Style & Naming Conventions
-- Python >= 3.11. Type hints required; strict `mypy` settings.
-- Formatters/linters: Black (line length 200), isort (profile=black), Ruff (F,E,W,B,ASYNC), Pylint as configured in `pyproject.toml` and dotfiles.
-- Naming: `snake_case` for modules/functions, `PascalCase` for classes, `UPPER_CASE` for constants.
-- Group imports per isort sections (stdlib, third-party, first-party `mcpgateway`, local).
+## Project Structure
 
-## Testing Guidelines
-- Pytest with async; discovery configured in `pyproject.toml`.
-- Layout: unit (`tests/unit`), integration (`tests/integration`), e2e (`tests/e2e`), UI (`tests/playwright`).
-- Naming: files `test_*.py`, classes `Test*`, functions `test_*`; marks: `slow`, `ui`, `api`, `smoke`, `e2e`.
-- Commands: `make test`, `pytest -k "name"`, `pytest -m "not slow"`. Use `make coverage` for reports.
-- Keep tests deterministic, isolated, and fast by default.
+```
+mcpgateway/                 # Core FastAPI application
+├── main.py                 # Application entry point
+├── config.py               # Environment configuration
+├── models.py               # SQLAlchemy ORM models
+├── schemas.py              # Pydantic validation schemas
+├── services/               # Business logic layer
+├── routers/                # HTTP endpoint definitions
+├── middleware/             # Cross-cutting concerns
+├── transports/             # Protocol implementations (SSE, WebSocket, stdio)
+├── plugins/                # Plugin framework infrastructure
+└── alembic/                # Database migrations
 
-## Commit & Pull Request Guidelines
-- Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `chore:`). Link issues (e.g., `Closes #123`).
-- Sign every commit with DCO: `git commit -s`.
-- Do not mention Claude or Claude Code in PRs/diffs. Do not include effort estimates or "phases".
-- Include tests and docs for behavior changes; attach screenshots for UI changes when relevant.
-- Require green lint and tests locally before opening a PR.
+tests/                      # Test suite (see tests/AGENTS.md)
+plugins/                    # Plugin implementations (see plugins/AGENTS.md)
+charts/                     # Helm charts (see charts/AGENTS.md)
+deployment/                 # Infrastructure configs (see deployment/AGENTS.md)
+docs/                       # Architecture and usage documentation (see docs/AGENTS.md)
+mcp-servers/                # MCP server templates (see mcp-servers/AGENTS.md)
+llms/                       # End-user LLM guidance (not for code agents)
+```
 
-## Architecture Overview
-- Core: FastAPI + Pydantic with SQLAlchemy. Architectural decisions live under `docs/docs/architecture/adr/`.
-- Data: SQLite by default; PostgreSQL via extras. Migrations managed with Alembic in `mcpgateway/alembic/`.
-- Caching & Federation: Optional Redis, mDNS/Zeroconf discovery, peer registration, health checks and failover.
-- Virtual Servers: Compose tools, prompts, and resources across multiple MCP servers; control tool visibility per server.
-- Transports: SSE, WebSocket, stdio wrapper, and streamable HTTP endpoints.
+## Essential Commands
 
-## Security & Configuration Tips
-- Copy `.env.example` → `.env`; verify with `make check-env`. Never commit secrets.
-- Auth: set `JWT_SECRET_KEY`; export `MCPGATEWAY_BEARER_TOKEN` using the token utility for API calls.
-- Wrapper: set `MCP_SERVER_URL` and `MCP_AUTH` when using `mcpgateway.wrapper`.
-- TLS: `make certs` → `make serve-ssl`. Prefer environment variables for config; see `README.md`.
+### Setup
+```bash
+cp .env.example .env && make venv install-dev check-env    # Complete setup
+make venv                          # Create virtual environment with uv
+make install-dev                   # Install with dev dependencies
+make check-env                     # Verify .env against .env.example
+```
+
+### Development
+```bash
+make dev                          # Dev server on :8000 with autoreload
+make serve                        # Production gunicorn on :4444
+make certs && make serve-ssl      # HTTPS on :4444
+```
+
+### Code Quality
+```bash
+# After writing code
+make autoflake isort black pre-commit
+
+# Before committing
+make flake8 bandit interrogate pylint verify
+```
+
+## Key Environment Variables
+
+```bash
+# Core
+HOST=0.0.0.0
+PORT=4444
+DATABASE_URL=sqlite:///./mcp.db   # or postgresql://...
+REDIS_URL=redis://localhost:6379
+RELOAD=true
+
+# Auth
+JWT_SECRET_KEY=your-secret-key
+BASIC_AUTH_USER=admin
+BASIC_AUTH_PASSWORD=changeme
+AUTH_REQUIRED=true
+
+# Features
+MCPGATEWAY_UI_ENABLED=true
+MCPGATEWAY_ADMIN_API_ENABLED=true
+MCPGATEWAY_A2A_ENABLED=true
+
+# Logging
+LOG_LEVEL=INFO
+LOG_TO_FILE=false
+STRUCTURED_LOGGING_DATABASE_ENABLED=false
+```
+
+## MCP Helpers
+
+```bash
+# Generate JWT token
+python -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret KEY
+
+# Export for API calls
+export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 0 --secret KEY)
+
+# Expose stdio server via HTTP/SSE
+python -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
+```
+
+### Adding an MCP Server
+1. Start: `python -m mcpgateway.translate --stdio "server-command" --port 9000`
+2. Register: `POST /gateways`
+3. Create virtual server: `POST /servers`
+4. Access via SSE/WebSocket endpoints
+
+## Technology Stack
+
+- **FastAPI** with **Pydantic** validation and **SQLAlchemy** ORM (Starlette ASGI)
+- **HTMX + Alpine.js** for admin UI
+- **SQLite** default, **PostgreSQL** support, **Redis** for caching/federation
+- **Alembic** for migrations
+
+## Coding Standards
+
+- **Python >= 3.11** with type hints; strict mypy
+- **Formatting**: Black (line length 200), isort (profile=black)
+- **Linting**: Ruff (F,E,W,B,ASYNC), Pylint per `pyproject.toml`
+- **Naming**: `snake_case` functions/modules, `PascalCase` classes, `UPPER_CASE` constants
+- **Imports**: Group per isort sections (stdlib, third-party, first-party `mcpgateway`, local)
+
+## Commit & PR Standards
+
+- **Sign commits**: `git commit -s` (DCO requirement)
+- **Conventional Commits**: `feat:`, `fix:`, `docs:`, `refactor:`, `chore:`
+- **Link issues**: `Closes #123`
+- Include tests for behavior changes
+- Require green lint and tests before PR
+
+## Important Constraints
+
+- Never mention AI assistants in PRs/diffs
+- Do not include test plans or effort estimates in PRs
+- Never create files unless absolutely necessary; prefer editing existing files
+- Never proactively create documentation files unless explicitly requested
+- Never commit secrets; use `.env` for configuration
+
+## Key Files
+
+- `mcpgateway/main.py` - Application entry point
+- `mcpgateway/config.py` - Environment configuration
+- `mcpgateway/models.py` - ORM models
+- `mcpgateway/schemas.py` - Pydantic schemas
+- `pyproject.toml` - Project configuration
+- `Makefile` - Build automation
+- `.env.example` - Environment template
+
+## CLI Tools Available
+
+- `gh` for GitHub operations
+- `make` for build/test automation
+- `uv` for virtual environment management
+- Standard tools: pytest, black, isort, ruff, pylint
