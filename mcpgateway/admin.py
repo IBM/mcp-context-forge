@@ -5582,6 +5582,10 @@ async def admin_list_users(
 
     auth_service = EmailAuthService(db)
 
+    # List users with page-based pagination
+    paginated_result = await auth_service.list_users(page=page, per_page=per_page)
+    users = paginated_result["data"]
+
     # Check if JSON response is requested (for dropdown population)
     accept_header = request.headers.get("accept", "")
     is_json_request = "application/json" in accept_header or request.query_params.get("format") == "json"
