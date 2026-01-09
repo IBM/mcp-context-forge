@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-pushd
 cd cyberfraud-mcp-management-service
 
 echo "#############################"
@@ -10,4 +9,4 @@ if [ $? != 0 ]; then
   echo "Integration test failed, exiting";
   exit 1;
 fi
-popd
+cd -
