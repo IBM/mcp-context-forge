@@ -3749,6 +3749,18 @@ async def change_password_required_handler(request: Request, db: Session = Depen
             success = await auth_service.change_password(email=current_user.email, old_password=current_password, new_password=new_password, ip_address=ip_address, user_agent=user_agent)
 
             if success:
+                # Ensure `current_user` is part of the session before updating
+                try:
+                    # pylint: disable=import-outside-toplevel
+                    from sqlalchemy import inspect as sa_inspect
+                    from mcpgateway.db import EmailUser
+
+                    insp = sa_inspect(current_user)
+                    if insp.transient or insp.detached:
+                        current_user = db.query(EmailUser).filter(EmailUser.email == current_user.email).first()
+                except Exception as e:  # Log and continue rather than silently passing
+                    LOGGER.debug(f"Failed to inspect or re-query current_user: {e}")
+
                 # Clear the password_change_required flag
                 current_user.password_change_required = False
                 db.commit()
