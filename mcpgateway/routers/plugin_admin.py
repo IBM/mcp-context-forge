@@ -31,6 +31,7 @@ from mcpgateway.admin_helpers import (
     validate_bulk_plugin_inputs,
     validate_remove_plugin_inputs,
 )
+from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
@@ -63,6 +64,25 @@ async def get_routing_rules(
         TemplateResponse with routing rules list HTML or HTMLResponse with error.
     """
     try:
+        # Check if plugins are enabled
+        if not settings.plugins_enabled:
+            root_path = request.scope.get("root_path", "")
+            context = {
+                "request": request,
+                "root_path": root_path,
+                "rules": [],
+                "rules_by_type": {
+                    "global": [],
+                    "entity-type": [],
+                    "tag-based": [],
+                    "entity-specific": [],
+                    "mixed": [],
+                },
+                "available_plugins": [],
+                "rule_indices": [],
+            }
+            return request.app.state.templates.TemplateResponse("routing_rules_list.html", context)
+
         # First-Party
         from mcpgateway.plugins.framework import get_plugin_manager
         from mcpgateway.services.plugin_route_service import get_plugin_route_service
@@ -89,9 +109,117 @@ async def get_routing_rules(
                     else:
                         display_name = f"Rule {idx + 1}"
 
+                # Determine rule type and specificity using constants
+                # First-Party
+                from mcpgateway.plugins.framework.constants import (
+                    SPECIFICITY_SCORE_HOOK_FILTER,
+                    SPECIFICITY_SCORE_NAME_MATCH,
+                    SPECIFICITY_SCORE_TAG_MATCH,
+                    SPECIFICITY_SCORE_WHEN_EXPRESSION,
+                )
+
+                rule_type = "global"  # Default to global
+                specificity_score = 0
+                entity_type_filters = []
+                name_filters = []
+                has_entity_types = False
+                has_tags = False
+                has_names = False
+
+                # Check for entity type filtering
+                if route.entities:
+                    entity_type_filters = [str(e) for e in route.entities]
+                    has_entity_types = True
+                    # Entity type filtering doesn't add score (it's the baseline)
+
+                # Check for tag-based matching
+                if route.tags:
+                    has_tags = True
+                    specificity_score += SPECIFICITY_SCORE_TAG_MATCH
+
+                # Check for specific entity name matches (highest specificity)
+                if route.name:
+                    if isinstance(route.name, str):
+                        name_filters = [route.name]
+                    elif isinstance(route.name, list):
+                        name_filters = route.name
+                    if name_filters:
+                        has_names = True
+                        specificity_score += SPECIFICITY_SCORE_NAME_MATCH
+
+                # Check for hook type filtering
+                if route.hooks:
+                    specificity_score += SPECIFICITY_SCORE_HOOK_FILTER
+
+                # Check for conditional (adds specificity)
+                if route.when:
+                    specificity_score += SPECIFICITY_SCORE_WHEN_EXPRESSION
+
+                # Determine rule type based on most specific filter present
+                # Entity type is treated as a baseline constraint, not a distinct filter type
+                # Prioritize: name (most specific) → tags → entity type → global
+                # Only mark as "mixed" when combining tags + names (rare case)
+
+                if has_names and has_tags:
+                    # Truly combining multiple semantic filters (unusual)
+                    rule_type = "mixed"
+                elif has_names:
+                    # Most specific: targets specific named entities
+                    rule_type = "entity-specific"
+                elif has_tags:
+                    # Medium specificity: matches by tags
+                    rule_type = "tag-based"
+                elif has_entity_types:
+                    # Baseline specificity: filters by entity type
+                    rule_type = "entity-type"
+                else:
+                    # No filters: applies globally
+                    rule_type = "global"
+
+                # Fetch matching entities for entity-type filters
+                matching_entities = []
+                name_filters_with_types = []
+
+                if entity_type_filters and not name_filters:
+                    # Only fetch preview if filtering by type but not by specific names
+                    for entity_type in entity_type_filters:
+                        if entity_type == "tool":
+                            tools = db.query(DbTool).filter(DbTool.enabled).limit(10).all()
+                            matching_entities.extend([{"type": "tool", "name": t.name, "id": str(t.id)} for t in tools])
+                        elif entity_type == "prompt":
+                            prompts = db.query(DbPrompt).filter(DbPrompt.enabled).limit(10).all()
+                            matching_entities.extend([{"type": "prompt", "name": p.name, "id": str(p.id)} for p in prompts])
+                        elif entity_type == "resource":
+                            resources = db.query(DbResource).filter(DbResource.enabled).limit(10).all()
+                            matching_entities.extend([{"type": "resource", "name": r.name, "id": str(r.id)} for r in resources])
+
+                # When we have specific name filters, look up their types
+                if name_filters and entity_type_filters:
+                    for entity_type in entity_type_filters:
+                        if entity_type == "tool":
+                            for name in name_filters:
+                                tool = db.query(DbTool).filter(DbTool.name == name).first()
+                                if tool:
+                                    name_filters_with_types.append({"type": "tool", "name": name})
+                        elif entity_type == "prompt":
+                            for name in name_filters:
+                                prompt = db.query(DbPrompt).filter(DbPrompt.name == name).first()
+                                if prompt:
+                                    name_filters_with_types.append({"type": "prompt", "name": name})
+                        elif entity_type == "resource":
+                            for name in name_filters:
+                                resource = db.query(DbResource).filter(DbResource.name == name).first()
+                                if resource:
+                                    name_filters_with_types.append({"type": "resource", "name": name})
+
                 rule_data = {
                     "index": idx,
                     "name": display_name,
+                    "rule_type": rule_type,
+                    "specificity_score": specificity_score,
+                    "entity_type_filters": entity_type_filters,
+                    "name_filters": name_filters,
+                    "name_filters_with_types": name_filters_with_types,  # Entity names with their types
                     "entities": [str(e) for e in (route.entities or [])],
                     "tags": route.tags or [],
                     "hooks": route.hooks or [],
@@ -104,8 +232,26 @@ async def get_routing_rules(
                     ],
                     "reverse_order_on_post": route.reverse_order_on_post or False,
                     "when": route.when or None,
+                    "matching_entities": matching_entities,
                 }
                 rules.append(rule_data)
+
+        # Group rules by type for better organization
+        # Order matters: Global → Entity Type → Tag-based → Entity-specific → Mixed
+        rules_by_type = {
+            "global": [],
+            "entity-type": [],
+            "tag-based": [],
+            "entity-specific": [],
+            "mixed": [],
+        }
+
+        for rule in rules:
+            rule_type = rule.get("rule_type", "global")
+            if rule_type in rules_by_type:
+                rules_by_type[rule_type].append(rule)
+            else:
+                rules_by_type["global"].append(rule)  # Fallback
 
         # Get available plugins for the modal
         plugin_service = get_plugin_service()
@@ -121,6 +267,7 @@ async def get_routing_rules(
             "request": request,
             "root_path": root_path,
             "rules": rules,
+            "rules_by_type": rules_by_type,
             "available_plugins": available_plugins,
             "rule_indices": rule_indices,
         }
@@ -463,10 +610,17 @@ async def create_or_update_routing_rule(
         if not rule_name:
             return HTMLResponse(content="Rule name is required", status_code=400)
 
+        # Check if this is a global rule
+        is_global = form_data.get("is_global", "false").lower() == "true"
+
         # Parse entities
         entities = form_data.getlist("entities")
-        entity_types = [EntityType(e) for e in entities] if entities else []
-        entity_types = entity_types or None  # Convert empty list to None
+        if is_global:
+            # For global rules, always set entity_types to None
+            entity_types = None
+        else:
+            entity_types = [EntityType(e) for e in entities] if entities else []
+            entity_types = entity_types or None  # Convert empty list to None
 
         # Parse name filter (can be comma-separated)
         name_filter = form_data.get("name_filter", "").strip()

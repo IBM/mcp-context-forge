@@ -433,23 +433,31 @@ class RuleBasedResolver:
         Returns:
             Specificity score.
         """
+        # First-Party
+        from mcpgateway.plugins.framework.constants import (
+            SPECIFICITY_SCORE_HOOK_FILTER,
+            SPECIFICITY_SCORE_NAME_MATCH,
+            SPECIFICITY_SCORE_TAG_MATCH,
+            SPECIFICITY_SCORE_WHEN_EXPRESSION,
+        )
+
         score = 0
 
         # Exact name match is most specific
         if rule.name is not None:
-            score += 1000
+            score += SPECIFICITY_SCORE_NAME_MATCH
 
         # Tag match is medium specificity
         if rule.tags:
-            score += 100
+            score += SPECIFICITY_SCORE_TAG_MATCH
 
         # Hook type filter is medium-low specificity
         if rule.hooks:
-            score += 50
+            score += SPECIFICITY_SCORE_HOOK_FILTER
 
         # When expression is lower specificity
         if rule.when:
-            score += 10
+            score += SPECIFICITY_SCORE_WHEN_EXPRESSION
 
         return score
 

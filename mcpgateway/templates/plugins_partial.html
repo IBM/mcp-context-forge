@@ -620,6 +620,7 @@
       showModal: false,
       ruleIndex: null,
       ruleName: '',
+      isGlobal: false,
       entities: [],
       nameFilter: '',
       availableEntities: {},
@@ -643,10 +644,23 @@
         // Watch for changes to entity types and fetch available entities
         this.$watch('entities', (newEntities) => {
           if (newEntities.length > 0) {
+            // If entity types are selected, disable global level
+            this.isGlobal = false;
             this.fetchEntities();
           } else {
+            // Clear all entity-related selections when no entity types are selected
             this.availableEntities = {};
             this.selectedEntityNames = [];
+            this.nameFilter = '';
+          }
+        });
+        // Watch for global level toggle
+        this.$watch('isGlobal', (newValue) => {
+          if (newValue) {
+            // If global level is selected, clear entity types
+            this.entities = [];
+            this.selectedEntityNames = [];
+            this.availableEntities = {};
           }
         });
         // Fetch available tags for autocomplete
@@ -655,6 +669,7 @@
       resetForm() {
         this.ruleIndex = null;
         this.ruleName = '';
+        this.isGlobal = false;
         this.entities = [];
         this.nameFilter = '';
         this.availableEntities = {};
@@ -701,6 +716,9 @@
           this.nameFilter = ruleData.name_filter || '';
           this.entities = ruleData.entities || [];
 
+          // Set global flag if no entities
+          this.isGlobal = !ruleData.entities || ruleData.entities.length === 0;
+
           // Parse name_filter into selectedEntityNames if it exists
           if (this.nameFilter) {
             this.selectedEntityNames = this.nameFilter.split(',').map(s => s.trim()).filter(s => s);
@@ -745,6 +763,31 @@
           'mcp_server': 'MCP Servers'
         };
         return labels[entityType] || entityType;
+      },
+      getEntityColorClass(entityName) {
+        // Find which entity type this entity belongs to
+        for (const [entityType, entityList] of Object.entries(this.availableEntities)) {
+          if (entityList.some(e => e.name === entityName)) {
+            return this.getColorClassForType(entityType);
+          }
+        }
+        // If we have exactly one entity type selected, use that color
+        if (this.entities.length === 1) {
+          return this.getColorClassForType(this.entities[0]);
+        }
+        // Default to indigo for unknown/mixed
+        return 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200';
+      },
+      getColorClassForType(entityType) {
+        const colors = {
+          'tool': 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
+          'prompt': 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
+          'resource': 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
+          'agent': 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
+          'virtual_server': 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-200',
+          'mcp_server': 'bg-pink-100 text-pink-800 dark:bg-pink-900 dark:text-pink-200'
+        };
+        return colors[entityType] || 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200';
       },
       async fetchTags() {
         try {
@@ -797,7 +840,10 @@
         }
         formData.append('rule_name', this.ruleName);
 
-        // Add entities
+        // Add global flag
+        formData.append('is_global', this.isGlobal);
+
+        // Add entities (empty if global)
         this.entities.forEach(entity => formData.append('entities', entity));
 
         // Add name filter
@@ -1052,7 +1098,10 @@
               >
                 <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
                   🎯 Filter on Entity Type
-                  <span x-show="entities.length > 0 || selectedEntityNames.length > 0" class="ml-2 text-xs text-indigo-600 dark:text-indigo-400">
+                  <span x-show="isGlobal" class="ml-2 text-xs text-green-600 dark:text-green-400">
+                    (Global)
+                  </span>
+                  <span x-show="!isGlobal && (entities.length > 0 || selectedEntityNames.length > 0)" class="ml-2 text-xs text-indigo-600 dark:text-indigo-400">
                     (<span x-text="entities.length > 0 ? entities.length + ' types' : ''"></span><span x-show="entities.length > 0 && selectedEntityNames.length > 0">, </span><span x-text="selectedEntityNames.length > 0 ? selectedEntityNames.length + ' entities' : ''"></span>)
                   </span>
                 </span>
@@ -1061,8 +1110,30 @@
                 </svg>
               </button>
               <div x-show="expanded" x-collapse class="mt-2 px-4 py-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-md">
+                <!-- Global / HTTP Level Option -->
+                <div class="mb-4 pb-4 border-b border-gray-200 dark:border-gray-600">
+                  <label class="inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      x-model="isGlobal"
+                      class="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                    />
+                    <span class="ml-2 text-sm font-medium text-gray-700 dark:text-gray-300">🌍 Global / HTTP Level</span>
+                  </label>
+                  <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 ml-6">
+                    Apply before entity processing (runs for all requests, regardless of entity type)
+                  </p>
+                </div>
+
+                <!-- Divider -->
+                <div class="flex items-center mb-4" x-show="!isGlobal">
+                  <div class="flex-grow border-t border-gray-300 dark:border-gray-600"></div>
+                  <span class="px-3 text-xs font-medium text-gray-500 dark:text-gray-400">OR</span>
+                  <div class="flex-grow border-t border-gray-300 dark:border-gray-600"></div>
+                </div>
+
                 <!-- Entity Types -->
-                <div class="mb-4">
+                <div class="mb-4" x-show="!isGlobal">
                   <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                     Entity Types
                   </label>
@@ -1080,17 +1151,18 @@
                           type="checkbox"
                           :value="entityType.value"
                           x-model="entities"
-                          class="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                          :disabled="isGlobal"
+                          class="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 disabled:opacity-50 disabled:cursor-not-allowed"
                         />
-                        <span class="ml-2 text-sm text-gray-700 dark:text-gray-300" x-text="entityType.label"></span>
+                        <span class="ml-2 text-sm text-gray-700 dark:text-gray-300" :class="{ 'opacity-50': isGlobal }" x-text="entityType.label"></span>
                       </label>
                     </template>
                   </div>
-                  <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Leave empty for HTTP-level hooks</p>
+                  <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Select specific entity types to filter</p>
                 </div>
 
                 <!-- Specific Entities Selection -->
-                <div>
+                <div x-show="!isGlobal">
                   <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                     Specific Entities
                   </label>
@@ -1101,7 +1173,7 @@
                       <template x-for="(entityList, entityType) in availableEntities" :key="entityType">
                         <div class="border-b border-gray-200 dark:border-gray-600 last:border-0">
                           <div class="px-3 py-2 bg-gray-50 dark:bg-gray-800">
-                            <span class="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase" x-text="getEntityTypeLabel(entityType)"></span>
+                            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold uppercase" :class="getColorClassForType(entityType)" x-text="getEntityTypeLabel(entityType)"></span>
                             <span class="text-xs text-gray-500 dark:text-gray-400 ml-2" x-text="'(' + entityList.length + ')'"></span>
                           </div>
                           <template x-for="entity in entityList" :key="entity.id">
@@ -1130,25 +1202,12 @@
                     Loading available entities...
                   </div>
 
-                  <!-- Show manual input when no entity types are selected -->
-                  <div x-show="entities.length === 0">
-                    <input
-                      type="text"
-                      x-model="nameFilter"
-                      placeholder="e.g., create_user or create_user,update_user,delete_user"
-                      class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500"
-                    />
-                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      Select entity types above to see available entities, or enter names manually (comma-separated)
-                    </p>
-                  </div>
-
                   <!-- Show selected entities as chips -->
                   <div class="flex flex-wrap gap-2 mt-2" x-show="selectedEntityNames.length > 0">
                     <template x-for="entityName in selectedEntityNames" :key="entityName">
-                      <span class="inline-flex items-center px-3 py-1 rounded-full text-sm bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">
+                      <span class="inline-flex items-center px-3 py-1 rounded-full text-sm" :class="getEntityColorClass(entityName)">
                         <span x-text="entityName"></span>
-                        <button @click="toggleEntityName(entityName)" class="ml-2 text-indigo-600 dark:text-indigo-300 hover:text-indigo-800">&times;</button>
+                        <button @click="toggleEntityName(entityName)" class="ml-2 hover:opacity-70">&times;</button>
                       </span>
                     </template>
                   </div>
@@ -1196,9 +1255,9 @@
                 </div>
                 <div class="flex flex-wrap gap-2" x-show="tags.length > 0">
                   <template x-for="(tag, index) in tags" :key="index">
-                    <span class="inline-flex items-center px-3 py-1 rounded-full text-sm bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+                    <span class="inline-flex items-center px-3 py-1 rounded-full text-sm bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
                       <span x-text="tag"></span>
-                      <button @click="removeTag(tag)" class="ml-2 text-green-600 dark:text-green-300 hover:text-green-800">&times;</button>
+                      <button @click="removeTag(tag)" class="ml-2 text-yellow-600 dark:text-yellow-300 hover:text-yellow-800">&times;</button>
                     </span>
                   </template>
                 </div>
@@ -1224,6 +1283,16 @@
                 </svg>
               </button>
               <div x-show="expanded" x-collapse class="mt-2 px-4 py-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-md">
+                <div class="mb-2">
+                  <div class="inline-flex items-center px-3 py-2 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-md">
+                    <svg class="h-4 w-4 text-indigo-600 dark:text-indigo-400 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                      <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+                    </svg>
+                    <span class="text-xs text-indigo-800 dark:text-indigo-200">
+                      <strong>Default:</strong> No selection = applies to all hooks
+                    </span>
+                  </div>
+                </div>
                 <div class="grid grid-cols-2 gap-2">
                   <template x-for="hookType in ['tool_pre_invoke', 'tool_post_invoke', 'prompt_pre_invoke', 'prompt_post_invoke', 'resource_pre_invoke', 'resource_post_invoke', 'http_pre_request', 'http_post_response']" :key="hookType">
                     <label class="inline-flex items-center">
@@ -1237,7 +1306,7 @@
                     </label>
                   </template>
                 </div>
-                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Leave empty to apply to all hooks</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Select specific hook types to restrict when this rule applies</p>
               </div>
             </div>
 

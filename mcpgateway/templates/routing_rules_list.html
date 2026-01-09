@@ -41,6 +41,25 @@
   }"
   class="overflow-x-auto"
 >
+  <!-- How Rules Work - Info Box -->
+  <div class="bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-400 dark:border-blue-600 px-6 py-4 mb-4 mx-6 mt-4 rounded-r-md">
+    <div class="flex items-start">
+      <div class="flex-shrink-0">
+        <svg class="h-5 w-5 text-blue-400 dark:text-blue-500 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+          <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+        </svg>
+      </div>
+      <div class="ml-3">
+        <h3 class="text-sm font-semibold text-blue-900 dark:text-blue-100 mb-1">How Routing Rules Work</h3>
+        <div class="text-sm text-blue-800 dark:text-blue-200 space-y-1">
+          <p><strong>Most Specific Rule Wins:</strong> When multiple rules could apply to an entity, only the most specific rule takes effect.</p>
+          <p><strong>Specificity Order:</strong> Entity Name (highest) → Tags → Entity Type → Global (lowest)</p>
+          <p><strong>Plugin Execution:</strong> Plugins within a rule execute in priority order (lower numbers first).</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Bulk Actions Bar -->
   <div
     x-show="selectedRules.length > 0"
@@ -61,141 +80,291 @@
     </button>
   </div>
 
-  <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-    <thead class="bg-gray-50 dark:bg-gray-700">
-      <tr>
-        <th scope="col" class="px-6 py-3 text-left">
-          <input
-            type="checkbox"
-            :checked="selectedRules.length === allRuleIndices.length && allRuleIndices.length > 0"
-            @change="toggleAll()"
-            class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded cursor-pointer"
-            title="Select all"
-          />
-        </th>
-        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-          Rule Name
-        </th>
-        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-          Entities
-        </th>
-        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-          Tags
-        </th>
-        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-          Plugins
-        </th>
-        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-          Hooks
-        </th>
-        <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-          Actions
-        </th>
-      </tr>
-    </thead>
-    <tbody class="bg-white divide-y divide-gray-200 dark:bg-gray-800 dark:divide-gray-700">
-      {% for rule in rules %}
-      <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
-        <td class="px-6 py-4 whitespace-nowrap">
-          <input
-            type="checkbox"
-            :value="{{ rule.index }}"
-            x-model="selectedRules"
-            class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded cursor-pointer"
-          />
-        </td>
-        <td class="px-6 py-4 whitespace-nowrap">
-          <div class="text-sm font-medium text-gray-900 dark:text-gray-100">
-            {{ rule.name }}
+  <!-- Grouped Rules Display -->
+  {% set rule_groups = [
+    ('global', 'Global Rules', 'Apply to all entities', 'bg-gray-100 dark:bg-gray-800', rules_by_type.global),
+    ('entity-type', 'Entity Type Rules', 'Filter by entity type (tool, prompt, resource)', 'bg-blue-50 dark:bg-blue-900/20', rules_by_type['entity-type']),
+    ('tag-based', 'Tag-Based Rules', 'Filter by entity tags', 'bg-green-50 dark:bg-green-900/20', rules_by_type['tag-based']),
+    ('entity-specific', 'Entity-Specific Rules', 'Target specific named entities', 'bg-purple-50 dark:bg-purple-900/20', rules_by_type['entity-specific']),
+    ('mixed', 'Mixed Filter Rules', 'Combine multiple filter types', 'bg-yellow-50 dark:bg-yellow-900/20', rules_by_type.mixed)
+  ] %}
+
+  {% for group_id, group_title, group_desc, group_bg, group_rules in rule_groups %}
+    {% if group_rules %}
+    <div class="mb-6">
+      <!-- Group Header -->
+      <div class="{{ group_bg }} px-6 py-3 border-b border-gray-200 dark:border-gray-700">
+        <div class="flex items-center justify-between">
+          <div>
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
+              {{ group_title }}
+            </h3>
+            <p class="text-xs text-gray-600 dark:text-gray-400 mt-0.5">{{ group_desc }}</p>
           </div>
-          {% if rule.when %}
-          <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-            <span class="inline-flex items-center px-2 py-0.5 rounded bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
-              <svg class="h-3 w-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                <path fill-rule="evenodd" d="M3 3a1 1 0 011-1h12a1 1 0 011 1v3a1 1 0 01-.293.707L12 11.414V15a1 1 0 01-.293.707l-2 2A1 1 0 018 17v-5.586L3.293 6.707A1 1 0 013 6V3z" clip-rule="evenodd" />
-              </svg>
-              Conditional
-            </span>
-          </div>
-          {% endif %}
-        </td>
-        <td class="px-6 py-4">
-          <div class="flex flex-wrap gap-1">
-            {% if rule.entities %}
-              {% for entity in rule.entities %}
-                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
-                  {{ entity }}
-                </span>
-              {% endfor %}
-            {% else %}
-              <span class="text-xs text-gray-400 dark:text-gray-500">All</span>
-            {% endif %}
-          </div>
-        </td>
-        <td class="px-6 py-4">
-          <div class="flex flex-wrap gap-1">
-            {% if rule.tags %}
-              {% for tag in rule.tags %}
-                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
-                  {{ tag }}
-                </span>
-              {% endfor %}
-            {% else %}
-              <span class="text-xs text-gray-400 dark:text-gray-500">Any</span>
-            {% endif %}
-          </div>
-        </td>
-        <td class="px-6 py-4">
-          <div class="text-sm text-gray-900 dark:text-gray-100">
-            {% if rule.plugins %}
-              <div class="flex flex-wrap gap-1">
-                {% for plugin in rule.plugins %}
-                  <span class="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">
-                    {{ plugin.name }}
-                    <span class="ml-1 text-indigo-600 dark:text-indigo-300">(p:{{ plugin.priority }})</span>
+          <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200">
+            {{ group_rules|length }} rule{{ 's' if group_rules|length != 1 else '' }}
+          </span>
+        </div>
+      </div>
+
+      <!-- Rules Table for this Group -->
+      <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <thead class="bg-gray-50 dark:bg-gray-700">
+          <tr>
+            <th scope="col" class="px-6 py-3 text-left w-12">
+              <input
+                type="checkbox"
+                @change="() => {
+                  const groupIndices = {{ group_rules | map(attribute='index') | list | tojson }};
+                  const allSelected = groupIndices.every(i => selectedRules.includes(i));
+                  if (allSelected) {
+                    selectedRules = selectedRules.filter(i => !groupIndices.includes(i));
+                  } else {
+                    selectedRules = [...new Set([...selectedRules, ...groupIndices])];
+                  }
+                }"
+                class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded cursor-pointer"
+                title="Select all in group"
+              />
+            </th>
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+              Rule Name & Filters
+            </th>
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+              Plugins
+            </th>
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+              Hooks
+            </th>
+            <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+              Actions
+            </th>
+          </tr>
+        </thead>
+        <tbody class="bg-white divide-y divide-gray-200 dark:bg-gray-800 dark:divide-gray-700">
+          {% for rule in group_rules %}
+          <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+            <td class="px-6 py-4 whitespace-nowrap">
+              <input
+                type="checkbox"
+                :value="{{ rule.index }}"
+                x-model="selectedRules"
+                class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded cursor-pointer"
+              />
+            </td>
+            <td class="px-6 py-4">
+              <div class="space-y-2">
+                <!-- Rule Name -->
+                <div class="text-sm font-medium text-gray-900 dark:text-gray-100">
+                  {{ rule.name }}
+                  {% if rule.when %}
+                  <span class="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
+                    <svg class="h-3 w-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                      <path fill-rule="evenodd" d="M3 3a1 1 0 011-1h12a1 1 0 011 1v3a1 1 0 01-.293.707L12 11.414V15a1 1 0 01-.293.707l-2 2A1 1 0 018 17v-5.586L3.293 6.707A1 1 0 013 6V3z" clip-rule="evenodd" />
+                    </svg>
+                    Conditional
                   </span>
-                {% endfor %}
+                  {% endif %}
+                </div>
+
+                <!-- Filter Details -->
+                <div class="text-xs space-y-1">
+                  {% if rule.entity_type_filters %}
+                  <div class="flex items-start">
+                    <span class="text-gray-500 dark:text-gray-400 font-medium mr-2">Entity Types:</span>
+                    <div class="flex flex-wrap gap-1">
+                      {% for entity_type in rule.entity_type_filters %}
+                        {% if entity_type == 'tool' %}
+                          {% set color_class = 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' %}
+                        {% elif entity_type == 'prompt' %}
+                          {% set color_class = 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200' %}
+                        {% elif entity_type == 'resource' %}
+                          {% set color_class = 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' %}
+                        {% elif entity_type == 'agent' %}
+                          {% set color_class = 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200' %}
+                        {% elif entity_type == 'virtual_server' %}
+                          {% set color_class = 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-200' %}
+                        {% elif entity_type == 'mcp_server' %}
+                          {% set color_class = 'bg-pink-100 text-pink-800 dark:bg-pink-900 dark:text-pink-200' %}
+                        {% else %}
+                          {% set color_class = 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200' %}
+                        {% endif %}
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium {{ color_class }}">
+                          {{ entity_type }}
+                        </span>
+                      {% endfor %}
+                    </div>
+                  </div>
+                  {% endif %}
+
+                  {% if rule.name_filters %}
+                  <div class="flex items-start">
+                    <span class="text-gray-500 dark:text-gray-400 font-medium mr-2">Entity Names:</span>
+                    <div class="flex flex-wrap gap-1">
+                      {# Use name_filters_with_types if available (includes type info), otherwise fallback to name_filters #}
+                      {% if rule.name_filters_with_types %}
+                        {% for entity in rule.name_filters_with_types %}
+                          {% if entity.type == 'tool' %}
+                            {% set color_class = 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' %}
+                          {% elif entity.type == 'prompt' %}
+                            {% set color_class = 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200' %}
+                          {% elif entity.type == 'resource' %}
+                            {% set color_class = 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' %}
+                          {% elif entity.type == 'agent' %}
+                            {% set color_class = 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200' %}
+                          {% elif entity.type == 'virtual_server' %}
+                            {% set color_class = 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-200' %}
+                          {% elif entity.type == 'mcp_server' %}
+                            {% set color_class = 'bg-pink-100 text-pink-800 dark:bg-pink-900 dark:text-pink-200' %}
+                          {% else %}
+                            {% set color_class = 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200' %}
+                          {% endif %}
+                          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium {{ color_class }}">
+                            {{ entity.name }}
+                          </span>
+                        {% endfor %}
+                      {% else %}
+                        {# Fallback: use entity type color if there's exactly one entity type #}
+                        {% for name in rule.name_filters %}
+                          {% if rule.entity_type_filters and rule.entity_type_filters|length == 1 %}
+                            {% set entity_type = rule.entity_type_filters[0] %}
+                            {% if entity_type == 'tool' %}
+                              {% set color_class = 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' %}
+                            {% elif entity_type == 'prompt' %}
+                              {% set color_class = 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200' %}
+                            {% elif entity_type == 'resource' %}
+                              {% set color_class = 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' %}
+                            {% elif entity_type == 'agent' %}
+                              {% set color_class = 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200' %}
+                            {% elif entity_type == 'virtual_server' %}
+                              {% set color_class = 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-200' %}
+                            {% elif entity_type == 'mcp_server' %}
+                              {% set color_class = 'bg-pink-100 text-pink-800 dark:bg-pink-900 dark:text-pink-200' %}
+                            {% else %}
+                              {% set color_class = 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200' %}
+                            {% endif %}
+                          {% else %}
+                            {# Multiple or no entity types - use purple for entity-specific names #}
+                            {% set color_class = 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200' %}
+                          {% endif %}
+                          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium {{ color_class }}">
+                            {{ name }}
+                          </span>
+                        {% endfor %}
+                      {% endif %}
+                    </div>
+                  </div>
+                  {% endif %}
+
+                  {% if rule.tags %}
+                  <div class="flex items-start">
+                    <span class="text-gray-500 dark:text-gray-400 font-medium mr-2">Tags:</span>
+                    <div class="flex flex-wrap gap-1">
+                      {% for tag in rule.tags %}
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
+                          {{ tag }}
+                        </span>
+                      {% endfor %}
+                    </div>
+                  </div>
+                  {% endif %}
+
+                  {% if rule.matching_entities %}
+                  <div class="flex items-start">
+                    <span class="text-gray-500 dark:text-gray-400 font-medium mr-2">Applies to:</span>
+                    <div class="flex flex-wrap gap-1">
+                      {% set total = rule.matching_entities|length %}
+                      {% set display_entities = rule.matching_entities[:5] if total > 5 else rule.matching_entities %}
+                      {% for entity in display_entities %}
+                        {% if entity.type == 'tool' %}
+                          {% set color_class = 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' %}
+                        {% elif entity.type == 'prompt' %}
+                          {% set color_class = 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200' %}
+                        {% elif entity.type == 'resource' %}
+                          {% set color_class = 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' %}
+                        {% elif entity.type == 'agent' %}
+                          {% set color_class = 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200' %}
+                        {% elif entity.type == 'virtual_server' %}
+                          {% set color_class = 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-200' %}
+                        {% elif entity.type == 'mcp_server' %}
+                          {% set color_class = 'bg-pink-100 text-pink-800 dark:bg-pink-900 dark:text-pink-200' %}
+                        {% else %}
+                          {% set color_class = 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200' %}
+                        {% endif %}
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium {{ color_class }}">
+                          {{ entity.name }}
+                        </span>
+                      {% endfor %}
+                      {% if total > 5 %}
+                        <span class="text-xs text-gray-500 dark:text-gray-400">and {{ total - 5 }} more...</span>
+                      {% endif %}
+                    </div>
+                  </div>
+                  {% endif %}
+
+                  {% if rule.when %}
+                  <div class="flex items-start">
+                    <span class="text-gray-500 dark:text-gray-400 font-medium mr-2">When:</span>
+                    <code class="text-xs bg-gray-100 dark:bg-gray-700 px-1 py-0.5 rounded">{{ rule.when }}</code>
+                  </div>
+                  {% endif %}
+                </div>
               </div>
-            {% else %}
-              <span class="text-xs text-gray-400 dark:text-gray-500">None</span>
-            {% endif %}
-          </div>
-        </td>
-        <td class="px-6 py-4">
-          <div class="flex flex-wrap gap-1">
-            {% if rule.hooks %}
-              {% for hook in rule.hooks %}
-                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
-                  {{ hook }}
+            </td>
+            <td class="px-6 py-4">
+              <div class="text-sm text-gray-900 dark:text-gray-100">
+                {% if rule.plugins %}
+                  <div class="flex flex-wrap gap-1">
+                    {% for plugin in rule.plugins %}
+                      <span class="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">
+                        {{ plugin.name }}
+                        <span class="ml-1 text-indigo-600 dark:text-indigo-300">({{ plugin.priority }})</span>
+                      </span>
+                    {% endfor %}
+                  </div>
+                {% else %}
+                  <span class="text-xs text-gray-400 dark:text-gray-500">None</span>
+                {% endif %}
+              </div>
+            </td>
+            <td class="px-6 py-4">
+              <div class="flex flex-wrap gap-1">
+                {% if rule.hooks %}
+                  {% for hook in rule.hooks %}
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
+                      {{ hook }}
+                    </span>
+                  {% endfor %}
+                {% else %}
+                  <span class="text-xs text-gray-400 dark:text-gray-500">All</span>
+                {% endif %}
+              </div>
+              {% if rule.reverse_order_on_post %}
+              <div class="mt-1">
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
+                  Reversed Post-Hooks
                 </span>
-              {% endfor %}
-            {% else %}
-              <span class="text-xs text-gray-400 dark:text-gray-500">All</span>
-            {% endif %}
-          </div>
-          {% if rule.reverse_order_on_post %}
-          <div class="mt-1">
-            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
-              Reversed Post-Hooks
-            </span>
-          </div>
-          {% endif %}
-        </td>
-        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-          <button
-            onclick="window.dispatchEvent(new CustomEvent('open-rule-modal', { detail: { ruleIndex: {{ rule.index }} } }))"
-            class="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300"
-            title="Edit rule"
-          >
-            <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-            </svg>
-          </button>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+              </div>
+              {% endif %}
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+              <button
+                onclick="window.dispatchEvent(new CustomEvent('open-rule-modal', { detail: { ruleIndex: {{ rule.index }} } }))"
+                class="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300"
+                title="Edit rule"
+              >
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+              </button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  {% endfor %}
 </div>
 {% else %}
 <div class="p-8 text-center">
