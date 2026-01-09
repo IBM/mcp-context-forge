@@ -814,7 +814,7 @@ class TestServerService:
 
         result = await server_service.toggle_server_status(test_db, 1, activate=False)
 
-        test_db.get.assert_called_once_with(DbServer, 1)
+        test_db.get.assert_called_once_with(DbServer, 1, options=ANY)
         assert test_db.commit.call_count == 1
         test_db.refresh.assert_called_once()
         server_service._notify_server_deactivated.assert_called_once()

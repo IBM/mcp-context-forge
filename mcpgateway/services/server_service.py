@@ -1372,7 +1372,17 @@ class ServerService:
             'server_read'
         """
         try:
-            server = db.get(DbServer, server_id)
+            server = db.get(
+                DbServer,
+                server_id,
+                options=[
+                    selectinload(DbServer.tools),
+                    selectinload(DbServer.resources),
+                    selectinload(DbServer.prompts),
+                    selectinload(DbServer.a2a_agents),
+                    joinedload(DbServer.email_team),
+                ],
+            )
             if not server:
                 raise ServerNotFoundError(f"Server not found: {server_id}")
 
