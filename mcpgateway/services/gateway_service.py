@@ -4219,10 +4219,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         result = {
             "tools_added": 0,
             "tools_removed": 0,
+            "tools_updated": 0,
             "resources_added": 0,
             "resources_removed": 0,
+            "resources_updated": 0,
             "prompts_added": 0,
             "prompts_removed": 0,
+            "prompts_updated": 0,
         }
 
         # Fetch gateway metadata only (no relationships needed for MCP call)
@@ -4300,14 +4303,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             resources_to_add = self._update_or_create_resources(db, resources, gateway, created_via)
             prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, created_via)
 
-            # Count per-type updates (new dirty objects that weren't dirty before)
-            tools_updated = len({obj for obj in db.dirty if isinstance(obj, DbTool)} - dirty_tools_before)
-            resources_updated = len({obj for obj in db.dirty if isinstance(obj, DbResource)} - dirty_resources_before)
-            prompts_updated = len({obj for obj in db.dirty if isinstance(obj, DbPrompt)} - dirty_prompts_before)
+            # Count per-type updates 
+            result["tools_updated"] = len({obj for obj in db.dirty if isinstance(obj, DbTool)} - dirty_tools_before)
+            result["resources_updated"] = len({obj for obj in db.dirty if isinstance(obj, DbResource)} - dirty_resources_before)
+            result["prompts_updated"] = len({obj for obj in db.dirty if isinstance(obj, DbPrompt)} - dirty_prompts_before)
 
             # Only delete MCP-discovered items (not user-created entries)
             # Excludes "api", "ui", None (legacy/user-created) to preserve user entries
-            mcp_created_via_values = {"MCP", "federation", "health_check", "oauth", "update"}
+            mcp_created_via_values = {"MCP", "federation", "health_check", "manual_refresh", "oauth", "update"}
 
             # Find and remove stale tools (only MCP-discovered ones)
             stale_tool_ids = [tool.id for tool in gateway.tools if tool.original_name not in new_tool_names and tool.created_via in mcp_created_via_values]
@@ -4368,37 +4371,31 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 result["prompts_added"] = len(prompts_to_add)
 
             # Only commit if there were actual changes (adds, removes, OR updates)
-            total_add_remove_changes = sum(result.values())
-            total_updates = tools_updated + resources_updated + prompts_updated
+            total_changes = sum(result.values())
 
-            has_changes = total_add_remove_changes > 0 or total_updates > 0
+            has_changes = total_changes > 0
 
             if has_changes:
                 db.commit()
                 logger.info(
                     f"Refreshed gateway {gateway_name}: "
-                    f"tools(+{result['tools_added']}/-{result['tools_removed']}/~{tools_updated}), "
-                    f"resources(+{result['resources_added']}/-{result['resources_removed']}/~{resources_updated}), "
-                    f"prompts(+{result['prompts_added']}/-{result['prompts_removed']}/~{prompts_updated})"
+                    f"tools(+{result['tools_added']}/-{result['tools_removed']}/~{result['tools_updated']}), "
+                    f"resources(+{result['resources_added']}/-{result['resources_removed']}/~{result['resources_updated']}), "
+                    f"prompts(+{result['prompts_added']}/-{result['prompts_removed']}/~{result['prompts_updated']})"
                 )
 
                 # Invalidate caches per-type based on actual changes
                 cache = _get_registry_cache()
-                if result["tools_added"] > 0 or result["tools_removed"] > 0 or tools_updated > 0:
+                if result["tools_added"] > 0 or result["tools_removed"] > 0 or result["tools_updated"] > 0:
                     await cache.invalidate_tools()
-                if result["resources_added"] > 0 or result["resources_removed"] > 0 or resources_updated > 0:
+                if result["resources_added"] > 0 or result["resources_removed"] > 0 or result["resources_updated"] > 0:
                     await cache.invalidate_resources()
-                if result["prompts_added"] > 0 or result["prompts_removed"] > 0 or prompts_updated > 0:
+                if result["prompts_added"] > 0 or result["prompts_removed"] > 0 or result["prompts_updated"] > 0:
                     await cache.invalidate_prompts()
 
                 # Invalidate tool lookup cache for this gateway
                 tool_lookup_cache = _get_tool_lookup_cache()
                 await tool_lookup_cache.invalidate_gateway(str(gateway_id))
-
-        # Add update counts to result
-        result["tools_updated"] = tools_updated
-        result["resources_updated"] = resources_updated
-        result["prompts_updated"] = prompts_updated
 
         return result
 
