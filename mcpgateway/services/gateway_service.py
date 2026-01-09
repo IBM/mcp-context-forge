@@ -3256,6 +3256,18 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     except Exception as update_error:
                         logger.warning(f"Failed to update last_seen for gateway {gateway_name}: {update_error}")
 
+                    # Auto-refresh tools/resources/prompts if enabled
+                    if settings.auto_refresh_servers:
+                        try:
+                            await self._refresh_gateway_tools_resources_prompts(
+                                gateway_id=gateway_id,
+                                _user_email=user_email,
+                                created_via="health_check",
+                                pre_auth_headers=headers if headers else None,
+                            )
+                        except Exception as refresh_error:
+                            logger.warning(f"Failed to refresh tools for gateway {gateway_name}: {refresh_error}")
+
                     if span:
                         span.set_attribute("health.status", "healthy")
                         span.set_attribute("success", True)
@@ -3391,6 +3403,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         auth_type: Optional[str] = None,
         oauth_config: Optional[Dict[str, Any]] = None,
         ca_certificate: Optional[bytes] = None,
+        pre_auth_headers: Optional[Dict[str, str]] = None,
     ) -> tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate]]:
         """Initialize connection to a gateway and retrieve its capabilities.
 
@@ -3405,6 +3418,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             auth_type: Authentication type - "basic", "bearer", "headers", "oauth" or None
             oauth_config: OAuth configuration if auth_type is "oauth"
             ca_certificate: CA certificate for SSL verification
+            pre_auth_headers: Pre-authenticated headers to skip OAuth token fetch (for reuse)
 
         Returns:
             tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate]]:
@@ -3440,8 +3454,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             if authentication is None:
                 authentication = {}
 
+            # Use pre-authenticated headers if provided (avoids duplicate OAuth token fetch)
+            if pre_auth_headers:
+                authentication = pre_auth_headers
             # Handle OAuth authentication
-            if auth_type == "oauth" and oauth_config:
+            elif auth_type == "oauth" and oauth_config:
                 grant_type = oauth_config.get("grant_type", "client_credentials")
 
                 if grant_type == "authorization_code":
@@ -4128,6 +4145,258 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 continue
 
         return prompts_to_add
+
+    async def _refresh_gateway_tools_resources_prompts(
+        self,
+        gateway_id: str,
+        _user_email: Optional[str] = None,
+        created_via: str = "health_check",
+        pre_auth_headers: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, int]:
+        """Refresh tools, resources, and prompts for a gateway during health checks.
+
+        Fetches the latest tools/resources/prompts from the MCP server and syncs
+        with the database (add new, update changed, remove stale). Only performs
+        DB operations if actual changes are detected.
+
+        This method uses fresh_db_session() internally to avoid holding
+        connections during HTTP calls to MCP servers.
+
+        Args:
+            gateway_id: ID of the gateway to refresh
+            _user_email: Optional user email for OAuth token lookup (unused currently)
+            created_via: String indicating creation source (default: "health_check")
+            pre_auth_headers: Pre-authenticated headers from health check to avoid duplicate OAuth token fetch
+
+        Returns:
+            Dict with counts: {tools_added, tools_removed, resources_added,
+                              resources_removed, prompts_added, prompts_removed}
+
+        Examples:
+            >>> from mcpgateway.services.gateway_service import GatewayService
+            >>> from unittest.mock import patch, MagicMock, AsyncMock
+            >>> import asyncio
+
+            >>> # Test gateway not found returns empty result
+            >>> service = GatewayService()
+            >>> mock_session = MagicMock()
+            >>> mock_session.execute.return_value.scalar_one_or_none.return_value = None
+            >>> with patch('mcpgateway.services.gateway_service.fresh_db_session') as mock_fresh:
+            ...     mock_fresh.return_value.__enter__.return_value = mock_session
+            ...     result = asyncio.run(service._refresh_gateway_tools_resources_prompts('gw-123'))
+            >>> result == {'tools_added': 0, 'tools_removed': 0, 'resources_added': 0, 'resources_removed': 0, 'prompts_added': 0, 'prompts_removed': 0}
+            True
+
+            >>> # Test disabled gateway returns empty result
+            >>> mock_gw = MagicMock()
+            >>> mock_gw.enabled = False
+            >>> mock_gw.reachable = True
+            >>> mock_gw.name = 'test_gw'
+            >>> mock_session.execute.return_value.scalar_one_or_none.return_value = mock_gw
+            >>> with patch('mcpgateway.services.gateway_service.fresh_db_session') as mock_fresh:
+            ...     mock_fresh.return_value.__enter__.return_value = mock_session
+            ...     result = asyncio.run(service._refresh_gateway_tools_resources_prompts('gw-123'))
+            >>> result['tools_added']
+            0
+
+            >>> # Test unreachable gateway returns empty result
+            >>> mock_gw.enabled = True
+            >>> mock_gw.reachable = False
+            >>> with patch('mcpgateway.services.gateway_service.fresh_db_session') as mock_fresh:
+            ...     mock_fresh.return_value.__enter__.return_value = mock_session
+            ...     result = asyncio.run(service._refresh_gateway_tools_resources_prompts('gw-123'))
+            >>> result['tools_added']
+            0
+
+            >>> # Test method is async and callable
+            >>> import inspect
+            >>> inspect.iscoroutinefunction(service._refresh_gateway_tools_resources_prompts)
+            True
+        """
+        result = {
+            "tools_added": 0,
+            "tools_removed": 0,
+            "resources_added": 0,
+            "resources_removed": 0,
+            "prompts_added": 0,
+            "prompts_removed": 0,
+        }
+
+        # Fetch gateway metadata only (no relationships needed for MCP call)
+        with fresh_db_session() as db:
+            gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+
+            if not gateway:
+                logger.warning(f"Gateway {gateway_id} not found for tool refresh")
+                return result
+
+            if not gateway.enabled or not gateway.reachable:
+                logger.debug(f"Skipping tool refresh for disabled/unreachable gateway {gateway.name}")
+                return result
+
+            # Extract metadata before session closes
+            gateway_name = gateway.name
+            gateway_url = gateway.url
+            gateway_transport = gateway.transport
+            gateway_auth_type = gateway.auth_type
+            gateway_auth_value = gateway.auth_value
+            gateway_oauth_config = gateway.oauth_config
+            gateway_ca_certificate = gateway.ca_certificate
+
+        # Fetch tools/resources/prompts from MCP server (no DB connection held)
+        try:
+            _capabilities, tools, resources, prompts = await self._initialize_gateway(
+                url=gateway_url,
+                authentication=gateway_auth_value,
+                transport=gateway_transport,
+                auth_type=gateway_auth_type,
+                oauth_config=gateway_oauth_config,
+                ca_certificate=gateway_ca_certificate.encode() if gateway_ca_certificate else None,
+                pre_auth_headers=pre_auth_headers,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to fetch tools from gateway {gateway_name}: {e}")
+            return result
+
+        # For authorization_code OAuth gateways, empty responses may indicate incomplete auth flow
+        # Skip only if it's an auth_code gateway with no data (user may not have completed authorization)
+        is_auth_code_gateway = (
+            gateway_oauth_config
+            and isinstance(gateway_oauth_config, dict)
+            and gateway_oauth_config.get("grant_type") == "authorization_code"
+        )
+        if not tools and not resources and not prompts and is_auth_code_gateway:
+            logger.debug(f"No tools/resources/prompts returned from auth_code gateway {gateway_name} (user may not have authorized)")
+            return result
+
+        # For non-auth_code gateways, empty responses are legitimate and will clear stale items
+
+        # Update database with fresh session
+        with fresh_db_session() as db:
+            # Fetch gateway with relationships for update/comparison
+            gateway = db.execute(
+                select(DbGateway)
+                .options(
+                    selectinload(DbGateway.tools),
+                    selectinload(DbGateway.resources),
+                    selectinload(DbGateway.prompts),
+                )
+                .where(DbGateway.id == gateway_id)
+            ).scalar_one_or_none()
+
+            if not gateway:
+                return result
+
+            new_tool_names = [tool.name for tool in tools]
+            new_resource_uris = [resource.uri for resource in resources]
+            new_prompt_names = [prompt.name for prompt in prompts]
+
+            # Track dirty objects before update operations to count per-type updates
+            dirty_tools_before = {obj for obj in db.dirty if isinstance(obj, DbTool)}
+            dirty_resources_before = {obj for obj in db.dirty if isinstance(obj, DbResource)}
+            dirty_prompts_before = {obj for obj in db.dirty if isinstance(obj, DbPrompt)}
+
+            # Update/create tools, resources, and prompts
+            tools_to_add = self._update_or_create_tools(db, tools, gateway, created_via)
+            resources_to_add = self._update_or_create_resources(db, resources, gateway, created_via)
+            prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, created_via)
+
+            # Count per-type updates (new dirty objects that weren't dirty before)
+            tools_updated = len({obj for obj in db.dirty if isinstance(obj, DbTool)} - dirty_tools_before)
+            resources_updated = len({obj for obj in db.dirty if isinstance(obj, DbResource)} - dirty_resources_before)
+            prompts_updated = len({obj for obj in db.dirty if isinstance(obj, DbPrompt)} - dirty_prompts_before)
+
+            # Only delete MCP-discovered items (not user-created entries)
+            # Excludes "api", "ui", None (legacy/user-created) to preserve user entries
+            mcp_created_via_values = {"MCP", "federation", "health_check", "oauth", "update"}
+
+            # Find and remove stale tools (only MCP-discovered ones)
+            stale_tool_ids = [tool.id for tool in gateway.tools if tool.original_name not in new_tool_names and tool.created_via in mcp_created_via_values]
+            if stale_tool_ids:
+                for i in range(0, len(stale_tool_ids), 500):
+                    chunk = stale_tool_ids[i : i + 500]
+                    db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
+                    db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
+                    db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
+                result["tools_removed"] = len(stale_tool_ids)
+
+            # Find and remove stale resources (only MCP-discovered ones)
+            stale_resource_ids = [resource.id for resource in gateway.resources if resource.uri not in new_resource_uris and resource.created_via in mcp_created_via_values]
+            if stale_resource_ids:
+                for i in range(0, len(stale_resource_ids), 500):
+                    chunk = stale_resource_ids[i : i + 500]
+                    db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk)))
+                    db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk)))
+                    db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk)))
+                    db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
+                result["resources_removed"] = len(stale_resource_ids)
+
+            # Find and remove stale prompts (only MCP-discovered ones)
+            stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.original_name not in new_prompt_names and prompt.created_via in mcp_created_via_values]
+            if stale_prompt_ids:
+                for i in range(0, len(stale_prompt_ids), 500):
+                    chunk = stale_prompt_ids[i : i + 500]
+                    db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk)))
+                    db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
+                    db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
+                result["prompts_removed"] = len(stale_prompt_ids)
+
+            # Expire gateway if stale items were deleted
+            if stale_tool_ids or stale_resource_ids or stale_prompt_ids:
+                db.expire(gateway)
+
+            # Add new items in chunks
+            chunk_size = 50
+            if tools_to_add:
+                for i in range(0, len(tools_to_add), chunk_size):
+                    chunk = tools_to_add[i : i + chunk_size]
+                    db.add_all(chunk)
+                    db.flush()
+                result["tools_added"] = len(tools_to_add)
+
+            if resources_to_add:
+                for i in range(0, len(resources_to_add), chunk_size):
+                    chunk = resources_to_add[i : i + chunk_size]
+                    db.add_all(chunk)
+                    db.flush()
+                result["resources_added"] = len(resources_to_add)
+
+            if prompts_to_add:
+                for i in range(0, len(prompts_to_add), chunk_size):
+                    chunk = prompts_to_add[i : i + chunk_size]
+                    db.add_all(chunk)
+                    db.flush()
+                result["prompts_added"] = len(prompts_to_add)
+
+            # Only commit if there were actual changes (adds, removes, OR updates)
+            total_add_remove_changes = sum(result.values())
+            total_updates = tools_updated + resources_updated + prompts_updated
+
+            has_changes = total_add_remove_changes > 0 or total_updates > 0
+
+            if has_changes:
+                db.commit()
+                logger.info(
+                    f"Refreshed gateway {gateway_name}: "
+                    f"tools(+{result['tools_added']}/-{result['tools_removed']}/~{tools_updated}), "
+                    f"resources(+{result['resources_added']}/-{result['resources_removed']}/~{resources_updated}), "
+                    f"prompts(+{result['prompts_added']}/-{result['prompts_removed']}/~{prompts_updated})"
+                )
+
+                # Invalidate caches per-type based on actual changes
+                cache = _get_registry_cache()
+                if result["tools_added"] > 0 or result["tools_removed"] > 0 or tools_updated > 0:
+                    await cache.invalidate_tools()
+                if result["resources_added"] > 0 or result["resources_removed"] > 0 or resources_updated > 0:
+                    await cache.invalidate_resources()
+                if result["prompts_added"] > 0 or result["prompts_removed"] > 0 or prompts_updated > 0:
+                    await cache.invalidate_prompts()
+
+                # Invalidate tool lookup cache for this gateway
+                tool_lookup_cache = _get_tool_lookup_cache()
+                await tool_lookup_cache.invalidate_gateway(str(gateway_id))
+
+        return result
 
     async def _publish_event(self, event: Dict[str, Any]) -> None:
         """Publish event to all subscribers.

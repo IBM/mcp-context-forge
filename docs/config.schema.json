@@ -2342,6 +2342,11 @@
       "title": "Gateway Validation Timeout",
       "type": "integer"
     },
+    "auto_refresh_servers": {
+      "default": false,
+      "title": "Auto Refresh Servers",
+      "type": "boolean"
+    },
     "gateway_max_redirects": {
       "default": 5,
       "title": "Gateway Max Redirects",

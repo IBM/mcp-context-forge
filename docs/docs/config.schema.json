@@ -2363,6 +2363,11 @@
       "title": "Gateway Health Check Timeout",
       "type": "number"
     },
+    "auto_refresh_servers": {
+      "default": false,
+      "title": "Auto Refresh Servers",
+      "type": "boolean"
+    },
     "unhealthy_threshold": {
       "default": 3,
       "title": "Unhealthy Threshold",

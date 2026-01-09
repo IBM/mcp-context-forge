@@ -1233,6 +1233,11 @@ UNHEALTHY_THRESHOLD=3
 
 # Gateway health check timeout (seconds)
 GATEWAY_HEALTH_CHECK_TIMEOUT=5.0
+
+# Auto-refresh tools during health checks
+# When enabled, tools/resources/prompts are fetched and synced during health checks
+AUTO_REFRESH_SERVERS=false
+
 ```
 
 ### Logging for Performance
