@@ -18,7 +18,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 # Third-Party
 import httpx
-from sqlalchemy import and_, delete, desc, or_, select, text
+from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload, selectinload, Session
 
@@ -27,12 +27,12 @@ from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import EmailTeam as DbEmailTeam
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
+from mcpgateway.db import get_for_update
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import ServerMetric, ServerMetricsHourly
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.db import get_for_update
 from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.logging_service import LoggingService
@@ -489,29 +489,13 @@ class ServerService:
             if visibility.lower() == "public":
                 # Check for existing public server with the same name
                 existing_server = get_for_update(
-                    db,
-                    DbServer,
-                    where=and_(
-                        DbServer.name == server_in.name,
-                        DbServer.visibility == "public",
-                        DbServer.id != server_in.id if server_in.id else True
-                    ),
-                    skip_locked=True
+                    db, DbServer, where=and_(DbServer.name == server_in.name, DbServer.visibility == "public", DbServer.id != server_in.id if server_in.id else True), skip_locked=True
                 )
                 if existing_server:
                     raise ServerNameConflictError(server_in.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
             elif visibility.lower() == "team" and team_id:
                 # Check for existing team server with the same name
-                existing_server = get_for_update(
-                    db,
-                    DbServer,
-                    where=and_(
-                        DbServer.name == server_in.name,
-                        DbServer.visibility == "team",
-                        DbServer.team_id == team_id
-                    ),
-                    skip_locked=True
-                )
+                existing_server = get_for_update(db, DbServer, where=and_(DbServer.name == server_in.name, DbServer.visibility == "team", DbServer.team_id == team_id), skip_locked=True)
                 if existing_server:
                     raise ServerNameConflictError(server_in.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
             # Set custom UUID if provided
@@ -1123,12 +1107,14 @@ class ServerService:
                 team_id = server_update.team_id or server.team_id
                 if visibility.lower() == "public":
                     # Check for existing public server with the same name
-                    existing_server = db.execute(select(DbServer).where(DbServer.name == server_update.name, DbServer.visibility == "public", DbServer.id != server.id).with_for_update()).scalar_one_or_none()
+                    existing_server = get_for_update(db, DbServer, where=and_(DbServer.name == server_update.name, DbServer.visibility == "public", DbServer.id != server.id))
                     if existing_server:
                         raise ServerNameConflictError(server_update.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
                 elif visibility.lower() == "team" and team_id:
                     # Check for existing team server with the same name
-                    existing_server = db.execute(select(DbServer).where(DbServer.name == server_update.name, DbServer.visibility == "team", DbServer.team_id == team_id, DbServer.id != server.id).with_for_update()).scalar_one_or_none()
+                    existing_server = get_for_update(
+                        db, DbServer, where=and_(DbServer.name == server_update.name, DbServer.visibility == "team", DbServer.team_id == team_id, DbServer.id != server.id)
+                    )
                     if existing_server:
                         raise ServerNameConflictError(server_update.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
 
@@ -1527,7 +1513,7 @@ class ServerService:
             >>> asyncio.run(service.delete_server(db, 'server_id', 'user@example.com'))
         """
         try:
-            #server = db.get(DbServer, server_id)
+            # server = db.get(DbServer, server_id)
             server = get_for_update(db, DbServer, server_id)
             if not server:
                 raise ServerNotFoundError(f"Server not found: {server_id}")

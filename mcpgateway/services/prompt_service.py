@@ -32,10 +32,9 @@ from sqlalchemy.orm import joinedload, Session
 # First-Party
 from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.config import settings
-from mcpgateway.db import EmailTeam
+from mcpgateway.db import EmailTeam, get_for_update
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, PromptMetricsHourly, server_prompt_association
-from mcpgateway.db import get_for_update
 from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework import GlobalContext, PluginContextTable, PluginManager, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate, TopPerformer
@@ -1619,28 +1618,18 @@ class PromptService:
             if computed_name != prompt.name:
                 if visibility.lower() == "public":
                     # Lock any conflicting row so concurrent updates cannot race.
-                    existing_prompt = db.execute(
-                        select(DbPrompt)
-                        .where(DbPrompt.name == computed_name, DbPrompt.visibility == "public", DbPrompt.id != prompt.id)
-                        .with_for_update()
-                    ).scalar_one_or_none()
+                    existing_prompt = get_for_update(db, DbPrompt, where=and_(DbPrompt.name == computed_name, DbPrompt.visibility == "public", DbPrompt.id != prompt.id))
                     if existing_prompt:
                         raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
                 elif visibility.lower() == "team" and team_id:
-                    existing_prompt = db.execute(
-                        select(DbPrompt)
-                        .where(DbPrompt.name == computed_name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id, DbPrompt.id != prompt.id)
-                        .with_for_update()
-                    ).scalar_one_or_none()
+                    existing_prompt = get_for_update(db, DbPrompt, where=and_(DbPrompt.name == computed_name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id, DbPrompt.id != prompt.id))
                     logger.info(f"Existing prompt check result: {existing_prompt}")
                     if existing_prompt:
                         raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
                 elif visibility.lower() == "private":
-                    existing_prompt = db.execute(
-                        select(DbPrompt)
-                        .where(DbPrompt.name == computed_name, DbPrompt.visibility == "private", DbPrompt.owner_email == owner_email, DbPrompt.id != prompt.id)
-                        .with_for_update()
-                    ).scalar_one_or_none()
+                    existing_prompt = get_for_update(
+                        db, DbPrompt, where=and_(DbPrompt.name == computed_name, DbPrompt.visibility == "private", DbPrompt.owner_email == owner_email, DbPrompt.id != prompt.id)
+                    )
                     if existing_prompt:
                         raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
 
@@ -1871,7 +1860,7 @@ class PromptService:
             ...     pass
         """
         try:
-            prompt = get_for_update(db, DbPrompt, prompt_id)    
+            prompt = get_for_update(db, DbPrompt, prompt_id)
             if not prompt:
                 raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
 

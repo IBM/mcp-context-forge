@@ -36,7 +36,7 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 import orjson
-from sqlalchemy import and_, delete, desc, not_, or_, select
+from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload, selectinload, Session
 
@@ -50,10 +50,9 @@ from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import server_tool_association
+from mcpgateway.db import get_for_update, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
-from mcpgateway.db import get_for_update
 from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework import (
     GlobalContext,
@@ -2050,7 +2049,7 @@ class ToolService:
             >>> asyncio.run(service.delete_tool(db, 'tool_id'))
         """
         try:
-            #tool = db.get(DbTool, tool_id)
+            # tool = db.get(DbTool, tool_id)
             tool = get_for_update(db, DbTool, tool_id)
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
@@ -3160,7 +3159,7 @@ class ToolService:
             'tool_read'
         """
         try:
-            #tool = db.get(DbTool, tool_id)
+            # tool = db.get(DbTool, tool_id)
             tool = get_for_update(db, DbTool, tool_id)
 
             if not tool:

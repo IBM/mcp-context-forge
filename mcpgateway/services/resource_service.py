@@ -47,11 +47,11 @@ from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import get_for_update
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import ResourceMetric, ResourceMetricsHourly
 from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
-from mcpgateway.db import get_for_update
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
@@ -2128,7 +2128,7 @@ class ResourceService:
             'resource_read'
         """
         try:
-            #resource = db.get(DbResource, resource_id)
+            # resource = db.get(DbResource, resource_id)
             resource = get_for_update(db, DbResource, resource_id)
             if not resource:
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")
@@ -2360,7 +2360,7 @@ class ResourceService:
         """
         try:
             logger.info(f"Updating resource: {resource_id}")
-            #resource = db.get(DbResource, resource_id)
+            # resource = db.get(DbResource, resource_id)
             resource = get_for_update(db, DbResource, resource_id)
             if not resource:
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")
@@ -2371,12 +2371,14 @@ class ResourceService:
                 team_id = resource_update.team_id or resource.team_id
                 if visibility.lower() == "public":
                     # Check for existing public resources with the same uri
-                    existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource_update.uri, DbResource.visibility == "public",DbResource.id != resource_id if resource_id else True).with_for_update()).scalar_one_or_none()
+                    existing_resource = get_for_update(
+                        db, DbResource, where=and_(DbResource.uri == resource_update.uri, DbResource.visibility == "public", DbResource.id != resource_id if resource_id else True)
+                    )
                     if existing_resource:
                         raise ResourceURIConflictError(resource_update.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
                 elif visibility.lower() == "team" and team_id:
                     # Check for existing team resource with the same uri
-                    existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource_update.uri, DbResource.visibility == "team", DbResource.team_id == team_id)).scalar_one_or_none()
+                    existing_resource = get_for_update(db, DbResource, where=and_(DbResource.uri == resource_update.uri, DbResource.visibility == "team", DbResource.team_id == team_id))
                     if existing_resource:
                         raise ResourceURIConflictError(resource_update.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
 

@@ -76,8 +76,7 @@ except ImportError:
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import get_db
-from mcpgateway.db import get_for_update
+from mcpgateway.db import get_db, get_for_update
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
 from mcpgateway.db import Resource as DbResource
