@@ -41,15 +41,7 @@ jobs:
 
           - id: eslint
             cmd: |
-              npm install --no-save --legacy-peer-deps \
-                eslint \
-                eslint-config-standard \
-                eslint-config-prettier \
-                eslint-plugin-import \
-                eslint-plugin-n \
-                eslint-plugin-prettier \
-                eslint-plugin-promise \
-                prettier
+              npm install --no-save eslint neostandard eslint-config-prettier eslint-plugin-prettier prettier
               npx eslint "mcpgateway/static/*.js"
 
           # -------------------------------------------------------

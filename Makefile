@@ -2430,43 +2430,29 @@ tomllint:                         ## 📑 TOML validation (tomlcheck)
 # 🕸️  WEBPAGE LINTERS & STATIC ANALYSIS
 # =============================================================================
 # help: 🕸️  WEBPAGE LINTERS & STATIC ANALYSIS (HTML/CSS/JS lint + security scans + formatting)
-# help: install-web-linters  - Install HTMLHint, Stylelint, ESLint, Retire.js, Prettier, JSHint, jscpd & markuplint via npm
 # help: nodejsscan           - Run nodejsscan for JS security vulnerabilities
 # help: lint-web             - Run HTMLHint, Stylelint, ESLint, Retire.js, nodejsscan and npm audit
+# help: eslint               - Run ESLint for JavaScript standard style and prettifying
 # help: jshint               - Run JSHint for additional JavaScript analysis
 # help: jscpd                - Detect copy-pasted code in JS/HTML/CSS files
 # help: markuplint           - Modern HTML linting with markuplint
 # help: format-web           - Format HTML, CSS & JS files with Prettier
-.PHONY: install-web-linters nodejsscan lint-web jshint jscpd markuplint format-web
-
-install-web-linters:
-	@echo "🔧 Installing HTML/CSS/JS lint, security & formatting tools..."
-	@if [ ! -f package.json ]; then \
-	  echo "📦 Initializing npm project..."; \
-	  npm init -y >/dev/null; \
-	fi
-	@npm install --no-save \
-		htmlhint \
-		stylelint stylelint-config-standard @stylistic/stylelint-config stylelint-order \
-		eslint eslint-config-standard eslint-plugin-import eslint-plugin-n eslint-plugin-promise \
-		eslint-plugin-prettier eslint-config-prettier \
-		retire \
-		prettier \
-		jshint \
-		jscpd \
-		markuplint
+.PHONY: nodejsscan eslint lint-web jshint jscpd markuplint format-web
 
 nodejsscan:
 	@echo "🔒 Running nodejsscan for JavaScript security vulnerabilities..."
 	@uvx nodejsscan --directory ./mcpgateway/static --directory ./mcpgateway/templates || true
 
-lint-web: install-web-linters nodejsscan
+eslint:
+	@echo "🔍 Linting JS files..."
+	@npm install --no-save
+	@find mcpgateway/static -name "*.js" -print0 | { xargs -0 npx eslint || true; }
+
+lint-web: eslint nodejsscan
 	@echo "🔍 Linting HTML files..."
 	@find mcpgateway/templates -name "*.html" -exec npx htmlhint {} + 2>/dev/null || true
 	@echo "🔍 Linting CSS files..."
 	@find mcpgateway/static -name "*.css" -exec npx stylelint {} + 2>/dev/null || true
-	@echo "🔍 Linting JS files..."
-	@find mcpgateway/static -name "*.js" -exec npx eslint {} + 2>/dev/null || true
 	@echo "🔒 Scanning for known JS/CSS library vulnerabilities with retire.js..."
 	@cd mcpgateway/static && npx retire . 2>/dev/null || true
 	@if [ -f package.json ]; then \
@@ -2476,27 +2462,27 @@ lint-web: install-web-linters nodejsscan
 	  echo "⚠️  Skipping npm audit: no package.json found"; \
 	fi
 
-jshint: install-web-linters
+jshint:
 	@echo "🔍 Running JSHint for JavaScript analysis..."
 	@if [ -f .jshintrc ]; then \
 	  echo "📋 Using .jshintrc configuration"; \
-	  npx jshint --config .jshintrc mcpgateway/static/*.js || true; \
+	  npx --yes jshint --config .jshintrc mcpgateway/static/*.js || true; \
 	else \
 	  echo "📋 No .jshintrc found, using defaults with ES11"; \
-	  npx jshint --esversion=11 mcpgateway/static/*.js || true; \
+	  npx --yes jshint --esversion=11 mcpgateway/static/*.js || true; \
 	fi
 
-jscpd: install-web-linters
+jscpd:
 	@echo "🔍 Detecting copy-pasted code with jscpd..."
-	@npx jscpd "mcpgateway/static/" "mcpgateway/templates/" || true
+	@npx --yes jscpd "mcpgateway/static/" "mcpgateway/templates/" || true
 
-markuplint: install-web-linters
+markuplint:
 	@echo "🔍 Running markuplint for modern HTML validation..."
-	@npx markuplint mcpgateway/templates/* || true
+	@npx --yes markuplint mcpgateway/templates/* || true
 
-format-web: install-web-linters
+format-web:
 	@echo "🎨 Formatting HTML, CSS & JS with Prettier..."
-	@npx prettier --write "mcpgateway/templates/**/*.html" \
+	@npx --yes prettier --write "mcpgateway/templates/**/*.html" \
 	                 "mcpgateway/static/**/*.css" \
 	                 "mcpgateway/static/**/*.js"
 
