@@ -29,6 +29,7 @@ from requests_oauthlib import OAuth2Session
 # First-Party
 from mcpgateway.config import get_settings
 from mcpgateway.services.encryption_service import get_encryption_service
+from mcpgateway.services.http_client_service import get_http_client
 from mcpgateway.utils.redis_client import get_redis_client as _get_shared_redis_client
 
 logger = logging.getLogger(__name__)
@@ -114,7 +115,7 @@ class OAuthManager:
     """
 
     def __init__(self, request_timeout: int = 30, max_retries: int = 3, token_storage: Optional[Any] = None):
-        """Initialize OAuth Manager with shared HTTP client for connection pooling.
+        """Initialize OAuth Manager.
 
         Args:
             request_timeout: Timeout for OAuth requests in seconds
@@ -125,29 +126,14 @@ class OAuthManager:
         self.max_retries = max_retries
         self.token_storage = token_storage
         self.settings = get_settings()
-        # Shared httpx client with connection pooling for better performance
-        self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
-        """Get or create shared httpx client with connection pooling.
+        """Get the shared singleton HTTP client.
 
         Returns:
-            Configured httpx.AsyncClient instance
+            Shared httpx.AsyncClient instance with connection pooling
         """
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(
-                timeout=httpx.Timeout(self.request_timeout),
-                limits=httpx.Limits(max_keepalive_connections=20, max_connections=100),
-                http2=True,
-                follow_redirects=True,
-            )
-        return self._client
-
-    async def close(self):
-        """Close the HTTP client and cleanup resources."""
-        if self._client is not None and not self._client.is_closed:
-            await self._client.aclose()
-            self._client = None
+        return await get_http_client()
 
     def _generate_pkce_params(self) -> Dict[str, str]:
         """Generate PKCE parameters for OAuth Authorization Code flow (RFC 7636).
