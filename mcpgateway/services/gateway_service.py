@@ -3961,7 +3961,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     )
 
                     # Check schema and configuration changes
-                    schema_fields_changed = existing_tool.headers != tool.headers or existing_tool.input_schema != tool.input_schema or existing_tool.jsonpath_filter != tool.jsonpath_filter
+                    schema_fields_changed = existing_tool.headers != tool.headers or existing_tool.input_schema != tool.input_schema or existing_tool.output_schema != tool.output_schema or existing_tool.jsonpath_filter != tool.jsonpath_filter
 
                     # Check authentication and visibility changes
                     auth_fields_changed = existing_tool.auth_type != gateway.auth_type or existing_tool.auth_value != gateway.auth_value or existing_tool.visibility != gateway.visibility
@@ -3975,6 +3975,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         existing_tool.request_type = tool.request_type
                         existing_tool.headers = tool.headers
                         existing_tool.input_schema = tool.input_schema
+                        existing_tool.output_schema = tool.output_schema
                         existing_tool.jsonpath_filter = tool.jsonpath_filter
                         existing_tool.auth_type = gateway.auth_type
                         existing_tool.auth_value = gateway.auth_value
