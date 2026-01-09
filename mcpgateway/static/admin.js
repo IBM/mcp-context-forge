@@ -6850,7 +6850,9 @@ function showTab(tabName) {
                     const gatewaysTable = safeGetElement("gateways-table");
                     if (gatewaysTable) {
                         const hasLoadingMessage =
-                            gatewaysTable.innerHTML.includes("Loading gateways...");
+                            gatewaysTable.innerHTML.includes(
+                                "Loading gateways...",
+                            );
                         const isEmpty = gatewaysTable.innerHTML.trim() === "";
                         if (hasLoadingMessage || isEmpty) {
                             // Trigger HTMX load manually if HTMX is available
