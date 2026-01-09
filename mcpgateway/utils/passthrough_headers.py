@@ -131,8 +131,10 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
 
     Configuration Priority (highest to lowest):
     1. Gateway-specific passthrough_headers setting
-    2. Global database configuration (GlobalConfig.passthrough_headers)
-    3. Environment variable DEFAULT_PASSTHROUGH_HEADERS
+    2. Global headers from get_passthrough_headers() based on PASSTHROUGH_HEADERS_SOURCE:
+       - "db": Database wins if configured, env var DEFAULT_PASSTHROUGH_HEADERS as fallback
+       - "env": Environment variable always wins, database ignored
+       - "merge": Union of both sources (DB casing wins for duplicates)
 
     Security Features:
     - Feature flag control (disabled by default)
@@ -434,6 +436,9 @@ async def set_global_passthrough_headers(db: Session) -> None:
     GlobalConfig table. If not, it initializes them with the default headers from
     settings.default_passthrough_headers.
 
+    When PASSTHROUGH_HEADERS_SOURCE=env, this function skips database writes entirely
+    since the database configuration is ignored in that mode.
+
     Args:
         db (Session): SQLAlchemy database session for querying and updating GlobalConfig.
 
@@ -448,6 +453,7 @@ async def set_global_passthrough_headers(db: Session) -> None:
         ... @patch("mcpgateway.utils.passthrough_headers.settings")
         ... async def test_default_headers(mock_settings):
         ...     mock_settings.enable_header_passthrough = True
+        ...     mock_settings.passthrough_headers_source = "db"
         ...     mock_settings.default_passthrough_headers = ["X-Tenant-Id", "X-Trace-Id"]
         ...     mock_db = Mock()
         ...     mock_db.query.return_value.first.return_value = None
@@ -463,6 +469,7 @@ async def set_global_passthrough_headers(db: Session) -> None:
         ... @patch("mcpgateway.utils.passthrough_headers.settings")
         ... async def test_db_write_failure(mock_settings):
         ...     mock_settings.enable_header_passthrough = True
+        ...     mock_settings.passthrough_headers_source = "db"
         ...     mock_db = Mock()
         ...     mock_db.query.return_value.first.return_value = None
         ...     mock_db.commit.side_effect = Exception("DB write failed")
@@ -478,6 +485,7 @@ async def set_global_passthrough_headers(db: Session) -> None:
         ... @patch("mcpgateway.utils.passthrough_headers.settings")
         ... async def test_existing_config(mock_settings):
         ...     mock_settings.enable_header_passthrough = True
+        ...     mock_settings.passthrough_headers_source = "db"
         ...     mock_db = Mock()
         ...     existing = Mock(spec=GlobalConfig)
         ...     existing.passthrough_headers = ["X-Tenant-ID", "Authorization"]
@@ -487,18 +495,35 @@ async def set_global_passthrough_headers(db: Session) -> None:
         ...     mock_db.commit.assert_not_called()
         ...     assert existing.passthrough_headers == ["X-Tenant-ID", "Authorization"]
 
+        Env mode skips DB entirely:
+        >>> import pytest
+        >>> from unittest.mock import Mock, patch
+        >>> @pytest.mark.asyncio
+        ... @patch("mcpgateway.utils.passthrough_headers.settings")
+        ... async def test_env_mode_skips_db(mock_settings):
+        ...     mock_settings.passthrough_headers_source = "env"
+        ...     mock_db = Mock()
+        ...     await set_global_passthrough_headers(mock_db)
+        ...     mock_db.query.assert_not_called()
+        ...     mock_db.add.assert_not_called()
+
     Note:
         This function is typically called during application startup to ensure
         global configuration is in place before any gateway operations.
     """
+    # When source is "env", skip DB operations entirely - env vars always win
+    if settings.passthrough_headers_source == "env":
+        logger.debug("Passthrough headers source=env: skipping database initialization (env vars always used)")
+        return
+
     # Query DB directly here (not cache) because we need to check if config exists
     # to decide whether to create it
     global_config = db.query(GlobalConfig).first()
 
     if not global_config:
         config_headers = settings.default_passthrough_headers
+        allowed_headers = []
         if config_headers:
-            allowed_headers = []
             for header_name in config_headers:
                 # Validate header name
                 if not validate_header_name(header_name):
