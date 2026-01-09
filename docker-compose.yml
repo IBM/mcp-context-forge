@@ -425,6 +425,10 @@ services:
 
   postgres:
     image: postgres:18
+    ulimits:
+      nofile:
+        soft: 8192
+        hard: 8192
     ports:
       - "5433:5432"      # Expose for baseline load testing (5433 to avoid conflict with local postgres)
     # Performance tuning for high-load testing (3000 sustained users)
@@ -553,6 +557,10 @@ services:
     image: edoburu/pgbouncer:latest
     restart: unless-stopped
     networks: [mcpnet]
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     ports:
       - "6432:6432"    # PgBouncer port (optional external access)
     environment:
@@ -684,6 +692,10 @@ services:
 ###############################################################################
   redis:
     image: redis:latest
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     # Performance tuning for 1000+ RPS high-concurrency load testing
     command:
       - "redis-server"
