@@ -543,8 +543,9 @@ async def list_tools() -> List[types.Tool]:
     token_teams = user_context.get("teams", []) if user_context else []
     is_admin = user_context.get("is_admin", False) if user_context else False
 
-    # Admin bypass
-    if is_admin:
+    # Admin bypass - but respect empty-team token restrictions (public-only access)
+    # If token has empty teams array, admin bypass is disabled to enforce scope
+    if is_admin and token_teams:  # Only bypass if admin AND has non-empty teams
         user_email = None
         token_teams = None
 
@@ -591,8 +592,9 @@ async def list_prompts() -> List[types.Prompt]:
     token_teams = user_context.get("teams", []) if user_context else []
     is_admin = user_context.get("is_admin", False) if user_context else False
 
-    # Admin bypass
-    if is_admin:
+    # Admin bypass - but respect empty-team token restrictions (public-only access)
+    # If token has empty teams array, admin bypass is disabled to enforce scope
+    if is_admin and token_teams:  # Only bypass if admin AND has non-empty teams
         user_email = None
         token_teams = None
 
@@ -679,8 +681,9 @@ async def list_resources() -> List[types.Resource]:
     token_teams = user_context.get("teams", []) if user_context else []
     is_admin = user_context.get("is_admin", False) if user_context else False
 
-    # Admin bypass
-    if is_admin:
+    # Admin bypass - but respect empty-team token restrictions (public-only access)
+    # If token has empty teams array, admin bypass is disabled to enforce scope
+    if is_admin and token_teams:  # Only bypass if admin AND has non-empty teams
         user_email = None
         token_teams = None
 

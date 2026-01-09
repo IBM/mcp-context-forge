@@ -377,14 +377,14 @@ def _get_rpc_filter_context(request: Request, user) -> tuple:
         >>> from unittest.mock import MagicMock
         >>> req = MagicMock()
         >>> req.state = MagicMock()
-        >>> req.state._jwt_verified_payload = ("token", {"teams": ["t1"]})
-        >>> user = {"email": "test@x.com", "is_admin": True}
+        >>> req.state._jwt_verified_payload = ("token", {"teams": ["t1"], "is_admin": True})
+        >>> user = {"email": "test@x.com", "is_admin": True}  # User's is_admin is ignored
         >>> email, teams, is_admin = main._get_rpc_filter_context(req, user)
         >>> email
         'test@x.com'
         >>> teams
         ['t1']
-        >>> is_admin
+        >>> is_admin  # From token payload, not user dict
         True
     """
     # Get user email
@@ -398,12 +398,20 @@ def _get_rpc_filter_context(request: Request, user) -> tuple:
     # Get normalized teams from verified token
     token_teams = _get_token_teams_from_request(request)
 
-    # Check if user is admin (for unrestricted access)
+    # Check if user is admin - MUST come from token, not DB user
+    # This ensures that tokens with restricted scope (empty teams) don't inherit admin bypass
     is_admin = False
-    if hasattr(user, "is_admin"):
-        is_admin = getattr(user, "is_admin", False)
-    elif isinstance(user, dict):
-        is_admin = user.get("is_admin", False) or user.get("user", {}).get("is_admin", False)
+    cached = getattr(request.state, "_jwt_verified_payload", None)
+    if cached and isinstance(cached, tuple) and len(cached) == 2:
+        _, payload = cached
+        if payload:
+            # Check both top-level is_admin and nested user.is_admin in token
+            is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
+
+    # If token has empty teams array (public-only token), admin bypass is disabled
+    # This allows admins to create properly scoped tokens for restricted access
+    if token_teams is not None and len(token_teams) == 0:
+        is_admin = False
 
     return user_email, token_teams, is_admin
 
@@ -2948,24 +2956,33 @@ async def list_tools(
     if tags:
         tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
 
-    # Get user email for team filtering
-    user_email = get_user_email(user)
+    # Get filtering context from token (respects token scope)
+    user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
 
-    # Check team_id from token as well
+    # Admin bypass - unrestricted access (but respects empty-team token restrictions)
+    if is_admin:
+        user_email = None
+        token_teams = None
+
+    # Check team_id from request.state (set during auth)
+    # Only use for non-empty-team tokens; empty-team tokens should rely on visibility filtering
     token_team_id = getattr(request.state, "team_id", None)
+    is_empty_team_token = token_teams is not None and len(token_teams) == 0
 
-    # Check for team ID mismatch
-    if team_id is not None and token_team_id is not None and team_id != token_team_id:
+    # Check for team ID mismatch (only applies when both are specified and token has teams)
+    if team_id is not None and token_team_id is not None and team_id != token_team_id and not is_empty_team_token:
         return ORJSONResponse(
             content={"message": "Access issue: This API token does not have the required permissions for this team."},
             status_code=status.HTTP_403_FORBIDDEN,
         )
 
-    # Determine final team ID
-    team_id = team_id or token_team_id
+    # Determine final team ID - don't use token_team_id for empty-team tokens
+    # Empty-team tokens should filter by public + owned, not by personal team
+    if not is_empty_team_token:
+        team_id = team_id or token_team_id
 
-    # Use unified list_tools() with optional team filtering
-    # When team_id or visibility is specified, user_email enables team-based access control
+    # Use unified list_tools() with token-based team filtering
+    # Always apply visibility filtering based on token scope
     data, next_cursor = await tool_service.list_tools(
         db=db,
         cursor=cursor,
@@ -2973,9 +2990,10 @@ async def list_tools(
         tags=tags_list,
         gateway_id=gateway_id,
         limit=limit,
-        user_email=user_email if (team_id or visibility) else None,
+        user_email=user_email,
         team_id=team_id,
         visibility=visibility,
+        token_teams=token_teams,
     )
 
     if apijsonpath is None:
@@ -3349,24 +3367,34 @@ async def list_resources(
     tags_list = None
     if tags:
         tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
-    # Get user email for team filtering
-    user_email = get_user_email(user)
 
-    # Check team_id from token as well
+    # Get filtering context from token (respects token scope)
+    user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+
+    # Admin bypass - unrestricted access (but respects empty-team token restrictions)
+    if is_admin:
+        user_email = None
+        token_teams = None
+
+    # Check team_id from request.state (set during auth)
+    # Only use for non-empty-team tokens; empty-team tokens should rely on visibility filtering
     token_team_id = getattr(request.state, "team_id", None)
+    is_empty_team_token = token_teams is not None and len(token_teams) == 0
 
-    # Check for team ID mismatch
-    if team_id is not None and token_team_id is not None and team_id != token_team_id:
+    # Check for team ID mismatch (only applies when both are specified and token has teams)
+    if team_id is not None and token_team_id is not None and team_id != token_team_id and not is_empty_team_token:
         return ORJSONResponse(
             content={"message": "Access issue: This API token does not have the required permissions for this team."},
             status_code=status.HTTP_403_FORBIDDEN,
         )
 
-    # Determine final team ID
-    team_id = team_id or token_team_id
+    # Determine final team ID - don't use token_team_id for empty-team tokens
+    # Empty-team tokens should filter by public + owned, not by personal team
+    if not is_empty_team_token:
+        team_id = team_id or token_team_id
 
-    # Use unified list_resources() with optional team filtering
-    # When team_id or visibility is specified, user_email enables team-based access control
+    # Use unified list_resources() with token-based team filtering
+    # Always apply visibility filtering based on token scope
     logger.debug(f"User {user_email} requested resource list with cursor {cursor}, include_inactive={include_inactive}, tags={tags_list}, team_id={team_id}, visibility={visibility}")
     data, next_cursor = await resource_service.list_resources(
         db=db,
@@ -3374,9 +3402,10 @@ async def list_resources(
         limit=limit,
         include_inactive=include_inactive,
         tags=tags_list,
-        user_email=user_email if (team_id or visibility) else None,
+        user_email=user_email,
         team_id=team_id,
         visibility=visibility,
+        token_teams=token_teams,
     )
 
     if include_pagination:
@@ -3726,23 +3755,34 @@ async def list_prompts(
     tags_list = None
     if tags:
         tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
-    # Get user email for team filtering
-    user_email = get_user_email(user)
 
-    # Check team_id from token as well
+    # Get filtering context from token (respects token scope)
+    user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+
+    # Admin bypass - unrestricted access (but respects empty-team token restrictions)
+    if is_admin:
+        user_email = None
+        token_teams = None
+
+    # Check team_id from request.state (set during auth)
+    # Only use for non-empty-team tokens; empty-team tokens should rely on visibility filtering
     token_team_id = getattr(request.state, "team_id", None)
+    is_empty_team_token = token_teams is not None and len(token_teams) == 0
 
-    # Check for team ID mismatch
-    if team_id is not None and token_team_id is not None and team_id != token_team_id:
+    # Check for team ID mismatch (only applies when both are specified and token has teams)
+    if team_id is not None and token_team_id is not None and team_id != token_team_id and not is_empty_team_token:
         return ORJSONResponse(
             content={"message": "Access issue: This API token does not have the required permissions for this team."},
             status_code=status.HTTP_403_FORBIDDEN,
         )
 
-    # Determine final team ID
-    team_id = team_id or token_team_id
+    # Determine final team ID - don't use token_team_id for empty-team tokens
+    # Empty-team tokens should filter by public + owned, not by personal team
+    if not is_empty_team_token:
+        team_id = team_id or token_team_id
 
-    # Use consolidated prompt listing with optional team filtering
+    # Use consolidated prompt listing with token-based team filtering
+    # Always apply visibility filtering based on token scope
     logger.debug(f"User: {user_email} requested prompt list with include_inactive={include_inactive}, cursor={cursor}, tags={tags_list}, team_id={team_id}, visibility={visibility}")
     data, next_cursor = await prompt_service.list_prompts(
         db=db,
@@ -3750,9 +3790,10 @@ async def list_prompts(
         limit=limit,
         include_inactive=include_inactive,
         tags=tags_list,
-        user_email=user_email if (team_id or visibility) else None,
+        user_email=user_email,
         team_id=team_id,
         visibility=visibility,
+        token_teams=token_teams,
     )
 
     if include_pagination:

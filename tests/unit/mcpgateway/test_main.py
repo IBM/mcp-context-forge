@@ -2094,14 +2094,15 @@ class TestGetRpcFilterContext:
         from mcpgateway.main import _get_rpc_filter_context
 
         mock_request = MagicMock()
-        mock_request.state._jwt_verified_payload = ("token", {"teams": ["t1", "t2"]})
-        user = {"email": "test@example.com", "is_admin": True}
+        # is_admin must be in the token payload, not the user dict (security fix)
+        mock_request.state._jwt_verified_payload = ("token", {"teams": ["t1", "t2"], "is_admin": True})
+        user = {"email": "test@example.com", "is_admin": True}  # User's is_admin is ignored
 
         email, teams, is_admin = _get_rpc_filter_context(mock_request, user)
 
         assert email == "test@example.com"
         assert teams == ["t1", "t2"]
-        assert is_admin is True
+        assert is_admin is True  # From token payload, not user dict
 
     def test_get_rpc_filter_context_dict_user_sub_field(self):
         """Test that sub field is used if email is not present."""
@@ -2135,17 +2136,33 @@ class TestGetRpcFilterContext:
         assert is_admin is False
 
     def test_get_rpc_filter_context_nested_is_admin(self):
-        """Test that nested user.is_admin is extracted from dict."""
+        """Test that nested user.is_admin is extracted from token payload."""
         from mcpgateway.main import _get_rpc_filter_context
 
         mock_request = MagicMock()
-        mock_request.state._jwt_verified_payload = ("token", {"teams": []})
+        # is_admin must be in token payload - use non-empty teams to allow admin bypass
+        mock_request.state._jwt_verified_payload = ("token", {"teams": ["team_x"], "user": {"is_admin": True}})
         user = {"email": "nested@example.com", "user": {"is_admin": True}}
 
         email, teams, is_admin = _get_rpc_filter_context(mock_request, user)
 
         assert email == "nested@example.com"
-        assert is_admin is True
+        assert is_admin is True  # From token payload's nested user.is_admin
+
+    def test_get_rpc_filter_context_empty_teams_disables_admin(self):
+        """Test that empty teams array disables admin bypass even when is_admin is true."""
+        from mcpgateway.main import _get_rpc_filter_context
+
+        mock_request = MagicMock()
+        # Token has is_admin but empty teams - admin bypass should be disabled
+        mock_request.state._jwt_verified_payload = ("token", {"teams": [], "is_admin": True})
+        user = {"email": "admin@example.com", "is_admin": True}
+
+        email, teams, is_admin = _get_rpc_filter_context(mock_request, user)
+
+        assert email == "admin@example.com"
+        assert teams == []
+        assert is_admin is False  # Disabled for empty-team tokens (public-only access)
 
     def test_get_rpc_filter_context_string_user(self):
         """Test with string user (fallback to str conversion)."""
