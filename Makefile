@@ -940,7 +940,7 @@ benchmark-logs:                            ## Show benchmark stack logs
 # 🚀 PERFORMANCE TESTING STACK - High-capacity configuration
 # =============================================================================
 # help: 🚀 PERFORMANCE TESTING STACK
-# help: performance-up         - Start performance stack (5 gateways, PostgreSQL replica, monitoring)
+# help: performance-up         - Start performance stack (7 gateways, PostgreSQL replica, monitoring)
 # help: performance-down       - Stop performance stack
 # help: performance-clean      - Stop and remove all performance data (volumes)
 # help: performance-logs       - Show performance stack logs
@@ -955,9 +955,9 @@ COMPOSE_CMD_PERF := $(shell \
 		echo "docker-compose -f docker-compose-performance.yml"; \
 	fi)
 
-performance-up:                            ## Start performance stack (5 gateways, PostgreSQL replica, monitoring)
+performance-up:                            ## Start performance stack (7 gateways, PostgreSQL replica, monitoring)
 	@echo "🚀 Starting performance testing stack..."
-	@echo "   • 5 gateway replicas"
+	@echo "   • 7 gateway replicas"
 	@echo "   • PostgreSQL primary + read replica (streaming replication)"
 	@echo "   • PgBouncer with load balancing"
 	@echo "   • Full monitoring stack"
@@ -986,7 +986,7 @@ performance-up:                            ## Start performance stack (5 gateway
 	@echo "      • PgBouncer - connection pool stats"
 	@echo ""
 	@echo "   🏋️ Configuration:"
-	@echo "      • 5 gateway replicas (vs 3 in standard)"
+	@echo "      • 7 gateway replicas (vs 3 in standard)"
 	@echo "      • PostgreSQL read replica for read scaling"
 	@echo "      • PgBouncer round-robin across primary + replica"
 	@echo ""
