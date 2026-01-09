@@ -3749,9 +3749,27 @@ async def change_password_required_handler(request: Request, db: Session = Depen
             success = await auth_service.change_password(email=current_user.email, old_password=current_password, new_password=new_password, ip_address=ip_address, user_agent=user_agent)
 
             if success:
-                # Clear the password_change_required flag
-                current_user.password_change_required = False
-                db.commit()
+                # Re-attach current_user to session for downstream use (e.g., get_teams() in token creation)
+                # Note: password_change_required is already cleared by auth_service.change_password()
+                # We must re-attach to ensure team claims are populated in the new JWT token.
+                user_email = current_user.email  # Save before potential re-query
+                try:
+                    # pylint: disable=import-outside-toplevel
+                    from sqlalchemy import inspect as sa_inspect
+                    from mcpgateway.db import EmailUser
+
+                    insp = sa_inspect(current_user)
+                    if insp.transient or insp.detached:
+                        current_user = db.query(EmailUser).filter(EmailUser.email == user_email).first()
+                        if current_user is None:
+                            LOGGER.error(f"User {user_email} not found after successful password change - possible race condition")
+                            root_path = request.scope.get("root_path", "")
+                            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
+                except Exception as e:
+                    # Return early to avoid creating token with empty team claims
+                    LOGGER.error(f"Failed to re-attach user {user_email} to session: {e} - password changed but token creation skipped")
+                    root_path = request.scope.get("root_path", "")
+                    return RedirectResponse(url=f"{root_path}/admin/login?message=password_changed", status_code=303)
 
                 # Create new JWT token
                 token, _ = await create_access_token(current_user)
