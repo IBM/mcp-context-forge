@@ -586,11 +586,14 @@ class EmailAuthService:
         cursor: Optional[str] = None,
         page: Optional[int] = None,
         per_page: Optional[int] = None,
+        search: Optional[str] = None,
+        exclude_emails: Optional[set[str]] = None,
     ) -> Union[list[EmailUser], tuple[list[EmailUser], Optional[str]], Dict[str, Any]]:
-        """List all users with cursor or offset-based pagination support.
+        """List all users with cursor or offset-based pagination support and optional search.
 
         This method supports both cursor-based (for API endpoints with large datasets)
-        and offset-based (for admin UI with page numbers) pagination.
+        and offset-based (for admin UI with page numbers) pagination, with optional
+        search filtering by email or full name.
 
         Note: This method returns ORM objects and cannot be cached since callers
         depend on ORM attributes and methods (e.g., EmailUserResponse.from_email_user).
@@ -601,6 +604,8 @@ class EmailAuthService:
             cursor: Opaque cursor token for cursor-based pagination
             page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
             per_page: Items per page for page-based pagination
+            search: Optional search term to filter by email or full name (case-insensitive)
+            exclude_emails: Optional set of email addresses to exclude from results
 
         Returns:
             - List of EmailUser objects (legacy mode, deprecated)
@@ -616,10 +621,25 @@ class EmailAuthService:
             # result = await service.list_users(page=1, per_page=20)
             # result['data']       # Returns: list of users
             # result['pagination'] # Returns: pagination metadata
+
+            # Search users
+            # users = await service.list_users(search="john", page=1, per_page=20)
+            # All users with "john" in email or name
         """
         try:
             # Build base query with ordering by created_at for consistent pagination
             query = select(EmailUser).order_by(desc(EmailUser.created_at), desc(EmailUser.email))
+
+            # Apply search filter if provided
+            if search and search.strip():
+                search_term = f"%{search.strip().lower()}%"
+                query = query.where(
+                    (func.lower(EmailUser.email).like(search_term)) | (func.lower(EmailUser.full_name).like(search_term))
+                )
+
+            # Apply email exclusion filter if provided
+            if exclude_emails:
+                query = query.where(~EmailUser.email.in_(exclude_emails))
 
             # Handle legacy offset-based pagination (for backward compatibility)
             # If offset is provided but page is not, use old-style offset/limit approach
@@ -685,13 +705,37 @@ class EmailAuthService:
     async def get_all_users(self) -> list[EmailUser]:
         """Get all users without pagination.
 
+        .. deprecated:: 1.0
+            Use :meth:`list_users` with proper pagination instead.
+            This method has a hardcoded limit of 10,000 users and will not return
+            more than that. For production systems with many users, use paginated
+            access with search/filtering.
+
         Returns:
-            List of all EmailUser objects
+            List of up to 10,000 EmailUser objects
 
         Examples:
             # users = await service.get_all_users()
             # isinstance(users, list)  # Returns: True
+
+        Warning:
+            This method is deprecated and will be removed in a future version.
+            Use list_users() with pagination instead:
+
+            # For small datasets
+            users = await service.list_users(page=1, per_page=1000)['data']
+
+            # For searching
+            users = await service.list_users(search="john", page=1, per_page=50)['data']
         """
+        import warnings
+
+        warnings.warn(
+            "get_all_users() is deprecated and limited to 10,000 users. "
+            "Use list_users() with pagination instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return await self.list_users(limit=10000)  # Large limit to get all users
 
     async def count_users(self) -> int:

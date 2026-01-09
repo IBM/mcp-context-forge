@@ -5348,8 +5348,8 @@ async def admin_list_users(
     List users for the admin UI with pagination support.
 
     This endpoint retrieves a paginated list of users from the database.
-    Uses offset-based (page/per_page) pagination. Supports JSON response
-    for dropdown population when format=json query parameter is provided.
+    Uses offset-based (page/per_page) pagination.
+    Supports JSON response for dropdown population when format=json query parameter is provided.
 
     Args:
         request: FastAPI request object
@@ -5380,9 +5380,9 @@ async def admin_list_users(
     is_json_request = "application/json" in accept_header or request.query_params.get("format") == "json"
 
     if is_json_request:
-        # Return JSON for dropdown population (no pagination needed for dropdowns)
-        users = await auth_service.list_users()
-        users_data = [{"email": user_obj.email, "full_name": user_obj.full_name, "is_active": user_obj.is_active, "is_admin": user_obj.is_admin} for user_obj in users]
+        # Return JSON for dropdown population
+        users = await auth_service.list_users(page=1, per_page=100)
+        users_data = [{"email": user_obj.email, "full_name": user_obj.full_name, "is_active": user_obj.is_active, "is_admin": user_obj.is_admin} for user_obj in users["data"]]
         return ORJSONResponse(content={"users": users_data})
 
     # Call auth_service.list_users with page-based pagination
@@ -5487,6 +5487,64 @@ async def admin_users_partial_html(
     except Exception as e:
         LOGGER.error(f"Error loading users partial for admin {user}: {e}")
         return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading users: {str(e)}</p></div>', status_code=200)
+
+
+@admin_router.get("/users/search", response_class=JSONResponse)
+async def admin_search_users(
+    q: str = Query("", description="Search query"),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of results to return"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """
+    Search users by email or full name.
+
+    This endpoint searches users for use in search functionality like team member selection.
+
+    Args:
+        q (str): Search query string to match against email or full name
+        limit (int): Maximum number of results to return (1-1000)
+        db (Session): Database session dependency
+        user: Current user making the request
+
+    Returns:
+        JSONResponse: Dictionary containing list of matching users and count
+    """
+    if not settings.email_auth_enabled:
+        return {"users": [], "count": 0}
+
+    user_email = get_user_email(user)
+    search_query = q.strip().lower()
+
+    if not search_query:
+        # If no search query, return empty list
+        return {"users": [], "count": 0}
+
+    LOGGER.debug(f"User {user_email} searching users with query: {search_query}")
+
+    # First-Party
+    from mcpgateway.services.email_auth_service import EmailAuthService
+
+    auth_service = EmailAuthService(db)
+
+    # Use list_users with search parameter
+    users_result = await auth_service.list_users(search=search_query, limit=limit)
+
+    # Extract user list from paginated result
+    users_list = users_result["data"]
+
+    # Format results for JSON response
+    results = [
+        {
+            "email": user_obj.email,
+            "full_name": user_obj.full_name or "",
+            "is_active": user_obj.is_active,
+            "is_admin": user_obj.is_admin,
+        }
+        for user_obj in users_list
+    ]
+
+    return {"users": results, "count": len(results)}
 
 
 @admin_router.post("/users")
