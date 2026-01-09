@@ -397,6 +397,7 @@ mcpContextForge:
     GATEWAY_HEALTH_CHECK_TIMEOUT: "5.0" # per-check timeout to bound total time of one gateway health check
     UNHEALTHY_THRESHOLD: "3"         # failed checks before peer marked unhealthy
     GATEWAY_VALIDATION_TIMEOUT: "5"  # gateway URL validation timeout (seconds)
+    AUTO_REFRESH_SERVERS: "false"      # automatic tools/prompts/resources refresh from the mcp servers during gateway health checks
     FILELOCK_NAME: gateway_healthcheck_init.lock # lock file used at start-up
 
     # ─ MCP Session Pool ─
