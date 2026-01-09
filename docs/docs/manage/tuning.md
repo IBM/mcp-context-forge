@@ -401,7 +401,7 @@ The MCP session pool maintains persistent connections to upstream MCP servers, p
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MCP_SESSION_POOL_ENABLED` | `false` | Enable/disable session pooling |
-| `MCP_SESSION_POOL_MAX_PER_KEY` | `10` | Max sessions per (URL, identity, transport) |
+| `MCP_SESSION_POOL_MAX_PER_KEY` | `10` | Max sessions per (URL, identity, transport). **Increase to 50-200 for high concurrency.** |
 | `MCP_SESSION_POOL_TTL` | `300.0` | Session TTL before forced close (seconds) |
 | `MCP_SESSION_POOL_TRANSPORT_TIMEOUT` | `30.0` | Timeout for all HTTP operations (seconds) |
 | `MCP_SESSION_POOL_HEALTH_CHECK_INTERVAL` | `60.0` | Idle time before health check (seconds) |
@@ -414,11 +414,18 @@ The MCP session pool maintains persistent connections to upstream MCP servers, p
 ### Recommended Production Settings
 
 ```bash
-# Baseline settings for authenticated deployments
+# Baseline settings for authenticated deployments (low-to-moderate traffic)
 MCP_SESSION_POOL_ENABLED=true
 MCP_SESSION_POOL_MAX_PER_KEY=10
 MCP_SESSION_POOL_TTL=300
 MCP_SESSION_POOL_TRANSPORT_TIMEOUT=30
+
+# High-concurrency settings (1000+ concurrent users)
+MCP_SESSION_POOL_ENABLED=true
+MCP_SESSION_POOL_MAX_PER_KEY=200          # 50-200 for high concurrency
+MCP_SESSION_POOL_TTL=300
+MCP_SESSION_POOL_TRANSPORT_TIMEOUT=30
+MCP_SESSION_POOL_ACQUIRE_TIMEOUT=60       # Longer timeout under load
 
 # Ensure identity headers are present
 ENABLE_HEADER_PASSTHROUGH=true
@@ -570,7 +577,278 @@ location /admin {
 
 ---
 
-## 8 - Security tips while tuning
+## 8 - High-Concurrency Production Tuning
+
+This section covers comprehensive tuning for deployments handling **1000+ concurrent users**. These settings have been tested under load with 6500 concurrent users.
+
+### 8.1 Database Connection Pool (SQLAlchemy)
+
+The gateway's internal connection pool manages connections between the application and PgBouncer (or PostgreSQL directly).
+
+| Variable | Default | High-Concurrency | Description |
+|----------|---------|------------------|-------------|
+| `DB_POOL_CLASS` | `auto` | `queue` | Pool implementation. Use `queue` with PgBouncer, `null` for safest option |
+| `DB_POOL_PRE_PING` | `false` | `true` | Validate connections before use (SELECT 1). Prevents stale connection errors |
+| `DB_POOL_SIZE` | `5` | `20` | Persistent connections per worker. Formula: `(concurrent_users / workers) × 0.5` |
+| `DB_MAX_OVERFLOW` | `10` | `10` | Extra connections allowed during spikes |
+| `DB_POOL_TIMEOUT` | `30` | `60` | Seconds to wait for available connection before error |
+| `DB_POOL_RECYCLE` | `3600` | `60` | Recycle connections after N seconds. **Must be less than PgBouncer CLIENT_IDLE_TIMEOUT** |
+
+**Example high-concurrency configuration:**
+
+```bash
+# With PgBouncer (recommended)
+DB_POOL_CLASS=queue
+DB_POOL_PRE_PING=true
+DB_POOL_SIZE=20
+DB_MAX_OVERFLOW=10
+DB_POOL_TIMEOUT=60
+DB_POOL_RECYCLE=60    # Half of PgBouncer CLIENT_IDLE_TIMEOUT (120s)
+```
+
+**Common errors and solutions:**
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `QueuePool limit reached, connection timed out` | Pool too small for load | Increase `DB_POOL_SIZE` (e.g., 5→20) |
+| `idle transaction timeout` | Transactions not committed | Ensure all endpoints call `db.commit()` |
+| `connection reset by peer` | PgBouncer recycled stale connection | Set `DB_POOL_RECYCLE` < `CLIENT_IDLE_TIMEOUT` |
+
+---
+
+### 8.2 PgBouncer Connection Pooler
+
+PgBouncer multiplexes many application connections into fewer PostgreSQL connections, dramatically reducing database overhead.
+
+#### Client-Side Settings (from gateway workers)
+
+| Variable | Default | High-Concurrency | Description |
+|----------|---------|------------------|-------------|
+| `MAX_CLIENT_CONN` | `1000` | `5000-15000` | Max connections from all gateway workers. Formula: `replicas × workers × pool_size × 2` |
+| `DEFAULT_POOL_SIZE` | `20` | `600` | Shared connections to PostgreSQL per database |
+| `MIN_POOL_SIZE` | `0` | `100` | Pre-warmed connections for instant response |
+| `RESERVE_POOL_SIZE` | `0` | `150` | Emergency pool for burst traffic |
+| `RESERVE_POOL_TIMEOUT` | `5` | `2` | Seconds before tapping reserve pool |
+
+#### Server-Side Settings (to PostgreSQL)
+
+| Variable | Default | High-Concurrency | Description |
+|----------|---------|------------------|-------------|
+| `MAX_DB_CONNECTIONS` | `100` | `700` | Max connections to PostgreSQL. **Must be < PostgreSQL max_connections** |
+| `MAX_USER_CONNECTIONS` | `100` | `700` | Per-user limit, typically equals `MAX_DB_CONNECTIONS` |
+| `SERVER_LIFETIME` | `3600` | `1800-3600` | Recycle server connections after N seconds |
+| `SERVER_IDLE_TIMEOUT` | `600` | `600` | Close unused server connections after N seconds |
+
+#### Timeout Settings
+
+| Variable | Default | High-Concurrency | Description |
+|----------|---------|------------------|-------------|
+| `QUERY_WAIT_TIMEOUT` | `120` | `60` | Max wait for available connection |
+| `CLIENT_IDLE_TIMEOUT` | `0` | `120-300` | Close idle client connections. **Gateway DB_POOL_RECYCLE must be less than this** |
+| `SERVER_CONNECT_TIMEOUT` | `15` | `5` | Timeout for new PostgreSQL connections |
+| `IDLE_TRANSACTION_TIMEOUT` | `0` | `60-300` | Kill transactions idle > N seconds. **Critical for preventing connection starvation** |
+
+#### Transaction Reset Settings
+
+| Variable | Default | High-Concurrency | Description |
+|----------|---------|------------------|-------------|
+| `SERVER_RESET_QUERY` | `DISCARD ALL` | `DISCARD ALL` | Reset connection state when returned to pool |
+| `SERVER_RESET_QUERY_ALWAYS` | `0` | `1` | Always run reset query even after clean transactions |
+| `POOL_MODE` | `session` | `transaction` | Connection returned after each transaction (required for web apps) |
+
+**Example PgBouncer configuration (docker-compose.yml):**
+
+```yaml
+pgbouncer:
+  image: edoburu/pgbouncer:latest
+  environment:
+    - DATABASE_URL=postgres://postgres:password@postgres:5432/mcp
+    - POOL_MODE=transaction
+    # Client limits
+    - MAX_CLIENT_CONN=5000
+    - DEFAULT_POOL_SIZE=600
+    - MIN_POOL_SIZE=100
+    - RESERVE_POOL_SIZE=150
+    # Server limits
+    - MAX_DB_CONNECTIONS=700
+    - SERVER_LIFETIME=1800
+    - SERVER_IDLE_TIMEOUT=600
+    # Timeouts
+    - QUERY_WAIT_TIMEOUT=60
+    - CLIENT_IDLE_TIMEOUT=120
+    - IDLE_TRANSACTION_TIMEOUT=60
+    # Reset
+    - SERVER_RESET_QUERY=DISCARD ALL
+    - SERVER_RESET_QUERY_ALWAYS=1
+  ulimits:
+    nofile:
+      soft: 65536
+      hard: 65536
+```
+
+---
+
+### 8.3 Container File Descriptor Limits (ulimits)
+
+Each network connection requires a file descriptor. Containers default to 1024 soft limit, which is insufficient for high concurrency.
+
+| Container | Recommended `nofile` | Rationale |
+|-----------|---------------------|-----------|
+| **PgBouncer** | `65536` | `MAX_CLIENT_CONN + MAX_DB_CONNECTIONS + overhead` |
+| **PostgreSQL** | `8192` | `max_connections + internal FDs` |
+| **Redis** | `65536` | `maxclients + overhead` |
+| **Gateway** | `65536` | `HTTP connections + DB connections + MCP sessions` |
+| **Nginx** | `65535` | `worker_connections × workers` |
+
+**docker-compose.yml example:**
+
+```yaml
+services:
+  pgbouncer:
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  postgres:
+    ulimits:
+      nofile:
+        soft: 8192
+        hard: 8192
+
+  redis:
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  gateway:
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+```
+
+**Verification:**
+
+```bash
+# Check container limits
+docker exec <container> cat /proc/1/limits | grep "open files"
+
+# Count current open FDs
+docker exec <container> ls /proc/1/fd | wc -l
+```
+
+**Common error:** `accept() failed: No file descriptors available` - Increase `ulimits.nofile`.
+
+---
+
+### 8.4 Host System Tuning (sysctl)
+
+The Docker host kernel settings affect all containers. These must be set on the host, not in containers.
+
+| Setting | Default | High-Concurrency | Description |
+|---------|---------|------------------|-------------|
+| `net.core.somaxconn` | `128` | `65535` | Max socket listen backlog |
+| `net.core.netdev_max_backlog` | `1000` | `65535` | Max packets queued before processing |
+| `net.ipv4.tcp_max_syn_backlog` | `128` | `65535` | Max SYN packets pending connection |
+| `net.ipv4.tcp_fin_timeout` | `60` | `15` | Faster TIME_WAIT cleanup |
+| `net.ipv4.tcp_tw_reuse` | `0` | `1` | Reuse TIME_WAIT sockets |
+| `net.ipv4.ip_local_port_range` | `32768 60999` | `1024 65535` | More ephemeral ports |
+| `fs.file-max` | varies | `2097152` | System-wide file descriptor limit |
+
+**Apply temporarily:**
+
+```bash
+sudo sysctl -w \
+  net.core.somaxconn=65535 \
+  net.core.netdev_max_backlog=65535 \
+  net.ipv4.tcp_max_syn_backlog=65535 \
+  net.ipv4.tcp_fin_timeout=15 \
+  net.ipv4.tcp_tw_reuse=1 \
+  net.ipv4.ip_local_port_range="1024 65535"
+```
+
+**Apply permanently** (`/etc/sysctl.d/99-mcp-loadtest.conf`):
+
+```ini
+# High-concurrency TCP tuning for MCP Gateway load testing
+net.core.somaxconn = 65535
+net.core.netdev_max_backlog = 65535
+net.ipv4.tcp_max_syn_backlog = 65535
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.ip_local_port_range = 1024 65535
+fs.file-max = 2097152
+```
+
+Then apply: `sudo sysctl -p /etc/sysctl.d/99-mcp-loadtest.conf`
+
+---
+
+### 8.5 HTTPX Client Pool (Outbound HTTP)
+
+The gateway uses a shared HTTPX client pool for all outbound requests (federation, health checks, A2A, MCP tool calls).
+
+| Variable | Default | High-Concurrency | Description |
+|----------|---------|------------------|-------------|
+| `HTTPX_MAX_CONNECTIONS` | `100` | `200` | Total connections in pool |
+| `HTTPX_MAX_KEEPALIVE_CONNECTIONS` | `20` | `100` | Persistent keepalive connections |
+| `HTTPX_KEEPALIVE_EXPIRY` | `5.0` | `30.0` | Idle connection expiry (seconds) |
+| `HTTPX_CONNECT_TIMEOUT` | `5.0` | `5.0` | TCP connection timeout |
+| `HTTPX_READ_TIMEOUT` | `30.0` | `120.0` | Response read timeout (increase for slow tools) |
+| `HTTPX_POOL_TIMEOUT` | `5.0` | `10.0` | Wait for available connection |
+
+**Example:**
+
+```bash
+HTTPX_MAX_CONNECTIONS=200
+HTTPX_MAX_KEEPALIVE_CONNECTIONS=100
+HTTPX_KEEPALIVE_EXPIRY=30.0
+HTTPX_READ_TIMEOUT=120.0
+HTTPX_POOL_TIMEOUT=10.0
+```
+
+---
+
+### 8.6 Complete High-Concurrency Configuration
+
+Here's a complete configuration for 3000-6500 concurrent users:
+
+```yaml
+# docker-compose.yml gateway environment
+environment:
+  # Database pool (via PgBouncer)
+  - DATABASE_URL=postgresql+psycopg://postgres:password@pgbouncer:6432/mcp
+  - DB_POOL_CLASS=queue
+  - DB_POOL_PRE_PING=true
+  - DB_POOL_SIZE=20
+  - DB_MAX_OVERFLOW=10
+  - DB_POOL_TIMEOUT=60
+  - DB_POOL_RECYCLE=60
+
+  # MCP Session Pool
+  - MCP_SESSION_POOL_ENABLED=true
+  - MCP_SESSION_POOL_MAX_PER_KEY=200
+  - MCP_SESSION_POOL_ACQUIRE_TIMEOUT=60
+
+  # HTTPX Client Pool
+  - HTTPX_MAX_CONNECTIONS=200
+  - HTTPX_MAX_KEEPALIVE_CONNECTIONS=100
+  - HTTPX_READ_TIMEOUT=120.0
+
+  # Redis
+  - REDIS_MAX_CONNECTIONS=150
+
+  # Performance
+  - LOG_LEVEL=ERROR
+  - DISABLE_ACCESS_LOG=true
+  - AUDIT_TRAIL_ENABLED=false
+```
+
+---
+
+## 9 - Security tips while tuning
 
 * Never commit real `JWT_SECRET_KEY`, DB passwords, or tokens-use `.env.example` as a template.
 * Prefer platform secrets (K8s Secrets, Code Engine secrets) over baking creds into the image.
