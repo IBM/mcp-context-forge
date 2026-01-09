@@ -19,10 +19,10 @@ Examples:
 
 # Standard
 from datetime import datetime, timedelta, UTC
-from typing import Optional
+from typing import Optional, Union
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -31,7 +31,17 @@ from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, SessionLocal
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
-from mcpgateway.schemas import AuthenticationResponse, AuthEventResponse, ChangePasswordRequest, EmailLoginRequest, EmailRegistrationRequest, EmailUserResponse, SuccessResponse, UserListResponse
+from mcpgateway.schemas import (
+    AuthenticationResponse,
+    AuthEventResponse,
+    ChangePasswordRequest,
+    CursorPaginatedUsersResponse,
+    EmailLoginRequest,
+    EmailRegistrationRequest,
+    EmailUserResponse,
+    SuccessResponse,
+    UserListResponse,
+)
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, EmailValidationError, PasswordValidationError, UserExistsError
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_jwt_token import create_jwt_token
@@ -429,24 +439,34 @@ async def get_auth_events(limit: int = 50, offset: int = 0, current_user: EmailU
 
 
 # Admin-only endpoints
-@email_auth_router.get("/admin/users", response_model=UserListResponse)
+@email_auth_router.get("/admin/users", response_model=Union[UserListResponse, CursorPaginatedUsersResponse])
 @require_permission("admin.user_management")
-async def list_users(limit: int = 100, offset: int = 0, current_user_ctx: dict = Depends(get_current_user_with_permissions)):
-    """List all users (admin only).
+async def list_users(
+    cursor: Optional[str] = None,
+    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
+    limit: Optional[int] = Query(None, ge=0, description="Maximum number of users to return. 0 means all (no limit). Default uses pagination_default_page_size."),
+    current_user_ctx: dict = Depends(get_current_user_with_permissions),
+):
+    """List all users (admin only) with cursor-based pagination support.
+
+    This endpoint supports cursor-based pagination for efficient handling of large user datasets.
+    For small datasets or backward compatibility, the legacy offset-based format is still supported.
 
     Args:
-        limit: Maximum number of users to return
-        offset: Number of users to skip
+        cursor: Pagination cursor for fetching the next set of results
+        include_pagination: Whether to include cursor pagination metadata in the response
+        limit: Maximum number of users to return. Use 0 for all users (no limit).
+            If not specified, uses pagination_default_page_size (default: 50).
         current_user_ctx: Currently authenticated user context with permissions
 
     Returns:
-        UserListResponse: List of users with pagination
+        UserListResponse or CursorPaginatedUsersResponse: List of users with pagination metadata
 
     Raises:
         HTTPException: If user is not admin
 
     Examples:
-        >>> # GET /auth/email/admin/users?limit=10&offset=0
+        >>> # GET /auth/email/admin/users?cursor=eyJpZCI6MTIzfQ&include_pagination=true
         >>> # Headers: Authorization: Bearer <admin_token>
     """
 
@@ -454,10 +474,16 @@ async def list_users(limit: int = 100, offset: int = 0, current_user_ctx: dict =
     auth_service = EmailAuthService(db)
 
     try:
-        users = await auth_service.list_users(limit=limit, offset=offset)
-        total_count = await auth_service.count_users()
+        # Use cursor-based pagination
+        users, next_cursor = await auth_service.list_users(cursor=cursor, limit=limit)
 
-        return UserListResponse(users=[EmailUserResponse.from_email_user(user) for user in users], total_count=total_count, limit=limit, offset=offset)
+        # Return appropriate format based on include_pagination flag
+        if include_pagination:
+            return CursorPaginatedUsersResponse(users=[EmailUserResponse.from_email_user(user) for user in users], next_cursor=next_cursor)
+        else:
+            # Legacy format without cursor metadata
+            total_count = await auth_service.count_users()
+            return UserListResponse(users=[EmailUserResponse.from_email_user(user) for user in users], total_count=total_count, limit=limit or 50, offset=0)
 
     except Exception as e:
         logger.error(f"Error listing users: {e}")

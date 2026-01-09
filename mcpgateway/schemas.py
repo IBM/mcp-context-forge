@@ -6766,6 +6766,13 @@ class CursorPaginatedA2AAgentsResponse(BaseModel):
     next_cursor: Optional[str] = Field(None, alias="nextCursor", description="Cursor for the next page, null if no more pages")
 
 
+class CursorPaginatedUsersResponse(BaseModel):
+    """Cursor-paginated response for users list endpoint."""
+
+    users: List["EmailUserResponse"] = Field(..., description="List of users for this page")
+    next_cursor: Optional[str] = Field(None, alias="nextCursor", description="Cursor for the next page, null if no more pages")
+
+
 # ============================================================================
 # Observability Schemas (OpenTelemetry-style traces, spans, events, metrics)
 # ============================================================================

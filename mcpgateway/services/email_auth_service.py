@@ -23,18 +23,20 @@ Examples:
 # Standard
 from datetime import datetime, timezone
 import re
-from typing import Optional
+from typing import Any, Dict, Optional, Union
 
 # Third-Party
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, desc, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import EmailAuthEvent, EmailUser
+from mcpgateway.schemas import PaginationLinks, PaginationMeta
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.pagination import unified_paginate
 
 # Initialize logging
 logging_service = LoggingService()
@@ -577,30 +579,107 @@ class EmailAuthService:
             user.reset_failed_attempts()  # This also updates last_login
             self.db.commit()
 
-    async def list_users(self, limit: int = 100, offset: int = 0) -> list[EmailUser]:
-        """List all users with pagination.
+    async def list_users(
+        self,
+        limit: Optional[int] = None,
+        offset: int = 0,
+        cursor: Optional[str] = None,
+        page: Optional[int] = None,
+        per_page: Optional[int] = None,
+    ) -> Union[list[EmailUser], tuple[list[EmailUser], Optional[str]], Dict[str, Any]]:
+        """List all users with cursor or offset-based pagination support.
+
+        This method supports both cursor-based (for API endpoints with large datasets)
+        and offset-based (for admin UI with page numbers) pagination.
 
         Note: This method returns ORM objects and cannot be cached since callers
         depend on ORM attributes and methods (e.g., EmailUserResponse.from_email_user).
 
         Args:
-            limit: Maximum number of users to return
-            offset: Number of users to skip
+            limit: Maximum number of users to return (for legacy offset-based pagination)
+            offset: Number of users to skip (for legacy offset-based pagination)
+            cursor: Opaque cursor token for cursor-based pagination
+            page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
+            per_page: Items per page for page-based pagination
 
         Returns:
-            List of EmailUser objects
+            - List of EmailUser objects (legacy mode, deprecated)
+            - Tuple of (list[EmailUser], next_cursor) for cursor-based pagination
+            - Dict with 'data', 'pagination', 'links' for page-based pagination
 
         Examples:
-            # users = await service.list_users(limit=10)
-            # len(users) <= 10     # Returns: True
+            # Cursor-based pagination (for APIs)
+            # users, next_cursor = await service.list_users(cursor=None, limit=50)
+            # len(users) <= 50     # Returns: True
+
+            # Page-based pagination (for admin UI)
+            # result = await service.list_users(page=1, per_page=20)
+            # result['data']       # Returns: list of users
+            # result['pagination'] # Returns: pagination metadata
         """
         try:
-            stmt = select(EmailUser).offset(offset).limit(limit)
-            result = self.db.execute(stmt)
-            users = list(result.scalars().all())
-            return users
+            # Build base query with ordering by created_at for consistent pagination
+            query = select(EmailUser).order_by(desc(EmailUser.created_at), desc(EmailUser.email))
+
+            # Handle legacy offset-based pagination (for backward compatibility)
+            # If offset is provided but page is not, use old-style offset/limit approach
+            if offset > 0 and page is None and cursor is None:
+                query = query.offset(offset)
+                if limit is not None:
+                    query = query.limit(limit)
+                result = self.db.execute(query)
+                users = list(result.scalars().all())
+                return users
+
+            # Use unified pagination helper - handles both page and cursor pagination
+            pag_result = await unified_paginate(
+                db=self.db,
+                query=query,
+                page=page,
+                per_page=per_page,
+                cursor=cursor,
+                limit=limit if limit != 100 or cursor is not None or page is not None else None,  # Only use limit if explicitly set or using pagination
+                base_url="/admin/users",  # Used for page-based links
+                query_params={},
+            )
+
+            next_cursor = None
+            # Extract users based on pagination type
+            if page is not None:
+                # Page-based: pag_result is a dict
+                users_db = pag_result["data"]
+                # Return page-based format
+                return {
+                    "data": users_db,
+                    "pagination": pag_result["pagination"],
+                    "links": pag_result["links"],
+                }
+
+            # Cursor-based: pag_result is a tuple
+            users_db, next_cursor = pag_result
+
+            # For backward compatibility: if neither cursor nor page specified, return just the list
+            if cursor is None and page is None:
+                return list(users_db)
+
+            # Cursor-based format
+            return (list(users_db), next_cursor)
+
         except Exception as e:
             logger.error(f"Error listing users: {e}")
+            # Return appropriate empty response based on pagination mode
+            if page is not None:
+                return {
+                    "data": [],
+                    "pagination": PaginationMeta(page=page, per_page=per_page or 50, total_items=0, total_pages=0, has_next=False, has_prev=False),
+                    "links": PaginationLinks(  # pylint: disable=kwarg-superseded-by-positional-arg
+                        self="/admin/users?page=1&per_page=50", first="/admin/users?page=1&per_page=50", last="/admin/users?page=1&per_page=50"
+                    ),
+                }
+
+            if cursor is not None:
+                return ([], None)
+
             return []
 
     async def get_all_users(self) -> list[EmailUser]:

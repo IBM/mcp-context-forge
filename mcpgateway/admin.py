@@ -5339,13 +5339,17 @@ async def admin_reject_join_request(
 @require_permission("admin.user_management")
 async def admin_list_users(
     request: Request,
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Response:
-    """List users for admin UI via HTMX.
+    """List users for admin UI via HTMX with pagination support.
 
     Args:
         request: FastAPI request object
+        page: Page number (1-indexed). Default: 1.
+        per_page: Items per page (1-500). Default: 50.
         db: Database session
         user: Current authenticated user context
 
@@ -5363,8 +5367,9 @@ async def admin_list_users(
 
         auth_service = EmailAuthService(db)
 
-        # List all users (admin endpoint)
-        users = await auth_service.list_users()
+        # List users with page-based pagination
+        paginated_result = await auth_service.list_users(page=page, per_page=per_page)
+        users = paginated_result["data"]
 
         # Check if JSON response is requested (for dropdown population)
         accept_header = request.headers.get("accept", "")
@@ -5464,7 +5469,50 @@ async def admin_list_users(
         if not users_html:
             users_html = '<div class="text-center py-8"><p class="text-gray-500 dark:text-gray-400">No users found.</p></div>'
 
-        return HTMLResponse(content=users_html)
+        # Add pagination information at the bottom
+        pagination = paginated_result["pagination"]
+
+        # Build pagination buttons (split for line length compliance)
+        prev_btn_classes = (
+            "px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700"
+        )
+        prev_btn_disabled_classes = (
+            "px-3 py-2 text-sm font-medium text-gray-400 dark:text-gray-600 bg-gray-100 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-md cursor-not-allowed"
+        )
+        next_btn_classes = prev_btn_classes
+        next_btn_disabled_classes = prev_btn_disabled_classes
+
+        prev_btn = (
+            f'<button hx-get="{root_path}/admin/users?page={pagination.page - 1}&per_page={pagination.per_page}" '
+            f'hx-target="#users-list" hx-swap="innerHTML" class="{prev_btn_classes}">Previous</button>'
+            if pagination.has_prev
+            else f'<button disabled class="{prev_btn_disabled_classes}">Previous</button>'
+        )
+        next_btn = (
+            f'<button hx-get="{root_path}/admin/users?page={pagination.page + 1}&per_page={pagination.per_page}" '
+            f'hx-target="#users-list" hx-swap="innerHTML" class="{next_btn_classes}">Next</button>'
+            if pagination.has_next
+            else f'<button disabled class="{next_btn_disabled_classes}">Next</button>'
+        )
+
+        pagination_html = f"""
+        <div class="mt-6 flex items-center justify-between border-t border-gray-200 dark:border-gray-700 pt-4">
+            <div class="text-sm text-gray-700 dark:text-gray-300">
+                Showing <span class="font-medium">{(pagination.page - 1) * pagination.per_page + 1}</span>
+                to <span class="font-medium">{min(pagination.page * pagination.per_page, pagination.total_items)}</span>
+                of <span class="font-medium">{pagination.total_items}</span> users
+            </div>
+            <div class="flex gap-2">
+                {prev_btn}
+                <span class="px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Page {pagination.page} of {pagination.total_pages}
+                </span>
+                {next_btn}
+            </div>
+        </div>
+        """
+
+        return HTMLResponse(content=users_html + pagination_html)
 
     except Exception as e:
         LOGGER.error(f"Error listing users for admin {user}: {e}")
