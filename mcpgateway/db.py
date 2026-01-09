@@ -4238,6 +4238,26 @@ class Server(Base):
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
+
+    # Relationship for loading team names (only active teams)
+    # Uses default lazy loading - team name is only loaded when accessed
+    # For list/admin views, use explicit joinedload(DbServer.email_team) for single-query loading
+    # This avoids adding overhead to hot paths that don't need team names
+    email_team: Mapped[Optional["EmailTeam"]] = relationship(
+        "EmailTeam",
+        primaryjoin="and_(Server.team_id == EmailTeam.id, EmailTeam.is_active == True)",
+        foreign_keys=[team_id],
+    )
+
+    @property
+    def team(self) -> Optional[str]:
+        """Return the team name from the `email_team` relationship.
+
+        Returns:
+            Optional[str]: The team name if the server belongs to an active team, otherwise None.
+        """
+        return self.email_team.name if self.email_team else None
+
     __table_args__ = (
         UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_server"),
         Index("idx_servers_created_at_id", "created_at", "id"),
