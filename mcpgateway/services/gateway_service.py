@@ -378,6 +378,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         self.oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
         self._event_service = EventService(channel_name="mcpgateway:gateway_events")
 
+        # Per-gateway refresh locks to prevent concurrent refreshes for the same gateway
+        self._refresh_locks: Dict[str, asyncio.Lock] = {}
+
         # For health checks, we determine the leader instance.
         self.redis_url = settings.redis_url if settings.cache_type == "redis" else None
 
@@ -4392,7 +4395,127 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 tool_lookup_cache = _get_tool_lookup_cache()
                 await tool_lookup_cache.invalidate_gateway(str(gateway_id))
 
+        # Add update counts to result
+        result["tools_updated"] = tools_updated
+        result["resources_updated"] = resources_updated
+        result["prompts_updated"] = prompts_updated
+
         return result
+
+    def _get_refresh_lock(self, gateway_id: str) -> asyncio.Lock:
+        """Get or create a per-gateway refresh lock.
+
+        This ensures only one refresh operation can run for a given gateway at a time.
+
+        Args:
+            gateway_id: ID of the gateway to get the lock for
+
+        Returns:
+            asyncio.Lock: The lock for the specified gateway
+
+        Examples:
+            >>> from mcpgateway.services.gateway_service import GatewayService
+            >>> service = GatewayService()
+            >>> lock1 = service._get_refresh_lock('gw-123')
+            >>> lock2 = service._get_refresh_lock('gw-123')
+            >>> lock1 is lock2
+            True
+            >>> lock3 = service._get_refresh_lock('gw-456')
+            >>> lock1 is lock3
+            False
+        """
+        if gateway_id not in self._refresh_locks:
+            self._refresh_locks[gateway_id] = asyncio.Lock()
+        return self._refresh_locks[gateway_id]
+
+    async def refresh_gateway_manually(
+        self,
+        gateway_id: str,
+        include_resources: bool = True,
+        include_prompts: bool = True,
+        user_email: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Manually trigger a refresh of tools/resources/prompts for a gateway.
+
+        This method provides a public API for triggering an immediate refresh
+        of a gateway's tools, resources, and prompts from its MCP server.
+        It includes concurrency control via per-gateway locking.
+
+        Args:
+            gateway_id: Gateway ID to refresh
+            include_resources: Whether to include resources in the refresh
+            include_prompts: Whether to include prompts in the refresh
+            user_email: Email of the user triggering the refresh
+
+        Returns:
+            Dict with counts: {tools_added, tools_updated, tools_removed,
+                              resources_added, resources_updated, resources_removed,
+                              prompts_added, prompts_updated, prompts_removed,
+                              validation_errors, duration_ms, refreshed_at}
+
+        Raises:
+            GatewayNotFoundError: If the gateway does not exist
+            GatewayError: If another refresh is already in progress for this gateway
+
+        Examples:
+            >>> from mcpgateway.services.gateway_service import GatewayService
+            >>> from unittest.mock import patch, MagicMock, AsyncMock
+            >>> import asyncio
+
+            >>> # Test method is async
+            >>> service = GatewayService()
+            >>> import inspect
+            >>> inspect.iscoroutinefunction(service.refresh_gateway_manually)
+            True
+        """
+        start_time = time.monotonic()
+
+        # Check if gateway exists before acquiring lock
+        with fresh_db_session() as db:
+            gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+            if not gateway:
+                raise GatewayNotFoundError(f"Gateway with ID '{gateway_id}' not found")
+            gateway_name = gateway.name
+
+        lock = self._get_refresh_lock(gateway_id)
+
+        # Check if lock is already held (concurrent refresh in progress)
+        if lock.locked():
+            raise GatewayError(f"Refresh already in progress for gateway {gateway_name}")
+
+        async with lock:
+            logger.info(f"Starting manual refresh for gateway {gateway_name} (ID: {gateway_id})")
+
+            result = await self._refresh_gateway_tools_resources_prompts(
+                gateway_id=gateway_id,
+                _user_email=user_email,
+                created_via="manual_refresh",
+            )
+
+            # Update last_refresh_at timestamp
+            with fresh_db_session() as db:
+                gw = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+                if gw:
+                    gw.last_refresh_at = datetime.now(timezone.utc)
+                    db.commit()
+
+        duration_ms = (time.monotonic() - start_time) * 1000
+        refreshed_at = datetime.now(timezone.utc)
+
+        logger.info(
+            f"Completed manual refresh for gateway {gateway_name}: "
+            f"tools(+{result['tools_added']}/-{result['tools_removed']}), "
+            f"resources(+{result['resources_added']}/-{result['resources_removed']}), "
+            f"prompts(+{result['prompts_added']}/-{result['prompts_removed']}) "
+            f"in {duration_ms:.2f}ms"
+        )
+
+        return {
+            **result,
+            "validation_errors": [],
+            "duration_ms": duration_ms,
+            "refreshed_at": refreshed_at,
+        }
 
     async def _publish_event(self, event: Dict[str, Any]) -> None:
         """Publish event to all subscribers.
