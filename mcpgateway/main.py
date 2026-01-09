@@ -4919,45 +4919,80 @@ async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] =
 # Healthcheck      #
 ####################
 @app.get("/health")
-async def healthcheck(db: Session = Depends(get_db)):
+def healthcheck():
     """
     Perform a basic health check to verify database connectivity.
 
-    Args:
-        db: SQLAlchemy session dependency.
+    Sync function so FastAPI runs it in a threadpool, avoiding event loop blocking.
+    Uses a dedicated session to avoid cross-thread issues and double-commit
+    from get_db dependency. All DB operations happen in the same thread.
 
     Returns:
         A dictionary with the health status and optional error message.
     """
+    db = SessionLocal()
     try:
-        # Execute the query using text() for an explicit textual SQL expression.
         db.execute(text("SELECT 1"))
+        # Explicitly commit to release PgBouncer backend connection in transaction mode.
+        db.commit()
+        return {"status": "healthy"}
     except Exception as e:
+        # Rollback, then invalidate if rollback fails (mirrors get_db cleanup).
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
         error_message = f"Database connection error: {str(e)}"
         logger.error(error_message)
         return {"status": "unhealthy", "error": error_message}
-    return {"status": "healthy"}
+    finally:
+        db.close()
 
 
 @app.get("/ready")
-async def readiness_check(db: Session = Depends(get_db)):
+async def readiness_check():
     """
     Perform a readiness check to verify if the application is ready to receive traffic.
 
-    Args:
-        db: SQLAlchemy session dependency.
+    Creates and manages its own session inside the worker thread to ensure all DB
+    operations (create, execute, commit, rollback, close) happen in the same thread.
+    This avoids cross-thread session issues and double-commit from get_db.
 
     Returns:
         JSONResponse with status 200 if ready, 503 if not.
     """
-    try:
-        # Run the blocking DB check in a thread to avoid blocking the event loop
-        await asyncio.to_thread(db.execute, text("SELECT 1"))
-        return ORJSONResponse(content={"status": "ready"}, status_code=200)
-    except Exception as e:
-        error_message = f"Readiness check failed: {str(e)}"
+
+    def _check_db() -> str | None:
+        # Create session in this thread - all DB operations stay in the same thread.
+        db = SessionLocal()
+        try:
+            db.execute(text("SELECT 1"))
+            # Explicitly commit to release PgBouncer backend connection.
+            db.commit()
+            return None  # Success
+        except Exception as e:
+            # Rollback, then invalidate if rollback fails (mirrors get_db cleanup).
+            try:
+                db.rollback()
+            except Exception:
+                try:
+                    db.invalidate()
+                except Exception:
+                    pass  # nosec B110 - Best effort cleanup on connection failure
+            return str(e)
+        finally:
+            db.close()
+
+    # Run the blocking DB check in a thread to avoid blocking the event loop.
+    error = await asyncio.to_thread(_check_db)
+    if error:
+        error_message = f"Readiness check failed: {error}"
         logger.error(error_message)
         return ORJSONResponse(content={"status": "not ready", "error": error_message}, status_code=503)
+    return ORJSONResponse(content={"status": "ready"}, status_code=200)
 
 
 @app.get("/health/security", tags=["health"])

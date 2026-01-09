@@ -4260,11 +4260,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         # For authorization_code OAuth gateways, empty responses may indicate incomplete auth flow
         # Skip only if it's an auth_code gateway with no data (user may not have completed authorization)
-        is_auth_code_gateway = (
-            gateway_oauth_config
-            and isinstance(gateway_oauth_config, dict)
-            and gateway_oauth_config.get("grant_type") == "authorization_code"
-        )
+        is_auth_code_gateway = gateway_oauth_config and isinstance(gateway_oauth_config, dict) and gateway_oauth_config.get("grant_type") == "authorization_code"
         if not tools and not resources and not prompts and is_auth_code_gateway:
             logger.debug(f"No tools/resources/prompts returned from auth_code gateway {gateway_name} (user may not have authorized)")
             return result
