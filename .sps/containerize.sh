@@ -51,7 +51,7 @@ GH_USER="ISC-REL"
 GH_TOKEN="$(get_env git-token)"
 GH_URL="https://${GH_USER}:${GH_TOKEN}@github.ibm.com/cyberfraud/cyberfraud-mcp-management-service.git"
 git clone $GH_URL
-source $HOME/.sps/run_smoke_test.sh
+source ./.sps/run_smoke_test.sh
 
 DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "${IMAGE}" | awk -F@ '{print $2}')"
 
