@@ -412,6 +412,116 @@ ORDER BY seq_tup_read DESC LIMIT 10;
 - Set `idle_in_transaction_session_timeout`
 - Optimize slow queries
 
+### Issue: Health Check Endpoints Holding PgBouncer Connections
+
+**Symptom:** `SELECT 1` queries stuck in `idle in transaction` state for minutes
+
+```sql
+SELECT left(query, 50), count(*), avg(EXTRACT(EPOCH FROM (NOW() - state_change)))::int as avg_age
+FROM pg_stat_activity
+WHERE state = 'idle in transaction' AND datname = 'mcp'
+GROUP BY left(query, 50);
+
+        query         | count | avg_age
+----------------------+-------+---------
+ SELECT 1             |    45 |     139
+```
+
+**Causes:**
+- PgBouncer in `transaction` mode holds backend connections until `COMMIT`/`ROLLBACK`
+- Health endpoints using `Depends(get_db)` rely on dependency cleanup, which may not execute on timeout/cancellation
+- `async def` endpoints calling blocking SQLAlchemy code on event loop thread
+- Cross-thread session usage when mixing `asyncio.to_thread` with `Depends(get_db)`
+
+**Solutions:**
+
+1. **Use dedicated sessions instead of `Depends(get_db)`** - Health endpoints should create and manage their own sessions to avoid double-commit and cross-thread issues:
+
+```python
+@app.get("/health")
+def healthcheck():  # Sync function - FastAPI runs in threadpool
+    """Health check with dedicated session."""
+    db = SessionLocal()
+    try:
+        db.execute(text("SELECT 1"))
+        db.commit()  # Explicitly release PgBouncer connection
+        return {"status": "healthy"}
+    except Exception as e:
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()  # Remove broken connection from pool
+            except Exception:
+                pass
+        return {"status": "unhealthy", "error": str(e)}
+    finally:
+        db.close()
+```
+
+2. **Use sync functions for simple blocking operations** - FastAPI automatically runs `def` (sync) route handlers in a threadpool:
+
+```python
+# BAD: async def with blocking calls stalls event loop
+@app.get("/health")
+async def healthcheck():
+    db.execute(text("SELECT 1"))  # Blocks event loop!
+
+# GOOD: sync def runs in threadpool automatically
+@app.get("/health")
+def healthcheck():
+    db.execute(text("SELECT 1"))  # Runs in threadpool
+```
+
+3. **For async endpoints, create sessions inside `asyncio.to_thread`** - All DB operations must happen in the same thread:
+
+```python
+@app.get("/ready")
+async def readiness_check():
+    def _check_db() -> str | None:
+        # Session created IN the worker thread
+        db = SessionLocal()
+        try:
+            db.execute(text("SELECT 1"))
+            db.commit()
+            return None
+        except Exception as e:
+            try:
+                db.rollback()
+            except Exception:
+                try:
+                    db.invalidate()
+                except Exception:
+                    pass
+            return str(e)
+        finally:
+            db.close()
+
+    error = await asyncio.to_thread(_check_db)
+    if error:
+        return {"status": "not ready", "error": error}
+    return {"status": "ready"}
+```
+
+4. **Mirror `get_db` cleanup pattern** - Use rollback → invalidate → close:
+
+```python
+except Exception as e:
+    try:
+        db.rollback()
+    except Exception:
+        try:
+            db.invalidate()  # Remove broken connection from pool
+        except Exception:
+            pass  # nosec B110 - Best effort cleanup
+```
+
+**Why not use `Depends(get_db)`?**
+
+- `get_db` commits after yield, causing double-commit if endpoint commits
+- With `asyncio.to_thread`, the session is created in one thread but used in another
+- Health endpoints should test actual DB connectivity, not be mockable via `dependency_overrides`
+
 ### Issue: High Gateway CPU
 
 **Symptom:** Gateway at 600%+ CPU
