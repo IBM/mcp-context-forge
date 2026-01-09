@@ -131,8 +131,10 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
 
     Configuration Priority (highest to lowest):
     1. Gateway-specific passthrough_headers setting
-    2. Global database configuration (GlobalConfig.passthrough_headers)
-    3. Environment variable DEFAULT_PASSTHROUGH_HEADERS
+    2. Global headers from get_passthrough_headers() based on PASSTHROUGH_HEADERS_SOURCE:
+       - "db": Database wins if configured, env var DEFAULT_PASSTHROUGH_HEADERS as fallback
+       - "env": Environment variable always wins, database ignored
+       - "merge": Union of both sources (DB casing wins for duplicates)
 
     Security Features:
     - Feature flag control (disabled by default)

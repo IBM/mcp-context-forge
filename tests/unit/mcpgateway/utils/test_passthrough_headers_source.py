@@ -18,7 +18,6 @@ import pytest
 
 # First-Party
 from mcpgateway.cache.global_config_cache import global_config_cache
-from mcpgateway.config import settings
 
 
 @pytest.fixture
@@ -85,10 +84,10 @@ class TestPassthroughHeadersSource:
         """Test that 'merge' mode uses DB casing for duplicates."""
         # Setup
         mock_config = Mock()
-        mock_config.passthrough_headers = ["X-COMMON-HEADER"] # DB has uppercase
+        mock_config.passthrough_headers = ["X-COMMON-HEADER"]  # DB has uppercase
         mock_db.query.return_value.first.return_value = mock_config
 
-        env_headers = ["x-common-header"] # Env has lowercase
+        env_headers = ["x-common-header"]  # Env has lowercase
 
         with patch("mcpgateway.config.settings.passthrough_headers_source", "merge"):
             result = global_config_cache.get_passthrough_headers(mock_db, env_headers)

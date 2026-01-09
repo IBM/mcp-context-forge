@@ -977,7 +977,8 @@ async def get_global_passthrough_headers(
         True
     """
     # Use cache for reads (Issue #1715)
-    passthrough_headers = global_config_cache.get_passthrough_headers(db, [])
+    # Pass env defaults so env/merge modes return correct headers
+    passthrough_headers = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
     return GlobalConfigRead(passthrough_headers=passthrough_headers)
 
 
