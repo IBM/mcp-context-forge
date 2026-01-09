@@ -5336,8 +5336,8 @@ def get_for_update(db: Session, model, entity_id=None, where: Optional[Any] = No
     if dialect != "postgresql":
         # SQLite and others: no FOR UPDATE support
         # Use db.get optimization only when querying by primary key without loader options
-        if not options and where is None and id is not None:
-            return db.get(model, id)
+        if not options and where is None and entity_id is not None:
+            return db.get(model, entity_id)
         return db.execute(stmt).scalar_one_or_none()
 
     # PostgreSQL: apply FOR UPDATE
