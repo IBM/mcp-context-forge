@@ -486,6 +486,8 @@ class EmailAuthService:
             # Hash new password and update
             new_password_hash = self.password_service.hash_password(new_password)
             user.password_hash = new_password_hash
+            # Clear the flag that requires the user to change password
+            user.password_change_required = False
 
             self.db.commit()
             success = True
