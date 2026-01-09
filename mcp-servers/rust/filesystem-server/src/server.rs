@@ -1,3 +1,4 @@
+use crate::tools::edit::Edit;
 use crate::tools::{edit, info, read, search, write};
 use rmcp::ErrorData as McpError;
 use rmcp::{
@@ -72,6 +73,18 @@ pub struct MoveFileParameters {
     source: String,
     #[schemars(description = "Destination file path")]
     destination: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct EditFileParameters {
+    #[schemars(description = "Source file path")]
+    path: String,
+
+    #[schemars(description = "Edits with old and new edits")]
+    edits: Vec<Edit>,
+
+    #[schemars(description = "Dry-run edit returns diff")]
+    dry_run: bool,
 }
 
 // SERVER ROUTER
@@ -156,6 +169,29 @@ impl FilesystemServer {
     ) -> Result<CallToolResult, McpError> {
         let result = write::write_file(&path, content).await.map_err(|e| {
             McpError::internal_error(format!("Error writing file'{}': {}", path, e), None)
+        })?;
+
+        let content = Content::json(&result).map_err(|e| {
+            McpError::internal_error(
+                format!("Error converting file content to JSON: {}", e),
+                None,
+            )
+        })?;
+
+        Ok(CallToolResult::success(vec![content]))
+    }
+
+    #[tool(description = "Edit file with dry run")]
+    async fn edit_file(
+        &self,
+        Parameters(EditFileParameters {
+            path,
+            edits,
+            dry_run,
+        }): Parameters<EditFileParameters>,
+    ) -> Result<CallToolResult, McpError> {
+        let result = edit::edit_file(&path, edits, dry_run).await.map_err(|e| {
+            McpError::internal_error(format!("Error editing file'{}': {}", path, e), None)
         })?;
 
         let content = Content::json(&result).map_err(|e| {
@@ -291,6 +327,7 @@ impl ServerHandler for FilesystemServer {
         - read_multiple_files: Read several files from a list of filepaths
         - get_file_info: Return metadata for a given file path, including size, permissions, creation time, and last modified time
         - write_file: Create or ovewrite a file
+        - edit_file: Edit file with dry run
         - create_directory: Create new directory
         - list_allowed_directories: Returns array of allowed roots
         "
