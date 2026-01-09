@@ -49,7 +49,7 @@ make IMAGE_TAG="base" docker-prod
 
 #GH_USER="ISC-REL"
 #GH_TOKEN="$(get_env gh-token)"
-#GH_URL="https://github.ibm.com/cyberfraud/cyberfraud-mcp-management-service.git"
+GH_URL="https://github.ibm.com/cyberfraud/cyberfraud-mcp-management-service.git"
 git clone $GH_URL
 source ./run_smoke_test.sh
 
