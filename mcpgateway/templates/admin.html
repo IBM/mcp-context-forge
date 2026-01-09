@@ -5568,8 +5568,8 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             <form
               id="create-user-form"
               hx-post="{{ root_path }}/admin/users"
-              hx-target="#users-list"
-              hx-swap="afterbegin"
+              hx-target="#user-creation-messages"
+              hx-swap="innerHTML"
               class="space-y-4"
             >
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -5755,18 +5755,29 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">
               System Users
             </h3>
-            <div
-              id="users-list"
-              hx-get="{{ root_path }}/admin/users"
-              hx-trigger="load"
-            >
-              <p class="text-gray-500 dark:text-gray-400">
-                <span class="animate-pulse">Loading users...</span>
-                <br /><small class="text-xs"
-                  >Note: User management requires email authentication</small
-                >
-              </p>
+
+            <!-- Loading indicator -->
+            <div id="users-loading" class="htmx-indicator flex items-center justify-center p-8">
+              <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span class="ml-3 text-gray-600 dark:text-gray-400">Loading users...</span>
             </div>
+
+            <!-- Users list container -->
+            <div
+              id="users-list-container"
+              hx-get="{{ root_path }}/admin/users/partial?page=1&per_page=50"
+              hx-trigger="load"
+              hx-swap="outerHTML"
+              hx-indicator="#users-loading"
+            >
+              <!-- Content will be loaded via HTMX -->
+            </div>
+
+            <!-- Pagination controls container -->
+            <div id="users-pagination-controls"></div>
           </div>
         </div>
       </div>
@@ -10842,6 +10853,15 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             }
           });
         }
+
+        // Listen for userCreated event from HX-Trigger header
+        document.body.addEventListener('userCreated', function() {
+          // Refresh the users list by triggering HTMX on the container
+          const usersList = document.getElementById('users-list-container');
+          if (usersList) {
+            htmx.trigger(usersList, 'load');
+          }
+        });
       });
 
       // Build mapping objects using your existing tools, resources, and prompts arrays

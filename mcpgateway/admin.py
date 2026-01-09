@@ -5344,7 +5344,77 @@ async def admin_list_users(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Response:
-    """List users for admin UI via HTMX with pagination support.
+    """
+    List users for the admin UI with pagination support.
+
+    This endpoint retrieves a paginated list of users from the database.
+    Uses offset-based (page/per_page) pagination. Supports JSON response
+    for dropdown population when format=json query parameter is provided.
+
+    Args:
+        request: FastAPI request object
+        page: Page number (1-indexed). Default: 1.
+        per_page: Items per page (1-500). Default: 50.
+        db: Database session dependency
+        user: Authenticated user dependency
+
+    Returns:
+        Dict with 'data', 'pagination', and 'links' keys containing paginated users,
+        or JSON response for dropdown population.
+    """
+    if not settings.email_auth_enabled:
+        return HTMLResponse(
+            content='<div class="text-center py-8"><p class="text-gray-500">Email authentication is disabled. User management requires email auth.</p></div>',
+            status_code=200,
+        )
+
+    LOGGER.debug(f"User {get_user_email(user)} requested user list (page={page}, per_page={per_page})")
+
+    # First-Party
+    from mcpgateway.services.email_auth_service import EmailAuthService
+
+    auth_service = EmailAuthService(db)
+
+    # Check if JSON response is requested (for dropdown population)
+    accept_header = request.headers.get("accept", "")
+    is_json_request = "application/json" in accept_header or request.query_params.get("format") == "json"
+
+    if is_json_request:
+        # Return JSON for dropdown population (no pagination needed for dropdowns)
+        users = await auth_service.list_users()
+        users_data = [{"email": user_obj.email, "full_name": user_obj.full_name, "is_active": user_obj.is_active, "is_admin": user_obj.is_admin} for user_obj in users]
+        return ORJSONResponse(content={"users": users_data})
+
+    # Call auth_service.list_users with page-based pagination
+    paginated_result = await auth_service.list_users(page=page, per_page=per_page)
+
+    # End the read-only transaction early to avoid idle-in-transaction under load
+    db.commit()
+
+    # Return standardized paginated response (for legacy compatibility)
+    return ORJSONResponse(
+        content={
+            "data": [{"email": u.email, "full_name": u.full_name, "is_active": u.is_active, "is_admin": u.is_admin} for u in paginated_result["data"]],
+            "pagination": paginated_result["pagination"].model_dump(),
+            "links": paginated_result["links"].model_dump() if paginated_result["links"] else None,
+        }
+    )
+
+
+@admin_router.get("/users/partial", response_class=HTMLResponse)
+@require_permission("admin.user_management")
+async def admin_users_partial_html(
+    request: Request,
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Response:
+    """
+    Return paginated users as HTML partial for HTMX requests.
+
+    This endpoint returns rendered HTML for the users list with pagination controls,
+    designed for HTMX-based dynamic updates.
 
     Args:
         request: FastAPI request object
@@ -5354,168 +5424,68 @@ async def admin_list_users(
         user: Current authenticated user context
 
     Returns:
-        Response: HTML or JSON response with users list
+        Response: HTML response with users list and pagination controls
     """
     try:
         if not settings.email_auth_enabled:
-            return HTMLResponse(content='<div class="text-center py-8"><p class="text-gray-500">Email authentication is disabled. User management requires email auth.</p></div>', status_code=200)
-
-        # Get root_path from request
-        root_path = request.scope.get("root_path", "")
+            return HTMLResponse(
+                content='<div class="text-center py-8"><p class="text-gray-500">Email authentication is disabled. User management requires email auth.</p></div>',
+                status_code=200,
+            )
 
         # First-Party
+        from mcpgateway.services.email_auth_service import EmailAuthService
 
         auth_service = EmailAuthService(db)
 
         # List users with page-based pagination
         paginated_result = await auth_service.list_users(page=page, per_page=per_page)
-        users = paginated_result["data"]
+        users_db = paginated_result["data"]
+        pagination = paginated_result["pagination"]
 
-        # Check if JSON response is requested (for dropdown population)
-        accept_header = request.headers.get("accept", "")
-        is_json_request = "application/json" in accept_header or request.query_params.get("format") == "json"
-
-        if is_json_request:
-            # Return JSON for dropdown population
-            users_data = []
-            for user_obj in users:
-                users_data.append({"email": user_obj.email, "full_name": user_obj.full_name, "is_active": user_obj.is_active, "is_admin": user_obj.is_admin})
-            return ORJSONResponse(content={"users": users_data})
-
-        # Generate HTML for users
-        users_html = ""
+        # Get current user email
         current_user_email = get_user_email(user)
 
-        # Check how many active admins we have to determine if we should hide buttons for last admin
+        # Check how many active admins we have
         admin_count = await auth_service.count_active_admin_users()
 
-        for user_obj in users:
-            status_class = "text-green-600" if user_obj.is_active else "text-red-600"
-            status_text = "Active" if user_obj.is_active else "Inactive"
-            admin_badge = '<span class="px-2 py-1 text-xs font-semibold bg-purple-100 text-purple-800 rounded-full dark:bg-purple-900 dark:text-purple-200">Admin</span>' if user_obj.is_admin else ""
+        # Prepare user data for template with additional flags
+        users_data = []
+        for user_obj in users_db:
             is_current_user = user_obj.email == current_user_email
             is_last_admin = user_obj.is_admin and user_obj.is_active and admin_count == 1
 
-            # Build activate/deactivate buttons (hide for current user and last admin)
-            activate_deactivate_button = ""
-            if not is_current_user and not is_last_admin:
-                if not user_obj.is_active:
-                    activate_deactivate_button = f'<button class="px-3 py-1 text-sm font-medium text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 border border-green-300 dark:border-green-600 hover:border-green-500 dark:hover:border-green-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500" hx-post="{root_path}/admin/users/{urllib.parse.quote(user_obj.email, safe="")}/activate" hx-confirm="Activate this user?" hx-target="closest .user-card" hx-swap="outerHTML">Activate</button>'
-                else:
-                    activate_deactivate_button = f'<button class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 hover:text-orange-800 dark:hover:text-orange-300 border border-orange-300 dark:border-orange-600 hover:border-orange-500 dark:hover:border-orange-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500" hx-post="{root_path}/admin/users/{urllib.parse.quote(user_obj.email, safe="")}/deactivate" hx-confirm="Deactivate this user?" hx-target="closest .user-card" hx-swap="outerHTML">Deactivate</button>'
-
-            # Build delete button (hide for current user and last admin)
-            delete_button = ""
-            if not is_current_user and not is_last_admin:
-                delete_button = f'<button class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500" hx-delete="{root_path}/admin/users/{urllib.parse.quote(user_obj.email, safe="")}" hx-confirm="Are you sure you want to delete this user? This action cannot be undone." hx-target="closest .user-card" hx-swap="outerHTML">Delete</button>'
-
-            # Build force password change button/indicator
-            password_change_button_html = ""  # nosec B105 - HTML content, not password
-            if not is_current_user:
-                if user_obj.password_change_required:
-                    # HTML content for password change required indicator
-                    password_change_required_html = (  # nosec B105 - HTML content, not password
-                        '<span class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 '
-                        "bg-orange-50 dark:bg-orange-900/20 border border-orange-300 dark:border-orange-600 "
-                        'rounded-md">Password Change Required</span>'
-                    )
-                    password_change_button_html = password_change_required_html
-                else:
-                    password_change_button_html = (
-                        f'<button class="px-3 py-1 text-sm font-medium text-yellow-600 dark:text-yellow-400 '
-                        f"hover:text-yellow-800 dark:hover:text-yellow-300 border border-yellow-300 dark:border-yellow-600 "
-                        f"hover:border-yellow-500 dark:hover:border-yellow-400 rounded-md focus:outline-none focus:ring-2 "
-                        f'focus:ring-offset-2 focus:ring-yellow-500" hx-post="{root_path}/admin/users/{urllib.parse.quote(user_obj.email, safe="")}/force-password-change" '
-                        f'hx-confirm="Force this user to change their password on next login?" hx-target="closest .user-card" '
-                        f'hx-swap="outerHTML">Force Password Change</button>'
-                    )
-
-            # Password change required badge
-            password_badge = (
-                '<span class="px-2 py-1 text-xs font-semibold bg-orange-100 text-orange-800 rounded-full dark:bg-orange-900 dark:text-orange-200"><i class="fas fa-key mr-1"></i>Password Change Required</span>'
-                if user_obj.password_change_required
-                else ""
+            users_data.append(
+                {
+                    "email": user_obj.email,
+                    "full_name": user_obj.full_name,
+                    "is_active": user_obj.is_active,
+                    "is_admin": user_obj.is_admin,
+                    "auth_provider": user_obj.auth_provider,
+                    "created_at": user_obj.created_at,
+                    "password_change_required": user_obj.password_change_required,
+                    "is_current_user": is_current_user,
+                    "is_last_admin": is_last_admin,
+                }
             )
 
-            users_html += f"""
-            <div class="user-card border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-white dark:bg-gray-800">
-                <div class="flex justify-between items-start">
-                    <div class="flex-1">
-                        <div class="flex items-center gap-2 mb-2">
-                            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{user_obj.full_name or "N/A"}</h3>
-                            {admin_badge}
-                            <span class="px-2 py-1 text-xs font-semibold {status_class} bg-gray-100 dark:bg-gray-700 rounded-full">{status_text}</span>
-                            {'<span class="px-2 py-1 text-xs font-semibold bg-blue-100 text-blue-800 rounded-full dark:bg-blue-900 dark:text-blue-200">You</span>' if is_current_user else ""}
-                            {'<span class="px-2 py-1 text-xs font-semibold bg-yellow-100 text-yellow-800 rounded-full dark:bg-yellow-900 dark:text-yellow-200">Last Admin</span>' if is_last_admin else ""}
-                            {password_badge}
-                        </div>
-                        <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">📧 {user_obj.email}</p>
-                        <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">🔐 Provider: {user_obj.auth_provider}</p>
-                        <p class="text-sm text-gray-600 dark:text-gray-400">📅 Created: {user_obj.created_at.strftime("%Y-%m-%d %H:%M")}</p>
-                    </div>
-                    <div class="flex gap-2 ml-4">
-                        <button class="px-3 py-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 border border-blue-300 dark:border-blue-600 hover:border-blue-500 dark:hover:border-blue-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                                hx-get="{root_path}/admin/users/{urllib.parse.quote(user_obj.email, safe="")}/edit" hx-target="#user-edit-modal-content">
-                            Edit
-                        </button>
-                        {activate_deactivate_button}
-                        {password_change_button_html}
-                        {delete_button}
-                    </div>
-                </div>
-            </div>
-            """
+        # End the read-only transaction early to avoid idle-in-transaction under load
+        db.commit()
 
-        if not users_html:
-            users_html = '<div class="text-center py-8"><p class="text-gray-500 dark:text-gray-400">No users found.</p></div>'
-
-        # Add pagination information at the bottom
-        pagination = paginated_result["pagination"]
-
-        # Build pagination buttons (split for line length compliance)
-        prev_btn_classes = (
-            "px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700"
+        # Render template with paginated data
+        return request.app.state.templates.TemplateResponse(
+            "users_partial.html",
+            {
+                "request": request,
+                "data": users_data,
+                "pagination": pagination.model_dump(),
+                "root_path": request.scope.get("root_path", ""),
+                "current_user_email": current_user_email,
+            },
         )
-        prev_btn_disabled_classes = (
-            "px-3 py-2 text-sm font-medium text-gray-400 dark:text-gray-600 bg-gray-100 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-md cursor-not-allowed"
-        )
-        next_btn_classes = prev_btn_classes
-        next_btn_disabled_classes = prev_btn_disabled_classes
-
-        prev_btn = (
-            f'<button hx-get="{root_path}/admin/users?page={pagination.page - 1}&per_page={pagination.per_page}" '
-            f'hx-target="#users-list" hx-swap="innerHTML" class="{prev_btn_classes}">Previous</button>'
-            if pagination.has_prev
-            else f'<button disabled class="{prev_btn_disabled_classes}">Previous</button>'
-        )
-        next_btn = (
-            f'<button hx-get="{root_path}/admin/users?page={pagination.page + 1}&per_page={pagination.per_page}" '
-            f'hx-target="#users-list" hx-swap="innerHTML" class="{next_btn_classes}">Next</button>'
-            if pagination.has_next
-            else f'<button disabled class="{next_btn_disabled_classes}">Next</button>'
-        )
-
-        pagination_html = f"""
-        <div class="mt-6 flex items-center justify-between border-t border-gray-200 dark:border-gray-700 pt-4">
-            <div class="text-sm text-gray-700 dark:text-gray-300">
-                Showing <span class="font-medium">{(pagination.page - 1) * pagination.per_page + 1}</span>
-                to <span class="font-medium">{min(pagination.page * pagination.per_page, pagination.total_items)}</span>
-                of <span class="font-medium">{pagination.total_items}</span> users
-            </div>
-            <div class="flex gap-2">
-                {prev_btn}
-                <span class="px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300">
-                    Page {pagination.page} of {pagination.total_pages}
-                </span>
-                {next_btn}
-            </div>
-        </div>
-        """
-
-        return HTMLResponse(content=users_html + pagination_html)
 
     except Exception as e:
-        LOGGER.error(f"Error listing users for admin {user}: {e}")
+        LOGGER.error(f"Error loading users partial for admin {user}: {e}")
         return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading users: {str(e)}</p></div>', status_code=200)
 
 
@@ -5565,36 +5535,11 @@ async def admin_create_user(
 
         LOGGER.info(f"Admin {user} created user: {new_user.email}")
 
-        # Generate HTML for the new user
-        status_class = "text-green-600"
-        status_text = "Active"
-        admin_badge = '<span class="px-2 py-1 text-xs font-semibold bg-purple-100 text-purple-800 rounded-full dark:bg-purple-900 dark:text-purple-200">Admin</span>' if new_user.is_admin else ""
-
-        user_html = f"""
-        <div class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-white dark:bg-gray-800">
-            <div class="flex justify-between items-start">
-                <div class="flex-1">
-                    <div class="flex items-center gap-2 mb-2">
-                        <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{new_user.full_name or "N/A"}</h3>
-                        {admin_badge}
-                        <span class="px-2 py-1 text-xs font-semibold {status_class} bg-gray-100 dark:bg-gray-700 rounded-full">{status_text}</span>
-                    </div>
-                    <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">📧 {new_user.email}</p>
-                    <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">🔐 Provider: {new_user.auth_provider}</p>
-                    <p class="text-sm text-gray-600 dark:text-gray-400">📅 Created: {new_user.created_at.strftime("%Y-%m-%d %H:%M")}</p>
-                </div>
-                <div class="flex gap-2 ml-4">
-                    <button class="px-3 py-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 border border-blue-300 dark:border-blue-600 hover:border-blue-500 dark:hover:border-blue-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                            hx-get="{root_path}/admin/users/{new_user.email}/edit" hx-target="#user-edit-modal-content">
-                        Edit
-                    </button>
-                    <button class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 hover:text-orange-800 dark:hover:text-orange-300 border border-orange-300 dark:border-orange-600 hover:border-orange-500 dark:hover:border-orange-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500" hx-post="{root_path}/admin/users/{new_user.email.replace("@", "%40")}/deactivate" hx-confirm="Deactivate this user?" hx-target="closest .border">Deactivate</button>
-                </div>
-            </div>
-        </div>
-        """
-
-        return HTMLResponse(content=user_html, status_code=201)
+        # Return HX-Trigger header to refresh the users list
+        # This will trigger a reload of the users-list-container
+        response = HTMLResponse(content='<div class="text-green-500">User created successfully!</div>', status_code=201)
+        response.headers["HX-Trigger"] = "userCreated"
+        return response
 
     except Exception as e:
         LOGGER.error(f"Error creating user by admin {user}: {e}")
