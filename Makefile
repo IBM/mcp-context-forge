@@ -112,7 +112,7 @@ endef
 # help: update               - Update all installed deps inside the venv
 .PHONY: uv
 uv:
-	@if ! type uv >/dev/null 2>&1; then \
+	@if ! type uv >/dev/null 2>&1 && ! test -x "$(HOME)/.local/bin/uv"; then \
 		echo "🔧 'uv' not found - installing..."; \
 		if type brew >/dev/null 2>&1; then \
 			echo "🍺 Installing 'uv' via Homebrew..."; \
@@ -120,15 +120,17 @@ uv:
 		else \
 			echo "🐍 Installing 'uv' via local install script..."; \
 			curl -LsSf https://astral.sh/uv/install.sh | sh ; \
-			echo "💡  Make sure to add 'uv' to your PATH if not done automatically."; \
 		fi; \
 	fi
+
+# UV_BIN: prefer uv in PATH, fallback to ~/.local/bin/uv
+UV_BIN := $(shell type -p uv 2>/dev/null || echo "$(HOME)/.local/bin/uv")
 
 .PHONY: venv
 venv: uv
 	@rm -Rf "$(VENV_DIR)"
 	@test -d "$(VENVS_DIR)" || mkdir -p "$(VENVS_DIR)"
-	@uv venv "$(VENV_DIR)"
+	@$(UV_BIN) venv "$(VENV_DIR)"
 	@echo -e "✅  Virtual env created.\n💡  Enter it with:\n    . $(VENV_DIR)/bin/activate\n"
 
 .PHONY: activate
