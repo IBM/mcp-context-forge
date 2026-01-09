@@ -88,6 +88,7 @@ try:
 except (ModuleNotFoundError, AttributeError) as e:
     # ModuleNotFoundError: redis package not installed
     # AttributeError: 'redis' exists but isn't a proper package (e.g., shadowed by a file)
+    # Standard
     import logging
 
     logging.getLogger(__name__).warning(f"Redis module check failed ({type(e).__name__}: {e}), Redis support disabled")
