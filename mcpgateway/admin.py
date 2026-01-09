@@ -1525,6 +1525,7 @@ async def admin_servers_partial_html(
         selectinload(DbServer.resources),
         selectinload(DbServer.prompts),
         selectinload(DbServer.a2a_agents),
+        joinedload(DbServer.email_team),
     )
 
     if not include_inactive:
@@ -1563,16 +1564,7 @@ async def admin_servers_partial_html(
     pagination = paginated_result["pagination"]
     links = paginated_result["links"]
 
-    # Batch fetch team names for the servers to avoid N+1 queries
-    team_ids_set = {p.team_id for p in servers_db if p.team_id}
-    team_map = {}
-    if team_ids_set:
-        teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids_set), EmailTeam.is_active.is_(True))).all()
-        team_map = {team.id: team.name for team in teams}
-
-    # Apply team names to DB objects before conversion
-    for p in servers_db:
-        p.team = team_map.get(p.team_id) if p.team_id else None
+    # Team names are loaded via joinedload(DbServer.email_team) and accessed via server.team property
 
     # Batch convert to Pydantic models using server service
     # This eliminates the N+1 query problem from calling get_server_details() in a loop
