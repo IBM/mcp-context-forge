@@ -735,6 +735,12 @@
               "description": "Unhealthy threshold",
               "default": "3"
             },
+            "AUTO_REFRESH_SERVERS": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable automatic tools/prompts/resources refresh from the mcp servers during gateway health checks",
+              "default": "false"
+            },
             "FILELOCK_NAME": {
               "type": "string",
               "description": "File lock path",
