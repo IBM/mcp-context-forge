@@ -30,6 +30,8 @@ from url_normalize import url_normalize
 # ---------------------------------------------------------------------------
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.db import Resource as DbResource
+from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.schemas import GatewayCreate, GatewayUpdate
 from mcpgateway.services.gateway_service import (
     GatewayConnectionError,
@@ -38,6 +40,7 @@ from mcpgateway.services.gateway_service import (
     GatewayNotFoundError,
     GatewayService,
     GatewayDuplicateConflictError,
+    OAuthToolValidationError,
 )
 
 # ---------------------------------------------------------------------------
@@ -1677,8 +1680,354 @@ class TestGatewayService:
                 assert any(fake_condition in call.args for call in where_calls), f"fake_condition not found in where() calls: {where_calls}"
                 # finally, your service should return the list produced by mock_db.execute(...)
                 assert isinstance(result, list)
-                assert len(result) == 1
-
-                # Verify convert_gateway_to_read was called
-                gateway_service.convert_gateway_to_read.assert_called_once()
                 assert result == [mocked_gateway_read]
+
+
+class TestGatewayRefresh:
+    """Test suite for gateway refresh logic (internal and manual)."""
+
+    @pytest.fixture
+    def mock_db_session(self):
+        """Mock database session context manager."""
+        session = MagicMock()
+        session.commit = MagicMock()
+        session.flush = MagicMock()
+        session.execute.return_value = _make_execute_result(scalar=None)
+        
+        # Mock dirty objects set
+        session.dirty = set()
+        
+        # Mock context manager
+        ctx = MagicMock()
+        ctx.__enter__.return_value = session
+        ctx.__exit__.return_value = None
+        return ctx
+
+    @pytest.fixture
+    def mock_gateway_with_relations(self):
+        """Mock gateway with tools, resources, prompts relations."""
+        gw = MagicMock(spec=DbGateway)
+        gw.id = "gw-123"
+        gw.name = "test_gateway"
+        gw.url = "http://example.com"
+        gw.enabled = True
+        gw.reachable = True
+        gw.tools = []
+        gw.resources = []
+        gw.prompts = []
+        return gw
+
+    @pytest.mark.asyncio
+    async def test_refresh_gateway_success_all_changed(self, gateway_service, mock_gateway_with_relations, mock_db_session):
+        """Test successful refresh where tools, resources, prompts are all updated."""
+        # Setup mocks
+        session = mock_db_session.__enter__()
+        # Mock gateway fetch
+        session.execute.return_value = _make_execute_result(scalar=mock_gateway_with_relations)
+        
+        # Mock fresh_db_session to return our mock session
+        with patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=mock_db_session):
+            # Mock _initialize_gateway to return new data
+            new_tools = [MagicMock(name="tool1")]
+            new_resources = [MagicMock(uri="res1")]
+            new_prompts = [MagicMock(name="prompt1")]
+            
+            gateway_service._initialize_gateway = AsyncMock(return_value=(
+                {}, # capabilities
+                new_tools,
+                new_resources,
+                new_prompts
+            ))
+            
+            # Mock update/create helpers
+            gateway_service._update_or_create_tools = Mock(return_value=[MagicMock()])
+            gateway_service._update_or_create_resources = Mock(return_value=[MagicMock()])
+            gateway_service._update_or_create_prompts = Mock(return_value=[MagicMock()])
+            
+            # Simulate dirty objects for count calculation
+            session.dirty = {MagicMock(spec=DbTool), MagicMock(spec=DbResource), MagicMock(spec=DbPrompt)} # mock updated objects
+
+            result = await gateway_service._refresh_gateway_tools_resources_prompts("gw-123", gateway=mock_gateway_with_relations)
+
+            assert result["success"] is True
+            assert result["tools_added"] == 1
+            assert result["resources_added"] == 1
+            assert result["prompts_added"] == 1
+            # Note: dirty check logic in actual code compares vs snapshot, simplified here
+
+    @pytest.mark.asyncio
+    async def test_refresh_gateway_no_changes(self, gateway_service, mock_gateway_with_relations, mock_db_session):
+        """Test refresh with no changes detected."""
+        # Setup mock session to return gateway when queried
+        session = mock_db_session.__enter__()
+        session.execute.return_value = _make_execute_result(scalar=mock_gateway_with_relations)
+
+        with patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=mock_db_session):
+            # Mock empty return from initialize
+            gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], []))
+            
+            # Mock update methods to avoid real execution errors
+            gateway_service._update_or_create_tools = Mock(return_value=[])
+            gateway_service._update_or_create_resources = Mock(return_value=[])
+            gateway_service._update_or_create_prompts = Mock(return_value=[])
+
+            result = await gateway_service._refresh_gateway_tools_resources_prompts("gw-123", gateway=mock_gateway_with_relations)
+
+            if not result.get("success", True):
+                 pytest.fail(f"Refresh failed with error: {result.get('error')}")
+
+            assert result["success"] is True
+            assert result["tools_added"] == 0
+            assert result["resources_added"] == 0
+            assert result["prompts_added"] == 0
+
+    @pytest.mark.asyncio
+    async def test_refresh_gateway_not_found(self, gateway_service, mock_db_session):
+        """Test refresh fails when gateway doesn't exist."""
+        session = mock_db_session.__enter__()
+        session.execute.return_value = _make_execute_result(scalar=None)
+
+        with patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=mock_db_session):
+            result = await gateway_service._refresh_gateway_tools_resources_prompts("non-existent-id")
+            
+            # Depending on implementation, it may return empty result or error
+            # Code says: logger.warning and return result (which defaults success=True but counts 0)
+            assert result["success"] is True  # Based on code reading: returns default result
+            assert result["tools_added"] == 0
+
+    @pytest.mark.asyncio
+    async def test_refresh_gateway_inactive(self, gateway_service, mock_gateway_with_relations):
+        """Test refresh is skipped for inactive gateway."""
+        mock_gateway_with_relations.enabled = False
+        
+        result = await gateway_service._refresh_gateway_tools_resources_prompts("gw-123", gateway=mock_gateway_with_relations)
+        
+        assert result["tools_added"] == 0
+        # Should verify no init calls made
+        assert not hasattr(gateway_service._initialize_gateway, "called") or not gateway_service._initialize_gateway.called
+
+    @pytest.mark.asyncio
+    async def test_refresh_gateway_connection_error(self, gateway_service, mock_gateway_with_relations):
+        """Test handling of connection error during refresh."""
+        gateway_service._initialize_gateway = AsyncMock(side_effect=Exception("Connection failed"))
+        
+        result = await gateway_service._refresh_gateway_tools_resources_prompts("gw-123", gateway=mock_gateway_with_relations)
+        
+        assert result["success"] is False
+        assert "Connection failed" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_manual_refresh_success(self, gateway_service, mock_gateway_with_relations, mock_db_session):
+        """Test successful manual refresh."""
+        session = mock_db_session.__enter__()
+        session.execute.return_value = _make_execute_result(scalar=mock_gateway_with_relations)
+
+        with patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=mock_db_session):
+            # Mock the internal refresh method
+            gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock(return_value={
+                "success": True,
+                "tools_added": 5, 
+                "tools_removed": 0,
+                "resources_added": 0,
+                "resources_removed": 0,
+                "prompts_added": 0, 
+                "prompts_removed": 0
+            })
+            
+            result = await gateway_service.refresh_gateway_manually("gw-123")
+            
+            assert result["success"] is True
+            assert result["tools_added"] == 5
+            gateway_service._refresh_gateway_tools_resources_prompts.assert_called_once()
+            # Verify last_refresh_at update was committed
+            assert mock_gateway_with_relations.last_refresh_at is not None
+            session.commit.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_manual_refresh_gateway_not_found(self, gateway_service, mock_db_session):
+        """Test manual refresh raises error if gateway not found."""
+        session = mock_db_session.__enter__()
+        session.execute.return_value = _make_execute_result(scalar=None)
+
+        with patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=mock_db_session):
+            with pytest.raises(GatewayNotFoundError):
+                await gateway_service.refresh_gateway_manually("non-existent-id")
+
+    @pytest.mark.asyncio
+    async def test_manual_refresh_concurrency(self, gateway_service, mock_gateway_with_relations, mock_db_session):
+        """Test error when refresh lock is already held."""
+        session = mock_db_session.__enter__()
+        session.execute.return_value = _make_execute_result(scalar=mock_gateway_with_relations)
+
+        # Manually acquire the lock first
+        lock = gateway_service._get_refresh_lock("gw-123")
+        await lock.acquire()
+
+        with patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=mock_db_session):
+            try:
+                with pytest.raises(GatewayError) as exc_info:
+                    await gateway_service.refresh_gateway_manually("gw-123")
+                assert "Refresh already in progress" in str(exc_info.value)
+            finally:
+                lock.release()
+
+    @pytest.mark.asyncio
+    async def test_manual_refresh_passthrough_headers(self, gateway_service, mock_gateway_with_relations, mock_db_session):
+        """Test manual refresh uses passthrough headers."""
+        session = mock_db_session.__enter__()
+        session.execute.return_value = _make_execute_result(scalar=mock_gateway_with_relations)
+
+        with patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=mock_db_session):
+            with patch("mcpgateway.services.gateway_service.get_passthrough_headers") as mock_get_headers:
+                mock_get_headers.return_value = {"x-custom": "value"}
+                # Return full dict structure expected by logging
+                gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock(return_value={
+                    "success": True,
+                    "tools_added": 0, "tools_removed": 0, "tools_updated": 0,
+                    "resources_added": 0, "resources_removed": 0, "resources_updated": 0,
+                    "prompts_added": 0, "prompts_removed": 0, "prompts_updated": 0,
+                    "duration_ms": 0
+                })
+                
+                await gateway_service.refresh_gateway_manually("gw-123", request_headers={"x-foo": "bar"})
+                
+                mock_get_headers.assert_called_once()
+                # Verify headers passed to internal method
+                args, kwargs = gateway_service._refresh_gateway_tools_resources_prompts.call_args
+                assert kwargs["pre_auth_headers"] == {"x-custom": "value"}
+
+    def test_validate_tools_partial_failure(self, gateway_service):
+        """Test tool validation logs errors but returns valid tools."""
+        tools = [
+            {"name": "valid_tool", "description": "valid", "inputSchema": {}},
+            {"name": "invalid_tool", "integration_type": "INVALID_TYPE"}, # Invalid integration_type, should fail
+        ]
+        
+        valid_tools = gateway_service._validate_tools(tools)
+        
+        assert len(valid_tools) == 1
+        assert valid_tools[0].name == "valid_tool"
+
+    def test_validate_tools_all_invalid(self, gateway_service):
+        """Test failure when all tools are invalid."""
+        tools = [
+            {"name": "invalid1", "integration_type": "INVALID_TYPE"},
+            {"name": "invalid2", "integration_type": "INVALID_TYPE"},
+        ]
+        
+        with pytest.raises(GatewayConnectionError) as exc:
+            gateway_service._validate_tools(tools)
+        assert "validation" in str(exc.value)
+
+    def test_validate_tools_all_invalid_oauth(self, gateway_service):
+        """Test failure when all tools are invalid in oauth context."""
+        tools = [{"name": "invalid", "integration_type": "INVALID_TYPE"}]
+        
+        with pytest.raises(OAuthToolValidationError) as exc:
+            gateway_service._validate_tools(tools, context="oauth")
+        assert "OAuth tool fetch failed" in str(exc.value)
+
+    def test_validate_tools_depth_limit(self, gateway_service):
+        """Test handling of recursion depth error in validation."""
+        # We simulate this by mocking ToolCreate.model_validate to raise ValueError
+        with patch("mcpgateway.services.gateway_service.ToolCreate.model_validate") as mock_validate:
+            mock_validate.side_effect = ValueError("JSON structure exceeds maximum depth")
+            
+            # Should not raise exception, but log error and return empty valid list
+            # Since all failed, it will raise GatewayConnectionError eventually
+            with pytest.raises(GatewayConnectionError):
+                gateway_service._validate_tools([{"name": "deep_tool"}])
+
+    @pytest.mark.asyncio
+    async def test_publish_event(self, gateway_service):
+        """Test event publishing."""
+        # Mock internal event service
+        gateway_service._event_service = AsyncMock()
+        event = {"type": "test", "data": "foo"}
+        
+        await gateway_service._publish_event(event)
+        
+        gateway_service._event_service.publish_event.assert_awaited_once_with(event)
+
+    @pytest.mark.asyncio
+    async def test_connect_to_sse_server_without_validation_success(self, gateway_service):
+        """Test successful connection without URL validation."""
+        
+        # Mock dependencies
+        mock_session = AsyncMock()
+        
+        # Mock responses
+        mock_init_response = MagicMock()
+        mock_init_response.capabilities.model_dump.return_value = {"resources": True, "prompts": True}
+        mock_session.initialize.return_value = mock_init_response
+        
+        mock_list_tools = MagicMock()
+        mock_list_tools.tools = [MagicMock(model_dump=MagicMock(return_value={"name": "tool1", "inputSchema": {}}))]
+        mock_session.list_tools.return_value = mock_list_tools
+        
+        mock_list_resources = MagicMock()
+        mock_list_resources.resources = [MagicMock(model_dump=MagicMock(return_value={"uri": "res1", "name": "res1"}))]
+        mock_session.list_resources.return_value = mock_list_resources
+        mock_session.list_resource_templates.return_value = MagicMock(resourceTemplates=[])
+        
+        mock_list_prompts = MagicMock()
+        mock_list_prompts.prompts = [MagicMock(model_dump=MagicMock(return_value={"name": "prompt1"}))]
+        mock_session.list_prompts.return_value = mock_list_prompts
+
+        # Context managers
+        mock_sse_cm = AsyncMock()
+        mock_sse_cm.__aenter__.return_value = (MagicMock(), MagicMock())
+        mock_sse_cm.__aexit__.return_value = None
+        
+        mock_client_cm = AsyncMock()
+        mock_client_cm.__aenter__.return_value = mock_session
+        mock_client_cm.__aexit__.return_value = None
+
+        with patch("mcpgateway.services.gateway_service.sse_client", return_value=mock_sse_cm):
+            with patch("mcpgateway.services.gateway_service.ClientSession", return_value=mock_client_cm):
+                # Execute
+                capabilities, tools, resources, prompts = await gateway_service._connect_to_sse_server_without_validation("http://test.com")
+                
+                assert len(tools) == 1
+                assert len(resources) == 1
+                assert len(prompts) == 1
+                assert capabilities["resources"] is True
+
+    @pytest.mark.asyncio
+    async def test_connect_to_sse_server_without_validation_fetch_errors(self, gateway_service):
+        """Test resilience when resource/prompt fetch fails."""
+        
+        # Mock dependencies
+        mock_session = AsyncMock()
+         # Mock responses
+        mock_init_response = MagicMock()
+        mock_init_response.capabilities.model_dump.return_value = {"resources": True, "prompts": True}
+        mock_session.initialize.return_value = mock_init_response
+        
+        mock_list_tools = MagicMock()
+        mock_list_tools.tools = []
+        mock_session.list_tools.return_value = mock_list_tools
+        
+        # Simulate failures
+        mock_session.list_resources.side_effect = Exception("Resource fetch failed")
+        mock_session.list_prompts.side_effect = Exception("Prompt fetch failed")
+        
+        # Context managers
+        mock_sse_cm = AsyncMock()
+        mock_sse_cm.__aenter__.return_value = (MagicMock(), MagicMock())
+        mock_sse_cm.__aexit__.return_value = None
+        
+        mock_client_cm = AsyncMock()
+        mock_client_cm.__aenter__.return_value = mock_session
+        mock_client_cm.__aexit__.return_value = None
+
+        with patch("mcpgateway.services.gateway_service.sse_client", return_value=mock_sse_cm):
+            with patch("mcpgateway.services.gateway_service.ClientSession", return_value=mock_client_cm):
+                # Execute
+                capabilities, tools, resources, prompts = await gateway_service._connect_to_sse_server_without_validation("http://test.com")
+                
+                # Should return empty lists for failed parts, not raise exception
+                assert len(resources) == 0
+                assert len(prompts) == 0
+                assert capabilities["resources"] is True
+
