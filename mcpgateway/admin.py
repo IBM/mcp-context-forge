@@ -5577,9 +5577,6 @@ async def admin_list_users(
 
     LOGGER.debug(f"User {get_user_email(user)} requested user list (page={page}, per_page={per_page})")
 
-    # First-Party
-    from mcpgateway.services.email_auth_service import EmailAuthService
-
     auth_service = EmailAuthService(db)
 
     # List users with page-based pagination
@@ -5634,6 +5631,7 @@ async def admin_users_partial_html(
         page: Page number (1-indexed). Default: 1.
         per_page: Items per page (1-500). Default: 50.
         render: Render mode - 'selector' returns user selector items, 'controls' returns pagination controls.
+        team_id: Optional team ID to pre-select members in selector mode
         db: Database session
         user: Current authenticated user context
 
@@ -5646,9 +5644,6 @@ async def admin_users_partial_html(
                 content='<div class="text-center py-8"><p class="text-gray-500">Email authentication is disabled. User management requires email auth.</p></div>',
                 status_code=200,
             )
-
-        # First-Party
-        from mcpgateway.services.email_auth_service import EmailAuthService
 
         auth_service = EmailAuthService(db)
 
@@ -5686,8 +5681,6 @@ async def admin_users_partial_html(
         # Get team members if team_id is provided (for pre-selection in team member addition)
         team_member_emails = set()
         if team_id and render == "selector":
-            from mcpgateway.services.team_management_service import TeamManagementService
-
             team_service = TeamManagementService(db)
             try:
                 team_members = await team_service.get_team_members(team_id)
@@ -5777,9 +5770,6 @@ async def admin_search_users(
 
     LOGGER.debug(f"User {user_email} searching users with query: {search_query}")
 
-    # First-Party
-    from mcpgateway.services.email_auth_service import EmailAuthService
-
     auth_service = EmailAuthService(db)
 
     # Use list_users with search parameter
@@ -5823,9 +5813,6 @@ async def admin_create_user(
         HTMLResponse: Success message or error response
     """
     try:
-        # Get root path for URL construction
-        root_path = request.scope.get("root_path", "") if request else ""
-
         form = await request.form()
 
         # Validate password strength

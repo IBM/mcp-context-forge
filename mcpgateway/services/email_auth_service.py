@@ -24,7 +24,7 @@ Examples:
 from datetime import datetime, timezone
 import re
 from typing import Any, Dict, Optional, Union
-from typing import Any, Dict, Optional, Union
+import warnings
 
 # Third-Party
 from sqlalchemy import delete, desc, func, select
@@ -635,9 +635,7 @@ class EmailAuthService:
             # Apply search filter if provided
             if search and search.strip():
                 search_term = f"%{search.strip().lower()}%"
-                query = query.where(
-                    (func.lower(EmailUser.email).like(search_term)) | (func.lower(EmailUser.full_name).like(search_term))
-                )
+                query = query.where((func.lower(EmailUser.email).like(search_term)) | (func.lower(EmailUser.full_name).like(search_term)))
 
             # Apply email exclusion filter if provided
             if exclude_emails:
@@ -730,14 +728,12 @@ class EmailAuthService:
             # For searching
             users = await service.list_users(search="john", page=1, per_page=50)['data']
         """
-        import warnings
-
         warnings.warn(
-            "get_all_users() is deprecated and limited to 10,000 users. "
-            "Use list_users() with pagination instead.",
+            "get_all_users() is deprecated and limited to 10,000 users. " "Use list_users() with pagination instead.",
             DeprecationWarning,
             stacklevel=2,
         )
+
         return await self.list_users(limit=10000)  # Large limit to get all users
 
     async def count_users(self) -> int:
