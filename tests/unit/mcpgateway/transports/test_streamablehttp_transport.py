@@ -1454,12 +1454,12 @@ async def test_streamable_http_auth_uses_email_field_fallback(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_streamable_http_auth_handles_missing_teams_key(monkeypatch):
-    """Auth handles JWT payload without teams key."""
+    """Auth handles JWT payload without teams key - returns None for unrestricted access."""
 
     async def fake_verify(token):
         return {
             "sub": "user@example.com",
-            # No teams key
+            # No teams key - legacy token without team scoping
         }
 
     monkeypatch.setattr(tr, "verify_credentials", fake_verify)
@@ -1474,7 +1474,32 @@ async def test_streamable_http_auth_handles_missing_teams_key(monkeypatch):
     assert result is True
 
     user_ctx = tr.user_context_var.get()
-    assert user_ctx.get("teams") == []  # Should default to empty list
+    assert user_ctx.get("teams") is None  # None = unrestricted (legacy token without teams key)
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_handles_null_teams(monkeypatch):
+    """Auth handles JWT payload with teams: null - same as missing teams key."""
+
+    async def fake_verify(token):
+        return {
+            "sub": "user@example.com",
+            "teams": None,  # Explicit null - treated same as missing
+        }
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer good-token")])
+
+    async def send(msg):
+        pass
+
+    result = await streamable_http_auth(scope, None, send)
+
+    assert result is True
+
+    user_ctx = tr.user_context_var.get()
+    assert user_ctx.get("teams") is None  # None = teams: null treated same as missing
 
 
 @pytest.mark.asyncio

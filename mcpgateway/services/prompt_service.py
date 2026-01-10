@@ -987,21 +987,29 @@ class PromptService:
                 user_teams = await team_service.get_user_teams(user_email)
                 team_ids = [team.id for team in user_teams]
 
+            # Check if this is a public-only token (empty teams array)
+            # Public-only tokens can ONLY see public resources - no owner access
+            is_public_only_token = token_teams is not None and len(token_teams) == 0
+
             if team_id:
                 # User requesting specific team - verify access
                 if team_id not in team_ids:
                     return ([], None)
                 access_conditions = [
                     and_(DbPrompt.team_id == team_id, DbPrompt.visibility.in_(["team", "public"])),
-                    and_(DbPrompt.team_id == team_id, DbPrompt.owner_email == user_email),
                 ]
+                # Only include owner access for non-public-only tokens
+                if not is_public_only_token:
+                    access_conditions.append(and_(DbPrompt.team_id == team_id, DbPrompt.owner_email == user_email))
                 query = query.where(or_(*access_conditions))
             else:
-                # General access: user's prompts + public prompts + team prompts
+                # General access: public prompts + team prompts (+ owner prompts if not public-only token)
                 access_conditions = [
-                    DbPrompt.owner_email == user_email,
                     DbPrompt.visibility == "public",
                 ]
+                # Only include owner access for non-public-only tokens
+                if not is_public_only_token:
+                    access_conditions.append(DbPrompt.owner_email == user_email)
                 if team_ids:
                     access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
                 query = query.where(or_(*access_conditions))
@@ -1219,10 +1227,16 @@ class PromptService:
                 user_teams = await team_service.get_user_teams(user_email)
                 team_ids = [team.id for team in user_teams]
 
+            # Check if this is a public-only token (empty teams array)
+            # Public-only tokens can ONLY see public resources - no owner access
+            is_public_only_token = token_teams is not None and len(token_teams) == 0
+
             access_conditions = [
-                DbPrompt.owner_email == user_email,
                 DbPrompt.visibility == "public",
             ]
+            # Only include owner access for non-public-only tokens
+            if not is_public_only_token:
+                access_conditions.append(DbPrompt.owner_email == user_email)
             if team_ids:
                 access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
             query = query.where(or_(*access_conditions))

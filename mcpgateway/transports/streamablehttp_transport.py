@@ -540,14 +540,17 @@ async def list_tools() -> List[types.Tool]:
 
     # Extract filtering parameters from user context
     user_email = user_context.get("email") if user_context else None
-    token_teams = user_context.get("teams", []) if user_context else []
+    # Use None as default to distinguish "no teams specified" from "empty teams array"
+    token_teams = user_context.get("teams") if user_context else None
     is_admin = user_context.get("is_admin", False) if user_context else False
 
-    # Admin bypass - but respect empty-team token restrictions (public-only access)
-    # If token has empty teams array, admin bypass is disabled to enforce scope
-    if is_admin and token_teams:  # Only bypass if admin AND has non-empty teams
+    # Admin bypass - only when token has NO team restrictions (token_teams is None)
+    # If token has explicit team scope (even empty [] for public-only), respect it
+    if is_admin and token_teams is None:
         user_email = None
-        token_teams = None
+        # token_teams stays None (unrestricted)
+    elif token_teams is None:
+        token_teams = []  # Non-admin without teams = public-only (secure default)
 
     if server_id:
         try:
@@ -589,14 +592,17 @@ async def list_prompts() -> List[types.Prompt]:
 
     # Extract filtering parameters from user context
     user_email = user_context.get("email") if user_context else None
-    token_teams = user_context.get("teams", []) if user_context else []
+    # Use None as default to distinguish "no teams specified" from "empty teams array"
+    token_teams = user_context.get("teams") if user_context else None
     is_admin = user_context.get("is_admin", False) if user_context else False
 
-    # Admin bypass - but respect empty-team token restrictions (public-only access)
-    # If token has empty teams array, admin bypass is disabled to enforce scope
-    if is_admin and token_teams:  # Only bypass if admin AND has non-empty teams
+    # Admin bypass - only when token has NO team restrictions (token_teams is None)
+    # If token has explicit team scope (even empty [] for public-only), respect it
+    if is_admin and token_teams is None:
         user_email = None
-        token_teams = None
+        # token_teams stays None (unrestricted)
+    elif token_teams is None:
+        token_teams = []  # Non-admin without teams = public-only (secure default)
 
     if server_id:
         try:
@@ -678,14 +684,17 @@ async def list_resources() -> List[types.Resource]:
 
     # Extract filtering parameters from user context
     user_email = user_context.get("email") if user_context else None
-    token_teams = user_context.get("teams", []) if user_context else []
+    # Use None as default to distinguish "no teams specified" from "empty teams array"
+    token_teams = user_context.get("teams") if user_context else None
     is_admin = user_context.get("is_admin", False) if user_context else False
 
-    # Admin bypass - but respect empty-team token restrictions (public-only access)
-    # If token has empty teams array, admin bypass is disabled to enforce scope
-    if is_admin and token_teams:  # Only bypass if admin AND has non-empty teams
+    # Admin bypass - only when token has NO team restrictions (token_teams is None)
+    # If token has explicit team scope (even empty [] for public-only), respect it
+    if is_admin and token_teams is None:
         user_email = None
-        token_teams = None
+        # token_teams stays None (unrestricted)
+    elif token_teams is None:
+        token_teams = []  # Non-admin without teams = public-only (secure default)
 
     if server_id:
         try:
@@ -1092,20 +1101,27 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
         user_payload = await verify_credentials(token)
         # Store enriched user context with normalized teams
         if isinstance(user_payload, dict):
-            # Normalize teams from payload
-            teams = user_payload.get("teams", [])
-            normalized_teams = []
-            for team in teams or []:
-                if isinstance(team, dict):
-                    team_id = team.get("id")
-                    if team_id:
-                        normalized_teams.append(team_id)
-                elif isinstance(team, str):
-                    normalized_teams.append(team)
+            # Check if "teams" key exists and is not None to distinguish:
+            # - Key exists with non-None value (even empty []) -> normalized list (scoped token)
+            # - Key absent OR key is None -> None (unrestricted for admin, public-only for non-admin)
+            teams_value = user_payload.get("teams") if "teams" in user_payload else None
+            if teams_value is not None:
+                normalized_teams = []
+                for team in teams_value or []:
+                    if isinstance(team, dict):
+                        team_id = team.get("id")
+                        if team_id:
+                            normalized_teams.append(team_id)
+                    elif isinstance(team, str):
+                        normalized_teams.append(team)
+                final_teams = normalized_teams
+            else:
+                # No "teams" key or teams is null - treat as unrestricted (None)
+                final_teams = None
 
             user_context_var.set({
                 "email": user_payload.get("sub") or user_payload.get("email"),  # Some tokens only have email
-                "teams": normalized_teams,
+                "teams": final_teams,
                 "is_authenticated": True,
                 # Check both top-level is_admin (legacy tokens) and nested user.is_admin
                 "is_admin": user_payload.get("is_admin", False) or user_payload.get("user", {}).get("is_admin", False),

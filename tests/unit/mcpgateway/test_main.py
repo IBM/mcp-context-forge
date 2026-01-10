@@ -2035,15 +2035,15 @@ class TestGetTokenTeamsFromRequest:
         result = _get_token_teams_from_request(mock_request)
         assert result is None  # None triggers DB team lookup in services
 
-    def test_get_token_teams_no_teams_in_payload_returns_empty_list(self):
-        """Test that payload without teams key returns empty list (not None)."""
+    def test_get_token_teams_no_teams_in_payload_returns_none(self):
+        """Test that payload without teams key returns None (unrestricted access)."""
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = ("token", {"sub": "user@example.com"})
 
         result = _get_token_teams_from_request(mock_request)
-        assert result == []  # Empty list = JWT exists but no teams
+        assert result is None  # None = JWT exists but no teams key (unrestricted)
 
     def test_get_token_teams_empty_teams_returns_empty_list(self):
         """Test that payload with empty teams returns empty list (not None)."""
@@ -2054,6 +2054,16 @@ class TestGetTokenTeamsFromRequest:
 
         result = _get_token_teams_from_request(mock_request)
         assert result == []  # Empty list = JWT exists but no teams
+
+    def test_get_token_teams_null_teams_returns_none(self):
+        """Test that payload with teams: null returns None (same as missing teams)."""
+        from mcpgateway.main import _get_token_teams_from_request
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"sub": "user@example.com", "teams": None})
+
+        result = _get_token_teams_from_request(mock_request)
+        assert result is None  # None = teams is null, treated same as missing (unrestricted)
 
     def test_get_token_teams_invalid_tuple_format_returns_none(self):
         """Test that non-tuple cached payload returns None."""

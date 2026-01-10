@@ -327,12 +327,18 @@ def _get_token_teams_from_request(request: Request) -> Optional[List[str]]:
 
     Uses cached verified payload from request.state to avoid re-decoding.
 
+    Semantics:
+        - teams key with non-None value -> normalized list (even if empty [])
+        - teams key absent OR teams: null -> None (unrestricted for admin, public-only for non-admin)
+        - No JWT payload -> None
+
     Args:
         request: FastAPI request object
 
     Returns:
-        List of normalized team IDs if JWT payload exists (may be empty list),
-        or None if no verified JWT payload (triggers DB team lookup in services)
+        List of normalized team IDs if teams key exists with non-None value,
+        or None if no JWT payload, teams key absent, or teams is null.
+        Callers use None to determine access: admin gets unrestricted, non-admin gets public-only.
 
     Examples:
         >>> from mcpgateway import main
@@ -345,8 +351,14 @@ def _get_token_teams_from_request(request: Request) -> Optional[List[str]]:
         >>> req.state._jwt_verified_payload = ("token", {"teams": []})
         >>> main._get_token_teams_from_request(req)
         []
+        >>> req.state._jwt_verified_payload = ("token", {"sub": "user@example.com"})
+        >>> main._get_token_teams_from_request(req) is None  # No teams key
+        True
+        >>> req.state._jwt_verified_payload = ("token", {"teams": None})
+        >>> main._get_token_teams_from_request(req) is None  # teams: null
+        True
         >>> req.state._jwt_verified_payload = None
-        >>> main._get_token_teams_from_request(req) is None
+        >>> main._get_token_teams_from_request(req) is None  # No JWT
         True
     """
     # Use cached verified payload (set by verify_jwt_token_cached)
@@ -354,8 +366,13 @@ def _get_token_teams_from_request(request: Request) -> Optional[List[str]]:
     if cached and isinstance(cached, tuple) and len(cached) == 2:
         _, payload = cached
         if payload:
-            # JWT exists - return normalized teams (may be empty list)
-            return _normalize_token_teams(payload.get("teams"))
+            # Check if "teams" key exists and is not None
+            # - Key exists with non-None value (even empty []) -> return normalized list
+            # - Key absent OR key is None -> return None (unrestricted for admin, public-only for non-admin)
+            if "teams" in payload and payload.get("teams") is not None:
+                return _normalize_token_teams(payload.get("teams"))
+            # No "teams" key or teams is null - treat as unrestricted (None)
+            return None
 
     # No JWT payload - return None to trigger DB team lookup
     return None
@@ -2471,9 +2488,13 @@ async def server_get_tools(
     """
     logger.debug(f"User: {user} has listed tools for the server_id: {server_id}")
     user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
-    if is_admin:
+    # Admin bypass - only when token has NO team restrictions (token_teams is None)
+    # If token has explicit team scope (even empty [] for public-only), respect it
+    if is_admin and token_teams is None:
         user_email = None
-        token_teams = None
+        token_teams = None  # Admin unrestricted
+    elif token_teams is None:
+        token_teams = []  # Non-admin without teams = public-only (secure default)
     tools = await tool_service.list_server_tools(db, server_id=server_id, include_inactive=include_inactive, include_metrics=include_metrics, user_email=user_email, token_teams=token_teams)
     return [tool.model_dump(by_alias=True) for tool in tools]
 
@@ -2506,9 +2527,13 @@ async def server_get_resources(
     """
     logger.debug(f"User: {user} has listed resources for the server_id: {server_id}")
     user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
-    if is_admin:
+    # Admin bypass - only when token has NO team restrictions (token_teams is None)
+    # If token has explicit team scope (even empty [] for public-only), respect it
+    if is_admin and token_teams is None:
         user_email = None
-        token_teams = None
+        token_teams = None  # Admin unrestricted
+    elif token_teams is None:
+        token_teams = []  # Non-admin without teams = public-only (secure default)
     resources = await resource_service.list_server_resources(db, server_id=server_id, include_inactive=include_inactive, user_email=user_email, token_teams=token_teams)
     return [resource.model_dump(by_alias=True) for resource in resources]
 
@@ -2541,9 +2566,13 @@ async def server_get_prompts(
     """
     logger.debug(f"User: {user} has listed prompts for the server_id: {server_id}")
     user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
-    if is_admin:
+    # Admin bypass - only when token has NO team restrictions (token_teams is None)
+    # If token has explicit team scope (even empty [] for public-only), respect it
+    if is_admin and token_teams is None:
         user_email = None
-        token_teams = None
+        token_teams = None  # Admin unrestricted
+    elif token_teams is None:
+        token_teams = []  # Non-admin without teams = public-only (secure default)
     prompts = await prompt_service.list_server_prompts(db, server_id=server_id, include_inactive=include_inactive, user_email=user_email, token_teams=token_teams)
     return [prompt.model_dump(by_alias=True) for prompt in prompts]
 
@@ -2959,10 +2988,13 @@ async def list_tools(
     # Get filtering context from token (respects token scope)
     user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
 
-    # Admin bypass - unrestricted access (but respects empty-team token restrictions)
-    if is_admin:
+    # Admin bypass - only when token has NO team restrictions (token_teams is None)
+    # If token has explicit team scope (even for admins), respect it for least-privilege
+    if is_admin and token_teams is None:
         user_email = None
-        token_teams = None
+        token_teams = None  # Admin unrestricted
+    elif token_teams is None:
+        token_teams = []  # Non-admin without teams = public-only (secure default)
 
     # Check team_id from request.state (set during auth)
     # Only use for non-empty-team tokens; empty-team tokens should rely on visibility filtering
@@ -3371,10 +3403,13 @@ async def list_resources(
     # Get filtering context from token (respects token scope)
     user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
 
-    # Admin bypass - unrestricted access (but respects empty-team token restrictions)
-    if is_admin:
+    # Admin bypass - only when token has NO team restrictions (token_teams is None)
+    # If token has explicit team scope (even for admins), respect it for least-privilege
+    if is_admin and token_teams is None:
         user_email = None
-        token_teams = None
+        token_teams = None  # Admin unrestricted
+    elif token_teams is None:
+        token_teams = []  # Non-admin without teams = public-only (secure default)
 
     # Check team_id from request.state (set during auth)
     # Only use for non-empty-team tokens; empty-team tokens should rely on visibility filtering
@@ -3759,10 +3794,13 @@ async def list_prompts(
     # Get filtering context from token (respects token scope)
     user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
 
-    # Admin bypass - unrestricted access (but respects empty-team token restrictions)
-    if is_admin:
+    # Admin bypass - only when token has NO team restrictions (token_teams is None)
+    # If token has explicit team scope (even for admins), respect it for least-privilege
+    if is_admin and token_teams is None:
         user_email = None
-        token_teams = None
+        token_teams = None  # Admin unrestricted
+    elif token_teams is None:
+        token_teams = []  # Non-admin without teams = public-only (secure default)
 
     # Check team_id from request.state (set during auth)
     # Only use for non-empty-team tokens; empty-team tokens should rely on visibility filtering
@@ -4548,10 +4586,12 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 result = result.model_dump(by_alias=True, exclude_none=True)
         elif method == "tools/list":
             user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
-            # Admin bypass - unrestricted access
-            if is_admin:
+            # Admin bypass - only when token has NO team restrictions
+            if is_admin and token_teams is None:
                 user_email = None
-                token_teams = None
+                token_teams = None  # Admin unrestricted
+            elif token_teams is None:
+                token_teams = []  # Non-admin without teams = public-only (secure default)
             if server_id:
                 tools = await tool_service.list_server_tools(db, server_id, cursor=cursor, user_email=user_email, token_teams=token_teams)
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
@@ -4562,9 +4602,13 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     result["nextCursor"] = next_cursor
         elif method == "list_tools":  # Legacy endpoint
             user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
-            if is_admin:
+            # Admin bypass - only when token has NO team restrictions (token_teams is None)
+            # If token has explicit team scope (even empty [] for public-only), respect it
+            if is_admin and token_teams is None:
                 user_email = None
-                token_teams = None
+                token_teams = None  # Admin unrestricted
+            elif token_teams is None:
+                token_teams = []  # Non-admin without teams = public-only (secure default)
             if server_id:
                 tools = await tool_service.list_server_tools(db, server_id, cursor=cursor, user_email=user_email, token_teams=token_teams)
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
@@ -4581,9 +4625,12 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             result = {"roots": [r.model_dump(by_alias=True, exclude_none=True) for r in roots]}
         elif method == "resources/list":
             user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
-            if is_admin:
+            # Admin bypass - only when token has NO team restrictions
+            if is_admin and token_teams is None:
                 user_email = None
-                token_teams = None
+                token_teams = None  # Admin unrestricted
+            elif token_teams is None:
+                token_teams = []  # Non-admin without teams = public-only (secure default)
             if server_id:
                 resources = await resource_service.list_server_resources(db, server_id, user_email=user_email, token_teams=token_teams)
                 result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
@@ -4642,9 +4689,12 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             result = {}
         elif method == "prompts/list":
             user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
-            if is_admin:
+            # Admin bypass - only when token has NO team restrictions
+            if is_admin and token_teams is None:
                 user_email = None
-                token_teams = None
+                token_teams = None  # Admin unrestricted
+            elif token_teams is None:
+                token_teams = []  # Non-admin without teams = public-only (secure default)
             if server_id:
                 prompts = await prompt_service.list_server_prompts(db, server_id, cursor=cursor, user_email=user_email, token_teams=token_teams)
                 result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}

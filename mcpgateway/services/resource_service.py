@@ -907,6 +907,10 @@ class ResourceService:
                 user_teams = await team_service.get_user_teams(user_email)
                 team_ids = [team.id for team in user_teams]
 
+            # Check if this is a public-only token (empty teams array)
+            # Public-only tokens can ONLY see public resources - no owner access
+            is_public_only_token = token_teams is not None and len(token_teams) == 0
+
             if team_id:
                 # User requesting specific team - verify access
                 if team_id not in team_ids:
@@ -914,15 +918,19 @@ class ResourceService:
 
                 access_conditions = [
                     and_(DbResource.team_id == team_id, DbResource.visibility.in_(["team", "public"])),
-                    and_(DbResource.team_id == team_id, DbResource.owner_email == user_email),
                 ]
+                # Only include owner access for non-public-only tokens
+                if not is_public_only_token:
+                    access_conditions.append(and_(DbResource.team_id == team_id, DbResource.owner_email == user_email))
                 query = query.where(or_(*access_conditions))
             else:
-                # General access: user's resources + public resources + team resources
+                # General access: public resources + team resources (+ owner resources if not public-only token)
                 access_conditions = [
-                    DbResource.owner_email == user_email,
                     DbResource.visibility == "public",
                 ]
+                # Only include owner access for non-public-only tokens
+                if not is_public_only_token:
+                    access_conditions.append(DbResource.owner_email == user_email)
                 if team_ids:
                     access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
 
@@ -1177,10 +1185,16 @@ class ResourceService:
                 user_teams = await team_service.get_user_teams(user_email)
                 team_ids = [team.id for team in user_teams]
 
+            # Check if this is a public-only token (empty teams array)
+            # Public-only tokens can ONLY see public resources - no owner access
+            is_public_only_token = token_teams is not None and len(token_teams) == 0
+
             access_conditions = [
-                DbResource.owner_email == user_email,
                 DbResource.visibility == "public",
             ]
+            # Only include owner access for non-public-only tokens
+            if not is_public_only_token:
+                access_conditions.append(DbResource.owner_email == user_email)
             if team_ids:
                 access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
             query = query.where(or_(*access_conditions))
