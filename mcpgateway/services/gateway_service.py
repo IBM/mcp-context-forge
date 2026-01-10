@@ -98,6 +98,7 @@ from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.pagination import unified_paginate
+from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
@@ -4226,7 +4227,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             "resources_updated": 0,
             "prompts_added": 0,
             "prompts_removed": 0,
+            "tools_updated": 0,
+            "resources_updated": 0,
             "prompts_updated": 0,
+            "success": True,
+            "error": None,
+            "validation_errors": [],
         }
 
         # Fetch gateway metadata only (no relationships needed for MCP call)
@@ -4263,6 +4269,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             )
         except Exception as e:
             logger.warning(f"Failed to fetch tools from gateway {gateway_name}: {e}")
+            result["success"] = False
+            result["error"] = str(e)
             return result
 
         # For authorization_code OAuth gateways, empty responses may indicate incomplete auth flow
@@ -4288,6 +4296,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             ).scalar_one_or_none()
 
             if not gateway:
+                result["success"] = False
+                result["error"] = f"Gateway {gateway_id} not found during refresh"
                 return result
 
             new_tool_names = [tool.name for tool in tools]
@@ -4372,7 +4382,18 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 result["prompts_added"] = len(prompts_to_add)
 
             # Only commit if there were actual changes (adds, removes, OR updates)
-            total_changes = sum(result.values())
+            
+            total_changes = (
+                result["tools_added"]
+                + result["tools_removed"]
+                + result["tools_updated"]
+                + result["resources_added"]
+                + result["resources_removed"]
+                + result["resources_updated"]
+                + result["prompts_added"]
+                + result["prompts_removed"]
+                + result["prompts_updated"]
+            )
 
             has_changes = total_changes > 0
 
@@ -4432,6 +4453,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         include_resources: bool = True,
         include_prompts: bool = True,
         user_email: Optional[str] = None,
+        request_headers: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """Manually trigger a refresh of tools/resources/prompts for a gateway.
 
@@ -4468,12 +4490,18 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         """
         start_time = time.monotonic()
 
+        pre_auth_headers = {}
+
         # Check if gateway exists before acquiring lock
         with fresh_db_session() as db:
             gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway with ID '{gateway_id}' not found")
             gateway_name = gateway.name
+
+            # Get passthrough headers if request headers provided
+            if request_headers:
+                pre_auth_headers = get_passthrough_headers(request_headers, {}, db, gateway)
 
         lock = self._get_refresh_lock(gateway_id)
 
@@ -4488,6 +4516,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 gateway_id=gateway_id,
                 _user_email=user_email,
                 created_via="manual_refresh",
+                pre_auth_headers=pre_auth_headers,
             )
 
             # Update last_refresh_at timestamp
@@ -4497,23 +4526,22 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     gw.last_refresh_at = datetime.now(timezone.utc)
                     db.commit()
 
-        duration_ms = (time.monotonic() - start_time) * 1000
-        refreshed_at = datetime.now(timezone.utc)
+        result["duration_ms"] = (time.monotonic() - start_time) * 1000
+        result["refreshed_at"] = datetime.now(timezone.utc)
 
-        logger.info(
-            f"Completed manual refresh for gateway {gateway_name}: "
+        log_level = logging.INFO if result.get("success", True) else logging.WARNING
+        status_msg = "succeeded" if result.get("success", True) else f"failed: {result.get('error')}"
+
+        logger.log(
+            log_level,
+            f"Manual refresh for gateway {gateway_id} {status_msg}. Stats: "
             f"tools(+{result['tools_added']}/-{result['tools_removed']}), "
             f"resources(+{result['resources_added']}/-{result['resources_removed']}), "
             f"prompts(+{result['prompts_added']}/-{result['prompts_removed']}) "
-            f"in {duration_ms:.2f}ms"
+            f"in {result['duration_ms']:.2f}ms"
         )
 
-        return {
-            **result,
-            "validation_errors": [],
-            "duration_ms": duration_ms,
-            "refreshed_at": refreshed_at,
-        }
+        return result
 
     async def _publish_event(self, event: Dict[str, Any]) -> None:
         """Publish event to all subscribers.

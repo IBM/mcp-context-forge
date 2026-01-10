@@ -4529,6 +4529,7 @@ async def refresh_gateway_tools(
             include_resources=include_resources,
             include_prompts=include_prompts,
             user_email=user_email,
+            request_headers=dict(request.headers),
         )
         return GatewayRefreshResponse(gateway_id=gateway_id, **result)
     except GatewayNotFoundError as e:

@@ -3253,6 +3253,8 @@ class GatewayRefreshResponse(BaseModelWithConfigDict):
     """
 
     gateway_id: str = Field(..., description="ID of the refreshed gateway")
+    success: bool = Field(default=True, description="Whether the refresh operation was successful")
+    error: Optional[str] = Field(None, description="Error message if the refresh failed")
     tools_added: int = Field(default=0, description="Number of tools added")
     tools_updated: int = Field(default=0, description="Number of tools updated")
     tools_removed: int = Field(default=0, description="Number of tools removed")
