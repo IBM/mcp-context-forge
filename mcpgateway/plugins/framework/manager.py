@@ -2,7 +2,7 @@
 """Location: ./mcpgateway/plugins/framework/manager.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Teryl Taylor, Mihai Criveti
+Authors: Teryl Taylor, Mihai Criveti, Fred Araujo
 
 Plugin manager.
 Module that manages and calls plugins at hookpoints throughout the gateway.
@@ -438,12 +438,31 @@ class PluginManager:
             >>> manager = PluginManager("plugins/config.yaml", timeout=60)
         """
         self.__dict__ = self.__shared_state
-        if config:
-            self._config = ConfigLoader.load_config(config)
 
-        # Update executor timeouts
-        self._executor.config = self._config
-        self._executor.timeout = timeout
+        # Only initialize once (first instance when shared state is empty)
+        if not self.__shared_state:
+            if config:
+                self._config = ConfigLoader.load_config(config)
+
+            # Update executor timeouts
+            self._executor.config = self._config
+            self._executor.timeout = timeout
+
+    @classmethod
+    def reset(cls) -> None:
+        """Reset the Borg pattern shared state.
+
+        This method clears all shared state, allowing a fresh PluginManager
+        instance to be created with new configuration. Primarily used for testing.
+
+        Examples:
+            >>> # Between tests, reset shared state
+            >>> PluginManager.reset()
+            >>> manager = PluginManager("new_config.yaml")
+        """
+        cls.__shared_state.clear()
+        cls._initialized = False
+        cls._config = None
 
     @property
     def config(self) -> Config | None:
@@ -554,6 +573,9 @@ class PluginManager:
         3. Cleans up stored contexts
         4. Resets initialization state
 
+        Note: The config is preserved to allow modifying settings and re-initializing.
+        To fully reset for a new config, create a new PluginManager instance.
+
         Examples:
             >>> manager = PluginManager("plugins/config.yaml")
             >>> # In async context:
@@ -568,8 +590,9 @@ class PluginManager:
 
         # Clear context store
 
-        # Reset state
+        # Reset state to allow re-initialization
         self._initialized = False
+
         logger.info("Plugin manager shutdown complete")
 
     async def invoke_hook(
