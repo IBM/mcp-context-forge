@@ -5847,16 +5847,16 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         <div class="flex-shrink-0">
                         </div>
                         <div class="ml-3 flex-1">
-                            <!-- Public Access Token Section -->
+                            <!-- Token Scope Section -->
                             <div class="space-y-2">
                                 <div class="flex items-center">
                                     <h3 class="text-sm font-bold text-yellow-800 dark:text-yellow-200">
-                                        ⚠️ <span class="font-semibold">Public Access Token</span>
+                                        ⚠️ <span class="font-semibold">Token Scope</span>
                                     </h3>
                                 </div>
                                 <div class="mt-1 text-sm text-yellow-700 dark:text-yellow-300">
                                     <p class="mb-1">
-                                        You are currently viewing <span class="font-semibold">"All Teams"</span>. Tokens created in this context will have <span class="font-semibold">public-only access</span>.
+                                        Tokens created without selecting a team will have access to <span class="font-semibold">public resources only</span>.
                                     </p>
                                     <p class="mb-1"><span class="font-semibold">✅ This token CAN access:</span></p>
                                     <ul class="list-disc list-inside ml-4 space-y-1">
@@ -5865,7 +5865,8 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                                     </ul>
                                     <p class="mt-2 mb-1"><span class="font-semibold">❌ This token CANNOT access:</span></p>
                                     <ul class="list-disc list-inside ml-4 space-y-1">
-                                        <li>Team-scoped or private servers, tools, resources, and prompts</li>
+                                        <li>Your own private or team-scoped resources</li>
+                                        <li>Team-scoped servers, tools, resources, and prompts</li>
                                     </ul>
                                 </div>
                             </div>
@@ -5874,7 +5875,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                             <div class="mt-4 bg-yellow-50 dark:bg-yellow-900 p-2 rounded-md border border-yellow-200 dark:border-yellow-600 flex items-center">
                                 <span class="text-yellow-600 dark:text-yellow-400 text-lg">💡</span>
                                 <p class="ml-2 text-sm font-semibold text-yellow-700 dark:text-yellow-300">
-                                    To create a token with full Team Access, select a specific team from the header above.
+                                    For team-level access, select a specific team from the header above before creating a token.
                                 </p>
                             </div>
                         </div>

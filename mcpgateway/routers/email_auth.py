@@ -145,16 +145,19 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
             "is_admin": user.is_admin,
             "auth_provider": user.auth_provider,
         },
-        # Team memberships for authorization
-        "teams": [
-            {"id": team.id, "name": team.name, "slug": team.slug, "is_personal": team.is_personal, "role": next((m.role for m in user.team_memberships if m.team_id == team.id), "member")}
-            for team in teams
-        ],
         # Namespace access (backwards compatible)
         "namespaces": [f"user:{user.email}", *[f"team:{team.slug}" for team in teams], "public"],
         # Token scoping (if provided)
         "scopes": token_scopes or {"server_id": None, "permissions": ["*"], "ip_restrictions": [], "time_restrictions": {}},  # Full access for regular user tokens
     }
+
+    # For admin users: omit "teams" key entirely to enable unrestricted access bypass
+    # For regular users: include teams for proper team-based scoping
+    if not user.is_admin:
+        payload["teams"] = [
+            {"id": team.id, "name": team.name, "slug": team.slug, "is_personal": team.is_personal, "role": next((m.role for m in user.team_memberships if m.team_id == team.id), "member")}
+            for team in teams
+        ]
 
     # Generate token using centralized token creation
     token = await create_jwt_token(payload)

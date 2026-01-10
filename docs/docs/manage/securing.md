@@ -168,6 +168,22 @@ volumes:
 
 The gateway supports fine-grained token scoping to restrict token access to specific servers, permissions, IP ranges, and time windows. This provides defense-in-depth security for API access.
 
+!!! tip "Detailed RBAC Documentation"
+    For comprehensive documentation on token scoping semantics, team-based access control, and visibility filtering, see the [RBAC Configuration Guide](rbac.md).
+
+#### Team-Based Token Scoping
+
+Tokens can be scoped to specific teams using the `teams` JWT claim:
+
+| Token Configuration | Admin User | Non-Admin User |
+|---------------------|------------|----------------|
+| No `teams` key | Unrestricted | Public-only |
+| `teams: null` | Unrestricted | Public-only |
+| `teams: []` | Public-only | Public-only |
+| `teams: ["team-id"]` | Team + Public | Team + Public |
+
+**Security Default**: Non-admin tokens without explicit team scope default to public-only access (principle of least privilege).
+
 #### Server-Scoped Tokens
 
 Server-scoped tokens are restricted to specific MCP servers and cannot access admin endpoints:

@@ -183,8 +183,8 @@ def test_client(app):
     # First-Party
     # Mock user object for RBAC system
     from mcpgateway.db import EmailUser
-    from mcpgateway.main import require_auth
     from mcpgateway.middleware.rbac import get_current_user_with_permissions
+    from mcpgateway.utils.verify_credentials import require_auth
 
     mock_user = EmailUser(
         email="test_user@example.com",
@@ -1160,7 +1160,7 @@ class TestRPCEndpoints:
             name="test_tool",
             arguments={"param": "value"},
             request_headers=ANY,
-            app_user_email="test_user",
+            app_user_email="test_user@example.com",  # Updated: now uses email from JWT/RBAC
             plugin_context_table=None,
             plugin_global_context=ANY,
         )
@@ -1939,3 +1939,291 @@ class TestJsonPathCaching:
 
         info = _parse_jsonpath.cache_info()
         assert info.misses == 2
+
+
+# ----------------------------------------------------- #
+# Token Teams Helper Function Tests (Issue #1915)       #
+# ----------------------------------------------------- #
+class TestNormalizeTokenTeams:
+    """Tests for _normalize_token_teams helper function."""
+
+    def test_normalize_token_teams_none(self):
+        """Test that None input returns empty list."""
+        from mcpgateway.main import _normalize_token_teams
+
+        assert _normalize_token_teams(None) == []
+
+    def test_normalize_token_teams_empty_list(self):
+        """Test that empty list input returns empty list."""
+        from mcpgateway.main import _normalize_token_teams
+
+        assert _normalize_token_teams([]) == []
+
+    def test_normalize_token_teams_string_ids(self):
+        """Test that string team IDs are passed through unchanged."""
+        from mcpgateway.main import _normalize_token_teams
+
+        result = _normalize_token_teams(["team_a", "team_b", "team_c"])
+        assert result == ["team_a", "team_b", "team_c"]
+
+    def test_normalize_token_teams_dict_format(self):
+        """Test that dict format with id key extracts the ID."""
+        from mcpgateway.main import _normalize_token_teams
+
+        result = _normalize_token_teams([{"id": "team_a", "name": "Team A"}, {"id": "team_b", "name": "Team B"}])
+        assert result == ["team_a", "team_b"]
+
+    def test_normalize_token_teams_mixed_format(self):
+        """Test that mixed string and dict formats are handled correctly."""
+        from mcpgateway.main import _normalize_token_teams
+
+        result = _normalize_token_teams([{"id": "t1", "name": "Team 1"}, "t2", {"id": "t3"}])
+        assert result == ["t1", "t2", "t3"]
+
+    def test_normalize_token_teams_dict_without_id(self):
+        """Test that dicts without id key are skipped."""
+        from mcpgateway.main import _normalize_token_teams
+
+        result = _normalize_token_teams([{"name": "No ID Team"}, {"id": "valid_team"}])
+        assert result == ["valid_team"]
+
+    def test_normalize_token_teams_dict_with_empty_id(self):
+        """Test that dicts with empty id value are skipped."""
+        from mcpgateway.main import _normalize_token_teams
+
+        result = _normalize_token_teams([{"id": "", "name": "Empty ID"}, {"id": "valid"}])
+        assert result == ["valid"]
+
+    def test_normalize_token_teams_preserves_order(self):
+        """Test that team order is preserved."""
+        from mcpgateway.main import _normalize_token_teams
+
+        result = _normalize_token_teams(["z_team", "a_team", "m_team"])
+        assert result == ["z_team", "a_team", "m_team"]
+
+
+class TestGetTokenTeamsFromRequest:
+    """Tests for _get_token_teams_from_request helper function."""
+
+    def test_get_token_teams_with_valid_cached_payload(self):
+        """Test extraction of teams from cached JWT payload."""
+        from mcpgateway.main import _get_token_teams_from_request
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token_string", {"sub": "user@example.com", "teams": ["team_a", "team_b"]})
+
+        result = _get_token_teams_from_request(mock_request)
+        assert result == ["team_a", "team_b"]
+
+    def test_get_token_teams_with_dict_teams_payload(self):
+        """Test extraction and normalization of dict format teams."""
+        from mcpgateway.main import _get_token_teams_from_request
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"teams": [{"id": "t1", "name": "Team 1"}]})
+
+        result = _get_token_teams_from_request(mock_request)
+        assert result == ["t1"]
+
+    def test_get_token_teams_no_cached_payload_returns_none(self):
+        """Test that missing cached payload returns None (triggers DB lookup)."""
+        from mcpgateway.main import _get_token_teams_from_request
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = None
+
+        result = _get_token_teams_from_request(mock_request)
+        assert result is None  # None triggers DB team lookup in services
+
+    def test_get_token_teams_no_teams_in_payload_returns_none(self):
+        """Test that payload without teams key returns None (unrestricted access)."""
+        from mcpgateway.main import _get_token_teams_from_request
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"sub": "user@example.com"})
+
+        result = _get_token_teams_from_request(mock_request)
+        assert result is None  # None = JWT exists but no teams key (unrestricted)
+
+    def test_get_token_teams_empty_teams_returns_empty_list(self):
+        """Test that payload with empty teams returns empty list (not None)."""
+        from mcpgateway.main import _get_token_teams_from_request
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"sub": "user@example.com", "teams": []})
+
+        result = _get_token_teams_from_request(mock_request)
+        assert result == []  # Empty list = JWT exists but no teams
+
+    def test_get_token_teams_null_teams_returns_none(self):
+        """Test that payload with teams: null returns None (same as missing teams)."""
+        from mcpgateway.main import _get_token_teams_from_request
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"sub": "user@example.com", "teams": None})
+
+        result = _get_token_teams_from_request(mock_request)
+        assert result is None  # None = teams is null, treated same as missing (unrestricted)
+
+    def test_get_token_teams_invalid_tuple_format_returns_none(self):
+        """Test that non-tuple cached payload returns None."""
+        from mcpgateway.main import _get_token_teams_from_request
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = "not_a_tuple"
+
+        result = _get_token_teams_from_request(mock_request)
+        assert result is None
+
+    def test_get_token_teams_short_tuple_returns_none(self):
+        """Test that tuple with wrong length returns None."""
+        from mcpgateway.main import _get_token_teams_from_request
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("only_one_element",)
+
+        result = _get_token_teams_from_request(mock_request)
+        assert result is None
+
+    def test_get_token_teams_none_payload_in_tuple_returns_none(self):
+        """Test that None payload in tuple returns None."""
+        from mcpgateway.main import _get_token_teams_from_request
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", None)
+
+        result = _get_token_teams_from_request(mock_request)
+        assert result is None
+
+
+class TestGetRpcFilterContext:
+    """Tests for _get_rpc_filter_context helper function."""
+
+    def test_get_rpc_filter_context_dict_user(self):
+        """Test with dict user containing email and is_admin."""
+        from mcpgateway.main import _get_rpc_filter_context
+
+        mock_request = MagicMock()
+        # is_admin must be in the token payload, not the user dict (security fix)
+        mock_request.state._jwt_verified_payload = ("token", {"teams": ["t1", "t2"], "is_admin": True})
+        user = {"email": "test@example.com", "is_admin": True}  # User's is_admin is ignored
+
+        email, teams, is_admin = _get_rpc_filter_context(mock_request, user)
+
+        assert email == "test@example.com"
+        assert teams == ["t1", "t2"]
+        assert is_admin is True  # From token payload, not user dict
+
+    def test_get_rpc_filter_context_dict_user_sub_field(self):
+        """Test that sub field is used if email is not present."""
+        from mcpgateway.main import _get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"teams": []})
+        user = {"sub": "user@sub.com"}
+
+        email, teams, is_admin = _get_rpc_filter_context(mock_request, user)
+
+        assert email == "user@sub.com"
+        assert teams == []
+        assert is_admin is False
+
+    def test_get_rpc_filter_context_object_user(self):
+        """Test with user object having email and is_admin attributes."""
+        from mcpgateway.main import _get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"teams": ["team_x"]})
+
+        class UserObject:
+            email = "obj@example.com"
+            is_admin = False
+
+        email, teams, is_admin = _get_rpc_filter_context(mock_request, UserObject())
+
+        assert email == "obj@example.com"
+        assert teams == ["team_x"]
+        assert is_admin is False
+
+    def test_get_rpc_filter_context_nested_is_admin(self):
+        """Test that nested user.is_admin is extracted from token payload."""
+        from mcpgateway.main import _get_rpc_filter_context
+
+        mock_request = MagicMock()
+        # is_admin must be in token payload - use non-empty teams to allow admin bypass
+        mock_request.state._jwt_verified_payload = ("token", {"teams": ["team_x"], "user": {"is_admin": True}})
+        user = {"email": "nested@example.com", "user": {"is_admin": True}}
+
+        email, teams, is_admin = _get_rpc_filter_context(mock_request, user)
+
+        assert email == "nested@example.com"
+        assert is_admin is True  # From token payload's nested user.is_admin
+
+    def test_get_rpc_filter_context_empty_teams_disables_admin(self):
+        """Test that empty teams array disables admin bypass even when is_admin is true."""
+        from mcpgateway.main import _get_rpc_filter_context
+
+        mock_request = MagicMock()
+        # Token has is_admin but empty teams - admin bypass should be disabled
+        mock_request.state._jwt_verified_payload = ("token", {"teams": [], "is_admin": True})
+        user = {"email": "admin@example.com", "is_admin": True}
+
+        email, teams, is_admin = _get_rpc_filter_context(mock_request, user)
+
+        assert email == "admin@example.com"
+        assert teams == []
+        assert is_admin is False  # Disabled for empty-team tokens (public-only access)
+
+    def test_get_rpc_filter_context_string_user(self):
+        """Test with string user (fallback to str conversion)."""
+        from mcpgateway.main import _get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"teams": ["t1"]})
+        user = "plain_username"
+
+        email, teams, is_admin = _get_rpc_filter_context(mock_request, user)
+
+        assert email == "plain_username"
+        assert teams == ["t1"]
+        assert is_admin is False
+
+    def test_get_rpc_filter_context_none_user(self):
+        """Test with None user."""
+        from mcpgateway.main import _get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"teams": []})
+
+        email, teams, is_admin = _get_rpc_filter_context(mock_request, None)
+
+        assert email is None
+        assert teams == []
+        assert is_admin is False
+
+    def test_get_rpc_filter_context_admin_not_in_dict(self):
+        """Test that is_admin defaults to False if not present."""
+        from mcpgateway.main import _get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"teams": ["t1"]})
+        user = {"email": "user@example.com"}
+
+        email, teams, is_admin = _get_rpc_filter_context(mock_request, user)
+
+        assert email == "user@example.com"
+        assert is_admin is False
+
+    def test_get_rpc_filter_context_no_jwt_returns_none_teams(self):
+        """Test that missing JWT payload returns None for teams (triggers DB lookup)."""
+        from mcpgateway.main import _get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = None  # No JWT - e.g., plugin auth
+        user = {"email": "plugin_user@example.com", "is_admin": False}
+
+        email, teams, is_admin = _get_rpc_filter_context(mock_request, user)
+
+        assert email == "plugin_user@example.com"
+        assert teams is None  # None triggers DB team lookup in services
+        assert is_admin is False
