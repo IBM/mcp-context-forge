@@ -192,7 +192,8 @@ class ExternalPluginServer:
             >>> import asyncio
             >>> import os
             >>> os.environ["PYTHONPATH"] = "."
-            >>> from mcpgateway.plugins.framework import GlobalContext, Plugin, PromptHookType, PromptPrehookPayload, PluginContext, PromptPrehookResult
+            >>> from mcpgateway.plugins.framework import GlobalContext, Plugin, PromptHookType, PromptPrehookPayload, PluginContext, PromptPrehookResult, PluginManager
+            >>> PluginManager.reset()  # Reset state for clean config loading
             >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_multiple_plugins_filter.yaml")
             >>> payload = PromptPrehookPayload(prompt_id="123", name="test_prompt", args={"user": "This is so innovative"})
             >>> context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
@@ -205,12 +206,11 @@ class ExternalPluginServer:
             >>> result["result"]["continue_processing"]
             False
         """
-        global_plugin_manager = PluginManager()
         result_payload: dict[str, Any] = {PLUGIN_NAME: plugin_name}
         try:
             _context = PluginContext.model_validate(context)
 
-            result = await global_plugin_manager.invoke_hook_for_plugin(plugin_name, hook_type, payload, _context, payload_as_json=True)
+            result = await self._plugin_manager.invoke_hook_for_plugin(plugin_name, hook_type, payload, _context, payload_as_json=True)
 
             result_payload[RESULT] = result.model_dump()
             if not _context.is_empty():

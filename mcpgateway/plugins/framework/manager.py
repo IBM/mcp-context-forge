@@ -421,6 +421,7 @@ class PluginManager:
     _initialized: bool = False
     _registry: PluginInstanceRegistry = PluginInstanceRegistry()
     _config: Config | None = None
+    _config_path: str | None = None
     _executor: PluginExecutor = PluginExecutor()
 
     def __init__(self, config: str = "", timeout: int = DEFAULT_PLUGIN_TIMEOUT):
@@ -443,6 +444,7 @@ class PluginManager:
         if not self.__shared_state:
             if config:
                 self._config = ConfigLoader.load_config(config)
+                self._config_path = config
 
             # Update executor timeouts
             self._executor.config = self._config
@@ -463,6 +465,7 @@ class PluginManager:
         cls.__shared_state.clear()
         cls._initialized = False
         cls._config = None
+        cls._config_path = None
 
     @property
     def config(self) -> Config | None:
