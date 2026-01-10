@@ -1227,7 +1227,7 @@ class Settings(BaseSettings):
 
     # Per-gateway refresh configuration (used when auto_refresh_servers is True)
     # Gateways can override this with their own refresh_interval_seconds
-    gateway_refresh_default_interval: int = Field(
+    gateway_auto_refresh_interval: int = Field(
         default=300,
         ge=0,
         description="Default refresh interval in seconds for gateway tools/resources/prompts sync (minimum 60 seconds)"
