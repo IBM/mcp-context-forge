@@ -3267,7 +3267,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             refresh_needed = True
                             if gateway.last_refresh_at:
                                 # Default to config value if configured interval is missing
-                   
+
                                 last_refresh = gateway.last_refresh_at
                                 if last_refresh.tzinfo is None:
                                     last_refresh = last_refresh.replace(tzinfo=timezone.utc)
@@ -3276,7 +3276,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 refresh_interval = getattr(settings, "gateway_auto_refresh_interval", 300)
                                 if gateway.refresh_interval_seconds is not None:
                                     refresh_interval = gateway.refresh_interval_seconds
-                                    
+
                                 time_since_refresh = (datetime.now(timezone.utc) - last_refresh).total_seconds()
 
                                 if time_since_refresh < refresh_interval:
@@ -3289,7 +3289,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 if not lock.locked():
                                     # Acquire lock to prevent concurrent manual refresh
                                     async with lock:
-                                         await self._refresh_gateway_tools_resources_prompts(
+                                        await self._refresh_gateway_tools_resources_prompts(
                                             gateway_id=gateway_id,
                                             _user_email=user_email,
                                             created_via="health_check",
@@ -3995,7 +3995,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     )
 
                     # Check schema and configuration changes
-                    schema_fields_changed = existing_tool.headers != tool.headers or existing_tool.input_schema != tool.input_schema or existing_tool.output_schema != tool.output_schema or existing_tool.jsonpath_filter != tool.jsonpath_filter
+                    schema_fields_changed = (
+                        existing_tool.headers != tool.headers
+                        or existing_tool.input_schema != tool.input_schema
+                        or existing_tool.output_schema != tool.output_schema
+                        or existing_tool.jsonpath_filter != tool.jsonpath_filter
+                    )
 
                     # Check authentication and visibility changes
                     auth_fields_changed = existing_tool.auth_type != gateway.auth_type or existing_tool.auth_value != gateway.auth_value or existing_tool.visibility != gateway.visibility
@@ -4288,7 +4293,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             if not gateway.enabled or not gateway.reachable:
                 logger.debug(f"Skipping tool refresh for disabled/unreachable gateway {gateway.name}")
                 return result
-            
+
             gateway_name = gateway.name
             gateway_url = gateway.url
             gateway_transport = gateway.transport
@@ -4377,7 +4382,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             resources_to_add = self._update_or_create_resources(db, resources, gateway, created_via)
             prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, created_via)
 
-            # Count per-type updates 
+            # Count per-type updates
             result["tools_updated"] = len({obj for obj in db.dirty if isinstance(obj, DbTool)} - pending_tools_before)
             result["resources_updated"] = len({obj for obj in db.dirty if isinstance(obj, DbResource)} - pending_resources_before)
             result["prompts_updated"] = len({obj for obj in db.dirty if isinstance(obj, DbPrompt)} - pending_prompts_before)
@@ -4607,7 +4612,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             f"tools(+{result['tools_added']}/-{result['tools_removed']}), "
             f"resources(+{result['resources_added']}/-{result['resources_removed']}), "
             f"prompts(+{result['prompts_added']}/-{result['prompts_removed']}) "
-            f"in {result['duration_ms']:.2f}ms"
+            f"in {result['duration_ms']:.2f}ms",
         )
 
         return result
@@ -4807,7 +4812,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             logger.error(f"SSE connection error details: {type(e).__name__}: {str(e)}", exc_info=True)
             raise GatewayConnectionError(f"Failed to connect to SSE server at {server_url}: {str(e)}")
 
-    async def connect_to_sse_server(self, server_url: str, authentication: Optional[Dict[str, str]] = None, ca_certificate: Optional[bytes] = None, include_prompts: bool = True, include_resources: bool = True):
+    async def connect_to_sse_server(
+        self, server_url: str, authentication: Optional[Dict[str, str]] = None, ca_certificate: Optional[bytes] = None, include_prompts: bool = True, include_resources: bool = True
+    ):
         """Connect to an MCP server running with SSE transport.
 
         Args:
@@ -4959,7 +4966,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 return capabilities, tools, resources, prompts
         raise GatewayConnectionError(f"Failed to initialize gateway at {server_url}")
 
-    async def connect_to_streamablehttp_server(self, server_url: str, authentication: Optional[Dict[str, str]] = None, ca_certificate: Optional[bytes] = None, include_prompts: bool = True, include_resources: bool = True):
+    async def connect_to_streamablehttp_server(
+        self, server_url: str, authentication: Optional[Dict[str, str]] = None, ca_certificate: Optional[bytes] = None, include_prompts: bool = True, include_resources: bool = True
+    ):
         """Connect to an MCP server running with Streamable HTTP transport.
 
         Args:
