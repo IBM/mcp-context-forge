@@ -4379,7 +4379,6 @@ async def admin_view_team_members(
         </div>
         """
 
-
         return HTMLResponse(content=f'{management_html}<div class="space-y-2">{members_html}</div>')
 
     except Exception as e:
