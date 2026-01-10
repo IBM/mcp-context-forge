@@ -734,7 +734,6 @@ class EmailAuthService:
             stacklevel=2,
         )
 
-
         return await self.list_users(limit=10000)  # Large limit to get all users
 
     async def count_users(self) -> int:
