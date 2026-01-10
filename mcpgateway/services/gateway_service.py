@@ -3272,10 +3272,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 if last_refresh.tzinfo is None:
                                     last_refresh = last_refresh.replace(tzinfo=timezone.utc)
 
-                                # Default to config value if configured interval is missing
+                                # Use per-gateway interval if set, otherwise fall back to global default
                                 refresh_interval = getattr(settings, "gateway_auto_refresh_interval", 300)
+                                if gateway.refresh_interval_seconds is not None:
+                                    refresh_interval = gateway.refresh_interval_seconds
+                                    
                                 time_since_refresh = (datetime.now(timezone.utc) - last_refresh).total_seconds()
-                                
+
                                 if time_since_refresh < refresh_interval:
                                     refresh_needed = False
                                     logger.debug(f"Skipping auto-refresh for {gateway_name}: last refreshed {int(time_since_refresh)}s ago")
