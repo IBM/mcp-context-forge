@@ -2524,7 +2524,7 @@ class GatewayCreate(BaseModel):
 
     # Per-gateway refresh configuration
     refresh_interval_seconds: Optional[int] = Field(
-        None, ge=60,
+        None, ge=1,
         description="Per-gateway refresh interval in seconds (minimum 60); uses global default if not set"
     )
 
@@ -2795,7 +2795,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
     # Per-gateway refresh configuration
     refresh_interval_seconds: Optional[int] = Field(
-        None, ge=60,
+        None, ge=1,
         description="Per-gateway refresh interval in seconds (minimum 60); uses global default if not set"
     )
 

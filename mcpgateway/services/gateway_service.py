@@ -3267,8 +3267,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             refresh_needed = True
                             if gateway.last_refresh_at:
                                 # Default to config value if configured interval is missing
+                   
+                                last_refresh = gateway.last_refresh_at
+                                if last_refresh.tzinfo is None:
+                                    last_refresh = last_refresh.replace(tzinfo=timezone.utc)
+
+                                # Default to config value if configured interval is missing
                                 refresh_interval = getattr(settings, "gateway_auto_refresh_interval", 300)
-                                time_since_refresh = (datetime.now(timezone.utc) - gateway.last_refresh_at).total_seconds()
+                                time_since_refresh = (datetime.now(timezone.utc) - last_refresh).total_seconds()
+                                
                                 if time_since_refresh < refresh_interval:
                                     refresh_needed = False
                                     logger.debug(f"Skipping auto-refresh for {gateway_name}: last refreshed {int(time_since_refresh)}s ago")
@@ -4434,8 +4441,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     db.flush()
                 result["prompts_added"] = len(prompts_to_add)
 
-            # Only commit if there were actual changes (adds, removes, OR updates)
-            
+            gateway.last_refresh_at = datetime.now(timezone.utc)
+
             total_changes = (
                 result["tools_added"]
                 + result["tools_removed"]
@@ -4471,6 +4478,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 # Invalidate tool lookup cache for this gateway
                 tool_lookup_cache = _get_tool_lookup_cache()
                 await tool_lookup_cache.invalidate_gateway(str(gateway_id))
+            else:
+                db.commit()
+                logger.debug(f"No changes detected during refresh of gateway {gateway_name}")
 
         return result
 
