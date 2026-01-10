@@ -14066,8 +14066,22 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
       function manageTeamMembersSafe(button) {
         const teamId = button.getAttribute('data-team-id');
+        loadTeamMembersView(teamId);
+      }
+
+      function loadTeamMembersView(teamId) {
         // Load team members management modal
         htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/' + teamId + '/members', {
+          target: '#team-edit-modal-content',
+          swap: 'innerHTML'
+        }).then(() => {
+          document.getElementById('team-edit-modal').classList.remove('hidden');
+        });
+      }
+
+      function loadAddMembersView(teamId) {
+        // Load add members interface
+        htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/' + teamId + '/members/add', {
           target: '#team-edit-modal-content',
           swap: 'innerHTML'
         }).then(() => {

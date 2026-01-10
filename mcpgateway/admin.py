@@ -4353,93 +4353,16 @@ async def admin_view_team_members(
         management_html = f"""
         <div class="mb-4">
             <div class="flex justify-between items-center mb-4">
-                <h3 class="text-lg font-medium text-gray-900 dark:text-white">Manage Members: {team.name}</h3>
-                <button onclick="document.getElementById('team-edit-modal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                </button>
-            </div>"""
-
-        # Show Add Member interface for team owners
-        if is_team_owner:
-            management_html += f"""
-            <div class="mb-6">
-                <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
-                    <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
-                        <div class="flex items-center justify-between">
-                            <h4 class="text-sm font-semibold text-gray-900 dark:text-white">Add New Member</h4>
-                            <button
-                                id="toggle-add-member-{team.id}"
-                                class="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 focus:outline-none"
-                                onclick="document.getElementById('add-member-form-{team.id}').classList.toggle('hidden'); this.textContent = this.textContent === 'Show' ? 'Hide' : 'Show';">
-                                Show
-                            </button>
-                        </div>
-                    </div>
-                    <div id="add-member-form-{team.id}" class="hidden px-6 py-4">
-                        <form hx-post="{root_path}/admin/teams/{team.id}/add-member" hx-target="#team-edit-modal-content" hx-swap="innerHTML">
-                            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <div class="md:col-span-2">
-                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Select User</label>
-                                    <select name="user_email" required
-                                            class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 text-gray-900 dark:text-white">
-                                        <option value="">Choose a user to add...</option>"""
-
-            # Get available users (not already members of this team)
-            try:
-                auth_service = EmailAuthService(db)
-                all_users = await auth_service.get_all_users()
-
-                # Get current team members
-                team_management_service = TeamManagementService(db)
-                team_members = await team_management_service.get_team_members(team.id)
-                member_emails = {team_user.email for team_user, membership in team_members}
-
-                # Filter out existing members
-                available_users = [team_user for team_user in all_users if team_user.email not in member_emails]
-
-                for team_user in available_users:
-                    management_html += f'<option value="{team_user.email}">{team_user.full_name} ({team_user.email})</option>'
-            except Exception as e:
-                LOGGER.error(f"Error loading available users for team {team.id}: {e}")
-
-            management_html += """                        </select>
-                                </div>
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Role</label>
-                                    <select name="role" required
-                                            class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 text-gray-900 dark:text-white">
-                                        <option value="member">Member</option>
-                                        <option value="owner">Owner</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="mt-4 flex justify-end space-x-3">
-                                <button type="submit"
-                                        class="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors duration-200">
-                                    Add Member
-                                </button>
-                            </div>
-                        </form>
-                    </div>
+                <h3 class="text-lg font-medium text-gray-900 dark:text-white">Team Members: {team.name}</h3>
+                <div class="flex items-center space-x-2">
+                    {f'<button onclick="loadAddMembersView(\'{team.id}\')" class="px-3 py-1 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">+ Add Members</button>' if is_team_owner else ''}
+                    <button onclick="document.getElementById('team-edit-modal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
                 </div>
-            </div>"""
-        else:
-            management_html += """
-            <div class="mb-4 p-4 bg-yellow-50 dark:bg-yellow-900 rounded-lg border border-yellow-200 dark:border-yellow-700">
-                <div class="flex items-center gap-2">
-                    <svg class="w-5 h-5 text-yellow-600 dark:text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
-                        <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
-                    </svg>
-                    <span class="text-sm font-medium text-yellow-800 dark:text-yellow-200">Private Team - Member Access</span>
-                </div>
-                <p class="text-xs text-yellow-600 dark:text-yellow-400 mt-1">
-                    You are a member of this private team. Only team owners can directly add new members. Use the team invitation system to request access for others.
-                </p>
-            </div>"""
-
-        management_html += """
+            </div>
         </div>
         """
 
@@ -4448,6 +4371,227 @@ async def admin_view_team_members(
     except Exception as e:
         LOGGER.error(f"Error viewing team members {team_id}: {e}")
         return HTMLResponse(content=f'<div class="text-red-500">Error loading members: {str(e)}</div>', status_code=500)
+
+
+@admin_router.get("/teams/{team_id}/members/add")
+@require_permission("teams.update")
+async def admin_add_team_members_view(
+    team_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
+    """Show add members interface with paginated user selector.
+
+    Args:
+        team_id: ID of the team to add members to
+        request: FastAPI request object
+        db: Database session
+        user: Current authenticated user context
+
+    Returns:
+        HTMLResponse: Rendered add members interface
+    """
+    if not settings.email_auth_enabled:
+        return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
+
+    try:
+        # Get root_path from request
+        root_path = request.scope.get("root_path", "")
+
+        # Get current user context for logging and authorization
+        user_email = get_user_email(user)
+        LOGGER.info(f"User {user_email} adding members to team {team_id}")
+
+        # First-Party
+        team_service = TeamManagementService(db)
+
+        # Get team details
+        team = await team_service.get_team_by_id(team_id)
+        if not team:
+            return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
+
+        # Check if current user is team owner
+        current_user_role = await team_service.get_user_role_in_team(user_email, team_id)
+        if current_user_role != "owner":
+            return HTMLResponse(content='<div class="text-red-500">Only team owners can add members</div>', status_code=403)
+
+        # Get current team members to exclude from selection
+        team_members = await team_service.get_team_members(team_id)
+        member_emails = {team_user.email for team_user, membership in team_members}
+        member_emails_param = ",".join(member_emails) if member_emails else ""
+
+        # Build add members interface with paginated user selector
+        add_members_html = f"""
+        <div class="mb-4">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-medium text-gray-900 dark:text-white">Add Members to: {team.name}</h3>
+                <div class="flex items-center space-x-2">
+                    <button onclick="loadTeamMembersView('{team.id}')" class="px-3 py-1 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700">
+                        ← Back to Members
+                    </button>
+                    <button onclick="document.getElementById('team-edit-modal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+                <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
+                    <h4 class="text-sm font-semibold text-gray-900 dark:text-white">Select Users to Add</h4>
+                </div>
+
+                <div class="px-6 py-4">
+                    <form id="add-members-form-{team.id}" hx-post="{root_path}/admin/teams/{team.id}/add-member" hx-target="#team-edit-modal-content" hx-swap="innerHTML">
+                        <!-- Search box -->
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Search Users</label>
+                            <input
+                                type="text"
+                                id="user-search-{team.id}"
+                                placeholder="Search by name or email..."
+                                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 text-gray-900 dark:text-white"
+                                autocomplete="off"
+                            />
+                            <div id="user-search-results-{team.id}" class="mt-2"></div>
+                        </div>
+
+                        <!-- User selector with infinite scroll -->
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Available Users</label>
+                            <div
+                                id="user-selector-container-{team.id}"
+                                class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-64 overflow-y-auto dark:bg-gray-700"
+                                hx-get="{root_path}/admin/users/partial?page=1&per_page=20&render=selector&team_id={team.id}"
+                                hx-trigger="load"
+                                hx-swap="innerHTML"
+                                hx-target="#user-selector-container-{team.id}"
+                            >
+                                <!-- User selector items will be loaded here via HTMX -->
+                            </div>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                Note: Users already in the team will be ignored if selected.
+                            </p>
+                        </div>
+
+                        <!-- Action buttons -->
+                        <div class="flex justify-between items-center">
+                            <div id="selected-count-{team.id}" class="text-sm text-gray-600 dark:text-gray-400">
+                                No users selected
+                            </div>
+                            <button
+                                type="submit"
+                                class="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors duration-200"
+                            >
+                                Add Selected Members
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            // Update selected count and role dropdown state
+            (function() {{
+                const form = document.getElementById('add-members-form-{team.id}');
+                const countEl = document.getElementById('selected-count-{team.id}');
+
+                function updateCount() {{
+                    const checked = form.querySelectorAll('input[name="associatedUsers"]:checked');
+                    countEl.textContent = checked.length === 0
+                        ? 'No users selected'
+                        : `${{checked.length}} user${{checked.length !== 1 ? 's' : ''}} selected`;
+                }}
+
+                // Listen for checkbox changes (using event delegation for dynamically loaded content)
+                form.addEventListener('change', function(e) {{
+                    if (e.target.name === 'associatedUsers') {{
+                        updateCount();
+
+                        // Enable/disable the corresponding role dropdown
+                        const userEmail = e.target.value;
+                        // Find the parent user-item div and then the role select within it
+                        const userItem = e.target.closest('.user-item');
+                        if (userItem) {{
+                            const roleSelect = userItem.querySelector('.role-select');
+                            if (roleSelect) {{
+                                roleSelect.disabled = !e.target.checked;
+                            }}
+                        }}
+                    }}
+                }});
+
+                // Initial count
+                updateCount();
+            }})();
+
+            // Search functionality (scoped to avoid variable conflicts)
+            (function() {{
+                const searchInput = document.getElementById('user-search-{team.id}');
+                const searchResults = document.getElementById('user-search-results-{team.id}');
+                let searchTimeout;
+
+                searchInput.addEventListener('input', function() {{
+                clearTimeout(searchTimeout);
+                const query = this.value.trim();
+
+                if (query.length < 2) {{
+                    searchResults.innerHTML = '';
+                    return;
+                }}
+
+                searchTimeout = setTimeout(async function() {{
+                    try {{
+                        const response = await fetch(`{root_path}/admin/users/search?q=${{encodeURIComponent(query)}}&limit=10`);
+                        const data = await response.json();
+
+                        if (data.users && data.users.length > 0) {{
+                            let html = '<div class="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md p-2 mt-1">';
+                            data.users.forEach(user => {{
+                                // Check if user is already a member
+                                const memberEmails = '{member_emails_param}'.split(',');
+                                if (!memberEmails.includes(user.email)) {{
+                                    html += `<div class="p-2 hover:bg-gray-50 dark:hover:bg-gray-700 rounded cursor-pointer text-sm" onclick="addUserFromSearch_{team.id}('${{user.email}}', '${{user.full_name}}', '{team.id}')">
+                                        ${{user.full_name}} (${{user.email}})
+                                    </div>`;
+                                }}
+                            }});
+                            html += '</div>';
+                            searchResults.innerHTML = html;
+                        }} else {{
+                            searchResults.innerHTML = '<div class="text-sm text-gray-500 dark:text-gray-400 mt-1">No users found</div>';
+                        }}
+                    }} catch (error) {{
+                        console.error('Search error:', error);
+                        searchResults.innerHTML = '<div class="text-sm text-red-500 mt-1">Search failed</div>';
+                    }}
+                }}, 300);
+                }});
+
+                window['addUserFromSearch_{team.id}'] = function(email, name, teamId) {{
+                    // Find the checkbox for this user
+                    const container = document.getElementById(`user-selector-container-${{teamId}}`);
+                    const checkbox = container.querySelector(`input[value="${{email}}"]`);
+                    if (checkbox) {{
+                        checkbox.checked = true;
+                        checkbox.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                    }}
+                    // Clear search
+                    document.getElementById(`user-search-${{teamId}}`).value = '';
+                    document.getElementById(`user-search-results-${{teamId}}`).innerHTML = '';
+                }};
+            }})();
+        </script>
+        """
+
+        return HTMLResponse(content=add_members_html)
+
+    except Exception as e:
+        LOGGER.error(f"Error loading add members view for team {team_id}: {e}")
+        return HTMLResponse(content=f'<div class="text-red-500">Error loading add members view: {str(e)}</div>', status_code=500)
 
 
 @admin_router.get("/teams/{team_id}/edit")
@@ -4665,16 +4809,18 @@ async def admin_delete_team(
 
 @admin_router.post("/teams/{team_id}/add-member")
 @require_permission("teams.manage_members")
-async def admin_add_team_member(
+async def admin_add_team_members(
     team_id: str,
     request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
-    """Add member to team via admin UI.
+    """Add member(s) to team via admin UI.
+
+    Supports both single user (user_email field) and multiple users (associatedUsers field).
 
     Args:
-        team_id: ID of the team to add member to
+        team_id: ID of the team to add member(s) to
         request: FastAPI request object
         db: Database session
         user: Current authenticated user context
@@ -4703,48 +4849,109 @@ async def admin_add_team_member(
                 return HTMLResponse(content='<div class="text-red-500">Only team owners can add members to private teams. Use the invitation system instead.</div>', status_code=403)
 
         form = await request.form()
-        email_val = form.get("user_email")
-        role_val = form.get("role", "member")
-        user_email = email_val if isinstance(email_val, str) else None
-        role = role_val if isinstance(role_val, str) else "member"
 
-        if not user_email:
-            return HTMLResponse(content='<div class="text-red-500">User email is required</div>', status_code=400)
+        # Check if this is single user or multiple users
+        single_user_email = form.get("user_email")
+        multiple_user_emails = form.getlist("associatedUsers")
 
-        # Check if user exists
-        target_user = await auth_service.get_user_by_email(user_email)
-        if not target_user:
-            return HTMLResponse(content=f'<div class="text-red-500">User {user_email} not found</div>', status_code=400)
+        # Determine which mode we're in
+        if single_user_email:
+            # Single user mode (legacy form) - get single role
+            user_emails = [single_user_email] if isinstance(single_user_email, str) else []
+            default_role = form.get("role", "member")
+            default_role = default_role if isinstance(default_role, str) else "member"
+        elif multiple_user_emails:
+            # Multiple users mode (new paginated selector)
+            user_emails = [email for email in multiple_user_emails if isinstance(email, str)]
+            default_role = "member"  # Default if no per-user role specified
+        else:
+            return HTMLResponse(content='<div class="text-red-500">No users selected</div>', status_code=400)
 
-        # Add member to team
-        await team_service.add_member_to_team(team_id=team_id, user_email=user_email, role=role, invited_by=user_email_from_jwt)
+        # Get current team members to avoid duplicates
+        team_members = await team_service.get_team_members(team_id)
+        existing_member_emails = {team_user.email for team_user, membership in team_members}
+
+        # Track results
+        added = []
+        skipped = []
+        errors = []
+
+        # Add each user
+        for user_email in user_emails:
+            if not isinstance(user_email, str):
+                continue
+
+            user_email = user_email.strip()
+            if not user_email:
+                continue
+
+            # Skip if already a member
+            if user_email in existing_member_emails:
+                skipped.append(user_email)
+                continue
+
+            try:
+                # Check if user exists
+                target_user = await auth_service.get_user_by_email(user_email)
+                if not target_user:
+                    errors.append(f"{user_email} (user not found)")
+                    continue
+
+                # Get per-user role from form (format: role_email@example.com)
+                user_role_key = f"role_{user_email}"
+                user_role_val = form.get(user_role_key, default_role)
+                user_role = user_role_val if isinstance(user_role_val, str) else default_role
+
+                # Add member to team with their specific role
+                await team_service.add_member_to_team(team_id=team_id, user_email=user_email, role=user_role, invited_by=user_email_from_jwt)
+                added.append(user_email)
+
+            except Exception as member_error:
+                LOGGER.error(f"Error adding {user_email} to team {team_id}: {member_error}")
+                errors.append(f"{user_email} ({str(member_error)})")
+
+        # Build result message
+        if len(user_emails) == 1 and len(added) == 1:
+            # Single user success - simple message
+            result_html = f'<p class="text-green-600 dark:text-green-400">Member {added[0]} added successfully</p>'
+        else:
+            # Multiple users or errors - detailed message
+            result_parts = []
+            if added:
+                result_parts.append(f'<p class="text-green-600 dark:text-green-400">✓ Added {len(added)} member(s)</p>')
+            if skipped:
+                result_parts.append(f'<p class="text-yellow-600 dark:text-yellow-400">⊘ Skipped {len(skipped)} (already members)</p>')
+            if errors:
+                result_parts.append(f'<p class="text-red-600 dark:text-red-400">✗ Failed to add {len(errors)} user(s)</p>')
+                for error in errors[:5]:  # Show first 5 errors
+                    result_parts.append(f'<p class="text-xs text-red-500 dark:text-red-400 ml-4">• {error}</p>')
+                if len(errors) > 5:
+                    result_parts.append(f'<p class="text-xs text-red-500 dark:text-red-400 ml-4">... and {len(errors) - 5} more</p>')
+            result_html = "\n".join(result_parts)
 
         # Return success message with script to refresh modal
         success_html = f"""
-        <div class="text-green-500 text-center p-4">
-            <p>Member {user_email} added successfully</p>
+        <div class="text-center p-4">
+            {result_html}
             <script>
                 setTimeout(() => {{
                     // Reload the manage members modal content
-                    htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/{team_id}/members', {{
-                        target: '#team-edit-modal-content',
-                        swap: 'innerHTML'
-                    }});
+                    loadTeamMembersView('{team_id}');
 
                     // Also refresh the teams list to update member counts
                     htmx.ajax('GET', window.ROOT_PATH + '/admin/teams?unified=true', {{
                         target: '#unified-teams-list',
                         swap: 'innerHTML'
                     }});
-                }}, 1000);
+                }}, {1000 if len(user_emails) == 1 else 2000});
             </script>
         </div>
         """
         return HTMLResponse(content=success_html)
 
     except Exception as e:
-        LOGGER.error(f"Error adding member to team {team_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error adding member: {str(e)}</div>', status_code=400)
+        LOGGER.error(f"Error adding member(s) to team {team_id}: {e}")
+        return HTMLResponse(content=f'<div class="text-red-500">Error adding member(s): {str(e)}</div>', status_code=400)
 
 
 @admin_router.post("/teams/{team_id}/update-member-role")
@@ -5408,6 +5615,7 @@ async def admin_users_partial_html(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
     render: Optional[str] = Query(None, description="Render mode: 'selector' for user selector items, 'controls' for pagination controls"),
+    team_id: Optional[str] = Query(None, description="Team ID to check membership and pre-select members"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Response:
@@ -5471,6 +5679,18 @@ async def admin_users_partial_html(
                 }
             )
 
+        # Get team members if team_id is provided (for pre-selection in team member addition)
+        team_member_emails = set()
+        if team_id and render == "selector":
+            from mcpgateway.services.team_management_service import TeamManagementService
+
+            team_service = TeamManagementService(db)
+            try:
+                team_members = await team_service.get_team_members(team_id)
+                team_member_emails = {team_user.email for team_user, membership in team_members}
+            except Exception as e:
+                LOGGER.warning(f"Could not fetch team members for team {team_id}: {e}")
+
         # End the read-only transaction early to avoid idle-in-transaction under load
         db.commit()
 
@@ -5482,6 +5702,8 @@ async def admin_users_partial_html(
                     "data": users_data,
                     "pagination": pagination.model_dump(),
                     "root_path": request.scope.get("root_path", ""),
+                    "team_member_emails": team_member_emails,
+                    "team_id": team_id,
                 },
             )
 
@@ -5518,6 +5740,7 @@ async def admin_users_partial_html(
 
 
 @admin_router.get("/users/search", response_class=JSONResponse)
+@require_permission("admin.user_management")
 async def admin_search_users(
     q: str = Query("", description="Search query"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of results to return"),
@@ -5558,8 +5781,11 @@ async def admin_search_users(
     # Use list_users with search parameter
     users_result = await auth_service.list_users(search=search_query, limit=limit)
 
-    # Extract user list from paginated result
-    users_list = users_result["data"]
+    # Extract user list - handle both dict (paginated) and list (direct) responses
+    if isinstance(users_result, dict):
+        users_list = users_result.get("data", [])
+    else:
+        users_list = users_result if isinstance(users_result, list) else []
 
     # Format results for JSON response
     results = [
