@@ -28,7 +28,6 @@ import warnings
 
 # Third-Party
 from sqlalchemy import delete, desc, func, select
-from sqlalchemy import delete, desc, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -729,10 +728,12 @@ class EmailAuthService:
             users = await service.list_users(search="john", page=1, per_page=50)['data']
         """
         warnings.warn(
-            "get_all_users() is deprecated and limited to 10,000 users. " "Use list_users() with pagination instead.",
+            "get_all_users() is deprecated and limited to 10,000 users. "
+            + "Use list_users() with pagination instead.",
             DeprecationWarning,
             stacklevel=2,
         )
+
 
         return await self.list_users(limit=10000)  # Large limit to get all users
 
