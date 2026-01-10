@@ -132,7 +132,7 @@ class TestCreateToken:
         """Test token creation with scope restrictions."""
         scope_data = {
             "server_id": "server-123",
-            "permissions": ["read", "write"],
+            "permissions": ["tools.read", "tools.write"],
             "ip_restrictions": ["192.168.1.0/24"],
             "time_restrictions": {"start_time": "09:00", "end_time": "17:00"},
             "usage_limits": {"max_calls": 1000},
@@ -294,7 +294,7 @@ class TestUpdateToken:
         """Test token update with new scope."""
         scope_data = {
             "server_id": "new-server",
-            "permissions": ["admin"],
+            "permissions": ["tools.admin"],
         }
         request = TokenUpdateRequest(
             name="Updated Token",
@@ -615,7 +615,7 @@ class TestEdgeCases:
         """Test token creation with all scope fields."""
         scope_data = {
             "server_id": "srv-123",
-            "permissions": ["read", "write", "delete"],
+            "permissions": ["tools.read", "tools.write", "tools.delete"],
             "ip_restrictions": ["192.168.1.0/24", "10.0.0.0/8"],
             "time_restrictions": {"start_time": "08:00", "end_time": "18:00", "timezone": "UTC", "days": ["mon", "tue", "wed", "thu", "fri"]},
             "usage_limits": {"max_calls": 10000, "max_bytes": 1048576, "rate_limit": "100/hour"},
