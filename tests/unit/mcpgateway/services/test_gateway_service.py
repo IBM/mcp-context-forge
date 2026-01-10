@@ -16,6 +16,7 @@ from __future__ import annotations
 
 # Standard
 import asyncio
+from datetime import datetime, timezone, timedelta
 from typing import TypeVar
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
@@ -2030,4 +2031,199 @@ class TestGatewayRefresh:
                 assert len(resources) == 0
                 assert len(prompts) == 0
                 assert capabilities["resources"] is True
+
+
+class TestGatewayHealth:
+    """Test suite for gateway health checks and auto-refresh logic."""
+
+    @pytest.fixture
+    def mock_db_session(self):
+         mock_session = MagicMock()
+         # Allow context manager usage
+         mock_session.__enter__.return_value = mock_session
+         mock_session.__exit__.return_value = None
+         return mock_session
+
+    @pytest.fixture
+    def mock_gateway_health(self):
+        """Gateway ready for health checks."""
+        gw = MagicMock(spec=DbGateway)
+        gw.id = "gw-health-1"
+        gw.name = "Health Gateway"
+        gw.url = "http://health.test"
+        gw.enabled = True
+        gw.auth_type = None
+        gw.last_refresh_at = datetime.now(timezone.utc) - timedelta(hours=1)
+        gw.refresh_interval_seconds = 300
+        gw.ca_certificate = None
+        gw.ca_certificate_sig = None
+        return gw
+
+    @pytest.mark.asyncio
+    async def test_check_health_batch_success(self, gateway_service, mock_gateway_health):
+        """Test batch health check success."""
+        gateways = [mock_gateway_health]
+        
+        # Mock single check to succeed
+        gateway_service._check_single_gateway_health = AsyncMock(return_value=None)
+        
+        # Mock settings
+        with patch("mcpgateway.services.gateway_service.settings") as mock_settings:
+             mock_settings.max_concurrent_health_checks = 5
+             mock_settings.gateway_health_check_timeout = 5
+             
+             result = await gateway_service.check_health_of_gateways(gateways)
+             assert result is True
+             gateway_service._check_single_gateway_health.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_check_health_timeout(self, gateway_service, mock_gateway_health):
+        """Test handling of health check timeout."""
+        gateways = [mock_gateway_health]
+        
+        # Mock single check to sleep forever (simulating timeout)
+        async def slow_check(*args, **kwargs):
+            await asyncio.sleep(0.2)
+            
+        gateway_service._check_single_gateway_health = AsyncMock(side_effect=slow_check)
+        gateway_service._handle_gateway_failure = AsyncMock()
+        
+        # Mock settings with very short timeout
+        with patch("mcpgateway.services.gateway_service.settings") as mock_settings:
+             mock_settings.max_concurrent_health_checks = 5
+             mock_settings.gateway_health_check_timeout = 0.01  # Ultra short timeout
+             
+             result = await gateway_service.check_health_of_gateways(gateways)
+             
+             assert result is True
+             # Should have timed out and called failure handler
+             gateway_service._handle_gateway_failure.assert_awaited_once_with(mock_gateway_health)
+
+    @pytest.mark.asyncio
+    async def test_health_triggers_auto_refresh(self, gateway_service, mock_gateway_health, mock_db_session):
+        """Test that health check triggers auto-refresh when due."""
+        # Setup: Auto-refresh ON, Refresh needed
+        gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock()
+        gateway_service.toggle_gateway_status = AsyncMock()
+        gateway_service._get_refresh_lock = MagicMock()
+        
+        # Lock needs to be MagicMock for sync .locked(), but behave as AsyncMock for context manager
+        lock = MagicMock()
+        lock.locked.return_value = False
+        lock.__aenter__ = AsyncMock(return_value=None)
+        lock.__aexit__ = AsyncMock(return_value=None)
+        
+        gateway_service._get_refresh_lock.return_value = lock
+        
+        # Mock http client for health ping
+        mock_client = AsyncMock()
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+        mock_client.get.return_value = MagicMock(status_code=200)
+
+        with patch("mcpgateway.services.gateway_service.settings") as mock_settings:
+            mock_settings.auto_refresh_servers = True
+            mock_settings.gateway_auto_refresh_interval = 300
+            # Ensure Ed25519 signing is disabled to simplify test
+            mock_settings.enable_ed25519_signing = False
+            mock_settings.httpx_admin_read_timeout = 5.0
+            
+            with patch("mcpgateway.services.http_client_service.get_isolated_http_client", return_value=mock_client):
+                with patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=mock_db_session):
+                     # Mock DB lookup for last_seen update
+                    session = mock_db_session.__enter__()
+                    session.execute.return_value = _make_execute_result(scalar=mock_gateway_health)
+
+                    await gateway_service._check_single_gateway_health(mock_gateway_health)
+                    
+                    # Should call refresh
+                    gateway_service._refresh_gateway_tools_resources_prompts.assert_awaited_once()
+                    args, kwargs = gateway_service._refresh_gateway_tools_resources_prompts.call_args
+                    assert kwargs["created_via"] == "health_check"
+
+    @pytest.mark.asyncio
+    async def test_health_skips_refresh_disabled(self, gateway_service, mock_gateway_health, mock_db_session):
+        """Test that health check skips refresh if feature disabled."""
+        gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock()
+        
+         # Mock http client
+        mock_client = AsyncMock()
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+        mock_client.get.return_value = MagicMock(status_code=200)
+
+        with patch("mcpgateway.services.gateway_service.settings") as mock_settings:
+            mock_settings.auto_refresh_servers = False # Disabled
+            mock_settings.enable_ed25519_signing = False
+            mock_settings.httpx_admin_read_timeout = 5.0
+            
+            with patch("mcpgateway.services.http_client_service.get_isolated_http_client", return_value=mock_client):
+                 with patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=mock_db_session):
+                    session = mock_db_session.__enter__()
+                    session.execute.return_value = _make_execute_result(scalar=mock_gateway_health)
+
+                    await gateway_service._check_single_gateway_health(mock_gateway_health)
+                    
+                    gateway_service._refresh_gateway_tools_resources_prompts.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_health_skips_refresh_throttled(self, gateway_service, mock_gateway_health, mock_db_session):
+        """Test that health check skips refresh if done recently."""
+        # Setup: Refreshed just now
+        mock_gateway_health.last_refresh_at = datetime.now(timezone.utc)
+        gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock()
+        
+        # Mock http client
+        mock_client = AsyncMock()
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+        mock_client.get.return_value = MagicMock(status_code=200)
+
+        with patch("mcpgateway.services.gateway_service.settings") as mock_settings:
+            mock_settings.auto_refresh_servers = True
+            mock_settings.gateway_auto_refresh_interval = 300
+            mock_settings.enable_ed25519_signing = False
+            mock_settings.httpx_admin_read_timeout = 5.0
+            
+            with patch("mcpgateway.services.http_client_service.get_isolated_http_client", return_value=mock_client):
+                with patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=mock_db_session):
+                    session = mock_db_session.__enter__()
+                    session.execute.return_value = _make_execute_result(scalar=mock_gateway_health)
+
+                    await gateway_service._check_single_gateway_health(mock_gateway_health)
+                    
+                    gateway_service._refresh_gateway_tools_resources_prompts.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_health_skips_refresh_locked(self, gateway_service, mock_gateway_health, mock_db_session):
+        """Test that health check skips refresh if lock is held."""
+        gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock()
+        
+        lock = MagicMock()
+        lock.locked.return_value = True # Lock held!
+        lock.__aenter__ = AsyncMock(return_value=None)
+        lock.__aexit__ = AsyncMock(return_value=None)
+        
+        gateway_service._get_refresh_lock = MagicMock(return_value=lock)
+        
+        # Mock http client
+        mock_client = AsyncMock()
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+        mock_client.get.return_value = MagicMock(status_code=200)
+
+        with patch("mcpgateway.services.gateway_service.settings") as mock_settings:
+            mock_settings.auto_refresh_servers = True
+            mock_settings.enable_ed25519_signing = False
+            mock_settings.httpx_admin_read_timeout = 5.0
+            
+            with patch("mcpgateway.services.http_client_service.get_isolated_http_client", return_value=mock_client):
+                with patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=mock_db_session):
+                    session = mock_db_session.__enter__()
+                    session.execute.return_value = _make_execute_result(scalar=mock_gateway_health)
+
+                    await gateway_service._check_single_gateway_health(mock_gateway_health)
+                    
+                    gateway_service._refresh_gateway_tools_resources_prompts.assert_not_called()
+
 
