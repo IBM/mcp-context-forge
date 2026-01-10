@@ -1,4 +1,4 @@
-use anyhow::{Context, Error, Result};
+use anyhow::{Context, Result};
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 use similar::{ChangeTag, TextDiff};
@@ -58,7 +58,6 @@ pub struct EditResult {
 }
 
 pub async fn edit_file(path: &str, edits: Vec<Edit>, dry_run: bool) -> Result<EditResult> {
-    // this behaviour will be in sandbox
     if !fs::try_exists(&path).await? {
         anyhow::bail!("File '{}' does not exist", &path);
     }

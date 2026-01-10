@@ -5,6 +5,7 @@ mod server;
 mod tools;
 use crate::server::FilesystemServer;
 use clap::Parser;
+mod sandbox;
 
 pub fn init_tracing() {
     let _ = tracing_subscriber::fmt()
