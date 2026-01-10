@@ -5639,6 +5639,7 @@ class TokenScopeRequest(BaseModel):
             >>> TokenScopeRequest.validate_ip_restrictions(["10.0.0.1"])
             ['10.0.0.1']
         """
+        # Standard
         import ipaddress  # pylint: disable=import-outside-toplevel
 
         if not v:

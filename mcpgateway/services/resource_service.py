@@ -1179,6 +1179,7 @@ class ResourceService:
             if token_teams is not None:
                 team_ids = token_teams
             else:
+                # First-Party
                 from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
 
                 team_service = TeamManagementService(db)
