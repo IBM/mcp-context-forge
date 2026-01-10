@@ -3755,7 +3755,10 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                 user_email = current_user.email  # Save before potential re-query
                 try:
                     # pylint: disable=import-outside-toplevel
+                    # Third-Party
                     from sqlalchemy import inspect as sa_inspect
+
+                    # First-Party
                     from mcpgateway.db import EmailUser
 
                     insp = sa_inspect(current_user)
