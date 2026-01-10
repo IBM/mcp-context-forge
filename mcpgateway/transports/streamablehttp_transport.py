@@ -1080,12 +1080,14 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
         # Client auth disabled → allow proxy header
         if proxy_user:
             # Set enriched user context for proxy-authenticated sessions
-            user_context_var.set({
-                "email": proxy_user,
-                "teams": [],  # Proxy auth has no team context
-                "is_authenticated": True,
-                "is_admin": False,
-            })
+            user_context_var.set(
+                {
+                    "email": proxy_user,
+                    "teams": [],  # Proxy auth has no team context
+                    "is_authenticated": True,
+                    "is_admin": False,
+                }
+            )
             return True  # Trusted proxy supplied user
 
     # --- Standard JWT authentication flow (client auth enabled) ---
@@ -1119,30 +1121,36 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
                 # No "teams" key or teams is null - treat as unrestricted (None)
                 final_teams = None
 
-            user_context_var.set({
-                "email": user_payload.get("sub") or user_payload.get("email"),  # Some tokens only have email
-                "teams": final_teams,
-                "is_authenticated": True,
-                # Check both top-level is_admin (legacy tokens) and nested user.is_admin
-                "is_admin": user_payload.get("is_admin", False) or user_payload.get("user", {}).get("is_admin", False),
-            })
+            user_context_var.set(
+                {
+                    "email": user_payload.get("sub") or user_payload.get("email"),  # Some tokens only have email
+                    "teams": final_teams,
+                    "is_authenticated": True,
+                    # Check both top-level is_admin (legacy tokens) and nested user.is_admin
+                    "is_admin": user_payload.get("is_admin", False) or user_payload.get("user", {}).get("is_admin", False),
+                }
+            )
         elif proxy_user:
             # If using proxy auth, store the proxy user
-            user_context_var.set({
-                "email": proxy_user,
-                "teams": [],
-                "is_authenticated": True,
-                "is_admin": False,
-            })
+            user_context_var.set(
+                {
+                    "email": proxy_user,
+                    "teams": [],
+                    "is_authenticated": True,
+                    "is_admin": False,
+                }
+            )
     except Exception:
         # If JWT auth fails but we have a trusted proxy user, use that
         if settings.trust_proxy_auth and proxy_user:
-            user_context_var.set({
-                "email": proxy_user,
-                "teams": [],
-                "is_authenticated": True,
-                "is_admin": False,
-            })
+            user_context_var.set(
+                {
+                    "email": proxy_user,
+                    "teams": [],
+                    "is_authenticated": True,
+                    "is_admin": False,
+                }
+            )
             return True  # Fall back to proxy authentication
 
         # No valid auth - return 401 (PRESERVES EXISTING BEHAVIOR)

@@ -716,6 +716,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         logger.info("All services initialized successfully")
 
+        # Start cache invalidation subscriber for cross-worker cache synchronization
+        # First-Party
+        from mcpgateway.cache.registry_cache import get_cache_invalidation_subscriber  # pylint: disable=import-outside-toplevel
+
+        cache_invalidation_subscriber = get_cache_invalidation_subscriber()
+        await cache_invalidation_subscriber.start()
+
         # Reconfigure uvicorn loggers after startup to capture access logs in dual output
         logging_service.configure_uvicorn_after_startup()
 
@@ -795,6 +802,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 logger.info("Plugin manager shutdown complete")
             except Exception as e:
                 logger.error(f"Error shutting down plugin manager: {str(e)}")
+
+        # Stop cache invalidation subscriber
+        try:
+            # First-Party
+            from mcpgateway.cache.registry_cache import get_cache_invalidation_subscriber  # pylint: disable=import-outside-toplevel
+
+            cache_invalidation_subscriber = get_cache_invalidation_subscriber()
+            await cache_invalidation_subscriber.stop()
+        except Exception as e:
+            logger.debug(f"Error stopping cache invalidation subscriber: {e}")
+
         logger.info("Shutting down MCP Gateway services")
         # await stop_streamablehttp()
         # Build service list conditionally
