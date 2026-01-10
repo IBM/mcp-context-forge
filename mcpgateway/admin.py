@@ -4342,35 +4342,43 @@ async def admin_view_team_members(
             """
 
         members_html += """
-            </div>
-        </div>
-        """
+                    </div>
+                </div>
+                """
 
-        if not members:
-            members_html = '<div class="text-center py-8 text-gray-500 dark:text-gray-400">No members found</div>'
+                if not members:
+                    members_html = '<div class="text-center py-8 text-gray-500 dark:text-gray-400">No members found</div>'
 
-        # Add member management interface
+                # Add member management interface
+                add_members_button = (
+            f"<button onclick=\"loadAddMembersView('{team.id}')\" "
+            "class=\"px-3 py-1 text-sm font-medium text-white bg-blue-600 "
+            "hover:bg-blue-700 rounded-md focus:outline-none focus:ring-2 "
+            "focus:ring-offset-2 focus:ring-blue-500\">+ Add Members</button>"
+            if is_team_owner
+            else ""
+        )
+
         management_html = f"""
         <div class="mb-4">
             <div class="flex justify-between items-center mb-4">
-                <h3 class="text-lg font-medium text-gray-900 dark:text-white">Team Members: {team.name}</h3>
+                <h3 class="text-lg font-medium text-gray-900 dark:text-white">
+                    Team Members: {team.name}
+                </h3>
                 <div class="flex items-center space-x-2">
-                    {
-                        f"<button onclick=\"loadAddMembersView('{team.id}')\" "
-                        "class=\"px-3 py-1 text-sm font-medium text-white bg-blue-600 "
-                        "hover:bg-blue-700 rounded-md focus:outline-none focus:ring-2 "
-                        "focus:ring-offset-2 focus:ring-blue-500\">+ Add Members</button>"
-                        if is_team_owner else ""
-                    }
-                    <button onclick="document.getElementById('team-edit-modal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                    {add_members_button}
+                    <button onclick="document.getElementById('team-edit-modal').classList.add('hidden')"
+                            class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
                         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                            <path stroke-linecap="round" stroke-linejoin="round"
+                                stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                         </svg>
                     </button>
                 </div>
             </div>
         </div>
         """
+
 
         return HTMLResponse(content=f'{management_html}<div class="space-y-2">{members_html}</div>')
 
