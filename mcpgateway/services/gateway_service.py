@@ -4265,10 +4265,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         result = {
             "tools_added": 0,
             "tools_removed": 0,
-            "tools_updated": 0,
             "resources_added": 0,
             "resources_removed": 0,
-            "resources_updated": 0,
             "prompts_added": 0,
             "prompts_removed": 0,
             "tools_updated": 0,
@@ -4537,6 +4535,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             include_resources: Whether to include resources in the refresh
             include_prompts: Whether to include prompts in the refresh
             user_email: Email of the user triggering the refresh
+            request_headers: Optional request headers for passthrough authentication
 
         Returns:
             Dict with counts: {tools_added, tools_updated, tools_removed,

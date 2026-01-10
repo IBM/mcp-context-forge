@@ -4497,7 +4497,6 @@ async def refresh_gateway_tools(
     request: Request,
     include_resources: bool = Query(False, description="Include resources in refresh"),
     include_prompts: bool = Query(False, description="Include prompts in refresh"),
-    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> GatewayRefreshResponse:
     """
@@ -4512,7 +4511,6 @@ async def refresh_gateway_tools(
         request: The FastAPI request object.
         include_resources: Whether to include resources in the refresh.
         include_prompts: Whether to include prompts in the refresh.
-        db: Database session.
         user: Authenticated user.
 
     Returns:
