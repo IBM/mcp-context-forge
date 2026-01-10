@@ -341,8 +341,8 @@ def test_client(app):
     # First-Party
     from mcpgateway.auth import get_current_user
     from mcpgateway.db import EmailUser
-    from mcpgateway.main import require_auth
     from mcpgateway.middleware.rbac import get_current_user_with_permissions
+    from mcpgateway.utils.verify_credentials import require_auth
 
     # Mock user object for RBAC system
     mock_user = EmailUser(

@@ -1573,6 +1573,7 @@ class ToolService:
         user_email: Optional[str] = None,
         team_id: Optional[str] = None,
         visibility: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
         _request_headers: Optional[Dict[str, str]] = None,
     ) -> Union[tuple[List[ToolRead], Optional[str]], Dict[str, Any]]:
         """
@@ -1593,6 +1594,8 @@ class ToolService:
             user_email (Optional[str]): User email for team-based access control. If None, no access control is applied.
             team_id (Optional[str]): Filter by specific team ID. Requires user_email for access validation.
             visibility (Optional[str]): Filter by visibility (private, team, public).
+            token_teams (Optional[List[str]]): Override DB team lookup with token's teams. Used for MCP/API token access
+                where the token scope should be respected instead of the user's full team memberships.
             _request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
                 Currently unused but kept for API consistency. Defaults to None.
 
@@ -1633,9 +1636,17 @@ class ToolService:
             query = query.where(DbTool.enabled)
         # Apply team-based access control if user_email is provided
         if user_email:
-            team_service = TeamManagementService(db)
-            user_teams = await team_service.get_user_teams(user_email)
-            team_ids = [team.id for team in user_teams]
+            # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
+            if token_teams is not None:
+                team_ids = token_teams
+            else:
+                team_service = TeamManagementService(db)
+                user_teams = await team_service.get_user_teams(user_email)
+                team_ids = [team.id for team in user_teams]
+
+            # Check if this is a public-only token (empty teams array)
+            # Public-only tokens can ONLY see public resources - no owner access
+            is_public_only_token = token_teams is not None and len(token_teams) == 0
 
             if team_id:
                 # User requesting specific team - verify access
@@ -1643,15 +1654,19 @@ class ToolService:
                     return ([], None)
                 access_conditions = [
                     and_(DbTool.team_id == team_id, DbTool.visibility.in_(["team", "public"])),
-                    and_(DbTool.team_id == team_id, DbTool.owner_email == user_email),
                 ]
+                # Only include owner access for non-public-only tokens
+                if not is_public_only_token:
+                    access_conditions.append(and_(DbTool.team_id == team_id, DbTool.owner_email == user_email))
                 query = query.where(or_(*access_conditions))
             else:
-                # General access: user's tools + public tools + team tools
+                # General access: public tools + team tools (+ owner tools if not public-only token)
                 access_conditions = [
-                    DbTool.owner_email == user_email,
                     DbTool.visibility == "public",
                 ]
+                # Only include owner access for non-public-only tokens
+                if not is_public_only_token:
+                    access_conditions.append(DbTool.owner_email == user_email)
                 if team_ids:
                     access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
                 query = query.where(or_(*access_conditions))
@@ -1721,7 +1736,15 @@ class ToolService:
         return (result, next_cursor)
 
     async def list_server_tools(
-        self, db: Session, server_id: str, include_inactive: bool = False, include_metrics: bool = False, cursor: Optional[str] = None, _request_headers: Optional[Dict[str, str]] = None
+        self,
+        db: Session,
+        server_id: str,
+        include_inactive: bool = False,
+        include_metrics: bool = False,
+        cursor: Optional[str] = None,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+        _request_headers: Optional[Dict[str, str]] = None,
     ) -> List[ToolRead]:
         """
         Retrieve a list of registered tools from the database.
@@ -1735,6 +1758,9 @@ class ToolService:
                 Defaults to False.
             cursor (Optional[str], optional): An opaque cursor token for pagination. Currently,
                 this parameter is ignored. Defaults to None.
+            user_email (Optional[str]): User email for visibility filtering. If None, no filtering applied.
+            token_teams (Optional[List[str]]): Override DB team lookup with token's teams. Used for MCP/API
+                token access where the token scope should be respected.
             _request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
                 Currently unused but kept for API consistency. Defaults to None.
 
@@ -1776,6 +1802,30 @@ class ToolService:
 
         if not include_inactive:
             query = query.where(DbTool.enabled)
+
+        # Add visibility filtering if user context provided
+        if user_email:
+            # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
+            if token_teams is not None:
+                team_ids = token_teams
+            else:
+                team_service = TeamManagementService(db)
+                user_teams = await team_service.get_user_teams(user_email)
+                team_ids = [team.id for team in user_teams]
+
+            # Check if this is a public-only token (empty teams array)
+            # Public-only tokens can ONLY see public resources - no owner access
+            is_public_only_token = token_teams is not None and len(token_teams) == 0
+
+            access_conditions = [
+                DbTool.visibility == "public",
+            ]
+            # Only include owner access for non-public-only tokens
+            if not is_public_only_token:
+                access_conditions.append(DbTool.owner_email == user_email)
+            if team_ids:
+                access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
+            query = query.where(or_(*access_conditions))
 
         # Execute the query - team names are loaded via joinedload(DbTool.email_team)
         tools = db.execute(query).scalars().all()

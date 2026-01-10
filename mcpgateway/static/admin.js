@@ -190,6 +190,50 @@ function escapeHtml(unsafe) {
 }
 
 /**
+ * Extract a human-readable error message from an API error response.
+ * Handles both string errors and Pydantic validation error arrays.
+ * @param {Object} error - The parsed JSON error response
+ * @param {string} fallback - Fallback message if no detail found
+ * @returns {string} Human-readable error message
+ */
+function extractApiError(error, fallback = "An error occurred") {
+    if (!error || !error.detail) {
+        return fallback;
+    }
+    if (typeof error.detail === "string") {
+        return error.detail;
+    }
+    if (Array.isArray(error.detail)) {
+        // Pydantic validation errors - extract messages
+        return error.detail
+            .map((err) => err.msg || JSON.stringify(err))
+            .join("; ");
+    }
+    return fallback;
+}
+
+/**
+ * Safely parse an error response, handling both JSON and plain text bodies.
+ * @param {Response} response - The fetch Response object
+ * @param {string} fallback - Fallback message if parsing fails
+ * @returns {Promise<string>} Human-readable error message
+ */
+async function parseErrorResponse(response, fallback = "An error occurred") {
+    try {
+        const contentType = response.headers.get("content-type") || "";
+        if (contentType.includes("application/json")) {
+            const error = await response.json();
+            return extractApiError(error, fallback);
+        }
+        // Non-JSON response - try to get text
+        const text = await response.text();
+        return text || fallback;
+    } catch {
+        return fallback;
+    }
+}
+
+/**
  * Header validation constants and functions
  */
 const HEADER_NAME_REGEX = /^[A-Za-z0-9-]+$/;
@@ -19129,13 +19173,34 @@ function displayTokensList(tokens) {
             ? '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-100">Active</span>'
             : '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-100">Inactive</span>';
 
+        // Build scope badges
+        const teamName = token.team_id ? getTeamNameById(token.team_id) : null;
+        const teamBadge = teamName
+            ? `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-800 dark:text-purple-100">Team: ${escapeHtml(teamName)}</span>`
+            : '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300">Public-only</span>';
+
+        const ipBadge =
+            token.ip_restrictions && token.ip_restrictions.length > 0
+                ? `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-800 dark:text-orange-100">${token.ip_restrictions.length} IP${token.ip_restrictions.length > 1 ? "s" : ""}</span>`
+                : "";
+
+        const serverBadge = token.server_id
+            ? '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-800 dark:text-blue-100">Server-scoped</span>'
+            : "";
+
+        // Safely encode token data for data attribute (URL encoding preserves all characters)
+        const tokenDataEncoded = encodeURIComponent(JSON.stringify(token));
+
         tokensHTML += `
             <div class="border border-gray-200 dark:border-gray-600 rounded-lg p-4 mb-4">
                 <div class="flex justify-between items-start">
                     <div class="flex-1">
-                        <div class="flex items-center space-x-2">
+                        <div class="flex items-center flex-wrap gap-2">
                             <h4 class="text-lg font-medium text-gray-900 dark:text-white">${escapeHtml(token.name)}</h4>
                             ${statusBadge}
+                            ${teamBadge}
+                            ${serverBadge}
+                            ${ipBadge}
                         </div>
                         ${token.description ? `<p class="text-sm text-gray-600 dark:text-gray-400 mt-1">${escapeHtml(token.description)}</p>` : ""}
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3 text-sm text-gray-500 dark:text-gray-400">
@@ -19152,15 +19217,25 @@ function displayTokensList(tokens) {
                         ${token.server_id ? `<div class="mt-2 text-sm"><span class="font-medium text-gray-700 dark:text-gray-300">Scoped to Server:</span> ${escapeHtml(token.server_id)}</div>` : ""}
                         ${token.resource_scopes && token.resource_scopes.length > 0 ? `<div class="mt-1 text-sm"><span class="font-medium text-gray-700 dark:text-gray-300">Permissions:</span> ${token.resource_scopes.map((p) => escapeHtml(p)).join(", ")}</div>` : ""}
                     </div>
-                    <div class="flex space-x-2 ml-4">
+                    <div class="flex flex-wrap gap-2 ml-4">
                         <button
-                            onclick="viewTokenUsage('${token.id}')"
+                            data-action="token-details"
+                            data-token="${tokenDataEncoded}"
+                            class="px-3 py-1 text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 border border-gray-300 dark:border-gray-600 hover:border-gray-500 dark:hover:border-gray-400 rounded-md"
+                        >
+                            Details
+                        </button>
+                        <button
+                            data-action="token-usage"
+                            data-token-id="${escapeHtml(token.id)}"
                             class="px-3 py-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 border border-blue-300 dark:border-blue-600 hover:border-blue-500 dark:hover:border-blue-400 rounded-md"
                         >
                             Usage Stats
                         </button>
                         <button
-                            onclick="revokeToken('${token.id}', '${escapeHtml(token.name)}')"
+                            data-action="token-revoke"
+                            data-token-id="${escapeHtml(token.id)}"
+                            data-token-name="${escapeHtml(token.name)}"
                             class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md"
                         >
                             Revoke
@@ -19172,6 +19247,55 @@ function displayTokensList(tokens) {
     });
 
     tokensList.innerHTML = tokensHTML;
+
+    // Attach event handlers via delegation (avoids inline JS and XSS risks)
+    setupTokenListEventHandlers(tokensList);
+}
+
+/**
+ * Set up event handlers for token list buttons using event delegation.
+ * This avoids inline onclick handlers and associated XSS risks.
+ * Uses a one-time guard to prevent duplicate handlers on repeated renders.
+ * @param {HTMLElement} container - The tokens list container element
+ */
+function setupTokenListEventHandlers(container) {
+    // Guard against duplicate handlers on repeated renders
+    if (container.dataset.handlersAttached === "true") {
+        return;
+    }
+    container.dataset.handlersAttached = "true";
+
+    container.addEventListener("click", (event) => {
+        const button = event.target.closest("button[data-action]");
+        if (!button) {
+            return;
+        }
+
+        const action = button.dataset.action;
+
+        if (action === "token-details") {
+            const tokenData = button.dataset.token;
+            if (tokenData) {
+                try {
+                    const token = JSON.parse(decodeURIComponent(tokenData));
+                    showTokenDetailsModal(token);
+                } catch (e) {
+                    console.error("Failed to parse token data:", e);
+                }
+            }
+        } else if (action === "token-usage") {
+            const tokenId = button.dataset.tokenId;
+            if (tokenId) {
+                viewTokenUsage(tokenId);
+            }
+        } else if (action === "token-revoke") {
+            const tokenId = button.dataset.tokenId;
+            const tokenName = button.dataset.tokenName;
+            if (tokenId) {
+                revokeToken(tokenId, tokenName || "");
+            }
+        }
+    });
 }
 
 /**
@@ -19344,6 +19468,73 @@ function setupCreateTokenForm() {
 }
 
 /**
+ * Validate an IP address or CIDR notation string.
+ * @param {string} value - The IP/CIDR string to validate
+ * @returns {boolean} True if valid IPv4/IPv6 address or CIDR notation
+ */
+function isValidIpOrCidr(value) {
+    if (!value || typeof value !== "string") {
+        return false;
+    }
+
+    const trimmed = value.trim();
+
+    // IPv4 with optional CIDR (e.g., 192.168.1.0/24 or 192.168.1.1)
+    const ipv4Segment = "(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)";
+    const ipv4Pattern = new RegExp(
+        `^(?:${ipv4Segment}\\.){3}${ipv4Segment}(?:\\/(?:[0-9]|[1-2][0-9]|3[0-2]))?$`,
+    );
+
+    // IPv6 with optional CIDR (supports compressed forms and IPv4-embedded)
+    const ipv6Segment = "[0-9A-Fa-f]{1,4}";
+    const ipv4Embedded = `(?:${ipv4Segment}\\.){3}${ipv4Segment}`;
+    const ipv6Pattern = new RegExp(
+        "^(?:" +
+            `(?:${ipv6Segment}:){7}${ipv6Segment}|` +
+            `(?:${ipv6Segment}:){1,7}:|` +
+            `(?:${ipv6Segment}:){1,6}:${ipv6Segment}|` +
+            `(?:${ipv6Segment}:){1,5}(?::${ipv6Segment}){1,2}|` +
+            `(?:${ipv6Segment}:){1,4}(?::${ipv6Segment}){1,3}|` +
+            `(?:${ipv6Segment}:){1,3}(?::${ipv6Segment}){1,4}|` +
+            `(?:${ipv6Segment}:){1,2}(?::${ipv6Segment}){1,5}|` +
+            `${ipv6Segment}:(?::${ipv6Segment}){1,6}|` +
+            `:(?::${ipv6Segment}){1,7}|` +
+            "::|" +
+            `(?:${ipv6Segment}:){1,4}:${ipv4Embedded}|` +
+            `::(?:ffff(?::0{1,4}){0,1}:)?${ipv4Embedded}` +
+            ")(?:\\/(?:[0-9]|[1-9][0-9]|1[01][0-9]|12[0-8]))?$",
+    );
+
+    return ipv4Pattern.test(trimmed) || ipv6Pattern.test(trimmed);
+}
+
+/**
+ * Validate a permission scope string.
+ * Permissions should follow format: resource.action (e.g., tools.read, resources.write)
+ * Also allows wildcard (*) for full access.
+ * @param {string} value - The permission string to validate
+ * @returns {boolean} True if valid permission format
+ */
+function isValidPermission(value) {
+    if (!value || typeof value !== "string") {
+        return false;
+    }
+
+    const trimmed = value.trim();
+
+    // Allow wildcard
+    if (trimmed === "*") {
+        return true;
+    }
+
+    // Permission format: resource.action (alphanumeric with underscores, dot-separated)
+    // Examples: tools.read, resources.write, prompts.list, tools.execute
+    const permissionPattern = /^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/i;
+
+    return permissionPattern.test(trimmed);
+}
+
+/**
  * Create a new API token
  */
 // Create a new API token
@@ -19377,21 +19568,48 @@ async function createToken(form) {
             scope.server_id = formData.get("server_id");
         }
 
+        // Parse and validate IP restrictions
         if (formData.get("ip_restrictions")) {
             const ipRestrictions = formData.get("ip_restrictions").trim();
-            scope.ip_restrictions = ipRestrictions
-                ? ipRestrictions.split(",").map((ip) => ip.trim())
-                : [];
+            if (ipRestrictions) {
+                const ipList = ipRestrictions
+                    .split(",")
+                    .map((ip) => ip.trim())
+                    .filter((ip) => ip.length > 0);
+
+                // Validate each IP/CIDR
+                const invalidIps = ipList.filter((ip) => !isValidIpOrCidr(ip));
+                if (invalidIps.length > 0) {
+                    throw new Error(
+                        `Invalid IP address or CIDR format: ${invalidIps.join(", ")}. ` +
+                            "Use formats like 192.168.1.0/24 or 10.0.0.1",
+                    );
+                }
+                scope.ip_restrictions = ipList;
+            } else {
+                scope.ip_restrictions = [];
+            }
         } else {
             scope.ip_restrictions = [];
         }
 
+        // Parse and validate permissions
         if (formData.get("permissions")) {
-            scope.permissions = formData
+            const permList = formData
                 .get("permissions")
                 .split(",")
                 .map((p) => p.trim())
                 .filter((p) => p.length > 0);
+
+            // Validate each permission
+            const invalidPerms = permList.filter((p) => !isValidPermission(p));
+            if (invalidPerms.length > 0) {
+                throw new Error(
+                    `Invalid permission format: ${invalidPerms.join(", ")}. ` +
+                        "Use formats like tools.read, resources.write, or * for full access",
+                );
+            }
+            scope.permissions = permList;
         } else {
             scope.permissions = [];
         }
@@ -19410,10 +19628,11 @@ async function createToken(form) {
         });
 
         if (!response.ok) {
-            const error = await response.json();
-            throw new Error(
-                error.detail || `Failed to create token (${response.status})`,
+            const errorMsg = await parseErrorResponse(
+                response,
+                `Failed to create token (${response.status})`,
             );
+            throw new Error(errorMsg);
         }
 
         const result = await response.json();
@@ -19556,10 +19775,11 @@ async function revokeToken(tokenId, tokenName) {
         );
 
         if (!response.ok) {
-            const error = await response.json();
-            throw new Error(
-                error.detail || `Failed to revoke token: ${response.status}`,
+            const errorMsg = await parseErrorResponse(
+                response,
+                `Failed to revoke token: ${response.status}`,
             );
+            throw new Error(errorMsg);
         }
 
         showNotification("Token revoked successfully", "success");
@@ -19676,6 +19896,254 @@ function showUsageStatsModal(stats) {
     `;
 
     document.body.appendChild(modal);
+}
+
+/**
+ * Get team name by team ID from cached team data
+ * @param {string} teamId - The team ID to look up
+ * @returns {string} Team name or truncated ID if not found
+ */
+function getTeamNameById(teamId) {
+    if (!teamId) {
+        return null;
+    }
+
+    // Try from window.USERTEAMSDATA (most reliable source)
+    if (window.USERTEAMSDATA && Array.isArray(window.USERTEAMSDATA)) {
+        const teamObj = window.USERTEAMSDATA.find((t) => t.id === teamId);
+        if (teamObj) {
+            return teamObj.name;
+        }
+    }
+
+    // Try from Alpine.js component
+    const teamSelector = document.querySelector('[x-data*="selectedTeam"]');
+    if (
+        teamSelector &&
+        teamSelector._x_dataStack &&
+        teamSelector._x_dataStack[0]
+    ) {
+        const alpineData = teamSelector._x_dataStack[0];
+        if (alpineData.teams && Array.isArray(alpineData.teams)) {
+            const teamObj = alpineData.teams.find((t) => t.id === teamId);
+            if (teamObj) {
+                return teamObj.name;
+            }
+        }
+    }
+
+    // Fallback: return truncated ID
+    return teamId.substring(0, 8) + "...";
+}
+
+/**
+ * Show token details modal with full token information
+ * @param {Object} token - The token object with all fields
+ */
+// eslint-disable-next-line no-unused-vars -- called via onclick in HTML
+function showTokenDetailsModal(token) {
+    const formatDate = (dateStr) => {
+        if (!dateStr) {
+            return "Never";
+        }
+        return new Date(dateStr).toLocaleString();
+    };
+
+    const formatList = (list) => {
+        if (!list || list.length === 0) {
+            return "None";
+        }
+        return list
+            .map((item) => `<li class="ml-4">• ${escapeHtml(item)}</li>`)
+            .join("");
+    };
+
+    const formatJson = (obj) => {
+        if (!obj || Object.keys(obj).length === 0) {
+            return "None";
+        }
+        return `<pre class="bg-gray-100 dark:bg-gray-700 p-2 rounded text-xs overflow-x-auto">${escapeHtml(JSON.stringify(obj, null, 2))}</pre>`;
+    };
+
+    const teamName = token.team_id ? getTeamNameById(token.team_id) : null;
+    const statusClass = token.is_active
+        ? "bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-100"
+        : "bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-100";
+    const statusText = token.is_active ? "Active" : "Inactive";
+
+    const modal = document.createElement("div");
+    modal.className =
+        "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50";
+    modal.innerHTML = `
+        <div class="relative top-10 mx-auto p-5 border w-11/12 max-w-2xl shadow-lg rounded-md bg-white dark:bg-gray-800 mb-10">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-medium text-gray-900 dark:text-white">Token Details</h3>
+                <button data-action="close-modal" class="text-gray-400 hover:text-gray-600">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Basic Information -->
+            <div class="mb-6">
+                <h4 class="text-md font-semibold text-gray-900 dark:text-white mb-3 border-b border-gray-200 dark:border-gray-600 pb-2">Basic Information</h4>
+                <div class="grid grid-cols-1 gap-2 text-sm">
+                    <div class="flex items-center">
+                        <span class="font-medium text-gray-700 dark:text-gray-300 w-28">ID:</span>
+                        <code class="bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded text-xs flex-1 overflow-hidden text-ellipsis">${escapeHtml(token.id)}</code>
+                        <button data-action="copy-id" data-copy-value="${escapeHtml(token.id)}"
+                                class="ml-2 px-2 py-0.5 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 border border-blue-300 dark:border-blue-600 rounded">
+                            Copy
+                        </button>
+                    </div>
+                    <div class="flex">
+                        <span class="font-medium text-gray-700 dark:text-gray-300 w-28">Name:</span>
+                        <span class="text-gray-900 dark:text-white">${escapeHtml(token.name)}</span>
+                    </div>
+                    <div class="flex">
+                        <span class="font-medium text-gray-700 dark:text-gray-300 w-28">Description:</span>
+                        <span class="text-gray-600 dark:text-gray-400">${token.description ? escapeHtml(token.description) : "None"}</span>
+                    </div>
+                    <div class="flex">
+                        <span class="font-medium text-gray-700 dark:text-gray-300 w-28">Created by:</span>
+                        <span class="text-gray-900 dark:text-white">${escapeHtml(token.user_email || "Unknown")}</span>
+                    </div>
+                    <div class="flex">
+                        <span class="font-medium text-gray-700 dark:text-gray-300 w-28">Team:</span>
+                        <span class="text-gray-900 dark:text-white">${teamName ? `${escapeHtml(teamName)} <code class="text-xs text-gray-500">(${escapeHtml(token.team_id.substring(0, 8))}...)</code>` : "None (Public-only)"}</span>
+                    </div>
+                    <div class="flex">
+                        <span class="font-medium text-gray-700 dark:text-gray-300 w-28">Created:</span>
+                        <span class="text-gray-600 dark:text-gray-400">${formatDate(token.created_at)}</span>
+                    </div>
+                    <div class="flex">
+                        <span class="font-medium text-gray-700 dark:text-gray-300 w-28">Expires:</span>
+                        <span class="text-gray-600 dark:text-gray-400">${formatDate(token.expires_at)}</span>
+                    </div>
+                    <div class="flex">
+                        <span class="font-medium text-gray-700 dark:text-gray-300 w-28">Last Used:</span>
+                        <span class="text-gray-600 dark:text-gray-400">${formatDate(token.last_used)}</span>
+                    </div>
+                    <div class="flex items-center">
+                        <span class="font-medium text-gray-700 dark:text-gray-300 w-28">Status:</span>
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusClass}">${statusText}</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Scope & Restrictions -->
+            <div class="mb-6">
+                <h4 class="text-md font-semibold text-gray-900 dark:text-white mb-3 border-b border-gray-200 dark:border-gray-600 pb-2">Scope & Restrictions</h4>
+                <div class="grid grid-cols-1 gap-3 text-sm">
+                    <div>
+                        <span class="font-medium text-gray-700 dark:text-gray-300">Server:</span>
+                        <span class="ml-2 text-gray-600 dark:text-gray-400">${token.server_id ? escapeHtml(token.server_id) : "All servers"}</span>
+                    </div>
+                    <div>
+                        <span class="font-medium text-gray-700 dark:text-gray-300">Permissions:</span>
+                        ${
+                            token.resource_scopes &&
+                            token.resource_scopes.length > 0
+                                ? `<ul class="mt-1 text-gray-600 dark:text-gray-400">${formatList(token.resource_scopes)}</ul>`
+                                : '<span class="ml-2 text-gray-600 dark:text-gray-400">All (no restrictions)</span>'
+                        }
+                    </div>
+                    <div>
+                        <span class="font-medium text-gray-700 dark:text-gray-300">IP Restrictions:</span>
+                        ${
+                            token.ip_restrictions &&
+                            token.ip_restrictions.length > 0
+                                ? `<ul class="mt-1 text-gray-600 dark:text-gray-400">${formatList(token.ip_restrictions)}</ul>`
+                                : '<span class="ml-2 text-gray-600 dark:text-gray-400">None</span>'
+                        }
+                    </div>
+                    <div>
+                        <span class="font-medium text-gray-700 dark:text-gray-300">Time Restrictions:</span>
+                        <div class="mt-1">${formatJson(token.time_restrictions)}</div>
+                    </div>
+                    <div>
+                        <span class="font-medium text-gray-700 dark:text-gray-300">Usage Limits:</span>
+                        <div class="mt-1">${formatJson(token.usage_limits)}</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tags -->
+            ${
+                token.tags && token.tags.length > 0
+                    ? `
+            <div class="mb-6">
+                <h4 class="text-md font-semibold text-gray-900 dark:text-white mb-3 border-b border-gray-200 dark:border-gray-600 pb-2">Tags</h4>
+                <div class="flex flex-wrap gap-2">
+                    ${token.tags.map((tag) => `<span class="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs rounded">${escapeHtml(tag)}</span>`).join("")}
+                </div>
+            </div>
+            `
+                    : ""
+            }
+
+            <!-- Revocation Details (if revoked) -->
+            ${
+                token.is_revoked
+                    ? `
+            <div class="mb-6">
+                <h4 class="text-md font-semibold text-red-600 dark:text-red-400 mb-3 border-b border-red-200 dark:border-red-600 pb-2">Revocation Details</h4>
+                <div class="grid grid-cols-1 gap-2 text-sm bg-red-50 dark:bg-red-900/20 p-3 rounded">
+                    <div class="flex">
+                        <span class="font-medium text-red-700 dark:text-red-300 w-28">Revoked at:</span>
+                        <span class="text-red-600 dark:text-red-400">${formatDate(token.revoked_at)}</span>
+                    </div>
+                    <div class="flex">
+                        <span class="font-medium text-red-700 dark:text-red-300 w-28">Revoked by:</span>
+                        <span class="text-red-600 dark:text-red-400">${token.revoked_by ? escapeHtml(token.revoked_by) : "Unknown"}</span>
+                    </div>
+                    <div class="flex">
+                        <span class="font-medium text-red-700 dark:text-red-300 w-28">Reason:</span>
+                        <span class="text-red-600 dark:text-red-400">${token.revocation_reason ? escapeHtml(token.revocation_reason) : "No reason provided"}</span>
+                    </div>
+                </div>
+            </div>
+            `
+                    : ""
+            }
+
+            <div class="flex justify-end">
+                <button
+                    data-action="close-modal"
+                    class="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500"
+                >
+                    Close
+                </button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    // Attach event handlers (avoids inline JS and XSS risks)
+    modal.addEventListener("click", (event) => {
+        const button = event.target.closest("button[data-action]");
+        if (!button) {
+            return;
+        }
+
+        const action = button.dataset.action;
+
+        if (action === "close-modal") {
+            modal.remove();
+        } else if (action === "copy-id") {
+            const value = button.dataset.copyValue;
+            if (value) {
+                navigator.clipboard.writeText(value).then(() => {
+                    button.textContent = "Copied!";
+                    setTimeout(() => {
+                        button.textContent = "Copy";
+                    }, 1500);
+                });
+            }
+        }
+    });
 }
 
 /**
@@ -28061,8 +28529,11 @@ async function saveLLMProvider(event) {
         });
 
         if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || "Failed to save provider");
+            const errorMsg = await parseErrorResponse(
+                response,
+                "Failed to save provider",
+            );
+            throw new Error(errorMsg);
         }
 
         closeLLMProviderModal();
@@ -28103,8 +28574,11 @@ async function deleteLLMProvider(providerId, providerName) {
         );
 
         if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || "Failed to delete provider");
+            const errorMsg = await parseErrorResponse(
+                response,
+                "Failed to delete provider",
+            );
+            throw new Error(errorMsg);
         }
 
         showToast("Provider deleted successfully", "success");
@@ -28442,8 +28916,11 @@ async function saveLLMModel(event) {
         });
 
         if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || "Failed to save model");
+            const errorMsg = await parseErrorResponse(
+                response,
+                "Failed to save model",
+            );
+            throw new Error(errorMsg);
         }
 
         closeLLMModelModal();
@@ -28480,8 +28957,11 @@ async function deleteLLMModel(modelId, modelName) {
         );
 
         if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || "Failed to delete model");
+            const errorMsg = await parseErrorResponse(
+                response,
+                "Failed to delete model",
+            );
+            throw new Error(errorMsg);
         }
 
         showToast("Model deleted successfully", "success");

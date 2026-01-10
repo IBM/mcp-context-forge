@@ -536,11 +536,26 @@ async def list_tools() -> List[types.Tool]:
     """
     server_id = server_id_var.get()
     request_headers = request_headers_var.get()
+    user_context = user_context_var.get()
+
+    # Extract filtering parameters from user context
+    user_email = user_context.get("email") if user_context else None
+    # Use None as default to distinguish "no teams specified" from "empty teams array"
+    token_teams = user_context.get("teams") if user_context else None
+    is_admin = user_context.get("is_admin", False) if user_context else False
+
+    # Admin bypass - only when token has NO team restrictions (token_teams is None)
+    # If token has explicit team scope (even empty [] for public-only), respect it
+    if is_admin and token_teams is None:
+        user_email = None
+        # token_teams stays None (unrestricted)
+    elif token_teams is None:
+        token_teams = []  # Non-admin without teams = public-only (secure default)
 
     if server_id:
         try:
             async with get_db() as db:
-                tools = await tool_service.list_server_tools(db, server_id, _request_headers=request_headers)
+                tools = await tool_service.list_server_tools(db, server_id, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
                 return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations) for tool in tools]
         except Exception as e:
             logger.exception(f"Error listing tools:{e}")
@@ -548,7 +563,7 @@ async def list_tools() -> List[types.Tool]:
     else:
         try:
             async with get_db() as db:
-                tools, _ = await tool_service.list_tools(db, include_inactive=False, limit=0, _request_headers=request_headers)
+                tools, _ = await tool_service.list_tools(db, include_inactive=False, limit=0, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
                 return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations) for tool in tools]
         except Exception as e:
             logger.exception(f"Error listing tools:{e}")
@@ -572,13 +587,27 @@ async def list_prompts() -> List[types.Prompt]:
         >>> sig.return_annotation
         typing.List[mcp.types.Prompt]
     """
-
     server_id = server_id_var.get()
+    user_context = user_context_var.get()
+
+    # Extract filtering parameters from user context
+    user_email = user_context.get("email") if user_context else None
+    # Use None as default to distinguish "no teams specified" from "empty teams array"
+    token_teams = user_context.get("teams") if user_context else None
+    is_admin = user_context.get("is_admin", False) if user_context else False
+
+    # Admin bypass - only when token has NO team restrictions (token_teams is None)
+    # If token has explicit team scope (even empty [] for public-only), respect it
+    if is_admin and token_teams is None:
+        user_email = None
+        # token_teams stays None (unrestricted)
+    elif token_teams is None:
+        token_teams = []  # Non-admin without teams = public-only (secure default)
 
     if server_id:
         try:
             async with get_db() as db:
-                prompts = await prompt_service.list_server_prompts(db, server_id)
+                prompts = await prompt_service.list_server_prompts(db, server_id, user_email=user_email, token_teams=token_teams)
                 return [types.Prompt(name=prompt.name, description=prompt.description, arguments=prompt.arguments) for prompt in prompts]
         except Exception as e:
             logger.exception(f"Error listing Prompts:{e}")
@@ -586,7 +615,7 @@ async def list_prompts() -> List[types.Prompt]:
     else:
         try:
             async with get_db() as db:
-                prompts, _ = await prompt_service.list_prompts(db, include_inactive=False, limit=0)
+                prompts, _ = await prompt_service.list_prompts(db, include_inactive=False, limit=0, user_email=user_email, token_teams=token_teams)
                 return [types.Prompt(name=prompt.name, description=prompt.description, arguments=prompt.arguments) for prompt in prompts]
         except Exception as e:
             logger.exception(f"Error listing prompts:{e}")
@@ -650,13 +679,27 @@ async def list_resources() -> List[types.Resource]:
         >>> sig.return_annotation
         typing.List[mcp.types.Resource]
     """
-
     server_id = server_id_var.get()
+    user_context = user_context_var.get()
+
+    # Extract filtering parameters from user context
+    user_email = user_context.get("email") if user_context else None
+    # Use None as default to distinguish "no teams specified" from "empty teams array"
+    token_teams = user_context.get("teams") if user_context else None
+    is_admin = user_context.get("is_admin", False) if user_context else False
+
+    # Admin bypass - only when token has NO team restrictions (token_teams is None)
+    # If token has explicit team scope (even empty [] for public-only), respect it
+    if is_admin and token_teams is None:
+        user_email = None
+        # token_teams stays None (unrestricted)
+    elif token_teams is None:
+        token_teams = []  # Non-admin without teams = public-only (secure default)
 
     if server_id:
         try:
             async with get_db() as db:
-                resources = await resource_service.list_server_resources(db, server_id)
+                resources = await resource_service.list_server_resources(db, server_id, user_email=user_email, token_teams=token_teams)
                 return [types.Resource(uri=resource.uri, name=resource.name, description=resource.description, mimeType=resource.mime_type) for resource in resources]
         except Exception as e:
             logger.exception(f"Error listing Resources:{e}")
@@ -664,7 +707,7 @@ async def list_resources() -> List[types.Resource]:
     else:
         try:
             async with get_db() as db:
-                resources, _ = await resource_service.list_resources(db, include_inactive=False, limit=0)
+                resources, _ = await resource_service.list_resources(db, include_inactive=False, limit=0, user_email=user_email, token_teams=token_teams)
                 return [types.Resource(uri=resource.uri, name=resource.name, description=resource.description, mimeType=resource.mime_type) for resource in resources]
         except Exception as e:
             logger.exception(f"Error listing resources:{e}")
@@ -1036,8 +1079,13 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
     if not settings.mcp_client_auth_enabled and settings.trust_proxy_auth:
         # Client auth disabled → allow proxy header
         if proxy_user:
-            # Set user context for proxy-authenticated sessions
-            user_context_var.set({"email": proxy_user})
+            # Set enriched user context for proxy-authenticated sessions
+            user_context_var.set({
+                "email": proxy_user,
+                "teams": [],  # Proxy auth has no team context
+                "is_authenticated": True,
+                "is_admin": False,
+            })
             return True  # Trusted proxy supplied user
 
     # --- Standard JWT authentication flow (client auth enabled) ---
@@ -1051,18 +1099,53 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
         if token is None:
             raise Exception()
         user_payload = await verify_credentials(token)
-        # Store user context for later use in tool invocations
+        # Store enriched user context with normalized teams
         if isinstance(user_payload, dict):
-            user_context_var.set(user_payload)
+            # Check if "teams" key exists and is not None to distinguish:
+            # - Key exists with non-None value (even empty []) -> normalized list (scoped token)
+            # - Key absent OR key is None -> None (unrestricted for admin, public-only for non-admin)
+            teams_value = user_payload.get("teams") if "teams" in user_payload else None
+            if teams_value is not None:
+                normalized_teams = []
+                for team in teams_value or []:
+                    if isinstance(team, dict):
+                        team_id = team.get("id")
+                        if team_id:
+                            normalized_teams.append(team_id)
+                    elif isinstance(team, str):
+                        normalized_teams.append(team)
+                final_teams = normalized_teams
+            else:
+                # No "teams" key or teams is null - treat as unrestricted (None)
+                final_teams = None
+
+            user_context_var.set({
+                "email": user_payload.get("sub") or user_payload.get("email"),  # Some tokens only have email
+                "teams": final_teams,
+                "is_authenticated": True,
+                # Check both top-level is_admin (legacy tokens) and nested user.is_admin
+                "is_admin": user_payload.get("is_admin", False) or user_payload.get("user", {}).get("is_admin", False),
+            })
         elif proxy_user:
             # If using proxy auth, store the proxy user
-            user_context_var.set({"email": proxy_user})
+            user_context_var.set({
+                "email": proxy_user,
+                "teams": [],
+                "is_authenticated": True,
+                "is_admin": False,
+            })
     except Exception:
         # If JWT auth fails but we have a trusted proxy user, use that
         if settings.trust_proxy_auth and proxy_user:
-            user_context_var.set({"email": proxy_user})
+            user_context_var.set({
+                "email": proxy_user,
+                "teams": [],
+                "is_authenticated": True,
+                "is_admin": False,
+            })
             return True  # Fall back to proxy authentication
 
+        # No valid auth - return 401 (PRESERVES EXISTING BEHAVIOR)
         response = ORJSONResponse(
             {"detail": "Authentication failed"},
             status_code=HTTP_401_UNAUTHORIZED,

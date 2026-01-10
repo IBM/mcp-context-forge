@@ -104,6 +104,32 @@ class TokenScopingMiddleware:
             True
         """
 
+    def _normalize_teams(self, teams) -> list:
+        """Normalize teams from token payload to list of team IDs.
+
+        Handles various team formats:
+        - None -> []
+        - List of strings -> as-is
+        - List of dicts with 'id' key -> extract IDs
+
+        Args:
+            teams: Raw teams value from JWT payload
+
+        Returns:
+            List of team ID strings
+        """
+        if not teams:
+            return []
+        normalized = []
+        for team in teams:
+            if isinstance(team, dict):
+                team_id = team.get("id")
+                if team_id:
+                    normalized.append(team_id)
+            elif isinstance(team, str):
+                normalized.append(team)
+        return normalized
+
     async def _extract_token_scopes(self, request: Request) -> Optional[dict]:
         """Extract token scopes from JWT in request.
 
@@ -441,7 +467,7 @@ class TokenScopingMiddleware:
                 finally:
                     db.close()
 
-    def _check_resource_team_ownership(self, request_path: str, token_teams: list, db=None) -> bool:  # pylint: disable=too-many-return-statements
+    def _check_resource_team_ownership(self, request_path: str, token_teams: list, db=None, _user_email: str = None) -> bool:  # pylint: disable=too-many-return-statements
         """
         Check if the requested resource is accessible by the token.
 
@@ -451,7 +477,7 @@ class TokenScopingMiddleware:
         - PRIVATE: Accessible only by tokens scoped to that specific team
 
         Token Access Rules:
-        - Public-only tokens (empty token_teams): Can ONLY access public resources
+        - Public-only tokens (empty token_teams): Can access public resources + their own resources
         - Team-scoped tokens: Can access their team's resources + public resources
 
         Handles URLs like:
@@ -535,7 +561,8 @@ class TokenScopingMiddleware:
                     logger.debug(f"Access granted: Server {resource_id} is PUBLIC")
                     return True
 
-                # PUBLIC-ONLY TOKEN: Can ONLY access public servers
+                # PUBLIC-ONLY TOKEN: Can ONLY access public servers (strict public-only policy)
+                # No owner access - if user needs own resources, use a personal team-scoped token
                 if is_public_token:
                     logger.warning(f"Access denied: Public-only token cannot access {server_visibility} server {resource_id}")
                     return False
@@ -578,7 +605,8 @@ class TokenScopingMiddleware:
                     logger.debug(f"Access granted: Tool {resource_id} is PUBLIC")
                     return True
 
-                # PUBLIC-ONLY TOKEN: Can ONLY access public tools
+                # PUBLIC-ONLY TOKEN: Can ONLY access public tools (strict public-only policy)
+                # No owner access - if user needs own resources, use a personal team-scoped token
                 if is_public_token:
                     logger.warning(f"Access denied: Public-only token cannot access {tool_visibility} tool {resource_id}")
                     return False
@@ -623,7 +651,8 @@ class TokenScopingMiddleware:
                     logger.debug(f"Access granted: Resource {resource_id} is PUBLIC")
                     return True
 
-                # PUBLIC-ONLY TOKEN: Can ONLY access public resources
+                # PUBLIC-ONLY TOKEN: Can ONLY access public resources (strict public-only policy)
+                # No owner access - if user needs own resources, use a personal team-scoped token
                 if is_public_token:
                     logger.warning(f"Access denied: Public-only token cannot access {resource_visibility} resource {resource_id}")
                     return False
@@ -668,7 +697,8 @@ class TokenScopingMiddleware:
                     logger.debug(f"Access granted: Prompt {resource_id} is PUBLIC")
                     return True
 
-                # PUBLIC-ONLY TOKEN: Can ONLY access public prompts
+                # PUBLIC-ONLY TOKEN: Can ONLY access public prompts (strict public-only policy)
+                # No owner access - if user needs own resources, use a personal team-scoped token
                 if is_public_token:
                     logger.warning(f"Access denied: Public-only token cannot access {prompt_visibility} prompt {resource_id}")
                     return False
@@ -755,10 +785,28 @@ class TokenScopingMiddleware:
 
             # TEAM VALIDATION: Use single DB session for both team checks
             # This reduces connection pool overhead from 2 sessions to 1 for resource endpoints
-            token_teams = payload.get("teams", [])
-            needs_db_session = bool(token_teams)  # Only need DB if token has teams
+            user_email = payload.get("sub") or payload.get("email")  # Extract user email for ownership check
+            is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
 
-            if needs_db_session:
+            # Determine token_teams based on whether "teams" key exists and is not None
+            # - Key absent OR null + admin = None (unrestricted bypass)
+            # - Key absent OR null + non-admin = [] (public-only, secure default)
+            # - Key present with non-None value = normalize the value
+            teams_value = payload.get("teams") if "teams" in payload else None
+            if teams_value is not None:
+                token_teams = self._normalize_teams(teams_value)
+            elif is_admin:
+                # Admin without teams key (or teams: null) = unrestricted (skip team checks)
+                token_teams = None
+            else:
+                # Non-admin without teams key (or teams: null) = public-only (secure default)
+                token_teams = []
+
+            # Admin with no team restrictions bypasses team validation entirely
+            if is_admin and token_teams is None:
+                logger.debug(f"Admin bypass: skipping team validation for {user_email}")
+                # Skip to other checks (server_id, IP, etc.)
+            elif token_teams:
                 # First-Party
                 from mcpgateway.db import get_db  # pylint: disable=import-outside-toplevel
 
@@ -770,7 +818,7 @@ class TokenScopingMiddleware:
                         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User is no longer a member of the associated team")
 
                     # Check resource team ownership with shared session
-                    if not self._check_resource_team_ownership(request.url.path, token_teams, db=db):
+                    if not self._check_resource_team_ownership(request.url.path, token_teams, db=db, _user_email=user_email):
                         logger.warning(f"Access denied: Resource does not belong to token's teams {token_teams}")
                         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: You do not have permission to access this resource using the current token")
                 finally:
@@ -785,7 +833,7 @@ class TokenScopingMiddleware:
                     logger.warning("Token rejected: User no longer member of associated team(s)")
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User is no longer a member of the associated team")
 
-                if not self._check_resource_team_ownership(request.url.path, token_teams):
+                if not self._check_resource_team_ownership(request.url.path, token_teams, _user_email=user_email):
                     logger.warning(f"Access denied: Resource does not belong to token's teams {token_teams}")
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: You do not have permission to access this resource using the current token")
 

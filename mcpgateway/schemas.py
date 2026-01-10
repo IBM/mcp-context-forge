@@ -5619,6 +5619,90 @@ class TokenScopeRequest(BaseModel):
     time_restrictions: Dict[str, Any] = Field(default_factory=dict, description="Time-based restrictions")
     usage_limits: Dict[str, Any] = Field(default_factory=dict, description="Usage limits and quotas")
 
+    @field_validator("ip_restrictions")
+    @classmethod
+    def validate_ip_restrictions(cls, v: List[str]) -> List[str]:
+        """Validate IP addresses and CIDR notation.
+
+        Args:
+            v: List of IP address or CIDR strings to validate.
+
+        Returns:
+            List of validated IP/CIDR strings with whitespace stripped.
+
+        Raises:
+            ValueError: If any IP address or CIDR notation is invalid.
+
+        Examples:
+            >>> TokenScopeRequest.validate_ip_restrictions(["192.168.1.0/24"])
+            ['192.168.1.0/24']
+            >>> TokenScopeRequest.validate_ip_restrictions(["10.0.0.1"])
+            ['10.0.0.1']
+        """
+        import ipaddress  # pylint: disable=import-outside-toplevel
+
+        if not v:
+            return v
+
+        validated = []
+        for ip_str in v:
+            ip_str = ip_str.strip()
+            if not ip_str:
+                continue
+            try:
+                # Try parsing as network (CIDR notation)
+                if "/" in ip_str:
+                    ipaddress.ip_network(ip_str, strict=False)
+                else:
+                    # Try parsing as single IP address
+                    ipaddress.ip_address(ip_str)
+                validated.append(ip_str)
+            except ValueError as e:
+                raise ValueError(f"Invalid IP address or CIDR notation '{ip_str}': {e}") from e
+        return validated
+
+    @field_validator("permissions")
+    @classmethod
+    def validate_permissions(cls, v: List[str]) -> List[str]:
+        """Validate permission scope format.
+
+        Permissions must be in format 'resource.action' or wildcard '*'.
+
+        Args:
+            v: List of permission strings to validate.
+
+        Returns:
+            List of validated permission strings with whitespace stripped.
+
+        Raises:
+            ValueError: If any permission does not match 'resource.action' format or '*'.
+
+        Examples:
+            >>> TokenScopeRequest.validate_permissions(["tools.read", "resources.write"])
+            ['tools.read', 'resources.write']
+            >>> TokenScopeRequest.validate_permissions(["*"])
+            ['*']
+        """
+        if not v:
+            return v
+
+        # Permission pattern: resource.action (alphanumeric with underscores)
+        permission_pattern = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]*\.[a-zA-Z][a-zA-Z0-9_]*$")
+
+        validated = []
+        for perm in v:
+            perm = perm.strip()
+            if not perm:
+                continue
+            # Allow wildcard
+            if perm == "*":
+                validated.append(perm)
+                continue
+            if not permission_pattern.match(perm):
+                raise ValueError(f"Invalid permission format '{perm}'. Use 'resource.action' format (e.g., 'tools.read') or '*' for full access")
+            validated.append(perm)
+        return validated
+
 
 class TokenCreateRequest(BaseModel):
     """Schema for creating a new API token.

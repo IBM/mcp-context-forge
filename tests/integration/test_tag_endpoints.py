@@ -15,7 +15,8 @@ from fastapi.testclient import TestClient
 import pytest
 
 # First-Party
-from mcpgateway.main import app, require_auth
+from mcpgateway.main import app
+from mcpgateway.utils.verify_credentials import require_auth
 from mcpgateway.schemas import TaggedEntity, TagInfo, TagStats
 
 # Local

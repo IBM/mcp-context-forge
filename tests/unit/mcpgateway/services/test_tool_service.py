@@ -3073,3 +3073,110 @@ class TestCorrelationIdPoolExclusion:
 
         # Headers should remain unchanged
         assert "X-Correlation-ID" not in headers
+
+
+# ----------------------------------------------------- #
+# Token Teams Filtering Tests (Issue #1915)             #
+# ----------------------------------------------------- #
+class TestToolServiceTokenTeamsFiltering:
+    """Tests for token_teams parameter in list_tools and list_server_tools."""
+
+    @pytest.mark.asyncio
+    async def test_list_tools_with_token_teams_uses_token_teams(self, tool_service, test_db):
+        """Test that list_tools uses token_teams when provided instead of DB lookup."""
+        mock_tool = MagicMock(spec=DbTool, id="1", team_id="team_a")
+
+        # Mock DB execute chain
+        test_db.execute = Mock(return_value=MagicMock(scalars=Mock(return_value=MagicMock(all=Mock(return_value=[mock_tool])))))
+        test_db.commit = Mock()
+
+        tool_read = MagicMock()
+        tool_service.convert_tool_to_read = Mock(return_value=tool_read)
+
+        # When token_teams is provided, TeamManagementService should NOT be called
+        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
+            mock_team_service.return_value.get_user_teams = AsyncMock()
+            result, _ = await tool_service.list_tools(test_db, user_email="user@example.com", token_teams=["team_a"])
+
+            # TeamManagementService should NOT be instantiated since token_teams was provided
+            mock_team_service.return_value.get_user_teams.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_list_tools_with_empty_token_teams_sees_own_and_public(self, tool_service, test_db):
+        """Test that empty token_teams list sees own resources and public resources."""
+        mock_tool_public = MagicMock(spec=DbTool, id="1", team_id=None, visibility="public", owner_email="other@example.com")
+        mock_tool_own = MagicMock(spec=DbTool, id="2", team_id=None, visibility="private", owner_email="user@example.com")
+
+        # Mock DB execute chain to return tools
+        test_db.execute = Mock(return_value=MagicMock(scalars=Mock(return_value=MagicMock(all=Mock(return_value=[mock_tool_public, mock_tool_own])))))
+        test_db.commit = Mock()
+
+        tool_service.convert_tool_to_read = Mock(side_effect=[MagicMock(), MagicMock()])
+
+        # With empty token_teams, user should see their own and public resources
+        result, _ = await tool_service.list_tools(test_db, user_email="user@example.com", token_teams=[])
+
+        # verify DB was queried
+        assert test_db.execute.called
+
+    @pytest.mark.asyncio
+    async def test_list_tools_without_token_teams_uses_db_lookup(self, tool_service, test_db):
+        """Test that list_tools performs DB team lookup when token_teams is None."""
+        mock_tool = MagicMock(spec=DbTool, id="1", team_id="team_a")
+
+        test_db.execute = Mock(return_value=MagicMock(scalars=Mock(return_value=MagicMock(all=Mock(return_value=[mock_tool])))))
+        test_db.commit = Mock()
+
+        tool_read = MagicMock()
+        tool_service.convert_tool_to_read = Mock(return_value=tool_read)
+
+        mock_team = MagicMock(id="team_a", is_personal=False)
+
+        # When token_teams is None, TeamManagementService SHOULD be called
+        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
+            mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[mock_team])
+            result, _ = await tool_service.list_tools(test_db, user_email="user@example.com", token_teams=None)
+
+            # TeamManagementService SHOULD be called for DB lookup
+            mock_team_service.return_value.get_user_teams.assert_called_once_with("user@example.com")
+
+    @pytest.mark.asyncio
+    async def test_list_server_tools_with_token_teams(self, tool_service, test_db):
+        """Test list_server_tools uses token_teams for filtering."""
+        mock_tool = MagicMock(spec=DbTool, id="1", team_id="team_x", enabled=True)
+        mock_server = MagicMock()
+        mock_server.tools = [mock_tool]
+
+        test_db.execute = Mock(return_value=MagicMock(scalar_one_or_none=Mock(return_value=mock_server)))
+        test_db.commit = Mock()
+
+        tool_read = MagicMock()
+        tool_service.convert_tool_to_read = Mock(return_value=tool_read)
+
+        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
+            mock_team_service.return_value.get_user_teams = AsyncMock()
+            result = await tool_service.list_server_tools(
+                test_db, server_id="server-1", include_inactive=False, user_email="user@example.com", token_teams=["team_x"]
+            )
+
+            # TeamManagementService should NOT be called since token_teams was provided
+            mock_team_service.return_value.get_user_teams.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_list_tools_token_teams_filters_by_membership(self, tool_service, test_db):
+        """Test that only tools matching token_teams are returned."""
+        mock_tool_a = MagicMock(spec=DbTool, id="1", team_id="team_a")
+        mock_tool_b = MagicMock(spec=DbTool, id="2", team_id="team_b")
+
+        # DB returns both tools, but filtering should occur
+        test_db.execute = Mock(return_value=MagicMock(scalars=Mock(return_value=MagicMock(all=Mock(return_value=[mock_tool_a, mock_tool_b])))))
+        test_db.commit = Mock()
+
+        tool_read_a = MagicMock()
+        tool_read_b = MagicMock()
+        tool_service.convert_tool_to_read = Mock(side_effect=[tool_read_a, tool_read_b])
+
+        # Only team_a in token_teams - should only see team_a tools
+        result, _ = await tool_service.list_tools(test_db, user_email="user@example.com", token_teams=["team_a"])
+
+        assert test_db.execute.called
