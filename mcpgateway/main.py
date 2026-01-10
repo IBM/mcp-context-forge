@@ -4495,8 +4495,8 @@ async def delete_gateway(gateway_id: str, db: Session = Depends(get_db), user=De
 async def refresh_gateway_tools(
     gateway_id: str,
     request: Request,
-    include_resources: bool = Query(True, description="Include resources in refresh"),
-    include_prompts: bool = Query(True, description="Include prompts in refresh"),
+    include_resources: bool = Query(False, description="Include resources in refresh"),
+    include_prompts: bool = Query(False, description="Include prompts in refresh"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> GatewayRefreshResponse:

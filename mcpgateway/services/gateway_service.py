@@ -3263,12 +3263,31 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     # Auto-refresh tools/resources/prompts if enabled
                     if settings.auto_refresh_servers:
                         try:
-                            await self._refresh_gateway_tools_resources_prompts(
-                                gateway_id=gateway_id,
-                                _user_email=user_email,
-                                created_via="health_check",
-                                pre_auth_headers=headers if headers else None,
-                            )
+                            # Throttling: Check if refresh is needed based on last_refresh_at
+                            refresh_needed = True
+                            if gateway.last_refresh_at:
+                                # Default to config value if configured interval is missing
+                                refresh_interval = getattr(settings, "gateway_auto_refresh_interval", 300)
+                                time_since_refresh = (datetime.now(timezone.utc) - gateway.last_refresh_at).total_seconds()
+                                if time_since_refresh < refresh_interval:
+                                    refresh_needed = False
+                                    logger.debug(f"Skipping auto-refresh for {gateway_name}: last refreshed {int(time_since_refresh)}s ago")
+
+                            if refresh_needed:
+                                # Locking: Try to acquire lock to avoid conflict with manual refresh
+                                lock = self._get_refresh_lock(gateway_id)
+                                if not lock.locked():
+                                    # Acquire lock to prevent concurrent manual refresh
+                                    async with lock:
+                                         await self._refresh_gateway_tools_resources_prompts(
+                                            gateway_id=gateway_id,
+                                            _user_email=user_email,
+                                            created_via="health_check",
+                                            pre_auth_headers=headers if headers else None,
+                                            gateway=gateway,
+                                        )
+                                else:
+                                    logger.debug(f"Skipping auto-refresh for {gateway_name}: lock held (likely manual refresh in progress)")
                         except Exception as refresh_error:
                             logger.warning(f"Failed to refresh tools for gateway {gateway_name}: {refresh_error}")
 
@@ -3408,6 +3427,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         oauth_config: Optional[Dict[str, Any]] = None,
         ca_certificate: Optional[bytes] = None,
         pre_auth_headers: Optional[Dict[str, str]] = None,
+        include_resources: bool = True,
+        include_prompts: bool = True,
     ) -> tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate]]:
         """Initialize connection to a gateway and retrieve its capabilities.
 
@@ -3423,6 +3444,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             oauth_config: OAuth configuration if auth_type is "oauth"
             ca_certificate: CA certificate for SSL verification
             pre_auth_headers: Pre-authenticated headers to skip OAuth token fetch (for reuse)
+            include_resources: Whether to include resources in the fetch
+            include_prompts: Whether to include prompts in the fetch
 
         Returns:
             tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate]]:
@@ -3492,9 +3515,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             if auth_type in ("basic", "bearer", "headers") and isinstance(authentication, str):
                 authentication = decode_auth(authentication)
             if transport.lower() == "sse":
-                capabilities, tools, resources, prompts = await self.connect_to_sse_server(url, authentication, ca_certificate)
+                capabilities, tools, resources, prompts = await self.connect_to_sse_server(url, authentication, ca_certificate, include_prompts, include_resources)
             elif transport.lower() == "streamablehttp":
-                capabilities, tools, resources, prompts = await self.connect_to_streamablehttp_server(url, authentication, ca_certificate)
+                capabilities, tools, resources, prompts = await self.connect_to_streamablehttp_server(url, authentication, ca_certificate, include_prompts, include_resources)
 
             return capabilities, tools, resources, prompts
         except Exception as e:
@@ -4157,6 +4180,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         _user_email: Optional[str] = None,
         created_via: str = "health_check",
         pre_auth_headers: Optional[Dict[str, str]] = None,
+        gateway: Optional[DbGateway] = None,
+        include_resources: bool = True,
+        include_prompts: bool = True,
     ) -> Dict[str, int]:
         """Refresh tools, resources, and prompts for a gateway during health checks.
 
@@ -4172,6 +4198,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             _user_email: Optional user email for OAuth token lookup (unused currently)
             created_via: String indicating creation source (default: "health_check")
             pre_auth_headers: Pre-authenticated headers from health check to avoid duplicate OAuth token fetch
+            gateway: Optional DbGateway object to avoid redundant DB lookup
+            include_resources: Whether to include resources in the refresh
+            include_prompts: Whether to include prompts in the refresh
 
         Returns:
             Dict with counts: {tools_added, tools_removed, resources_added,
@@ -4236,18 +4265,20 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         }
 
         # Fetch gateway metadata only (no relationships needed for MCP call)
-        with fresh_db_session() as db:
-            gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+        # Use provided gateway object if available to save a DB call
+        gateway_name = None
+        gateway_url = None
+        gateway_transport = None
+        gateway_auth_type = None
+        gateway_auth_value = None
+        gateway_oauth_config = None
+        gateway_ca_certificate = None
 
-            if not gateway:
-                logger.warning(f"Gateway {gateway_id} not found for tool refresh")
-                return result
-
+        if gateway:
             if not gateway.enabled or not gateway.reachable:
                 logger.debug(f"Skipping tool refresh for disabled/unreachable gateway {gateway.name}")
                 return result
-
-            # Extract metadata before session closes
+            
             gateway_name = gateway.name
             gateway_url = gateway.url
             gateway_transport = gateway.transport
@@ -4255,6 +4286,26 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             gateway_auth_value = gateway.auth_value
             gateway_oauth_config = gateway.oauth_config
             gateway_ca_certificate = gateway.ca_certificate
+        else:
+            with fresh_db_session() as db:
+                gateway_obj = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+
+                if not gateway_obj:
+                    logger.warning(f"Gateway {gateway_id} not found for tool refresh")
+                    return result
+
+                if not gateway_obj.enabled or not gateway_obj.reachable:
+                    logger.debug(f"Skipping tool refresh for disabled/unreachable gateway {gateway_obj.name}")
+                    return result
+
+                # Extract metadata before session closes
+                gateway_name = gateway_obj.name
+                gateway_url = gateway_obj.url
+                gateway_transport = gateway_obj.transport
+                gateway_auth_type = gateway_obj.auth_type
+                gateway_auth_value = gateway_obj.auth_value
+                gateway_oauth_config = gateway_obj.oauth_config
+                gateway_ca_certificate = gateway_obj.ca_certificate
 
         # Fetch tools/resources/prompts from MCP server (no DB connection held)
         try:
@@ -4266,6 +4317,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 oauth_config=gateway_oauth_config,
                 ca_certificate=gateway_ca_certificate.encode() if gateway_ca_certificate else None,
                 pre_auth_headers=pre_auth_headers,
+                include_resources=include_resources,
+                include_prompts=include_prompts,
             )
         except Exception as e:
             logger.warning(f"Failed to fetch tools from gateway {gateway_name}: {e}")
@@ -4305,9 +4358,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             new_prompt_names = [prompt.name for prompt in prompts]
 
             # Track dirty objects before update operations to count per-type updates
-            dirty_tools_before = {obj for obj in db.dirty if isinstance(obj, DbTool)}
-            dirty_resources_before = {obj for obj in db.dirty if isinstance(obj, DbResource)}
-            dirty_prompts_before = {obj for obj in db.dirty if isinstance(obj, DbPrompt)}
+            pending_tools_before = {obj for obj in db.dirty if isinstance(obj, DbTool)}
+            pending_resources_before = {obj for obj in db.dirty if isinstance(obj, DbResource)}
+            pending_prompts_before = {obj for obj in db.dirty if isinstance(obj, DbPrompt)}
 
             # Update/create tools, resources, and prompts
             tools_to_add = self._update_or_create_tools(db, tools, gateway, created_via)
@@ -4315,9 +4368,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, created_via)
 
             # Count per-type updates 
-            result["tools_updated"] = len({obj for obj in db.dirty if isinstance(obj, DbTool)} - dirty_tools_before)
-            result["resources_updated"] = len({obj for obj in db.dirty if isinstance(obj, DbResource)} - dirty_resources_before)
-            result["prompts_updated"] = len({obj for obj in db.dirty if isinstance(obj, DbPrompt)} - dirty_prompts_before)
+            result["tools_updated"] = len({obj for obj in db.dirty if isinstance(obj, DbTool)} - pending_tools_before)
+            result["resources_updated"] = len({obj for obj in db.dirty if isinstance(obj, DbResource)} - pending_resources_before)
+            result["prompts_updated"] = len({obj for obj in db.dirty if isinstance(obj, DbPrompt)} - pending_prompts_before)
 
             # Only delete MCP-discovered items (not user-created entries)
             # Excludes "api", "ui", None (legacy/user-created) to preserve user entries
@@ -4517,6 +4570,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 _user_email=user_email,
                 created_via="manual_refresh",
                 pre_auth_headers=pre_auth_headers,
+                gateway=gateway,
+                include_resources=include_resources,
+                include_prompts=include_prompts,
             )
 
             # Update last_refresh_at timestamp
@@ -4738,13 +4794,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             logger.error(f"SSE connection error details: {type(e).__name__}: {str(e)}", exc_info=True)
             raise GatewayConnectionError(f"Failed to connect to SSE server at {server_url}: {str(e)}")
 
-    async def connect_to_sse_server(self, server_url: str, authentication: Optional[Dict[str, str]] = None, ca_certificate: Optional[bytes] = None):
+    async def connect_to_sse_server(self, server_url: str, authentication: Optional[Dict[str, str]] = None, ca_certificate: Optional[bytes] = None, include_prompts: bool = True, include_resources: bool = True):
         """Connect to an MCP server running with SSE transport.
 
         Args:
             server_url: The URL of the SSE MCP server to connect to.
             authentication: Optional dictionary containing authentication headers.
             ca_certificate: Optional CA certificate for SSL verification.
+            include_prompts: Whether to fetch prompts from the server.
+            include_resources: Whether to fetch resources from the server.
 
         Returns:
             Tuple containing (capabilities, tools, resources, prompts) from the MCP server.
@@ -4804,95 +4862,99 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     logger.info(f"Fetched {len(tools)} tools from gateway")
                 # Fetch resources if supported
                 resources = []
-                logger.debug(f"Checking for resources support: {capabilities.get('resources')}")
-                if capabilities.get("resources"):
-                    try:
-                        response = await session.list_resources()
-                        raw_resources = response.resources
-                        for resource in raw_resources:
-                            resource_data = resource.model_dump(by_alias=True, exclude_none=True)
-                            # Convert AnyUrl to string if present
-                            if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
-                                resource_data["uri"] = str(resource_data["uri"])
-                            # Add default content if not present (will be fetched on demand)
-                            if "content" not in resource_data:
-                                resource_data["content"] = ""
-                            try:
-                                resources.append(ResourceCreate.model_validate(resource_data))
-                            except Exception:
-                                # If validation fails, create minimal resource
-                                resources.append(
-                                    ResourceCreate(
-                                        uri=str(resource_data.get("uri", "")),
-                                        name=resource_data.get("name", ""),
-                                        description=resource_data.get("description"),
-                                        mime_type=resource_data.get("mimeType"),
-                                        uri_template=resource_data.get("uriTemplate") or None,
-                                        content="",
+                if include_resources:
+                    logger.debug(f"Checking for resources support: {capabilities.get('resources')}")
+                    if capabilities.get("resources"):
+                        try:
+                            response = await session.list_resources()
+                            raw_resources = response.resources
+                            for resource in raw_resources:
+                                resource_data = resource.model_dump(by_alias=True, exclude_none=True)
+                                # Convert AnyUrl to string if present
+                                if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
+                                    resource_data["uri"] = str(resource_data["uri"])
+                                # Add default content if not present (will be fetched on demand)
+                                if "content" not in resource_data:
+                                    resource_data["content"] = ""
+                                try:
+                                    resources.append(ResourceCreate.model_validate(resource_data))
+                                except Exception:
+                                    # If validation fails, create minimal resource
+                                    resources.append(
+                                        ResourceCreate(
+                                            uri=str(resource_data.get("uri", "")),
+                                            name=resource_data.get("name", ""),
+                                            description=resource_data.get("description"),
+                                            mime_type=resource_data.get("mimeType"),
+                                            uri_template=resource_data.get("uriTemplate") or None,
+                                            content="",
+                                        )
                                     )
-                                )
-                        logger.info(f"Fetched {len(resources)} resources from gateway")
-                    except Exception as e:
-                        logger.warning(f"Failed to fetch resources: {e}")
+                            logger.info(f"Fetched {len(resources)} resources from gateway")
+                        except Exception as e:
+                            logger.warning(f"Failed to fetch resources: {e}")
 
-                    # resource template URI
-                    try:
-                        response_templates = await session.list_resource_templates()
-                        raw_resources_templates = response_templates.resourceTemplates
-                        resource_templates = []
-                        for resource_template in raw_resources_templates:
-                            resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
+                        # resource template URI
+                        try:
+                            response_templates = await session.list_resource_templates()
+                            raw_resources_templates = response_templates.resourceTemplates
+                            resource_templates = []
+                            for resource_template in raw_resources_templates:
+                                resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
 
-                            if "uriTemplate" in resource_template_data:  # and hasattr(resource_template_data["uriTemplate"], "unicode_string"):
-                                resource_template_data["uri_template"] = str(resource_template_data["uriTemplate"])
-                                resource_template_data["uri"] = str(resource_template_data["uriTemplate"])
+                                if "uriTemplate" in resource_template_data:  # and hasattr(resource_template_data["uriTemplate"], "unicode_string"):
+                                    resource_template_data["uri_template"] = str(resource_template_data["uriTemplate"])
+                                    resource_template_data["uri"] = str(resource_template_data["uriTemplate"])
 
-                            if "content" not in resource_template_data:
-                                resource_template_data["content"] = ""
+                                if "content" not in resource_template_data:
+                                    resource_template_data["content"] = ""
 
-                            resources.append(ResourceCreate.model_validate(resource_template_data))
-                            resource_templates.append(ResourceCreate.model_validate(resource_template_data))
-                        logger.info(f"Fetched {len(raw_resources_templates)} resource templates from gateway")
-                    except Exception as ei:
-                        logger.warning(f"Failed to fetch resource templates: {ei}")
+                                resources.append(ResourceCreate.model_validate(resource_template_data))
+                                resource_templates.append(ResourceCreate.model_validate(resource_template_data))
+                            logger.info(f"Fetched {len(raw_resources_templates)} resource templates from gateway")
+                        except Exception as ei:
+                            logger.warning(f"Failed to fetch resource templates: {ei}")
 
                 # Fetch prompts if supported
                 prompts = []
-                logger.debug(f"Checking for prompts support: {capabilities.get('prompts')}")
-                if capabilities.get("prompts"):
-                    try:
-                        response = await session.list_prompts()
-                        raw_prompts = response.prompts
-                        for prompt in raw_prompts:
-                            prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
-                            # Add default template if not present
-                            if "template" not in prompt_data:
-                                prompt_data["template"] = ""
-                            try:
-                                prompts.append(PromptCreate.model_validate(prompt_data))
-                            except Exception:
-                                # If validation fails, create minimal prompt
-                                prompts.append(
-                                    PromptCreate(
-                                        name=prompt_data.get("name", ""),
-                                        description=prompt_data.get("description"),
-                                        template=prompt_data.get("template", ""),
+                if include_prompts:
+                    logger.debug(f"Checking for prompts support: {capabilities.get('prompts')}")
+                    if capabilities.get("prompts"):
+                        try:
+                            response = await session.list_prompts()
+                            raw_prompts = response.prompts
+                            for prompt in raw_prompts:
+                                prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
+                                # Add default template if not present
+                                if "template" not in prompt_data:
+                                    prompt_data["template"] = ""
+                                try:
+                                    prompts.append(PromptCreate.model_validate(prompt_data))
+                                except Exception:
+                                    # If validation fails, create minimal prompt
+                                    prompts.append(
+                                        PromptCreate(
+                                            name=prompt_data.get("name", ""),
+                                            description=prompt_data.get("description"),
+                                            template=prompt_data.get("template", ""),
+                                        )
                                     )
-                                )
-                        logger.info(f"Fetched {len(prompts)} prompts from gateway")
-                    except Exception as e:
-                        logger.warning(f"Failed to fetch prompts: {e}")
+                            logger.info(f"Fetched {len(prompts)} prompts from gateway")
+                        except Exception as e:
+                            logger.warning(f"Failed to fetch prompts: {e}")
 
                 return capabilities, tools, resources, prompts
         raise GatewayConnectionError(f"Failed to initialize gateway at {server_url}")
 
-    async def connect_to_streamablehttp_server(self, server_url: str, authentication: Optional[Dict[str, str]] = None, ca_certificate: Optional[bytes] = None):
+    async def connect_to_streamablehttp_server(self, server_url: str, authentication: Optional[Dict[str, str]] = None, ca_certificate: Optional[bytes] = None, include_prompts: bool = True, include_resources: bool = True):
         """Connect to an MCP server running with Streamable HTTP transport.
 
         Args:
             server_url: The URL of the Streamable HTTP MCP server to connect to.
             authentication: Optional dictionary containing authentication headers.
             ca_certificate: Optional CA certificate for SSL verification.
+            include_prompts: Whether to fetch prompts from the server.
+            include_resources: Whether to fetch resources from the server.
 
         Returns:
             Tuple containing (capabilities, tools, resources, prompts) from the MCP server.
@@ -4955,74 +5017,76 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 # Fetch resources if supported
                 resources = []
-                logger.debug(f"Checking for resources support: {capabilities.get('resources')}")
-                if capabilities.get("resources"):
-                    try:
-                        response = await session.list_resources()
-                        raw_resources = response.resources
-                        for resource in raw_resources:
-                            resource_data = resource.model_dump(by_alias=True, exclude_none=True)
-                            # Convert AnyUrl to string if present
-                            if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
-                                resource_data["uri"] = str(resource_data["uri"])
-                            # Add default content if not present
-                            if "content" not in resource_data:
-                                resource_data["content"] = ""
-                            try:
-                                resources.append(ResourceCreate.model_validate(resource_data))
-                            except Exception:
-                                # If validation fails, create minimal resource
-                                resources.append(
-                                    ResourceCreate(
-                                        uri=str(resource_data.get("uri", "")),
-                                        name=resource_data.get("name", ""),
-                                        description=resource_data.get("description"),
-                                        mime_type=resource_data.get("mimeType"),
-                                        uri_template=resource_data.get("uriTemplate") or None,
-                                        content="",
+                if include_resources:
+                    logger.debug(f"Checking for resources support: {capabilities.get('resources')}")
+                    if capabilities.get("resources"):
+                        try:
+                            response = await session.list_resources()
+                            raw_resources = response.resources
+                            for resource in raw_resources:
+                                resource_data = resource.model_dump(by_alias=True, exclude_none=True)
+                                # Convert AnyUrl to string if present
+                                if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
+                                    resource_data["uri"] = str(resource_data["uri"])
+                                # Add default content if not present
+                                if "content" not in resource_data:
+                                    resource_data["content"] = ""
+                                try:
+                                    resources.append(ResourceCreate.model_validate(resource_data))
+                                except Exception:
+                                    # If validation fails, create minimal resource
+                                    resources.append(
+                                        ResourceCreate(
+                                            uri=str(resource_data.get("uri", "")),
+                                            name=resource_data.get("name", ""),
+                                            description=resource_data.get("description"),
+                                            mime_type=resource_data.get("mimeType"),
+                                            uri_template=resource_data.get("uriTemplate") or None,
+                                            content="",
+                                        )
                                     )
-                                )
-                        logger.info(f"Fetched {len(resources)} resources from gateway")
-                    except Exception as e:
-                        logger.warning(f"Failed to fetch resources: {e}")
+                            logger.info(f"Fetched {len(resources)} resources from gateway")
+                        except Exception as e:
+                            logger.warning(f"Failed to fetch resources: {e}")
 
-                    # resource template URI
-                    try:
-                        response_templates = await session.list_resource_templates()
-                        raw_resources_templates = response_templates.resourceTemplates
-                        resource_templates = []
-                        for resource_template in raw_resources_templates:
-                            resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
+                        # resource template URI
+                        try:
+                            response_templates = await session.list_resource_templates()
+                            raw_resources_templates = response_templates.resourceTemplates
+                            resource_templates = []
+                            for resource_template in raw_resources_templates:
+                                resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
 
-                            if "uriTemplate" in resource_template_data:  # and hasattr(resource_template_data["uriTemplate"], "unicode_string"):
-                                resource_template_data["uri_template"] = str(resource_template_data["uriTemplate"])
-                                resource_template_data["uri"] = str(resource_template_data["uriTemplate"])
+                                if "uriTemplate" in resource_template_data:  # and hasattr(resource_template_data["uriTemplate"], "unicode_string"):
+                                    resource_template_data["uri_template"] = str(resource_template_data["uriTemplate"])
+                                    resource_template_data["uri"] = str(resource_template_data["uriTemplate"])
 
-                            if "content" not in resource_template_data:
-                                resource_template_data["content"] = ""
+                                if "content" not in resource_template_data:
+                                    resource_template_data["content"] = ""
 
-                            resources.append(ResourceCreate.model_validate(resource_template_data))
-                            resource_templates.append(ResourceCreate.model_validate(resource_template_data))
-                        logger.info(f"Fetched {len(resource_templates)} resource templates from gateway")
-                    except Exception as e:
-                        logger.warning(f"Failed to fetch resource templates: {e}")
+                                resources.append(ResourceCreate.model_validate(resource_template_data))
+                                resource_templates.append(ResourceCreate.model_validate(resource_template_data))
+                            logger.info(f"Fetched {len(resource_templates)} resource templates from gateway")
+                        except Exception as e:
+                            logger.warning(f"Failed to fetch resource templates: {e}")
 
                 # Fetch prompts if supported
                 prompts = []
-                logger.debug(f"Checking for prompts support: {capabilities.get('prompts')}")
-                if capabilities.get("prompts"):
-                    try:
-                        response = await session.list_prompts()
-                        raw_prompts = response.prompts
-                        for prompt in raw_prompts:
-                            prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
-                            # Add default template if not present
-                            if "template" not in prompt_data:
-                                prompt_data["template"] = ""
-                            prompts.append(PromptCreate.model_validate(prompt_data))
-                        logger.info(f"Fetched {len(prompts)} prompts from gateway")
-                    except Exception as e:
-                        logger.warning(f"Failed to fetch prompts: {e}")
+                if include_prompts:
+                    logger.debug(f"Checking for prompts support: {capabilities.get('prompts')}")
+                    if capabilities.get("prompts"):
+                        try:
+                            response = await session.list_prompts()
+                            raw_prompts = response.prompts
+                            for prompt in raw_prompts:
+                                prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
+                                # Add default template if not present
+                                if "template" not in prompt_data:
+                                    prompt_data["template"] = ""
+                                prompts.append(PromptCreate.model_validate(prompt_data))
+                            logger.info(f"Fetched {len(prompts)} prompts from gateway")
+                        except Exception as e:
+                            logger.warning(f"Failed to fetch prompts: {e}")
 
                 return capabilities, tools, resources, prompts
         raise GatewayConnectionError(f"Failed to initialize gateway at{server_url}")
