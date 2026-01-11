@@ -1235,8 +1235,9 @@ class Settings(BaseSettings):
     db_max_overflow: int = 10
     db_pool_timeout: int = 30
     db_pool_recycle: int = 3600
-    db_max_retries: int = 3
-    db_retry_interval_ms: int = 2000
+    db_max_retries: int = 30  # Max attempts with exponential backoff (≈5 min total)
+    db_retry_interval_ms: int = 2000  # Base interval; doubles each attempt, ±25% jitter
+    db_max_backoff_seconds: int = 30  # Cap for exponential backoff (jitter applied after cap)
 
     # Database Performance Optimization
     use_postgresdb_percentiles: bool = Field(
@@ -1276,8 +1277,9 @@ class Settings(BaseSettings):
     cache_prefix: str = "mcpgw:"
     session_ttl: int = 3600
     message_ttl: int = 600
-    redis_max_retries: int = 3
-    redis_retry_interval_ms: int = 2000
+    redis_max_retries: int = 30  # Max attempts with exponential backoff (≈5 min total)
+    redis_retry_interval_ms: int = 2000  # Base interval; doubles each attempt, ±25% jitter
+    redis_max_backoff_seconds: int = 30  # Cap for exponential backoff (jitter applied after cap)
 
     # GlobalConfig In-Memory Cache (Issue #1715)
     # Caches GlobalConfig (passthrough headers) to eliminate redundant DB queries

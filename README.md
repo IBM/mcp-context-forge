@@ -2123,8 +2123,8 @@ Automatic management of metrics data to prevent unbounded table growth and maint
 | `DB_MAX_OVERFLOW`.      | Extra connections beyond pool   | `10`    | int ≥ 0 |
 | `DB_POOL_TIMEOUT`.      | Wait for connection (secs)      | `30`    | int > 0 |
 | `DB_POOL_RECYCLE`.      | Recycle connections (secs)      | `3600`  | int > 0 |
-| `DB_MAX_RETRIES` .      | Max Retry Attempts              | `3`     | int > 0 |
-| `DB_RETRY_INTERVAL_MS`  | Retry Interval (ms)             | `2000`  | int > 0 |
+| `DB_MAX_RETRIES` .      | Max retry attempts at startup (exponential backoff) | `30`    | int > 0 |
+| `DB_RETRY_INTERVAL_MS`  | Base retry interval (ms), doubles each attempt up to 30s | `2000`  | int > 0 |
 
 ### Cache Backend
 
@@ -2135,8 +2135,8 @@ Automatic management of metrics data to prevent unbounded table growth and maint
 | `CACHE_PREFIX`            | Key prefix                 | `mcpgw:` | string                   |
 | `SESSION_TTL`             | Session validity (secs)    | `3600`   | int > 0                  |
 | `MESSAGE_TTL`             | Message retention (secs)   | `600`    | int > 0                  |
-| `REDIS_MAX_RETRIES`       | Max Retry Attempts         | `3`      | int > 0                  |
-| `REDIS_RETRY_INTERVAL_MS` | Retry Interval (ms)        | `2000`   | int > 0                  |
+| `REDIS_MAX_RETRIES`       | Max retry attempts at startup (exponential backoff) | `30`     | int > 0                  |
+| `REDIS_RETRY_INTERVAL_MS` | Base retry interval (ms), doubles each attempt up to 30s | `2000`   | int > 0                  |
 | `REDIS_MAX_CONNECTIONS`   | Connection pool size       | `50`     | int > 0                  |
 | `REDIS_SOCKET_TIMEOUT`    | Socket timeout (secs)      | `2.0`    | float > 0                |
 | `REDIS_SOCKET_CONNECT_TIMEOUT` | Connect timeout (secs) | `2.0`   | float > 0                |

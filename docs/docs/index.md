@@ -1367,8 +1367,8 @@ mcpgateway
 | `DB_MAX_OVERFLOW`.      | Extra connections beyond pool   | `10`    | int ≥ 0 |
 | `DB_POOL_TIMEOUT`.      | Wait for connection (secs)      | `30`    | int > 0 |
 | `DB_POOL_RECYCLE`.      | Recycle connections (secs)      | `3600`  | int > 0 |
-| `DB_MAX_RETRIES` .      | Max Retry Attempts              | `3`     | int > 0 |
-| `DB_RETRY_INTERVAL_MS`  | Retry Interval (ms)             | `2000`  | int > 0 |
+| `DB_MAX_RETRIES` .      | Max retry attempts at startup (exponential backoff) | `30`    | int > 0 |
+| `DB_RETRY_INTERVAL_MS`  | Base retry interval (ms), doubles each attempt up to 30s | `2000`  | int > 0 |
 
 ### Cache Backend
 
@@ -1377,8 +1377,8 @@ mcpgateway
 | `CACHE_TYPE`              | Backend type | `database` | `none`, `memory`, `database`, `redis` |
 | `REDIS_URL`               | Redis connection URL       | (none)   | string or empty          |
 | `CACHE_PREFIX`            | Key prefix                 | `mcpgw:` | string                   |
-| `REDIS_MAX_RETRIES`       | Max Retry Attempts         | `3`      | int > 0                  |
-| `REDIS_RETRY_INTERVAL_MS` | Retry Interval (ms)        | `2000`   | int > 0                  |
+| `REDIS_MAX_RETRIES`       | Max retry attempts at startup (exponential backoff) | `30`     | int > 0                  |
+| `REDIS_RETRY_INTERVAL_MS` | Base retry interval (ms), doubles each attempt up to 30s | `2000`   | int > 0                  |
 
 > 🧠 `none` disables caching entirely. Use `memory` for dev, `database` for local persistence, or `redis` for distributed caching across multiple instances.
 
