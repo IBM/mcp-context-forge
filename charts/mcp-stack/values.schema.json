@@ -422,13 +422,18 @@
             },
             "REDIS_MAX_RETRIES": {
               "type": "string",
-              "description": "Redis max retries",
-              "default": "3"
+              "description": "Max Redis connection retries at startup (uses exponential backoff with jitter)",
+              "default": "30"
             },
             "REDIS_RETRY_INTERVAL_MS": {
               "type": "string",
-              "description": "Redis retry interval in milliseconds",
+              "description": "Base retry interval in ms (doubles each attempt)",
               "default": "2000"
+            },
+            "REDIS_MAX_BACKOFF_SECONDS": {
+              "type": "string",
+              "description": "Max backoff cap in seconds (jitter ±25% applied after)",
+              "default": "30"
             },
             "REDIS_MAX_CONNECTIONS": {
               "type": "string",
@@ -479,13 +484,18 @@
             },
             "DB_MAX_RETRIES": {
               "type": "string",
-              "description": "Database max retries",
-              "default": "3"
+              "description": "Max DB connection retries at startup (uses exponential backoff with jitter)",
+              "default": "30"
             },
             "DB_RETRY_INTERVAL_MS": {
               "type": "string",
-              "description": "Database retry interval in milliseconds",
+              "description": "Base retry interval in ms (doubles each attempt)",
               "default": "2000"
+            },
+            "DB_MAX_BACKOFF_SECONDS": {
+              "type": "string",
+              "description": "Max backoff cap in seconds (jitter ±25% applied after)",
+              "default": "30"
             },
             "PROTOCOL_VERSION": {
               "type": "string",

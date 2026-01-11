@@ -22,6 +22,10 @@ Exit codes when executed as a script
 Features
 --------
 * Supports any valid Redis URL supported by :pypi:`redis`.
+* **Exponential backoff with jitter** - prevents thundering herd on reconnect:
+  - Retry delays: 2s → 4s → 8s → 16s → 30s (capped) → 30s...
+  - Random jitter of ±25% prevents synchronized reconnection storms
+  - Default: 30 retries ≈ 5 minutes total wait before giving up
 * Retry settings are configurable via *environment variables*.
 * Works both **synchronously** (blocking) and **asynchronously**.
 
@@ -29,14 +33,15 @@ Environment variables
 ---------------------
 These environment variables can be used to configure retry behavior and Redis connection.
 
-+-----------------------------+-----------------------------------------------+-----------------------------+
-| Name                        | Description                                   | Default                     |
-+=============================+===============================================+=============================+
-| ``REDIS_URL``               | Redis connection URL                          | ``redis://localhost:6379/0``|
-| ``REDIS_MAX_RETRIES``       | Maximum retry attempts before failing         | ``3``                       |
-| ``REDIS_RETRY_INTERVAL_MS`` | Delay between retries *(milliseconds)*        | ``2000``                    |
-| ``LOG_LEVEL``               | Log verbosity when not set via ``--log-level``| ``INFO``                    |
-+-----------------------------+-----------------------------------------------+-----------------------------+
++-------------------------------+-----------------------------------------------+-----------------------------+
+| Name                          | Description                                   | Default                     |
++===============================+===============================================+=============================+
+| ``REDIS_URL``                 | Redis connection URL                          | ``redis://localhost:6379/0``|
+| ``REDIS_MAX_RETRIES``         | Maximum retry attempts before failing         | ``30``                      |
+| ``REDIS_RETRY_INTERVAL_MS``   | Base delay between retries *(milliseconds)*   | ``2000``                    |
+| ``REDIS_MAX_BACKOFF_SECONDS`` | Max backoff cap *(seconds, jitter added)*     | ``30``                      |
+| ``LOG_LEVEL``                 | Log verbosity when not set via ``--log-level``| ``INFO``                    |
++-------------------------------+-----------------------------------------------+-----------------------------+
 
 Usage examples
 --------------
@@ -85,6 +90,7 @@ import argparse
 import asyncio
 import logging
 import os
+import random
 import sys
 import time
 from typing import Any, Optional
@@ -95,8 +101,9 @@ from mcpgateway.config import settings
 
 # Environment variables
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-REDIS_MAX_RETRIES = int(os.getenv("REDIS_MAX_RETRIES", "3"))
+REDIS_MAX_RETRIES = int(os.getenv("REDIS_MAX_RETRIES", "30"))
 REDIS_RETRY_INTERVAL_MS = int(os.getenv("REDIS_RETRY_INTERVAL_MS", "2000"))
+REDIS_MAX_BACKOFF_SECONDS = float(os.getenv("REDIS_MAX_BACKOFF_SECONDS", "30"))
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
@@ -106,6 +113,7 @@ def wait_for_redis_ready(
     redis_url: str = REDIS_URL,
     max_retries: int = REDIS_MAX_RETRIES,
     retry_interval_ms: int = REDIS_RETRY_INTERVAL_MS,
+    max_backoff: float = REDIS_MAX_BACKOFF_SECONDS,
     logger: Optional[logging.Logger] = None,
     sync: bool = False,
 ) -> None:
@@ -117,13 +125,25 @@ def wait_for_redis_ready(
     or asynchronously using an executor. Intended for use during service
     startup to ensure Redis is reachable before proceeding.
 
+    Uses **exponential backoff with jitter** to prevent thundering herd when
+    multiple workers attempt to reconnect simultaneously. The delay between
+    attempts doubles each time (capped at max_backoff), with ±25% random jitter.
+
+    Example retry progression with retry_interval_ms=2000, max_backoff=30s:
+        Attempt 1: 2s, Attempt 2: 4s, Attempt 3: 8s, Attempt 4: 16s,
+        Attempt 5+: 30s (capped), each ±25% jitter
+
     Args:
         redis_url : str
             Redis connection URL. Defaults to the value of the `REDIS_URL` environment variable.
         max_retries : int
             Maximum number of connection attempts before failing.
         retry_interval_ms : int
-            Delay between retry attempts, in milliseconds.
+            Base delay between retry attempts, in milliseconds. Actual delay uses
+            exponential backoff: ``min(interval * 2^(attempt-1), max_backoff)``, then ±25% jitter.
+        max_backoff : float
+            Maximum backoff delay in seconds (default 30). Jitter is applied after this cap,
+            so actual sleep can be ±25% of this value.
         logger : logging.Logger, optional
             Logger instance to use. If not provided, a default logger is configured.
         sync : bool
@@ -162,7 +182,7 @@ def wait_for_redis_ready(
     if max_retries < 1 or retry_interval_ms <= 0:
         raise RuntimeError("Invalid max_retries or retry_interval_ms values")
 
-    log.info(f"Probing Redis at {redis_url} (interval={retry_interval_ms}ms, max_retries={max_retries})")
+    log.info(f"Probing Redis at {redis_url} (interval={retry_interval_ms}ms, max_retries={max_retries}, max_backoff={max_backoff}s)")
 
     def _probe(*_: Any) -> None:
         """
@@ -186,15 +206,23 @@ def wait_for_redis_ready(
             sys.exit(2)
 
         redis_client = Redis.from_url(redis_url)
+        interval_s = retry_interval_ms / 1000.0  # Convert to seconds
         for attempt in range(1, max_retries + 1):
             try:
                 redis_client.ping()
                 log.info(f"Redis ready (attempt {attempt})")
                 return
             except Exception as exc:
-                log.debug(f"Attempt {attempt}/{max_retries} failed ({exc}) - retrying in {retry_interval_ms} ms")
                 if attempt < max_retries:  # Don't sleep on the last attempt
-                    time.sleep(retry_interval_ms / 1000.0)
+                    # Exponential backoff: interval * 2^(attempt-1), capped at max_backoff
+                    backoff = min(interval_s * (2 ** (attempt - 1)), max_backoff)
+                    # Add jitter (±25%) to prevent thundering herd
+                    jitter = backoff * random.uniform(-0.25, 0.25)  # noqa: DUO102  # nosec B311 - timing jitter, not security
+                    sleep_time = max(0.1, backoff + jitter)  # Ensure minimum 0.1s
+                    log.debug(f"Attempt {attempt}/{max_retries} failed ({exc}) - retrying in {sleep_time:.1f}s")
+                    time.sleep(sleep_time)
+                else:
+                    log.debug(f"Attempt {attempt}/{max_retries} failed ({exc})")
         raise RuntimeError(f"Redis not ready after {max_retries} attempts")
 
     if sync:
@@ -261,6 +289,7 @@ def _parse_cli() -> argparse.Namespace:
     )
     parser.add_argument("--max-retries", type=int, default=REDIS_MAX_RETRIES, help="Maximum connection attempts")
     parser.add_argument("--retry-interval-ms", type=int, default=REDIS_RETRY_INTERVAL_MS, help="Delay between attempts in milliseconds")
+    parser.add_argument("--max-backoff", type=float, default=REDIS_MAX_BACKOFF_SECONDS, help="Maximum backoff delay in seconds (jitter applied after)")
     parser.add_argument("--log-level", default=LOG_LEVEL, help="Logging level (DEBUG, INFO, ...)")
     return parser.parse_args()
 
@@ -289,6 +318,7 @@ def main() -> None:  # pragma: no cover
             redis_url=cli_args.redis_url,
             max_retries=cli_args.max_retries,
             retry_interval_ms=cli_args.retry_interval_ms,
+            max_backoff=cli_args.max_backoff,
             sync=True,
             logger=log,
         )

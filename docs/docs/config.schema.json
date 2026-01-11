@@ -2427,13 +2427,21 @@
       "type": "integer"
     },
     "db_max_retries": {
-      "default": 3,
+      "default": 30,
+      "description": "Max DB connection retries at startup. Uses exponential backoff with jitter to prevent thundering herd.",
       "title": "Db Max Retries",
       "type": "integer"
     },
     "db_retry_interval_ms": {
       "default": 2000,
+      "description": "Base retry interval in milliseconds. Doubles each attempt with ±25% jitter.",
       "title": "Db Retry Interval Ms",
+      "type": "integer"
+    },
+    "db_max_backoff_seconds": {
+      "default": 30,
+      "description": "Maximum backoff cap in seconds. Jitter (±25%) is applied after this cap.",
+      "title": "Db Max Backoff Seconds",
       "type": "integer"
     },
     "db_prepare_threshold": {
@@ -2505,13 +2513,21 @@
       "type": "integer"
     },
     "redis_max_retries": {
-      "default": 3,
+      "default": 30,
+      "description": "Max Redis connection retries at startup. Uses exponential backoff with jitter to prevent thundering herd.",
       "title": "Redis Max Retries",
       "type": "integer"
     },
     "redis_retry_interval_ms": {
       "default": 2000,
+      "description": "Base retry interval in milliseconds. Doubles each attempt with ±25% jitter.",
       "title": "Redis Retry Interval Ms",
+      "type": "integer"
+    },
+    "redis_max_backoff_seconds": {
+      "default": 30,
+      "description": "Maximum backoff cap in seconds. Jitter (±25%) is applied after this cap.",
+      "title": "Redis Max Backoff Seconds",
       "type": "integer"
     },
     "global_config_cache_ttl": {

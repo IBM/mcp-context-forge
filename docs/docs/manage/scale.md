@@ -640,8 +640,8 @@ DB_POOL_SIZE=50              # Persistent connections per worker
 DB_MAX_OVERFLOW=10           # Additional connections allowed
 DB_POOL_TIMEOUT=60           # Wait time before timeout (seconds)
 DB_POOL_RECYCLE=3600         # Recycle connections after 1 hour
-DB_MAX_RETRIES=5             # Retry attempts on failure
-DB_RETRY_INTERVAL_MS=2000    # Retry interval
+DB_MAX_RETRIES=30            # Retry attempts on failure (exponential backoff)
+DB_RETRY_INTERVAL_MS=2000    # Base retry interval (doubles each attempt, max 30s)
 
 # psycopg3-specific optimizations
 DB_PREPARE_THRESHOLD=5       # Auto-prepare queries after N executions (0=disable)
@@ -928,8 +928,8 @@ REDIS_URL=redis://redis-service:6379/0
 CACHE_PREFIX=mcpgw:
 SESSION_TTL=3600
 MESSAGE_TTL=600
-REDIS_MAX_RETRIES=3
-REDIS_RETRY_INTERVAL_MS=2000
+REDIS_MAX_RETRIES=30             # Retry attempts on failure (exponential backoff)
+REDIS_RETRY_INTERVAL_MS=2000     # Base retry interval (doubles each attempt, max 30s)
 
 # Connection pool (standard)
 REDIS_MAX_CONNECTIONS=50

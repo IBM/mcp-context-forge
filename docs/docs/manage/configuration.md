@@ -186,8 +186,8 @@ DB_POOL_SIZE=200                   # Pool size (QueuePool only)
 DB_MAX_OVERFLOW=5                  # Max overflow connections (QueuePool only)
 DB_POOL_TIMEOUT=60                 # Wait timeout for connection
 DB_POOL_RECYCLE=3600               # Recycle connections after N seconds
-DB_MAX_RETRIES=5                   # Retry attempts on connection failure
-DB_RETRY_INTERVAL_MS=2000          # Delay between retries
+DB_MAX_RETRIES=30                  # Retry attempts on connection failure (default: 30)
+DB_RETRY_INTERVAL_MS=2000          # Base retry interval in ms (uses exponential backoff with jitter)
 
 # Connection pool class selection
 # - "auto": NullPool with PgBouncer, QueuePool otherwise (default)
@@ -205,6 +205,16 @@ DB_POOL_PRE_PING=auto
 # Queries executed N+ times are prepared server-side for performance
 DB_PREPARE_THRESHOLD=5
 ```
+
+#### Database Startup Resilience
+
+The gateway uses **exponential backoff with jitter** when waiting for the database at startup:
+
+- **Retry progression**: 2s → 4s → 8s → 16s → 30s (capped) → 30s...
+- **Jitter**: ±25% randomization prevents thundering herd when multiple workers reconnect
+- **Default behavior**: 30 retries with 2s base interval ≈ 5 minutes total wait
+
+This prevents CPU-intensive crash-respawn loops when the database is temporarily unavailable.
 
 ### Server Configuration
 
@@ -412,6 +422,10 @@ CACHE_TYPE=redis                    # Options: memory, redis, database, none
 REDIS_URL=redis://localhost:6379/0
 CACHE_PREFIX=mcpgateway
 
+# Redis Startup Resilience (exponential backoff with jitter)
+REDIS_MAX_RETRIES=30                # Max attempts before worker exits (default: 30)
+REDIS_RETRY_INTERVAL_MS=2000        # Base interval in ms (uses exponential backoff with jitter)
+
 # Cache TTL (seconds)
 SESSION_TTL=3600
 MESSAGE_TTL=600
@@ -440,6 +454,16 @@ AUTH_CACHE_REVOCATION_TTL=30        # Token revocation cache TTL (5-120, securit
 AUTH_CACHE_TEAM_TTL=60              # Team membership cache TTL in seconds (10-300)
 AUTH_CACHE_BATCH_QUERIES=true       # Batch auth DB queries into single call
 ```
+
+#### Redis Startup Resilience
+
+The gateway uses **exponential backoff with jitter** when waiting for Redis at startup:
+
+- **Retry progression**: 2s → 4s → 8s → 16s → 30s (capped) → 30s...
+- **Jitter**: ±25% randomization prevents thundering herd when multiple workers reconnect
+- **Default behavior**: 30 retries with 2s base interval ≈ 5 minutes total wait
+
+This prevents CPU-intensive crash-respawn loops when Redis is temporarily unavailable.
 
 #### Authentication Cache
 

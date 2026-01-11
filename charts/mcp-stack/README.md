@@ -43,11 +43,11 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.CORS_ALLOW_CREDENTIALS | string | `"true"` |  |
 | mcpContextForge.config.CORS_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.DB_MAX_OVERFLOW | string | `"10"` |  |
-| mcpContextForge.config.DB_MAX_RETRIES | string | `"3"` |  |
+| mcpContextForge.config.DB_MAX_RETRIES | string | `"30"` | Max DB connection retries at startup (exponential backoff) |
 | mcpContextForge.config.DB_POOL_RECYCLE | string | `"3600"` |  |
 | mcpContextForge.config.DB_POOL_SIZE | string | `"200"` |  |
 | mcpContextForge.config.DB_POOL_TIMEOUT | string | `"30"` |  |
-| mcpContextForge.config.DB_RETRY_INTERVAL_MS | string | `"2000"` |  |
+| mcpContextForge.config.DB_RETRY_INTERVAL_MS | string | `"2000"` | Base retry interval in ms (doubles each attempt, max 30s) |
 | mcpContextForge.config.DEBUG | string | `"false"` |  |
 | mcpContextForge.config.DEFAULT_PASSTHROUGH_HEADERS | string | `"[\"X-Tenant-Id\", \"X-Trace-Id\"]"` |  |
 | mcpContextForge.config.DEFAULT_ROOTS | string | `"[]"` |  |
@@ -170,8 +170,8 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.REDIS_LEADER_KEY | string | `"gateway_service_leader"` |  |
 | mcpContextForge.config.REDIS_LEADER_TTL | string | `"15"` |  |
 | mcpContextForge.config.REDIS_MAX_CONNECTIONS | string | `"50"` |  |
-| mcpContextForge.config.REDIS_MAX_RETRIES | string | `"3"` |  |
-| mcpContextForge.config.REDIS_RETRY_INTERVAL_MS | string | `"2000"` |  |
+| mcpContextForge.config.REDIS_MAX_RETRIES | string | `"30"` | Max Redis connection retries at startup (exponential backoff) |
+| mcpContextForge.config.REDIS_RETRY_INTERVAL_MS | string | `"2000"` | Base retry interval in ms (doubles each attempt, max 30s) |
 | mcpContextForge.config.REDIS_RETRY_ON_TIMEOUT | string | `"true"` |  |
 | mcpContextForge.config.REDIS_SOCKET_CONNECT_TIMEOUT | string | `"2.0"` |  |
 | mcpContextForge.config.REDIS_SOCKET_TIMEOUT | string | `"2.0"` |  |
