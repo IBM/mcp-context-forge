@@ -12685,6 +12685,7 @@ async def admin_import_tools(
 
 
 @admin_router.get("/logs")
+@require_permission("admin.system_config")
 async def admin_get_logs(
     entity_type: Optional[str] = None,
     entity_id: Optional[str] = None,
@@ -12775,6 +12776,7 @@ async def admin_get_logs(
 
 
 @admin_router.get("/logs/stream")
+@require_permission("admin.system_config")
 async def admin_stream_logs(
     request: Request,
     entity_type: Optional[str] = None,
@@ -12861,6 +12863,7 @@ async def admin_stream_logs(
 
 
 @admin_router.get("/logs/file")
+@require_permission("admin.system_config")
 async def admin_get_log_file(
     filename: Optional[str] = None,
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
@@ -12981,6 +12984,7 @@ async def admin_get_log_file(
 
 
 @admin_router.get("/logs/export")
+@require_permission("admin.system_config")
 async def admin_export_logs(
     export_format: str = Query("json", alias="format"),
     entity_type: Optional[str] = None,
@@ -13110,6 +13114,7 @@ async def admin_export_logs(
 
 
 @admin_router.get("/export/configuration")
+@require_permission("admin.system_config")
 async def admin_export_configuration(
     request: Request,  # pylint: disable=unused-argument
     types: Optional[str] = None,
@@ -13196,6 +13201,7 @@ async def admin_export_configuration(
 
 
 @admin_router.post("/export/selective")
+@require_permission("admin.system_config")
 async def admin_export_selective(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
     """
     Export selected entities via Admin UI with entity selection.
@@ -13259,6 +13265,7 @@ async def admin_export_selective(request: Request, db: Session = Depends(get_db)
 
 
 @admin_router.post("/import/preview")
+@require_permission("admin.system_config")
 async def admin_import_preview(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
     """
     Preview import file to show available items for selective import.
@@ -13312,6 +13319,7 @@ async def admin_import_preview(request: Request, db: Session = Depends(get_db), 
 
 
 @admin_router.post("/import/configuration")
+@require_permission("admin.system_config")
 async def admin_import_configuration(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
     """
     Import configuration via Admin UI.
@@ -13375,6 +13383,7 @@ async def admin_import_configuration(request: Request, db: Session = Depends(get
 
 
 @admin_router.get("/import/status/{import_id}")
+@require_permission("admin.system_config")
 async def admin_get_import_status(import_id: str, user=Depends(get_current_user_with_permissions)):
     """Get import status via Admin UI.
 
@@ -13398,6 +13407,7 @@ async def admin_get_import_status(import_id: str, user=Depends(get_current_user_
 
 
 @admin_router.get("/import/status")
+@require_permission("admin.system_config")
 async def admin_list_import_statuses(user=Depends(get_current_user_with_permissions)):
     """List all import statuses via Admin UI.
 
@@ -15302,6 +15312,7 @@ async def catalog_partial(
 
 
 @admin_router.get("/system/stats")
+@require_permission("admin.system_config")
 async def get_system_stats(
     request: Request,
     db: Session = Depends(get_db),
@@ -15372,6 +15383,7 @@ async def get_system_stats(
 
 
 @admin_router.get("/support-bundle/generate")
+@require_permission("admin.system_config")
 async def admin_generate_support_bundle(
     log_lines: int = Query(default=1000, description="Number of log lines to include"),
     include_logs: bool = Query(default=True, description="Include log files"),
@@ -15459,6 +15471,7 @@ async def admin_generate_support_bundle(
 
 
 @admin_router.get("/maintenance/partial", response_class=HTMLResponse)
+@require_permission("admin.system_config")
 async def get_maintenance_partial(
     request: Request,
     user=Depends(get_current_user_with_permissions),
@@ -15482,11 +15495,6 @@ async def get_maintenance_partial(
     Raises:
         HTTPException: 403 if user is not a platform admin
     """
-    # Check if user is platform admin
-    is_admin = user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False)
-    if not is_admin:
-        raise HTTPException(status_code=403, detail="Platform administrator access required")
-
     root_path = request.scope.get("root_path", "")
 
     # Build payload with settings for the template
@@ -15510,6 +15518,7 @@ async def get_maintenance_partial(
 
 
 @admin_router.get("/observability/partial", response_class=HTMLResponse)
+@require_permission("admin.system_config")
 async def get_observability_partial(request: Request, _user=Depends(get_current_user_with_permissions)):
     """Render the observability dashboard partial.
 
@@ -15525,6 +15534,7 @@ async def get_observability_partial(request: Request, _user=Depends(get_current_
 
 
 @admin_router.get("/observability/metrics/partial", response_class=HTMLResponse)
+@require_permission("admin.system_config")
 async def get_observability_metrics_partial(request: Request, _user=Depends(get_current_user_with_permissions)):
     """Render the advanced metrics dashboard partial.
 
@@ -15540,6 +15550,7 @@ async def get_observability_metrics_partial(request: Request, _user=Depends(get_
 
 
 @admin_router.get("/observability/stats", response_class=HTMLResponse)
+@require_permission("admin.system_config")
 async def get_observability_stats(request: Request, hours: int = Query(24, ge=1, le=168), _user=Depends(get_current_user_with_permissions)):
     """Get observability statistics for the dashboard.
 
@@ -15583,6 +15594,7 @@ async def get_observability_stats(request: Request, hours: int = Query(24, ge=1,
 
 
 @admin_router.get("/observability/traces", response_class=HTMLResponse)
+@require_permission("admin.system_config")
 async def get_observability_traces(
     request: Request,
     time_range: str = Query("24h"),
@@ -15681,6 +15693,7 @@ async def get_observability_traces(
 
 
 @admin_router.get("/observability/trace/{trace_id}", response_class=HTMLResponse)
+@require_permission("admin.system_config")
 async def get_observability_trace_detail(request: Request, trace_id: str, _user=Depends(get_current_user_with_permissions)):
     """Get detailed trace information with spans.
 
@@ -15713,6 +15726,7 @@ async def get_observability_trace_detail(request: Request, trace_id: str, _user=
 
 
 @admin_router.post("/observability/queries", response_model=dict)
+@require_permission("admin.system_config")
 async def save_observability_query(
     request: Request,  # pylint: disable=unused-argument
     name: str = Body(..., description="Name for the saved query"),
@@ -15763,6 +15777,7 @@ async def save_observability_query(
 
 
 @admin_router.get("/observability/queries", response_model=list)
+@require_permission("admin.system_config")
 async def list_observability_queries(request: Request, user=Depends(get_current_user_with_permissions)):  # pylint: disable=unused-argument
     """List saved observability queries for the current user.
 
@@ -15810,6 +15825,7 @@ async def list_observability_queries(request: Request, user=Depends(get_current_
 
 
 @admin_router.get("/observability/queries/{query_id}", response_model=dict)
+@require_permission("admin.system_config")
 async def get_observability_query(request: Request, query_id: int, user=Depends(get_current_user_with_permissions)):  # pylint: disable=unused-argument
     """Get a specific saved query by ID.
 
@@ -15856,6 +15872,7 @@ async def get_observability_query(request: Request, query_id: int, user=Depends(
 
 
 @admin_router.put("/observability/queries/{query_id}", response_model=dict)
+@require_permission("admin.system_config")
 async def update_observability_query(
     request: Request,  # pylint: disable=unused-argument
     query_id: int,
@@ -15928,6 +15945,7 @@ async def update_observability_query(
 
 
 @admin_router.delete("/observability/queries/{query_id}", status_code=204)
+@require_permission("admin.system_config")
 async def delete_observability_query(request: Request, query_id: int, user=Depends(get_current_user_with_permissions)):  # pylint: disable=unused-argument
     """Delete a saved query.
 
@@ -15960,6 +15978,7 @@ async def delete_observability_query(request: Request, query_id: int, user=Depen
 
 
 @admin_router.post("/observability/queries/{query_id}/use", response_model=dict)
+@require_permission("admin.system_config")
 async def track_query_usage(request: Request, query_id: int, user=Depends(get_current_user_with_permissions)):  # pylint: disable=unused-argument
     """Track usage of a saved query (increments use count and updates last_used_at).
 
@@ -16009,6 +16028,7 @@ async def track_query_usage(request: Request, query_id: int, user=Depends(get_cu
 
 
 @admin_router.get("/observability/metrics/percentiles", response_model=dict)
+@require_permission("admin.system_config")
 async def get_latency_percentiles(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -16175,6 +16195,7 @@ def _get_latency_percentiles_python(db: Session, cutoff_time: datetime, interval
 
 
 @admin_router.get("/observability/metrics/timeseries", response_model=dict)
+@require_permission("admin.system_config")
 async def get_timeseries_metrics(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -16500,6 +16521,7 @@ def _get_latency_heatmap_python(db: Session, cutoff_time: datetime, hours: int, 
 
 
 @admin_router.get("/observability/metrics/top-slow", response_model=dict)
+@require_permission("admin.system_config")
 async def get_top_slow_endpoints(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -16566,6 +16588,7 @@ async def get_top_slow_endpoints(
 
 
 @admin_router.get("/observability/metrics/top-volume", response_model=dict)
+@require_permission("admin.system_config")
 async def get_top_volume_endpoints(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -16630,6 +16653,7 @@ async def get_top_volume_endpoints(
 
 
 @admin_router.get("/observability/metrics/top-errors", response_model=dict)
+@require_permission("admin.system_config")
 async def get_top_error_endpoints(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -16697,6 +16721,7 @@ async def get_top_error_endpoints(
 
 
 @admin_router.get("/observability/metrics/heatmap", response_model=dict)
+@require_permission("admin.system_config")
 async def get_latency_heatmap(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -16743,6 +16768,7 @@ async def get_latency_heatmap(
 
 
 @admin_router.get("/observability/tools/usage", response_model=dict)
+@require_permission("admin.system_config")
 async def get_tool_usage(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -16810,6 +16836,7 @@ async def get_tool_usage(
 
 
 @admin_router.get("/observability/tools/performance", response_model=dict)
+@require_permission("admin.system_config")
 async def get_tool_performance(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -16859,6 +16886,7 @@ async def get_tool_performance(
 
 
 @admin_router.get("/observability/tools/errors", response_model=dict)
+@require_permission("admin.system_config")
 async def get_tool_errors(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -16925,6 +16953,7 @@ async def get_tool_errors(
 
 
 @admin_router.get("/observability/tools/chains", response_model=dict)
+@require_permission("admin.system_config")
 async def get_tool_chains(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -16999,6 +17028,7 @@ async def get_tool_chains(
 
 
 @admin_router.get("/observability/tools/partial", response_class=HTMLResponse)
+@require_permission("admin.system_config")
 async def get_tools_partial(
     request: Request,
     _user=Depends(get_current_user_with_permissions),
@@ -17028,6 +17058,7 @@ async def get_tools_partial(
 
 
 @admin_router.get("/observability/prompts/usage", response_model=dict)
+@require_permission("admin.system_config")
 async def get_prompt_usage(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -17095,6 +17126,7 @@ async def get_prompt_usage(
 
 
 @admin_router.get("/observability/prompts/performance", response_model=dict)
+@require_permission("admin.system_config")
 async def get_prompt_performance(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -17144,6 +17176,7 @@ async def get_prompt_performance(
 
 
 @admin_router.get("/observability/prompts/errors", response_model=dict)
+@require_permission("admin.system_config")
 async def get_prompts_errors(
     hours: int = Query(24, description="Time range in hours"),
     limit: int = Query(20, description="Maximum number of results"),
@@ -17202,6 +17235,7 @@ async def get_prompts_errors(
 
 
 @admin_router.get("/observability/prompts/partial", response_class=HTMLResponse)
+@require_permission("admin.system_config")
 async def get_prompts_partial(
     request: Request,
     _user=Depends(get_current_user_with_permissions),
@@ -17231,6 +17265,7 @@ async def get_prompts_partial(
 
 
 @admin_router.get("/observability/resources/usage", response_model=dict)
+@require_permission("admin.system_config")
 async def get_resource_usage(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -17298,6 +17333,7 @@ async def get_resource_usage(
 
 
 @admin_router.get("/observability/resources/performance", response_model=dict)
+@require_permission("admin.system_config")
 async def get_resource_performance(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -17347,6 +17383,7 @@ async def get_resource_performance(
 
 
 @admin_router.get("/observability/resources/errors", response_model=dict)
+@require_permission("admin.system_config")
 async def get_resources_errors(
     hours: int = Query(24, description="Time range in hours"),
     limit: int = Query(20, description="Maximum number of results"),
@@ -17405,6 +17442,7 @@ async def get_resources_errors(
 
 
 @admin_router.get("/observability/resources/partial", response_class=HTMLResponse)
+@require_permission("admin.system_config")
 async def get_resources_partial(
     request: Request,
     _user=Depends(get_current_user_with_permissions),
@@ -17434,6 +17472,7 @@ async def get_resources_partial(
 
 
 @admin_router.get("/performance/stats", response_class=HTMLResponse)
+@require_permission("admin.system_config")
 async def get_performance_stats(
     request: Request,
     db: Session = Depends(get_db),
@@ -17495,6 +17534,7 @@ async def get_performance_stats(
 
 
 @admin_router.get("/performance/system")
+@require_permission("admin.system_config")
 async def get_performance_system(
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
@@ -17520,6 +17560,7 @@ async def get_performance_system(
 
 
 @admin_router.get("/performance/workers")
+@require_permission("admin.system_config")
 async def get_performance_workers(
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
@@ -17545,6 +17586,7 @@ async def get_performance_workers(
 
 
 @admin_router.get("/performance/requests")
+@require_permission("admin.system_config")
 async def get_performance_requests(
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
@@ -17570,6 +17612,7 @@ async def get_performance_requests(
 
 
 @admin_router.get("/performance/cache")
+@require_permission("admin.system_config")
 async def get_performance_cache(
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
@@ -17595,6 +17638,7 @@ async def get_performance_cache(
 
 
 @admin_router.get("/performance/history")
+@require_permission("admin.system_config")
 async def get_performance_history(
     period_type: str = Query("hourly", description="Aggregation period: hourly or daily"),
     hours: int = Query(24, ge=1, le=168, description="Number of hours to look back"),

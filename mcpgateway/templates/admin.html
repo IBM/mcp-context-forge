@@ -86,11 +86,13 @@
       defer
     ></script>
     {% endif %}
+    {% if is_admin %}
     <!-- Chart.js -->
     {% if ui_airgapped %}
     <script src="{{ root_path }}/static/vendor/chartjs/chart.umd.min.js"></script>
     {% else %}
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    {% endif %}
     {% endif %}
     <!-- Markdown and Sanitization -->
     {% if ui_airgapped %}
@@ -101,8 +103,10 @@
     <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
     {% endif %}
     <script src="{{ root_path }}/static/admin.js"></script>
+    {% if is_admin %}
     <script src="{{ root_path }}/static/gantt-chart.js?v=3"></script>
     <script src="{{ root_path }}/static/flame-graph.js?v=1"></script>
+    {% endif %}
     <!-- CodeMirror CSS -->
     {% if ui_airgapped %}
     <link
@@ -348,6 +352,7 @@
           </div>
           {% endif %}
 
+          {% if is_admin %}
           <!-- Monitoring Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Monitoring</span>
@@ -379,7 +384,9 @@
             </a>
             {% endif %}
           </div>
+          {% endif %}
 
+          {% if is_admin %}
           <!-- Extensions Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Extensions</span>
@@ -393,6 +400,7 @@
               <span x-show="!sidebarCollapsed">Plugins</span>
             </a>
           </div>
+          {% endif %}
 
           <!-- Organization Section -->
           {% if email_auth_enabled %}
@@ -426,6 +434,7 @@
           </div>
           {% endif %}
 
+          {% if is_admin %}
           <!-- Admin Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Admin</span>
@@ -452,7 +461,6 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">ℹ️</span>
               <span x-show="!sidebarCollapsed">Version Info</span>
             </a>
-            {% if is_admin %}
             <a href="#maintenance" id="tab-maintenance"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -460,8 +468,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔧</span>
               <span x-show="!sidebarCollapsed">Maintenance</span>
             </a>
-            {% endif %}
           </div>
+          {% endif %}
         </nav>
 
         <!-- Sidebar Footer -->
@@ -621,6 +629,7 @@
         <!-- Tab Panels Container -->
         <main class="flex-1 overflow-y-auto bg-gray-100 dark:bg-gray-900 p-4 lg:p-6">
 
+      {% if is_admin %}
       <!-- Logs Panel -->
       <div id="logs-panel" class="tab-panel hidden">
           <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
@@ -833,7 +842,9 @@
             </div>
           </div>
       </div>
+      {% endif %}
 
+      {% if is_admin %}
       <!-- Export/Import Panel -->
       <div id="export-import-panel" class="tab-panel hidden">
           <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
@@ -1267,12 +1278,15 @@
 
       <!-- Maintenance Panel (admin only) -->
       <div id="maintenance-panel" class="tab-panel hidden"></div>
+      {% endif %}
 
+      {% if is_admin %}
       <!-- Plugins Panel -->
       <div id="plugins-panel" class="tab-panel hidden"></div>
+      {% endif %}
 
       <!-- Performance Panel -->
-      {% if performance_enabled %}
+      {% if performance_enabled and is_admin %}
       <div id="performance-panel" class="tab-panel hidden"
            hx-get="{{ root_path }}/admin/performance/stats"
            hx-trigger="revealed once"
@@ -1288,7 +1302,7 @@
       {% endif %}
 
       <!-- Observability Panel -->
-      {% if observability_enabled %}
+      {% if observability_enabled and is_admin %}
       <div id="observability-panel" class="tab-panel hidden"
            hx-get="{{ root_path }}/admin/observability/partial"
            hx-trigger="revealed once"
@@ -7311,6 +7325,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         </div>
       </div>
 
+      {% if is_admin %}
       <!-- Metrics Panel -->
       <div id="metrics-panel" class="tab-panel hidden">
         <!-- System Metrics Section (isolated from JavaScript clearing) -->
@@ -7460,6 +7475,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <canvas id="metricsChart"></canvas>
         </div>
       </div>
+      {% endif %}
 
       <!-- Modals -->
       <!-- Tool Detail Modal -->

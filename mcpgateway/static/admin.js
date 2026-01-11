@@ -6754,10 +6754,42 @@ if (window.htmx && !window._promptsHtmxHandlerAttached) {
 // ENHANCED TAB HANDLING with Better Error Management
 // ===================================================================
 
+const ADMIN_ONLY_TABS = new Set([
+    "users",
+    "metrics",
+    "performance",
+    "observability",
+    "plugins",
+    "logs",
+    "export-import",
+    "version-info",
+    "maintenance",
+]);
+
+function isAdminUser() {
+    return Boolean(window.IS_ADMIN);
+}
+
+function isAdminOnlyTab(tabName) {
+    return ADMIN_ONLY_TABS.has(tabName);
+}
+
+function getDefaultTabName() {
+    return safeGetElement("overview-panel", true) ? "overview" : "gateways";
+}
+
 let tabSwitchTimeout = null;
 
 function showTab(tabName) {
     try {
+        if (!isAdminUser() && isAdminOnlyTab(tabName)) {
+            console.warn(`Blocked non-admin access to tab: ${tabName}`);
+            const fallbackTab = getDefaultTabName();
+            if (tabName !== fallbackTab) {
+                showTab(fallbackTab);
+            }
+            return;
+        }
         console.log(`Switching to tab: ${tabName}`);
 
         // Clear any pending tab switch
@@ -15490,10 +15522,15 @@ function setupTabNavigation() {
         "version-info",
     ];
 
-    tabs.forEach((tabName) => {
+    const visibleTabs = isAdminUser()
+        ? tabs
+        : tabs.filter((tabName) => !ADMIN_ONLY_TABS.has(tabName));
+
+    visibleTabs.forEach((tabName) => {
         // Suppress warnings for optional tabs that might not be enabled
         const optionalTabs = [
             "roots",
+            "metrics",
             "logs",
             "export-import",
             "version-info",
@@ -16825,7 +16862,7 @@ function initializeTabState() {
     }
 
     // Pre-load version info if that's the initial tab
-    if (window.location.hash === "#version-info") {
+    if (isAdminUser() && window.location.hash === "#version-info") {
         setTimeout(() => {
             const panel = safeGetElement("version-info-panel");
             if (panel && panel.innerHTML.trim() === "") {
@@ -16852,7 +16889,7 @@ function initializeTabState() {
     }
 
     // Pre-load maintenance panel if that's the initial tab
-    if (window.location.hash === "#maintenance") {
+    if (isAdminUser() && window.location.hash === "#maintenance") {
         setTimeout(() => {
             const panel = safeGetElement("maintenance-panel");
             if (panel && panel.innerHTML.trim() === "") {
@@ -22069,7 +22106,7 @@ function initializePluginFunctions() {
 }
 
 // Initialize plugin functions if plugins panel exists
-if (document.getElementById("plugins-panel")) {
+if (isAdminUser() && document.getElementById("plugins-panel")) {
     initializePluginFunctions();
     // Populate filter dropdowns on initial load
     if (window.populatePluginFilters) {
