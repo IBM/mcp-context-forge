@@ -92,7 +92,7 @@ class ExternalPluginServer:
                         If set, this attribute overrides the value in PLUGINS_CONFIG_PATH.
 
         Examples:
-            >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_multiple_plugins_filter.yaml")
+            >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
             >>> server is not None
             True
         """
@@ -108,7 +108,7 @@ class ExternalPluginServer:
 
         Examples:
             >>> import asyncio
-            >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_multiple_plugins_filter.yaml")
+            >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
             >>> plugins = asyncio.run(server.get_plugin_configs())
             >>> len(plugins) > 0
             True
@@ -145,11 +145,11 @@ class ExternalPluginServer:
 
         Examples:
             >>> import asyncio
-            >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_multiple_plugins_filter.yaml")
-            >>> c = asyncio.run(server.get_plugin_config(name = "DenyListPlugin"))
+            >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
+            >>> c = asyncio.run(server.get_plugin_config(name = "ReplaceBadWordsPlugin"))
             >>> c is not None
             True
-            >>> c["name"] == "DenyListPlugin"
+            >>> c["name"] == "ReplaceBadWordsPlugin"
             True
 
             Returns None when plugin not found:
@@ -192,25 +192,26 @@ class ExternalPluginServer:
             >>> import asyncio
             >>> import os
             >>> os.environ["PYTHONPATH"] = "."
-            >>> from mcpgateway.plugins.framework import GlobalContext, Plugin, PromptHookType, PromptPrehookPayload, PluginContext, PromptPrehookResult
-            >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_multiple_plugins_filter.yaml")
-            >>> payload = PromptPrehookPayload(prompt_id="123", name="test_prompt", args={"user": "This is so innovative"})
+            >>> from mcpgateway.plugins.framework import GlobalContext, Plugin, PromptHookType, PromptPrehookPayload, PluginContext, PromptPrehookResult, PluginManager
+            >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
+            >>> payload = PromptPrehookPayload(prompt_id="123", name="test_prompt", args={"user": "This is a crap app"})
             >>> context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
             >>> initialized = asyncio.run(server.initialize())
             >>> initialized
             True
-            >>> result = asyncio.run(server.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, "DenyListPlugin", payload.model_dump(), context.model_dump()))
+            >>> result = asyncio.run(server.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, "ReplaceBadWordsPlugin", payload.model_dump(), context.model_dump()))
             >>> result is not None
             True
             >>> result["result"]["continue_processing"]
-            False
+            True
+            >>> "yikes" in result["result"]["modified_payload"]["args"]["user"]
+            True
         """
-        global_plugin_manager = PluginManager()
         result_payload: dict[str, Any] = {PLUGIN_NAME: plugin_name}
         try:
             _context = PluginContext.model_validate(context)
 
-            result = await global_plugin_manager.invoke_hook_for_plugin(plugin_name, hook_type, payload, _context, payload_as_json=True)
+            result = await self._plugin_manager.invoke_hook_for_plugin(plugin_name, hook_type, payload, _context, payload_as_json=True)
 
             result_payload[RESULT] = result.model_dump()
             if not _context.is_empty():
