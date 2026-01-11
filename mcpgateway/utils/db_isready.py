@@ -39,15 +39,16 @@ The script falls back to :pydata:`mcpgateway.config.settings`, but the values
 below can be overridden via environment variables *or* the corresponding
 command-line options.
 
-+------------------------+----------------------------------------------+-----------+
-| Name                   | Description                                  | Default   |
-+========================+==============================================+===========+
-| ``DATABASE_URL``       | SQLAlchemy connection URL                    | ``sqlite:///./mcp.db`` |
-| ``DB_WAIT_MAX_TRIES``  | Maximum attempts before giving up            | ``30``    |
-| ``DB_WAIT_INTERVAL``   | Delay between attempts *(seconds)*           | ``2``     |
-| ``DB_CONNECT_TIMEOUT`` | Per-attempt connect timeout *(seconds)*      | ``2``     |
-| ``LOG_LEVEL``          | Log verbosity when not set via ``--log-level`` | ``INFO`` |
-+------------------------+----------------------------------------------+-----------+
++----------------------------+----------------------------------------------+-----------+
+| Name                       | Description                                  | Default   |
++============================+==============================================+===========+
+| ``DATABASE_URL``           | SQLAlchemy connection URL                    | ``sqlite:///./mcp.db`` |
+| ``DB_WAIT_MAX_TRIES``      | Maximum attempts before giving up            | ``30``    |
+| ``DB_WAIT_INTERVAL``       | Delay between attempts *(seconds)*           | ``2``     |
+| ``DB_CONNECT_TIMEOUT``     | Per-attempt connect timeout *(seconds)*      | ``2``     |
+| ``DB_MAX_BACKOFF_SECONDS`` | Max backoff cap *(seconds, jitter added)*    | ``30``    |
+| ``LOG_LEVEL``              | Log verbosity when not set via ``--log-level`` | ``INFO`` |
++----------------------------+----------------------------------------------+-----------+
 
 Usage examples
 --------------
@@ -146,6 +147,7 @@ ENV_DB_URL: Final[str] = "DATABASE_URL"
 ENV_MAX_TRIES: Final[str] = "DB_WAIT_MAX_TRIES"
 ENV_INTERVAL: Final[str] = "DB_WAIT_INTERVAL"
 ENV_TIMEOUT: Final[str] = "DB_CONNECT_TIMEOUT"
+ENV_MAX_BACKOFF: Final[str] = "DB_MAX_BACKOFF_SECONDS"
 
 # ---------------------------------------------------------------------------
 # Defaults - overridable via env-vars or CLI flags
@@ -154,6 +156,7 @@ DEFAULT_DB_URL: Final[str] = os.getenv(ENV_DB_URL, settings.database_url)
 DEFAULT_MAX_TRIES: Final[int] = int(os.getenv(ENV_MAX_TRIES, "30"))
 DEFAULT_INTERVAL: Final[float] = float(os.getenv(ENV_INTERVAL, "2"))
 DEFAULT_TIMEOUT: Final[int] = int(os.getenv(ENV_TIMEOUT, "2"))
+DEFAULT_MAX_BACKOFF: Final[float] = float(os.getenv(ENV_MAX_BACKOFF, "30"))
 DEFAULT_LOG_LEVEL: Final[str] = os.getenv("LOG_LEVEL", settings.log_level).upper()
 
 # ---------------------------------------------------------------------------
@@ -208,6 +211,7 @@ def wait_for_db_ready(
     max_tries: int = DEFAULT_MAX_TRIES,
     interval: float = DEFAULT_INTERVAL,
     timeout: int = DEFAULT_TIMEOUT,
+    max_backoff: float = DEFAULT_MAX_BACKOFF,
     logger: Optional[logging.Logger] = None,
     sync: bool = False,
 ) -> None:
@@ -219,9 +223,9 @@ def wait_for_db_ready(
 
     Uses **exponential backoff with jitter** to prevent thundering herd when
     multiple workers attempt to reconnect simultaneously. The delay between
-    attempts doubles each time (capped at 30s), with ±25% random jitter.
+    attempts doubles each time (capped at max_backoff), with ±25% random jitter.
 
-    Example retry progression with interval=2s:
+    Example retry progression with interval=2s, max_backoff=30s:
         Attempt 1: 2s, Attempt 2: 4s, Attempt 3: 8s, Attempt 4: 16s,
         Attempt 5+: 30s (capped), each ±25% jitter
 
@@ -230,9 +234,11 @@ def wait_for_db_ready(
             or the project default (usually an on-disk SQLite file).
         max_tries: Total number of connection attempts before giving up.
         interval: Base delay *in seconds* between attempts. Actual delay uses
-            exponential backoff: ``min(interval * 2^(attempt-1), 30s)``, then ±25% jitter.
+            exponential backoff: ``min(interval * 2^(attempt-1), max_backoff)``, then ±25% jitter.
         timeout: Per-attempt connection timeout in seconds (passed to the DB
             driver when supported).
+        max_backoff: Maximum backoff delay in seconds (default 30). Jitter is applied
+            after this cap, so actual sleep can be ±25% of this value.
         logger: Optional custom :class:`logging.Logger`. If omitted, a default
             one named ``"db_isready"`` is lazily configured.
         sync: When *True*, run in the **current** thread instead of scheduling
@@ -283,7 +289,7 @@ def wait_for_db_ready(
     backend: str = url_obj.get_backend_name()
     target: str = _format_target(url_obj)
 
-    log.info(f"Probing {backend} at {target} (timeout={timeout}s, interval={interval}s, max_tries={max_tries})")
+    log.info(f"Probing {backend} at {target} (timeout={timeout}s, interval={interval}s, max_tries={max_tries}, max_backoff={max_backoff}s)")
 
     connect_args: Dict[str, Any] = {}
     if backend.startswith(("postgresql", "mysql")):
@@ -317,7 +323,6 @@ def wait_for_db_ready(
         """
 
         start = time.perf_counter()
-        max_backoff = 30.0  # Cap exponential backoff at 30 seconds
         for attempt in range(1, max_tries + 1):
             try:
                 with engine.connect() as conn:
@@ -330,7 +335,7 @@ def wait_for_db_ready(
                     # Exponential backoff: interval * 2^(attempt-1), capped at max_backoff
                     backoff = min(interval * (2 ** (attempt - 1)), max_backoff)
                     # Add jitter (±25%) to prevent thundering herd
-                    jitter = backoff * random.uniform(-0.25, 0.25)  # noqa: DUO102 - timing jitter, not security
+                    jitter = backoff * random.uniform(-0.25, 0.25)  # noqa: DUO102  # nosec B311 - timing jitter, not security
                     sleep_time = max(0.1, backoff + jitter)  # Ensure minimum 0.1s
                     log.debug(f"Attempt {attempt}/{max_tries} failed ({_sanitize(str(exc))}) - retrying in {sleep_time:.1f}s")
                     time.sleep(sleep_time)
@@ -408,6 +413,7 @@ def _parse_cli() -> argparse.Namespace:
     parser.add_argument("--max-tries", type=int, default=DEFAULT_MAX_TRIES, help="Maximum connection attempts")
     parser.add_argument("--interval", type=float, default=DEFAULT_INTERVAL, help="Delay between attempts in seconds")
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help="Per-attempt connect timeout in seconds")
+    parser.add_argument("--max-backoff", type=float, default=DEFAULT_MAX_BACKOFF, help="Maximum backoff delay in seconds (jitter applied after)")
     parser.add_argument("--log-level", default=DEFAULT_LOG_LEVEL, help="Logging level (DEBUG, INFO, ...)")
     return parser.parse_args()
 
@@ -437,6 +443,7 @@ def main() -> None:  # pragma: no cover
             max_tries=cli_args.max_tries,
             interval=cli_args.interval,
             timeout=cli_args.timeout,
+            max_backoff=cli_args.max_backoff,
             sync=True,
             logger=log,
         )

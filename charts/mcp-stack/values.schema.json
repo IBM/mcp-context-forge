@@ -427,8 +427,13 @@
             },
             "REDIS_RETRY_INTERVAL_MS": {
               "type": "string",
-              "description": "Base retry interval in ms (doubles each attempt up to 30s max)",
+              "description": "Base retry interval in ms (doubles each attempt)",
               "default": "2000"
+            },
+            "REDIS_MAX_BACKOFF_SECONDS": {
+              "type": "string",
+              "description": "Max backoff cap in seconds (jitter ±25% applied after)",
+              "default": "30"
             },
             "REDIS_MAX_CONNECTIONS": {
               "type": "string",
@@ -484,8 +489,13 @@
             },
             "DB_RETRY_INTERVAL_MS": {
               "type": "string",
-              "description": "Base retry interval in ms (doubles each attempt up to 30s max)",
+              "description": "Base retry interval in ms (doubles each attempt)",
               "default": "2000"
+            },
+            "DB_MAX_BACKOFF_SECONDS": {
+              "type": "string",
+              "description": "Max backoff cap in seconds (jitter ±25% applied after)",
+              "default": "30"
             },
             "PROTOCOL_VERSION": {
               "type": "string",
