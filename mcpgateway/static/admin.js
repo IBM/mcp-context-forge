@@ -22344,7 +22344,32 @@ function initializeChatScroll() {
 /**
  * Generate a unique user ID for the session
  */
+function getAuthenticatedUserId() {
+    const currentUser = window.CURRENT_USER;
+    if (!currentUser) {
+        return "";
+    }
+    if (typeof currentUser === "string") {
+        return currentUser;
+    }
+    if (typeof currentUser === "object") {
+        return (
+            currentUser.id ||
+            currentUser.user_id ||
+            currentUser.sub ||
+            currentUser.email ||
+            ""
+        );
+    }
+    return "";
+}
+
 function generateUserId() {
+    const authenticatedUserId = getAuthenticatedUserId();
+    if (authenticatedUserId) {
+        sessionStorage.setItem("llm_chat_user_id", authenticatedUserId);
+        return authenticatedUserId;
+    }
     // Check if user ID exists in session storage
     let userId = sessionStorage.getItem("llm_chat_user_id");
     if (!userId) {

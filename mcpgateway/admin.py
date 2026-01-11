@@ -952,6 +952,7 @@ async def get_overview_partial(
 
 
 @admin_router.get("/config/passthrough-headers", response_model=GlobalConfigRead)
+@require_permission("admin.system_config")
 @rate_limit(requests_per_minute=30)  # Lower limit for config endpoints
 async def get_global_passthrough_headers(
     db: Session = Depends(get_db),
@@ -983,6 +984,7 @@ async def get_global_passthrough_headers(
 
 
 @admin_router.put("/config/passthrough-headers", response_model=GlobalConfigRead)
+@require_permission("admin.system_config")
 @rate_limit(requests_per_minute=20)  # Stricter limit for config updates
 async def update_global_passthrough_headers(
     request: Request,  # pylint: disable=unused-argument
@@ -1037,6 +1039,7 @@ async def update_global_passthrough_headers(
 
 
 @admin_router.post("/config/passthrough-headers/invalidate-cache")
+@require_permission("admin.system_config")
 @rate_limit(requests_per_minute=10)  # Strict limit for cache operations
 async def invalidate_passthrough_headers_cache(
     _user=Depends(get_current_user_with_permissions),
@@ -1073,6 +1076,7 @@ async def invalidate_passthrough_headers_cache(
 
 
 @admin_router.get("/config/passthrough-headers/cache-stats")
+@require_permission("admin.system_config")
 @rate_limit(requests_per_minute=30)
 async def get_passthrough_headers_cache_stats(
     _user=Depends(get_current_user_with_permissions),
@@ -1107,6 +1111,7 @@ async def get_passthrough_headers_cache_stats(
 
 
 @admin_router.post("/cache/a2a-stats/invalidate")
+@require_permission("admin.system_config")
 @rate_limit(requests_per_minute=10)
 async def invalidate_a2a_stats_cache(
     _user=Depends(get_current_user_with_permissions),
@@ -1141,6 +1146,7 @@ async def invalidate_a2a_stats_cache(
 
 
 @admin_router.get("/cache/a2a-stats/stats")
+@require_permission("admin.system_config")
 @rate_limit(requests_per_minute=30)
 async def get_a2a_stats_cache_stats(
     _user=Depends(get_current_user_with_permissions),
@@ -1168,6 +1174,7 @@ async def get_a2a_stats_cache_stats(
 
 
 @admin_router.get("/mcp-pool/metrics")
+@require_permission("admin.system_config")
 @rate_limit(requests_per_minute=60)
 async def get_mcp_session_pool_metrics(
     request: Request,  # pylint: disable=unused-argument
@@ -1220,6 +1227,7 @@ async def get_mcp_session_pool_metrics(
 
 
 @admin_router.get("/config/settings")
+@require_permission("admin.system_config")
 async def get_configuration_settings(
     _db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
@@ -11748,6 +11756,7 @@ MetricsDict = Dict[str, Union[ToolMetrics, ResourceMetrics, ServerMetrics, Promp
 
 
 @admin_router.get("/metrics")
+@require_permission("admin.system_config")
 async def get_aggregated_metrics(
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
@@ -11787,6 +11796,7 @@ async def get_aggregated_metrics(
 
 
 @admin_router.get("/metrics/partial", response_class=HTMLResponse)
+@require_permission("admin.system_config")
 async def admin_metrics_partial_html(
     request: Request,
     entity_type: str = Query("tools", description="Entity type: tools, resources, prompts, or servers"),
@@ -11868,6 +11878,7 @@ async def admin_metrics_partial_html(
 
 
 @admin_router.post("/metrics/reset", response_model=Dict[str, object])
+@require_permission("admin.system_config")
 async def admin_reset_metrics(db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, object]:
     """
     Reset all metrics for tools, resources, servers, and prompts.

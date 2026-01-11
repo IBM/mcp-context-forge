@@ -23,7 +23,7 @@ import os
 from typing import Any, Dict, Optional
 
 # Third-Party
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 import orjson
 from pydantic import BaseModel, Field
@@ -38,6 +38,7 @@ except ImportError:
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.middleware.rbac import get_current_user_with_permissions
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_client_chat_service import (
     GatewayConfig,
@@ -274,6 +275,23 @@ def build_config(input_data: ConnectInput) -> MCPClientConfig:
         llm=build_llm_config(input_data.llm),
         enable_streaming=input_data.streaming,
     )
+
+
+def _get_user_id_from_context(user: Dict[str, Any]) -> str:
+    """Extract a stable user identifier from the authenticated user context."""
+    if isinstance(user, dict):
+        return user.get("id") or user.get("user_id") or user.get("sub") or user.get("email") or "unknown"
+    return "unknown" if user is None else str(getattr(user, "id", user))
+
+
+def _resolve_user_id(input_user_id: Optional[str], user: Dict[str, Any]) -> str:
+    """Resolve the authenticated user ID and reject mismatched requests."""
+    user_id = _get_user_id_from_context(user)
+    if user_id == "unknown":
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    if input_user_id and input_user_id != user_id:
+        raise HTTPException(status_code=403, detail="User ID mismatch.")
+    return user_id
 
 
 # ---------- SESSION STORAGE HELPERS ----------
@@ -574,7 +592,7 @@ async def get_active_session(user_id: str) -> Optional[MCPChatService]:
 
 
 @llmchat_router.post("/connect")
-async def connect(input_data: ConnectInput, request: Request):
+async def connect(input_data: ConnectInput, request: Request, user=Depends(get_current_user_with_permissions)):
     """Create or refresh a chat session for a user.
 
     Initializes a new MCPChatService instance for the specified user, establishing
@@ -634,7 +652,7 @@ async def connect(input_data: ConnectInput, request: Request):
         Existing sessions are automatically terminated before establishing new ones.
         All configuration values support environment variable fallbacks.
     """
-    user_id = input_data.user_id
+    user_id = _resolve_user_id(input_data.user_id, user)
 
     try:
         # Validate user_id
@@ -871,7 +889,7 @@ async def token_streamer(chat_service: MCPChatService, message: str, user_id: st
 
 
 @llmchat_router.post("/chat")
-async def chat(input_data: ChatInput):
+async def chat(input_data: ChatInput, user=Depends(get_current_user_with_permissions)):
     """Send a message to the user's active chat session and receive a response.
 
     Processes user messages through the configured LLM with MCP tool integration.
@@ -934,7 +952,7 @@ async def chat(input_data: ChatInput):
         Streaming responses use Server-Sent Events (SSE) with 'text/event-stream' MIME type.
         Client must maintain persistent connection for streaming.
     """
-    user_id = input_data.user_id
+    user_id = _resolve_user_id(input_data.user_id, user)
 
     # Validate input
     if not user_id:
@@ -986,7 +1004,7 @@ async def chat(input_data: ChatInput):
 
 
 @llmchat_router.post("/disconnect")
-async def disconnect(input_data: DisconnectInput):
+async def disconnect(input_data: DisconnectInput, user=Depends(get_current_user_with_permissions)):
     """End the chat session for a user and clean up resources.
 
     Gracefully shuts down the MCPChatService instance, closes connections,
@@ -1036,7 +1054,7 @@ async def disconnect(input_data: DisconnectInput):
         This operation is idempotent - calling it multiple times for the same
         user_id is safe and will not raise errors.
     """
-    user_id = input_data.user_id
+    user_id = _resolve_user_id(input_data.user_id, user)
 
     if not user_id:
         raise HTTPException(status_code=400, detail="User ID is required")
@@ -1065,7 +1083,7 @@ async def disconnect(input_data: DisconnectInput):
 
 
 @llmchat_router.get("/status/{user_id}")
-async def status(user_id: str):
+async def status(user_id: str, user=Depends(get_current_user_with_permissions)):
     """Check if an active chat session exists for the specified user.
 
     Lightweight endpoint for verifying session state without modifying data.
@@ -1103,12 +1121,13 @@ async def status(user_id: str):
         This endpoint does not validate that the session is properly initialized,
         only that it exists in the active_sessions dictionary.
     """
-    connected = bool(await get_active_session(user_id))
-    return {"user_id": user_id, "connected": connected}
+    resolved_user_id = _resolve_user_id(user_id, user)
+    connected = bool(await get_active_session(resolved_user_id))
+    return {"user_id": resolved_user_id, "connected": connected}
 
 
 @llmchat_router.get("/config/{user_id}")
-async def get_config(user_id: str):
+async def get_config(user_id: str, user=Depends(get_current_user_with_permissions)):
     """Retrieve the stored configuration for a user's session.
 
     Returns sanitized configuration data with sensitive information (API keys,
@@ -1156,7 +1175,8 @@ async def get_config(user_id: str):
         API keys and authentication tokens are explicitly removed before returning.
         Never log or expose these values in responses.
     """
-    config = await get_user_config(user_id)
+    resolved_user_id = _resolve_user_id(user_id, user)
+    config = await get_user_config(resolved_user_id)
 
     if not config:
         raise HTTPException(status_code=404, detail="No config found for this user.")
@@ -1172,7 +1192,7 @@ async def get_config(user_id: str):
 
 
 @llmchat_router.get("/gateway/models")
-async def get_gateway_models():
+async def get_gateway_models(_user=Depends(get_current_user_with_permissions)):
     """Get available models from configured LLM providers.
 
     Returns a list of enabled models from enabled providers configured
