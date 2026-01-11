@@ -3923,20 +3923,21 @@ class ToolService:
             Exception: If the call fails.
         """
         logger.info(f"Calling A2A agent '{agent.name}' at {agent.endpoint_url} with arguments: {parameters}")
-        # Patch: Build correct JSON-RPC params structure from flat UI input
-        params = None
-        # If UI sends flat fields, convert to nested message structure
-        if isinstance(parameters, dict) and "query" in parameters and isinstance(parameters["query"], str):
-            # Build the nested message object
-            message_id = f"admin-test-{int(time.time())}"
-            params = {"message": {"messageId": message_id, "role": "user", "parts": [{"type": "text", "text": parameters["query"]}]}}
-            method = parameters.get("method", "message/send")
-        else:
-            # Already in correct format or unknown, pass through
-            params = parameters.get("params", parameters)
-            method = parameters.get("method", "message/send")
 
+        # Build request data based on agent type
         if agent.agent_type in ["generic", "jsonrpc"] or agent.endpoint_url.endswith("/"):
+            # JSONRPC agents: Convert flat query to nested message structure
+            params = None
+            if isinstance(parameters, dict) and "query" in parameters and isinstance(parameters["query"], str):
+                # Build the nested message object for JSONRPC protocol
+                message_id = f"admin-test-{int(time.time())}"
+                params = {"message": {"messageId": message_id, "role": "user", "parts": [{"type": "text", "text": parameters["query"]}]}}
+                method = parameters.get("method", "message/send")
+            else:
+                # Already in correct format or unknown, pass through
+                params = parameters.get("params", parameters)
+                method = parameters.get("method", "message/send")
+
             try:
                 request_data = {"jsonrpc": "2.0", "method": method, "params": params, "id": 1}
                 logger.info(f"invoke tool JSONRPC request_data prepared: {request_data}")
@@ -3944,8 +3945,11 @@ class ToolService:
                 logger.error(f"Error preparing JSONRPC request data: {e}")
                 raise
         else:
-            logger.info(f"invoke tool Using custom A2A format for A2A agent '{parameters}'")
-            request_data = {"interaction_type": parameters.get("interaction_type", "query"), "parameters": params, "protocol_version": agent.protocol_version}
+            # Custom agents: Pass parameters directly without JSONRPC message conversion
+            # Custom agents expect flat fields like {"query": "...", "message": "..."}
+            params = parameters if isinstance(parameters, dict) else {}
+            logger.info(f"invoke tool Using custom A2A format for A2A agent '{params}'")
+            request_data = {"interaction_type": params.get("interaction_type", "query"), "parameters": params, "protocol_version": agent.protocol_version}
         logger.info(f"invoke tool request_data prepared: {request_data}")
         # Make HTTP request to the agent endpoint using shared HTTP client
         # First-Party

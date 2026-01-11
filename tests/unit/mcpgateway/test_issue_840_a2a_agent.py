@@ -602,3 +602,142 @@ class TestIssue840ToolInvocationRouting:
         ]
 
         assert len(expected_invocation_flow) == 5
+
+
+class TestIssue840CustomAgentQueryFormat:
+    """Test that custom A2A agents receive query as string, not JSONRPC message object.
+
+    When invoking A2A tools through MCP, the code must handle agent_type correctly:
+    - For JSONRPC agents: convert query to nested message structure
+    - For custom agents: pass query directly as string
+
+    Bug: Custom agents were receiving query as JSONRPC message object:
+    {"message": {"messageId": "...", "role": "user", "parts": [{"type": "text", "text": "..."}]}}
+
+    Fix: Custom agents should receive flat parameters:
+    {"query": "...", "message": "..."}
+    """
+
+    @pytest.fixture
+    def tool_service(self):
+        """Create tool service instance."""
+        return ToolService()
+
+    @pytest.fixture
+    def mock_db(self):
+        """Create mock database session."""
+        return MagicMock(spec=Session)
+
+    @pytest.fixture
+    def custom_agent(self):
+        """Create a custom (non-JSONRPC) A2A agent."""
+        agent = MagicMock(spec=DbA2AAgent)
+        agent.id = uuid.uuid4().hex
+        agent.name = "custom-calculator-agent"
+        agent.endpoint_url = "http://localhost:9100/run"
+        agent.agent_type = "custom"  # NOT jsonrpc
+        agent.protocol_version = "1.0"
+        agent.auth_type = None
+        agent.auth_value = None
+        agent.enabled = True
+        return agent
+
+    @pytest.fixture
+    def jsonrpc_agent(self):
+        """Create a JSONRPC A2A agent."""
+        agent = MagicMock(spec=DbA2AAgent)
+        agent.id = uuid.uuid4().hex
+        agent.name = "jsonrpc-agent"
+        agent.endpoint_url = "http://localhost:9999/"
+        agent.agent_type = "jsonrpc"
+        agent.protocol_version = "1.0"
+        agent.auth_type = None
+        agent.auth_value = None
+        agent.enabled = True
+        return agent
+
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_custom_agent_receives_string_query(
+        self,
+        mock_get_client,
+        tool_service,
+        custom_agent,
+    ):
+        """Test that custom agents receive query as a string, not JSONRPC message object.
+
+        This is the core bug fix verification: when MCP Tool invokes a custom A2A agent,
+        the agent should receive {"parameters": {"query": "calc: 7*8"}} NOT
+        {"parameters": {"message": {"messageId": ..., "parts": [...]}}}
+        """
+        # Mock HTTP client to capture request
+        mock_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"response": "56"}
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        # Call the agent with a flat query (how MCP tool calls it)
+        parameters = {"query": "calc: 7*8"}
+        await tool_service._call_a2a_agent(custom_agent, parameters)
+
+        # Verify HTTP call was made
+        mock_client.post.assert_called_once()
+        call_args = mock_client.post.call_args
+
+        # Extract the JSON body
+        request_body = call_args.kwargs.get("json") or call_args[1].get("json")
+        assert request_body is not None, "Request body should not be None"
+
+        # CRITICAL: For custom agents, parameters should contain flat query string
+        params = request_body.get("parameters", {})
+
+        # The query should be a STRING, not an object
+        query_value = params.get("query")
+        assert query_value is not None, "parameters.query should exist"
+        assert isinstance(query_value, str), f"parameters.query should be string, got {type(query_value)}"
+        assert query_value == "calc: 7*8", f"Query should be 'calc: 7*8', got '{query_value}'"
+
+        # Verify that 'message' is NOT a nested object (JSONRPC format)
+        message_value = params.get("message")
+        if message_value is not None:
+            assert not isinstance(message_value, dict), "parameters.message should NOT be JSONRPC object for custom agents"
+
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_jsonrpc_agent_receives_nested_message(
+        self,
+        mock_get_client,
+        tool_service,
+        jsonrpc_agent,
+    ):
+        """Test that JSONRPC agents receive query as nested message structure.
+
+        JSONRPC agents expect the A2A protocol format:
+        {"jsonrpc": "2.0", "method": "message/send", "params": {"message": {...}}}
+        """
+        # Mock HTTP client
+        mock_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"result": {"text": "Hello"}}
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        # Call the agent with a flat query
+        parameters = {"query": "Hello world"}
+        await tool_service._call_a2a_agent(jsonrpc_agent, parameters)
+
+        # Verify HTTP call
+        mock_client.post.assert_called_once()
+        call_args = mock_client.post.call_args
+        request_body = call_args.kwargs.get("json") or call_args[1].get("json")
+
+        # For JSONRPC agents, request should be JSONRPC format
+        assert request_body.get("jsonrpc") == "2.0", "Should be JSONRPC format"
+        assert "params" in request_body, "Should have params"
+
+        # params.message should be a nested object
+        params = request_body.get("params", {})
+        message = params.get("message")
+        assert isinstance(message, dict), "params.message should be dict for JSONRPC agents"
+        assert "parts" in message, "message should have parts array"
