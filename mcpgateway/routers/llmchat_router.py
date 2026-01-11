@@ -278,14 +278,32 @@ def build_config(input_data: ConnectInput) -> MCPClientConfig:
 
 
 def _get_user_id_from_context(user: Dict[str, Any]) -> str:
-    """Extract a stable user identifier from the authenticated user context."""
+    """Extract a stable user identifier from the authenticated user context.
+
+    Args:
+        user: Authenticated user context from RBAC dependency.
+
+    Returns:
+        User identifier string or "unknown" if missing.
+    """
     if isinstance(user, dict):
         return user.get("id") or user.get("user_id") or user.get("sub") or user.get("email") or "unknown"
     return "unknown" if user is None else str(getattr(user, "id", user))
 
 
 def _resolve_user_id(input_user_id: Optional[str], user: Dict[str, Any]) -> str:
-    """Resolve the authenticated user ID and reject mismatched requests."""
+    """Resolve the authenticated user ID and reject mismatched requests.
+
+    Args:
+        input_user_id: User ID provided by the client (optional).
+        user: Authenticated user context from RBAC dependency.
+
+    Returns:
+        Resolved authenticated user identifier.
+
+    Raises:
+        HTTPException: When authentication is missing or user ID mismatches.
+    """
     user_id = _get_user_id_from_context(user)
     if user_id == "unknown":
         raise HTTPException(status_code=401, detail="Authentication required.")
@@ -605,6 +623,7 @@ async def connect(input_data: ConnectInput, request: Request, user=Depends(get_c
     Args:
         input_data: ConnectInput containing user_id, optional server/LLM config, and streaming preference.
         request: FastAPI Request object for accessing cookies and headers.
+        user: Authenticated user context.
 
     Returns:
         dict: Connection status response containing:
@@ -898,6 +917,7 @@ async def chat(input_data: ChatInput, user=Depends(get_current_user_with_permiss
 
     Args:
         input_data: ChatInput containing user_id, message, and streaming preference.
+        user: Authenticated user context.
 
     Returns:
         For streaming=False:
@@ -1013,6 +1033,7 @@ async def disconnect(input_data: DisconnectInput, user=Depends(get_current_user_
 
     Args:
         input_data: DisconnectInput containing the user_id to disconnect.
+        user: Authenticated user context.
 
     Returns:
         dict: Disconnection status containing:
@@ -1091,6 +1112,7 @@ async def status(user_id: str, user=Depends(get_current_user_with_permissions)):
 
     Args:
         user_id: User identifier to check session status for.
+        user: Authenticated user context.
 
     Returns:
         dict: Status information containing:
@@ -1136,6 +1158,7 @@ async def get_config(user_id: str, user=Depends(get_current_user_with_permission
 
     Args:
         user_id: User identifier whose configuration to retrieve.
+        user: Authenticated user context.
 
     Returns:
         dict: Sanitized configuration dictionary containing:
@@ -1227,6 +1250,9 @@ async def get_gateway_models(_user=Depends(get_current_user_with_permissions)):
 
     Raises:
         HTTPException: If there is an error retrieving gateway models.
+
+    Args:
+        _user: Authenticated user context.
     """
     # Import here to avoid circular dependency
     # First-Party

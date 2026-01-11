@@ -5651,7 +5651,17 @@ async def admin_reject_join_request(
 
 
 def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, root_path: str) -> str:
-    """Render a single user card HTML snippet matching the users list template."""
+    """Render a single user card HTML snippet matching the users list template.
+
+    Args:
+        user_obj: User record to render.
+        current_user_email: Email of the current user for "You" badge logic.
+        admin_count: Count of active admins to protect the last admin.
+        root_path: Application root path for HTMX endpoints.
+
+    Returns:
+        HTML snippet for the user card.
+    """
     encoded_email = urllib.parse.quote(user_obj.email, safe="")
     display_name = html.escape(user_obj.full_name or "N/A")
     safe_email = html.escape(user_obj.email)
@@ -5663,15 +5673,24 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
 
     badges = []
     if user_obj.is_admin:
-        badges.append('<span class="px-2 py-1 text-xs font-semibold bg-purple-100 text-purple-800 rounded-full ' 'dark:bg-purple-900 dark:text-purple-200">Admin</span>')
+        badges.append(
+            '<span class="px-2 py-1 text-xs font-semibold bg-purple-100 text-purple-800 rounded-full '
+            + 'dark:bg-purple-900 dark:text-purple-200">Admin</span>'
+        )
     if user_obj.is_active:
         badges.append('<span class="px-2 py-1 text-xs font-semibold text-green-600 bg-gray-100 dark:bg-gray-700 rounded-full">Active</span>')
     else:
         badges.append('<span class="px-2 py-1 text-xs font-semibold text-red-600 bg-gray-100 dark:bg-gray-700 rounded-full">Inactive</span>')
     if is_current_user:
-        badges.append('<span class="px-2 py-1 text-xs font-semibold bg-blue-100 text-blue-800 rounded-full ' 'dark:bg-blue-900 dark:text-blue-200">You</span>')
+        badges.append(
+            '<span class="px-2 py-1 text-xs font-semibold bg-blue-100 text-blue-800 rounded-full '
+            + 'dark:bg-blue-900 dark:text-blue-200">You</span>'
+        )
     if is_last_admin:
-        badges.append('<span class="px-2 py-1 text-xs font-semibold bg-yellow-100 text-yellow-800 rounded-full ' 'dark:bg-yellow-900 dark:text-yellow-200">Last Admin</span>')
+        badges.append(
+            '<span class="px-2 py-1 text-xs font-semibold bg-yellow-100 text-yellow-800 rounded-full '
+            + 'dark:bg-yellow-900 dark:text-yellow-200">Last Admin</span>'
+        )
     if user_obj.password_change_required:
         badges.append(
             '<span class="px-2 py-1 text-xs font-semibold bg-orange-100 text-orange-800 rounded-full '
@@ -5949,7 +5968,19 @@ async def admin_team_users_partial_html(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Response:
-    """Return paginated users selector items for team member selection."""
+    """Return paginated users selector items for team member selection.
+
+    Args:
+        team_id: Team identifier to scope membership checks.
+        request: FastAPI request object.
+        page: Page number (1-indexed). Default: 1.
+        per_page: Items per page (1-500). Default: 50.
+        db: Database session.
+        user: Current authenticated user context.
+
+    Returns:
+        Response: HTML response with selector items and pagination data.
+    """
     try:
         if not settings.email_auth_enabled:
             return HTMLResponse(
@@ -6076,7 +6107,18 @@ async def admin_search_team_users(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
-    """Search users by email or full name for a team selector."""
+    """Search users by email or full name for a team selector.
+
+    Args:
+        team_id: Team identifier to scope membership checks.
+        q: Search query string to match against email or full name.
+        limit: Maximum number of results to return (1-1000).
+        db: Database session dependency.
+        user: Current authenticated user context.
+
+    Returns:
+        JSONResponse: Dictionary containing list of matching users and count.
+    """
     if not settings.email_auth_enabled:
         return {"users": [], "count": 0}
 
@@ -11894,9 +11936,10 @@ async def admin_reset_metrics(db: Session = Depends(get_db), user=Depends(get_cu
     Examples:
         >>> import asyncio
         >>> from unittest.mock import AsyncMock, MagicMock
+        >>> from mcpgateway.config import settings
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": settings.platform_admin_email, "db": mock_db}
         >>>
         >>> original_reset_metrics_tool = tool_service.reset_metrics
         >>> original_reset_metrics_resource = resource_service.reset_metrics
@@ -11909,7 +11952,7 @@ async def admin_reset_metrics(db: Session = Depends(get_db), user=Depends(get_cu
         >>> prompt_service.reset_metrics = AsyncMock()
         >>>
         >>> async def test_admin_reset_metrics():
-        ...     result = await admin_reset_metrics(mock_db, mock_user)
+        ...     result = await admin_reset_metrics(db=mock_db, user=mock_user)
         ...     return result == {"message": "All metrics reset successfully", "success": True}
         >>>
         >>> import asyncio; asyncio.run(test_admin_reset_metrics())
@@ -15485,7 +15528,7 @@ async def admin_generate_support_bundle(
 @require_permission("admin.system_config")
 async def get_maintenance_partial(
     request: Request,
-    user=Depends(get_current_user_with_permissions),
+    _user=Depends(get_current_user_with_permissions),
 ):
     """Render the maintenance dashboard partial (platform admin only).
 
@@ -15498,7 +15541,7 @@ async def get_maintenance_partial(
 
     Args:
         request: FastAPI request object
-        user: Authenticated user with admin permissions
+        _user: Authenticated user with admin permissions
 
     Returns:
         HTMLResponse: Rendered maintenance dashboard template
