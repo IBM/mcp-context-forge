@@ -19361,7 +19361,7 @@ function getCurrentTeamId() {
 
     // Fallback: check URL parameters
     const urlParams = new URLSearchParams(window.location.search);
-    const teamId = urlParams.get("teamid");
+    const teamId = urlParams.get("team_id");
 
     if (!teamId || teamId === "" || teamId === "all") {
         return null;

@@ -827,12 +827,12 @@ class TestTeamFiltering:
         db.add(team2_tool)
         db.commit()
 
-        # Test filtering by team1 - should return team1 tool and all user-owned tools
+        # Test filtering by team1 - should return ONLY team1 tools (strict team scoping)
         response = await client.get(f"/admin/tools/ids?team_id={team1.id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         data = response.json()
         assert team1_tool_id in data["tool_ids"]
-        # Note: team2_tool is also included because admin owns it (API uses OR logic for owner_email)
+        assert team2_tool_id not in data["tool_ids"], "team2 tool should NOT appear when filtering by team1"
 
         # Test without filter - should return both
         response = await client.get("/admin/tools/ids", headers=TEST_AUTH_HEADER)
@@ -877,13 +877,13 @@ class TestTeamFiltering:
         await client.post("/admin/tools/", data=team1_tool_data, headers=TEST_AUTH_HEADER)
         await client.post("/admin/tools/", data=team2_tool_data, headers=TEST_AUTH_HEADER)
 
-        # Test search with team filter - returns team1 tool (and all user-owned tools due to OR logic)
+        # Test search with team filter - returns ONLY team1 tools (strict team scoping)
         response = await client.get(f"/admin/tools/search?q={search_term}&team_id={team1.id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         data = response.json()
         tool_names = [tool["name"] for tool in data["tools"]]
         assert team1_tool_data["name"] in tool_names
-        # Note: team2 tool also appears because user owns it (API uses OR logic)
+        assert team2_tool_data["name"] not in tool_names, "team2 tool should NOT appear when filtering by team1"
 
         # Test search without team filter - returns both
         response = await client.get(f"/admin/tools/search?q={search_term}", headers=TEST_AUTH_HEADER)
@@ -935,8 +935,7 @@ class TestTeamFiltering:
         db.add(db_tool)
         db.commit()
 
-        # Try to filter by the other team - should not return that team's tool (user not a member)
-        # Note: API still returns user-owned tools due to OR logic, just not other team's tools
+        # Try to filter by the other team - returns empty results (user is not a member)
         response = await client.get(f"/admin/tools/partial?team_id={other_team.id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         html = response.text
@@ -987,11 +986,12 @@ class TestTeamFiltering:
         resp2 = await client.post("/admin/resources", data=team2_resource, headers=TEST_AUTH_HEADER)
         assert resp2.status_code == 200, f"Failed to create team2 resource: {resp2.text}"
 
-        # Test with team1 filter - returns team1 resource (API uses OR logic so user-owned resources also appear)
+        # Test with team1 filter - returns ONLY team1 resources (strict team scoping)
         response = await client.get(f"/admin/resources/partial?team_id={team1.id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         html = response.text
         assert team1_resource["name"] in html, f"team1_resource not found in HTML. First 500 chars: {html[:500]}"
+        assert team2_resource["name"] not in html, "team2 resource should NOT appear when filtering by team1"
 
     async def test_prompts_partial_with_team_id(self, client, app_with_temp_db):
         """Test that /admin/prompts/partial respects team_id parameter."""
@@ -1030,12 +1030,12 @@ class TestTeamFiltering:
         resp2 = await client.post("/admin/prompts", data=team2_prompt, headers=TEST_AUTH_HEADER)
         assert resp2.status_code == 200, f"Failed to create team2 prompt: {resp2.text}"
 
-        # Test with team1 filter - returns team1 prompt (API uses OR logic so user-owned prompts also appear)
+        # Test with team1 filter - returns ONLY team1 prompts (strict team scoping)
         response = await client.get(f"/admin/prompts/partial?team_id={team1.id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         html = response.text
         assert team1_prompt["name"] in html
-        # Note: team2_prompt may also appear because admin owns it (API uses OR logic)
+        assert team2_prompt["name"] not in html, "team2 prompt should NOT appear when filtering by team1"
 
     async def test_servers_partial_with_team_id(self, client, app_with_temp_db):
         """Test that /admin/servers/partial respects team_id parameter."""
@@ -1070,11 +1070,12 @@ class TestTeamFiltering:
         resp2 = await client.post("/admin/servers", data=team2_server, headers=TEST_AUTH_HEADER)
         assert resp2.status_code == 200, f"Failed to create team2 server: {resp2.text}"
 
-        # Test with team1 filter - returns team1 server
+        # Test with team1 filter - returns ONLY team1 servers (strict team scoping)
         response = await client.get(f"/admin/servers/partial?team_id={team1.id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         html = response.text
         assert team1_server["name"] in html
+        assert team2_server["name"] not in html, "team2 server should NOT appear when filtering by team1"
 
     async def test_gateways_partial_with_team_id(self, client, app_with_temp_db):
         """Test that /admin/gateways/partial respects team_id parameter."""
@@ -1126,11 +1127,12 @@ class TestTeamFiltering:
         db.add(team2_gw)
         db.commit()
 
-        # Test with team1 filter - returns team1 gateway
+        # Test with team1 filter - returns ONLY team1 gateways (strict team scoping)
         response = await client.get(f"/admin/gateways/partial?team_id={team1.id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         html = response.text
         assert team1_gw_name in html
+        assert team2_gw_name not in html, "team2 gateway should NOT appear when filtering by team1"
 
     async def test_visibility_private_not_visible_to_other_team_members(self, client, app_with_temp_db):
         """Test that visibility=private resources are NOT visible to other team members."""
