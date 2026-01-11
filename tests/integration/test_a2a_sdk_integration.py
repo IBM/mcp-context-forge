@@ -31,6 +31,10 @@ from a2a.utils import new_agent_text_message
 from mcpgateway.services.a2a_service import A2AAgentService
 from mcpgateway.services.tool_service import ToolService
 
+# Mark all tests in this module as integration tests
+# These tests require --with-integration flag to run
+pytestmark = pytest.mark.integration
+
 
 # =============================================================================
 # Test A2A Agent Implementation using Official SDK
