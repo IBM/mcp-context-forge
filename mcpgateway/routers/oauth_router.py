@@ -209,7 +209,7 @@ async def oauth_callback(
 
     try:
         # Get root path for URL construction
-        root_path = request.scope.get("root_path", "") if request else ""
+        root_path = settings.app_root_path if request else ""
 
         # Extract gateway_id from state parameter
         # Try new base64-encoded JSON format first
