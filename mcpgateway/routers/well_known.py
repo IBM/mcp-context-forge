@@ -20,6 +20,7 @@ from fastapi.responses import PlainTextResponse
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.db import get_db, Server as DbServer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.verify_credentials import require_auth
 
@@ -73,6 +74,88 @@ def validate_security_txt(content: str) -> Optional[str]:
     validated.extend(lines)
 
     return "\n".join(validated)
+
+
+@router.get("/.well-known/oauth-protected-resource")
+async def get_oauth_protected_resource(request: Request, server_id: Optional[str] = None):
+    """
+    RFC 9728 OAuth 2.0 Protected Resource Metadata endpoint.
+
+    Returns OAuth configuration for a server per RFC 9728, enabling MCP clients
+    to discover OAuth authorization servers and authenticate using browser-based SSO.
+
+    Args:
+        request: FastAPI request object for building resource URL.
+        server_id: The ID of the server to get OAuth configuration for.
+
+    Returns:
+        JSONResponse with RFC 9728 Protected Resource Metadata.
+
+    Raises:
+        HTTPException: 404 if server not found, OAuth not enabled, or not configured.
+
+    Examples:
+        >>> # Request OAuth metadata for a server
+        >>> # GET /.well-known/oauth-protected-resource?server_id=server-123
+        >>> # Returns:
+        >>> # {
+        >>> #   "resource": "https://gateway.example.com/servers/server-123",
+        >>> #   "authorization_servers": ["https://idp.example.com"],
+        >>> #   "bearer_methods_supported": ["header"],
+        >>> #   "scopes_supported": ["openid", "profile"]
+        >>> # }
+    """
+    # Third-Party
+    from fastapi.responses import JSONResponse  # pylint: disable=import-outside-toplevel
+
+    if not settings.well_known_enabled:
+        raise HTTPException(status_code=404, detail="Well-known endpoints are disabled")
+
+    if not server_id:
+        raise HTTPException(status_code=400, detail="server_id query parameter is required")
+
+    try:
+        db = next(get_db())
+        server = db.get(DbServer, server_id)
+
+        if not server:
+            raise HTTPException(status_code=404, detail=f"Server not found: {server_id}")
+
+        if not getattr(server, "oauth_enabled", False):
+            raise HTTPException(status_code=404, detail=f"OAuth not enabled for server: {server_id}")
+
+        oauth_config = getattr(server, "oauth_config", None)
+        if not oauth_config:
+            raise HTTPException(status_code=404, detail=f"OAuth not configured for server: {server_id}")
+
+        # Build RFC 9728 Protected Resource Metadata response
+        base_url = str(request.base_url).rstrip("/")
+        resource_url = f"{base_url}/servers/{server_id}"
+
+        # Extract authorization server from config
+        authorization_server = oauth_config.get("authorization_server")
+        if not authorization_server:
+            raise HTTPException(status_code=404, detail="OAuth authorization_server not configured")
+
+        response_data = {
+            "resource": resource_url,
+            "authorization_servers": [authorization_server],
+            "bearer_methods_supported": ["header"],  # We support Bearer token in Authorization header
+        }
+
+        # Add optional scopes if configured
+        scopes = oauth_config.get("scopes_supported") or oauth_config.get("scopes")
+        if scopes:
+            response_data["scopes_supported"] = scopes
+
+        logger.debug(f"Returning OAuth protected resource metadata for server {server_id}")
+        return JSONResponse(content=response_data, media_type="application/json")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching OAuth protected resource metadata: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve OAuth metadata")
 
 
 @router.get("/.well-known/{filename:path}", include_in_schema=False)

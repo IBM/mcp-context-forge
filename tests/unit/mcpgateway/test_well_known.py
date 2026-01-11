@@ -354,3 +354,194 @@ class TestWellKnownRegistry:
 
         for file in text_files:
             assert WELL_KNOWN_REGISTRY[file]["content_type"] == "text/plain"
+
+
+class TestOAuthProtectedResourceEndpoint:
+    """Test RFC 9728 OAuth Protected Resource Metadata endpoint."""
+
+    @pytest.fixture
+    def client(self):
+        """Create a test client for the FastAPI app."""
+        return TestClient(app)
+
+    @pytest.fixture
+    def auth_client(self):
+        """Create a test client with auth dependency override."""
+        # First-Party
+        from mcpgateway.utils.verify_credentials import require_auth
+
+        app.dependency_overrides[require_auth] = lambda: "test_user"
+        client = TestClient(app)
+        yield client
+        app.dependency_overrides.pop(require_auth, None)
+
+    @patch("mcpgateway.routers.well_known.settings")
+    def test_oauth_protected_resource_disabled(self, mock_settings, client):
+        """Test that OAuth protected resource returns 400 when server_id is not provided."""
+        mock_settings.well_known_enabled = True
+
+        response = client.get("/.well-known/oauth-protected-resource")
+        # Should return 400 when server_id is not provided
+        assert response.status_code == 400
+        assert "server_id" in response.text.lower()
+
+    @patch("mcpgateway.routers.well_known.settings")
+    def test_oauth_protected_resource_no_server_id(self, mock_settings, client):
+        """Test OAuth protected resource without server_id returns error."""
+        mock_settings.well_known_enabled = True
+
+        response = client.get("/.well-known/oauth-protected-resource")
+        # Should return 400 when server_id is not provided
+        assert response.status_code == 400
+
+    @patch("mcpgateway.routers.well_known.settings")
+    @patch("mcpgateway.routers.well_known.get_db")
+    def test_oauth_protected_resource_server_not_found(self, mock_get_db, mock_settings, client):
+        """Test OAuth protected resource returns 404 for non-existent server."""
+        # Standard
+        from unittest.mock import MagicMock
+
+        mock_settings.well_known_enabled = True
+
+        # Mock the database session generator
+        mock_db = MagicMock()
+        mock_db.get.return_value = None  # Server not found
+        mock_get_db.return_value = iter([mock_db])
+
+        response = client.get("/.well-known/oauth-protected-resource?server_id=non-existent-server")
+        assert response.status_code == 404
+
+    @patch("mcpgateway.routers.well_known.settings")
+    @patch("mcpgateway.routers.well_known.get_db")
+    def test_oauth_protected_resource_oauth_disabled(self, mock_get_db, mock_settings, client):
+        """Test OAuth protected resource returns 404 when OAuth is disabled on server."""
+        # Standard
+        from unittest.mock import MagicMock
+
+        mock_settings.well_known_enabled = True
+
+        # Mock server with OAuth disabled
+        mock_server = MagicMock()
+        mock_server.id = "test-server-id"
+        mock_server.oauth_enabled = False
+        mock_server.oauth_config = None
+
+        mock_db = MagicMock()
+        mock_db.get.return_value = mock_server
+        mock_get_db.return_value = iter([mock_db])
+
+        response = client.get("/.well-known/oauth-protected-resource?server_id=test-server-id")
+        assert response.status_code == 404
+
+    @patch("mcpgateway.routers.well_known.settings")
+    @patch("mcpgateway.routers.well_known.get_db")
+    def test_oauth_protected_resource_success(self, mock_get_db, mock_settings, client):
+        """Test OAuth protected resource returns RFC 9728 metadata for OAuth-enabled server."""
+        # Standard
+        from unittest.mock import MagicMock
+
+        mock_settings.well_known_enabled = True
+
+        # Mock server with OAuth enabled
+        oauth_config = {
+            "authorization_server": "https://idp.example.com",
+            "token_endpoint": "https://idp.example.com/oauth/token",
+            "scopes_supported": ["openid", "profile", "email"],
+        }
+        mock_server = MagicMock()
+        mock_server.id = "test-server-id"
+        mock_server.oauth_enabled = True
+        mock_server.oauth_config = oauth_config
+
+        mock_db = MagicMock()
+        mock_db.get.return_value = mock_server
+        mock_get_db.return_value = iter([mock_db])
+
+        response = client.get("/.well-known/oauth-protected-resource?server_id=test-server-id")
+        assert response.status_code == 200
+
+        data = response.json()
+        # Verify RFC 9728 response format
+        assert "resource" in data
+        assert "authorization_servers" in data
+        assert isinstance(data["authorization_servers"], list)
+        assert "https://idp.example.com" in data["authorization_servers"]
+
+    @patch("mcpgateway.routers.well_known.settings")
+    @patch("mcpgateway.routers.well_known.get_db")
+    def test_oauth_protected_resource_content_type(self, mock_get_db, mock_settings, client):
+        """Test OAuth protected resource returns correct content type."""
+        # Standard
+        from unittest.mock import MagicMock
+
+        mock_settings.well_known_enabled = True
+
+        # Mock server with OAuth enabled
+        mock_server = MagicMock()
+        mock_server.id = "test-server-id"
+        mock_server.oauth_enabled = True
+        mock_server.oauth_config = {"authorization_server": "https://idp.example.com"}
+
+        mock_db = MagicMock()
+        mock_db.get.return_value = mock_server
+        mock_get_db.return_value = iter([mock_db])
+
+        response = client.get("/.well-known/oauth-protected-resource?server_id=test-server-id")
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/json"
+
+    @patch("mcpgateway.routers.well_known.settings")
+    @patch("mcpgateway.routers.well_known.get_db")
+    def test_oauth_protected_resource_scopes(self, mock_get_db, mock_settings, client):
+        """Test OAuth protected resource includes scopes when configured."""
+        # Standard
+        from unittest.mock import MagicMock
+
+        mock_settings.well_known_enabled = True
+
+        # Mock server with OAuth and scopes
+        mock_server = MagicMock()
+        mock_server.id = "test-server-id"
+        mock_server.oauth_enabled = True
+        mock_server.oauth_config = {
+            "authorization_server": "https://idp.example.com",
+            "scopes_supported": ["read", "write", "admin"],
+        }
+
+        mock_db = MagicMock()
+        mock_db.get.return_value = mock_server
+        mock_get_db.return_value = iter([mock_db])
+
+        response = client.get("/.well-known/oauth-protected-resource?server_id=test-server-id")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert "scopes_supported" in data
+        assert data["scopes_supported"] == ["read", "write", "admin"]
+
+    @patch("mcpgateway.routers.well_known.settings")
+    @patch("mcpgateway.routers.well_known.get_db")
+    def test_oauth_protected_resource_bearer_methods(self, mock_get_db, mock_settings, client):
+        """Test OAuth protected resource includes bearer methods supported."""
+        # Standard
+        from unittest.mock import MagicMock
+
+        mock_settings.well_known_enabled = True
+
+        # Mock server with OAuth
+        mock_server = MagicMock()
+        mock_server.id = "test-server-id"
+        mock_server.oauth_enabled = True
+        mock_server.oauth_config = {"authorization_server": "https://idp.example.com"}
+
+        mock_db = MagicMock()
+        mock_db.get.return_value = mock_server
+        mock_get_db.return_value = iter([mock_db])
+
+        response = client.get("/.well-known/oauth-protected-resource?server_id=test-server-id")
+        assert response.status_code == 200
+
+        data = response.json()
+        # RFC 9728 requires bearer_methods_supported
+        assert "bearer_methods_supported" in data
+        assert "header" in data["bearer_methods_supported"]

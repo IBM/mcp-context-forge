@@ -1318,7 +1318,7 @@ class SessionRegistry(SessionBackend):
                 await asyncio.sleep(300)  # Sleep longer on error
 
     # Handle initialize logic
-    async def handle_initialize_logic(self, body: Dict[str, Any], session_id: Optional[str] = None) -> InitializeResult:
+    async def handle_initialize_logic(self, body: Dict[str, Any], session_id: Optional[str] = None, server_id: Optional[str] = None) -> InitializeResult:
         """Process MCP protocol initialization request.
 
         Validates the protocol version and returns server capabilities and information.
@@ -1328,6 +1328,7 @@ class SessionRegistry(SessionBackend):
             body: Request body containing protocol_version and optional client_info.
                 Expected keys: 'protocol_version' or 'protocolVersion', 'capabilities'.
             session_id: Optional session ID to associate client capabilities with.
+            server_id: Optional server ID to query OAuth configuration for RFC 9728 support.
 
         Returns:
             InitializeResult containing protocol version, server capabilities, and server info.
@@ -1373,6 +1374,24 @@ class SessionRegistry(SessionBackend):
             await self.store_client_capabilities(session_id, client_capabilities)
             logger.debug(f"Stored capabilities for session {session_id}: {client_capabilities}")
 
+        # Build experimental capabilities (including OAuth if configured)
+        experimental: Optional[Dict[str, Dict[str, Any]]] = None
+
+        # Query OAuth configuration if server_id is provided
+        if server_id:
+            try:
+                # First-Party
+                from mcpgateway.db import Server as DbServer  # pylint: disable=import-outside-toplevel
+
+                with next(get_db()) as db:
+                    server = db.get(DbServer, server_id)
+                    if server and getattr(server, "oauth_enabled", False) and getattr(server, "oauth_config", None):
+                        # Add OAuth capability to experimental section per MCP Authorization spec
+                        experimental = {"oauth": server.oauth_config}
+                        logger.debug(f"Advertising OAuth capability for server {server_id}")
+            except Exception as e:
+                logger.warning(f"Failed to query OAuth config for server {server_id}: {e}")
+
         return InitializeResult(
             protocolVersion=protocol_version,
             capabilities=ServerCapabilities(
@@ -1381,6 +1400,7 @@ class SessionRegistry(SessionBackend):
                 tools={"listChanged": True},
                 logging={},
                 completions={},  # Advertise completions capability per MCP spec
+                experimental=experimental,  # OAuth capability when configured
             ),
             serverInfo=Implementation(name=settings.app_name, version=__version__),
             instructions=("MCP Gateway providing federated tools, resources and prompts. Use /admin interface for configuration."),

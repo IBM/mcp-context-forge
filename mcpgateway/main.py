@@ -4804,7 +4804,8 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         if method == "initialize":
             # Extract session_id from params or query string (for capability tracking)
             init_session_id = params.get("session_id") or params.get("sessionId") or request.query_params.get("session_id")
-            result = await session_registry.handle_initialize_logic(body.get("params", {}), session_id=init_session_id)
+            # Pass server_id to advertise OAuth capability if configured per RFC 9728
+            result = await session_registry.handle_initialize_logic(body.get("params", {}), session_id=init_session_id, server_id=server_id)
             if hasattr(result, "model_dump"):
                 result = result.model_dump(by_alias=True, exclude_none=True)
         elif method == "tools/list":
@@ -5571,10 +5572,10 @@ async def readiness_check():
     """
 
     def _check_db() -> str | None:
-        """Check database connectivity for readiness.
+        """Check database connectivity by executing a simple query.
 
         Returns:
-            Error string when the check fails, otherwise None.
+            None if successful, error message string if failed.
         """
         # Create session in this thread - all DB operations stay in the same thread.
         db = SessionLocal()

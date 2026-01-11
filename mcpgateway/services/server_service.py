@@ -290,6 +290,9 @@ class ServerService:
             "federation_source": getattr(server, "federation_source", None),
             "version": getattr(server, "version", None),
             "tags": server.tags or [],
+            # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
+            "oauth_enabled": getattr(server, "oauth_enabled", False),
+            "oauth_config": getattr(server, "oauth_config", None),
         }
 
         # Compute aggregated metrics only if requested (avoids N+1 queries in list operations)
@@ -478,6 +481,9 @@ class ServerService:
                 team_id=getattr(server_in, "team_id", None) or team_id,
                 owner_email=getattr(server_in, "owner_email", None) or owner_email or created_by,
                 visibility=getattr(server_in, "visibility", None) or visibility,
+                # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
+                oauth_enabled=getattr(server_in, "oauth_enabled", False) or False,
+                oauth_config=getattr(server_in, "oauth_config", None),
                 # Metadata fields
                 created_by=created_by,
                 created_from_ip=created_from_ip,
@@ -1214,6 +1220,18 @@ class ServerService:
             # Update tags if provided
             if server_update.tags is not None:
                 server.tags = server_update.tags
+
+            # Update OAuth 2.0 configuration if provided
+            if server_update.oauth_enabled is not None:
+                server.oauth_enabled = server_update.oauth_enabled
+                # If OAuth is being disabled, also clear the config
+                if not server_update.oauth_enabled:
+                    server.oauth_config = None
+            # Update oauth_config if explicitly provided (check if it was set in the update)
+            if hasattr(server_update, "model_fields_set") and "oauth_config" in server_update.model_fields_set:
+                server.oauth_config = server_update.oauth_config
+            elif server_update.oauth_config is not None:
+                server.oauth_config = server_update.oauth_config
 
             # Update metadata fields
             server.updated_at = datetime.now(timezone.utc)

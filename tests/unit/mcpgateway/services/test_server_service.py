@@ -99,6 +99,10 @@ def mock_server(mock_tool, mock_resource, mock_prompt):
     server.federation_source = None
     server.version = 1
 
+    # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
+    server.oauth_enabled = False
+    server.oauth_config = None
+
     # Associated objects -------------------------------------------------- #
     server.tools = [mock_tool]
     server.resources = [mock_resource]
@@ -1276,3 +1280,288 @@ class TestServerService:
                 assert isinstance(servers, list)
                 assert len(servers) == 1
                 assert cursor is None
+
+    # --------------------------- OAuth Configuration -------------------- #
+    @pytest.mark.asyncio
+    async def test_register_server_with_oauth_config(self, server_service, test_db):
+        """Test server registration with OAuth configuration for RFC 9728 support."""
+        # No existing server with the same name
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = None
+        test_db.execute = Mock(return_value=mock_scalar)
+
+        # Capture the server being added
+        captured_server = None
+
+        def capture_add(server):
+            nonlocal captured_server
+            captured_server = server
+
+        test_db.add = Mock(side_effect=capture_add)
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.get = Mock(return_value=None)
+
+        # Define OAuth configuration
+        oauth_config = {
+            "authorization_server": "https://idp.example.com",
+            "token_endpoint": "https://idp.example.com/oauth/token",
+            "authorization_endpoint": "https://idp.example.com/oauth/authorize",
+            "scopes_supported": ["openid", "profile", "email"],
+        }
+
+        # Mock service methods
+        server_service._notify_server_added = AsyncMock()
+        server_service.convert_server_to_read = Mock(
+            return_value=ServerRead(
+                id="1",
+                name="OAuth Server",
+                description="Server with OAuth enabled",
+                icon=None,
+                created_at="2023-01-01T00:00:00",
+                updated_at="2023-01-01T00:00:00",
+                enabled=True,
+                associated_tools=[],
+                associated_resources=[],
+                associated_prompts=[],
+                oauth_enabled=True,
+                oauth_config=oauth_config,
+                metrics={
+                    "total_executions": 0,
+                    "successful_executions": 0,
+                    "failed_executions": 0,
+                    "failure_rate": 0.0,
+                    "min_response_time": None,
+                    "max_response_time": None,
+                    "avg_response_time": None,
+                    "last_execution_time": None,
+                },
+            )
+        )
+
+        server_create = ServerCreate(
+            name="OAuth Server",
+            description="Server with OAuth enabled",
+            oauth_enabled=True,
+            oauth_config=oauth_config,
+        )
+
+        # Call the service method
+        result = await server_service.register_server(test_db, server_create)
+
+        # Verify OAuth config was stored
+        assert captured_server is not None
+        assert captured_server.oauth_enabled is True
+        assert captured_server.oauth_config == oauth_config
+        assert result.oauth_enabled is True
+        assert result.oauth_config == oauth_config
+        test_db.add.assert_called_once()
+        test_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_register_server_without_oauth_config(self, server_service, test_db):
+        """Test server registration without OAuth configuration (default behavior)."""
+        # No existing server with the same name
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = None
+        test_db.execute = Mock(return_value=mock_scalar)
+
+        # Capture the server being added
+        captured_server = None
+
+        def capture_add(server):
+            nonlocal captured_server
+            captured_server = server
+
+        test_db.add = Mock(side_effect=capture_add)
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.get = Mock(return_value=None)
+
+        # Mock service methods
+        server_service._notify_server_added = AsyncMock()
+        server_service.convert_server_to_read = Mock(
+            return_value=ServerRead(
+                id="1",
+                name="Non-OAuth Server",
+                description="Server without OAuth",
+                icon=None,
+                created_at="2023-01-01T00:00:00",
+                updated_at="2023-01-01T00:00:00",
+                enabled=True,
+                associated_tools=[],
+                associated_resources=[],
+                associated_prompts=[],
+                oauth_enabled=False,
+                oauth_config=None,
+                metrics={
+                    "total_executions": 0,
+                    "successful_executions": 0,
+                    "failed_executions": 0,
+                    "failure_rate": 0.0,
+                    "min_response_time": None,
+                    "max_response_time": None,
+                    "avg_response_time": None,
+                    "last_execution_time": None,
+                },
+            )
+        )
+
+        server_create = ServerCreate(
+            name="Non-OAuth Server",
+            description="Server without OAuth",
+        )
+
+        # Call the service method
+        result = await server_service.register_server(test_db, server_create)
+
+        # Verify OAuth config is not set
+        assert captured_server is not None
+        assert getattr(captured_server, "oauth_enabled", False) is False
+        assert getattr(captured_server, "oauth_config", None) is None
+        assert result.oauth_enabled is False
+        assert result.oauth_config is None
+
+    @pytest.mark.asyncio
+    async def test_update_server_oauth_config(self, server_service, mock_server, test_db):
+        """Test updating server with OAuth configuration."""
+        # Setup existing server without OAuth
+        mock_server.oauth_enabled = False
+        mock_server.oauth_config = None
+
+        test_db.get = Mock(return_value=mock_server)
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+
+        # Mock name conflict check
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = None
+        test_db.execute = Mock(return_value=mock_scalar)
+
+        # Define new OAuth configuration
+        new_oauth_config = {
+            "authorization_server": "https://auth.example.com",
+            "scopes_supported": ["read", "write"],
+        }
+
+        server_service._notify_server_updated = AsyncMock()
+        server_service.convert_server_to_read = Mock(
+            return_value=ServerRead(
+                id="1",
+                name="test_server",
+                description="A test server",
+                icon="server-icon",
+                created_at="2023-01-01T00:00:00",
+                updated_at="2023-01-01T00:00:00",
+                enabled=True,
+                associated_tools=[],
+                associated_resources=[],
+                associated_prompts=[],
+                oauth_enabled=True,
+                oauth_config=new_oauth_config,
+                metrics={
+                    "total_executions": 0,
+                    "successful_executions": 0,
+                    "failed_executions": 0,
+                    "failure_rate": 0.0,
+                    "min_response_time": None,
+                    "max_response_time": None,
+                    "avg_response_time": None,
+                    "last_execution_time": None,
+                },
+            )
+        )
+
+        server_update = ServerUpdate(
+            oauth_enabled=True,
+            oauth_config=new_oauth_config,
+        )
+
+        test_user_email = "user@example.com"
+        result = await server_service.update_server(test_db, "1", server_update, test_user_email)
+
+        # Verify OAuth config was updated
+        assert mock_server.oauth_enabled is True
+        assert mock_server.oauth_config == new_oauth_config
+        assert result.oauth_enabled is True
+        assert result.oauth_config == new_oauth_config
+        test_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_server_disable_oauth(self, server_service, mock_server, test_db):
+        """Test disabling OAuth on a server."""
+        # Setup existing server with OAuth enabled
+        mock_server.oauth_enabled = True
+        mock_server.oauth_config = {"authorization_server": "https://auth.example.com"}
+
+        test_db.get = Mock(return_value=mock_server)
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+
+        # Mock name conflict check
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = None
+        test_db.execute = Mock(return_value=mock_scalar)
+
+        server_service._notify_server_updated = AsyncMock()
+        server_service.convert_server_to_read = Mock(
+            return_value=ServerRead(
+                id="1",
+                name="test_server",
+                description="A test server",
+                icon="server-icon",
+                created_at="2023-01-01T00:00:00",
+                updated_at="2023-01-01T00:00:00",
+                enabled=True,
+                associated_tools=[],
+                associated_resources=[],
+                associated_prompts=[],
+                oauth_enabled=False,
+                oauth_config=None,
+                metrics={
+                    "total_executions": 0,
+                    "successful_executions": 0,
+                    "failed_executions": 0,
+                    "failure_rate": 0.0,
+                    "min_response_time": None,
+                    "max_response_time": None,
+                    "avg_response_time": None,
+                    "last_execution_time": None,
+                },
+            )
+        )
+
+        server_update = ServerUpdate(
+            oauth_enabled=False,
+            oauth_config=None,
+        )
+
+        test_user_email = "user@example.com"
+        result = await server_service.update_server(test_db, "1", server_update, test_user_email)
+
+        # Verify OAuth was disabled
+        assert mock_server.oauth_enabled is False
+        assert mock_server.oauth_config is None
+        assert result.oauth_enabled is False
+        assert result.oauth_config is None
+
+    @pytest.mark.asyncio
+    async def test_server_oauth_config_in_read(self, server_service, mock_server, test_db):
+        """Test that OAuth config is included in server read response."""
+        # Setup server with OAuth config
+        mock_server.oauth_enabled = True
+        mock_server.oauth_config = {
+            "authorization_server": "https://idp.example.com",
+            "scopes_supported": ["openid"],
+        }
+
+        test_db.get = Mock(return_value=mock_server)
+
+        # Manually call convert_server_to_read to test the conversion
+        # This test verifies the data flow when OAuth fields are present
+        server_read = server_service.convert_server_to_read(mock_server)
+
+        # Verify OAuth fields are included in the read model
+        assert server_read.oauth_enabled is True
+        assert server_read.oauth_config is not None
+        assert server_read.oauth_config["authorization_server"] == "https://idp.example.com"
