@@ -145,8 +145,10 @@ class TestA2AAgentService:
             result = await service.register_agent(mock_db, sample_agent_create)
 
         # Verify
+        # add: 1 for agent, 1 for tool
         assert mock_db.add.call_count == 2
-        assert mock_db.commit.call_count == 2
+        # commit: 1 for agent (before tool creation), 1 for tool, 1 for tool association
+        assert mock_db.commit.call_count == 3
         assert service.convert_agent_to_read.called
 
     async def test_register_agent_name_conflict(self, service, mock_db, sample_agent_create):

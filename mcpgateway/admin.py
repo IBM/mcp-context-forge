@@ -13720,15 +13720,15 @@ async def admin_delete_a2a_agent(
 @admin_router.post("/a2a/{agent_id}/test")
 async def admin_test_a2a_agent(
     agent_id: str,
-    request: Request,  # pylint: disable=unused-argument
+    request: Request,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
+    user=Depends(get_current_user_with_permissions),
 ) -> JSONResponse:
     """Test A2A agent via admin UI.
 
     Args:
         agent_id: Agent ID
-        request: FastAPI request object
+        request: FastAPI request object containing optional 'query' field
         db: Database session
         user: Authenticated user
 
@@ -13746,16 +13746,25 @@ async def admin_test_a2a_agent(
         # Get the agent by ID
         agent = await a2a_service.get_agent(db, agent_id)
 
+        # Parse request body to get user-provided query
+        default_message = "Hello from MCP Gateway Admin UI test!"
+        try:
+            body = await request.json()
+            # Use 'or' to also handle empty string queries
+            user_query = (body.get("query") if body else None) or default_message
+        except Exception:
+            user_query = default_message
+
         # Prepare test parameters based on agent type and endpoint
         if agent.agent_type in ["generic", "jsonrpc"] or agent.endpoint_url.endswith("/"):
             # JSONRPC format for agents that expect it
             test_params = {
                 "method": "message/send",
-                "params": {"message": {"messageId": f"admin-test-{int(time.time())}", "role": "user", "parts": [{"type": "text", "text": "Hello from MCP Gateway Admin UI test!"}]}},
+                "params": {"message": {"messageId": f"admin-test-{int(time.time())}", "role": "user", "parts": [{"type": "text", "text": user_query}]}},
             }
         else:
             # Generic test format
-            test_params = {"message": "Hello from MCP Gateway Admin UI test!", "test": True, "timestamp": int(time.time())}
+            test_params = {"query": user_query, "message": user_query, "test": True, "timestamp": int(time.time())}
 
         # Invoke the agent
         result = await a2a_service.invoke_agent(

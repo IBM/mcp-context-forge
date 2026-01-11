@@ -313,40 +313,66 @@ class A2AAgentService:
             )
 
             db.add(new_agent)
-            db.flush()  # Flush to get the agent ID without committing yet
-
-            # Invalidate caches since agent count changed
-            a2a_stats_cache.invalidate()
-            cache = _get_registry_cache()
-            await cache.invalidate_agents()
-            # Also invalidate tags cache since agent tags may have changed
-            # First-Party
-            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
-
-            await admin_stats_cache.invalidate_tags()
-            # First-Party
-            from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
-
-            metrics_cache.invalidate("a2a")
-
-            # Automatically create a tool for the A2A agent if not already present
-            tool_service = ToolService()
-            tool_db = await tool_service.create_tool_from_a2a_agent(
-                db=db,
-                agent=new_agent,
-                created_by=created_by,
-                created_from_ip=created_from_ip,
-                created_via=created_via,
-                created_user_agent=created_user_agent,
-            )
-
-            # Associate the tool with the agent using the relationship
-            # This sets both the tool_id foreign key and the tool relationship
-            new_agent.tool = tool_db
+            # Commit agent FIRST to ensure it persists even if tool creation fails
+            # This is critical because ToolService.register_tool calls db.rollback()
+            # on error, which would undo a pending (flushed but uncommitted) agent
             db.commit()
             db.refresh(new_agent)
 
-            logger.info(f"Registered new A2A agent: {new_agent.name} (ID: {new_agent.id}) with tool ID: {tool_db.id}")
+            # Invalidate caches since agent count changed
+            # Wrapped in try/except to ensure cache failures don't fail the request
+            # when the agent is already successfully committed
+            try:
+                a2a_stats_cache.invalidate()
+                cache = _get_registry_cache()
+                await cache.invalidate_agents()
+                # Also invalidate tags cache since agent tags may have changed
+                # First-Party
+                from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+                await admin_stats_cache.invalidate_tags()
+                # First-Party
+                from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
+
+                metrics_cache.invalidate("a2a")
+            except Exception as cache_error:
+                logger.warning(f"Cache invalidation failed after agent commit: {cache_error}")
+
+            # Automatically create a tool for the A2A agent if not already present
+            # Tool creation is wrapped in try/except to ensure agent registration succeeds
+            # even if tool creation fails (e.g., due to visibility or permission issues)
+            tool_db = None
+            try:
+                tool_service = ToolService()
+                tool_db = await tool_service.create_tool_from_a2a_agent(
+                    db=db,
+                    agent=new_agent,
+                    created_by=created_by,
+                    created_from_ip=created_from_ip,
+                    created_via=created_via,
+                    created_user_agent=created_user_agent,
+                )
+
+                # Associate the tool with the agent using the relationship
+                # This sets both the tool_id foreign key and the tool relationship
+                new_agent.tool = tool_db
+                db.commit()
+                db.refresh(new_agent)
+                logger.info(f"Registered new A2A agent: {new_agent.name} (ID: {new_agent.id}) with tool ID: {tool_db.id}")
+            except Exception as tool_error:
+                # Log the error but don't fail agent registration
+                # Agent was already committed above, so it persists even if tool creation fails
+                logger.warning(f"Failed to create tool for A2A agent {new_agent.name}: {tool_error}")
+                structured_logger.warning(
+                    f"A2A agent '{new_agent.name}' created without tool association",
+                    user_id=created_by,
+                    resource_type="a2a_agent",
+                    resource_id=str(new_agent.id),
+                    custom_fields={"error": str(tool_error), "agent_name": new_agent.name},
+                )
+                # Refresh the agent to ensure it's in a clean state after any rollback
+                db.refresh(new_agent)
+                logger.info(f"Registered new A2A agent: {new_agent.name} (ID: {new_agent.id}) without tool")
 
             # Log A2A agent registration for lifecycle tracking
             structured_logger.info(

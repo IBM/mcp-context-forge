@@ -206,6 +206,107 @@ Associate A2A agents with virtual servers to:
 - **Audit Logging**: All agent interactions are logged
 - **Network Security**: HTTPS support and SSL verification
 
+## Local Testing
+
+### Demo A2A Agent
+
+The repository includes a demo A2A agent with calculator and weather tools for local testing:
+
+```bash
+# Terminal 1: Start ContextForge
+make dev
+
+# Terminal 2: Start the demo agent (auto-registers with ContextForge)
+uv run python scripts/demo_a2a_agent.py
+```
+
+The demo agent supports these query formats:
+
+| Query | Example | Response |
+|-------|---------|----------|
+| Calculator | `calc: 7*8+2` | `58` |
+| Weather | `weather: Dallas` | `The weather in Dallas is sunny, 25C` |
+
+**Test via Admin UI:**
+
+1. Go to `http://localhost:8000/admin`
+2. Click the "A2A Agents" tab
+3. Find "Demo Calculator Agent" and click **Test**
+4. Enter a query like `calc: 100/4+25` in the modal
+5. Click **Run Test** to see the result
+
+**Test via API:**
+
+```bash
+# Get a token
+export TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
+  --username admin@example.com --exp 60 --secret my-test-key)
+
+# Invoke the agent
+curl -X POST "http://localhost:8000/a2a/demo-calculator-agent/invoke" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "calc: 15*4+10"}'
+```
+
+### A2A SDK HelloWorld Sample
+
+Test with the official A2A Python SDK sample:
+
+```bash
+# Clone and run the HelloWorld agent
+git clone https://github.com/google/a2a-samples.git
+cd a2a-samples/samples/python/agents/helloworld
+uv run python __main__.py  # Starts on port 9999
+
+# Register with ContextForge (in another terminal)
+export TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
+  --username admin@example.com --exp 60 --secret my-test-key)
+
+curl -X POST "http://localhost:8000/a2a" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agent": {
+      "name": "Hello World Agent",
+      "endpoint_url": "http://localhost:9999/",
+      "agent_type": "jsonrpc",
+      "description": "Official A2A SDK HelloWorld sample"
+    },
+    "visibility": "public"
+  }'
+```
+
+### Admin UI Query Input
+
+The Admin UI test button opens a modal where you can enter custom queries:
+
+1. **Open Modal**: Click the blue **Test** button next to any A2A agent
+2. **Enter Query**: Type your query in the textarea (e.g., `calc: 5*10+2`)
+3. **Run Test**: Click **Run Test** to send the query to the agent
+4. **View Response**: The agent's response appears in the modal
+
+This allows testing A2A agents with real user queries instead of hardcoded test messages.
+
+### Testing via MCP Tools
+
+A2A agents are automatically exposed as MCP tools. After registration, invoke them via the MCP protocol:
+
+```bash
+curl -X POST "http://localhost:8000/rpc" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "a2a_demo-calculator-agent",
+      "arguments": {"query": "calc: 99+1"}
+    },
+    "id": 1
+  }'
+```
+
 ## Troubleshooting
 
 ### Agent Not Responding

@@ -750,11 +750,13 @@ function closeModal(modalId, clearId = null) {
         if (modalId === "gateway-test-modal") {
             cleanupGatewayTestModal();
         } else if (modalId === "tool-test-modal") {
-            cleanupToolTestModal(); // ADD THIS LINE
+            cleanupToolTestModal();
         } else if (modalId === "prompt-test-modal") {
             cleanupPromptTestModal();
         } else if (modalId === "resource-test-modal") {
             cleanupResourceTestModal();
+        } else if (modalId === "a2a-test-modal") {
+            cleanupA2ATestModal();
         }
 
         modal.classList.add("hidden");
@@ -19030,58 +19032,129 @@ function getCookie(name) {
 window.resetImportFile = resetImportFile;
 
 // ===================================================================
-// A2A AGENT TESTING FUNCTIONALITY
+// A2A AGENT TEST MODAL FUNCTIONALITY
 // ===================================================================
 
+let a2aTestFormHandler = null;
+let a2aTestCloseHandler = null;
+
 /**
- * Test an A2A agent by making a direct invocation call
+ * Open A2A test modal with agent details
  * @param {string} agentId - ID of the agent to test
  * @param {string} agentName - Name of the agent for display
  * @param {string} endpointUrl - Endpoint URL of the agent
  */
 async function testA2AAgent(agentId, agentName, endpointUrl) {
     try {
-        // Show loading state
-        const testResult = document.getElementById(`test-result-${agentId}`);
-        testResult.innerHTML =
-            '<div class="text-blue-600">🔄 Testing agent...</div>';
-        testResult.classList.remove("hidden");
+        console.log("Opening A2A test modal for:", agentName);
 
-        // Get auth token using the robust getAuthToken function
+        // Clean up any existing event listeners
+        cleanupA2ATestModal();
+
+        // Open the modal
+        openModal("a2a-test-modal");
+
+        // Set modal title and description
+        const titleElement = safeGetElement("a2a-test-modal-title");
+        const descElement = safeGetElement("a2a-test-modal-description");
+        const agentIdInput = safeGetElement("a2a-test-agent-id");
+        const queryInput = safeGetElement("a2a-test-query");
+        const resultDiv = safeGetElement("a2a-test-result");
+
+        if (titleElement) {
+            titleElement.textContent = `Test A2A Agent: ${agentName}`;
+        }
+        if (descElement) {
+            descElement.textContent = `Endpoint: ${endpointUrl}`;
+        }
+        if (agentIdInput) {
+            agentIdInput.value = agentId;
+        }
+        if (queryInput) {
+            // Reset to default value
+            queryInput.value = "Hello from MCP Gateway Admin UI test!";
+        }
+        if (resultDiv) {
+            resultDiv.classList.add("hidden");
+        }
+
+        // Set up form submission handler
+        const form = safeGetElement("a2a-test-form");
+        if (form) {
+            a2aTestFormHandler = async (e) => {
+                await handleA2ATestSubmit(e);
+            };
+            form.addEventListener("submit", a2aTestFormHandler);
+        }
+
+        // Set up close button handler
+        const closeButton = safeGetElement("a2a-test-close");
+        if (closeButton) {
+            a2aTestCloseHandler = () => {
+                handleA2ATestClose();
+            };
+            closeButton.addEventListener("click", a2aTestCloseHandler);
+        }
+    } catch (error) {
+        console.error("Error setting up A2A test modal:", error);
+        showErrorMessage("Failed to open A2A test modal");
+    }
+}
+
+/**
+ * Handle A2A test form submission
+ * @param {Event} e - Form submit event
+ */
+async function handleA2ATestSubmit(e) {
+    e.preventDefault();
+
+    const loading = safeGetElement("a2a-test-loading");
+    const responseDiv = safeGetElement("a2a-test-response-json");
+    const resultDiv = safeGetElement("a2a-test-result");
+    const testButton = safeGetElement("a2a-test-submit");
+
+    try {
+        // Show loading
+        if (loading) {
+            loading.classList.remove("hidden");
+        }
+        if (resultDiv) {
+            resultDiv.classList.add("hidden");
+        }
+        if (testButton) {
+            testButton.disabled = true;
+            testButton.textContent = "Testing...";
+        }
+
+        const agentId = safeGetElement("a2a-test-agent-id")?.value;
+        const query =
+            safeGetElement("a2a-test-query")?.value ||
+            "Hello from MCP Gateway Admin UI test!";
+
+        if (!agentId) {
+            throw new Error("Agent ID is missing");
+        }
+
+        // Get auth token
         const token = await getAuthToken();
-
-        // Debug logging
-        console.log("Available cookies:", document.cookie);
-        console.log(
-            "Found token:",
-            token ? "Yes (length: " + token.length + ")" : "No",
-        );
-
-        // Prepare headers
-        const headers = {
-            "Content-Type": "application/json",
-        };
-
+        const headers = { "Content-Type": "application/json" };
         if (token) {
             headers.Authorization = `Bearer ${token}`;
         } else {
             // Fallback to basic auth if JWT not available
             console.warn("JWT token not found, attempting basic auth fallback");
-            headers.Authorization = "Basic " + btoa("admin:changeme"); // Default admin credentials
+            headers.Authorization = "Basic " + btoa("admin:changeme");
         }
 
-        // Test payload is now determined server-side based on agent configuration
-        const testPayload = {};
-
-        // Make test request to A2A agent via admin endpoint
+        // Send test request with user query
         const response = await fetchWithTimeout(
             `${window.ROOT_PATH}/admin/a2a/${agentId}/test`,
             {
                 method: "POST",
                 headers,
-                body: JSON.stringify(testPayload),
+                body: JSON.stringify({ query }),
             },
-            window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000, // Use configurable timeout
+            window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000,
         );
 
         if (!response.ok) {
@@ -19091,57 +19164,100 @@ async function testA2AAgent(agentId, agentName, endpointUrl) {
         const result = await response.json();
 
         // Display result
-        let resultHtml;
-        if (!result.success || result.error) {
-            resultHtml = `
-                <div class="text-red-600">
-                    <div>❌ Test Failed</div>
-                    <div class="text-xs mt-1">Error: ${escapeHtml(result.error || "Unknown error")}</div>
-                </div>`;
-        } else {
-            // Check if the agent result contains an error (agent-level error)
-            const agentResult = result.result;
-            if (agentResult && agentResult.error) {
-                resultHtml = `
-                    <div class="text-yellow-600">
-                        <div>⚠️ Agent Error</div>
-                        <div class="text-xs mt-1">Agent Response: ${escapeHtml(JSON.stringify(agentResult).substring(0, 150))}...</div>
-                    </div>`;
-            } else {
-                resultHtml = `
-                    <div class="text-green-600">
-                        <div>✅ Test Successful</div>
-                        <div class="text-xs mt-1">Response: ${escapeHtml(JSON.stringify(agentResult).substring(0, 150))}...</div>
-                    </div>`;
-            }
+        const isSuccess = result.success && !result.error;
+        const icon = isSuccess ? "✅" : "❌";
+        const title = isSuccess ? "Test Successful" : "Test Failed";
+
+        let bodyHtml = "";
+        if (result.result) {
+            bodyHtml = `<details open>
+                <summary class='cursor-pointer font-medium'>Response</summary>
+                <pre class="text-sm px-4 max-h-96 dark:bg-gray-800 dark:text-gray-100 overflow-auto whitespace-pre-wrap">${escapeHtml(JSON.stringify(result.result, null, 2))}</pre>
+            </details>`;
         }
 
-        testResult.innerHTML = resultHtml;
-
-        // Auto-hide after 10 seconds
-        setTimeout(() => {
-            testResult.classList.add("hidden");
-        }, 10000);
+        responseDiv.innerHTML = `
+            <div class="p-3 rounded ${isSuccess ? "bg-green-50 dark:bg-green-900/20" : "bg-red-50 dark:bg-red-900/20"}">
+                <h4 class="font-bold ${isSuccess ? "text-green-700 dark:text-green-400" : "text-red-700 dark:text-red-400"}">${icon} ${title}</h4>
+                ${result.error ? `<p class="text-red-600 dark:text-red-400 mt-2">Error: ${escapeHtml(result.error)}</p>` : ""}
+                ${bodyHtml}
+            </div>
+        `;
     } catch (error) {
-        console.error("A2A agent test failed:", error);
-
-        const testResult = document.getElementById(`test-result-${agentId}`);
-        testResult.innerHTML = `
-            <div class="text-red-600">
-                <div>❌ Test Failed</div>
-                <div class="text-xs mt-1">Error: ${escapeHtml(error.message)}</div>
-            </div>`;
-        testResult.classList.remove("hidden");
-
-        // Auto-hide after 10 seconds
-        setTimeout(() => {
-            testResult.classList.add("hidden");
-        }, 10000);
+        console.error("A2A test error:", error);
+        if (responseDiv) {
+            responseDiv.innerHTML = `<div class="text-red-600 dark:text-red-400 p-4 bg-red-50 dark:bg-red-900/20 rounded">❌ Error: ${escapeHtml(error.message)}</div>`;
+        }
+    } finally {
+        if (loading) {
+            loading.classList.add("hidden");
+        }
+        if (resultDiv) {
+            resultDiv.classList.remove("hidden");
+        }
+        if (testButton) {
+            testButton.disabled = false;
+            testButton.textContent = "Test Agent";
+        }
     }
 }
 
-// Expose A2A test function to global scope
+/**
+ * Handle A2A test modal close
+ */
+function handleA2ATestClose() {
+    try {
+        // Reset form
+        const form = safeGetElement("a2a-test-form");
+        if (form) {
+            form.reset();
+        }
+
+        // Clear response
+        const responseDiv = safeGetElement("a2a-test-response-json");
+        const resultDiv = safeGetElement("a2a-test-result");
+        if (responseDiv) {
+            responseDiv.innerHTML = "";
+        }
+        if (resultDiv) {
+            resultDiv.classList.add("hidden");
+        }
+
+        // Close modal
+        closeModal("a2a-test-modal");
+    } catch (error) {
+        console.error("Error closing A2A test modal:", error);
+    }
+}
+
+/**
+ * Clean up A2A test modal event listeners
+ */
+function cleanupA2ATestModal() {
+    try {
+        const form = safeGetElement("a2a-test-form");
+        const closeButton = safeGetElement("a2a-test-close");
+
+        if (form && a2aTestFormHandler) {
+            form.removeEventListener("submit", a2aTestFormHandler);
+            a2aTestFormHandler = null;
+        }
+
+        if (closeButton && a2aTestCloseHandler) {
+            closeButton.removeEventListener("click", a2aTestCloseHandler);
+            a2aTestCloseHandler = null;
+        }
+
+        console.log("✓ Cleaned up A2A test modal listeners");
+    } catch (error) {
+        console.error("Error cleaning up A2A test modal:", error);
+    }
+}
+
+// Expose A2A test functions to global scope
 window.testA2AAgent = testA2AAgent;
+window.openA2ATestModal = testA2AAgent;
+window.cleanupA2ATestModal = cleanupA2ATestModal;
 
 /**
  * Token Management Functions
