@@ -4352,9 +4352,9 @@ async def admin_view_team_members(
         # Add member management interface
         add_members_button = (
             f"<button onclick=\"loadAddMembersView('{team.id}')\" "
-            "class=\"px-3 py-1 text-sm font-medium text-white bg-blue-600 "
+            'class="px-3 py-1 text-sm font-medium text-white bg-blue-600 '
             "hover:bg-blue-700 rounded-md focus:outline-none focus:ring-2 "
-            "focus:ring-offset-2 focus:ring-blue-500\">+ Add Members</button>"
+            'focus:ring-offset-2 focus:ring-blue-500">+ Add Members</button>'
             if is_team_owner
             else ""
         )
@@ -4562,18 +4562,27 @@ async def admin_add_team_members_view(
                         const data = await response.json();
 
                         if (data.users && data.users.length > 0) {{
-                            let html = '<div class="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md p-2 mt-1">';
+                            // Helper to escape HTML to prevent XSS
+                            const escapeHtml = (str) => {{
+                                const div = document.createElement('div');
+                                div.textContent = str || '';
+                                return div.innerHTML;
+                            }};
+                            const container = document.createElement('div');
+                            container.className = 'bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md p-2 mt-1';
+                            const memberEmails = '{member_emails_param}'.split(',');
                             data.users.forEach(user => {{
                                 // Check if user is already a member
-                                const memberEmails = '{member_emails_param}'.split(',');
                                 if (!memberEmails.includes(user.email)) {{
-                                    html += `<div class="p-2 hover:bg-gray-50 dark:hover:bg-gray-700 rounded cursor-pointer text-sm" onclick="addUserFromSearch_{team.id}('${{user.email}}', '${{user.full_name}}', '{team.id}')">
-                                        ${{user.full_name}} (${{user.email}})
-                                    </div>`;
+                                    const item = document.createElement('div');
+                                    item.className = 'p-2 hover:bg-gray-50 dark:hover:bg-gray-700 rounded cursor-pointer text-sm';
+                                    item.textContent = `${{user.full_name || ''}} (${{user.email}})`;
+                                    item.onclick = () => window['addUserFromSearch_{team.id}'](user.email, user.full_name, '{team.id}');
+                                    container.appendChild(item);
                                 }}
                             }});
-                            html += '</div>';
-                            searchResults.innerHTML = html;
+                            searchResults.innerHTML = '';
+                            searchResults.appendChild(container);
                         }} else {{
                             searchResults.innerHTML = '<div class="text-sm text-gray-500 dark:text-gray-400 mt-1">No users found</div>';
                         }}
@@ -5592,21 +5601,17 @@ async def admin_list_users(
 
     auth_service = EmailAuthService(db)
 
-    # List users with page-based pagination
-    paginated_result = await auth_service.list_users(page=page, per_page=per_page)
-    users = paginated_result["data"]
-
     # Check if JSON response is requested (for dropdown population)
     accept_header = request.headers.get("accept", "")
     is_json_request = "application/json" in accept_header or request.query_params.get("format") == "json"
 
     if is_json_request:
-        # Return JSON for dropdown population
-        users = await auth_service.list_users(page=1, per_page=100)
-        users_data = [{"email": user_obj.email, "full_name": user_obj.full_name, "is_active": user_obj.is_active, "is_admin": user_obj.is_admin} for user_obj in users["data"]]
+        # Return JSON for dropdown population - always return first page with 100 users
+        paginated_result = await auth_service.list_users(page=1, per_page=100)
+        users_data = [{"email": user_obj.email, "full_name": user_obj.full_name, "is_active": user_obj.is_active, "is_admin": user_obj.is_admin} for user_obj in paginated_result["data"]]
         return ORJSONResponse(content={"users": users_data})
 
-    # Call auth_service.list_users with page-based pagination
+    # List users with page-based pagination
     paginated_result = await auth_service.list_users(page=page, per_page=per_page)
 
     # End the read-only transaction early to avoid idle-in-transaction under load
