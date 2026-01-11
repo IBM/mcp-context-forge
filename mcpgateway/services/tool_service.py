@@ -2345,19 +2345,10 @@ class ToolService:
             PluginError: If encounters issue with plugin
 
         Examples:
-            >>> from mcpgateway.services.tool_service import ToolService
-            >>> from unittest.mock import MagicMock, patch
-            >>> service = ToolService()
-            >>> db = MagicMock()
-            >>> tool = MagicMock()
-            >>> db.execute.return_value.scalar_one_or_none.side_effect = [tool, None]
-            >>> tool.reachable = True
-            >>> import asyncio
-            >>> # Mock structured_logger to prevent database writes during doctest
-            >>> with patch('mcpgateway.services.tool_service.structured_logger'):
-            ...     result = asyncio.run(service.invoke_tool(db, 'tool_name', {}))
-            ...     isinstance(result, object)
-            True
+            >>> # Note: This method requires extensive mocking of SQLAlchemy models,
+            >>> # database relationships, and caching infrastructure, which is not
+            >>> # suitable for doctests. See tests/unit/mcpgateway/services/test_tool_service.py
+            >>> pass  # doctest: +SKIP
         """
         # pylint: disable=comparison-with-callable
         logger.info(f"Invoking tool: {name} with arguments: {arguments.keys() if arguments else None} and headers: {request_headers.keys() if request_headers else None}")
