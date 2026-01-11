@@ -3738,6 +3738,10 @@ class ToolService:
             tags=normalized_tags,
         )
 
+        # Default to "public" visibility if agent visibility is not set
+        # This ensures A2A tools are visible in the Global Tools Tab
+        tool_visibility = agent.visibility or "public"
+
         tool_read = await self.register_tool(
             db,
             tool_data,
@@ -3747,7 +3751,7 @@ class ToolService:
             created_user_agent=created_user_agent,
             team_id=agent.team_id,
             owner_email=agent.owner_email,
-            visibility=agent.visibility,
+            visibility=tool_visibility,
         )
 
         # Return the DbTool object for relationship assignment

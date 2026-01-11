@@ -87,6 +87,7 @@ dependencies = [
 # ----------------------------------------------------------------
 [dependency-groups]
 dev = [
+    "a2a-sdk[http-server]",
     "aiohttp>=3.12.15",
     "argparse-manpage>=4.7",
     "autoflake>=2.3.1",
