@@ -2054,7 +2054,7 @@
           <div class="overflow-x-auto">
             <!-- Table will be loaded via HTMX -->
             <div id="servers-table"
-                 hx-get="{{ root_path }}/admin/servers/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}"
+                 hx-get="{{ root_path }}/admin/servers/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#servers-loading">
@@ -2507,7 +2507,7 @@
                   <div
                     id="associatedGateways"
                     class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                    hx-get="{{ root_path }}/admin/gateways/partial?page=1&per_page=50&render=selector"
+                    hx-get="{{ root_path }}/admin/gateways/partial?page=1&per_page=50&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                     hx-trigger="load"
                     hx-swap="innerHTML"
                   >
@@ -2572,7 +2572,7 @@
                   <div
                     id="associatedTools"
                     class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                    hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=50&render=selector"
+                    hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=50&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                     hx-trigger="load"
                     hx-swap="innerHTML"
                     hx-on::after-swap="initToolSelect('associatedTools', 'selectedToolsPills', 'selectedToolsWarning', 6, 'selectAllToolsBtn', 'clearAllToolsBtn')"
@@ -2644,7 +2644,7 @@
                 <div
                   id="associatedResources"
                   class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                  hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector"
+                  hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                   hx-trigger="load"
                   hx-swap="innerHTML"
                   hx-on::after-swap="initResourceSelect('associatedResources', 'selectedResourcesPills', 'selectedResourcesWarning', 6, 'selectAllResourcesBtn', 'clearAllResourcesBtn')"
@@ -2704,7 +2704,7 @@
                 <div
                   id="associatedPrompts"
                   class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                  hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector"
+                  hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                   hx-trigger="load"
                   hx-swap="innerHTML"
                   hx-on::after-swap="initPromptSelect('associatedPrompts', 'selectedPromptsPills', 'selectedPromptsWarning', 6, 'selectAllPromptsBtn', 'clearAllPromptsBtn')"
@@ -2922,7 +2922,7 @@
           <div class="overflow-x-auto">
             <!-- Table will be loaded via HTMX -->
             <div id="tools-table"
-                 hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}"
+                 hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#tools-loading">
@@ -3926,7 +3926,7 @@
           <div class="overflow-x-auto">
             <!-- HTMX container: will be replaced by /admin/resources/partial -->
             <div id="resources-list-container"
-              hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}"
+              hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-trigger="load"
               hx-swap="outerHTML"
               hx-indicator="#resources-loading"
@@ -4149,7 +4149,7 @@
           <div class="overflow-x-auto">
             <!-- HTMX container: will be replaced by /admin/prompts/partial -->
             <div id="prompts-list-container"
-              hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}"
+              hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-trigger="load"
               hx-swap="outerHTML"
               hx-indicator="#prompts-loading"
@@ -4432,7 +4432,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <div class="overflow-x-auto">
             <!-- Table will be loaded via HTMX -->
             <div id="gateways-table"
-                 hx-get="{{ root_path }}/admin/gateways/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}"
+                 hx-get="{{ root_path }}/admin/gateways/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#gateways-loading">
@@ -6039,7 +6039,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             <div class="overflow-x-auto">
               <!-- Table will be loaded via HTMX -->
               <div id="agents-table"
-                   hx-get="{{ root_path }}/admin/a2a/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}"
+                   hx-get="{{ root_path }}/admin/a2a/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                    hx-trigger="load"
                    hx-swap="outerHTML"
                    hx-indicator="#agents-loading">
@@ -10255,7 +10255,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   <div
                     id="associatedEditGateways"
                     class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                    hx-get="{{ root_path }}/admin/gateways/partial?page=1&per_page=50&render=selector"
+                    hx-get="{{ root_path }}/admin/gateways/partial?page=1&per_page=50&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                     hx-trigger="load"
                     hx-swap="innerHTML"
                   >
@@ -10394,7 +10394,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       <div
                         id="edit-server-resources"
                         class="max-h-60 overflow-y-auto rounded-md border border-gray-600 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                        hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector"
+                        hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
                         hx-on::after-swap="initResourceSelect('edit-server-resources', 'selectedEditResourcesPills', 'selectedEditResourcesWarning', 6, 'selectAllEditResourcesBtn', 'clearAllEditResourcesBtn')"
@@ -10461,7 +10461,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       <div
                         id="edit-server-prompts"
                         class="max-h-60 overflow-y-auto rounded-md border border-gray-600 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                        hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector"
+                        hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
                         hx-on::after-swap="initPromptSelect('edit-server-prompts', 'selectedEditPromptsPills', 'selectedEditPromptsWarning', 6, 'selectAllEditPromptsBtn', 'clearAllEditPromptsBtn')"
@@ -10840,12 +10840,14 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       function updateTeamContext(teamId) {
         // Prevent double-invocation if user clicks rapidly
         if (window.__teamSwitchingInProgress) {
+          console.log('Team switch already in progress, ignoring');
           return;
         }
         window.__teamSwitchingInProgress = true;
 
         try {
           const url = new URL(window.location.href);
+
           if (teamId && teamId !== '') {
             url.searchParams.set('team_id', teamId);
           } else {

@@ -18,6 +18,7 @@ Examples:
 """
 
 # Standard
+import asyncio
 from datetime import timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -26,6 +27,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.cache.admin_stats_cache import admin_stats_cache
+from mcpgateway.cache.auth_cache import auth_cache
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailTeamMemberHistory, EmailUser, utc_now
 from mcpgateway.services.logging_service import LoggingService
@@ -221,6 +224,16 @@ class TeamManagementService:
             # Invalidate member count cache for the new team
             await self.invalidate_team_member_count_cache(str(team.id))
 
+            # Invalidate auth cache for creator's team membership
+            # Without this, the cache won't know the user belongs to this new team
+            try:
+                await auth_cache.invalidate_user_teams(created_by)
+                await auth_cache.invalidate_team_membership(created_by)
+                await auth_cache.invalidate_user_role(created_by, str(team.id))
+                await admin_stats_cache.invalidate_teams()
+            except Exception as cache_error:
+                logger.debug(f"Failed to invalidate cache on team create: {cache_error}")
+
             logger.info(f"Created team '{team.name}' by {created_by}")
             return team
 
@@ -395,13 +408,6 @@ class TeamManagementService:
 
             # Invalidate all role caches for this team
             try:
-                # Standard
-                import asyncio  # pylint: disable=import-outside-toplevel
-
-                # First-Party
-                from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
-                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
-
                 asyncio.create_task(auth_cache.invalidate_team_roles(team_id))
                 asyncio.create_task(admin_stats_cache.invalidate_teams())
                 # Also invalidate team cache, teams list cache, and team membership cache for each member
@@ -493,13 +499,6 @@ class TeamManagementService:
 
             # Invalidate auth cache for user's team membership and role
             try:
-                # Standard
-                import asyncio  # pylint: disable=import-outside-toplevel
-
-                # First-Party
-                from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
-                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
-
                 asyncio.create_task(auth_cache.invalidate_team(user_email))
                 asyncio.create_task(auth_cache.invalidate_user_role(user_email, team_id))
                 asyncio.create_task(auth_cache.invalidate_user_teams(user_email))
@@ -570,12 +569,6 @@ class TeamManagementService:
 
             # Invalidate auth cache for user's team membership and role
             try:
-                # Standard
-                import asyncio  # pylint: disable=import-outside-toplevel
-
-                # First-Party
-                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
-
                 asyncio.create_task(auth_cache.invalidate_team(user_email))
                 asyncio.create_task(auth_cache.invalidate_user_role(user_email, team_id))
                 asyncio.create_task(auth_cache.invalidate_user_teams(user_email))
@@ -651,12 +644,6 @@ class TeamManagementService:
 
             # Invalidate role cache
             try:
-                # Standard
-                import asyncio  # pylint: disable=import-outside-toplevel
-
-                # First-Party
-                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
-
                 asyncio.create_task(auth_cache.invalidate_user_role(user_email, team_id))
             except Exception as cache_error:
                 logger.debug(f"Failed to invalidate cache on role update: {cache_error}")
@@ -1078,13 +1065,6 @@ class TeamManagementService:
 
             # Invalidate auth cache for user's team membership and role
             try:
-                # Standard
-                import asyncio  # pylint: disable=import-outside-toplevel
-
-                # First-Party
-                from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
-                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
-
                 asyncio.create_task(auth_cache.invalidate_team(join_request.user_email))
                 asyncio.create_task(auth_cache.invalidate_user_role(join_request.user_email, join_request.team_id))
                 asyncio.create_task(auth_cache.invalidate_user_teams(join_request.user_email))
