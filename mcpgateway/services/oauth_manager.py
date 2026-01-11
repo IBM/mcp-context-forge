@@ -254,7 +254,7 @@ class OAuthManager:
         for attempt in range(self.max_retries):
             try:
                 client = await self._get_client()
-                response = await client.post(token_url, data=token_data)
+                response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
                 response.raise_for_status()
 
                 # GitHub returns form-encoded responses, not JSON
@@ -353,7 +353,7 @@ class OAuthManager:
         for attempt in range(self.max_retries):
             try:
                 client = await self._get_client()
-                response = await client.post(token_url, data=token_data)
+                response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
                 response.raise_for_status()
 
                 # Handle both JSON and form-encoded responses
@@ -464,7 +464,7 @@ class OAuthManager:
         for attempt in range(self.max_retries):
             try:
                 client = await self._get_client()
-                response = await client.post(token_url, data=token_data)
+                response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
                 response.raise_for_status()
 
                 # GitHub returns form-encoded responses, not JSON
@@ -1044,7 +1044,7 @@ class OAuthManager:
         for attempt in range(self.max_retries):
             try:
                 client = await self._get_client()
-                response = await client.post(token_url, data=token_data)
+                response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
                 response.raise_for_status()
 
                 # GitHub returns form-encoded responses, not JSON
@@ -1123,7 +1123,7 @@ class OAuthManager:
         for attempt in range(self.max_retries):
             try:
                 client = await self._get_client()
-                response = await client.post(token_url, data=token_data)
+                response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
                 if response.status_code == 200:
                     token_response = response.json()
 

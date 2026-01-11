@@ -50,6 +50,14 @@ class DcrService:
         """
         return await get_http_client()
 
+    def _get_timeout(self) -> float:
+        """Get the OAuth request timeout from settings.
+
+        Returns:
+            Timeout in seconds for OAuth/DCR requests
+        """
+        return float(self.settings.oauth_request_timeout)
+
     async def discover_as_metadata(self, issuer: str) -> Dict[str, Any]:
         """Discover AS metadata via RFC 8414.
 
@@ -81,7 +89,7 @@ class DcrService:
 
         try:
             client = await self._get_client()
-            response = await client.get(rfc8414_url)
+            response = await client.get(rfc8414_url, timeout=self._get_timeout())
             if response.status_code == 200:
                 metadata = response.json()
 
@@ -102,7 +110,7 @@ class DcrService:
 
         try:
             client = await self._get_client()
-            response = await client.get(oidc_url)
+            response = await client.get(oidc_url, timeout=self._get_timeout())
             if response.status_code == 200:
                 metadata = response.json()
 
@@ -164,7 +172,7 @@ class DcrService:
         # Send registration request
         try:
             client = await self._get_client()
-            response = await client.post(registration_endpoint, json=registration_request)
+            response = await client.post(registration_endpoint, json=registration_request, timeout=self._get_timeout())
             # Accept both 200 OK and 201 Created (some servers don't follow RFC 7591 strictly)
             if response.status_code in (200, 201):
                 registration_response = response.json()
@@ -279,7 +287,7 @@ class DcrService:
         try:
             client = await self._get_client()
             headers = {"Authorization": f"Bearer {registration_access_token}"}
-            response = await client.put(client_record.registration_client_uri, json=update_request, headers=headers)
+            response = await client.put(client_record.registration_client_uri, json=update_request, headers=headers, timeout=self._get_timeout())
             if response.status_code == 200:
                 updated_response = response.json()
 
@@ -327,7 +335,7 @@ class DcrService:
         try:
             client = await self._get_client()
             headers = {"Authorization": f"Bearer {registration_access_token}"}
-            response = await client.delete(client_record.registration_client_uri, headers=headers)
+            response = await client.delete(client_record.registration_client_uri, headers=headers, timeout=self._get_timeout())
             if response.status_code in [204, 404]:  # 204 = deleted, 404 = already gone
                 logger.info(f"Successfully deleted client registration for {client_record.client_id}")
                 return True
