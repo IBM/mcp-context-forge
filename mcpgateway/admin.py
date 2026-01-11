@@ -48,7 +48,7 @@ import httpx
 import orjson
 from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
-from sqlalchemy import and_, bindparam, case, cast, desc, func, or_, select, String, text
+from sqlalchemy import and_, bindparam, case, cast, desc, false, func, or_, select, String, text
 from sqlalchemy.exc import IntegrityError, InvalidRequestError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session
 from sqlalchemy.sql.functions import coalesce
@@ -1481,6 +1481,7 @@ async def admin_servers_partial_html(
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -1499,6 +1500,7 @@ async def admin_servers_partial_html(
         per_page (int): Number of items per page (bounded by settings).
         include_inactive (bool): If True, include inactive servers in results.
         render (Optional[str]): Render mode; one of None, "controls", "selector".
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
@@ -1508,7 +1510,7 @@ async def admin_servers_partial_html(
         items depending on ``render``. The response contains JSON-serializable
         encoded server data when templates expect it.
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested servers HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render})")
+    LOGGER.debug(f"User {get_user_email(user)} requested servers HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render}, team_id={team_id})")
 
     # Normalize per_page within configured bounds
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
@@ -1532,13 +1534,31 @@ async def admin_servers_partial_html(
     if not include_inactive:
         query = query.where(DbServer.enabled.is_(True))
 
-    # Access conditions: owner, team, public
-    access_conditions = [DbServer.owner_email == user_email]
-    if team_ids:
-        access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
-    access_conditions.append(DbServer.visibility == "public")
-
-    query = query.where(or_(*access_conditions))
+    # Build access conditions
+    # When team_id is specified, show ONLY items from that team (team-scoped view)
+    # Otherwise, show all accessible items (All Teams view)
+    if team_id:
+        # Team-specific view: only show servers from the specified team
+        if team_id in team_ids:
+            # Apply visibility check: team/public resources + user's own resources (including private)
+            team_access = [
+                and_(DbServer.team_id == team_id, DbServer.visibility.in_(["team", "public"])),
+                and_(DbServer.team_id == team_id, DbServer.owner_email == user_email),
+            ]
+            query = query.where(or_(*team_access))
+            LOGGER.debug(f"Filtering servers by team_id: {team_id}")
+        else:
+            # User is not a member of this team, return no results using SQLAlchemy's false()
+            LOGGER.warning(f"User {user_email} attempted to filter by team {team_id} but is not a member")
+            query = query.where(false())
+    else:
+        # All Teams view: apply standard access conditions (owner, team, public)
+        access_conditions = []
+        access_conditions.append(DbServer.owner_email == user_email)
+        if team_ids:
+            access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
+        access_conditions.append(DbServer.visibility == "public")
+        query = query.where(or_(*access_conditions))
 
     # Apply pagination ordering for cursor support
     query = query.order_by(desc(DbServer.created_at), desc(DbServer.id))
@@ -1547,6 +1567,8 @@ async def admin_servers_partial_html(
     query_params = {}
     if include_inactive:
         query_params["include_inactive"] = "true"
+    if team_id:
+        query_params["team_id"] = team_id
 
     # Use unified pagination function
     paginated_result = await paginate_query(
@@ -2777,7 +2799,7 @@ async def admin_toggle_gateway(
 @admin_router.get("/", name="admin_home", response_class=HTMLResponse)
 async def admin_ui(
     request: Request,
-    team_id: Optional[str] = Query(None),
+    team_id: Optional[str] = Query(default=None),
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -2943,14 +2965,14 @@ async def admin_ui(
                 user_teams = []
                 for team in raw_teams:
                     try:
-                        team_id = str(team.id) if team.id else ""
+                        current_team_id = str(team.id) if team.id else ""
                         team_dict = {
-                            "id": team_id,
+                            "id": current_team_id,
                             "name": str(team.name) if team.name else "",
                             "type": str(getattr(team, "type", "organization")),
                             "is_personal": bool(getattr(team, "is_personal", False)),
-                            "member_count": member_counts.get(team_id, 0),
-                            "role": user_roles.get(team_id) or "member",
+                            "member_count": member_counts.get(current_team_id, 0),
+                            "role": user_roles.get(current_team_id) or "member",
                         }
                         user_teams.append(team_dict)
                     except Exception as team_error:
@@ -2966,6 +2988,7 @@ async def admin_ui(
     # Optionally you can raise HTTPException(403) if you prefer strict rejection.
     # --------------------------------------------------------------------------------
     selected_team_id = team_id
+    user_email = get_user_email(user)
     if team_id and getattr(settings, "email_auth_enabled", False):
         # If team list failed to load for some reason, be conservative and drop selection
         if not user_teams:
@@ -6240,6 +6263,7 @@ async def admin_tools_partial_html(
     include_inactive: bool = False,
     render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -6255,6 +6279,7 @@ async def admin_tools_partial_html(
         per_page (int): Items per page (1-500). Default: 50.
         include_inactive (bool): Whether to include inactive tools in the results.
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
+        team_id (Optional[str]): Filter by team ID.
         render (str): Render mode - 'controls' returns only pagination controls.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -6262,9 +6287,8 @@ async def admin_tools_partial_html(
     Returns:
         HTMLResponse with tools table rows and pagination controls.
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested tools HTML partial (page={page}, per_page={per_page}, render={render}, gateway_id={gateway_id})")
-
     user_email = get_user_email(user)
+    LOGGER.info(f"🔧 TOOLS PARTIAL REQUEST - User: {user_email}, team_id: {team_id}, page: {page}, render: {render}, referer: {request.headers.get('referer', 'none')}")
 
     # Build base query using tool_service's team filtering logic
     team_service = TeamManagementService(db)
@@ -6296,20 +6320,38 @@ async def admin_tools_partial_html(
     if not include_inactive:
         query = query.where(DbTool.enabled.is_(True))
 
-    # Build access conditions (same logic as tool_service.list_tools with user_email)
-    access_conditions = []
+    # Build access conditions
+    # When team_id is specified, show ONLY items from that team (simpler, team-scoped view)
+    # When team_id is NOT specified, show all accessible items (owned + team + public)
+    if team_id:
+        # Team-specific view: only show tools from the specified team if user is a member
+        if team_id in team_ids:
+            # Apply visibility check: team/public resources + user's own resources (including private)
+            team_access = [
+                and_(DbTool.team_id == team_id, DbTool.visibility.in_(["team", "public"])),
+                and_(DbTool.team_id == team_id, DbTool.owner_email == user_email),
+            ]
+            query = query.where(or_(*team_access))
+            LOGGER.debug(f"Filtering tools by team_id: {team_id}")
+        else:
+            # User is not a member of this team, return no results
+            LOGGER.warning(f"User {user_email} attempted to filter by team {team_id} but is not a member")
+            query = query.where(false())
+    else:
+        # All Teams view: apply standard access conditions
+        access_conditions = []
 
-    # 1. User's personal tools (owner_email matches)
-    access_conditions.append(DbTool.owner_email == user_email)
+        # 1. User's personal tools (owner_email matches)
+        access_conditions.append(DbTool.owner_email == user_email)
 
-    # 2. Team tools where user is member
-    if team_ids:
-        access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
+        # 2. Team tools where user is member
+        if team_ids:
+            access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
 
-    # 3. Public tools
-    access_conditions.append(DbTool.visibility == "public")
+        # 3. Public tools
+        access_conditions.append(DbTool.visibility == "public")
 
-    query = query.where(or_(*access_conditions))
+        query = query.where(or_(*access_conditions))
 
     # Apply sorting: alphabetical by URL, then name, then ID (for UI display)
     # Different from JSON endpoint which uses created_at DESC
@@ -6322,6 +6364,8 @@ async def admin_tools_partial_html(
         query_params_dict["include_inactive"] = "true"
     if gateway_id:
         query_params_dict["gateway_id"] = gateway_id
+    if team_id:
+        query_params_dict["team_id"] = team_id
 
     paginated_result = await paginate_query(
         db=db,
@@ -6396,6 +6440,7 @@ async def admin_tools_partial_html(
 async def admin_get_all_tool_ids(
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -6407,6 +6452,7 @@ async def admin_get_all_tool_ids(
     Args:
         include_inactive (bool): Whether to include inactive tools in the results
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated. Accepts the literal value 'null' to indicate NULL gateway_id (local tools).
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session dependency
         user: Current user making the request
 
@@ -6443,11 +6489,28 @@ async def admin_get_all_tool_ids(
                 LOGGER.debug(f"Filtering tools by gateway IDs: {non_null_ids}")
 
     # Build access conditions
-    access_conditions = [DbTool.owner_email == user_email, DbTool.visibility == "public"]
-    if team_ids:
-        access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
-
-    query = query.where(or_(*access_conditions))
+    # When team_id is specified, show ONLY items from that team (team-scoped view)
+    # Otherwise, show all accessible items (All Teams view)
+    if team_id:
+        if team_id in team_ids:
+            # Apply visibility check: team/public resources + user's own resources (including private)
+            team_access = [
+                and_(DbTool.team_id == team_id, DbTool.visibility.in_(["team", "public"])),
+                and_(DbTool.team_id == team_id, DbTool.owner_email == user_email),
+            ]
+            query = query.where(or_(*team_access))
+            LOGGER.debug(f"Filtering tool IDs by team_id: {team_id}")
+        else:
+            LOGGER.warning(f"User {user_email} attempted to filter tool IDs by team {team_id} but is not a member")
+            query = query.where(false())
+    else:
+        # All Teams view: apply standard access conditions (owner, team, public)
+        access_conditions = []
+        access_conditions.append(DbTool.owner_email == user_email)
+        access_conditions.append(DbTool.visibility == "public")
+        if team_ids:
+            access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
+        query = query.where(or_(*access_conditions))
 
     # Get all IDs
     tool_ids = [row[0] for row in db.execute(query).all()]
@@ -6461,6 +6524,7 @@ async def admin_search_tools(
     include_inactive: bool = False,
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of results to return"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -6475,6 +6539,7 @@ async def admin_search_tools(
         include_inactive (bool): Whether to include inactive tools in the search results
         limit (int): Maximum number of results to return (1-1000)
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated
+        team_id (Optional[str]): Filter by team ID
         db (Session): Database session dependency
         user: Current user making the request
 
@@ -6517,11 +6582,28 @@ async def admin_search_tools(
         query = query.where(DbTool.enabled.is_(True))
 
     # Build access conditions
-    access_conditions = [DbTool.owner_email == user_email, DbTool.visibility == "public"]
-    if team_ids:
-        access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
-
-    query = query.where(or_(*access_conditions))
+    # When team_id is specified, show ONLY items from that team (team-scoped view)
+    # Otherwise, show all accessible items (All Teams view)
+    if team_id:
+        if team_id in team_ids:
+            # Apply visibility check: team/public resources + user's own resources (including private)
+            team_access = [
+                and_(DbTool.team_id == team_id, DbTool.visibility.in_(["team", "public"])),
+                and_(DbTool.team_id == team_id, DbTool.owner_email == user_email),
+            ]
+            query = query.where(or_(*team_access))
+            LOGGER.debug(f"Filtering tool search by team_id: {team_id}")
+        else:
+            LOGGER.warning(f"User {user_email} attempted to filter tool search by team {team_id} but is not a member")
+            query = query.where(false())
+    else:
+        # All Teams view: apply standard access conditions (owner, team, public)
+        access_conditions = []
+        access_conditions.append(DbTool.owner_email == user_email)
+        access_conditions.append(DbTool.visibility == "public")
+        if team_ids:
+            access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
+        query = query.where(or_(*access_conditions))
 
     # Add search conditions - search in display fields and description
     # Using the same priority as display: displayName -> customName -> original_name
@@ -6564,6 +6646,7 @@ async def admin_prompts_partial_html(
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -6583,6 +6666,7 @@ async def admin_prompts_partial_html(
         include_inactive (bool): If True, include inactive prompts in results.
         render (Optional[str]): Render mode; one of None, "controls", "selector".
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
@@ -6592,7 +6676,9 @@ async def admin_prompts_partial_html(
         items depending on ``render``. The response contains JSON-serializable
         encoded prompt data when templates expect it.
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested prompts HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render}, gateway_id={gateway_id})")
+    LOGGER.debug(
+        f"User {get_user_email(user)} requested prompts HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render}, gateway_id={gateway_id}, team_id={team_id})"
+    )
     # Normalize per_page within configured bounds
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
 
@@ -6625,13 +6711,31 @@ async def admin_prompts_partial_html(
     if not include_inactive:
         query = query.where(DbPrompt.enabled.is_(True))
 
-    # Access conditions: owner, team, public
-    access_conditions = [DbPrompt.owner_email == user_email]
-    if team_ids:
-        access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
-    access_conditions.append(DbPrompt.visibility == "public")
-
-    query = query.where(or_(*access_conditions))
+    # Build access conditions
+    # When team_id is specified, show ONLY items from that team (team-scoped view)
+    # Otherwise, show all accessible items (All Teams view)
+    if team_id:
+        # Team-specific view: only show prompts from the specified team
+        if team_id in team_ids:
+            # Apply visibility check: team/public resources + user's own resources (including private)
+            team_access = [
+                and_(DbPrompt.team_id == team_id, DbPrompt.visibility.in_(["team", "public"])),
+                and_(DbPrompt.team_id == team_id, DbPrompt.owner_email == user_email),
+            ]
+            query = query.where(or_(*team_access))
+            LOGGER.debug(f"Filtering prompts by team_id: {team_id}")
+        else:
+            # User is not a member of this team, return no results using SQLAlchemy's false()
+            LOGGER.warning(f"User {user_email} attempted to filter by team {team_id} but is not a member")
+            query = query.where(false())
+    else:
+        # All Teams view: apply standard access conditions (owner, team, public)
+        access_conditions = []
+        access_conditions.append(DbPrompt.owner_email == user_email)
+        if team_ids:
+            access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
+        access_conditions.append(DbPrompt.visibility == "public")
+        query = query.where(or_(*access_conditions))
 
     # Apply pagination ordering for cursor support
     query = query.order_by(desc(DbPrompt.created_at), desc(DbPrompt.id))
@@ -6642,6 +6746,8 @@ async def admin_prompts_partial_html(
         query_params["include_inactive"] = "true"
     if gateway_id:
         query_params["gateway_id"] = gateway_id
+    if team_id:
+        query_params["team_id"] = team_id
 
     # Use unified pagination function
     paginated_result = await paginate_query(
@@ -6727,6 +6833,7 @@ async def admin_gateways_partial_html(
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -6745,6 +6852,7 @@ async def admin_gateways_partial_html(
         per_page (int): Number of items per page (bounded by settings).
         include_inactive (bool): If True, include inactive gateways in results.
         render (Optional[str]): Render mode; one of None, "controls", "selector".
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
@@ -6754,11 +6862,10 @@ async def admin_gateways_partial_html(
         items depending on ``render``. The response contains JSON-serializable
         encoded gateway data when templates expect it.
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested gateways HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render})")
+    user_email = get_user_email(user)
+    LOGGER.info(f"🔷 GATEWAYS PARTIAL REQUEST - User: {user_email}, team_id: {team_id}, page: {page}, render: {render}, referer: {request.headers.get('referer', 'none')}")
     # Normalize per_page within configured bounds
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
-
-    user_email = get_user_email(user)
 
     # Team scoping
     team_service = TeamManagementService(db)
@@ -6771,13 +6878,32 @@ async def admin_gateways_partial_html(
     if not include_inactive:
         query = query.where(DbGateway.enabled.is_(True))
 
-    # Access conditions: owner, team, public
-    access_conditions = [DbGateway.owner_email == user_email]
-    if team_ids:
-        access_conditions.append(and_(DbGateway.team_id.in_(team_ids), DbGateway.visibility.in_(["team", "public"])))
-    access_conditions.append(DbGateway.visibility == "public")
+    # Build access conditions
+    # When team_id is specified, show ONLY items from that team (simpler, team-scoped view)
+    # When team_id is NOT specified, show all accessible items (owned + team + public)
+    if team_id:
+        # Team-specific view: only show gateways from the specified team if user is a member
+        if team_id in team_ids:
+            # Apply visibility check: team/public resources + user's own resources (including private)
+            team_access = [
+                and_(DbGateway.team_id == team_id, DbGateway.visibility.in_(["team", "public"])),
+                and_(DbGateway.team_id == team_id, DbGateway.owner_email == user_email),
+            ]
+            query = query.where(or_(*team_access))
+            LOGGER.debug(f"Filtering gateways by team_id: {team_id}")
+        else:
+            # User is not a member of this team, return no results
+            LOGGER.warning(f"User {user_email} attempted to filter by team {team_id} but is not a member")
+            query = query.where(false())
+    else:
+        # All Teams view: apply standard access conditions
+        access_conditions = []
+        access_conditions.append(DbGateway.owner_email == user_email)
+        if team_ids:
+            access_conditions.append(and_(DbGateway.team_id.in_(team_ids), DbGateway.visibility.in_(["team", "public"])))
+        access_conditions.append(DbGateway.visibility == "public")
 
-    query = query.where(or_(*access_conditions))
+        query = query.where(or_(*access_conditions))
 
     # Apply pagination ordering for cursor support
     query = query.order_by(desc(DbGateway.created_at), desc(DbGateway.id))
@@ -6786,6 +6912,8 @@ async def admin_gateways_partial_html(
     query_params = {}
     if include_inactive:
         query_params["include_inactive"] = "true"
+    if team_id:
+        query_params["team_id"] = team_id
 
     # Use unified pagination function
     paginated_result = await paginate_query(
@@ -6825,6 +6953,8 @@ async def admin_gateways_partial_html(
     # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
     db.commit()
 
+    LOGGER.info(f"🔷 GATEWAYS PARTIAL RESPONSE - Returning {len(data)} gateways, render mode: {render or 'default'}, team_id used in query: {team_id}")
+
     if render == "controls":
         return request.app.state.templates.TemplateResponse(
             "pagination_controls.html",
@@ -6861,6 +6991,7 @@ async def admin_gateways_partial_html(
 @admin_router.get("/gateways/ids", response_class=JSONResponse)
 async def admin_get_all_gateways_ids(
     include_inactive: bool = False,
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -6871,6 +7002,7 @@ async def admin_get_all_gateways_ids(
 
     Args:
         include_inactive (bool): When True include prompts that are inactive.
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -6889,11 +7021,30 @@ async def admin_get_all_gateways_ids(
     if not include_inactive:
         query = query.where(DbGateway.enabled.is_(True))
 
-    access_conditions = [DbGateway.owner_email == user_email, DbGateway.visibility == "public"]
-    if team_ids:
-        access_conditions.append(and_(DbGateway.team_id.in_(team_ids), DbGateway.visibility.in_(["team", "public"])))
+    # Build access conditions
+    # When team_id is specified, show ONLY items from that team (team-scoped view)
+    # Otherwise, show all accessible items (All Teams view)
+    if team_id:
+        if team_id in team_ids:
+            # Apply visibility check: team/public resources + user's own resources (including private)
+            team_access = [
+                and_(DbGateway.team_id == team_id, DbGateway.visibility.in_(["team", "public"])),
+                and_(DbGateway.team_id == team_id, DbGateway.owner_email == user_email),
+            ]
+            query = query.where(or_(*team_access))
+            LOGGER.debug(f"Filtering gateway IDs by team_id: {team_id}")
+        else:
+            LOGGER.warning(f"User {user_email} attempted to filter gateway IDs by team {team_id} but is not a member")
+            query = query.where(false())
+    else:
+        # All Teams view: apply standard access conditions (owner, team, public)
+        access_conditions = []
+        access_conditions.append(DbGateway.owner_email == user_email)
+        access_conditions.append(DbGateway.visibility == "public")
+        if team_ids:
+            access_conditions.append(and_(DbGateway.team_id.in_(team_ids), DbGateway.visibility.in_(["team", "public"])))
+        query = query.where(or_(*access_conditions))
 
-    query = query.where(or_(*access_conditions))
     gateway_ids = [row[0] for row in db.execute(query).all()]
     return {"gateway_ids": gateway_ids, "count": len(gateway_ids)}
 
@@ -6903,6 +7054,7 @@ async def admin_search_gateways(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
     limit: int = Query(100, ge=1, le=1000),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -6916,6 +7068,7 @@ async def admin_search_gateways(
         q (str): Search query string.
         include_inactive (bool): When True include gateways that are inactive.
         limit (int): Maximum number of results to return (bounded by the query parameter).
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -6938,11 +7091,29 @@ async def admin_search_gateways(
     if not include_inactive:
         query = query.where(DbGateway.enabled.is_(True))
 
-    access_conditions = [DbGateway.owner_email == user_email, DbGateway.visibility == "public"]
-    if team_ids:
-        access_conditions.append(and_(DbGateway.team_id.in_(team_ids), DbGateway.visibility.in_(["team", "public"])))
-
-    query = query.where(or_(*access_conditions))
+    # Build access conditions
+    # When team_id is specified, show ONLY items from that team (team-scoped view)
+    # Otherwise, show all accessible items (All Teams view)
+    if team_id:
+        if team_id in team_ids:
+            # Apply visibility check: team/public resources + user's own resources (including private)
+            team_access = [
+                and_(DbGateway.team_id == team_id, DbGateway.visibility.in_(["team", "public"])),
+                and_(DbGateway.team_id == team_id, DbGateway.owner_email == user_email),
+            ]
+            query = query.where(or_(*team_access))
+            LOGGER.debug(f"Filtering gateway search by team_id: {team_id}")
+        else:
+            LOGGER.warning(f"User {user_email} attempted to filter gateway search by team {team_id} but is not a member")
+            query = query.where(false())
+    else:
+        # All Teams view: apply standard access conditions (owner, team, public)
+        access_conditions = []
+        access_conditions.append(DbGateway.owner_email == user_email)
+        access_conditions.append(DbGateway.visibility == "public")
+        if team_ids:
+            access_conditions.append(and_(DbGateway.team_id.in_(team_ids), DbGateway.visibility.in_(["team", "public"])))
+        query = query.where(or_(*access_conditions))
 
     search_conditions = [
         func.lower(DbGateway.name).contains(search_query),
@@ -6978,6 +7149,7 @@ async def admin_search_gateways(
 @admin_router.get("/servers/ids", response_class=JSONResponse)
 async def admin_get_all_server_ids(
     include_inactive: bool = False,
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -6988,6 +7160,7 @@ async def admin_get_all_server_ids(
 
     Args:
         include_inactive (bool): When True include servers that are inactive.
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -7006,11 +7179,32 @@ async def admin_get_all_server_ids(
     if not include_inactive:
         query = query.where(DbServer.enabled.is_(True))
 
-    access_conditions = [DbServer.owner_email == user_email, DbServer.visibility == "public"]
-    if team_ids:
-        access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
+    # Build access conditions
+    # When team_id is specified, show ONLY items from that team (team-scoped view)
+    # Otherwise, show all accessible items (All Teams view)
+    if team_id:
+        # Team-specific view: only show servers from the specified team
+        if team_id in team_ids:
+            # Apply visibility check: team/public resources + user's own resources (including private)
+            team_access = [
+                and_(DbServer.team_id == team_id, DbServer.visibility.in_(["team", "public"])),
+                and_(DbServer.team_id == team_id, DbServer.owner_email == user_email),
+            ]
+            query = query.where(or_(*team_access))
+            LOGGER.debug(f"Filtering server IDs by team_id: {team_id}")
+        else:
+            # User is not a member of this team, return no results using SQLAlchemy's false()
+            LOGGER.warning(f"User {user_email} attempted to filter server IDs by team {team_id} but is not a member")
+            query = query.where(false())
+    else:
+        # All Teams view: apply standard access conditions (owner, team, public)
+        access_conditions = []
+        access_conditions.append(DbServer.owner_email == user_email)
+        if team_ids:
+            access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
+        access_conditions.append(DbServer.visibility == "public")
+        query = query.where(or_(*access_conditions))
 
-    query = query.where(or_(*access_conditions))
     server_ids = [row[0] for row in db.execute(query).all()]
     return {"server_ids": server_ids, "count": len(server_ids)}
 
@@ -7020,6 +7214,7 @@ async def admin_search_servers(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
     limit: int = Query(100, ge=1, le=1000),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7033,6 +7228,7 @@ async def admin_search_servers(
         q (str): Search query string.
         include_inactive (bool): When True include servers that are inactive.
         limit (int): Maximum number of results to return (bounded by the query parameter).
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -7055,11 +7251,31 @@ async def admin_search_servers(
     if not include_inactive:
         query = query.where(DbServer.enabled.is_(True))
 
-    access_conditions = [DbServer.owner_email == user_email, DbServer.visibility == "public"]
-    if team_ids:
-        access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
-
-    query = query.where(or_(*access_conditions))
+    # Build access conditions
+    # When team_id is specified, show ONLY items from that team (team-scoped view)
+    # Otherwise, show all accessible items (All Teams view)
+    if team_id:
+        # Team-specific view: only show servers from the specified team
+        if team_id in team_ids:
+            # Apply visibility check: team/public resources + user's own resources (including private)
+            team_access = [
+                and_(DbServer.team_id == team_id, DbServer.visibility.in_(["team", "public"])),
+                and_(DbServer.team_id == team_id, DbServer.owner_email == user_email),
+            ]
+            query = query.where(or_(*team_access))
+            LOGGER.debug(f"Filtering server search by team_id: {team_id}")
+        else:
+            # User is not a member of this team, return no results using SQLAlchemy's false()
+            LOGGER.warning(f"User {user_email} attempted to filter server search by team {team_id} but is not a member")
+            query = query.where(false())
+    else:
+        # All Teams view: apply standard access conditions (owner, team, public)
+        access_conditions = []
+        access_conditions.append(DbServer.owner_email == user_email)
+        if team_ids:
+            access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
+        access_conditions.append(DbServer.visibility == "public")
+        query = query.where(or_(*access_conditions))
 
     search_conditions = [
         func.lower(DbServer.name).contains(search_query),
@@ -7097,6 +7313,7 @@ async def admin_resources_partial_html(
     include_inactive: bool = False,
     render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7115,6 +7332,7 @@ async def admin_resources_partial_html(
             pagination controls. Other supported value: "selector" for selector
             items used by infinite scroll selectors.
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
@@ -7124,7 +7342,9 @@ async def admin_resources_partial_html(
         items depending on the ``render`` parameter.
     """
 
-    LOGGER.debug(f"[RESOURCES FILTER DEBUG] User {get_user_email(user)} requested resources HTML partial (page={page}, per_page={per_page}, render={render}, gateway_id={gateway_id})")
+    LOGGER.debug(
+        f"[RESOURCES FILTER DEBUG] User {get_user_email(user)} requested resources HTML partial (page={page}, per_page={per_page}, render={render}, gateway_id={gateway_id}, team_id={team_id})"
+    )
 
     # Normalize per_page
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
@@ -7161,13 +7381,31 @@ async def admin_resources_partial_html(
     if not include_inactive:
         query = query.where(DbResource.enabled.is_(True))
 
-    # Access conditions: owner, team, public
-    access_conditions = [DbResource.owner_email == user_email]
-    if team_ids:
-        access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
-    access_conditions.append(DbResource.visibility == "public")
-
-    query = query.where(or_(*access_conditions))
+    # Build access conditions
+    # When team_id is specified, show ONLY items from that team (team-scoped view)
+    # Otherwise, show all accessible items (All Teams view)
+    if team_id:
+        # Team-specific view: only show resources from the specified team
+        if team_id in team_ids:
+            # Apply visibility check: team/public resources + user's own resources (including private)
+            team_access = [
+                and_(DbResource.team_id == team_id, DbResource.visibility.in_(["team", "public"])),
+                and_(DbResource.team_id == team_id, DbResource.owner_email == user_email),
+            ]
+            query = query.where(or_(*team_access))
+            LOGGER.debug(f"Filtering resources by team_id: {team_id}")
+        else:
+            # User is not a member of this team, return no results using SQLAlchemy's false()
+            LOGGER.warning(f"User {user_email} attempted to filter by team {team_id} but is not a member")
+            query = query.where(false())
+    else:
+        # All Teams view: apply standard access conditions (owner, team, public)
+        access_conditions = []
+        access_conditions.append(DbResource.owner_email == user_email)
+        if team_ids:
+            access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
+        access_conditions.append(DbResource.visibility == "public")
+        query = query.where(or_(*access_conditions))
 
     # Add sorting for consistent pagination
     query = query.order_by(desc(DbResource.created_at), desc(DbResource.id))
@@ -7178,6 +7416,8 @@ async def admin_resources_partial_html(
         query_params["include_inactive"] = "true"
     if gateway_id:
         query_params["gateway_id"] = gateway_id
+    if team_id:
+        query_params["team_id"] = team_id
 
     # Use unified pagination function
     paginated_result = await paginate_query(
@@ -7258,6 +7498,7 @@ async def admin_resources_partial_html(
 async def admin_get_all_prompt_ids(
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7269,6 +7510,7 @@ async def admin_get_all_prompt_ids(
     Args:
         include_inactive (bool): When True include prompts that are inactive.
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated. Accepts the literal value 'null' to indicate NULL gateway_id (local prompts).
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -7303,11 +7545,32 @@ async def admin_get_all_prompt_ids(
     if not include_inactive:
         query = query.where(DbPrompt.enabled.is_(True))
 
-    access_conditions = [DbPrompt.owner_email == user_email, DbPrompt.visibility == "public"]
-    if team_ids:
-        access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
+    # Build access conditions
+    # When team_id is specified, show ONLY items from that team (team-scoped view)
+    # Otherwise, show all accessible items (All Teams view)
+    if team_id:
+        # Team-specific view: only show prompts from the specified team
+        if team_id in team_ids:
+            # Apply visibility check: team/public resources + user's own resources (including private)
+            team_access = [
+                and_(DbPrompt.team_id == team_id, DbPrompt.visibility.in_(["team", "public"])),
+                and_(DbPrompt.team_id == team_id, DbPrompt.owner_email == user_email),
+            ]
+            query = query.where(or_(*team_access))
+            LOGGER.debug(f"Filtering prompt IDs by team_id: {team_id}")
+        else:
+            # User is not a member of this team, return no results using SQLAlchemy's false()
+            LOGGER.warning(f"User {user_email} attempted to filter prompt IDs by team {team_id} but is not a member")
+            query = query.where(false())
+    else:
+        # All Teams view: apply standard access conditions (owner, team, public)
+        access_conditions = []
+        access_conditions.append(DbPrompt.owner_email == user_email)
+        if team_ids:
+            access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
+        access_conditions.append(DbPrompt.visibility == "public")
+        query = query.where(or_(*access_conditions))
 
-    query = query.where(or_(*access_conditions))
     prompt_ids = [row[0] for row in db.execute(query).all()]
     return {"prompt_ids": prompt_ids, "count": len(prompt_ids)}
 
@@ -7316,6 +7579,7 @@ async def admin_get_all_prompt_ids(
 async def admin_get_all_resource_ids(
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7327,6 +7591,7 @@ async def admin_get_all_resource_ids(
     Args:
         include_inactive (bool): Whether to include inactive resources in the results.
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated. Accepts the literal value 'null' to indicate NULL gateway_id (local resources).
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session dependency.
         user: Authenticated user object from dependency injection.
 
@@ -7361,11 +7626,32 @@ async def admin_get_all_resource_ids(
     if not include_inactive:
         query = query.where(DbResource.enabled.is_(True))
 
-    access_conditions = [DbResource.owner_email == user_email, DbResource.visibility == "public"]
-    if team_ids:
-        access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
+    # Build access conditions
+    # When team_id is specified, show ONLY items from that team (team-scoped view)
+    # Otherwise, show all accessible items (All Teams view)
+    if team_id:
+        # Team-specific view: only show resources from the specified team
+        if team_id in team_ids:
+            # Apply visibility check: team/public resources + user's own resources (including private)
+            team_access = [
+                and_(DbResource.team_id == team_id, DbResource.visibility.in_(["team", "public"])),
+                and_(DbResource.team_id == team_id, DbResource.owner_email == user_email),
+            ]
+            query = query.where(or_(*team_access))
+            LOGGER.debug(f"Filtering resource IDs by team_id: {team_id}")
+        else:
+            # User is not a member of this team, return no results using SQLAlchemy's false()
+            LOGGER.warning(f"User {user_email} attempted to filter resource IDs by team {team_id} but is not a member")
+            query = query.where(false())
+    else:
+        # All Teams view: apply standard access conditions (owner, team, public)
+        access_conditions = []
+        access_conditions.append(DbResource.owner_email == user_email)
+        if team_ids:
+            access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
+        access_conditions.append(DbResource.visibility == "public")
+        query = query.where(or_(*access_conditions))
 
-    query = query.where(or_(*access_conditions))
     resource_ids = [row[0] for row in db.execute(query).all()]
     return {"resource_ids": resource_ids, "count": len(resource_ids)}
 
@@ -7376,6 +7662,7 @@ async def admin_search_resources(
     include_inactive: bool = False,
     limit: int = Query(100, ge=1, le=1000),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7390,6 +7677,7 @@ async def admin_search_resources(
         include_inactive (bool): When True include resources that are inactive.
         limit (int): Maximum number of results to return (bounded by the query parameter).
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -7428,10 +7716,31 @@ async def admin_search_resources(
     if not include_inactive:
         query = query.where(DbResource.enabled.is_(True))
 
-    access_conditions = [DbResource.owner_email == user_email, DbResource.visibility == "public"]
-    if team_ids:
-        access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
-    query = query.where(or_(*access_conditions))
+    # Build access conditions
+    # When team_id is specified, show ONLY items from that team (team-scoped view)
+    # Otherwise, show all accessible items (All Teams view)
+    if team_id:
+        # Team-specific view: only show resources from the specified team
+        if team_id in team_ids:
+            # Apply visibility check: team/public resources + user's own resources (including private)
+            team_access = [
+                and_(DbResource.team_id == team_id, DbResource.visibility.in_(["team", "public"])),
+                and_(DbResource.team_id == team_id, DbResource.owner_email == user_email),
+            ]
+            query = query.where(or_(*team_access))
+            LOGGER.debug(f"Filtering resource search by team_id: {team_id}")
+        else:
+            # User is not a member of this team, return no results using SQLAlchemy's false()
+            LOGGER.warning(f"User {user_email} attempted to filter resource search by team {team_id} but is not a member")
+            query = query.where(false())
+    else:
+        # All Teams view: apply standard access conditions (owner, team, public)
+        access_conditions = []
+        access_conditions.append(DbResource.owner_email == user_email)
+        if team_ids:
+            access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
+        access_conditions.append(DbResource.visibility == "public")
+        query = query.where(or_(*access_conditions))
 
     search_conditions = [func.lower(DbResource.name).contains(search_query), func.lower(coalesce(DbResource.description, "")).contains(search_query)]
     query = query.where(or_(*search_conditions))
@@ -7458,6 +7767,7 @@ async def admin_search_prompts(
     include_inactive: bool = False,
     limit: int = Query(100, ge=1, le=1000),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7472,6 +7782,7 @@ async def admin_search_prompts(
         include_inactive (bool): When True include prompts that are inactive.
         limit (int): Maximum number of results to return (bounded by the query parameter).
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -7510,11 +7821,31 @@ async def admin_search_prompts(
     if not include_inactive:
         query = query.where(DbPrompt.enabled.is_(True))
 
-    access_conditions = [DbPrompt.owner_email == user_email, DbPrompt.visibility == "public"]
-    if team_ids:
-        access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
-
-    query = query.where(or_(*access_conditions))
+    # Build access conditions
+    # When team_id is specified, show ONLY items from that team (team-scoped view)
+    # Otherwise, show all accessible items (All Teams view)
+    if team_id:
+        # Team-specific view: only show prompts from the specified team
+        if team_id in team_ids:
+            # Apply visibility check: team/public resources + user's own resources (including private)
+            team_access = [
+                and_(DbPrompt.team_id == team_id, DbPrompt.visibility.in_(["team", "public"])),
+                and_(DbPrompt.team_id == team_id, DbPrompt.owner_email == user_email),
+            ]
+            query = query.where(or_(*team_access))
+            LOGGER.debug(f"Filtering prompt search by team_id: {team_id}")
+        else:
+            # User is not a member of this team, return no results using SQLAlchemy's false()
+            LOGGER.warning(f"User {user_email} attempted to filter prompt search by team {team_id} but is not a member")
+            query = query.where(false())
+    else:
+        # All Teams view: apply standard access conditions (owner, team, public)
+        access_conditions = []
+        access_conditions.append(DbPrompt.owner_email == user_email)
+        if team_ids:
+            access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
+        access_conditions.append(DbPrompt.visibility == "public")
+        query = query.where(or_(*access_conditions))
 
     search_conditions = [
         func.lower(DbPrompt.original_name).contains(search_query),
@@ -7556,6 +7887,7 @@ async def admin_a2a_partial_html(
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7575,6 +7907,7 @@ async def admin_a2a_partial_html(
         include_inactive (bool): If True, include inactive a2a agents in results.
         render (Optional[str]): Render mode; one of None, "controls", "selector".
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
@@ -7584,7 +7917,9 @@ async def admin_a2a_partial_html(
         items depending on ``render``. The response contains JSON-serializable
         encoded a2a agent data when templates expect it.
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested a2a_agents HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render}, gateway_id={gateway_id})")
+    LOGGER.debug(
+        f"User {get_user_email(user)} requested a2a_agents HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render}, gateway_id={gateway_id}, team_id={team_id})"
+    )
     # Normalize per_page within configured bounds
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
 
@@ -7604,13 +7939,31 @@ async def admin_a2a_partial_html(
     if not include_inactive:
         query = query.where(DbA2AAgent.enabled.is_(True))
 
-    # Access conditions: owner, team, public
-    access_conditions = [DbA2AAgent.owner_email == user_email]
-    if team_ids:
-        access_conditions.append(and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])))
-    access_conditions.append(DbA2AAgent.visibility == "public")
-
-    query = query.where(or_(*access_conditions))
+    # Build access conditions
+    # When team_id is specified, show ONLY items from that team (team-scoped view)
+    # Otherwise, show all accessible items (All Teams view)
+    if team_id:
+        # Team-specific view: only show a2a agents from the specified team
+        if team_id in team_ids:
+            # Apply visibility check: team/public resources + user's own resources (including private)
+            team_access = [
+                and_(DbA2AAgent.team_id == team_id, DbA2AAgent.visibility.in_(["team", "public"])),
+                and_(DbA2AAgent.team_id == team_id, DbA2AAgent.owner_email == user_email),
+            ]
+            query = query.where(or_(*team_access))
+            LOGGER.debug(f"Filtering a2a agents by team_id: {team_id}")
+        else:
+            # User is not a member of this team, return no results using SQLAlchemy's false()
+            LOGGER.warning(f"User {user_email} attempted to filter by team {team_id} but is not a member")
+            query = query.where(false())
+    else:
+        # All Teams view: apply standard access conditions (owner, team, public)
+        access_conditions = []
+        access_conditions.append(DbA2AAgent.owner_email == user_email)
+        if team_ids:
+            access_conditions.append(and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])))
+        access_conditions.append(DbA2AAgent.visibility == "public")
+        query = query.where(or_(*access_conditions))
 
     # Apply pagination ordering for cursor support
     query = query.order_by(desc(DbA2AAgent.created_at), desc(DbA2AAgent.id))
@@ -7621,6 +7974,8 @@ async def admin_a2a_partial_html(
         query_params["include_inactive"] = "true"
     if gateway_id:
         query_params["gateway_id"] = gateway_id
+    if team_id:
+        query_params["team_id"] = team_id
 
     # Use unified pagination function
     paginated_result = await paginate_query(
@@ -7702,6 +8057,7 @@ async def admin_a2a_partial_html(
 @admin_router.get("/a2a/ids", response_class=JSONResponse)
 async def admin_get_all_agent_ids(
     include_inactive: bool = False,
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7712,6 +8068,7 @@ async def admin_get_all_agent_ids(
 
     Args:
         include_inactive (bool): When True include a2a agents that are inactive.
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -7730,11 +8087,30 @@ async def admin_get_all_agent_ids(
     if not include_inactive:
         query = query.where(DbA2AAgent.enabled.is_(True))
 
-    access_conditions = [DbA2AAgent.owner_email == user_email, DbA2AAgent.visibility == "public"]
-    if team_ids:
-        access_conditions.append(and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])))
+    # Build access conditions
+    # When team_id is specified, show ONLY items from that team (team-scoped view)
+    # Otherwise, show all accessible items (All Teams view)
+    if team_id:
+        if team_id in team_ids:
+            # Apply visibility check: team/public resources + user's own resources (including private)
+            team_access = [
+                and_(DbA2AAgent.team_id == team_id, DbA2AAgent.visibility.in_(["team", "public"])),
+                and_(DbA2AAgent.team_id == team_id, DbA2AAgent.owner_email == user_email),
+            ]
+            query = query.where(or_(*team_access))
+            LOGGER.debug(f"Filtering A2A agent IDs by team_id: {team_id}")
+        else:
+            LOGGER.warning(f"User {user_email} attempted to filter A2A agent IDs by team {team_id} but is not a member")
+            query = query.where(false())
+    else:
+        # All Teams view: apply standard access conditions (owner, team, public)
+        access_conditions = []
+        access_conditions.append(DbA2AAgent.owner_email == user_email)
+        access_conditions.append(DbA2AAgent.visibility == "public")
+        if team_ids:
+            access_conditions.append(and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])))
+        query = query.where(or_(*access_conditions))
 
-    query = query.where(or_(*access_conditions))
     agent_ids = [row[0] for row in db.execute(query).all()]
     return {"agent_ids": agent_ids, "count": len(agent_ids)}
 
@@ -7744,6 +8120,7 @@ async def admin_search_a2a_agents(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
     limit: int = Query(100, ge=1, le=1000),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7757,6 +8134,7 @@ async def admin_search_a2a_agents(
         q (str): Search query string.
         include_inactive (bool): When True include a2a agents that are inactive.
         limit (int): Maximum number of results to return (bounded by the query parameter).
+        team_id (Optional[str]): Filter by team ID.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -7779,11 +8157,29 @@ async def admin_search_a2a_agents(
     if not include_inactive:
         query = query.where(DbA2AAgent.enabled.is_(True))
 
-    access_conditions = [DbA2AAgent.owner_email == user_email, DbA2AAgent.visibility == "public"]
-    if team_ids:
-        access_conditions.append(and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])))
-
-    query = query.where(or_(*access_conditions))
+    # Build access conditions
+    # When team_id is specified, show ONLY items from that team (team-scoped view)
+    # Otherwise, show all accessible items (All Teams view)
+    if team_id:
+        if team_id in team_ids:
+            # Apply visibility check: team/public resources + user's own resources (including private)
+            team_access = [
+                and_(DbA2AAgent.team_id == team_id, DbA2AAgent.visibility.in_(["team", "public"])),
+                and_(DbA2AAgent.team_id == team_id, DbA2AAgent.owner_email == user_email),
+            ]
+            query = query.where(or_(*team_access))
+            LOGGER.debug(f"Filtering A2A agent search by team_id: {team_id}")
+        else:
+            LOGGER.warning(f"User {user_email} attempted to filter A2A agent search by team {team_id} but is not a member")
+            query = query.where(false())
+    else:
+        # All Teams view: apply standard access conditions (owner, team, public)
+        access_conditions = []
+        access_conditions.append(DbA2AAgent.owner_email == user_email)
+        access_conditions.append(DbA2AAgent.visibility == "public")
+        if team_ids:
+            access_conditions.append(and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])))
+        query = query.where(or_(*access_conditions))
 
     search_conditions = [
         func.lower(DbA2AAgent.name).contains(search_query),
