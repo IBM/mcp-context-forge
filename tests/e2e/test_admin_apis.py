@@ -1037,6 +1037,137 @@ class TestTeamFiltering:
         assert team1_prompt["name"] in html
         # Note: team2_prompt may also appear because admin owns it (API uses OR logic)
 
+    async def test_servers_partial_with_team_id(self, client, app_with_temp_db):
+        """Test that /admin/servers/partial respects team_id parameter."""
+        # First-Party
+        from mcpgateway.db import get_db
+        from mcpgateway.services.team_management_service import TeamManagementService
+
+        test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
+        db = next(test_db_dependency())
+
+        # Create two teams
+        team_service = TeamManagementService(db)
+        team1 = await team_service.create_team(name="Server Team 1", description="Test", created_by="admin@example.com", visibility="private")
+        team2 = await team_service.create_team(name="Server Team 2", description="Test", created_by="admin@example.com", visibility="private")
+
+        # Create servers in different teams
+        team1_server = {
+            "name": f"team1_server_{uuid.uuid4().hex[:8]}",
+            "description": "Team 1 server",
+            "visibility": "team",
+            "team_id": team1.id,
+        }
+        team2_server = {
+            "name": f"team2_server_{uuid.uuid4().hex[:8]}",
+            "description": "Team 2 server",
+            "visibility": "team",
+            "team_id": team2.id,
+        }
+
+        resp1 = await client.post("/admin/servers", data=team1_server, headers=TEST_AUTH_HEADER)
+        assert resp1.status_code == 200, f"Failed to create team1 server: {resp1.text}"
+        resp2 = await client.post("/admin/servers", data=team2_server, headers=TEST_AUTH_HEADER)
+        assert resp2.status_code == 200, f"Failed to create team2 server: {resp2.text}"
+
+        # Test with team1 filter - returns team1 server
+        response = await client.get(f"/admin/servers/partial?team_id={team1.id}", headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
+        html = response.text
+        assert team1_server["name"] in html
+
+    async def test_gateways_partial_with_team_id(self, client, app_with_temp_db):
+        """Test that /admin/gateways/partial respects team_id parameter."""
+        # First-Party
+        from mcpgateway.db import get_db, Gateway as DbGateway
+        from mcpgateway.services.team_management_service import TeamManagementService
+
+        test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
+        db = next(test_db_dependency())
+
+        # Create two teams
+        team_service = TeamManagementService(db)
+        team1 = await team_service.create_team(name="Gateway Team 1", description="Test", created_by="admin@example.com", visibility="private")
+        team2 = await team_service.create_team(name="Gateway Team 2", description="Test", created_by="admin@example.com", visibility="private")
+
+        # Create gateways directly in DB (gateway creation via form is complex)
+        team1_gw_name = f"team1_gw_{uuid.uuid4().hex[:8]}"
+        team1_gw_slug = f"team1-gw-{uuid.uuid4().hex[:8]}"
+        team1_gw = DbGateway(
+            id=uuid.uuid4().hex,
+            name=team1_gw_name,
+            slug=team1_gw_slug,
+            url=f"http://team1.example.com/{uuid.uuid4().hex[:8]}",
+            description="Team 1 gateway",
+            transport="SSE",
+            visibility="team",
+            team_id=team1.id,
+            owner_email="admin@example.com",
+            enabled=True,
+            capabilities={},
+        )
+        db.add(team1_gw)
+
+        team2_gw_name = f"team2_gw_{uuid.uuid4().hex[:8]}"
+        team2_gw_slug = f"team2-gw-{uuid.uuid4().hex[:8]}"
+        team2_gw = DbGateway(
+            id=uuid.uuid4().hex,
+            name=team2_gw_name,
+            slug=team2_gw_slug,
+            url=f"http://team2.example.com/{uuid.uuid4().hex[:8]}",
+            description="Team 2 gateway",
+            transport="SSE",
+            visibility="team",
+            team_id=team2.id,
+            owner_email="admin@example.com",
+            enabled=True,
+            capabilities={},
+        )
+        db.add(team2_gw)
+        db.commit()
+
+        # Test with team1 filter - returns team1 gateway
+        response = await client.get(f"/admin/gateways/partial?team_id={team1.id}", headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
+        html = response.text
+        assert team1_gw_name in html
+
+    async def test_visibility_private_not_visible_to_other_team_members(self, client, app_with_temp_db):
+        """Test that visibility=private resources are NOT visible to other team members."""
+        # First-Party
+        from mcpgateway.db import get_db, Tool as DbTool
+        from mcpgateway.services.team_management_service import TeamManagementService
+
+        test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
+        db = next(test_db_dependency())
+
+        # Create a team
+        team_service = TeamManagementService(db)
+        team = await team_service.create_team(name="Visibility Test Team", description="Test", created_by="admin@example.com", visibility="private")
+
+        # Create a PRIVATE tool owned by another user in the same team
+        private_tool_name = f"private_tool_{uuid.uuid4().hex[:8]}"
+        private_tool = DbTool(
+            id=uuid.uuid4().hex,
+            original_name=private_tool_name,
+            url="http://example.com/private",
+            description="Private tool owned by other user",
+            visibility="private",  # KEY: This should NOT be visible to admin
+            team_id=team.id,
+            owner_email="other_user@example.com",  # Different owner
+            enabled=True,
+            input_schema={},
+        )
+        db.add(private_tool)
+        db.commit()
+
+        # Filter by team - admin should NOT see the private tool owned by other_user
+        response = await client.get(f"/admin/tools/partial?team_id={team.id}", headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
+        html = response.text
+        # The private tool should NOT be visible because it's owned by another user
+        assert private_tool_name not in html, f"Private tool should NOT be visible to non-owner! Found in: {html[:500]}"
+
 
 # Run tests with pytest
 if __name__ == "__main__":
