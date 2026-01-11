@@ -490,9 +490,11 @@ async def list_users(
                 return UserListResponse(users=[EmailUserResponse.from_email_user(user) for user in users], total_count=total_count, limit=limit or 50, offset=0)
 
         # Legacy offset-based pagination (only when neither cursor nor include_pagination is provided)
-        users = await auth_service.list_users(limit=limit or 100, offset=offset)
+        # Handle limit: None uses default (100), 0 means no limit (use max_page_size)
+        effective_limit = settings.pagination_max_page_size if limit == 0 else (limit if limit is not None else 100)
+        users = await auth_service.list_users(limit=effective_limit, offset=offset)
         total_count = await auth_service.count_users()
-        return UserListResponse(users=[EmailUserResponse.from_email_user(user) for user in users], total_count=total_count, limit=limit or 100, offset=offset)
+        return UserListResponse(users=[EmailUserResponse.from_email_user(user) for user in users], total_count=total_count, limit=effective_limit, offset=offset)
 
     except Exception as e:
         logger.error(f"Error listing users: {e}")

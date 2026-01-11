@@ -602,8 +602,8 @@ class EmailAuthService:
             Tuple of (list of users, next_cursor or None)
         """
         # Handle limit: None means use default, 0 means no limit (return all)
-        # Cap at max 1000 to prevent memory issues
-        max_page_size = 1000
+        # Cap at settings.pagination_max_page_size to prevent memory issues
+        max_page_size = settings.pagination_max_page_size
         if limit is None:
             page_size = settings.pagination_default_page_size
         elif limit == 0:
