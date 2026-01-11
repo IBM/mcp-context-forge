@@ -30,6 +30,7 @@ Examples:
 # Standard
 import asyncio
 import logging
+import threading
 from typing import Any, Optional, Union
 
 # First-Party
@@ -385,12 +386,17 @@ class PluginExecutor:
 class PluginManager:
     """Plugin manager for managing the plugin lifecycle.
 
-    This class implements a singleton pattern to ensure consistent plugin
-    management across the application. It handles:
+    This class implements a thread-safe Borg singleton pattern to ensure consistent
+    plugin management across the application. It handles:
     - Plugin discovery and loading from configuration
     - Plugin lifecycle management (initialization, execution, shutdown)
     - Context management with automatic cleanup
     - Hook execution orchestration
+
+    Thread Safety:
+        Uses double-checked locking to prevent race conditions when multiple threads
+        create PluginManager instances simultaneously. The first instance to acquire
+        the lock loads the configuration; subsequent instances reuse the shared state.
 
     Attributes:
         config: The loaded plugin configuration.
@@ -417,6 +423,8 @@ class PluginManager:
     """
 
     __shared_state: dict[Any, Any] = {}
+    __lock: threading.Lock = threading.Lock()  # Thread safety for synchronous init
+    _async_lock: asyncio.Lock | None = None  # Async lock for initialize/shutdown
     _loader: PluginLoader = PluginLoader()
     _initialized: bool = False
     _registry: PluginInstanceRegistry = PluginInstanceRegistry()
@@ -427,9 +435,15 @@ class PluginManager:
     def __init__(self, config: str = "", timeout: int = DEFAULT_PLUGIN_TIMEOUT):
         """Initialize plugin manager.
 
-        PluginManager implements a Borg singleton:
-            - Shared state is initialized only once.
+        PluginManager implements a thread-safe Borg singleton:
+            - Shared state is initialized only once across all instances.
             - Subsequent instantiations reuse same state and skip config reload.
+            - Uses double-checked locking to prevent race conditions in multi-threaded environments.
+
+        Thread Safety:
+            The initialization uses a double-checked locking pattern to ensure that
+            config loading only happens once, even when multiple threads create
+            PluginManager instances simultaneously.
 
         Args:
             config: Path to plugin configuration file (YAML).
@@ -445,14 +459,18 @@ class PluginManager:
         self.__dict__ = self.__shared_state
 
         # Only initialize once (first instance when shared state is empty)
+        # Use lock to prevent race condition in multi-threaded environments
         if not self.__shared_state:
-            if config:
-                self._config = ConfigLoader.load_config(config)
-                self._config_path = config
+            with self.__lock:
+                # Double-check after acquiring lock (another thread may have initialized)
+                if not self.__shared_state:
+                    if config:
+                        self._config = ConfigLoader.load_config(config)
+                        self._config_path = config
 
-            # Update executor timeouts
-            self._executor.config = self._config
-            self._executor.timeout = timeout
+                    # Update executor timeouts
+                    self._executor.config = self._config
+                    self._executor.timeout = timeout
 
     @classmethod
     def reset(cls) -> None:
@@ -461,15 +479,19 @@ class PluginManager:
         This method clears all shared state, allowing a fresh PluginManager
         instance to be created with new configuration. Primarily used for testing.
 
+        Thread-safe: Uses lock to ensure atomic reset operation.
+
         Examples:
             >>> # Between tests, reset shared state
             >>> PluginManager.reset()
             >>> manager = PluginManager("new_config.yaml")
         """
-        cls.__shared_state.clear()
-        cls._initialized = False
-        cls._config = None
-        cls._config_path = None
+        with cls.__lock:
+            cls.__shared_state.clear()
+            cls._initialized = False
+            cls._config = None
+            cls._config_path = None
+            cls._async_lock = None
 
     @property
     def config(self) -> Config | None:
@@ -530,6 +552,11 @@ class PluginManager:
         3. Registers plugins with the registry
         4. Validates plugin initialization
 
+        Thread Safety:
+            Uses asyncio.Lock to prevent concurrent initialization from multiple
+            coroutines or async tasks. Combined with threading.Lock in __init__
+            for full multi-threaded safety.
+
         Raises:
             RuntimeError: If plugin initialization fails with an exception.
             ValueError: If a plugin cannot be initialized or registered.
@@ -540,36 +567,42 @@ class PluginManager:
             >>> # await manager.initialize()
             >>> # Manager is now ready to execute plugins
         """
-        if self._initialized:
-            logger.debug("Plugin manager already initialized")
-            return
+        # Initialize async lock lazily (can't create asyncio.Lock in class definition)
+        if self._async_lock is None:
+            self._async_lock = asyncio.Lock()
 
-        plugins = self._config.plugins if self._config and self._config.plugins else []
-        loaded_count = 0
+        async with self._async_lock:
+            # Double-check after acquiring lock
+            if self._initialized:
+                logger.debug("Plugin manager already initialized")
+                return
 
-        for plugin_config in plugins:
-            try:
-                # For disabled plugins, create a stub plugin without full instantiation
-                if plugin_config.mode != PluginMode.DISABLED:
-                    # Fully instantiate enabled plugins
-                    plugin = await self._loader.load_and_instantiate_plugin(plugin_config)
-                    if plugin:
-                        self._registry.register(plugin)
-                        loaded_count += 1
-                        logger.info("Loaded plugin: %s (mode: %s)", plugin_config.name, plugin_config.mode)
+            plugins = self._config.plugins if self._config and self._config.plugins else []
+            loaded_count = 0
+
+            for plugin_config in plugins:
+                try:
+                    # For disabled plugins, create a stub plugin without full instantiation
+                    if plugin_config.mode != PluginMode.DISABLED:
+                        # Fully instantiate enabled plugins
+                        plugin = await self._loader.load_and_instantiate_plugin(plugin_config)
+                        if plugin:
+                            self._registry.register(plugin)
+                            loaded_count += 1
+                            logger.info("Loaded plugin: %s (mode: %s)", plugin_config.name, plugin_config.mode)
+                        else:
+                            raise ValueError(f"Unable to instantiate plugin: {plugin_config.name}")
                     else:
-                        raise ValueError(f"Unable to instantiate plugin: {plugin_config.name}")
-                else:
-                    logger.info("Plugin: %s is disabled. Ignoring.", plugin_config.name)
+                        logger.info("Plugin: %s is disabled. Ignoring.", plugin_config.name)
 
-            except Exception as e:
-                # Clean error message without stack trace spam
-                logger.error("Failed to load plugin %s: {%s}", plugin_config.name, str(e))
-                # Let it crash gracefully with a clean error
-                raise RuntimeError(f"Plugin initialization failed: {plugin_config.name} - {str(e)}") from e
+                except Exception as e:
+                    # Clean error message without stack trace spam
+                    logger.error("Failed to load plugin %s: {%s}", plugin_config.name, str(e))
+                    # Let it crash gracefully with a clean error
+                    raise RuntimeError(f"Plugin initialization failed: {plugin_config.name} - {str(e)}") from e
 
-        self._initialized = True
-        logger.info("Plugin manager initialized with %s plugins", loaded_count)
+            self._initialized = True
+            logger.info("Plugin manager initialized with %s plugins", loaded_count)
 
     async def shutdown(self) -> None:
         """Shutdown all plugins and cleanup resources.
@@ -579,6 +612,10 @@ class PluginManager:
         2. Clears the plugin registry
         3. Cleans up stored contexts
         4. Resets initialization state
+
+        Thread Safety:
+            Uses asyncio.Lock to prevent concurrent shutdown with initialization
+            or with another shutdown call.
 
         Note: The config is preserved to allow modifying settings and re-initializing.
         To fully reset for a new config, create a new PluginManager instance.
@@ -590,15 +627,24 @@ class PluginManager:
             >>> # ... use the manager ...
             >>> # await manager.shutdown()
         """
-        logger.info("Shutting down plugin manager")
+        # Initialize async lock lazily if needed
+        if self._async_lock is None:
+            self._async_lock = asyncio.Lock()
 
-        # Shutdown all plugins
-        await self._registry.shutdown()
+        async with self._async_lock:
+            if not self._initialized:
+                logger.debug("Plugin manager not initialized, nothing to shutdown")
+                return
 
-        # Reset state to allow re-initialization
-        self._initialized = False
+            logger.info("Shutting down plugin manager")
 
-        logger.info("Plugin manager shutdown complete")
+            # Shutdown all plugins
+            await self._registry.shutdown()
+
+            # Reset state to allow re-initialization
+            self._initialized = False
+
+            logger.info("Plugin manager shutdown complete")
 
     async def invoke_hook(
         self,
