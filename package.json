@@ -1,21 +1,21 @@
 {
-  "devDependencies": {
-    "@biomejs/biome": "^2.1.1",
-    "@stylistic/eslint-plugin": "^5.1.0",
-    "@stylistic/stylelint-config": "^2.0.0",
-    "eslint": "^8.57.1",
-    "eslint-config-prettier": "^10.1.5",
-    "eslint-config-standard": "^17.1.0",
-    "eslint-plugin-import": "^2.32.0",
-    "eslint-plugin-n": "^16.6.2",
-    "eslint-plugin-prettier": "^5.5.1",
-    "eslint-plugin-promise": "^6.6.0",
-    "prettier": "^3.6.2",
-    "stylelint": "^16.0.0",
-    "stylelint-config-standard": "^36.0.0",
-    "stylelint-order": "^7.0.0"
-  },
-  "overrides": {
-    "keyv": "5.1.0"
-  }
+    "devDependencies": {
+        "@biomejs/biome": "^2.1.1",
+        "@stylistic/eslint-plugin": "^5.7.0",
+        "@stylistic/stylelint-config": "^2.0.0",
+        "eslint": "^9.39.2",
+        "eslint-config-prettier": "^9.1.2",
+        "eslint-plugin-import": "^2.32.0",
+        "eslint-plugin-prettier": "^5.5.4",
+        "htmlhint": "^1.8.0",
+        "neostandard": "^0.12.2",
+        "prettier": "^3.7.4",
+        "retire": "^5.4.0",
+        "stylelint": "^16.0.0",
+        "stylelint-config-standard": "^36.0.0",
+        "stylelint-order": "^7.0.0"
+    },
+    "overrides": {
+        "keyv": "5.1.0"
+    }
 }
