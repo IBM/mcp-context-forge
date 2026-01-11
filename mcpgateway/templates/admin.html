@@ -407,6 +407,7 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">👥</span>
               <span x-show="!sidebarCollapsed">Teams</span>
             </a>
+            {% if is_admin %}
             <a href="#users" id="tab-users"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -414,6 +415,7 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">👤</span>
               <span x-show="!sidebarCollapsed">Users</span>
             </a>
+            {% endif %}
             <a href="#tokens" id="tab-tokens"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -4150,7 +4152,7 @@
             <!-- HTMX container: will be replaced by /admin/prompts/partial -->
             <div id="prompts-list-container"
               hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
-              hx-trigger="load"
+              hx-trigger="load, refreshUsers"
               hx-swap="outerHTML"
               hx-indicator="#prompts-loading"
             >
@@ -5547,7 +5549,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       {% endif %}
 
       <!-- User Management Panel -->
-      {% if email_auth_enabled %}
+      {% if email_auth_enabled and is_admin %}
       <div id="users-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-2xl font-bold dark:text-gray-200">User Management</h2>
@@ -5769,7 +5771,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             <div
               id="users-list-container"
               hx-get="{{ root_path }}/admin/users/partial?page=1&per_page=50"
-              hx-trigger="load"
+              hx-trigger="load, refreshUsers"
               hx-swap="outerHTML"
               hx-indicator="#users-loading"
             >
@@ -10859,7 +10861,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           // Refresh the users list by triggering HTMX on the container
           const usersList = document.getElementById('users-list-container');
           if (usersList) {
-            htmx.trigger(usersList, 'load');
+            htmx.trigger(usersList, 'refreshUsers');
           }
         });
       });
@@ -11264,6 +11266,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         setTimeout(refreshVisibilityRules, 1000);
       }
 
+      {% if is_admin %}
       function openInviteUserModal() {
         console.log('Opening invite user modal...');
 
@@ -11623,6 +11626,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         });
       }
 
+      {% endif %}
       function exportPermissions() {
         console.log('Exporting permissions...');
 
@@ -13740,6 +13744,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       </div>
     </div>
 
+    {% if is_admin %}
     <!-- User Invitation Modal -->
     <div id="invite-user-modal" class="fixed inset-0 z-50 hidden">
       <div
@@ -13949,6 +13954,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         </div>
       </div>
     </div>
+    {% endif %}
 
     <script>
       // Safely inject teams data for Alpine.js

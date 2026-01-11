@@ -1,5 +1,7 @@
 <!-- htmlhint doctype-first:false, tag-pair:false -->
 <!-- User selector items for infinite scroll -->
+{% set selector_url = selector_base_url or (root_path + '/admin/users/partial') %}
+{% set include_team_param = team_id and not selector_base_url %}
 {% for user in data %}
 {% set is_member = team_member_emails and user.email in team_member_emails %}
 <div
@@ -31,7 +33,7 @@
 <!-- Infinite scroll trigger element -->
 <div
   id="users-scroll-trigger-{{ pagination.page }}"
-  hx-get="{{ root_path }}/admin/users/partial?page={{ pagination.page + 1 }}&per_page={{ pagination.per_page }}&render=selector{% if team_id %}&team_id={{ team_id }}{% endif %}"
+  hx-get="{{ selector_url }}?page={{ pagination.page + 1 }}&per_page={{ pagination.per_page }}&render=selector{% if include_team_param %}&team_id={{ team_id }}{% endif %}"
   hx-trigger="intersect once"
   hx-swap="outerHTML"
   class="text-center py-2 text-xs text-gray-500 dark:text-gray-400"

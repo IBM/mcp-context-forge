@@ -1,5 +1,11 @@
 <!-- htmlhint doctype-first:false -->
-<div id="users-list-container">
+<div
+  id="users-list-container"
+  hx-get="{{ root_path }}/admin/users/partial?page={{ pagination.page }}&per_page={{ pagination.per_page }}"
+  hx-trigger="refreshUsers"
+  hx-swap="outerHTML"
+  hx-indicator="#users-loading"
+>
   {% if data %}
   <div class="space-y-4">
     {% for user in data %}
@@ -108,6 +114,7 @@
   {% set base_url = root_path + '/admin/users/partial' %}
   {% set hx_target = '#users-list-container' %}
   {% set hx_indicator = '#users-loading' %}
+  {% set hx_swap = 'outerHTML' %}
   {% set query_params = {} %}
   {% include 'pagination_controls.html' %}
 </div>

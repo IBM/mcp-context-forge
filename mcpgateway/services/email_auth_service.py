@@ -602,13 +602,12 @@ class EmailAuthService:
             Tuple of (list of users, next_cursor or None)
         """
         # Handle limit: None means use default, 0 means no limit (return all)
-        # Cap at settings.pagination_max_page_size to prevent memory issues
+        # Cap non-zero limits at settings.pagination_max_page_size
         max_page_size = settings.pagination_max_page_size
         if limit is None:
             page_size = settings.pagination_default_page_size
         elif limit == 0:
-            # limit=0 means "no limit" - return all results (capped at max_page_size)
-            page_size = max_page_size
+            page_size = None
         else:
             page_size = min(limit, max_page_size)
 
@@ -632,9 +631,13 @@ class EmailAuthService:
                 logger.warning(f"Invalid cursor for user pagination, ignoring: {e}")
 
         # Fetch page_size + 1 to determine if there are more results
-        query = query.limit(page_size + 1)
+        if page_size is not None:
+            query = query.limit(page_size + 1)
         result = self.db.execute(query)
         users = list(result.scalars().all())
+
+        if page_size is None:
+            return (users, None)
 
         # Check if there are more results
         has_more = len(users) > page_size
@@ -705,9 +708,9 @@ class EmailAuthService:
             # Note: EmailUser uses email as primary key, not id
             query = select(EmailUser).order_by(desc(EmailUser.created_at), desc(EmailUser.email))
 
-            # Apply search filter if provided
+            # Apply search filter if provided (prefix search for better index usage)
             if search and search.strip():
-                search_term = f"%{search.strip().lower()}%"
+                search_term = f"{search.strip().lower()}%"
                 query = query.where((func.lower(EmailUser.email).like(search_term)) | (func.lower(EmailUser.full_name).like(search_term)))
 
             # Apply email exclusion filter if provided
@@ -718,7 +721,7 @@ class EmailAuthService:
             # If offset is provided but page is not, use old-style offset/limit approach
             if offset > 0 and page is None and cursor is None:
                 query = query.offset(offset)
-                if limit is not None:
+                if limit not in (None, 0):
                     query = query.limit(limit)
                 result = self.db.execute(query)
                 users = list(result.scalars().all())
@@ -748,7 +751,7 @@ class EmailAuthService:
                 }
 
             # No pagination specified - return list with optional limit
-            if limit is not None:
+            if limit not in (None, 0):
                 query = query.limit(limit)
             result = self.db.execute(query)
             return list(result.scalars().all())

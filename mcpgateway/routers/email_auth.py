@@ -19,7 +19,7 @@ Examples:
 
 # Standard
 from datetime import datetime, timedelta, UTC
-from typing import Optional, Union
+from typing import Optional
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -40,7 +40,6 @@ from mcpgateway.schemas import (
     EmailRegistrationRequest,
     EmailUserResponse,
     SuccessResponse,
-    UserListResponse,
 )
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, EmailValidationError, PasswordValidationError, UserExistsError
 from mcpgateway.services.logging_service import LoggingService
@@ -439,37 +438,29 @@ async def get_auth_events(limit: int = 50, offset: int = 0, current_user: EmailU
 
 
 # Admin-only endpoints
-@email_auth_router.get("/admin/users", response_model=Union[UserListResponse, CursorPaginatedUsersResponse])
+@email_auth_router.get("/admin/users", response_model=CursorPaginatedUsersResponse)
 @require_permission("admin.user_management")
 async def list_users(
     cursor: Optional[str] = Query(None, description="Pagination cursor for fetching the next set of results"),
-    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, ge=0, description="Maximum number of users to return. 0 means all (no limit). Default uses pagination_default_page_size."),
-    offset: int = Query(0, ge=0, description="Number of users to skip (legacy offset-based pagination)"),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ):
-    """List all users (admin only) with cursor-based or offset-based pagination support.
-
-    This endpoint supports both cursor-based pagination (for efficient handling of large datasets)
-    and legacy offset-based pagination (for backward compatibility).
+    """List all users (admin only) with cursor-based pagination support.
 
     Args:
-        cursor: Pagination cursor for fetching the next set of results (mutually exclusive with offset)
-        include_pagination: Whether to include cursor pagination metadata in the response
+        cursor: Pagination cursor for fetching the next set of results
         limit: Maximum number of users to return. Use 0 for all users (no limit).
             If not specified, uses pagination_default_page_size (default: 50).
-        offset: Number of users to skip (for legacy offset-based pagination)
         current_user_ctx: Currently authenticated user context with permissions
 
     Returns:
-        UserListResponse or CursorPaginatedUsersResponse: List of users with pagination metadata
+        CursorPaginatedUsersResponse: List of users with pagination metadata
 
     Raises:
         HTTPException: If user is not admin
 
     Examples:
-        >>> # Cursor-based: GET /auth/email/admin/users?cursor=eyJlbWFpbCI6Li4ufQ&include_pagination=true
-        >>> # Offset-based: GET /auth/email/admin/users?limit=10&offset=0
+        >>> # Cursor-based: GET /auth/email/admin/users?cursor=eyJlbWFpbCI6Li4ufQ
         >>> # Headers: Authorization: Bearer <admin_token>
     """
 
@@ -477,24 +468,8 @@ async def list_users(
     auth_service = EmailAuthService(db)
 
     try:
-        # Use cursor-based pagination if cursor is provided OR if include_pagination is requested
-        # This allows clients to get cursor pagination on the first page by passing include_pagination=true
-        if cursor is not None or include_pagination:
-            # Use empty string as cursor for first page if none provided
-            effective_cursor = cursor if cursor is not None else ""
-            users, next_cursor = await auth_service.list_users(cursor=effective_cursor, limit=limit)
-            if include_pagination:
-                return CursorPaginatedUsersResponse(users=[EmailUserResponse.from_email_user(user) for user in users], next_cursor=next_cursor)
-            else:
-                total_count = await auth_service.count_users()
-                return UserListResponse(users=[EmailUserResponse.from_email_user(user) for user in users], total_count=total_count, limit=limit or 50, offset=0)
-
-        # Legacy offset-based pagination (only when neither cursor nor include_pagination is provided)
-        # Handle limit: None uses default (100), 0 means no limit (use max_page_size)
-        effective_limit = settings.pagination_max_page_size if limit == 0 else (limit if limit is not None else 100)
-        users = await auth_service.list_users(limit=effective_limit, offset=offset)
-        total_count = await auth_service.count_users()
-        return UserListResponse(users=[EmailUserResponse.from_email_user(user) for user in users], total_count=total_count, limit=effective_limit, offset=offset)
+        users, next_cursor = await auth_service.list_users(cursor=cursor, limit=limit)
+        return CursorPaginatedUsersResponse(users=[EmailUserResponse.from_email_user(user) for user in users], next_cursor=next_cursor)
 
     except Exception as e:
         logger.error(f"Error listing users: {e}")

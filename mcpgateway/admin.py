@@ -4390,7 +4390,7 @@ async def admin_view_team_members(
 
 
 @admin_router.get("/teams/{team_id}/members/add")
-@require_permission("teams.update")
+@require_permission("teams.manage_members")
 async def admin_add_team_members_view(
     team_id: str,
     request: Request,
@@ -4484,7 +4484,7 @@ async def admin_add_team_members_view(
                             <div
                                 id="user-selector-container-{team.id}"
                                 class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-64 overflow-y-auto dark:bg-gray-700"
-                                hx-get="{root_path}/admin/users/partial?page=1&per_page=20&render=selector&team_id={team.id}"
+                                hx-get="{root_path}/admin/teams/{team.id}/users/partial?page=1&per_page=20&render=selector"
                                 hx-trigger="load"
                                 hx-swap="innerHTML"
                                 hx-target="#user-selector-container-{team.id}"
@@ -4526,6 +4526,22 @@ async def admin_add_team_members_view(
                         : `${{checked.length}} user${{checked.length !== 1 ? 's' : ''}} selected`;
                 }}
 
+                function dedupeSelectorItems(container) {{
+                    const seen = new Set();
+                    const items = Array.from(container.querySelectorAll('.user-item'));
+                    items.forEach((item) => {{
+                        const email = item.getAttribute('data-user-email') || '';
+                        if (!email) {{
+                            return;
+                        }}
+                        if (seen.has(email)) {{
+                            item.remove();
+                            return;
+                        }}
+                        seen.add(email);
+                    }});
+                }}
+
                 // Listen for checkbox changes (using event delegation for dynamically loaded content)
                 form.addEventListener('change', function(e) {{
                     if (e.target.name === 'associatedUsers') {{
@@ -4546,6 +4562,14 @@ async def admin_add_team_members_view(
 
                 // Initial count
                 updateCount();
+
+                // Remove duplicates after infinite scroll inserts new items
+                document.body.addEventListener('htmx:afterSwap', function(event) {{
+                    if (event.target && event.target.id === 'user-selector-container-{team.id}') {{
+                        dedupeSelectorItems(event.target);
+                        updateCount();
+                    }}
+                }});
             }})();
 
             // Search functionality (scoped to avoid variable conflicts)
@@ -4565,7 +4589,7 @@ async def admin_add_team_members_view(
 
                 searchTimeout = setTimeout(async function() {{
                     try {{
-                        const response = await fetch(`{root_path}/admin/users/search?q=${{encodeURIComponent(query)}}&limit=10`);
+                        const response = await fetch(`{root_path}/admin/teams/{team.id}/users/search?q=${{encodeURIComponent(query)}}&limit=10`);
                         const data = await response.json();
 
                         if (data.users && data.users.length > 0) {{
@@ -4927,7 +4951,16 @@ async def admin_add_team_members(
             default_role = default_role if isinstance(default_role, str) else "member"
         elif multiple_user_emails:
             # Multiple users mode (new paginated selector)
-            user_emails = [email for email in multiple_user_emails if isinstance(email, str)]
+            seen = set()
+            user_emails = []
+            for email in multiple_user_emails:
+                if not isinstance(email, str):
+                    continue
+                cleaned = email.strip()
+                if not cleaned or cleaned in seen:
+                    continue
+                seen.add(cleaned)
+                user_emails.append(cleaned)
             default_role = "member"  # Default if no per-user role specified
         else:
             return HTMLResponse(content='<div class="text-red-500">No users selected</div>', status_code=400)
@@ -5609,6 +5642,104 @@ async def admin_reject_join_request(
 # ============================================================================ #
 
 
+def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, root_path: str) -> str:
+    """Render a single user card HTML snippet matching the users list template."""
+    encoded_email = urllib.parse.quote(user_obj.email, safe="")
+    display_name = html.escape(user_obj.full_name or "N/A")
+    safe_email = html.escape(user_obj.email)
+    auth_provider = html.escape(user_obj.auth_provider or "unknown")
+    created_at = user_obj.created_at.strftime("%Y-%m-%d %H:%M") if user_obj.created_at else "Unknown"
+
+    is_current_user = user_obj.email == current_user_email
+    is_last_admin = bool(user_obj.is_admin and user_obj.is_active and admin_count == 1)
+
+    badges = []
+    if user_obj.is_admin:
+        badges.append('<span class="px-2 py-1 text-xs font-semibold bg-purple-100 text-purple-800 rounded-full ' 'dark:bg-purple-900 dark:text-purple-200">Admin</span>')
+    if user_obj.is_active:
+        badges.append('<span class="px-2 py-1 text-xs font-semibold text-green-600 bg-gray-100 dark:bg-gray-700 rounded-full">Active</span>')
+    else:
+        badges.append('<span class="px-2 py-1 text-xs font-semibold text-red-600 bg-gray-100 dark:bg-gray-700 rounded-full">Inactive</span>')
+    if is_current_user:
+        badges.append('<span class="px-2 py-1 text-xs font-semibold bg-blue-100 text-blue-800 rounded-full ' 'dark:bg-blue-900 dark:text-blue-200">You</span>')
+    if is_last_admin:
+        badges.append('<span class="px-2 py-1 text-xs font-semibold bg-yellow-100 text-yellow-800 rounded-full ' 'dark:bg-yellow-900 dark:text-yellow-200">Last Admin</span>')
+    if user_obj.password_change_required:
+        badges.append(
+            '<span class="px-2 py-1 text-xs font-semibold bg-orange-100 text-orange-800 rounded-full '
+            'dark:bg-orange-900 dark:text-orange-200"><i class="fas fa-key mr-1"></i>Password Change Required</span>'
+        )
+
+    actions = [
+        f'<button class="px-3 py-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 '
+        f"dark:hover:text-blue-300 border border-blue-300 dark:border-blue-600 hover:border-blue-500 "
+        f"dark:hover:border-blue-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 "
+        f'focus:ring-blue-500" hx-get="{root_path}/admin/users/{encoded_email}/edit" '
+        f'hx-target="#user-edit-modal-content">Edit</button>'
+    ]
+
+    if not is_current_user and not is_last_admin:
+        if user_obj.is_active:
+            actions.append(
+                f'<button class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 hover:text-orange-800 '
+                f"dark:hover:text-orange-300 border border-orange-300 dark:border-orange-600 hover:border-orange-500 "
+                f"dark:hover:border-orange-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 "
+                f'focus:ring-orange-500" hx-post="{root_path}/admin/users/{encoded_email}/deactivate" '
+                f'hx-confirm="Deactivate this user?" hx-target="closest .user-card" hx-swap="outerHTML">Deactivate</button>'
+            )
+        else:
+            actions.append(
+                f'<button class="px-3 py-1 text-sm font-medium text-green-600 dark:text-green-400 hover:text-green-800 '
+                f"dark:hover:text-green-300 border border-green-300 dark:border-green-600 hover:border-green-500 "
+                f"dark:hover:border-green-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 "
+                f'focus:ring-green-500" hx-post="{root_path}/admin/users/{encoded_email}/activate" '
+                f'hx-confirm="Activate this user?" hx-target="closest .user-card" hx-swap="outerHTML">Activate</button>'
+            )
+
+        if user_obj.password_change_required:
+            actions.append(
+                '<span class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 bg-orange-50 '
+                'dark:bg-orange-900/20 border border-orange-300 dark:border-orange-600 rounded-md">Password Change Required</span>'
+            )
+        else:
+            actions.append(
+                f'<button class="px-3 py-1 text-sm font-medium text-yellow-600 dark:text-yellow-400 hover:text-yellow-800 '
+                f"dark:hover:text-yellow-300 border border-yellow-300 dark:border-yellow-600 hover:border-yellow-500 "
+                f"dark:hover:border-yellow-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 "
+                f'focus:ring-yellow-500" hx-post="{root_path}/admin/users/{encoded_email}/force-password-change" '
+                f'hx-confirm="Force this user to change their password on next login?" hx-target="closest .user-card" '
+                f'hx-swap="outerHTML">Force Password Change</button>'
+            )
+
+        actions.append(
+            f'<button class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 '
+            f"dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 "
+            f"dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 "
+            f'focus:ring-red-500" hx-delete="{root_path}/admin/users/{encoded_email}" '
+            f'hx-confirm="Are you sure you want to delete this user? This action cannot be undone." '
+            f'hx-target="closest .user-card" hx-swap="outerHTML">Delete</button>'
+        )
+
+    return f"""
+    <div class="user-card border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-white dark:bg-gray-800">
+      <div class="flex justify-between items-start">
+        <div class="flex-1">
+          <div class="flex items-center gap-2 mb-2">
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{display_name}</h3>
+            {' '.join(badges)}
+          </div>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">📧 {safe_email}</p>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">🔐 Provider: {auth_provider}</p>
+          <p class="text-sm text-gray-600 dark:text-gray-400">📅 Created: {created_at}</p>
+        </div>
+        <div class="flex gap-2 ml-4">
+          {' '.join(actions)}
+        </div>
+      </div>
+    </div>
+    """
+
+
 @admin_router.get("/users")
 @require_permission("admin.user_management")
 async def admin_list_users(
@@ -5777,6 +5908,7 @@ async def admin_users_partial_html(
                     "base_url": base_url,
                     "hx_target": "#users-list-container",
                     "hx_indicator": "#users-loading",
+                    "hx_swap": "outerHTML",
                     "query_params": {},
                     "root_path": request.scope.get("root_path", ""),
                 },
@@ -5796,6 +5928,75 @@ async def admin_users_partial_html(
 
     except Exception as e:
         LOGGER.error(f"Error loading users partial for admin {user}: {e}")
+        return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading users: {str(e)}</p></div>', status_code=200)
+
+
+@admin_router.get("/teams/{team_id}/users/partial", response_class=HTMLResponse)
+@require_permission("teams.manage_members")
+async def admin_team_users_partial_html(
+    team_id: str,
+    request: Request,
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Response:
+    """Return paginated users selector items for team member selection."""
+    try:
+        if not settings.email_auth_enabled:
+            return HTMLResponse(
+                content='<div class="text-center py-8"><p class="text-gray-500">Email authentication is disabled. User management requires email auth.</p></div>',
+                status_code=200,
+            )
+
+        auth_service = EmailAuthService(db)
+        team_service = TeamManagementService(db)
+        current_user_email = get_user_email(user)
+
+        team = await team_service.get_team_by_id(team_id)
+        if not team:
+            return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
+
+        current_user_role = await team_service.get_user_role_in_team(current_user_email, team_id)
+        if current_user_role != "owner":
+            return HTMLResponse(content='<div class="text-red-500">Only team owners can add members</div>', status_code=403)
+
+        paginated_result = await auth_service.list_users(page=page, per_page=per_page)
+        users_db = paginated_result["data"]
+        pagination = paginated_result["pagination"]
+
+        users_data = [
+            {
+                "email": user_obj.email,
+                "full_name": user_obj.full_name,
+                "is_active": user_obj.is_active,
+                "is_admin": user_obj.is_admin,
+            }
+            for user_obj in users_db
+        ]
+
+        team_members = await team_service.get_team_members(team_id)
+        team_member_emails = {team_user.email for team_user, membership in team_members}
+
+        # End the read-only transaction early to avoid idle-in-transaction under load
+        db.commit()
+
+        root_path = request.scope.get("root_path", "")
+        return request.app.state.templates.TemplateResponse(
+            "users_selector_items.html",
+            {
+                "request": request,
+                "data": users_data,
+                "pagination": pagination.model_dump(),
+                "root_path": root_path,
+                "team_member_emails": team_member_emails,
+                "team_id": team_id,
+                "selector_base_url": f"{root_path}/admin/teams/{team_id}/users/partial",
+            },
+        )
+
+    except Exception as e:
+        LOGGER.error(f"Error loading team users selector for team {team_id}: {e}")
         return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading users: {str(e)}</p></div>', status_code=200)
 
 
@@ -5845,6 +6046,61 @@ async def admin_search_users(
         users_list = users_result if isinstance(users_result, list) else []
 
     # Format results for JSON response
+    results = [
+        {
+            "email": user_obj.email,
+            "full_name": user_obj.full_name or "",
+            "is_active": user_obj.is_active,
+            "is_admin": user_obj.is_admin,
+        }
+        for user_obj in users_list
+    ]
+
+    return {"users": results, "count": len(results)}
+
+
+@admin_router.get("/teams/{team_id}/users/search", response_class=JSONResponse)
+@require_permission("teams.manage_members")
+async def admin_search_team_users(
+    team_id: str,
+    q: str = Query("", description="Search query"),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of results to return"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Search users by email or full name for a team selector."""
+    if not settings.email_auth_enabled:
+        return {"users": [], "count": 0}
+
+    team_service = TeamManagementService(db)
+    current_user_email = get_user_email(user)
+
+    team = await team_service.get_team_by_id(team_id)
+    if not team:
+        return JSONResponse(content={"users": [], "count": 0}, status_code=404)
+
+    current_user_role = await team_service.get_user_role_in_team(current_user_email, team_id)
+    if current_user_role != "owner":
+        return JSONResponse(content={"users": [], "count": 0}, status_code=403)
+
+    search_query = q.strip().lower()
+    if not search_query:
+        return {"users": [], "count": 0}
+
+    LOGGER.debug(f"User {current_user_email} searching users with query: {search_query} (team {team_id})")
+
+    auth_service = EmailAuthService(db)
+
+    team_members = await team_service.get_team_members(team_id)
+    exclude_emails = {team_user.email for team_user, membership in team_members}
+
+    users_result = await auth_service.list_users(search=search_query, limit=limit, exclude_emails=exclude_emails)
+
+    if isinstance(users_result, dict):
+        users_list = users_result.get("data", [])
+    else:
+        users_list = users_result if isinstance(users_result, list) else []
+
     results = [
         {
             "email": user_obj.email,
@@ -6230,7 +6486,10 @@ async def admin_update_user(
                     // Close the modal
                     hideUserEditModal();
                     // Refresh the users list
-                    htmx.trigger(document.getElementById('users-list'), 'load');
+                    const usersList = document.getElementById('users-list-container');
+                    if (usersList) {
+                        htmx.trigger(usersList, 'refreshUsers');
+                    }
                 }, 1500);
             </script>
         </div>
@@ -6276,33 +6535,11 @@ async def admin_activate_user(
         decoded_email = urllib.parse.unquote(user_email)
 
         # Get current user email from JWT (used for logging purposes)
-        get_user_email(user)
+        current_user_email = get_user_email(user)
 
         user_obj = await auth_service.activate_user(decoded_email)
-        user_html = f"""
-        <div class="user-card border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-white dark:bg-gray-800">
-            <div class="flex justify-between items-start">
-                <div class="flex-1">
-                    <div class="flex items-center gap-2 mb-2">
-                        <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{user_obj.full_name}</h3>
-                        <span class="px-2 py-1 text-xs font-semibold text-green-600 bg-gray-100 dark:bg-gray-700 rounded-full">Active</span>
-                    </div>
-                    <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">📧 {user_obj.email}</p>
-                    <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">🔐 Provider: {user_obj.auth_provider}</p>
-                    <p class="text-sm text-gray-600 dark:text-gray-400">📅 Created: {user_obj.created_at.strftime("%Y-%m-%d %H:%M") if user_obj.created_at else "Unknown"}</p>
-                </div>
-                <div class="flex gap-2 ml-4">
-                    <button class="px-3 py-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 border border-blue-300 dark:border-blue-600 hover:border-blue-500 dark:hover:border-blue-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                            hx-get="{root_path}/admin/users/{user_obj.email}/edit" hx-target="#user-edit-modal-content">
-                        Edit
-                    </button>
-                    <button class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 hover:text-orange-800 dark:hover:text-orange-300 border border-orange-300 dark:border-orange-600 hover:border-orange-500 dark:hover:border-orange-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500" hx-post="{root_path}/admin/users/{user_obj.email.replace("@", "%40")}/deactivate" hx-confirm="Deactivate this user?" hx-target="closest .user-card" hx-swap="outerHTML">Deactivate</button>
-                    <button class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500" hx-delete="{root_path}/admin/users/{user_obj.email.replace("@", "%40")}" hx-confirm="Are you sure you want to delete this user? This action cannot be undone." hx-target="closest .user-card" hx-swap="outerHTML">Delete</button>
-                </div>
-            </div>
-        </div>
-        """
-        return HTMLResponse(content=user_html)
+        admin_count = await auth_service.count_active_admin_users()
+        return HTMLResponse(content=_render_user_card_html(user_obj, current_user_email, admin_count, root_path))
 
     except Exception as e:
         LOGGER.error(f"Error activating user {user_email}: {e}")
@@ -6354,30 +6591,8 @@ async def admin_deactivate_user(
             return HTMLResponse(content='<div class="text-red-500">Cannot deactivate the last remaining admin user</div>', status_code=400)
 
         user_obj = await auth_service.deactivate_user(decoded_email)
-        user_html = f"""
-        <div class="user-card border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-white dark:bg-gray-800">
-            <div class="flex justify-between items-start">
-                <div class="flex-1">
-                    <div class="flex items-center gap-2 mb-2">
-                        <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{user_obj.full_name}</h3>
-                        <span class="px-2 py-1 text-xs font-semibold text-red-600 bg-gray-100 dark:bg-gray-700 rounded-full">Inactive</span>
-                    </div>
-                    <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">📧 {user_obj.email}</p>
-                    <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">🔐 Provider: {user_obj.auth_provider}</p>
-                    <p class="text-sm text-gray-600 dark:text-gray-400">📅 Created: {user_obj.created_at.strftime("%Y-%m-%d %H:%M") if user_obj.created_at else "Unknown"}</p>
-                </div>
-                <div class="flex gap-2 ml-4">
-                    <button class="px-3 py-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 border border-blue-300 dark:border-blue-600 hover:border-blue-500 dark:hover:border-blue-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                            hx-get="{root_path}/admin/users/{user_obj.email}/edit" hx-target="#user-edit-modal-content">
-                        Edit
-                    </button>
-                    <button class="px-3 py-1 text-sm font-medium text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 border border-green-300 dark:border-green-600 hover:border-green-500 dark:hover:border-green-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500" hx-post="{root_path}/admin/users/{user_obj.email.replace("@", "%40")}/activate" hx-confirm="Activate this user?" hx-target="closest .user-card" hx-swap="outerHTML">Activate</button>
-                    <button class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500" hx-delete="{root_path}/admin/users/{user_obj.email.replace("@", "%40")}" hx-confirm="Are you sure you want to delete this user? This action cannot be undone." hx-target="closest .user-card" hx-swap="outerHTML">Delete</button>
-                </div>
-            </div>
-        </div>
-        """
-        return HTMLResponse(content=user_html)
+        admin_count = await auth_service.count_active_admin_users()
+        return HTMLResponse(content=_render_user_card_html(user_obj, current_user_email, admin_count, root_path))
 
     except Exception as e:
         LOGGER.error(f"Error deactivating user {user_email}: {e}")
@@ -6505,61 +6720,8 @@ async def admin_force_password_change(
 
         LOGGER.info(f"Admin {current_user_email} forced password change for user {decoded_email}")
 
-        # Return updated user card with status indicator
-        user_html = f"""
-        <div class="user-card bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 border border-gray-200 dark:border-gray-700 hover:shadow-lg transition-shadow duration-200">
-            <div class="flex items-start justify-between">
-                <div class="flex items-center space-x-4">
-                    <div class="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-semibold text-lg">
-                        {user_obj.get_display_name()[0].upper()}
-                    </div>
-                    <div>
-                        <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{html.escape(user_obj.get_display_name())}</h3>
-                        <p class="text-sm text-gray-600 dark:text-gray-400">{html.escape(user_obj.email)}</p>
-                        <div class="flex items-center space-x-2 mt-1">
-                            <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium {'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300' if user_obj.is_active else 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300'}">
-                                {'Active' if user_obj.is_active else 'Inactive'}
-                            </span>
-                            {'<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300">Admin</span>' if user_obj.is_admin else ''}
-                            {'<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300"><i class="fas fa-key mr-1"></i>Password Change Required</span>' if user_obj.password_change_required else ''}
-                        </div>
-                    </div>
-                </div>
-                <div class="flex flex-col space-y-2">
-                    <button class="px-3 py-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 border border-blue-300 dark:border-blue-600 hover:border-blue-500 dark:hover:border-blue-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                            hx-get="{root_path}/admin/users/{user_obj.email}/edit" hx-target="#user-edit-modal-content">
-                        Edit
-                    </button>
-                    {(
-                        '<button class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 hover:text-orange-800 '
-                        'dark:hover:text-orange-300 border border-orange-300 dark:border-orange-600 hover:border-orange-500 '
-                        'dark:hover:border-orange-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 '
-                        'focus:ring-orange-500" hx-post="' + root_path + '/admin/users/' + user_obj.email.replace("@", "%40") +
-                        '/deactivate" hx-confirm="Deactivate this user?" hx-target="closest .user-card" hx-swap="outerHTML">Deactivate</button>'
-                        if user_obj.is_active else
-                        '<button class="px-3 py-1 text-sm font-medium text-green-600 dark:text-green-400 hover:text-green-800 '
-                        'dark:hover:text-green-300 border border-green-300 dark:border-green-600 hover:border-green-500 '
-                        'dark:hover:border-green-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 '
-                        'focus:ring-green-500" hx-post="' + root_path + '/admin/users/' + user_obj.email.replace("@", "%40") +
-                        '/activate" hx-confirm="Activate this user?" hx-target="closest .user-card" hx-swap="outerHTML">Activate</button>'
-                    )}
-                    {(
-                        '<button class="px-3 py-1 text-sm font-medium text-yellow-600 dark:text-yellow-400 hover:text-yellow-800 '
-                        'dark:hover:text-yellow-300 border border-yellow-300 dark:border-yellow-600 hover:border-yellow-500 '
-                        'dark:hover:border-yellow-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 '
-                        'focus:ring-yellow-500" hx-post="' + root_path + '/admin/users/' + user_obj.email.replace("@", "%40") +
-                        '/force-password-change" hx-confirm="Force this user to change their password on next login?" '
-                        'hx-target="closest .user-card" hx-swap="outerHTML">Force Password Change</button>'
-                        if not user_obj.password_change_required else
-                        '<span class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 bg-orange-50 '
-                        'dark:bg-orange-900/20 border border-orange-300 dark:border-orange-600 rounded-md">Password Change Required</span>'
-                    )}
-                    <button class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500" hx-delete="{root_path}/admin/users/{user_obj.email.replace("@", "%40")}" hx-confirm="Are you sure you want to delete this user? This action cannot be undone." hx-target="closest .user-card" hx-swap="outerHTML">Delete</button>
-                </div>
-            </div>
-        </div>
-        """
-        return HTMLResponse(content=user_html)
+        admin_count = await auth_service.count_active_admin_users()
+        return HTMLResponse(content=_render_user_card_html(user_obj, current_user_email, admin_count, root_path))
 
     except Exception as e:
         LOGGER.error(f"Error forcing password change for user {user_email}: {e}")
