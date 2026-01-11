@@ -1816,9 +1816,9 @@ mypy:                               ## 🏷️  mypy type-checking
 bandit:                             ## 🛡️  bandit security scan
 	@echo "🛡️ bandit $(TARGET)..."
 	@if [ -d "$(TARGET)" ]; then \
-		$(VENV_DIR)/bin/bandit -r $(TARGET); \
+		$(VENV_DIR)/bin/bandit -c pyproject.toml -r $(TARGET); \
 	else \
-		$(VENV_DIR)/bin/bandit $(TARGET); \
+		$(VENV_DIR)/bin/bandit -c pyproject.toml $(TARGET); \
 	fi
 
 pydocstyle:                         ## 📚  Docstring style

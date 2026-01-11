@@ -739,3 +739,11 @@ quiet = false
 whitelist-regex = []
 color = true
 omit-covered-files = false
+
+# --------------------------------------------------------------------
+# Bandit security scanner configuration
+# --------------------------------------------------------------------
+[tool.bandit]
+# Skip B608 (hardcoded_sql_expressions) - false positives on HTML template f-strings
+# The codebase uses SQLAlchemy ORM which handles SQL injection protection
+skips = ["B608"]

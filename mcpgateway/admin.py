@@ -4433,13 +4433,16 @@ async def admin_add_team_members_view(
         team_members = await team_service.get_team_members(team_id)
         member_emails = {team_user.email for team_user, membership in team_members}
         # Use orjson to safely serialize the list for JavaScript consumption (prevents XSS/injection)
-        member_emails_json = orjson.dumps(list(member_emails)).decode()
+        member_emails_json = orjson.dumps(list(member_emails)).decode()  # nosec B105 - JSON array of emails, not password
 
-        # Build add members interface with paginated user selector
+        # Escape team name to prevent XSS
+        safe_team_name = html.escape(team.name)
+
+        # Build add members interface with paginated user selector (nosec B608 - HTML template, not SQL)
         add_members_html = f"""
         <div class="mb-4">
             <div class="flex justify-between items-center mb-4">
-                <h3 class="text-lg font-medium text-gray-900 dark:text-white">Add Members to: {team.name}</h3>
+                <h3 class="text-lg font-medium text-gray-900 dark:text-white">Add Members to: {safe_team_name}</h3>
                 <div class="flex items-center space-x-2">
                     <button onclick="loadTeamMembersView('{team.id}')" class="px-3 py-1 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700">
                         ← Back to Members
