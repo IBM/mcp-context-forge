@@ -2,7 +2,7 @@
 """Location: ./tests/unit/mcpgateway/plugins/framework/test_manager.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Teryl Taylor
+Authors: Teryl Taylor, Fred Araujo
 
 Unit tests for plugin manager.
 """
@@ -283,3 +283,79 @@ async def test_manager_tool_hooks_with_header_mods():
     assert result.modified_payload.headers["Content-Type"] == "application/json"
 
     await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_plugin_manager_singleton_behavior():
+    """Test that PluginManager implements proper singleton pattern (Borg pattern).
+
+    Verifies that:
+    1. Multiple instances share the same internal state
+    2. Initialization only happens once per process
+    3. reset() properly clears the shared state
+    4. After reset, a new instance can be initialized with different config
+    """
+    # Clean up any previous state
+    PluginManager.reset()
+
+    # Create first instance with a specific config
+    config1_path = "./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml"
+    manager1 = PluginManager(config1_path)
+    await manager1.initialize()
+
+    # Verify first instance is initialized
+    assert manager1.initialized
+    assert manager1.config is not None
+    assert manager1.config.plugins[0].name == "ReplaceBadWordsPlugin"
+    plugin_count_1 = manager1.plugin_count
+    assert plugin_count_1 > 0
+
+    # Create second instance with same config - should share state
+    manager2 = PluginManager(config1_path)
+
+    # Verify both instances share the same state (Borg pattern)
+    assert manager2.initialized is True, "Second instance should already be initialized"
+    assert manager2.config is manager1.config, "Both instances should share the same config object"
+    assert manager2.plugin_count == plugin_count_1, "Both instances should report same plugin count"
+    assert id(manager1.__dict__) == id(manager2.__dict__), "Both instances should share the same __dict__"
+
+    # Verify that calling initialize again on second instance doesn't re-initialize
+    await manager2.initialize()
+    assert manager2.plugin_count == plugin_count_1, "Plugin count should not change on re-initialization"
+
+    # Create third instance with different config path
+    config2_path = "./tests/unit/mcpgateway/plugins/fixtures/configs/valid_multiple_plugins.yaml"
+    manager3 = PluginManager(config2_path)
+
+    # Verify third instance STILL shares state (config path is ignored after first init)
+    assert manager3.initialized is True, "Third instance should already be initialized"
+    assert manager3.config is manager1.config, "Third instance should share config from first instance"
+    assert manager3.config.plugins[0].name == "ReplaceBadWordsPlugin", "Config should not change"
+
+    # Shutdown the manager
+    await manager1.shutdown()
+
+    # Now test reset functionality
+    PluginManager.reset()
+
+    # Verify reset clears the state
+    manager4 = PluginManager(config2_path)
+    assert not manager4.initialized, "After reset, new instance should not be initialized"
+    assert manager4.config is not None, "After reset, config should be loaded from new path"
+
+    # Initialize with the new config
+    await manager4.initialize()
+    assert manager4.initialized
+    assert manager4.config.plugins[0].name == "SynonymsPlugin", "Should have different config after reset"
+    plugin_count_2 = manager4.plugin_count
+    assert plugin_count_2 != plugin_count_1, "Plugin count should differ with different config"
+
+    # Create fifth instance - should share new state
+    manager5 = PluginManager(config1_path)
+    assert manager5.initialized is True
+    assert manager5.config is manager4.config, "New instances after reset should share new state"
+    assert manager5.config.plugins[0].name == "SynonymsPlugin", "Should still have config from after reset"
+
+    # Clean up
+    await manager4.shutdown()
+    PluginManager.reset()

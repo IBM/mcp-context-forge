@@ -591,8 +591,6 @@ class PluginManager:
         # Shutdown all plugins
         await self._registry.shutdown()
 
-        # Clear context store
-
         # Reset state to allow re-initialization
         self._initialized = False
 
