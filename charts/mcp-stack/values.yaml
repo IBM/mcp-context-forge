@@ -185,8 +185,8 @@ mcpContextForge:
     # ─ Connection retry settings ─
     REDIS_MAX_RETRIES: "3"           # Maximum retries for Redis cold start
     REDIS_RETRY_INTERVAL_MS: "2000"  # Interval between Redis retries (ms)
-    DB_MAX_RETRIES: "3"              # Maximum retries for DB cold start
-    DB_RETRY_INTERVAL_MS: "2000"     # Interval between DB retries (ms)
+    DB_MAX_RETRIES: "30"             # Maximum retries for DB cold start (exponential backoff)
+    DB_RETRY_INTERVAL_MS: "2000"     # Base interval between DB retries (ms, doubles each attempt)
 
     # ─ Redis connection pool (performance-tuned) ─
     REDIS_MAX_CONNECTIONS: "50"      # Pool size per worker

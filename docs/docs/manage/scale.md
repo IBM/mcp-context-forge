@@ -640,8 +640,8 @@ DB_POOL_SIZE=50              # Persistent connections per worker
 DB_MAX_OVERFLOW=10           # Additional connections allowed
 DB_POOL_TIMEOUT=60           # Wait time before timeout (seconds)
 DB_POOL_RECYCLE=3600         # Recycle connections after 1 hour
-DB_MAX_RETRIES=5             # Retry attempts on failure
-DB_RETRY_INTERVAL_MS=2000    # Retry interval
+DB_MAX_RETRIES=30            # Retry attempts on failure (exponential backoff)
+DB_RETRY_INTERVAL_MS=2000    # Base retry interval (doubles each attempt, max 30s)
 
 # psycopg3-specific optimizations
 DB_PREPARE_THRESHOLD=5       # Auto-prepare queries after N executions (0=disable)

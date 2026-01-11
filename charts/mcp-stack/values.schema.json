@@ -479,12 +479,12 @@
             },
             "DB_MAX_RETRIES": {
               "type": "string",
-              "description": "Database max retries",
-              "default": "3"
+              "description": "Max DB connection retries at startup (uses exponential backoff with jitter)",
+              "default": "30"
             },
             "DB_RETRY_INTERVAL_MS": {
               "type": "string",
-              "description": "Database retry interval in milliseconds",
+              "description": "Base retry interval in ms (doubles each attempt up to 30s max)",
               "default": "2000"
             },
             "PROTOCOL_VERSION": {

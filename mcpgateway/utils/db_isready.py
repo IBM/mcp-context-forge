@@ -22,6 +22,10 @@ Exit codes when executed as a script
 Features
 --------
 * Accepts **any** SQLAlchemy URL supported by the installed version.
+* **Exponential backoff with jitter** - prevents thundering herd on reconnect:
+  - Retry delays: 2s → 4s → 8s → 16s → 30s (capped) → 30s...
+  - Random jitter of ±25% prevents synchronized reconnection storms
+  - Default: 30 retries ≈ 5 minutes total wait before giving up
 * Timing knobs (tries, interval, connect-timeout) configurable through
   *environment variables* **or** *CLI flags* - see below.
 * Works **synchronously** (blocking) or **asynchronously** - simply
@@ -100,6 +104,7 @@ import argparse
 import asyncio
 import logging
 import os
+import random
 import re
 import sys
 import time
@@ -212,11 +217,20 @@ def wait_for_db_ready(
     The helper can be awaited **asynchronously** *or* called in *blocking*
     mode by passing ``sync=True``.
 
+    Uses **exponential backoff with jitter** to prevent thundering herd when
+    multiple workers attempt to reconnect simultaneously. The delay between
+    attempts doubles each time (capped at 30s), with ±25% random jitter.
+
+    Example retry progression with interval=2s:
+        Attempt 1: 2s, Attempt 2: 4s, Attempt 3: 8s, Attempt 4: 16s,
+        Attempt 5+: 30s (capped), each ±25% jitter
+
     Args:
         database_url: SQLAlchemy URL to probe. Falls back to ``$DATABASE_URL``
             or the project default (usually an on-disk SQLite file).
         max_tries: Total number of connection attempts before giving up.
-        interval: Delay *in seconds* between attempts.
+        interval: Base delay *in seconds* between attempts. Actual delay uses
+            exponential backoff: ``min(interval * 2^attempt, 30s) ± 25% jitter``.
         timeout: Per-attempt connection timeout in seconds (passed to the DB
             driver when supported).
         logger: Optional custom :class:`logging.Logger`. If omitted, a default
@@ -303,6 +317,7 @@ def wait_for_db_ready(
         """
 
         start = time.perf_counter()
+        max_backoff = 30.0  # Cap exponential backoff at 30 seconds
         for attempt in range(1, max_tries + 1):
             try:
                 with engine.connect() as conn:
@@ -311,8 +326,13 @@ def wait_for_db_ready(
                 log.info(f"Database ready after {elapsed:.2f}s (attempt {attempt})")
                 return
             except OperationalError as exc:
-                log.debug(f"Attempt {attempt}/{max_tries} failed ({_sanitize(str(exc))}) - retrying in {interval:.1f}s")
-            time.sleep(interval)
+                # Exponential backoff: interval * 2^(attempt-1), capped at max_backoff
+                backoff = min(interval * (2 ** (attempt - 1)), max_backoff)
+                # Add jitter (±25%) to prevent thundering herd
+                jitter = backoff * random.uniform(-0.25, 0.25)
+                sleep_time = max(0.1, backoff + jitter)  # Ensure minimum 0.1s
+                log.debug(f"Attempt {attempt}/{max_tries} failed ({_sanitize(str(exc))}) - retrying in {sleep_time:.1f}s")
+            time.sleep(sleep_time)
         raise RuntimeError(f"Database not ready after {max_tries} attempts")
 
     if sync:

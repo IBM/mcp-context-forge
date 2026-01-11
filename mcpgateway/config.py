@@ -1235,8 +1235,8 @@ class Settings(BaseSettings):
     db_max_overflow: int = 10
     db_pool_timeout: int = 30
     db_pool_recycle: int = 3600
-    db_max_retries: int = 3
-    db_retry_interval_ms: int = 2000
+    db_max_retries: int = 30  # Max attempts with exponential backoff (≈5 min total)
+    db_retry_interval_ms: int = 2000  # Base interval; doubles each attempt up to 30s, ±25% jitter
 
     # Database Performance Optimization
     use_postgresdb_percentiles: bool = Field(

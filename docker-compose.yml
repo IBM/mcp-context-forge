@@ -250,6 +250,13 @@ services:
       - DB_MAX_OVERFLOW=10             # Extra connections under load
       - DB_POOL_TIMEOUT=60             # Time to wait for connection before failing
       - DB_POOL_RECYCLE=60             # Recycle before PgBouncer CLIENT_IDLE_TIMEOUT (half of 120s)
+      # ═══════════════════════════════════════════════════════════════════════════
+      # Database Startup Resilience (prevents crash-loop on DB outage)
+      # ═══════════════════════════════════════════════════════════════════════════
+      # With exponential backoff: 2s, 4s, 8s, 16s, 30s (capped), 30s...
+      # 30 retries = ~5 minutes total wait before worker gives up
+      - DB_MAX_RETRIES=30              # Max attempts before worker exits (default: 30)
+      - DB_RETRY_INTERVAL_MS=2000      # Base interval, grows exponentially with jitter
       # Tool configuration for high-concurrency load testing
       - TOOL_TIMEOUT=60               # Seconds before tool invocation times out
       - MAX_TOOL_RETRIES=3            # Retry attempts for failed tool invocations
