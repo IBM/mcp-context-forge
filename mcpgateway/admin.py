@@ -4432,7 +4432,8 @@ async def admin_add_team_members_view(
         # Get current team members to exclude from selection
         team_members = await team_service.get_team_members(team_id)
         member_emails = {team_user.email for team_user, membership in team_members}
-        member_emails_param = ",".join(member_emails) if member_emails else ""
+        # Use orjson to safely serialize the list for JavaScript consumption (prevents XSS/injection)
+        member_emails_json = orjson.dumps(list(member_emails)).decode()
 
         # Build add members interface with paginated user selector
         add_members_html = f"""
@@ -4562,15 +4563,10 @@ async def admin_add_team_members_view(
                         const data = await response.json();
 
                         if (data.users && data.users.length > 0) {{
-                            // Helper to escape HTML to prevent XSS
-                            const escapeHtml = (str) => {{
-                                const div = document.createElement('div');
-                                div.textContent = str || '';
-                                return div.innerHTML;
-                            }};
                             const container = document.createElement('div');
                             container.className = 'bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md p-2 mt-1';
-                            const memberEmails = '{member_emails_param}'.split(',');
+                            // Parse member emails from JSON (safely serialized server-side)
+                            const memberEmails = {member_emails_json};
                             data.users.forEach(user => {{
                                 // Check if user is already a member
                                 if (!memberEmails.includes(user.email)) {{
