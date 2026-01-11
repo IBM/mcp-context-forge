@@ -182,9 +182,9 @@ mcpContextForge:
     SESSION_TTL: "3600"              # TTL (s) for user sessions
     MESSAGE_TTL: "600"               # TTL (s) for ephemeral messages (completions)
 
-    # ─ Connection retry settings ─
-    REDIS_MAX_RETRIES: "3"           # Maximum retries for Redis cold start
-    REDIS_RETRY_INTERVAL_MS: "2000"  # Interval between Redis retries (ms)
+    # ─ Connection retry settings (exponential backoff with jitter) ─
+    REDIS_MAX_RETRIES: "30"          # Maximum retries for Redis cold start (exponential backoff)
+    REDIS_RETRY_INTERVAL_MS: "2000"  # Base interval between Redis retries (ms, doubles each attempt)
     DB_MAX_RETRIES: "30"             # Maximum retries for DB cold start (exponential backoff)
     DB_RETRY_INTERVAL_MS: "2000"     # Base interval between DB retries (ms, doubles each attempt)
 

@@ -928,8 +928,8 @@ REDIS_URL=redis://redis-service:6379/0
 CACHE_PREFIX=mcpgw:
 SESSION_TTL=3600
 MESSAGE_TTL=600
-REDIS_MAX_RETRIES=3
-REDIS_RETRY_INTERVAL_MS=2000
+REDIS_MAX_RETRIES=30             # Retry attempts on failure (exponential backoff)
+REDIS_RETRY_INTERVAL_MS=2000     # Base retry interval (doubles each attempt, max 30s)
 
 # Connection pool (standard)
 REDIS_MAX_CONNECTIONS=50

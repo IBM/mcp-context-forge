@@ -2471,12 +2471,14 @@
       "type": "integer"
     },
     "redis_max_retries": {
-      "default": 3,
+      "default": 30,
+      "description": "Max Redis connection retries at startup. Uses exponential backoff with jitter to prevent thundering herd.",
       "title": "Redis Max Retries",
       "type": "integer"
     },
     "redis_retry_interval_ms": {
       "default": 2000,
+      "description": "Base retry interval in milliseconds. Doubles each attempt up to 30s max, with ±25% jitter.",
       "title": "Redis Retry Interval Ms",
       "type": "integer"
     },

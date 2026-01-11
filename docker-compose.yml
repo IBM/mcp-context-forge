@@ -135,6 +135,13 @@ services:
       - REDIS_SOCKET_TIMEOUT=5.0
       - REDIS_SOCKET_CONNECT_TIMEOUT=5.0
       - REDIS_HEALTH_CHECK_INTERVAL=30
+      # ═══════════════════════════════════════════════════════════════════════════
+      # Redis Startup Resilience (prevents crash-loop on Redis outage)
+      # ═══════════════════════════════════════════════════════════════════════════
+      # With exponential backoff: 2s, 4s, 8s, 16s, 30s (capped), 30s...
+      # 30 retries = ~5 minutes total wait before worker gives up
+      - REDIS_MAX_RETRIES=30             # Max attempts before worker exits (default: 30)
+      - REDIS_RETRY_INTERVAL_MS=2000     # Base interval, grows exponentially with jitter
       # Auth Cache Configuration (reduces DB queries per auth request from 3-4 to 0-1)
       - AUTH_CACHE_ENABLED=true
       - AUTH_CACHE_USER_TTL=300

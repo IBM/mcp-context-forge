@@ -1276,8 +1276,8 @@ class Settings(BaseSettings):
     cache_prefix: str = "mcpgw:"
     session_ttl: int = 3600
     message_ttl: int = 600
-    redis_max_retries: int = 3
-    redis_retry_interval_ms: int = 2000
+    redis_max_retries: int = 30  # Max attempts with exponential backoff (≈5 min total)
+    redis_retry_interval_ms: int = 2000  # Base interval; doubles each attempt up to 30s, ±25% jitter
 
     # GlobalConfig In-Memory Cache (Issue #1715)
     # Caches GlobalConfig (passthrough headers) to eliminate redundant DB queries

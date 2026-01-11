@@ -422,12 +422,12 @@
             },
             "REDIS_MAX_RETRIES": {
               "type": "string",
-              "description": "Redis max retries",
-              "default": "3"
+              "description": "Max Redis connection retries at startup (uses exponential backoff with jitter)",
+              "default": "30"
             },
             "REDIS_RETRY_INTERVAL_MS": {
               "type": "string",
-              "description": "Redis retry interval in milliseconds",
+              "description": "Base retry interval in ms (doubles each attempt up to 30s max)",
               "default": "2000"
             },
             "REDIS_MAX_CONNECTIONS": {

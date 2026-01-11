@@ -422,6 +422,10 @@ CACHE_TYPE=redis                    # Options: memory, redis, database, none
 REDIS_URL=redis://localhost:6379/0
 CACHE_PREFIX=mcpgateway
 
+# Redis Startup Resilience (exponential backoff with jitter)
+REDIS_MAX_RETRIES=30                # Max attempts before worker exits (default: 30)
+REDIS_RETRY_INTERVAL_MS=2000        # Base interval in ms (uses exponential backoff with jitter)
+
 # Cache TTL (seconds)
 SESSION_TTL=3600
 MESSAGE_TTL=600
@@ -450,6 +454,16 @@ AUTH_CACHE_REVOCATION_TTL=30        # Token revocation cache TTL (5-120, securit
 AUTH_CACHE_TEAM_TTL=60              # Team membership cache TTL in seconds (10-300)
 AUTH_CACHE_BATCH_QUERIES=true       # Batch auth DB queries into single call
 ```
+
+#### Redis Startup Resilience
+
+The gateway uses **exponential backoff with jitter** when waiting for Redis at startup:
+
+- **Retry progression**: 2s → 4s → 8s → 16s → 30s (capped) → 30s...
+- **Jitter**: ±25% randomization prevents thundering herd when multiple workers reconnect
+- **Default behavior**: 30 retries with 2s base interval ≈ 5 minutes total wait
+
+This prevents CPU-intensive crash-respawn loops when Redis is temporarily unavailable.
 
 #### Authentication Cache
 

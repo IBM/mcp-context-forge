@@ -170,8 +170,8 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.REDIS_LEADER_KEY | string | `"gateway_service_leader"` |  |
 | mcpContextForge.config.REDIS_LEADER_TTL | string | `"15"` |  |
 | mcpContextForge.config.REDIS_MAX_CONNECTIONS | string | `"50"` |  |
-| mcpContextForge.config.REDIS_MAX_RETRIES | string | `"3"` |  |
-| mcpContextForge.config.REDIS_RETRY_INTERVAL_MS | string | `"2000"` |  |
+| mcpContextForge.config.REDIS_MAX_RETRIES | string | `"30"` | Max Redis connection retries at startup (exponential backoff) |
+| mcpContextForge.config.REDIS_RETRY_INTERVAL_MS | string | `"2000"` | Base retry interval in ms (doubles each attempt, max 30s) |
 | mcpContextForge.config.REDIS_RETRY_ON_TIMEOUT | string | `"true"` |  |
 | mcpContextForge.config.REDIS_SOCKET_CONNECT_TIMEOUT | string | `"2.0"` |  |
 | mcpContextForge.config.REDIS_SOCKET_TIMEOUT | string | `"2.0"` |  |
