@@ -137,7 +137,7 @@ def wait_for_redis_ready(
             Maximum number of connection attempts before failing.
         retry_interval_ms : int
             Base delay between retry attempts, in milliseconds. Actual delay uses
-            exponential backoff: ``min(interval * 2^attempt, 30s) ± 25% jitter``.
+            exponential backoff: ``min(interval * 2^(attempt-1), 30s)``, then ±25% jitter.
         logger : logging.Logger, optional
             Logger instance to use. If not provided, a default logger is configured.
         sync : bool

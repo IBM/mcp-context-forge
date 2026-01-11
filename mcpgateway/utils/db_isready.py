@@ -230,7 +230,7 @@ def wait_for_db_ready(
             or the project default (usually an on-disk SQLite file).
         max_tries: Total number of connection attempts before giving up.
         interval: Base delay *in seconds* between attempts. Actual delay uses
-            exponential backoff: ``min(interval * 2^attempt, 30s) ± 25% jitter``.
+            exponential backoff: ``min(interval * 2^(attempt-1), 30s)``, then ±25% jitter.
         timeout: Per-attempt connection timeout in seconds (passed to the DB
             driver when supported).
         logger: Optional custom :class:`logging.Logger`. If omitted, a default
@@ -326,13 +326,16 @@ def wait_for_db_ready(
                 log.info(f"Database ready after {elapsed:.2f}s (attempt {attempt})")
                 return
             except OperationalError as exc:
-                # Exponential backoff: interval * 2^(attempt-1), capped at max_backoff
-                backoff = min(interval * (2 ** (attempt - 1)), max_backoff)
-                # Add jitter (±25%) to prevent thundering herd
-                jitter = backoff * random.uniform(-0.25, 0.25)
-                sleep_time = max(0.1, backoff + jitter)  # Ensure minimum 0.1s
-                log.debug(f"Attempt {attempt}/{max_tries} failed ({_sanitize(str(exc))}) - retrying in {sleep_time:.1f}s")
-            time.sleep(sleep_time)
+                if attempt < max_tries:  # Don't sleep on the last attempt
+                    # Exponential backoff: interval * 2^(attempt-1), capped at max_backoff
+                    backoff = min(interval * (2 ** (attempt - 1)), max_backoff)
+                    # Add jitter (±25%) to prevent thundering herd
+                    jitter = backoff * random.uniform(-0.25, 0.25)
+                    sleep_time = max(0.1, backoff + jitter)  # Ensure minimum 0.1s
+                    log.debug(f"Attempt {attempt}/{max_tries} failed ({_sanitize(str(exc))}) - retrying in {sleep_time:.1f}s")
+                    time.sleep(sleep_time)
+                else:
+                    log.debug(f"Attempt {attempt}/{max_tries} failed ({_sanitize(str(exc))})")
         raise RuntimeError(f"Database not ready after {max_tries} attempts")
 
     if sync:
