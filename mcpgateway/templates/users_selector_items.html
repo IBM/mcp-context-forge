@@ -17,7 +17,7 @@
   />
   <span class="select-none flex-grow">{{ user.full_name }} ({{ user.email }})</span>
   <select
-    name="role_{{ user.email }}"
+    name="role_{{ user.email | urlencode }}"
     class="role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0"
     {{ 'disabled' if not is_member else '' }}
   >

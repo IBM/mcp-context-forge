@@ -4359,11 +4359,14 @@ async def admin_view_team_members(
             else ""
         )
 
+        # Escape team name to prevent XSS
+        safe_team_name_header = html.escape(team.name)
+
         management_html = f"""
         <div class="mb-4">
             <div class="flex justify-between items-center mb-4">
                 <h3 class="text-lg font-medium text-gray-900 dark:text-white">
-                    Team Members: {team.name}
+                    Team Members: {safe_team_name_header}
                 </h3>
                 <div class="flex items-center space-x-2">
                     {add_members_button}
@@ -4438,7 +4441,7 @@ async def admin_add_team_members_view(
         # Escape team name to prevent XSS
         safe_team_name = html.escape(team.name)
 
-        # Build add members interface with paginated user selector (nosec B608 - HTML template, not SQL)
+        # Build add members interface with paginated user selector
         add_members_html = f"""
         <div class="mb-4">
             <div class="flex justify-between items-center mb-4">
@@ -4593,20 +4596,61 @@ async def admin_add_team_members_view(
                 }});
 
                 window['addUserFromSearch_{team.id}'] = function(email, name, teamId) {{
-                    // Find the checkbox for this user
+                    // Find the checkbox for this user in the selector list
                     const container = document.getElementById(`user-selector-container-${{teamId}}`);
-                    const checkbox = container.querySelector(`input[value="${{email}}"]`);
+                    let checkbox = container.querySelector(`input[value="${{email}}"]`);
+
                     if (checkbox) {{
+                        // User already in list - just check the box
                         checkbox.checked = true;
                         checkbox.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                    }} else {{
+                        // User not in infinite-scroll list yet - dynamically add them
+                        const userItem = document.createElement('div');
+                        userItem.className = 'flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-2 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item';
+                        userItem.setAttribute('data-user-email', email);
+
+                        const newCheckbox = document.createElement('input');
+                        newCheckbox.type = 'checkbox';
+                        newCheckbox.name = 'associatedUsers';
+                        newCheckbox.value = email;
+                        newCheckbox.setAttribute('data-user-name', name || '');
+                        newCheckbox.className = 'user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0';
+                        newCheckbox.setAttribute('data-auto-check', 'true');
+                        newCheckbox.checked = true;
+
+                        const label = document.createElement('span');
+                        label.className = 'select-none flex-grow';
+                        label.textContent = `${{name || ''}} (${{email}})`;
+
+                        const roleSelect = document.createElement('select');
+                        roleSelect.name = `role_${{encodeURIComponent(email)}}`;
+                        roleSelect.className = 'role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0';
+                        roleSelect.innerHTML = '<option value="member" selected>Member</option><option value="owner">Owner</option>';
+
+                        userItem.appendChild(newCheckbox);
+                        userItem.appendChild(label);
+                        userItem.appendChild(roleSelect);
+
+                        // Insert at the top of the list
+                        const firstChild = container.firstChild;
+                        if (firstChild) {{
+                            container.insertBefore(userItem, firstChild);
+                        }} else {{
+                            container.appendChild(userItem);
+                        }}
+
+                        // Trigger change event for the new checkbox
+                        newCheckbox.dispatchEvent(new Event('change', {{ bubbles: true }}));
                     }}
+
                     // Clear search
                     document.getElementById(`user-search-${{teamId}}`).value = '';
                     document.getElementById(`user-search-results-${{teamId}}`).innerHTML = '';
                 }};
             }})();
         </script>
-        """
+        """  # nosec B608 - HTML template f-string, not SQL (uses SQLAlchemy ORM for DB)
 
         return HTMLResponse(content=add_members_html)
 
@@ -4918,8 +4962,10 @@ async def admin_add_team_members(
                     errors.append(f"{user_email} (user not found)")
                     continue
 
-                # Get per-user role from form (format: role_email@example.com)
-                user_role_key = f"role_{user_email}"
+                # Get per-user role from form (format: role_<url-encoded-email>)
+                # Template uses urlencode filter, so we need to URL-encode the email to match
+                encoded_email = urllib.parse.quote(user_email, safe="")
+                user_role_key = f"role_{encoded_email}"
                 user_role_val = form.get(user_role_key, default_role)
                 user_role = user_role_val if isinstance(user_role_val, str) else default_role
 
@@ -5729,7 +5775,7 @@ async def admin_users_partial_html(
                     "request": request,
                     "pagination": pagination.model_dump(),
                     "base_url": base_url,
-                    "hx_target": "#users-table-body",
+                    "hx_target": "#users-list-container",
                     "hx_indicator": "#users-loading",
                     "query_params": {},
                     "root_path": request.scope.get("root_path", ""),
