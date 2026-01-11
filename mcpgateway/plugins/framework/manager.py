@@ -427,6 +427,10 @@ class PluginManager:
     def __init__(self, config: str = "", timeout: int = DEFAULT_PLUGIN_TIMEOUT):
         """Initialize plugin manager.
 
+        PluginManager implements a Borg singleton:
+            - Shared state is initialized only once.
+            - Subsequent instantiations reuse same state and skip config reload.
+
         Args:
             config: Path to plugin configuration file (YAML).
             timeout: Maximum execution time per plugin in seconds.
