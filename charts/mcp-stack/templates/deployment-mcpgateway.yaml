@@ -54,12 +54,30 @@ spec:
             - name: POSTGRES_HOST
               {{- if .Values.pgbouncer.enabled }}
               value: {{ printf "%s-pgbouncer" (include "mcp-stack.fullname" .) }}
+              {{- else if .Values.postgres.external.enabled }}
+              {{- if .Values.postgres.external.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . }}
+                  key: {{ .Values.postgres.external.hostKey | default "host" }}
+              {{- else }}
+              value: {{ .Values.postgres.external.host | quote }}
+              {{- end }}
               {{- else }}
               value: {{ printf "%s-postgres" (include "mcp-stack.fullname" .) }}
               {{- end }}
             - name: POSTGRES_PORT
               {{- if .Values.pgbouncer.enabled }}
               value: "{{ .Values.pgbouncer.service.port }}"
+              {{- else if .Values.postgres.external.enabled }}
+              {{- if .Values.postgres.external.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . }}
+                  key: {{ .Values.postgres.external.portKey | default "port" }}
+              {{- else }}
+              value: "{{ .Values.postgres.external.port }}"
+              {{- end }}
               {{- else }}
               value: "{{ .Values.mcpContextForge.env.postgres.port }}"
               {{- end }}

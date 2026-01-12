@@ -812,6 +812,32 @@ postgres:
       memory: 64Mi
 
   # ─── Health & readiness probes ───
+
+  # ─── External Database Configuration ───
+  # If enabled, uses these connection details instead of the internal postgres pod.
+  # Can map keys from an existingSecret (e.g. created by CloudNativePG).
+  external:
+    enabled: false
+    # Secret name containing connection details
+    existingSecret: ""
+
+    # Connection details.
+    # If *Key is provided and existingSecret is set, the value is pulled from the secret.
+    # Otherwise, the direct value (host, port, etc.) is used.
+    host: ""
+    hostKey: "host"
+
+    port: 5432
+    portKey: "port"
+
+    database: ""
+    databaseKey: "dbname"
+
+    user: ""
+    userKey: "user"
+
+    password: ""
+    passwordKey: "password"
   probes:
     readiness:
       type: exec
