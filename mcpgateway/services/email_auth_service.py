@@ -802,6 +802,115 @@ class EmailAuthService:
 
             return UsersListResult(data=[])
 
+    async def list_users_not_in_team(
+        self,
+        team_id: str,
+        cursor: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        per_page: Optional[int] = None,
+        search: Optional[str] = None,
+    ) -> UsersListResult:
+        """List users who are NOT members of the specified team with cursor or page-based pagination.
+
+        Uses a NOT IN subquery to efficiently exclude team members.
+
+        Args:
+            team_id: ID of the team to exclude members from
+            cursor: Opaque cursor token for cursor-based pagination
+            limit: Maximum number of users to return (for cursor-based, default: 50)
+            page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
+            per_page: Items per page for page-based pagination (default: 30)
+            search: Optional search term to filter by email or full name
+
+        Returns:
+            UsersListResult with data and either cursor or pagination metadata
+
+        Examples:
+            # Page-based (admin UI)
+            # result = await service.list_users_not_in_team("team-123", page=1, per_page=30)
+            # result.pagination # Returns: pagination metadata
+
+            # Cursor-based (API)
+            # result = await service.list_users_not_in_team("team-123", cursor=None, limit=50)
+            # result.next_cursor # Returns: next cursor token
+        """
+        try:
+            # Build base query with ordering
+            query = select(EmailUser).order_by(EmailUser.full_name, EmailUser.email)
+
+            # Apply search filter if provided
+            if search and search.strip():
+                search_term = f"{self._escape_like(search.strip())}%"
+                query = query.where(
+                    or_(
+                        EmailUser.email.ilike(search_term, escape="\\"),
+                        EmailUser.full_name.ilike(search_term, escape="\\"),
+                    )
+                )
+
+            # Exclude team members using NOT IN subquery
+            member_emails_subquery = (
+                select(EmailTeamMember.user_email)
+                .where(
+                    EmailTeamMember.team_id == team_id,
+                    EmailTeamMember.is_active.is_(True)
+                )
+            )
+            query = query.where(
+                EmailUser.is_active.is_(True),
+                ~EmailUser.email.in_(member_emails_subquery)
+            )
+
+            # Use unified pagination for both cursor and page-based
+            pag_result = await unified_paginate(
+                db=self.db,
+                query=query,
+                page=page,
+                per_page=per_page or 30,
+                cursor=cursor,
+                limit=limit or 50,
+                base_url=f"/admin/teams/{team_id}/non-members",
+                query_params={},
+            )
+
+            # Return appropriate format based on pagination type
+            if page is not None:
+                # Page-based format
+                return UsersListResult(
+                    data=pag_result["data"],
+                    pagination=pag_result["pagination"],
+                    links=pag_result["links"]
+                )
+            else:
+                # Cursor-based format
+                users, next_cursor = pag_result
+                return UsersListResult(data=users, next_cursor=next_cursor)
+
+        except Exception as e:
+            logger.error(f"Error listing non-members for team {team_id}: {e}")
+
+            # Return appropriate empty response based on mode
+            if page is not None:
+                return UsersListResult(
+                    data=[],
+                    pagination=PaginationMeta(
+                        page=page,
+                        per_page=per_page or 30,
+                        total_items=0,
+                        total_pages=0,
+                        has_next=False,
+                        has_prev=False
+                    ),
+                    links=PaginationLinks(  # pylint: disable=kwarg-superseded-by-positional-arg
+                        self=f"/admin/teams/{team_id}/non-members?page=1&per_page={per_page or 30}",
+                        first=f"/admin/teams/{team_id}/non-members?page=1&per_page={per_page or 30}",
+                        last=f"/admin/teams/{team_id}/non-members?page=1&per_page={per_page or 30}"
+                    ),
+                )
+            else:
+                return UsersListResult(data=[], next_cursor=None)
+
     async def get_all_users(self) -> list[EmailUser]:
         """Get all users without pagination.
 

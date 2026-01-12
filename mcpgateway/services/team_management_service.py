@@ -768,78 +768,91 @@ class TeamManagementService:
 
         return team_id
 
-    async def get_team_members(self, team_id: str) -> List[Tuple[EmailUser, EmailTeamMember]]:
-        """Get all members of a team.
+    async def get_team_members(
+        self,
+        team_id: str,
+        cursor: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        per_page: Optional[int] = None,
+    ) -> Union[List[Tuple[EmailUser, EmailTeamMember]], Tuple[List[Tuple[EmailUser, EmailTeamMember]], Optional[str]], Dict[str, Any]]:
+        """Get all members of a team with optional cursor or page-based pagination.
 
         Note: This method returns ORM objects and cannot be cached since callers
         depend on ORM attributes and methods.
 
         Args:
             team_id: ID of the team
+            cursor: Opaque cursor token for cursor-based pagination
+            limit: Maximum number of members to return (for cursor-based, default: 50)
+            page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
+            per_page: Items per page for page-based pagination (default: 30)
 
         Returns:
-            List[Tuple[EmailUser, EmailTeamMember]]: List of (user, membership) tuples
+            - If cursor is provided: Tuple (members, next_cursor)
+            - If page is provided: Dict with keys 'data', 'pagination', 'links'
+            - If neither: List of all members (backward compatibility)
 
         Examples:
             Team member management and role display.
         """
         try:
-            members = (
-                self.db.query(EmailUser, EmailTeamMember)
+            # Build base query - using select() for unified_paginate compatibility
+            query = (
+                select(EmailUser, EmailTeamMember)
                 .join(EmailTeamMember, EmailUser.email == EmailTeamMember.user_email)
-                .filter(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True))
-                .all()
+                .where(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True))
+                .order_by(EmailUser.full_name, EmailUser.email)
             )
-            self.db.commit()  # Release transaction to avoid idle-in-transaction
-            return members
+
+            # If neither cursor nor page provided, return all members (backward compatibility)
+            if cursor is None and page is None:
+                result = self.db.execute(query)
+                members = list(result.all())
+                self.db.commit()
+                return members
+
+            # Use unified_paginate for both cursor and page-based pagination
+            from mcpgateway.utils.pagination import unified_paginate
+
+            pag_result = await unified_paginate(
+                db=self.db,
+                query=query,
+                page=page,
+                per_page=per_page or 30,
+                cursor=cursor,
+                limit=limit or 50,
+                base_url=f"/admin/teams/{team_id}/members",
+                query_params={},
+            )
+
+            self.db.commit()
+
+            # Return appropriate format based on pagination type
+            if page is not None:
+                # Page-based format: dict
+                return {
+                    "data": pag_result["data"],
+                    "pagination": pag_result["pagination"],
+                    "links": pag_result["links"],
+                }
+            else:
+                # Cursor-based format: tuple
+                members, next_cursor = pag_result
+                return (members, next_cursor)
 
         except Exception as e:
             self.db.rollback()
             logger.error(f"Failed to get members for team {team_id}: {e}")
-            return []
 
-    async def list_team_members_paginated(
-        self,
-        team_id: str,
-        page: int = 1,
-        per_page: Optional[int] = None,
-        base_url: str = "",
-        query_params: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        """Get team members with offset-based pagination.
+            # Return appropriate empty response based on mode
+            if page is not None:
+                return {"data": [], "pagination": {"page": page, "per_page": per_page or 30, "total": 0, "has_next": False, "has_prev": False}, "links": None}
+            elif cursor is not None:
+                return ([], None)
+            else:
+                return []
 
-        Args:
-            team_id: ID of the team.
-            page: Page number (1-indexed).
-            per_page: Items per page (uses default if None).
-            base_url: Base URL for pagination links.
-            query_params: Additional query parameters to include in links.
-
-        Returns:
-            Dict[str, Any]: Pagination result with data, pagination, and links.
-        """
-        try:
-            query = (
-                select(EmailTeamMember).options(selectinload(EmailTeamMember.user)).where(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)).order_by(EmailTeamMember.user_email)
-            )
-            result = await offset_paginate(
-                db=self.db,
-                query=query,
-                page=page,
-                per_page=per_page or settings.pagination_default_page_size,
-                base_url=base_url,
-                query_params=query_params,
-            )
-            self.db.commit()  # Release transaction to avoid idle-in-transaction
-            return result
-        except Exception as e:
-            self.db.rollback()
-            logger.error(f"Failed to paginate members for team {team_id}: {e}")
-            return {
-                "data": [],
-                "pagination": None,
-                "links": None,
-            }
 
     def count_team_owners(self, team_id: str) -> int:
         """Count the number of owners in a team using SQL COUNT.

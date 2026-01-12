@@ -325,16 +325,26 @@ async def delete_team(team_id: str, current_user: EmailUserResponse = Depends(ge
 
 @teams_router.get("/{team_id}/members", response_model=List[TeamMemberResponse])
 @require_permission("teams.read")
-async def list_team_members(team_id: str, current_user: EmailUserResponse = Depends(get_current_user), db: Session = Depends(get_db)) -> List[TeamMemberResponse]:
-    """List team members.
+async def list_team_members(
+    team_id: str,
+    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    limit: Optional[int] = Query(None, ge=0, description="Maximum number of members to return (default: 50)"),
+    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
+    current_user: EmailUserResponse = Depends(get_current_user),
+    db: Session = Depends(get_db)
+) -> Union[List[TeamMemberResponse], Dict]:
+    """List team members with cursor-based pagination.
 
     Args:
         team_id: Team UUID
+        cursor: Pagination cursor for fetching the next set of results
+        limit: Maximum number of members to return (default: 50)
+        include_pagination: Whether to include cursor pagination metadata in the response
         current_user: Currently authenticated user
         db: Database session
 
     Returns:
-        List[TeamMemberResponse]: List of team members
+        List of team members or dict with members and nextCursor if include_pagination=true
 
     Raises:
         HTTPException: If team not found or access denied
@@ -347,12 +357,30 @@ async def list_team_members(team_id: str, current_user: EmailUserResponse = Depe
         if not user_role:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to team")
 
-        members = await service.get_team_members(team_id)
+        # Get members with cursor-based pagination
+        members, next_cursor = await service.get_team_members(team_id, cursor=cursor, limit=limit)
 
+        # Convert to response objects
         member_responses = []
-        for member in members:
-            m = cast(Any, member)
-            member_responses.append(TeamMemberResponse(id=m.id, team_id=m.team_id, user_email=m.user_email, role=m.role, joined_at=m.joined_at, invited_by=m.invited_by, is_active=m.is_active))
+        for user, membership in members:
+            member_responses.append(
+                TeamMemberResponse(
+                    id=membership.id,
+                    team_id=membership.team_id,
+                    user_email=membership.user_email,
+                    role=membership.role,
+                    joined_at=membership.joined_at,
+                    invited_by=membership.invited_by,
+                    is_active=membership.is_active
+                )
+            )
+
+        # Return with pagination metadata if requested
+        if include_pagination:
+            payload = {"members": member_responses}
+            if next_cursor:
+                payload["nextCursor"] = next_cursor
+            return payload
 
         return member_responses
     except HTTPException:
