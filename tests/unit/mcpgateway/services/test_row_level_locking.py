@@ -146,6 +146,8 @@ class TestToolServiceLocking:
         Delete operations don't need get_for_update because they use DELETE...RETURNING
         which provides atomicity at the database level.
         """
+        from unittest.mock import AsyncMock
+        
         service = ToolService()
         db = MagicMock(spec=Session)
         
@@ -163,10 +165,18 @@ class TestToolServiceLocking:
         db.execute.return_value = mock_fetch_result
         db.commit = MagicMock()
         
+        # Mock cache objects with async methods
+        mock_registry_cache = MagicMock()
+        mock_registry_cache.invalidate_tools = AsyncMock()
+        mock_tool_lookup_cache = MagicMock()
+        mock_tool_lookup_cache.invalidate = AsyncMock()
+        mock_admin_stats = MagicMock()
+        mock_admin_stats.invalidate_tags = AsyncMock()
+        
         with patch.object(service, '_notify_tool_deleted', return_value=None):
-            with patch('mcpgateway.services.tool_service._get_registry_cache'):
-                with patch('mcpgateway.services.tool_service._get_tool_lookup_cache'):
-                    with patch('mcpgateway.cache.admin_stats_cache.admin_stats_cache'):
+            with patch('mcpgateway.services.tool_service._get_registry_cache', return_value=mock_registry_cache):
+                with patch('mcpgateway.services.tool_service._get_tool_lookup_cache', return_value=mock_tool_lookup_cache):
+                    with patch('mcpgateway.cache.admin_stats_cache.admin_stats_cache', mock_admin_stats):
                         with patch('mcpgateway.cache.metrics_cache.metrics_cache'):
                             await service.delete_tool(db, "tool-id")
         
