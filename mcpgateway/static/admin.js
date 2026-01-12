@@ -20570,9 +20570,11 @@ function initializeAddMembersForm(form) {
     }
     form.dataset.initialized = "true";
 
+    // Support both old add-members-form pattern and new team-members-form pattern
     const teamId =
         form.dataset.teamId ||
         extractTeamId("add-members-form-", form.id) ||
+        extractTeamId("team-members-form-", form.id) ||
         "";
     if (!teamId) {
         return;
@@ -20585,6 +20587,9 @@ function initializeAddMembersForm(form) {
     const searchLoading = document.getElementById(
         `user-search-loading-${teamId}`,
     );
+
+    // For unified view, find the list container for client-side filtering
+    const userListContainer = document.getElementById(`team-members-list-${teamId}`);
 
     const memberEmails = [];
     if (searchResults?.dataset.memberEmails) {
@@ -20613,6 +20618,29 @@ function initializeAddMembersForm(form) {
     });
 
     updateAddMembersCount(teamId);
+
+    // If we have searchInput but no searchResults container, use client-side filtering (unified view)
+    if (searchInput && !searchResults && userListContainer) {
+        searchInput.addEventListener("input", function () {
+            const query = this.value.trim().toLowerCase();
+
+            // Filter user items in the list
+            const userItems = userListContainer.querySelectorAll(".user-item");
+            userItems.forEach((item) => {
+                const email = item.dataset.userEmail || "";
+                const checkbox = item.querySelector('input[name="associatedUsers"]');
+                const userName = checkbox?.dataset.userName || "";
+
+                // Show item if query matches email or name
+                const matchesSearch = query.length === 0 ||
+                                     email.toLowerCase().includes(query) ||
+                                     userName.toLowerCase().includes(query);
+
+                item.style.display = matchesSearch ? "" : "none";
+            });
+        });
+        return;
+    }
 
     if (!searchInput || !searchResults) {
         return;
@@ -20789,8 +20817,11 @@ function initializeAddMembersForm(form) {
 }
 
 function initializeAddMembersForms(root = document) {
-    const forms = root?.querySelectorAll?.('[id^="add-members-form-"]') || [];
-    forms.forEach((form) => initializeAddMembersForm(form));
+    // Support both old add-members-form pattern and new unified team-members-form pattern
+    const addMembersForms = root?.querySelectorAll?.('[id^="add-members-form-"]') || [];
+    const teamMembersForms = root?.querySelectorAll?.('[id^="team-members-form-"]') || [];
+    const allForms = [...addMembersForms, ...teamMembersForms];
+    allForms.forEach((form) => initializeAddMembersForm(form));
 }
 
 function handleAdminTeamAction(event) {
