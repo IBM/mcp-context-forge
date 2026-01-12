@@ -6024,7 +6024,6 @@ async def admin_search_team_users(
     Returns:
         JSONResponse: Dictionary containing list of matching users and count.
     """
-    print('hi')
     if not settings.email_auth_enabled:
         return {"users": [], "count": 0}
 
