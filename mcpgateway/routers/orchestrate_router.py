@@ -23,6 +23,11 @@ router = APIRouter(prefix="/orchestrate", tags=["Orchestrate"])
 
 
 class CancelRequest(BaseModel):
+    """
+    Request model for cancelling a run/requestId.
+    :param request_id: The ID of the request to cancel.
+    :param reason: Optional reason for cancellation.
+    """
     request_id: str = Field(..., alias="requestId")
     reason: Optional[str] = None
 
@@ -31,6 +36,12 @@ class CancelRequest(BaseModel):
 
 
 class CancelResponse(BaseModel):
+    """
+    Response model for cancellation requests.
+    :param status: Status of the cancellation request ("cancelled" or "queued").
+    :param request_id: The ID of the request that was cancelled.
+    :param reason: Optional reason for cancellation.
+    """
     status: str  # "cancelled" | "queued"
     request_id: str = Field(..., alias="requestId")
     reason: Optional[str] = None
@@ -42,6 +53,13 @@ class CancelResponse(BaseModel):
 @router.post("/cancel", response_model=CancelResponse)
 @require_permission("admin.system_config")
 async def cancel_run(payload: CancelRequest, _user=Depends(get_current_user_with_permissions)) -> CancelResponse:
+    """
+    Cancel a run by its request ID.
+
+    :param payload: The cancellation request payload.
+    :param _user: The current user (dependency injection).
+    :return: The cancellation response.
+    """
     request_id = payload.request_id
     reason = payload.reason
 

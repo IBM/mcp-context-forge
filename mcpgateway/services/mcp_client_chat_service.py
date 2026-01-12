@@ -2766,6 +2766,12 @@ class MCPChatService:
 
                         # Register run for cancellation tracking with gateway-level orchestration service
                         async def _noop_cancel_cb(reason: Optional[str]) -> None:
+                            """
+                            Docstring for _noop_cancel_cb
+                            
+                            :param reason: Description
+                            :type reason: Optional[str]
+                            """
                             # Default no-op; kept for potential future intra-process cancellation
                             return None
 
