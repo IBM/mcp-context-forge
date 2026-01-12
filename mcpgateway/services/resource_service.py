@@ -23,7 +23,6 @@ Examples:
 # Standard
 from datetime import datetime, timezone
 from functools import lru_cache
-import hashlib
 import mimetypes
 import os
 import re
@@ -67,7 +66,7 @@ from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
-from mcpgateway.utils.ssl_context_cache import clear_ssl_context_cache, get_cached_ssl_context
+from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.validate_signature import validate_signature
 
 # Plugin support imports (conditional)

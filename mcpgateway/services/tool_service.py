@@ -18,7 +18,6 @@ It handles:
 import base64
 from datetime import datetime, timezone
 from functools import lru_cache
-import hashlib
 import os
 import re
 import ssl
@@ -88,7 +87,7 @@ from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cac
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
-from mcpgateway.utils.ssl_context_cache import clear_ssl_context_cache, get_cached_ssl_context
+from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.validate_signature import validate_signature
 
 # Cache import (lazy to avoid circular dependencies)
