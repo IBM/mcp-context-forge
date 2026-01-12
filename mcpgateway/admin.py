@@ -4315,19 +4315,14 @@ async def admin_view_team_members(
             is_current_user = email == user_email
 
             # For template (with object-like access)
-            team_member_data[email] = type('MemberData', (), {
-                'role': membership.role,
-                'joined_at': membership.joined_at,
-                'is_last_owner': is_last_owner,
-                'is_current_user': is_current_user
-            })()
+            team_member_data[email] = type("MemberData", (), {"role": membership.role, "joined_at": membership.joined_at, "is_last_owner": is_last_owner, "is_current_user": is_current_user})()
 
             # For JSON (plain dict with ISO date string)
             team_member_data_json[email] = {
-                'role': membership.role,
-                'joined_at': membership.joined_at.isoformat() if membership.joined_at else None,
-                'is_last_owner': is_last_owner,
-                'is_current_user': is_current_user
+                "role": membership.role,
+                "joined_at": membership.joined_at.isoformat() if membership.joined_at else None,
+                "is_last_owner": is_last_owner,
+                "is_current_user": is_current_user,
             }
 
         # Escape team name to prevent XSS
@@ -4393,7 +4388,7 @@ async def admin_view_team_members(
             team_member_data=team_member_data,
             current_user_email=user_email,
             current_user_is_team_owner=is_team_owner,
-            selector_base_url=f"{root_path}/admin/teams/{team_id}/users/partial"
+            selector_base_url=f"{root_path}/admin/teams/{team_id}/users/partial",
         )
 
         # Build footer with submit button (only for team owners)
@@ -4416,7 +4411,7 @@ async def admin_view_team_members(
         </div>
         """
 
-        return HTMLResponse(content=f'{management_header}{users_html}{footer_html}')
+        return HTMLResponse(content=f"{management_header}{users_html}{footer_html}")
 
     except Exception as e:
         LOGGER.error(f"Error viewing team members {team_id}: {e}")
@@ -4838,10 +4833,7 @@ async def admin_add_team_members(
         for team_user, membership in team_members:
             email = team_user.email
             is_last_owner = membership.role == "owner" and owner_count == 1
-            existing_member_roles[email] = {
-                'role': membership.role,
-                'is_last_owner': is_last_owner
-            }
+            existing_member_roles[email] = {"role": membership.role, "is_last_owner": is_last_owner}
 
         # Track results
         added = []
@@ -4876,28 +4868,18 @@ async def admin_add_team_members(
 
                 if user_email in existing_member_emails:
                     # User is already a member - check if role changed
-                    current_role = existing_member_roles[user_email]['role']
+                    current_role = existing_member_roles[user_email]["role"]
                     if current_role != user_role:
                         # Don't allow changing role of last owner
-                        if existing_member_roles[user_email]['is_last_owner']:
+                        if existing_member_roles[user_email]["is_last_owner"]:
                             errors.append(f"{user_email} (cannot change role of last owner)")
                             continue
                         # Update role
-                        await team_service.update_member_role(
-                            team_id=team_id,
-                            user_email=user_email,
-                            new_role=user_role,
-                            updated_by=user_email_from_jwt
-                        )
+                        await team_service.update_member_role(team_id=team_id, user_email=user_email, new_role=user_role, updated_by=user_email_from_jwt)
                         updated.append(f"{user_email} (role: {user_role})")
                 else:
                     # New member - add them
-                    await team_service.add_member_to_team(
-                        team_id=team_id,
-                        user_email=user_email,
-                        role=user_role,
-                        invited_by=user_email_from_jwt
-                    )
+                    await team_service.add_member_to_team(team_id=team_id, user_email=user_email, role=user_role, invited_by=user_email_from_jwt)
                     added.append(user_email)
 
             except Exception as member_error:
@@ -4915,17 +4897,13 @@ async def admin_add_team_members(
                     errors.append(f"{existing_email} (cannot remove yourself)")
                     continue
                 # Last owner cannot be removed
-                if member_info.get('is_last_owner', False):
+                if member_info.get("is_last_owner", False):
                     errors.append(f"{existing_email} (cannot remove last owner)")
                     continue
 
                 # This member was unchecked and removal is allowed - remove them
                 try:
-                    await team_service.remove_member_from_team(
-                        team_id=team_id,
-                        user_email=existing_email,
-                        removed_by=user_email_from_jwt
-                    )
+                    await team_service.remove_member_from_team(team_id=team_id, user_email=existing_email, removed_by=user_email_from_jwt)
                     removed.append(existing_email)
                 except Exception as removal_error:
                     LOGGER.error(f"Error removing {existing_email} from team {team_id}: {removal_error}")
@@ -5788,11 +5766,7 @@ async def admin_users_partial_html(
                 for team_user, membership in team_members:
                     email = team_user.email
                     is_last_owner = membership.role == "owner" and owner_count == 1
-                    team_member_data[email] = type('MemberData', (), {
-                        'role': membership.role,
-                        'joined_at': membership.joined_at,
-                        'is_last_owner': is_last_owner
-                    })()
+                    team_member_data[email] = type("MemberData", (), {"role": membership.role, "joined_at": membership.joined_at, "is_last_owner": is_last_owner})()
 
                     # Check if current user is owner (in-memory check)
                     if email == current_user_email and membership.role == "owner":
@@ -5927,11 +5901,7 @@ async def admin_team_users_partial_html(
         for team_user, membership in team_members:
             email = team_user.email
             is_last_owner = membership.role == "owner" and owner_count == 1
-            team_member_data[email] = type('MemberData', (), {
-                'role': membership.role,
-                'joined_at': membership.joined_at,
-                'is_last_owner': is_last_owner
-            })()
+            team_member_data[email] = type("MemberData", (), {"role": membership.role, "joined_at": membership.joined_at, "is_last_owner": is_last_owner})()
 
             # Check if current user is owner (in-memory check)
             if email == current_user_email and membership.role == "owner":
