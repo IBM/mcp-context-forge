@@ -135,6 +135,14 @@ services:
       - REDIS_SOCKET_TIMEOUT=5.0
       - REDIS_SOCKET_CONNECT_TIMEOUT=5.0
       - REDIS_HEALTH_CHECK_INTERVAL=30
+      # ═══════════════════════════════════════════════════════════════════════════
+      # Redis Startup Resilience (prevents crash-loop on Redis outage)
+      # ═══════════════════════════════════════════════════════════════════════════
+      # With exponential backoff: 2s, 4s, 8s, 16s, 30s (capped), 30s...
+      # 30 retries = ~5 minutes total wait before worker gives up
+      - REDIS_MAX_RETRIES=30             # Max attempts before worker exits (default: 30)
+      - REDIS_RETRY_INTERVAL_MS=2000     # Base interval, grows exponentially with jitter
+      - REDIS_MAX_BACKOFF_SECONDS=30     # Max backoff cap (jitter ±25% applied after)
       # Auth Cache Configuration (reduces DB queries per auth request from 3-4 to 0-1)
       - AUTH_CACHE_ENABLED=true
       - AUTH_CACHE_USER_TTL=300
@@ -250,6 +258,14 @@ services:
       - DB_MAX_OVERFLOW=10             # Extra connections under load
       - DB_POOL_TIMEOUT=60             # Time to wait for connection before failing
       - DB_POOL_RECYCLE=60             # Recycle before PgBouncer CLIENT_IDLE_TIMEOUT (half of 120s)
+      # ═══════════════════════════════════════════════════════════════════════════
+      # Database Startup Resilience (prevents crash-loop on DB outage)
+      # ═══════════════════════════════════════════════════════════════════════════
+      # With exponential backoff: 2s, 4s, 8s, 16s, 30s (capped), 30s...
+      # 30 retries = ~5 minutes total wait before worker gives up
+      - DB_MAX_RETRIES=30              # Max attempts before worker exits (default: 30)
+      - DB_RETRY_INTERVAL_MS=2000      # Base interval, grows exponentially with jitter
+      - DB_MAX_BACKOFF_SECONDS=30      # Max backoff cap (jitter ±25% applied after)
       # Tool configuration for high-concurrency load testing
       - TOOL_TIMEOUT=60               # Seconds before tool invocation times out
       - MAX_TOOL_RETRIES=3            # Retry attempts for failed tool invocations
@@ -425,6 +441,10 @@ services:
 
   postgres:
     image: postgres:18
+    ulimits:
+      nofile:
+        soft: 8192
+        hard: 8192
     ports:
       - "5433:5432"      # Expose for baseline load testing (5433 to avoid conflict with local postgres)
     # Performance tuning for high-load testing (3000 sustained users)
@@ -682,6 +702,10 @@ services:
 ###############################################################################
   redis:
     image: redis:latest
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     # Performance tuning for 1000+ RPS high-concurrency load testing
     command:
       - "redis-server"
@@ -1271,9 +1295,9 @@ services:
     restart: unless-stopped
     networks: [mcpnet]
     ports:
-      - "9080:9080"    # Port 9080 (avoids conflict with nginx on 8080)
+      - "8880:8880"    # Port 8880 (avoids conflict with benchmark servers on 9000+)
     environment:
-      - BIND_ADDRESS=0.0.0.0:9080
+      - BIND_ADDRESS=0.0.0.0:8880
       - RUST_LOG=info
     # TCP kernel tuning for high-concurrency load testing
     sysctls:
@@ -1285,7 +1309,7 @@ services:
         soft: 65535
         hard: 65535
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9080/health"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8880/health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -1298,7 +1322,7 @@ services:
         reservations:
           cpus: '0.5'
           memory: 128M
-    profiles: ["testing"]
+    profiles: ["testing", "monitoring"]
 
   ###############################################################################
   # Auto-registration service - registers fast_test_server with gateway
@@ -1355,7 +1379,7 @@ services:
         try:
             result = api_request('POST', '/gateways', {
                 'name': 'fast_test',
-                'url': 'http://fast_test_server:9080/mcp',
+                'url': 'http://fast_test_server:8880/mcp',
                 'transport': 'STREAMABLEHTTP'
             })
             print(f'✅ Registered fast_test_server: {result.get(\"id\", \"unknown\")}')
@@ -1364,7 +1388,123 @@ services:
             exit(1)
         "
         echo "✅ Registration complete!"
-    profiles: ["testing"]
+    profiles: ["testing", "monitoring"]
+
+  ###############################################################################
+  # Benchmark Server - Multi-server MCP benchmark tool
+  # Spawns multiple lightweight MCP servers for load testing
+  # Usage: make benchmark-up (or: docker compose --profile benchmark up -d)
+  #
+  # Environment variables:
+  #   BENCHMARK_SERVER_COUNT - Number of servers to spawn (default: 10)
+  #   BENCHMARK_START_PORT   - Starting port number (default: 9000)
+  ###############################################################################
+  benchmark_server:
+    build:
+      context: ./mcp-servers/go/benchmark-server
+      dockerfile: Dockerfile
+    image: mcpgateway/benchmark-server:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    command:
+      - "-transport=http"
+      - "-server-count=${BENCHMARK_SERVER_COUNT:-10}"
+      - "-start-port=${BENCHMARK_START_PORT:-9000}"
+      - "-tools=50"
+      - "-resources=20"
+      - "-prompts=10"
+    ports:
+      # Port range supports up to 100 servers (9000-9099)
+      # Actual servers spawned controlled by BENCHMARK_SERVER_COUNT
+      - "9000-9099:9000-9099"
+    # Note: No healthcheck - scratch-based Go image has no shell
+    # Verify health via: curl http://localhost:9000/health
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    profiles: ["benchmark"]
+
+  ###############################################################################
+  # Auto-registration service - registers benchmark servers with gateway
+  # Uses BENCHMARK_SERVER_COUNT and BENCHMARK_START_PORT environment variables
+  ###############################################################################
+  register_benchmark:
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    networks: [mcpnet]
+    depends_on:
+      gateway:
+        condition: service_healthy
+      benchmark_server:
+        condition: service_started
+    environment:
+      - JWT_SECRET_KEY=my-test-key
+      - BENCHMARK_SERVER_COUNT=${BENCHMARK_SERVER_COUNT:-10}
+      - BENCHMARK_START_PORT=${BENCHMARK_START_PORT:-9000}
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Registering benchmark servers with gateway..."
+
+        # Wait for benchmark servers to start (no healthcheck available)
+        echo "Waiting for benchmark servers to start..."
+        sleep 5
+
+        # Generate JWT token
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+
+        # Register benchmark servers using environment variables
+        python3 -c "
+        import urllib.request
+        import json
+        import os
+
+        token = os.environ.get('MCPGATEWAY_BEARER_TOKEN', '')
+        server_count = int(os.environ.get('BENCHMARK_SERVER_COUNT', '10'))
+        start_port = int(os.environ.get('BENCHMARK_START_PORT', '9000'))
+
+        headers = {
+            'Authorization': f'Bearer {token}',
+            'Content-Type': 'application/json'
+        }
+
+        def api_request(method, path, data=None):
+            url = f'http://gateway:4444{path}'
+            body = json.dumps(data).encode() if data else None
+            req = urllib.request.Request(url, data=body, headers=headers, method=method)
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read().decode())
+
+        # Register benchmark servers
+        print(f'Registering {server_count} benchmark servers (ports {start_port}-{start_port + server_count - 1})...')
+        registered = 0
+        for port in range(start_port, start_port + server_count):
+            name = f'benchmark-{port}'
+            try:
+                result = api_request('POST', '/gateways', {
+                    'name': name,
+                    'url': f'http://benchmark_server:{port}/mcp',
+                    'transport': 'STREAMABLEHTTP'
+                })
+                print(f'✅ Registered {name}: {result.get(\"id\", \"unknown\")}')
+                registered += 1
+            except urllib.error.HTTPError as e:
+                if e.code == 409:
+                    print(f'⏭️  {name} already registered')
+                    registered += 1
+                else:
+                    print(f'❌ Failed to register {name}: HTTP {e.code}')
+            except Exception as e:
+                print(f'❌ Failed to register {name}: {e}')
+
+        print(f'✅ Registration complete: {registered}/{server_count} benchmark servers')
+        "
+    profiles: ["benchmark"]
 
   ###############################################################################
   # Hashicorp Terraform MCP Server
