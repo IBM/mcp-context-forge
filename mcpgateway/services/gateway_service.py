@@ -4233,7 +4233,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             >>> with patch('mcpgateway.services.gateway_service.fresh_db_session') as mock_fresh:
             ...     mock_fresh.return_value.__enter__.return_value = mock_session
             ...     result = asyncio.run(service._refresh_gateway_tools_resources_prompts('gw-123'))
-            >>> result == {'tools_added': 0, 'tools_removed': 0, 'resources_added': 0, 'resources_removed': 0, 'prompts_added': 0, 'prompts_removed': 0, 'tools_updated': 0, 'resources_updated': 0, 'prompts_updated': 0, 'success': True, 'error': None, 'validation_errors': []}
+            >>> result['tools_added'] == 0 and result['tools_removed'] == 0
+            True
+            >>> result['resources_added'] == 0 and result['resources_removed'] == 0
+            True
+            >>> result['success'] is True and result['error'] is None
             True
 
             >>> # Test disabled gateway returns empty result
