@@ -8,8 +8,10 @@ local run lifecycle management; the gateway remains authoritative for
 cancellation and also broadcasts a `notifications/cancelled` JSON-RPC
 notification to connected sessions.
 """
+# Future
 from __future__ import annotations
 
+# Standard
 import asyncio
 import logging
 import time
@@ -46,7 +48,11 @@ class OrchestrationService:
             logger.info("Registered run %s (%s)", run_id, name)
 
     async def unregister_run(self, run_id: str) -> None:
-        """Remove a run from tracking."""
+        """Remove a run from tracking.
+
+        Args:
+            run_id: Unique identifier for the run to unregister.
+        """
         async with self._lock:
             if run_id in self._runs:
                 self._runs.pop(run_id, None)
@@ -55,8 +61,13 @@ class OrchestrationService:
     async def cancel_run(self, run_id: str, reason: Optional[str] = None) -> bool:
         """Attempt to cancel a run.
 
-        Returns True if the run was found (and cancellation attempted or already marked),
-        False when the run is unknown locally.
+        Args:
+            run_id: Unique identifier for the run to cancel.
+            reason: Optional textual reason for the cancellation request.
+
+        Returns:
+            bool: True if the run was found and cancellation was attempted (or already marked),
+            False if the run was not known locally.
         """
         async with self._lock:
             entry = self._runs.get(run_id)
@@ -77,7 +88,14 @@ class OrchestrationService:
         return True
 
     async def get_status(self, run_id: str) -> Optional[Dict[str, Any]]:
-        """Return the status dict for a run if known, else None."""
+        """Return the status dict for a run if known, else None.
+
+        Args:
+            run_id: Unique identifier for the run to query.
+
+        Returns:
+            Optional[Dict[str, Any]]: The status dictionary for the run if found, otherwise None.
+        """
         async with self._lock:
             return self._runs.get(run_id)
 

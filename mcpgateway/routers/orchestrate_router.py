@@ -7,33 +7,42 @@ Endpoints:
 
 Security: endpoints require RBAC permission `admin.system_config` by default.
 """
+# Standard
 from typing import Optional
 
+# Third-Party
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from mcpgateway.middleware.rbac import require_permission, get_current_user_with_permissions
-from mcpgateway.services.orchestration_service import orchestration_service
+# First-Party
 import mcpgateway.main as main_module
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.services.orchestration_service import orchestration_service
 
 router = APIRouter(prefix="/orchestrate", tags=["Orchestrate"])
 
 
 class CancelRequest(BaseModel):
-    requestId: str
+    request_id: str = Field(..., alias="requestId")
     reason: Optional[str] = None
+
+    class Config:
+        allow_population_by_field_name = True
 
 
 class CancelResponse(BaseModel):
     status: str  # "cancelled" | "queued"
-    requestId: str
+    request_id: str = Field(..., alias="requestId")
     reason: Optional[str] = None
+
+    class Config:
+        allow_population_by_field_name = True
 
 
 @router.post("/cancel", response_model=CancelResponse)
 @require_permission("admin.system_config")
 async def cancel_run(payload: CancelRequest, _user=Depends(get_current_user_with_permissions)) -> CancelResponse:
-    request_id = payload.requestId
+    request_id = payload.request_id
     reason = payload.reason
 
     # Try local cancellation first
@@ -55,7 +64,7 @@ async def cancel_run(payload: CancelRequest, _user=Depends(get_current_user_with
         # Continue silently if we cannot enumerate sessions
         pass
 
-    return CancelResponse(status=("cancelled" if local_cancelled else "queued"), requestId=request_id, reason=reason)
+    return CancelResponse(status=("cancelled" if local_cancelled else "queued"), request_id=request_id, reason=reason)
 
 
 @router.get("/status/{request_id}")

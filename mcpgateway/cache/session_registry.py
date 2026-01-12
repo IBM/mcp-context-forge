@@ -784,7 +784,11 @@ class SessionRegistry(SessionBackend):
                 logger.error(f"Database error during broadcast: {e}")
 
     async def get_all_session_ids(self) -> list[str]:
-        """Return a snapshot list of all known local session IDs."""
+        """Return a snapshot list of all known local session IDs.
+
+        Returns:
+            list[str]: A snapshot list of currently known local session IDs.
+        """
         async with self._lock:
             return list(self._sessions.keys())
 
