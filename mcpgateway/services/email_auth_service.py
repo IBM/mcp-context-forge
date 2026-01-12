@@ -22,9 +22,10 @@ Examples:
 
 # Standard
 import base64
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import re
-from typing import Any, Dict, Optional, Union
+from typing import Optional
 import warnings
 
 # Third-Party
@@ -44,6 +45,19 @@ from mcpgateway.utils.pagination import unified_paginate
 # Initialize logging
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+_GET_ALL_USERS_LIMIT = 10000
+_GET_ALL_USERS_DEPRECATED_WARNED = False
+
+
+@dataclass(frozen=True)
+class UsersListResult:
+    """Result for list_users queries."""
+
+    data: list[EmailUser]
+    next_cursor: Optional[str] = None
+    pagination: Optional[PaginationMeta] = None
+    links: Optional[PaginationLinks] = None
 
 
 class EmailValidationError(Exception):
@@ -656,6 +670,11 @@ class EmailAuthService:
 
         return (users, next_cursor)
 
+    @staticmethod
+    def _escape_like(value: str) -> str:
+        """Escape LIKE wildcards for prefix search."""
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
     async def list_users(
         self,
         limit: Optional[int] = None,
@@ -665,12 +684,14 @@ class EmailAuthService:
         per_page: Optional[int] = None,
         search: Optional[str] = None,
         exclude_emails: Optional[set[str]] = None,
-    ) -> Union[list[EmailUser], tuple[list[EmailUser], Optional[str]], Dict[str, Any]]:
+    ) -> UsersListResult:
         """List all users with cursor or offset-based pagination support and optional search.
 
         This method supports both cursor-based (for API endpoints with large datasets)
         and offset-based (for admin UI with page numbers) pagination, with optional
         search filtering by email or full name.
+        If page and offset are not provided, cursor pagination is used starting at
+        the first page.
 
         Note: This method returns ORM objects and cannot be cached since callers
         depend on ORM attributes and methods (e.g., EmailUserResponse.from_email_user).
@@ -685,19 +706,17 @@ class EmailAuthService:
             exclude_emails: Optional set of email addresses to exclude from results
 
         Returns:
-            - List of EmailUser objects (legacy mode, deprecated)
-            - Tuple of (list[EmailUser], next_cursor) for cursor-based pagination
-            - Dict with 'data', 'pagination', 'links' for page-based pagination
+            UsersListResult with data and optional pagination metadata.
 
         Examples:
             # Cursor-based pagination (for APIs)
-            # users, next_cursor = await service.list_users(cursor=None, limit=50)
-            # len(users) <= 50     # Returns: True
+            # result = await service.list_users(cursor=None, limit=50)
+            # len(result.data) <= 50     # Returns: True
 
             # Page-based pagination (for admin UI)
             # result = await service.list_users(page=1, per_page=20)
-            # result['data']       # Returns: list of users
-            # result['pagination'] # Returns: pagination metadata
+            # result.data       # Returns: list of users
+            # result.pagination # Returns: pagination metadata
 
             # Search users
             # users = await service.list_users(search="john", page=1, per_page=20)
@@ -710,8 +729,14 @@ class EmailAuthService:
 
             # Apply search filter if provided (prefix search for better index usage)
             if search and search.strip():
-                search_term = f"{search.strip().lower()}%"
-                query = query.where((func.lower(EmailUser.email).like(search_term)) | (func.lower(EmailUser.full_name).like(search_term)))
+                search_term = f"{self._escape_like(search.strip())}%"
+                # NOTE: For large Postgres datasets, consider citext or functional indexes for case-insensitive search.
+                query = query.where(
+                    or_(
+                        EmailUser.email.ilike(search_term, escape="\\"),
+                        EmailUser.full_name.ilike(search_term, escape="\\"),
+                    )
+                )
 
             # Apply email exclusion filter if provided
             if exclude_emails:
@@ -722,15 +747,10 @@ class EmailAuthService:
             if offset > 0 and page is None and cursor is None:
                 query = query.offset(offset)
                 if limit not in (None, 0):
-                    query = query.limit(limit)
+                    query = query.limit(min(limit, settings.pagination_max_page_size))
                 result = self.db.execute(query)
                 users = list(result.scalars().all())
-                return users
-
-            # Handle cursor-based pagination manually since EmailUser uses email (not id) as primary key
-            # The unified_paginate helper assumes an 'id' column which EmailUser doesn't have
-            if cursor is not None:
-                return await self._cursor_paginate_users(query, cursor, limit)
+                return UsersListResult(data=users)
 
             # Handle page-based pagination using unified helper
             if page is not None:
@@ -744,34 +764,28 @@ class EmailAuthService:
                     base_url="/admin/users",
                     query_params={},
                 )
-                return {
-                    "data": pag_result["data"],
-                    "pagination": pag_result["pagination"],
-                    "links": pag_result["links"],
-                }
+                return UsersListResult(data=pag_result["data"], pagination=pag_result["pagination"], links=pag_result["links"])
 
-            # No pagination specified - return list with optional limit
-            if limit not in (None, 0):
-                query = query.limit(limit)
-            result = self.db.execute(query)
-            return list(result.scalars().all())
+            # Default to cursor-based pagination for first page if not explicitly page-based
+            users, next_cursor = await self._cursor_paginate_users(query, cursor, limit)
+            return UsersListResult(data=users, next_cursor=next_cursor)
 
         except Exception as e:
             logger.error(f"Error listing users: {e}")
             # Return appropriate empty response based on pagination mode
             if page is not None:
-                return {
-                    "data": [],
-                    "pagination": PaginationMeta(page=page, per_page=per_page or 50, total_items=0, total_pages=0, has_next=False, has_prev=False),
-                    "links": PaginationLinks(  # pylint: disable=kwarg-superseded-by-positional-arg
+                return UsersListResult(
+                    data=[],
+                    pagination=PaginationMeta(page=page, per_page=per_page or 50, total_items=0, total_pages=0, has_next=False, has_prev=False),
+                    links=PaginationLinks(  # pylint: disable=kwarg-superseded-by-positional-arg
                         self="/admin/users?page=1&per_page=50", first="/admin/users?page=1&per_page=50", last="/admin/users?page=1&per_page=50"
                     ),
-                }
+                )
 
             if cursor is not None:
-                return ([], None)
+                return UsersListResult(data=[], next_cursor=None)
 
-            return []
+            return UsersListResult(data=[])
 
     async def get_all_users(self) -> list[EmailUser]:
         """Get all users without pagination.
@@ -785,6 +799,9 @@ class EmailAuthService:
         Returns:
             List of up to 10,000 EmailUser objects
 
+        Raises:
+            ValueError: If total users exceed 10,000
+
         Examples:
             # users = await service.get_all_users()
             # isinstance(users, list)  # Returns: True
@@ -794,18 +811,26 @@ class EmailAuthService:
             Use list_users() with pagination instead:
 
             # For small datasets
-            users = await service.list_users(page=1, per_page=1000)['data']
+            users = await service.list_users(page=1, per_page=1000).data
 
             # For searching
-            users = await service.list_users(search="john", page=1, per_page=50)['data']
+            users = await service.list_users(search="john", page=1, per_page=50).data
         """
-        warnings.warn(
-            "get_all_users() is deprecated and limited to 10,000 users. " + "Use list_users() with pagination instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+        global _GET_ALL_USERS_DEPRECATED_WARNED
+        if not _GET_ALL_USERS_DEPRECATED_WARNED:
+            warnings.warn(
+                "get_all_users() is deprecated and limited to 10,000 users. " + "Use list_users() with pagination instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            _GET_ALL_USERS_DEPRECATED_WARNED = True
 
-        return await self.list_users(limit=10000)  # Large limit to get all users
+        total_users = await self.count_users()
+        if total_users > _GET_ALL_USERS_LIMIT:
+            raise ValueError("get_all_users() supports up to 10,000 users. Use list_users() pagination instead.")
+
+        result = await self.list_users(limit=_GET_ALL_USERS_LIMIT)
+        return result.data  # Large limit to get all users
 
     async def count_users(self) -> int:
         """Count total number of users.

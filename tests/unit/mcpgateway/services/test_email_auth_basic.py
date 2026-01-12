@@ -848,8 +848,8 @@ class TestEmailAuthServiceUserListing:
 
         result = await service.list_users(limit=3, offset=0)
 
-        assert len(result) == 3
-        assert result[0].email == "user0@example.com"
+        assert len(result.data) == 3
+        assert result.data[0].email == "user0@example.com"
         mock_db.execute.assert_called_once()
 
     @pytest.mark.asyncio
@@ -952,19 +952,31 @@ class TestEmailAuthServiceUserListing:
 
         result = await service.list_users()
 
-        assert result == []
+        assert result.data == []
 
     @pytest.mark.asyncio
     async def test_get_all_users(self, service, mock_db, mock_users):
         """Test getting all users without explicit pagination."""
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = mock_users
-        mock_db.execute.return_value = mock_result
+        mock_count_result = MagicMock()
+        mock_count_result.scalar.return_value = len(mock_users)
+        mock_list_result = MagicMock()
+        mock_list_result.scalars.return_value.all.return_value = mock_users
+        mock_db.execute.side_effect = [mock_count_result, mock_list_result]
 
         result = await service.get_all_users()
 
         assert len(result) == 5
-        mock_db.execute.assert_called_once()
+        assert mock_db.execute.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_get_all_users_raises_when_exceeds_limit(self, service, mock_db):
+        """Test get_all_users raises when total exceeds limit."""
+        mock_count_result = MagicMock()
+        mock_count_result.scalar.return_value = 10001
+        mock_db.execute.return_value = mock_count_result
+
+        with pytest.raises(ValueError):
+            await service.get_all_users()
 
     @pytest.mark.asyncio
     async def test_count_users_success(self, service, mock_db, mock_users):

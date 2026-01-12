@@ -245,6 +245,34 @@ grpc_service_mgr: Optional[Any] = GrpcService() if (settings.mcpgateway_grpc_ena
 rate_limit_storage = defaultdict(list)
 
 
+def _normalize_team_id(team_id: Optional[str]) -> Optional[str]:
+    """Validate and normalize team IDs for UI endpoints.
+
+    Args:
+        team_id: Raw team ID from request params.
+
+    Returns:
+        Normalized team ID string or None.
+
+    Raises:
+        ValueError: If the team ID is not a valid UUID.
+    """
+    if not team_id:
+        return None
+    try:
+        return uuid.UUID(str(team_id)).hex
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise ValueError("Invalid team ID") from exc
+
+
+def _validated_team_id_param(team_id: Optional[str] = Query(None, description="Filter by team ID")) -> Optional[str]:
+    """Normalize team ID query params and raise on invalid UUIDs."""
+    try:
+        return _normalize_team_id(team_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid team ID") from exc
+
+
 def get_client_ip(request: Request) -> str:
     """Extract client IP address from request.
 
@@ -1381,7 +1409,7 @@ async def get_configuration_settings(
 @admin_router.get("/servers", response_model=PaginatedResponse)
 async def admin_list_servers(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -1394,7 +1422,7 @@ async def admin_list_servers(
 
     Args:
         page (int): Page number (1-indexed) for offset pagination.
-        per_page (int): Number of items per page (1-500).
+        per_page (int): Number of items per page.
         include_inactive (bool): Whether to include inactive servers.
         db (Session): The database session dependency.
         user (str): The authenticated user dependency.
@@ -1486,10 +1514,10 @@ async def admin_list_servers(
 async def admin_servers_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
+    team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -2416,7 +2444,7 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
 @admin_router.get("/resources", response_model=PaginatedResponse)
 async def admin_list_resources(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -2429,7 +2457,7 @@ async def admin_list_resources(
 
     Args:
         page (int): Page number (1-indexed). Default: 1.
-        per_page (int): Items per page (1-500). Default: 50.
+        per_page (int): Items per page. Default: 50.
         include_inactive (bool): Whether to include inactive resources in the results.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -2507,7 +2535,7 @@ async def admin_list_resources(
 @admin_router.get("/prompts", response_model=PaginatedResponse)
 async def admin_list_prompts(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -2520,7 +2548,7 @@ async def admin_list_prompts(
 
     Args:
         page (int): Page number (1-indexed) for offset pagination.
-        per_page (int): Number of items per page (1-500).
+        per_page (int): Number of items per page.
         include_inactive (bool): Whether to include inactive prompts in the results.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -2604,7 +2632,7 @@ async def admin_list_prompts(
 @admin_router.get("/gateways", response_model=PaginatedResponse)
 async def admin_list_gateways(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -2617,7 +2645,7 @@ async def admin_list_gateways(
 
     Args:
         page (int): Page number (1-indexed) for offset pagination.
-        per_page (int): Number of items per page (1-500).
+        per_page (int): Number of items per page.
         include_inactive (bool): Whether to include inactive gateways in the results.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -2807,7 +2835,7 @@ async def admin_toggle_gateway(
 @admin_router.get("/", name="admin_home", response_class=HTMLResponse)
 async def admin_ui(
     request: Request,
-    team_id: Optional[str] = Query(default=None),
+    team_id: Optional[str] = Depends(_validated_team_id_param),
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -4113,7 +4141,7 @@ async def admin_list_teams(
 
     except Exception as e:
         LOGGER.error(f"Error listing teams for admin {user}: {e}")
-        return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading teams: {str(e)}</p></div>', status_code=200)
+        return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading teams: {html.escape(str(e))}</p></div>', status_code=200)
 
 
 @admin_router.post("/teams")
@@ -4191,28 +4219,21 @@ async def admin_create_team(
             </div>
             <div id="team-details-{team.id}" class="mt-4"></div>
         </div>
-        <script>
-            // Reset the team creation form after successful creation
-            setTimeout(() => {{
-                const form = document.querySelector('form[hx-post*="/admin/teams"]');
-                if (form) {{
-                    form.reset();
-                }}
-            }}, 500);
-        </script>
         """
 
-        return HTMLResponse(content=team_html, status_code=201)
+        response = HTMLResponse(content=team_html, status_code=201)
+        response.headers["HX-Trigger"] = json.dumps({"adminTeamAction": {"resetTeamCreateForm": True, "delayMs": 500}})
+        return response
 
     except IntegrityError as e:
         LOGGER.error(f"Error creating team for admin {user}: {e}")
         if "UNIQUE constraint failed: email_teams.slug" in str(e):
             return HTMLResponse(content='<div class="text-red-500">A team with this name already exists. Please choose a different name.</div>', status_code=400)
 
-        return HTMLResponse(content=f'<div class="text-red-500">Database error creating team: {str(e)}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Database error creating team: {html.escape(str(e))}</div>', status_code=400)
     except Exception as e:
         LOGGER.error(f"Error creating team for admin {user}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error creating team: {str(e)}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error creating team: {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.get("/teams/{team_id}/members")
@@ -4394,7 +4415,7 @@ async def admin_view_team_members(
 
     except Exception as e:
         LOGGER.error(f"Error viewing team members {team_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error loading members: {str(e)}</div>', status_code=500)
+        return HTMLResponse(content=f'<div class="text-red-500">Error loading members: {html.escape(str(e))}</div>', status_code=500)
 
 
 @admin_router.get("/teams/{team_id}/members/add")
@@ -4472,18 +4493,22 @@ async def admin_add_team_members_view(
                 </div>
 
                 <div class="px-6 py-4">
-                    <form id="add-members-form-{team.id}" hx-post="{root_path}/admin/teams/{team.id}/add-member" hx-target="#team-edit-modal-content" hx-swap="innerHTML">
+                    <form id="add-members-form-{team.id}" data-team-id="{team.id}" hx-post="{root_path}/admin/teams/{team.id}/add-member" hx-target="#team-edit-modal-content" hx-swap="innerHTML">
                         <!-- Search box -->
                         <div class="mb-4">
                             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Search Users</label>
                             <input
                                 type="text"
                                 id="user-search-{team.id}"
+                                data-team-id="{team.id}"
+                                data-search-url="{root_path}/admin/teams/{team.id}/users/search"
+                                data-search-limit="10"
                                 placeholder="Search by name or email..."
                                 class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 text-gray-900 dark:text-white"
                                 autocomplete="off"
                             />
-                            <div id="user-search-results-{team.id}" class="mt-2"></div>
+                            <div id="user-search-loading-{team.id}" class="mt-2 text-sm text-gray-500 dark:text-gray-400 hidden">Searching...</div>
+                            <div id="user-search-results-{team.id}" data-member-emails="{html.escape(member_emails_json)}" class="mt-2"></div>
                         </div>
 
                         <!-- User selector with infinite scroll -->
@@ -4520,175 +4545,13 @@ async def admin_add_team_members_view(
                 </div>
             </div>
         </div>
-
-        <script>
-            // Update selected count and role dropdown state
-            (function() {{
-                const form = document.getElementById('add-members-form-{team.id}');
-                const countEl = document.getElementById('selected-count-{team.id}');
-
-                function updateCount() {{
-                    const checked = form.querySelectorAll('input[name="associatedUsers"]:checked');
-                    countEl.textContent = checked.length === 0
-                        ? 'No users selected'
-                        : `${{checked.length}} user${{checked.length !== 1 ? 's' : ''}} selected`;
-                }}
-
-                function dedupeSelectorItems(container) {{
-                    const seen = new Set();
-                    const items = Array.from(container.querySelectorAll('.user-item'));
-                    items.forEach((item) => {{
-                        const email = item.getAttribute('data-user-email') || '';
-                        if (!email) {{
-                            return;
-                        }}
-                        if (seen.has(email)) {{
-                            item.remove();
-                            return;
-                        }}
-                        seen.add(email);
-                    }});
-                }}
-
-                // Listen for checkbox changes (using event delegation for dynamically loaded content)
-                form.addEventListener('change', function(e) {{
-                    if (e.target.name === 'associatedUsers') {{
-                        updateCount();
-
-                        // Enable/disable the corresponding role dropdown
-                        const userEmail = e.target.value;
-                        // Find the parent user-item div and then the role select within it
-                        const userItem = e.target.closest('.user-item');
-                        if (userItem) {{
-                            const roleSelect = userItem.querySelector('.role-select');
-                            if (roleSelect) {{
-                                roleSelect.disabled = !e.target.checked;
-                            }}
-                        }}
-                    }}
-                }});
-
-                // Initial count
-                updateCount();
-
-                // Remove duplicates after infinite scroll inserts new items
-                document.body.addEventListener('htmx:afterSwap', function(event) {{
-                    if (event.target && event.target.id === 'user-selector-container-{team.id}') {{
-                        dedupeSelectorItems(event.target);
-                        updateCount();
-                    }}
-                }});
-            }})();
-
-            // Search functionality (scoped to avoid variable conflicts)
-            (function() {{
-                const searchInput = document.getElementById('user-search-{team.id}');
-                const searchResults = document.getElementById('user-search-results-{team.id}');
-                let searchTimeout;
-
-                searchInput.addEventListener('input', function() {{
-                clearTimeout(searchTimeout);
-                const query = this.value.trim();
-
-                if (query.length < 2) {{
-                    searchResults.innerHTML = '';
-                    return;
-                }}
-
-                searchTimeout = setTimeout(async function() {{
-                    try {{
-                        const response = await fetch(`{root_path}/admin/teams/{team.id}/users/search?q=${{encodeURIComponent(query)}}&limit=10`);
-                        const data = await response.json();
-
-                        if (data.users && data.users.length > 0) {{
-                            const container = document.createElement('div');
-                            container.className = 'bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md p-2 mt-1';
-                            // Parse member emails from JSON (safely serialized server-side)
-                            const memberEmails = {member_emails_json};
-                            data.users.forEach(user => {{
-                                // Check if user is already a member
-                                if (!memberEmails.includes(user.email)) {{
-                                    const item = document.createElement('div');
-                                    item.className = 'p-2 hover:bg-gray-50 dark:hover:bg-gray-700 rounded cursor-pointer text-sm';
-                                    item.textContent = `${{user.full_name || ''}} (${{user.email}})`;
-                                    item.onclick = () => window['addUserFromSearch_{team.id}'](user.email, user.full_name, '{team.id}');
-                                    container.appendChild(item);
-                                }}
-                            }});
-                            searchResults.innerHTML = '';
-                            searchResults.appendChild(container);
-                        }} else {{
-                            searchResults.innerHTML = '<div class="text-sm text-gray-500 dark:text-gray-400 mt-1">No users found</div>';
-                        }}
-                    }} catch (error) {{
-                        console.error('Search error:', error);
-                        searchResults.innerHTML = '<div class="text-sm text-red-500 mt-1">Search failed</div>';
-                    }}
-                }}, 300);
-                }});
-
-                window['addUserFromSearch_{team.id}'] = function(email, name, teamId) {{
-                    // Find the checkbox for this user in the selector list
-                    const container = document.getElementById(`user-selector-container-${{teamId}}`);
-                    let checkbox = container.querySelector(`input[value="${{email}}"]`);
-
-                    if (checkbox) {{
-                        // User already in list - just check the box
-                        checkbox.checked = true;
-                        checkbox.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                    }} else {{
-                        // User not in infinite-scroll list yet - dynamically add them
-                        const userItem = document.createElement('div');
-                        userItem.className = 'flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-2 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item';
-                        userItem.setAttribute('data-user-email', email);
-
-                        const newCheckbox = document.createElement('input');
-                        newCheckbox.type = 'checkbox';
-                        newCheckbox.name = 'associatedUsers';
-                        newCheckbox.value = email;
-                        newCheckbox.setAttribute('data-user-name', name || '');
-                        newCheckbox.className = 'user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0';
-                        newCheckbox.setAttribute('data-auto-check', 'true');
-                        newCheckbox.checked = true;
-
-                        const label = document.createElement('span');
-                        label.className = 'select-none flex-grow';
-                        label.textContent = `${{name || ''}} (${{email}})`;
-
-                        const roleSelect = document.createElement('select');
-                        roleSelect.name = `role_${{encodeURIComponent(email)}}`;
-                        roleSelect.className = 'role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0';
-                        roleSelect.innerHTML = '<option value="member" selected>Member</option><option value="owner">Owner</option>';
-
-                        userItem.appendChild(newCheckbox);
-                        userItem.appendChild(label);
-                        userItem.appendChild(roleSelect);
-
-                        // Insert at the top of the list
-                        const firstChild = container.firstChild;
-                        if (firstChild) {{
-                            container.insertBefore(userItem, firstChild);
-                        }} else {{
-                            container.appendChild(userItem);
-                        }}
-
-                        // Trigger change event for the new checkbox
-                        newCheckbox.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                    }}
-
-                    // Clear search
-                    document.getElementById(`user-search-${{teamId}}`).value = '';
-                    document.getElementById(`user-search-results-${{teamId}}`).innerHTML = '';
-                }};
-            }})();
-        </script>
         """  # nosec B608 - HTML template f-string, not SQL (uses SQLAlchemy ORM for DB)
 
         return HTMLResponse(content=add_members_html)
 
     except Exception as e:
         LOGGER.error(f"Error loading add members view for team {team_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error loading add members view: {str(e)}</div>', status_code=500)
+        return HTMLResponse(content=f'<div class="text-red-500">Error loading add members view: {html.escape(str(e))}</div>', status_code=500)
 
 
 @admin_router.get("/teams/{team_id}/edit")
@@ -4765,7 +4628,7 @@ async def admin_get_team_edit(
 
     except Exception as e:
         LOGGER.error(f"Error getting team edit form for {team_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error loading team: {str(e)}</div>', status_code=500)
+        return HTMLResponse(content=f'<div class="text-red-500">Error loading team: {html.escape(str(e))}</div>', status_code=500)
 
 
 @admin_router.post("/teams/{team_id}/update")
@@ -4823,17 +4686,11 @@ async def admin_update_team(
             success_html = """
             <div class="text-green-500 text-center p-4">
                 <p>Team updated successfully</p>
-                <script>
-                    setTimeout(() => {
-                        // Close the modal
-                        hideTeamEditModal();
-                        // Refresh the teams list
-                        htmx.trigger(document.getElementById('teams-list'), 'load');
-                    }, 1500);
-                </script>
             </div>
             """
-            return HTMLResponse(content=success_html)
+            response = HTMLResponse(content=success_html)
+            response.headers["HX-Trigger"] = json.dumps({"adminTeamAction": {"closeTeamEditModal": True, "refreshTeamsList": True, "delayMs": 1500}})
+            return response
         # For regular form submission, redirect to admin page with teams section
         return RedirectResponse(url=f"{root_path}/admin/#teams", status_code=303)
 
@@ -4844,7 +4701,7 @@ async def admin_update_team(
         is_htmx = request.headers.get("HX-Request") == "true"
 
         if is_htmx:
-            return HTMLResponse(content=f'<div class="text-red-500">Error updating team: {str(e)}</div>', status_code=400)
+            return HTMLResponse(content=f'<div class="text-red-500">Error updating team: {html.escape(str(e))}</div>', status_code=400)
         # For regular form submission, redirect to admin page with error parameter
         error_msg = urllib.parse.quote(f"Error updating team: {str(e)}")
         return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
@@ -4886,22 +4743,15 @@ async def admin_delete_team(
         success_html = f"""
         <div class="text-green-500 text-center p-4">
             <p>Team "{team_name}" deleted successfully</p>
-            <script>
-                setTimeout(() => {{
-                    // Refresh the entire teams list
-                    htmx.ajax('GET', window.ROOT_PATH + '/admin/teams?unified=true', {{
-                        target: '#unified-teams-list',
-                        swap: 'innerHTML'
-                    }});
-                }}, 1000);
-            </script>
         </div>
         """
-        return HTMLResponse(content=success_html)
+        response = HTMLResponse(content=success_html)
+        response.headers["HX-Trigger"] = json.dumps({"adminTeamAction": {"refreshUnifiedTeamsList": True, "delayMs": 1000}})
+        return response
 
     except Exception as e:
         LOGGER.error(f"Error deleting team {team_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error deleting team: {str(e)}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error deleting team: {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.post("/teams/{team_id}/add-member")
@@ -5041,25 +4891,24 @@ async def admin_add_team_members(
         success_html = f"""
         <div class="text-center p-4">
             {result_html}
-            <script>
-                setTimeout(() => {{
-                    // Reload the manage members modal content
-                    loadTeamMembersView('{team_id}');
-
-                    // Also refresh the teams list to update member counts
-                    htmx.ajax('GET', window.ROOT_PATH + '/admin/teams?unified=true', {{
-                        target: '#unified-teams-list',
-                        swap: 'innerHTML'
-                    }});
-                }}, {1000 if len(user_emails) == 1 else 2000});
-            </script>
         </div>
         """
-        return HTMLResponse(content=success_html)
+        response = HTMLResponse(content=success_html)
+        response.headers["HX-Trigger"] = json.dumps(
+            {
+                "adminTeamAction": {
+                    "teamId": team_id,
+                    "refreshTeamMembers": True,
+                    "refreshUnifiedTeamsList": True,
+                    "delayMs": 1000 if len(user_emails) == 1 else 2000,
+                }
+            }
+        )
+        return response
 
     except Exception as e:
         LOGGER.error(f"Error adding member(s) to team {team_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error adding member(s): {str(e)}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error adding member(s): {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.post("/teams/{team_id}/update-member-role")
@@ -5117,34 +4966,25 @@ async def admin_update_team_member_role(
         success_html = f"""
         <div class="text-green-500 text-center p-4">
             <p>Role updated successfully for {user_email}</p>
-            <script>
-                setTimeout(() => {{
-                    // Reload the manage members modal content to show updated roles
-                    htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/{team_id}/members', {{
-                        target: '#team-edit-modal-content',
-                        swap: 'innerHTML'
-                    }});
-
-                    // Close any open modals
-                    const roleModal = document.getElementById('role-assignment-modal');
-                    if (roleModal) {{
-                        roleModal.classList.add('hidden');
-                    }}
-
-                    // Refresh teams list if visible
-                    htmx.ajax('GET', window.ROOT_PATH + '/admin/teams?unified=true', {{
-                        target: '#unified-teams-list',
-                        swap: 'innerHTML'
-                    }});
-                }}, 1000);
-            </script>
         </div>
         """
-        return HTMLResponse(content=success_html)
+        response = HTMLResponse(content=success_html)
+        response.headers["HX-Trigger"] = json.dumps(
+            {
+                "adminTeamAction": {
+                    "teamId": team_id,
+                    "refreshTeamMembers": True,
+                    "refreshUnifiedTeamsList": True,
+                    "closeRoleModal": True,
+                    "delayMs": 1000,
+                }
+            }
+        )
+        return response
 
     except Exception as e:
         LOGGER.error(f"Error updating member role in team {team_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error updating role: {str(e)}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error updating role: {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.post("/teams/{team_id}/remove-member")
@@ -5198,34 +5038,30 @@ async def admin_remove_team_member(
                 return HTMLResponse(content='<div class="text-red-500">Failed to remove member from team</div>', status_code=400)
         except ValueError as e:
             # Handle specific business logic errors (like last owner)
-            return HTMLResponse(content=f'<div class="text-red-500">{str(e)}</div>', status_code=400)
+            return HTMLResponse(content=f'<div class="text-red-500">{html.escape(str(e))}</div>', status_code=400)
 
         # Return success message with script to refresh modal
         success_html = f"""
         <div class="text-green-500 text-center p-4">
             <p>Member {user_email} removed successfully</p>
-            <script>
-                setTimeout(() => {{
-                    // Reload the manage members modal content
-                    htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/{team_id}/members', {{
-                        target: '#team-edit-modal-content',
-                        swap: 'innerHTML'
-                    }});
-
-                    // Also refresh the teams list to update member counts
-                    htmx.ajax('GET', window.ROOT_PATH + '/admin/teams?unified=true', {{
-                        target: '#unified-teams-list',
-                        swap: 'innerHTML'
-                    }});
-                }}, 1000);
-            </script>
         </div>
         """
-        return HTMLResponse(content=success_html)
+        response = HTMLResponse(content=success_html)
+        response.headers["HX-Trigger"] = json.dumps(
+            {
+                "adminTeamAction": {
+                    "teamId": team_id,
+                    "refreshTeamMembers": True,
+                    "refreshUnifiedTeamsList": True,
+                    "delayMs": 1000,
+                }
+            }
+        )
+        return response
 
     except Exception as e:
         LOGGER.error(f"Error removing member from team {team_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error removing member: {str(e)}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error removing member: {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.post("/teams/{team_id}/leave")
@@ -5285,26 +5121,15 @@ async def admin_leave_team(
         success_html = """
         <div class="text-green-500 text-center p-4">
             <p>Successfully left the team</p>
-            <script>
-                setTimeout(() => {{
-                    // Refresh the unified teams list
-                    htmx.ajax('GET', window.ROOT_PATH + '/admin/teams?unified=true', {{
-                        target: '#unified-teams-list',
-                        swap: 'innerHTML'
-                    }});
-
-                    // Close any open modals
-                    const modals = document.querySelectorAll('[id$="-modal"]');
-                    modals.forEach(modal => modal.classList.add('hidden'));
-                }}, 1500);
-            </script>
         </div>
         """
-        return HTMLResponse(content=success_html)
+        response = HTMLResponse(content=success_html)
+        response.headers["HX-Trigger"] = json.dumps({"adminTeamAction": {"refreshUnifiedTeamsList": True, "closeAllModals": True, "delayMs": 1500}})
+        return response
 
     except Exception as e:
         LOGGER.error(f"Error leaving team {team_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error leaving team: {str(e)}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error leaving team: {html.escape(str(e))}</div>', status_code=400)
 
 
 # ============================================================================ #
@@ -5390,7 +5215,7 @@ async def admin_create_join_request(
 
     except Exception as e:
         LOGGER.error(f"Error creating join request for team {team_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error creating join request: {str(e)}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error creating join request: {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.delete("/teams/{team_id}/join-request/{request_id}")
@@ -5437,7 +5262,7 @@ async def admin_cancel_join_request(
 
     except Exception as e:
         LOGGER.error(f"Error canceling join request {request_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error canceling join request: {str(e)}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error canceling join request: {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.get("/teams/{team_id}/join-requests")
@@ -5524,7 +5349,7 @@ async def admin_list_join_requests(
 
     except Exception as e:
         LOGGER.error(f"Error listing join requests for team {team_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error loading join requests: {str(e)}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error loading join requests: {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.post("/teams/{team_id}/join-requests/{request_id}/approve")
@@ -5563,27 +5388,20 @@ async def admin_approve_join_request(
         if not member:
             return HTMLResponse(content='<div class="text-red-500">Join request not found</div>', status_code=404)
 
-        return HTMLResponse(
+        response = HTMLResponse(
             content=f"""
         <div class="text-green-600 text-center p-4">
             <p>Join request approved! {member.user_email} is now a team member.</p>
-            <script>
-                setTimeout(() => {{
-                    // Refresh the join requests list
-                    htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/{team_id}/join-requests', {{
-                        target: '#team-join-requests-modal-content',
-                        swap: 'innerHTML'
-                    }});
-                }}, 1000);
-            </script>
         </div>
         """,
             status_code=200,
         )
+        response.headers["HX-Trigger"] = json.dumps({"adminTeamAction": {"teamId": team_id, "refreshJoinRequests": True, "delayMs": 1000}})
+        return response
 
     except Exception as e:
         LOGGER.error(f"Error approving join request {request_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error approving join request: {str(e)}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error approving join request: {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.post("/teams/{team_id}/join-requests/{request_id}/reject")
@@ -5622,27 +5440,20 @@ async def admin_reject_join_request(
         if not success:
             return HTMLResponse(content='<div class="text-red-500">Join request not found</div>', status_code=404)
 
-        return HTMLResponse(
+        response = HTMLResponse(
             content=f"""
         <div class="text-green-600 text-center p-4">
             <p>Join request rejected.</p>
-            <script>
-                setTimeout(() => {{
-                    // Refresh the join requests list
-                    htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/{team_id}/join-requests', {{
-                        target: '#team-join-requests-modal-content',
-                        swap: 'innerHTML'
-                    }});
-                }}, 1000);
-            </script>
         </div>
         """,
             status_code=200,
         )
+        response.headers["HX-Trigger"] = json.dumps({"adminTeamAction": {"teamId": team_id, "refreshJoinRequests": True, "delayMs": 1000}})
+        return response
 
     except Exception as e:
         LOGGER.error(f"Error rejecting join request {request_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error rejecting join request: {str(e)}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error rejecting join request: {html.escape(str(e))}</div>', status_code=400)
 
 
 # ============================================================================ #
@@ -5673,24 +5484,15 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
 
     badges = []
     if user_obj.is_admin:
-        badges.append(
-            '<span class="px-2 py-1 text-xs font-semibold bg-purple-100 text-purple-800 rounded-full '
-            + 'dark:bg-purple-900 dark:text-purple-200">Admin</span>'
-        )
+        badges.append('<span class="px-2 py-1 text-xs font-semibold bg-purple-100 text-purple-800 rounded-full ' + 'dark:bg-purple-900 dark:text-purple-200">Admin</span>')
     if user_obj.is_active:
         badges.append('<span class="px-2 py-1 text-xs font-semibold text-green-600 bg-gray-100 dark:bg-gray-700 rounded-full">Active</span>')
     else:
         badges.append('<span class="px-2 py-1 text-xs font-semibold text-red-600 bg-gray-100 dark:bg-gray-700 rounded-full">Inactive</span>')
     if is_current_user:
-        badges.append(
-            '<span class="px-2 py-1 text-xs font-semibold bg-blue-100 text-blue-800 rounded-full '
-            + 'dark:bg-blue-900 dark:text-blue-200">You</span>'
-        )
+        badges.append('<span class="px-2 py-1 text-xs font-semibold bg-blue-100 text-blue-800 rounded-full ' + 'dark:bg-blue-900 dark:text-blue-200">You</span>')
     if is_last_admin:
-        badges.append(
-            '<span class="px-2 py-1 text-xs font-semibold bg-yellow-100 text-yellow-800 rounded-full '
-            + 'dark:bg-yellow-900 dark:text-yellow-200">Last Admin</span>'
-        )
+        badges.append('<span class="px-2 py-1 text-xs font-semibold bg-yellow-100 text-yellow-800 rounded-full ' + 'dark:bg-yellow-900 dark:text-yellow-200">Last Admin</span>')
     if user_obj.password_change_required:
         badges.append(
             '<span class="px-2 py-1 text-xs font-semibold bg-orange-100 text-orange-800 rounded-full '
@@ -5772,7 +5574,7 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
 async def admin_list_users(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Response:
@@ -5786,7 +5588,7 @@ async def admin_list_users(
     Args:
         request: FastAPI request object
         page: Page number (1-indexed). Default: 1.
-        per_page: Items per page (1-500). Default: 50.
+        per_page: Items per page. Default: 50.
         db: Database session dependency
         user: Authenticated user dependency
 
@@ -5811,7 +5613,7 @@ async def admin_list_users(
     if is_json_request:
         # Return JSON for dropdown population - always return first page with 100 users
         paginated_result = await auth_service.list_users(page=1, per_page=100)
-        users_data = [{"email": user_obj.email, "full_name": user_obj.full_name, "is_active": user_obj.is_active, "is_admin": user_obj.is_admin} for user_obj in paginated_result["data"]]
+        users_data = [{"email": user_obj.email, "full_name": user_obj.full_name, "is_active": user_obj.is_active, "is_admin": user_obj.is_admin} for user_obj in paginated_result.data]
         return ORJSONResponse(content={"users": users_data})
 
     # List users with page-based pagination
@@ -5823,9 +5625,9 @@ async def admin_list_users(
     # Return standardized paginated response (for legacy compatibility)
     return ORJSONResponse(
         content={
-            "data": [{"email": u.email, "full_name": u.full_name, "is_active": u.is_active, "is_admin": u.is_admin} for u in paginated_result["data"]],
-            "pagination": paginated_result["pagination"].model_dump(),
-            "links": paginated_result["links"].model_dump() if paginated_result["links"] else None,
+            "data": [{"email": u.email, "full_name": u.full_name, "is_active": u.is_active, "is_admin": u.is_admin} for u in paginated_result.data],
+            "pagination": paginated_result.pagination.model_dump() if paginated_result.pagination else None,
+            "links": paginated_result.links.model_dump() if paginated_result.links else None,
         }
     )
 
@@ -5835,9 +5637,9 @@ async def admin_list_users(
 async def admin_users_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     render: Optional[str] = Query(None, description="Render mode: 'selector' for user selector items, 'controls' for pagination controls"),
-    team_id: Optional[str] = Query(None, description="Team ID to check membership and pre-select members"),
+    team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Response:
@@ -5850,7 +5652,7 @@ async def admin_users_partial_html(
     Args:
         request: FastAPI request object
         page: Page number (1-indexed). Default: 1.
-        per_page: Items per page (1-500). Default: 50.
+        per_page: Items per page. Default: 50.
         render: Render mode - 'selector' returns user selector items, 'controls' returns pagination controls.
         team_id: Optional team ID to pre-select members in selector mode
         db: Database session
@@ -5870,8 +5672,8 @@ async def admin_users_partial_html(
 
         # List users with page-based pagination
         paginated_result = await auth_service.list_users(page=page, per_page=per_page)
-        users_db = paginated_result["data"]
-        pagination = paginated_result["pagination"]
+        users_db = paginated_result.data
+        pagination = typing_cast(PaginationMeta, paginated_result.pagination)
 
         # Get current user email
         current_user_email = get_user_email(user)
@@ -5955,7 +5757,7 @@ async def admin_users_partial_html(
 
     except Exception as e:
         LOGGER.error(f"Error loading users partial for admin {user}: {e}")
-        return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading users: {str(e)}</p></div>', status_code=200)
+        return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading users: {html.escape(str(e))}</p></div>', status_code=200)
 
 
 @admin_router.get("/teams/{team_id}/users/partial", response_class=HTMLResponse)
@@ -5964,7 +5766,7 @@ async def admin_team_users_partial_html(
     team_id: str,
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Response:
@@ -5974,7 +5776,7 @@ async def admin_team_users_partial_html(
         team_id: Team identifier to scope membership checks.
         request: FastAPI request object.
         page: Page number (1-indexed). Default: 1.
-        per_page: Items per page (1-500). Default: 50.
+        per_page: Items per page. Default: 50.
         db: Database session.
         user: Current authenticated user context.
 
@@ -5991,6 +5793,10 @@ async def admin_team_users_partial_html(
         auth_service = EmailAuthService(db)
         team_service = TeamManagementService(db)
         current_user_email = get_user_email(user)
+        try:
+            team_id = _normalize_team_id(team_id)
+        except ValueError:
+            return HTMLResponse(content='<div class="text-red-500">Invalid team ID</div>', status_code=400)
 
         team = await team_service.get_team_by_id(team_id)
         if not team:
@@ -6001,8 +5807,8 @@ async def admin_team_users_partial_html(
             return HTMLResponse(content='<div class="text-red-500">Only team owners can add members</div>', status_code=403)
 
         paginated_result = await auth_service.list_users(page=page, per_page=per_page)
-        users_db = paginated_result["data"]
-        pagination = paginated_result["pagination"]
+        users_db = paginated_result.data
+        pagination = typing_cast(PaginationMeta, paginated_result.pagination)
 
         users_data = [
             {
@@ -6036,14 +5842,14 @@ async def admin_team_users_partial_html(
 
     except Exception as e:
         LOGGER.error(f"Error loading team users selector for team {team_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading users: {str(e)}</p></div>', status_code=200)
+        return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading users: {html.escape(str(e))}</p></div>', status_code=200)
 
 
 @admin_router.get("/users/search", response_class=JSONResponse)
 @require_permission("admin.user_management")
 async def admin_search_users(
     q: str = Query("", description="Search query"),
-    limit: int = Query(100, ge=1, le=1000, description="Maximum number of results to return"),
+    limit: int = Query(100, ge=1, le=settings.pagination_max_page_size, description="Maximum number of results to return"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -6054,7 +5860,7 @@ async def admin_search_users(
 
     Args:
         q (str): Search query string to match against email or full name
-        limit (int): Maximum number of results to return (1-1000)
+        limit (int): Maximum number of results to return
         db (Session): Database session dependency
         user: Current user making the request
 
@@ -6077,12 +5883,7 @@ async def admin_search_users(
 
     # Use list_users with search parameter
     users_result = await auth_service.list_users(search=search_query, limit=limit)
-
-    # Extract user list - handle both dict (paginated) and list (direct) responses
-    if isinstance(users_result, dict):
-        users_list = users_result.get("data", [])
-    else:
-        users_list = users_result if isinstance(users_result, list) else []
+    users_list = users_result.data
 
     # Format results for JSON response
     results = [
@@ -6103,7 +5904,7 @@ async def admin_search_users(
 async def admin_search_team_users(
     team_id: str,
     q: str = Query("", description="Search query"),
-    limit: int = Query(100, ge=1, le=1000, description="Maximum number of results to return"),
+    limit: int = Query(100, ge=1, le=settings.pagination_max_page_size, description="Maximum number of results to return"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -6112,7 +5913,7 @@ async def admin_search_team_users(
     Args:
         team_id: Team identifier to scope membership checks.
         q: Search query string to match against email or full name.
-        limit: Maximum number of results to return (1-1000).
+        limit: Maximum number of results to return.
         db: Database session dependency.
         user: Current authenticated user context.
 
@@ -6124,6 +5925,10 @@ async def admin_search_team_users(
 
     team_service = TeamManagementService(db)
     current_user_email = get_user_email(user)
+    try:
+        team_id = _normalize_team_id(team_id)
+    except ValueError:
+        return JSONResponse(content={"users": [], "count": 0}, status_code=400)
 
     team = await team_service.get_team_by_id(team_id)
     if not team:
@@ -6145,11 +5950,7 @@ async def admin_search_team_users(
     exclude_emails = {team_user.email for team_user, membership in team_members}
 
     users_result = await auth_service.list_users(search=search_query, limit=limit, exclude_emails=exclude_emails)
-
-    if isinstance(users_result, dict):
-        users_list = users_result.get("data", [])
-    else:
-        users_list = users_result if isinstance(users_result, list) else []
+    users_list = users_result.data
 
     results = [
         {
@@ -6215,7 +6016,7 @@ async def admin_create_user(
 
     except Exception as e:
         LOGGER.error(f"Error creating user by admin {user}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error creating user: {str(e)}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error creating user: {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.get("/users/{user_email}/edit")
@@ -6346,106 +6147,15 @@ async def admin_get_user_edit(
                     <div id="password-match-message" class="mt-1 text-sm text-red-600 hidden">Passwords do not match</div>
                 </div>
                 {password_requirements_html}
-
-                <script>
-                // Password policy settings injected from backend
-                const passwordPolicy = {{
-                    minLength: {settings.password_min_length},
-                    requireUppercase: {'true' if settings.password_require_uppercase else 'false'},
-                    requireLowercase: {'true' if settings.password_require_lowercase else 'false'},
-                    requireNumbers: {'true' if settings.password_require_numbers else 'false'},
-                    requireSpecial: {'true' if settings.password_require_special else 'false'}
-                }};
-
-                // (No debug output) passwordPolicy available in JS for logic below
-
-                function updateRequirementIcon(elementId, isValid) {{
-                    const req = document.getElementById(elementId);
-                    if (req) {{
-                        const icon = req.querySelector('span');
-                        if (isValid) {{
-                            icon.className = 'inline-flex items-center justify-center w-4 h-4 bg-green-500 text-white rounded-full text-xs mr-2';
-                            icon.textContent = '✓';
-                        }} else {{
-                            icon.className = 'inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2';
-                            icon.textContent = '✗';
-                        }}
-                    }}
-                }}
-
-                function validatePasswordRequirements() {{
-                    const password = document.getElementById('password-field')?.value || '';
-
-                    // Check length requirement (always required)
-                    const lengthCheck = password.length >= passwordPolicy.minLength;
-                    updateRequirementIcon('req-length', lengthCheck);
-
-                    // Check uppercase requirement (if enabled)
-                    const uppercaseCheck = !passwordPolicy.requireUppercase || /[A-Z]/.test(password);
-                    updateRequirementIcon('req-uppercase', uppercaseCheck);
-
-                    // Check lowercase requirement (if enabled)
-                    const lowercaseCheck = !passwordPolicy.requireLowercase || /[a-z]/.test(password);
-                    updateRequirementIcon('req-lowercase', lowercaseCheck);
-
-                    // Check numbers requirement (if enabled)
-                    const numbersCheck = !passwordPolicy.requireNumbers || /[0-9]/.test(password);
-                    updateRequirementIcon('req-numbers', numbersCheck);
-
-                    // Check special character requirement (if enabled) - matches backend set
-                    const specialCheck = !passwordPolicy.requireSpecial || /[!@#$%^&*()_+\\-\\=\\[\\]{{}};:'"\\\\|,.<>`~\\/\\?]/.test(password);
-                    updateRequirementIcon('req-special', specialCheck);
-
-                    // Enable/disable submit button based on active requirements
-                    const submitButton = document.querySelector('#user-edit-modal-content button[type="submit"]');
-                    const allRequirementsMet = lengthCheck && uppercaseCheck && lowercaseCheck && numbersCheck && specialCheck;
-                    const passwordEmpty = password.length === 0;
-
-                    if (submitButton) {{
-                        // Allow submission if password is empty (keep current) or if all requirements are met
-                        if (passwordEmpty || allRequirementsMet) {{
-                            submitButton.disabled = false;
-                            submitButton.className = 'px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500';
-                        }} else {{
-                            submitButton.disabled = true;
-                            submitButton.className = 'px-4 py-2 text-sm font-medium text-white bg-gray-400 border border-transparent rounded-md cursor-not-allowed';
-                        }}
-                    }}
-                }}
-
-                function validatePasswordMatch() {{
-                    const password = document.getElementById('password-field')?.value || '';
-                    const confirmPassword = document.getElementById('confirm-password-field')?.value || '';
-                    const matchMessage = document.getElementById('password-match-message');
-
-                    if (password && confirmPassword && password !== confirmPassword) {{
-                        matchMessage?.classList.remove('hidden');
-                    }} else {{
-                        matchMessage?.classList.add('hidden');
-                    }}
-                }}
-
-                // Initialize validation when the form is present (supports HTMX-injected content)
-                (function initPasswordValidation() {{
-                    if (document.getElementById('password-field')) {{
-                        validatePasswordRequirements();
-                        validatePasswordMatch();
-                    }}
-                }})();
-
-                // Re-run validation after HTMX swaps content into the DOM (modal loaded via HTMX)
-                document.addEventListener('htmx:afterSwap', function(event) {{
-                    try {{
-                        const target = event.detail && event.detail.target ? event.detail.target : null;
-                        if (target && (target.querySelector('#password-field') || target.id === 'user-edit-modal-content')) {{
-                            validatePasswordRequirements();
-                            validatePasswordMatch();
-                        }}
-                    }} catch (e) {{
-                        // Ignore errors from HTMX event handling
-                    }}
-                }});
-                </script>
+                <div
+                    id="password-policy-data"
+                    class="hidden"
+                    data-min-length="{settings.password_min_length}"
+                    data-require-uppercase="{'true' if settings.password_require_uppercase else 'false'}"
+                    data-require-lowercase="{'true' if settings.password_require_lowercase else 'false'}"
+                    data-require-numbers="{'true' if settings.password_require_numbers else 'false'}"
+                    data-require-special="{'true' if settings.password_require_special else 'false'}"
+                ></div>
                 <div class="flex justify-end space-x-3">
                     <button type="button" onclick="hideUserEditModal()"
                             class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700">
@@ -6463,7 +6173,7 @@ async def admin_get_user_edit(
 
     except Exception as e:
         LOGGER.error(f"Error getting user edit form for {user_email}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error loading user: {str(e)}</div>', status_code=500)
+        return HTMLResponse(content=f'<div class="text-red-500">Error loading user: {html.escape(str(e))}</div>', status_code=500)
 
 
 @admin_router.post("/users/{user_email}/update")
@@ -6531,24 +6241,15 @@ async def admin_update_user(
         success_html = """
         <div class="text-green-500 text-center p-4">
             <p>User updated successfully</p>
-            <script>
-                setTimeout(() => {
-                    // Close the modal
-                    hideUserEditModal();
-                    // Refresh the users list
-                    const usersList = document.getElementById('users-list-container');
-                    if (usersList) {
-                        htmx.trigger(usersList, 'refreshUsers');
-                    }
-                }, 1500);
-            </script>
         </div>
         """
-        return HTMLResponse(content=success_html)
+        response = HTMLResponse(content=success_html)
+        response.headers["HX-Trigger"] = json.dumps({"adminUserAction": {"closeUserEditModal": True, "refreshUsersList": True, "delayMs": 1500}})
+        return response
 
     except Exception as e:
         LOGGER.error(f"Error updating user {user_email}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error updating user: {str(e)}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error updating user: {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.post("/users/{user_email}/activate")
@@ -6593,7 +6294,7 @@ async def admin_activate_user(
 
     except Exception as e:
         LOGGER.error(f"Error activating user {user_email}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error activating user: {str(e)}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error activating user: {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.post("/users/{user_email}/deactivate")
@@ -6646,7 +6347,7 @@ async def admin_deactivate_user(
 
     except Exception as e:
         LOGGER.error(f"Error deactivating user {user_email}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error deactivating user: {str(e)}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error deactivating user: {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.delete("/users/{user_email}")
@@ -6698,7 +6399,7 @@ async def admin_delete_user(
 
     except Exception as e:
         LOGGER.error(f"Error deleting user {user_email}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error deleting user: {str(e)}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error deleting user: {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.post("/users/{user_email}/force-password-change")
@@ -6775,13 +6476,13 @@ async def admin_force_password_change(
 
     except Exception as e:
         LOGGER.error(f"Error forcing password change for user {user_email}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error forcing password change: {str(e)}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error forcing password change: {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.get("/tools", response_model=PaginatedResponse)
 async def admin_list_tools(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -6794,7 +6495,7 @@ async def admin_list_tools(
 
     Args:
         page (int): Page number (1-indexed). Default: 1.
-        per_page (int): Items per page (1-500). Default: 50.
+        per_page (int): Items per page. Default: 50.
         include_inactive (bool): Whether to include inactive tools in the results.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -6830,11 +6531,11 @@ async def admin_list_tools(
 async def admin_tools_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
+    team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -6847,7 +6548,7 @@ async def admin_tools_partial_html(
     Args:
         request (Request): FastAPI request object.
         page (int): Page number (1-indexed). Default: 1.
-        per_page (int): Items per page (1-500). Default: 50.
+        per_page (int): Items per page. Default: 50.
         include_inactive (bool): Whether to include inactive tools in the results.
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         team_id (Optional[str]): Filter by team ID.
@@ -7011,7 +6712,7 @@ async def admin_tools_partial_html(
 async def admin_get_all_tool_ids(
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
+    team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7093,9 +6794,9 @@ async def admin_get_all_tool_ids(
 async def admin_search_tools(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
-    limit: int = Query(100, ge=1, le=1000, description="Maximum number of results to return"),
+    limit: int = Query(100, ge=1, le=settings.pagination_max_page_size, description="Maximum number of results to return"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
+    team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7108,7 +6809,7 @@ async def admin_search_tools(
     Args:
         q (str): Search query string to match against tool names, IDs, or descriptions
         include_inactive (bool): Whether to include inactive tools in the search results
-        limit (int): Maximum number of results to return (1-1000)
+        limit (int): Maximum number of results to return
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated
         team_id (Optional[str]): Filter by team ID
         db (Session): Database session dependency
@@ -7213,11 +6914,11 @@ async def admin_search_tools(
 async def admin_prompts_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
+    team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7401,10 +7102,10 @@ async def admin_prompts_partial_html(
 async def admin_gateways_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
+    team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7562,7 +7263,7 @@ async def admin_gateways_partial_html(
 @admin_router.get("/gateways/ids", response_class=JSONResponse)
 async def admin_get_all_gateways_ids(
     include_inactive: bool = False,
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
+    team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7624,8 +7325,8 @@ async def admin_get_all_gateways_ids(
 async def admin_search_gateways(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
-    limit: int = Query(100, ge=1, le=1000),
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
+    limit: int = Query(100, ge=1, le=settings.pagination_max_page_size),
+    team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7720,7 +7421,7 @@ async def admin_search_gateways(
 @admin_router.get("/servers/ids", response_class=JSONResponse)
 async def admin_get_all_server_ids(
     include_inactive: bool = False,
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
+    team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7784,8 +7485,8 @@ async def admin_get_all_server_ids(
 async def admin_search_servers(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
-    limit: int = Query(100, ge=1, le=1000),
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
+    limit: int = Query(100, ge=1, le=settings.pagination_max_page_size),
+    team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7880,11 +7581,11 @@ async def admin_search_servers(
 async def admin_resources_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
+    team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -8069,7 +7770,7 @@ async def admin_resources_partial_html(
 async def admin_get_all_prompt_ids(
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
+    team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -8150,7 +7851,7 @@ async def admin_get_all_prompt_ids(
 async def admin_get_all_resource_ids(
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
+    team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -8231,9 +7932,9 @@ async def admin_get_all_resource_ids(
 async def admin_search_resources(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
-    limit: int = Query(100, ge=1, le=1000),
+    limit: int = Query(100, ge=1, le=settings.pagination_max_page_size),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
+    team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -8336,9 +8037,9 @@ async def admin_search_resources(
 async def admin_search_prompts(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
-    limit: int = Query(100, ge=1, le=1000),
+    limit: int = Query(100, ge=1, le=settings.pagination_max_page_size),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
+    team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -8454,11 +8155,11 @@ async def admin_search_prompts(
 async def admin_a2a_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
+    team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -8628,7 +8329,7 @@ async def admin_a2a_partial_html(
 @admin_router.get("/a2a/ids", response_class=JSONResponse)
 async def admin_get_all_agent_ids(
     include_inactive: bool = False,
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
+    team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -8690,8 +8391,8 @@ async def admin_get_all_agent_ids(
 async def admin_search_a2a_agents(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
-    limit: int = Query(100, ge=1, le=1000),
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
+    limit: int = Query(100, ge=1, le=settings.pagination_max_page_size),
+    team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -11843,7 +11544,7 @@ async def admin_metrics_partial_html(
     request: Request,
     entity_type: str = Query("tools", description="Entity type: tools, resources, prompts, or servers"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(10, ge=1, le=1000, description="Items per page"),
+    per_page: int = Query(10, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -11856,7 +11557,7 @@ async def admin_metrics_partial_html(
         request: FastAPI request object
         entity_type: Entity type (tools, resources, prompts, servers)
         page: Page number (1-indexed)
-        per_page: Items per page (1-1000)
+        per_page: Items per page
         db: Database session
         user: Authenticated user
 
@@ -11972,7 +11673,9 @@ async def admin_reset_metrics(db: Session = Depends(get_db), user=Depends(get_cu
 
 
 @admin_router.post("/gateways/test", response_model=GatewayTestResponse)
-async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str] = Query(None), user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> GatewayTestResponse:
+async def admin_test_gateway(
+    request: GatewayTestRequest, team_id: Optional[str] = Depends(_validated_team_id_param), user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)
+) -> GatewayTestResponse:
     """
     Test a gateway by sending a request to its URL.
     This endpoint allows administrators to test the connectivity and response
@@ -13583,7 +13286,7 @@ async def admin_get_agent(
 @admin_router.get("/a2a", response_model=PaginatedResponse)
 async def admin_list_a2a_agents(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -13597,7 +13300,7 @@ async def admin_list_a2a_agents(
 
     Args:
         page (int): Page number (1-indexed) for offset pagination.
-        per_page (int): Number of items per page (1-500).
+        per_page (int): Number of items per page.
         include_inactive (bool): Whether to include inactive agents in the results.
         db (Session): Database session dependency.
         user (dict): Authenticated user dependency.
@@ -14374,7 +14077,7 @@ async def admin_test_a2a_agent(
 @admin_router.get("/grpc", response_model=PaginatedResponse)
 async def admin_list_grpc_services(
     include_inactive: bool = False,
-    team_id: Optional[str] = Query(None),
+    team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -14900,7 +14603,7 @@ async def get_plugins_partial(request: Request, db: Session = Depends(get_db), u
         error_html = f"""
         <div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
             <strong class="font-bold">Error loading plugins:</strong>
-            <span class="block sm:inline">{str(e)}</span>
+            <span class="block sm:inline">{html.escape(str(e))}</span>
         </div>
         """
         return HTMLResponse(content=error_html, status_code=500)

@@ -442,7 +442,13 @@ async def get_auth_events(limit: int = 50, offset: int = 0, current_user: EmailU
 @require_permission("admin.user_management")
 async def list_users(
     cursor: Optional[str] = Query(None, description="Pagination cursor for fetching the next set of results"),
-    limit: Optional[int] = Query(None, ge=0, description="Maximum number of users to return. 0 means all (no limit). Default uses pagination_default_page_size."),
+    limit: Optional[int] = Query(
+        None,
+        ge=0,
+        le=settings.pagination_max_page_size,
+        description="Maximum number of users to return. 0 means all (no limit). Default uses pagination_default_page_size.",
+    ),
+    offset: int = Query(0, ge=0, description="Number of users to skip (deprecated; use cursor pagination)."),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ):
     """List all users (admin only) with cursor-based pagination support.
@@ -451,6 +457,7 @@ async def list_users(
         cursor: Pagination cursor for fetching the next set of results
         limit: Maximum number of users to return. Use 0 for all users (no limit).
             If not specified, uses pagination_default_page_size (default: 50).
+        offset: Number of users to skip (deprecated; use cursor pagination)
         current_user_ctx: Currently authenticated user context with permissions
 
     Returns:
@@ -468,8 +475,11 @@ async def list_users(
     auth_service = EmailAuthService(db)
 
     try:
-        users, next_cursor = await auth_service.list_users(cursor=cursor, limit=limit)
-        return CursorPaginatedUsersResponse(users=[EmailUserResponse.from_email_user(user) for user in users], next_cursor=next_cursor)
+        result = await auth_service.list_users(cursor=cursor, limit=limit, offset=offset)
+        return CursorPaginatedUsersResponse(
+            users=[EmailUserResponse.from_email_user(user) for user in result.data],
+            next_cursor=result.next_cursor,
+        )
 
     except Exception as e:
         logger.error(f"Error listing users: {e}")
