@@ -988,8 +988,14 @@ class TestToolService:
         """Test deleting a tool."""
         # Mock DB get to return tool
         test_db.get = Mock(return_value=mock_tool)
-        test_db.delete = Mock()
+        
+        # Mock the fetchone result for DELETE ... RETURNING
+        mock_fetch_result = Mock()
+        mock_fetch_result.fetchone.return_value = (mock_tool.id,)
+        mock_fetch_result.rowcount = 1  # Indicate successful deletion
+        test_db.execute = Mock(return_value=mock_fetch_result)
         test_db.commit = Mock()
+        test_db.rollback = Mock()
 
         # Mock notification
         tool_service._notify_tool_deleted = AsyncMock()
@@ -999,7 +1005,8 @@ class TestToolService:
 
         # Verify DB operations
         test_db.get.assert_called_once_with(DbTool, 1)
-        test_db.delete.assert_called_once_with(mock_tool)
+        # Verify execute was called for DELETE ... RETURNING
+        test_db.execute.assert_called_once()
         test_db.commit.assert_called_once()
 
         # Verify notification
@@ -1009,15 +1016,21 @@ class TestToolService:
     async def test_delete_tool_purge_metrics(self, tool_service, mock_tool, test_db):
         """Test deleting a tool with metric purge."""
         test_db.get = Mock(return_value=mock_tool)
-        test_db.delete = Mock()
         test_db.commit = Mock()
-        test_db.execute = Mock()
+        test_db.rollback = Mock()
+        
+        # Mock the execute result - need rowcount=0 for delete_metrics_in_batches to stop looping
+        mock_execute_result = Mock()
+        mock_execute_result.rowcount = 0  # No rows to delete (stops the batch loop)
+        mock_execute_result.fetchone.return_value = (mock_tool.id,)  # For DELETE...RETURNING
+        test_db.execute = Mock(return_value=mock_execute_result)
+        
         tool_service._notify_tool_deleted = AsyncMock()
 
         await tool_service.delete_tool(test_db, 1, purge_metrics=True)
 
-        assert test_db.execute.call_count == 2
-        test_db.delete.assert_called_once_with(mock_tool)
+        # Verify execute was called: 1 for ToolMetric + 1 for ToolMetricsHourly + 1 for DELETE...RETURNING = 3
+        assert test_db.execute.call_count == 3
         test_db.commit.assert_called_once()
 
     @pytest.mark.asyncio

@@ -1208,24 +1208,36 @@ class TestGatewayService:
     @pytest.mark.asyncio
     async def test_delete_gateway(self, gateway_service, mock_gateway, test_db):
         """Gateway is removed and subscribers are notified."""
-        # First execute call returns gateway (selectinload query), rest are for bulk deletes
-        execute_mock = Mock(side_effect=[_make_execute_result(scalar=mock_gateway)] + [Mock()] * 20)
+        # Mock the fetchone result for DELETE ... RETURNING
+        mock_fetch_result = Mock()
+        mock_fetch_result.fetchone.return_value = (mock_gateway.id,)
+        
+        # First execute call returns gateway (selectinload query), rest are for bulk deletes, last is DELETE RETURNING
+        execute_mock = Mock(side_effect=[
+            _make_execute_result(scalar=mock_gateway),  # Initial select
+            Mock(),  # Tool metrics delete
+            Mock(),  # Tool association delete
+            Mock(),  # Tool delete
+            Mock(),  # Resource metrics delete
+            Mock(),  # Resource association delete
+            Mock(),  # Resource subscription delete
+            Mock(),  # Resource delete
+            Mock(),  # Prompt metrics delete
+            Mock(),  # Prompt association delete
+            Mock(),  # Prompt delete
+            mock_fetch_result,  # DELETE ... RETURNING
+        ])
         test_db.execute = execute_mock
-        test_db.delete = Mock()
         test_db.commit = Mock()
         test_db.expire = Mock()  # For expiring gateway after bulk deletes
-
-        # tool clean-up query chain
-        test_db.query = Mock(return_value=MagicMock(filter=MagicMock(return_value=MagicMock(delete=Mock()))))
 
         gateway_service._notify_gateway_deleted = AsyncMock()
 
         await gateway_service.delete_gateway(test_db, 1)
 
-        test_db.delete.assert_called_once_with(mock_gateway)
         gateway_service._notify_gateway_deleted.assert_called_once()
-        # Verify execute was called (first for selectinload, then for bulk deletes)
-        assert test_db.execute.call_count >= 1
+        # Verify execute was called multiple times (select + bulk deletes + final delete)
+        assert test_db.execute.call_count >= 2
 
     @pytest.mark.asyncio
     async def test_delete_gateway_not_found(self, gateway_service, test_db):

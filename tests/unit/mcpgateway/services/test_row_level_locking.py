@@ -141,24 +141,40 @@ class TestToolServiceLocking:
 
     @pytest.mark.asyncio
     async def test_delete_tool_uses_for_update(self):
-        """Verify tool deletion uses get_for_update."""
+        """Verify tool deletion uses DELETE...RETURNING for atomicity (not get_for_update).
+        
+        Delete operations don't need get_for_update because they use DELETE...RETURNING
+        which provides atomicity at the database level.
+        """
         service = ToolService()
         db = MagicMock(spec=Session)
         
         mock_tool = MagicMock(spec=Tool)
         mock_tool.id = "tool-id"
         mock_tool.name = "test-tool"
+        mock_tool.gateway_id = None
         
-        with patch('mcpgateway.services.tool_service.get_for_update', return_value=mock_tool) as mock_get:
-            with patch.object(service, '_notify_tool_deleted', return_value=None):
-                with patch('mcpgateway.services.tool_service._get_registry_cache'):
-                    with patch('mcpgateway.services.tool_service._get_tool_lookup_cache'):
-                        try:
+        # Mock db.get to return the tool (used for initial lookup and ownership check)
+        db.get.return_value = mock_tool
+        
+        # Mock the fetchone result for DELETE ... RETURNING
+        mock_fetch_result = MagicMock()
+        mock_fetch_result.fetchone.return_value = ("tool-id",)
+        db.execute.return_value = mock_fetch_result
+        db.commit = MagicMock()
+        
+        with patch.object(service, '_notify_tool_deleted', return_value=None):
+            with patch('mcpgateway.services.tool_service._get_registry_cache'):
+                with patch('mcpgateway.services.tool_service._get_tool_lookup_cache'):
+                    with patch('mcpgateway.cache.admin_stats_cache.admin_stats_cache'):
+                        with patch('mcpgateway.cache.metrics_cache.metrics_cache'):
                             await service.delete_tool(db, "tool-id")
-                        except Exception:
-                            pass
-            
-            mock_get.assert_called_once_with(db, Tool, "tool-id")
+        
+        # Verify db.get was called for initial lookup (not get_for_update)
+        db.get.assert_called_once_with(Tool, "tool-id")
+        # Verify DELETE...RETURNING was used for atomic deletion
+        assert db.execute.called
+        db.commit.assert_called_once()
 
 
 class TestServerServiceLocking:
