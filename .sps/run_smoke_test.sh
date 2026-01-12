@@ -14,7 +14,7 @@ echo "#############################"
 python3 -m pip install --upgrade pip setuptools
 python3 -m pip install uv --user
 export PATH=/root/.local/bin/:$PATH
-uv run pytest tests/integration -v -s --setup-show --git_token=$(get_env git-token)
+uv run pytest tests/integration -v -s --setup-show --git_token=$(get_env git-token) --mcp_gateway_image_tag="${MCP_GATEWAY_IMAGE_TAG}"
 if [ $? != 0 ]; then
   echo "Integration test failed, exiting";
   exit 1;
