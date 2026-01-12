@@ -9,6 +9,14 @@ echo "############# Python Version #################"
 python3 -V
 dnf install -y  postgresql-devel
 
+python3 -m pip install --upgrade pip setuptools
+python3 -m pip install uv --user 
+
+export PATH="$HOME/.local/bin:$PATH"
+which uv
+ls -a
+
+
 echo "############# Running Install ################"
  make venv install install-dev
  echo "############# Running Linting ##################"
