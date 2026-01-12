@@ -10,14 +10,84 @@ window.createMetricsController = function() {
     charts: {},
     loading: false,
     error: null,
-    async init() {
-      await this.loadAllMetrics();
-      this.startAutoRefresh();
+    autoRefreshInterval: null,
+    visibilityHandler: null,
+    
+    /**
+     * Destroy all Chart.js instances to prevent canvas reuse errors
+     */
+    destroyAllCharts() {
+      Object.keys(this.charts).forEach(key => {
+        if (this.charts[key]) {
+          try {
+            this.charts[key].destroy();
+          } catch (e) {
+            console.warn(`Failed to destroy chart ${key}:`, e);
+          }
+          this.charts[key] = null;
+        }
+      });
     },
+    
+    /**
+     * Initialize the metrics dashboard with proper cleanup
+     */
+    async init() {
+      // Clean up any existing charts first
+      this.destroyAllCharts();
+      
+      // Load initial data
+      await this.loadAllMetrics();
+      
+      // Start auto-refresh
+      this.startAutoRefresh();
+      
+      // Handle visibility changes to pause updates when tab is hidden
+      this.visibilityHandler = () => {
+        if (document.hidden) {
+          this.stopAutoRefresh();
+        } else {
+          this.startAutoRefresh();
+          // Refresh data when tab becomes visible
+          if (!this.loading) {
+            this.loadAllMetrics();
+          }
+        }
+      };
+      document.addEventListener('visibilitychange', this.visibilityHandler);
+      
+      // Add cleanup on page unload as fallback
+      window.addEventListener('beforeunload', () => this.cleanup());
+    },
+    
+    /**
+     * Cleanup resources on component destroy
+     */
+    cleanup() {
+      this.destroyAllCharts();
+      this.stopAutoRefresh();
+      if (this.visibilityHandler) {
+        document.removeEventListener('visibilitychange', this.visibilityHandler);
+      }
+    },
+    /**
+     * Load all metrics with proper guards to prevent concurrent refreshes
+     */
     async loadAllMetrics() {
+      // Prevent concurrent refreshes
+      if (this.loading) {
+        console.log('Refresh already in progress, skipping');
+        return;
+      }
+      
       this.loading = true;
       this.error = null;
+      
       try {
+        // Destroy existing charts before loading new data
+        this.destroyAllCharts();
+        
+        // Load all metrics in parallel
         await Promise.all([
           this.loadPercentiles(),
           this.loadTimeSeries(),
@@ -81,15 +151,30 @@ window.createMetricsController = function() {
       const data = await response.json();
       this.renderHeatmap(data);
     },
+    /**
+     * Render percentile chart with proper cleanup and error handling
+     */
     renderPercentileChart(data) {
       const ctx = document.getElementById('percentileChart');
-      if (!ctx) return;
-
-      if (this.charts.percentile) {
-        this.charts.percentile.destroy();
+      if (!ctx) {
+        console.warn('percentileChart canvas not found');
+        return;
       }
 
-      this.charts.percentile = new Chart(ctx, {
+      // Destroy existing chart
+      if (this.charts.percentile) {
+        try {
+          this.charts.percentile.destroy();
+        } catch (e) {
+          console.warn('Failed to destroy percentile chart:', e);
+        }
+        this.charts.percentile = null;
+      }
+
+      // Use requestAnimationFrame to ensure canvas is ready
+      requestAnimationFrame(() => {
+        try {
+          this.charts.percentile = new Chart(ctx, {
         type: 'line',
         data: {
           labels: data.timestamps.map((t) => new Date(t).toLocaleTimeString()),
@@ -158,16 +243,36 @@ window.createMetricsController = function() {
           },
         },
       });
+        } catch (e) {
+          console.error('Failed to create percentile chart:', e);
+          this.error = 'Failed to render percentile chart';
+        }
+      });
     },
+    /**
+     * Render time series chart with proper cleanup and error handling
+     */
     renderTimeSeriesChart(data) {
       const ctx = document.getElementById('timeSeriesChart');
-      if (!ctx) return;
-
-      if (this.charts.timeSeries) {
-        this.charts.timeSeries.destroy();
+      if (!ctx) {
+        console.warn('timeSeriesChart canvas not found');
+        return;
       }
 
-      this.charts.timeSeries = new Chart(ctx, {
+      // Destroy existing chart
+      if (this.charts.timeSeries) {
+        try {
+          this.charts.timeSeries.destroy();
+        } catch (e) {
+          console.warn('Failed to destroy time series chart:', e);
+        }
+        this.charts.timeSeries = null;
+      }
+
+      // Use requestAnimationFrame to ensure canvas is ready
+      requestAnimationFrame(() => {
+        try {
+          this.charts.timeSeries = new Chart(ctx, {
         type: 'line',
         data: {
           labels: data.timestamps.map((t) => new Date(t).toLocaleTimeString()),
@@ -231,6 +336,11 @@ window.createMetricsController = function() {
           },
         },
       });
+        } catch (e) {
+          console.error('Failed to create time series chart:', e);
+          this.error = 'Failed to render time series chart';
+        }
+      });
     },
     renderTopSlowTable(data) {
       const tbody = document.querySelector('#topSlowTable tbody');
@@ -285,12 +395,24 @@ window.createMetricsController = function() {
         )
         .join('');
     },
+    /**
+     * Render heatmap chart with proper cleanup and error handling
+     */
     renderHeatmap(data) {
       const ctx = document.getElementById('heatmapChart');
-      if (!ctx) return;
+      if (!ctx) {
+        console.warn('heatmapChart canvas not found');
+        return;
+      }
 
+      // Destroy existing chart
       if (this.charts.heatmap) {
-        this.charts.heatmap.destroy();
+        try {
+          this.charts.heatmap.destroy();
+        } catch (e) {
+          console.warn('Failed to destroy heatmap chart:', e);
+        }
+        this.charts.heatmap = null;
       }
 
       // Flatten the 2D heatmap data for Chart.js matrix
@@ -305,8 +427,11 @@ window.createMetricsController = function() {
         }
       }
 
-      this.charts.heatmap = new Chart(ctx, {
-        type: 'scatter',
+      // Use requestAnimationFrame to ensure canvas is ready
+      requestAnimationFrame(() => {
+        try {
+          this.charts.heatmap = new Chart(ctx, {
+            type: 'scatter',
         data: {
           datasets: [
             {
@@ -378,10 +503,36 @@ window.createMetricsController = function() {
           },
         },
       });
+        } catch (e) {
+          console.error('Failed to create heatmap chart:', e);
+          this.error = 'Failed to render heatmap chart';
+        }
+      });
     },
+    /**
+     * Start auto-refresh with proper cleanup
+     */
     startAutoRefresh() {
-      // Refresh every 60 seconds
-      setInterval(() => this.loadAllMetrics(), 60000);
+      // Clear any existing interval
+      if (this.autoRefreshInterval) {
+        clearInterval(this.autoRefreshInterval);
+      }
+      
+      // Refresh every 60 seconds, only if not already loading
+      this.autoRefreshInterval = setInterval(() => {
+        if (!this.loading) {
+          this.loadAllMetrics();
+        }
+      }, 60000);
+    },
+    /**
+     * Stop auto-refresh
+     */
+    stopAutoRefresh() {
+      if (this.autoRefreshInterval) {
+        clearInterval(this.autoRefreshInterval);
+        this.autoRefreshInterval = null;
+      }
     },
     async applyFilters() {
       await this.loadAllMetrics();
@@ -390,7 +541,7 @@ window.createMetricsController = function() {
 };
 </script>
 
-<div class="metrics-dashboard" x-data="createMetricsController()" x-init="init()">
+<div class="metrics-dashboard" x-data="createMetricsController()" x-init="init()" @destroy.window="cleanup()">
   <!-- Controls -->
   <div class="mb-6 p-4 bg-white dark:bg-gray-800 rounded-lg shadow">
     <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
