@@ -131,14 +131,16 @@ document.addEventListener("DOMContentLoaded", function () {
     // Event delegation for team member search - server-side search for unified view
     // This handler is initialized here for early binding, but the actual search logic
     // is in performUserSearch() which is attached when the form is initialized
-    let teamSearchTimeouts = {};
-    let teamMemberDataCache = {};
+    const teamSearchTimeouts = {};
+    const teamMemberDataCache = {};
 
-    document.body.addEventListener("input", async function(event) {
+    document.body.addEventListener("input", async function (event) {
         const target = event.target;
         if (target.id && target.id.startsWith("user-search-")) {
             const teamId = target.id.replace("user-search-", "");
-            const listContainer = document.getElementById(`team-members-list-${teamId}`);
+            const listContainer = document.getElementById(
+                `team-members-list-${teamId}`,
+            );
 
             if (!listContainer) return;
 
@@ -151,13 +153,22 @@ document.addEventListener("DOMContentLoaded", function () {
 
             // Get team member data from cache or script tag
             if (!teamMemberDataCache[teamId]) {
-                const teamMemberDataScript = document.getElementById(`team-member-data-${teamId}`);
+                const teamMemberDataScript = document.getElementById(
+                    `team-member-data-${teamId}`,
+                );
                 if (teamMemberDataScript) {
                     try {
-                        teamMemberDataCache[teamId] = JSON.parse(teamMemberDataScript.textContent || '{}');
-                        console.log(`[Team ${teamId}] Loaded team member data for ${Object.keys(teamMemberDataCache[teamId]).length} members`);
+                        teamMemberDataCache[teamId] = JSON.parse(
+                            teamMemberDataScript.textContent || "{}",
+                        );
+                        console.log(
+                            `[Team ${teamId}] Loaded team member data for ${Object.keys(teamMemberDataCache[teamId]).length} members`,
+                        );
                     } catch (e) {
-                        console.error(`[Team ${teamId}] Failed to parse team member data:`, e);
+                        console.error(
+                            `[Team ${teamId}] Failed to parse team member data:`,
+                            e,
+                        );
                         teamMemberDataCache[teamId] = {};
                     }
                 } else {
@@ -167,7 +178,12 @@ document.addEventListener("DOMContentLoaded", function () {
 
             // Debounce server call
             teamSearchTimeouts[teamId] = setTimeout(async () => {
-                await performUserSearch(teamId, query, listContainer, teamMemberDataCache[teamId]);
+                await performUserSearch(
+                    teamId,
+                    query,
+                    listContainer,
+                    teamMemberDataCache[teamId],
+                );
             }, 300);
         }
     });
@@ -20619,8 +20635,10 @@ async function performUserSearch(teamId, query, container, teamMemberData) {
         const userItems = container.querySelectorAll(".user-item");
         userItems.forEach((item) => {
             const email = item.dataset.userEmail || "";
-            const checkbox = item.querySelector('input[name="associatedUsers"]');
-            const roleSelect = item.querySelector('.role-select');
+            const checkbox = item.querySelector(
+                'input[name="associatedUsers"]',
+            );
+            const roleSelect = item.querySelector(".role-select");
             if (checkbox && email) {
                 selections[email] = checkbox.checked;
             }
@@ -20628,7 +20646,9 @@ async function performUserSearch(teamId, query, container, teamMemberData) {
                 roleSelections[email] = roleSelect.value;
             }
         });
-        console.log(`[Team ${teamId}] Captured ${Object.keys(selections).length} selections and ${Object.keys(roleSelections).length} role selections`);
+        console.log(
+            `[Team ${teamId}] Captured ${Object.keys(selections).length} selections and ${Object.keys(roleSelections).length} role selections`,
+        );
     } catch (e) {
         console.error(`[Team ${teamId}] Error capturing selections:`, e);
     }
@@ -20648,7 +20668,9 @@ async function performUserSearch(teamId, query, container, teamMemberData) {
     if (query === "") {
         try {
             const usersUrl = `${window.ROOT_PATH}/admin/users/partial?page=1&per_page=50&render=selector&team_id=${encodeURIComponent(teamId)}`;
-            console.log(`[Team ${teamId}] Loading default users with URL: ${usersUrl}`);
+            console.log(
+                `[Team ${teamId}] Loading default users with URL: ${usersUrl}`,
+            );
 
             const response = await fetchWithAuth(usersUrl);
             if (response.ok) {
@@ -20658,12 +20680,16 @@ async function performUserSearch(teamId, query, container, teamMemberData) {
                 // Restore selections
                 restoreUserSelections(container, selections, roleSelections);
             } else {
-                console.error(`[Team ${teamId}] Failed to load users: ${response.status}`);
-                container.innerHTML = '<div class="text-center py-4 text-red-600">Failed to load users</div>';
+                console.error(
+                    `[Team ${teamId}] Failed to load users: ${response.status}`,
+                );
+                container.innerHTML =
+                    '<div class="text-center py-4 text-red-600">Failed to load users</div>';
             }
         } catch (error) {
             console.error(`[Team ${teamId}] Error loading users:`, error);
-            container.innerHTML = '<div class="text-center py-4 text-red-600">Error loading users</div>';
+            container.innerHTML =
+                '<div class="text-center py-4 text-red-600">Error loading users</div>';
         }
         return;
     }
@@ -20675,7 +20701,9 @@ async function performUserSearch(teamId, query, container, teamMemberData) {
 
         const response = await fetchWithAuth(searchUrl);
         if (!response.ok) {
-            console.error(`[Team ${teamId}] Search failed: ${response.status} ${response.statusText}`);
+            console.error(
+                `[Team ${teamId}] Search failed: ${response.status} ${response.statusText}`,
+            );
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
@@ -20687,14 +20715,19 @@ async function performUserSearch(teamId, query, container, teamMemberData) {
             data.users.forEach((user) => {
                 const memberData = teamMemberData[user.email] || {};
                 const isMember = Object.keys(memberData).length > 0;
-                const memberRole = memberData.role || 'member';
+                const memberRole = memberData.role || "member";
                 const joinedAt = memberData.joined_at;
                 const isCurrentUser = memberData.is_current_user || false;
                 const isLastOwner = memberData.is_last_owner || false;
-                const isChecked = selections[user.email] !== undefined ? selections[user.email] : isMember;
+                const isChecked =
+                    selections[user.email] !== undefined
+                        ? selections[user.email]
+                        : isMember;
                 const selectedRole = roleSelections[user.email] || memberRole;
 
-                const borderClass = isMember ? 'border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-900/20' : 'border-transparent';
+                const borderClass = isMember
+                    ? "border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-900/20"
+                    : "border-transparent";
 
                 searchResultsHtml += `
                     <div class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-3 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item border ${borderClass}" data-user-email="${escapeHtml(user.email)}">
@@ -20713,19 +20746,19 @@ async function performUserSearch(teamId, query, container, teamMemberData) {
                             data-user-name="${escapeHtml(user.full_name || user.email)}"
                             class="user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0"
                             data-auto-check="true"
-                            ${isChecked ? 'checked' : ''}
+                            ${isChecked ? "checked" : ""}
                         />
 
                         <!-- User Info with Badges -->
                         <div class="flex-grow min-w-0">
                             <div class="flex items-center gap-2 flex-wrap">
                                 <span class="select-none font-medium text-gray-900 dark:text-white truncate">${escapeHtml(user.full_name || user.email)}</span>
-                                ${isCurrentUser ? '<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-800 rounded-full dark:bg-blue-900 dark:text-blue-200">You</span>' : ''}
-                                ${isLastOwner ? '<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-yellow-100 text-yellow-800 rounded-full dark:bg-yellow-900 dark:text-yellow-200">Last Owner</span>' : ''}
-                                ${isMember && memberRole === 'owner' && !isLastOwner ? '<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-800 rounded-full dark:bg-purple-900 dark:text-purple-200">Owner</span>' : ''}
+                                ${isCurrentUser ? '<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-800 rounded-full dark:bg-blue-900 dark:text-blue-200">You</span>' : ""}
+                                ${isLastOwner ? '<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-yellow-100 text-yellow-800 rounded-full dark:bg-yellow-900 dark:text-yellow-200">Last Owner</span>' : ""}
+                                ${isMember && memberRole === "owner" && !isLastOwner ? '<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-800 rounded-full dark:bg-purple-900 dark:text-purple-200">Owner</span>' : ""}
                             </div>
                             <div class="text-sm text-gray-500 dark:text-gray-400 truncate">${escapeHtml(user.email)}</div>
-                            ${isMember && joinedAt ? `<div class="text-xs text-gray-400 dark:text-gray-500">Joined: ${formatDate(joinedAt)}</div>` : ''}
+                            ${isMember && joinedAt ? `<div class="text-xs text-gray-400 dark:text-gray-500">Joined: ${formatDate(joinedAt)}</div>` : ""}
                         </div>
 
                         <!-- Role Selector -->
@@ -20733,8 +20766,8 @@ async function performUserSearch(teamId, query, container, teamMemberData) {
                             name="role_${encodeURIComponent(user.email)}"
                             class="role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0"
                         >
-                            <option value="member" ${selectedRole === 'member' ? 'selected' : ''}>Member</option>
-                            <option value="owner" ${selectedRole === 'owner' ? 'selected' : ''}>Owner</option>
+                            <option value="member" ${selectedRole === "member" ? "selected" : ""}>Member</option>
+                            <option value="owner" ${selectedRole === "owner" ? "selected" : ""}>Owner</option>
                         </select>
                     </div>
                 `;
@@ -20744,29 +20777,35 @@ async function performUserSearch(teamId, query, container, teamMemberData) {
             container.innerHTML = searchResultsHtml;
 
             // Step 7: No need to restore selections - they're already built into the HTML
-            console.log(`[Team ${teamId}] Rendered ${data.users.length} users from search`);
+            console.log(
+                `[Team ${teamId}] Rendered ${data.users.length} users from search`,
+            );
         } else {
-            container.innerHTML = '<div class="text-center py-4 text-gray-500">No users found</div>';
+            container.innerHTML =
+                '<div class="text-center py-4 text-gray-500">No users found</div>';
         }
     } catch (error) {
         console.error(`[Team ${teamId}] Error searching users:`, error);
-        container.innerHTML = '<div class="text-center py-4 text-red-600">Error searching users</div>';
+        container.innerHTML =
+            '<div class="text-center py-4 text-red-600">Error searching users</div>';
     }
 }
 
 // Restore user selections after loading default list
 function restoreUserSelections(container, selections, roleSelections) {
     try {
-        const checkboxes = container.querySelectorAll('input[name="associatedUsers"]');
+        const checkboxes = container.querySelectorAll(
+            'input[name="associatedUsers"]',
+        );
         checkboxes.forEach((cb) => {
             if (selections[cb.value] !== undefined) {
                 cb.checked = selections[cb.value];
             }
         });
 
-        const roleSelects = container.querySelectorAll('.role-select');
+        const roleSelects = container.querySelectorAll(".role-select");
         roleSelects.forEach((select) => {
-            const email = select.name.replace('role_', '');
+            const email = select.name.replace("role_", "");
             const decodedEmail = decodeURIComponent(email);
             if (roleSelections[decodedEmail]) {
                 select.value = roleSelections[decodedEmail];
@@ -20783,7 +20822,11 @@ function restoreUserSelections(container, selections, roleSelections) {
 function formatDate(dateString) {
     try {
         const date = new Date(dateString);
-        return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+        return date.toLocaleDateString("en-US", {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+        });
     } catch (e) {
         return dateString;
     }
@@ -20802,10 +20845,15 @@ function initializeAddMembersForm(form) {
         extractTeamId("team-members-form-", form.id) ||
         "";
 
-    console.log(`[initializeAddMembersForm] Form ID: ${form.id}, Team ID: ${teamId}`);
+    console.log(
+        `[initializeAddMembersForm] Form ID: ${form.id}, Team ID: ${teamId}`,
+    );
 
     if (!teamId) {
-        console.warn(`[initializeAddMembersForm] No team ID found for form:`, form);
+        console.warn(
+            `[initializeAddMembersForm] No team ID found for form:`,
+            form,
+        );
         return;
     }
 
@@ -20818,9 +20866,13 @@ function initializeAddMembersForm(form) {
     );
 
     // For unified view, find the list container for client-side filtering
-    const userListContainer = document.getElementById(`team-members-list-${teamId}`);
+    const userListContainer = document.getElementById(
+        `team-members-list-${teamId}`,
+    );
 
-    console.log(`[Team ${teamId}] Form initialization - searchInput: ${!!searchInput}, userListContainer: ${!!userListContainer}, searchResults: ${!!searchResults}`);
+    console.log(
+        `[Team ${teamId}] Form initialization - searchInput: ${!!searchInput}, userListContainer: ${!!userListContainer}, searchResults: ${!!searchResults}`,
+    );
 
     const memberEmails = [];
     if (searchResults?.dataset.memberEmails) {
@@ -20846,17 +20898,28 @@ function initializeAddMembersForm(form) {
 
     // If we have searchInput and userListContainer, use server-side search like tools (unified view)
     if (searchInput && userListContainer) {
-        console.log(`[Team ${teamId}] Initializing server-side search for unified view`);
+        console.log(
+            `[Team ${teamId}] Initializing server-side search for unified view`,
+        );
 
         // Get team member data from the initial page load (embedded in the form)
-        const teamMemberDataScript = document.getElementById(`team-member-data-${teamId}`);
+        const teamMemberDataScript = document.getElementById(
+            `team-member-data-${teamId}`,
+        );
         let teamMemberData = {};
         if (teamMemberDataScript) {
             try {
-                teamMemberData = JSON.parse(teamMemberDataScript.textContent || '{}');
-                console.log(`[Team ${teamId}] Loaded team member data for ${Object.keys(teamMemberData).length} members`);
+                teamMemberData = JSON.parse(
+                    teamMemberDataScript.textContent || "{}",
+                );
+                console.log(
+                    `[Team ${teamId}] Loaded team member data for ${Object.keys(teamMemberData).length} members`,
+                );
             } catch (e) {
-                console.error(`[Team ${teamId}] Failed to parse team member data:`, e);
+                console.error(
+                    `[Team ${teamId}] Failed to parse team member data:`,
+                    e,
+                );
             }
         }
 
@@ -20866,7 +20929,12 @@ function initializeAddMembersForm(form) {
             const query = this.value.trim();
 
             searchTimeout = setTimeout(async () => {
-                await performUserSearch(teamId, query, userListContainer, teamMemberData);
+                await performUserSearch(
+                    teamId,
+                    query,
+                    userListContainer,
+                    teamMemberData,
+                );
             }, 300);
         });
 
@@ -21049,8 +21117,10 @@ function initializeAddMembersForm(form) {
 
 function initializeAddMembersForms(root = document) {
     // Support both old add-members-form pattern and new unified team-members-form pattern
-    const addMembersForms = root?.querySelectorAll?.('[id^="add-members-form-"]') || [];
-    const teamMembersForms = root?.querySelectorAll?.('[id^="team-members-form-"]') || [];
+    const addMembersForms =
+        root?.querySelectorAll?.('[id^="add-members-form-"]') || [];
+    const teamMembersForms =
+        root?.querySelectorAll?.('[id^="team-members-form-"]') || [];
     const allForms = [...addMembersForms, ...teamMembersForms];
     allForms.forEach((form) => initializeAddMembersForm(form));
 }
