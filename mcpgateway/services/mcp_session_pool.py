@@ -37,9 +37,12 @@ from typing import Any, Callable, Dict, Optional, Set, Tuple, TYPE_CHECKING
 
 # Third-Party
 import httpx
-from mcp import ClientSession
+from mcp import ClientSession, McpError
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
+
+# JSON-RPC standard error code for method not found
+METHOD_NOT_FOUND = -32601
 
 if TYPE_CHECKING:
     # Standard
@@ -120,7 +123,7 @@ HttpxClientFactory = Callable[
 IdentityExtractor = Callable[[Dict[str, str]], Optional[str]]
 
 
-class MCPSessionPool:
+class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
     """
     Pool of MCP ClientSessions keyed by (server URL, identity hash, transport type).
 
@@ -195,6 +198,8 @@ class MCPSessionPool:
         identity_extractor: Optional[IdentityExtractor] = None,
         idle_pool_eviction_seconds: float = 600.0,
         default_transport_timeout_seconds: float = 30.0,
+        health_check_methods: Optional[list[str]] = None,
+        health_check_timeout_seconds: float = 5.0,
     ):
         """
         Initialize the session pool.
@@ -213,6 +218,10 @@ class MCPSessionPool:
                                Should return a stable user/tenant ID string.
             idle_pool_eviction_seconds: Evict empty pool keys after this many seconds of no use.
             default_transport_timeout_seconds: Default timeout for transport connections.
+            health_check_methods: Ordered list of health check methods to try.
+                                 Options: ping, list_tools, list_prompts, list_resources, skip.
+                                 Default: ["ping", "skip"] (try ping, skip if unsupported).
+            health_check_timeout_seconds: Timeout for each health check attempt.
         """
         # Configuration
         self._max_sessions = max_sessions_per_key
@@ -226,6 +235,8 @@ class MCPSessionPool:
         self._identity_extractor = identity_extractor
         self._idle_pool_eviction = idle_pool_eviction_seconds
         self._default_transport_timeout = default_transport_timeout_seconds
+        self._health_check_methods = health_check_methods or ["ping", "skip"]
+        self._health_check_timeout = health_check_timeout_seconds
 
         # State - protected by _global_lock for creation, per-key locks for access
         self._global_lock = asyncio.Lock()
@@ -633,16 +644,71 @@ class MCPSessionPool:
 
         # Health check if stale
         if pooled.idle_seconds > self._health_check_interval:
+            return await self._run_health_check_chain(pooled)
+
+        return True
+
+    async def _run_health_check_chain(self, pooled: PooledSession) -> bool:
+        """
+        Run health check methods in configured order until one succeeds.
+
+        The health check chain allows configuring which methods to try and in what order.
+        This supports both modern servers (with ping support) and legacy servers
+        (that may only support list_tools or no health check at all).
+
+        Args:
+            pooled: The session to health check.
+
+        Returns:
+            True if any health check method succeeds, False if all fail.
+        """
+        for method in self._health_check_methods:
             try:
-                # Use list_tools as a lightweight health check
-                await asyncio.wait_for(pooled.session.list_tools(), timeout=self._default_transport_timeout)
-                return True
-            except Exception as e:
-                logger.debug(f"Health check failed: {e}")
+                if method == "ping":
+                    await asyncio.wait_for(pooled.session.send_ping(), timeout=self._health_check_timeout)
+                    logger.debug(f"Health check passed: ping (url={pooled.url})")
+                    return True
+                if method == "list_tools":
+                    await asyncio.wait_for(pooled.session.list_tools(), timeout=self._health_check_timeout)
+                    logger.debug(f"Health check passed: list_tools (url={pooled.url})")
+                    return True
+                if method == "list_prompts":
+                    await asyncio.wait_for(pooled.session.list_prompts(), timeout=self._health_check_timeout)
+                    logger.debug(f"Health check passed: list_prompts (url={pooled.url})")
+                    return True
+                if method == "list_resources":
+                    await asyncio.wait_for(pooled.session.list_resources(), timeout=self._health_check_timeout)
+                    logger.debug(f"Health check passed: list_resources (url={pooled.url})")
+                    return True
+                if method == "skip":
+                    logger.debug(f"Health check skipped per configuration (url={pooled.url})")
+                    return True
+                logger.warning(f"Unknown health check method '{method}', skipping")
+                continue
+
+            except McpError as e:
+                # METHOD_NOT_FOUND (-32601) means the method isn't supported - try next
+                if e.error.code == METHOD_NOT_FOUND:
+                    logger.debug(f"Health check method '{method}' not supported by server, trying next")
+                    continue
+                # Other MCP errors are real failures
+                logger.debug(f"Health check '{method}' failed with MCP error: {e}")
                 self._health_check_failures += 1
                 return False
 
-        return True
+            except asyncio.TimeoutError:
+                logger.debug(f"Health check '{method}' timed out after {self._health_check_timeout}s, trying next")
+                continue
+
+            except Exception as e:
+                logger.debug(f"Health check '{method}' failed: {e}")
+                self._health_check_failures += 1
+                return False
+
+        # All methods failed or were unsupported
+        logger.warning(f"All health check methods failed or unsupported (methods={self._health_check_methods})")
+        self._health_check_failures += 1
+        return False
 
     async def _create_session(
         self,
@@ -891,6 +957,8 @@ def init_mcp_session_pool(
     identity_extractor: Optional[IdentityExtractor] = None,
     idle_pool_eviction_seconds: float = 600.0,
     default_transport_timeout_seconds: float = 30.0,
+    health_check_methods: Optional[list[str]] = None,
+    health_check_timeout_seconds: float = 5.0,
 ) -> MCPSessionPool:
     """Initialize the global MCP session pool.
 
@@ -913,6 +981,8 @@ def init_mcp_session_pool(
         identity_extractor=identity_extractor,
         idle_pool_eviction_seconds=idle_pool_eviction_seconds,
         default_transport_timeout_seconds=default_transport_timeout_seconds,
+        health_check_methods=health_check_methods,
+        health_check_timeout_seconds=health_check_timeout_seconds,
     )
     logger.info("MCP session pool initialized")
     return _mcp_session_pool
