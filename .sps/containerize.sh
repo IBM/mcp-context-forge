@@ -47,8 +47,8 @@ make IMAGE_TAG="base" docker-prod
     docker tag "mcpgateway/mcpgateway:${IMAGE_TAG}" "${IMAGE}" && \
     docker push "${IMAGE}"
 
-RUN_SMOKE_TESTS=get_env(run-smoke-tests, 1)
-if [ $RUN_SMOKE_TESTS eq 1 ]; then
+RUN_SMOKE_TESTS=get_env(run-smoke-tests "1")
+if [ $RUN_SMOKE_TESTS == "1" ]; then
    source ./.sps/run_smoke_test.sh
 else
    echo "run-smoke-tests set to 0; Skipping smoke tests"
