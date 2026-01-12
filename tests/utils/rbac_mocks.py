@@ -28,6 +28,7 @@ def create_mock_user_context(
     is_admin: bool = True,
     ip_address: str = "127.0.0.1",
     user_agent: str = "test-client",
+    auth_method: str = "jwt",
 ) -> Dict:
     """Create a mock user context for RBAC testing.
 
@@ -37,6 +38,7 @@ def create_mock_user_context(
         is_admin: Whether user has admin privileges
         ip_address: User's IP address
         user_agent: User agent string
+        auth_method: Authentication method for interactive-session gating
 
     Returns:
         Dict: Mock user context suitable for RBAC functions
@@ -47,6 +49,7 @@ def create_mock_user_context(
         "is_admin": is_admin,
         "ip_address": ip_address,
         "user_agent": user_agent,
+        "auth_method": auth_method,
         "db": MagicMock(),  # Mock database session
     }
 

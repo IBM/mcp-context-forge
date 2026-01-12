@@ -278,15 +278,15 @@ def _is_api_token_jti_sync(jti: str) -> bool:
     Returns:
         bool: True if JTI exists in email_api_tokens table OR if lookup fails
     """
-    import logging  # pylint: disable=import-outside-toplevel
+    # Third-Party
     from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-    from mcpgateway.db import EmailApiToken, fresh_db_session  # pylint: disable=import-outside-toplevel
+
+    # First-Party
+    from mcpgateway.db import EmailApiToken  # pylint: disable=import-outside-toplevel
 
     try:
         with fresh_db_session() as db:
-            result = db.execute(
-                select(EmailApiToken.id).where(EmailApiToken.jti == jti).limit(1)
-            )
+            result = db.execute(select(EmailApiToken.id).where(EmailApiToken.jti == jti).limit(1))
             return result.scalar_one_or_none() is not None
     except Exception as e:
         logging.getLogger(__name__).warning(f"Legacy API token check failed, failing closed: {e}")
@@ -440,6 +440,39 @@ async def get_current_user(
         HTTPException: If authentication fails
     """
     logger = logging.getLogger(__name__)
+
+    async def _set_auth_method_from_payload(payload: dict) -> None:
+        """Set request.state.auth_method based on JWT payload."""
+        if not request:
+            return
+
+        # NOTE: Cannot use structural check (scopes dict) because email login JWTs
+        # also have scopes dict (see email_auth.py:160)
+        user_info = payload.get("user", {})
+        auth_provider = user_info.get("auth_provider")
+
+        if auth_provider == "api_token":
+            request.state.auth_method = "api_token"
+            return
+
+        if auth_provider:
+            # email, oauth, saml, or any other interactive auth provider
+            request.state.auth_method = "jwt"
+            return
+
+        # Legacy API token fallback: check if JTI exists in API token table
+        # This handles tokens created before auth_provider was added
+        jti_for_check = payload.get("jti")
+        if jti_for_check:
+            is_legacy_api_token = await asyncio.to_thread(_is_api_token_jti_sync, jti_for_check)
+            if is_legacy_api_token:
+                request.state.auth_method = "api_token"
+                logger.debug(f"Legacy API token detected via DB lookup (JTI: ...{jti_for_check[-8:]})")
+            else:
+                request.state.auth_method = "jwt"
+        else:
+            # No auth_provider or JTI; default to interactive
+            request.state.auth_method = "jwt"
 
     # NEW: Custom authentication hook - allows plugins to provide alternative auth
     # This hook is invoked BEFORE standard JWT/API token validation
@@ -623,6 +656,7 @@ async def get_current_user(
                         if isinstance(token_team_id, dict):
                             token_team_id = token_team_id.get("id")
                         request.state.team_id = token_team_id or cached_ctx.personal_team_id
+                        await _set_auth_method_from_payload(payload)
 
                     # Return user from cache
                     if cached_ctx.user:
@@ -656,6 +690,7 @@ async def get_current_user(
                 team_id = token_team_id or auth_ctx.get("personal_team_id")
                 if request:
                     request.state.team_id = team_id
+                    await _set_auth_method_from_payload(payload)
 
                 # Store in cache for future requests
                 if settings.auth_cache_enabled:
@@ -738,29 +773,7 @@ async def get_current_user(
         team_id = await get_team_from_token(payload)
         if request:
             request.state.team_id = team_id
-
-            # Set auth_method based on token type
-            # NOTE: Cannot use structural check (scopes dict) because email login JWTs
-            # also have scopes dict (see email_auth.py:160)
-            user_info = payload.get("user", {})
-            auth_provider = user_info.get("auth_provider", "")
-
-            if auth_provider == "api_token":
-                request.state.auth_method = "api_token"
-            else:
-                # Legacy API token fallback: check if JTI exists in API token table
-                # This handles tokens created before auth_provider was added
-                jti_for_check = payload.get("jti")
-                if jti_for_check:
-                    is_legacy_api_token = await asyncio.to_thread(_is_api_token_jti_sync, jti_for_check)
-                    if is_legacy_api_token:
-                        request.state.auth_method = "api_token"
-                        logger.debug(f"Legacy API token detected via DB lookup (JTI: ...{jti_for_check[-8:]})")
-                    else:
-                        request.state.auth_method = "jwt"
-                else:
-                    # email, oauth, saml, or any other interactive auth provider
-                    request.state.auth_method = "jwt"
+            await _set_auth_method_from_payload(payload)
 
     except HTTPException:
         # Re-raise HTTPException from verify_jwt_token (handles expired/invalid tokens)

@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.routers.tokens import (
+    _require_interactive_session,
     admin_revoke_token,
     create_team_token,
     create_token,
@@ -103,6 +104,32 @@ def mock_token_record():
     token.tags = ["test"]
     token.jti = "jti-123"
     return token
+
+
+class TestInteractiveSessionGate:
+    """Test interactive session gating for token endpoints."""
+
+    def test_api_token_blocked(self):
+        """API tokens are blocked from token management."""
+        with pytest.raises(HTTPException) as exc_info:
+            _require_interactive_session({"auth_method": "api_token"})
+
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_missing_auth_method_blocked(self):
+        """Missing auth_method fails secure."""
+        with pytest.raises(HTTPException) as exc_info:
+            _require_interactive_session({})
+
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_oauth_allowed(self):
+        """SSO/OAuth sessions are allowed."""
+        _require_interactive_session({"auth_method": "oauth"})
+
+    def test_disabled_allowed(self):
+        """auth_disabled mode is allowed."""
+        _require_interactive_session({"auth_method": "disabled"})
 
 
 class TestCreateToken:
@@ -474,6 +501,17 @@ class TestAdminEndpoints:
             await admin_revoke_token(token_id="token-123", request=None, current_user=mock_admin_user, db=mock_db)
 
             mock_service.admin_revoke_token.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_admin_revoke_token_blocked_for_api_token(self, mock_db, mock_admin_user):
+        """Admin API tokens are blocked from admin endpoints."""
+        current_user = dict(mock_admin_user)
+        current_user["auth_method"] = "api_token"
+
+        with pytest.raises(HTTPException) as exc_info:
+            await admin_revoke_token(token_id="token-123", request=None, current_user=current_user, db=mock_db)
+
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
 
     @pytest.mark.asyncio
     async def test_admin_revoke_token_non_admin(self, mock_db, mock_current_user):

@@ -569,7 +569,7 @@ class PermissionService:
 
         return member.role if member else None
 
-    async def _check_token_fallback_permissions(self, user_email: str, permission: str) -> bool:
+    async def _check_token_fallback_permissions(self, _user_email: str, permission: str) -> bool:
         """Check fallback token permissions for authenticated users.
 
         All authenticated users can manage their own tokens. The token endpoints

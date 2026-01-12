@@ -319,8 +319,8 @@ class TokenCatalogService:
         if not caller_permissions:
             raise ValueError(
                 "Cannot specify custom token permissions. "
-                "You have no explicit permissions to delegate. "
-                "Create a token without scope to inherit permissions at runtime."
+                + "You have no explicit permissions to delegate. "
+                + "Create a token without scope to inherit permissions at runtime."
             )
 
         # Wildcard caller can grant anything
@@ -331,7 +331,7 @@ class TokenCatalogService:
         if "*" in requested_permissions:
             raise ValueError(
                 "Cannot create token with wildcard permissions. "
-                "Your effective permissions do not include wildcard access."
+                + "Your effective permissions do not include wildcard access."
             )
 
         # Check each requested permission
@@ -381,6 +381,8 @@ class TokenCatalogService:
             expires_in_days (Optional[int]): The expiration time in days for the token (None means no expiration).
             tags (Optional[List[str]]): A list of organizational tags for the token (default is an empty list).
             team_id (Optional[str]): The team ID to which the token should be scoped. This is required for team-level scoping.
+            caller_permissions (Optional[List[str]]): The permissions of the caller creating the token. Used for
+                scope containment validation to ensure the new token cannot have broader permissions than the caller.
 
         Returns:
             tuple[EmailApiToken, str]: A tuple where the first element is the `EmailApiToken` database record and
@@ -722,7 +724,10 @@ class TokenCatalogService:
         self.db.commit()
 
         try:
+            # Standard
             import asyncio  # pylint: disable=import-outside-toplevel
+
+            # First-Party
             from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
             asyncio.create_task(auth_cache.invalidate_revocation(token.jti))

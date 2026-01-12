@@ -55,22 +55,17 @@ def _require_interactive_session(current_user: dict) -> None:
 
     # Fail-secure: block if auth_method not set (indicates incomplete auth flow)
     if auth_method is None:
-        logger.warning(
-            "Token management blocked: auth_method not set. "
-            "This indicates an auth code path that needs to set request.state.auth_method"
-        )
+        logger.warning("Token management blocked: auth_method not set. " "This indicates an auth code path that needs to set request.state.auth_method")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Token management requires interactive session. "
-            "Authentication method could not be determined.",
+            detail="Token management requires interactive session. " "Authentication method could not be determined.",
         )
 
     # Block API tokens explicitly
     if auth_method == "api_token":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Token management requires interactive session (web login). "
-            "API tokens cannot create, modify, or revoke tokens.",
+            detail="Token management requires interactive session (web login). " "API tokens cannot create, modify, or revoke tokens.",
         )
 
     # All other auth_methods (jwt, oauth, oidc, saml, disabled, etc.) are allowed
