@@ -957,7 +957,8 @@ class ServerService:
             >>> asyncio.run(service.get_server(db, 'server_id'))
             'server_read'
         """
-        server = db.get(
+        server = get_for_update(
+            db,
             DbServer,
             server_id,
             options=[
@@ -1078,7 +1079,8 @@ class ServerService:
             'server_read'
         """
         try:
-            server = db.get(
+            server = get_for_update(
+                db,
                 DbServer,
                 server_id,
                 options=[
@@ -1377,7 +1379,8 @@ class ServerService:
             'server_read'
         """
         try:
-            server = db.get(
+            server = get_for_update(
+                db,
                 DbServer,
                 server_id,
                 options=[
@@ -1513,8 +1516,7 @@ class ServerService:
             >>> asyncio.run(service.delete_server(db, 'server_id', 'user@example.com'))
         """
         try:
-            # server = db.get(DbServer, server_id)
-            server = get_for_update(db, DbServer, server_id)
+            server = db.get(DbServer, server_id)
             if not server:
                 raise ServerNotFoundError(f"Server not found: {server_id}")
 
