@@ -576,7 +576,7 @@ class PermissionService:
         already filter by user_email, so this just grants access to the endpoints.
 
         Args:
-            user_email: Email address of the user
+            _user_email: Email address of the user (unused)
             permission: Permission being checked
 
         Returns:

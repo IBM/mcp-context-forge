@@ -442,7 +442,11 @@ async def get_current_user(
     logger = logging.getLogger(__name__)
 
     async def _set_auth_method_from_payload(payload: dict) -> None:
-        """Set request.state.auth_method based on JWT payload."""
+        """Set request.state.auth_method based on JWT payload.
+
+        Args:
+            payload: Decoded JWT payload
+        """
         if not request:
             return
 
