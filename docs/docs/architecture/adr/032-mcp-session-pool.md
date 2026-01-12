@@ -342,30 +342,57 @@ The pool uses **separate timeouts** for different operations:
 
 The transport timeout applies to **all** HTTP operations (connect, read, write) on pooled sessions. If your tools require longer execution times, increase this value accordingly.
 
-#### 7. Optional Explicit Health Verification
+#### 7. Configurable Health Check Chain
 
-Gateway health checks can optionally perform **explicit RPC verification** via feature flag:
+The pool uses a **configurable health check chain** to validate idle sessions. The chain tries methods in order until one succeeds:
 
 ```bash
-# Disabled by default for performance (pool's internal staleness check is sufficient)
-MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC=false
+# Default: try lightweight ping, skip if unsupported (for legacy servers)
+# Note: Use JSON array format for list values
+MCP_SESSION_POOL_HEALTH_CHECK_METHODS=["ping", "skip"]
+MCP_SESSION_POOL_HEALTH_CHECK_TIMEOUT=5.0
 ```
 
-When enabled, health checks call `list_tools()` even on fresh sessions:
+**Available methods:**
+- `ping` - MCP protocol ping (fastest, ~5ms, optional per spec)
+- `list_tools` - List tools RPC (30-100ms, requires tools capability)
+- `list_prompts` - List prompts RPC (30-100ms, requires prompts capability)
+- `list_resources` - List resources RPC (30-100ms, requires resources capability)
+- `skip` - Skip health check (maximum performance, use with caution)
+
+**Example configurations:**
+
+| Use Case | Configuration |
+|----------|---------------|
+| Modern servers (recommended) | `["ping", "skip"]` |
+| Legacy server support | `["ping", "list_tools", "skip"]` |
+| Maximum compatibility | `["ping", "list_tools", "list_prompts", "list_resources", "skip"]` |
+| Maximum performance | `["skip"]` |
+| Strict (fail if no ping) | `["ping"]` |
+
+**How it works:**
+- If a method returns `METHOD_NOT_FOUND` error, the next method is tried
+- If a method times out, the next method is tried
+- If a method succeeds, the session is considered healthy
+- If all methods fail or are unsupported, the session is closed
 
 ```python
-# gateway_service.py
-async with pool.session(url, headers, transport_type) as pooled:
-    if settings.mcp_session_pool_explicit_health_rpc:
-        await asyncio.wait_for(
-            pooled.session.list_tools(),
-            timeout=settings.health_check_timeout,
-        )
+# mcp_session_pool.py
+async def _run_health_check_chain(self, pooled: PooledSession) -> bool:
+    for method in self._health_check_methods:
+        if method == "ping":
+            await pooled.session.send_ping()
+            return True
+        elif method == "skip":
+            return True  # No health check
+        # ... other methods
 ```
 
-**Trade-off:**
-- **Disabled (default)**: Pool's internal staleness check (idle > health_check_interval) handles health. Best performance (~1-2ms per check).
-- **Enabled**: Every health check performs explicit RPC. Stricter verification at ~5ms latency cost per check.
+**Legacy option (deprecated):**
+```bash
+# Force explicit RPC even on fresh sessions (deprecated, use health check chain instead)
+MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC=false
+```
 
 ### Implementation
 

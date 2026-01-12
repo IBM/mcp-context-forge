@@ -405,6 +405,8 @@ The MCP session pool maintains persistent connections to upstream MCP servers, p
 | `MCP_SESSION_POOL_TTL` | `300.0` | Session TTL before forced close (seconds) |
 | `MCP_SESSION_POOL_TRANSPORT_TIMEOUT` | `30.0` | Timeout for all HTTP operations (seconds) |
 | `MCP_SESSION_POOL_HEALTH_CHECK_INTERVAL` | `60.0` | Idle time before health check (seconds) |
+| `MCP_SESSION_POOL_HEALTH_CHECK_METHODS` | `ping,skip` | Ordered list of health check methods (ping, list_tools, list_prompts, list_resources, skip) |
+| `MCP_SESSION_POOL_HEALTH_CHECK_TIMEOUT` | `5.0` | Timeout per health check attempt (seconds) |
 | `MCP_SESSION_POOL_ACQUIRE_TIMEOUT` | `30.0` | Timeout waiting for session slot |
 | `MCP_SESSION_POOL_CREATE_TIMEOUT` | `30.0` | Timeout creating new session |
 | `MCP_SESSION_POOL_IDLE_EVICTION` | `600.0` | Evict idle pool keys after (seconds) |

@@ -627,6 +627,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             # Use dedicated transport timeout (default 30s to match MCP SDK default).
             # This is separate from health_check_timeout to allow long-running tool calls.
             default_transport_timeout_seconds=settings.mcp_session_pool_transport_timeout,
+            # Configurable health check chain - ordered list of methods to try.
+            health_check_methods=settings.mcp_session_pool_health_check_methods,
+            health_check_timeout_seconds=settings.mcp_session_pool_health_check_timeout,
         )
         logger.info("MCP session pool initialized")
 

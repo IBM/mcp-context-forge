@@ -1189,6 +1189,12 @@ class Settings(BaseSettings):
     # Off by default: pool's internal staleness check (idle > health_check_interval) handles this.
     # Enable for stricter health verification at the cost of ~5ms latency per check.
     mcp_session_pool_explicit_health_rpc: bool = False
+    # Configurable health check chain - ordered list of methods to try.
+    # Options: ping, list_tools, list_prompts, list_resources, skip
+    # Default: ping,skip - try lightweight ping, skip if unsupported (for legacy servers)
+    mcp_session_pool_health_check_methods: List[str] = ["ping", "skip"]
+    # Timeout in seconds for each health check attempt
+    mcp_session_pool_health_check_timeout: float = 5.0
     mcp_session_pool_identity_headers: List[str] = [
         "authorization",
         "x-tenant-id",

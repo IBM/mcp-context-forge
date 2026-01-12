@@ -325,6 +325,10 @@ services:
       - MCP_SESSION_POOL_IDLE_EVICTION=600.0      # Evict idle pool keys after (default: 600)
       - MCP_SESSION_POOL_TRANSPORT_TIMEOUT=30.0   # Timeout for all HTTP operations (default: 30)
       - MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC=false  # Force RPC on health checks (default: false)
+      # Configurable health check chain - ordered list of methods to try (JSON array)
+      # Options: ping, list_tools, list_prompts, list_resources, skip
+      - MCP_SESSION_POOL_HEALTH_CHECK_METHODS=["ping", "skip"]  # Try ping, skip if unsupported
+      - MCP_SESSION_POOL_HEALTH_CHECK_TIMEOUT=5.0               # Timeout per health check attempt
 
       # ═══════════════════════════════════════════════════════════════════════════
       # Execution Metrics Recording
