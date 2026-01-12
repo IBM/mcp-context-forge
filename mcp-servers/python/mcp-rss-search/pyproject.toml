@@ -12,6 +12,7 @@ dependencies = [
     "fastmcp>=2.14.1",
     "feedparser>=6.0.12",
     "httpx>=0.28.1",
+    "orjson>=3.11.5",
     "pydantic>=2.12.5",
     "python-dateutil>=2.9.0.post0",
 ]

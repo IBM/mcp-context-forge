@@ -54,7 +54,6 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 import importlib.util
-import json
 import os
 import platform
 import socket
@@ -66,6 +65,7 @@ from urllib.parse import urlsplit, urlunsplit
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
+import orjson
 from sqlalchemy import text
 
 # First-Party
@@ -591,14 +591,14 @@ def _html_table(obj: Dict[str, Any]) -> str:
         True
         >>> '<th>active</th><td>true</td>' in html
         True
-        >>> '<th>items</th><td>["a", "b"]</td>' in html
+        >>> '<th>items</th><td>["a","b"]</td>' in html
         True
 
         >>> # Empty dict
         >>> _html_table({})
         '<table></table>'
     """
-    rows = "".join(f"<tr><th>{k}</th><td>{json.dumps(v, default=str) if not isinstance(v, str) else v}</td></tr>" for k, v in obj.items())
+    rows = "".join(f"<tr><th>{k}</th><td>{orjson.dumps(v, default=str).decode() if not isinstance(v, str) else v}</td></tr>" for k, v in obj.items())
     return f"<table>{rows}</table>"
 
 

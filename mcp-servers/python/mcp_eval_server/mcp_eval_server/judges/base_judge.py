@@ -9,12 +9,12 @@ Base abstract interface for LLM judges.
 
 # Standard
 import abc
-import json
 import os
 from typing import Any, Dict, List, Optional, Protocol, Union
 
 # Third-Party
 from jinja2 import Environment, FileSystemLoader
+import orjson
 from pydantic import BaseModel, Field
 
 
@@ -280,7 +280,7 @@ class BaseJudge(abc.ABC):
             json_start = response_text.find("{")
             json_end = response_text.rfind("}") + 1
             json_text = response_text[json_start:json_end]
-            result_data = json.loads(json_text)
+            result_data = orjson.loads(json_text)
 
             # Calculate overall score
             overall_score = self._calculate_overall_score(result_data["scores"], criteria)
@@ -310,7 +310,7 @@ class BaseJudge(abc.ABC):
             json_start = response_text.find("{")
             json_end = response_text.rfind("}") + 1
             json_text = response_text[json_start:json_end]
-            result_data = json.loads(json_text)
+            result_data = orjson.loads(json_text)
 
             return ReferenceEvaluationResult(
                 similarity_score=result_data.get("similarity_score", 0.5),
@@ -338,7 +338,7 @@ class BaseJudge(abc.ABC):
             json_start = response_text.find("{")
             json_end = response_text.rfind("}") + 1
             json_text = response_text[json_start:json_end]
-            result_data = json.loads(json_text)
+            result_data = orjson.loads(json_text)
 
             # Adjust winner if we swapped positions
             winner = result_data["winner"]

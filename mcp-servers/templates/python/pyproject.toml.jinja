@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">={{ python_min }}"
 dependencies = [
   "mcp>=1.0.0",
+  "orjson>=3.11.5",
   "pydantic>=2.5.0",
 ]
 
@@ -52,4 +53,3 @@ select = ["E", "W", "F", "B", "I", "N", "UP"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "--cov={{ package_name }} --cov-report=term-missing"
-

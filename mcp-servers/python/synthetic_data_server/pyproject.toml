@@ -11,6 +11,7 @@ license = { text = "Apache-2.0" }
 dependencies = [
     "faker>=38.2.0",
     "fastmcp>=2.14.1",
+    "orjson>=3.11.5",
     "pydantic>=2.12.5",
 ]
 

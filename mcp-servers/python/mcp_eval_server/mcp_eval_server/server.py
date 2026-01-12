@@ -9,11 +9,11 @@ MCP Evaluation Server - Main entry point.
 
 # Standard
 import asyncio
-import json
 import logging
 import os
 from typing import Any, Dict, List
 
+import orjson
 # Load .env file if it exists
 try:
     # Third-Party
@@ -1269,14 +1269,14 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
             raise ValueError(f"Unknown tool: {name}")
 
         # Format result as JSON string
-        result_text = json.dumps(result, indent=2, default=str)
+        result_text = orjson.dumps(result, default=str, option=orjson.OPT_INDENT_2).decode()
 
         return [TextContent(type="text", text=result_text)]
 
     except Exception as e:
         logger.error(f"Error executing tool {name}: {str(e)}")
         error_result = {"error": str(e), "tool": name, "arguments": arguments}
-        error_text = json.dumps(error_result, indent=2)
+        error_text = orjson.dumps(error_result, option=orjson.OPT_INDENT_2).decode()
         return [TextContent(type="text", text=error_text)]
 
 

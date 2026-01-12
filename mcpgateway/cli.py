@@ -37,13 +37,13 @@ $ mcpgateway mypkg.other:app          # run a different ASGI callable
 from __future__ import annotations
 
 # Standard
-import json
 import os
 from pathlib import Path
 import sys
 from typing import List, Optional
 
 # Third-Party
+import orjson
 from pydantic import ValidationError
 import uvicorn
 
@@ -173,7 +173,7 @@ def _handle_config_schema(output: Optional[str] = None) -> None:
         ✅ Schema written to schema.json
     """
     schema = Settings.model_json_schema(mode="validation")
-    data = json.dumps(schema, indent=2, sort_keys=True)
+    data = orjson.dumps(schema, option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS).decode()
 
     if output:
         path = Path(output)

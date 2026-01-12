@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "fastmcp>=2.14.1",
+    "orjson>=3.11.5",
     "pydantic>=2.12.5",
     "RestrictedPython>=8.1",
     "typing-extensions>=4.15.0",

@@ -15,10 +15,10 @@ Hooks: resource_post_fetch, tool_post_invoke
 from __future__ import annotations
 
 # Standard
-import json
 from typing import Any, Optional
 
 # Third-Party
+import orjson
 from pydantic import BaseModel, Field
 
 # First-Party
@@ -157,7 +157,7 @@ async def _summarize_openai(cfg: OpenAIConfig, system_prompt: str, user_text: st
         else:
             return data["choices"][0]["message"]["content"]
     except Exception as e:
-        raise RuntimeError(f"OpenAI response parse error: {e}; raw: {json.dumps(data)[:500]}")
+        raise RuntimeError(f"OpenAI response parse error: {e}; raw: {orjson.dumps(data).decode()[:500]}")
 
 
 async def _summarize_anthropic(cfg: AnthropicConfig, system_prompt: str, user_text: str) -> str:
@@ -205,7 +205,7 @@ async def _summarize_anthropic(cfg: AnthropicConfig, system_prompt: str, user_te
                 texts.append(b["text"])
         return "\n".join(texts) if texts else ""
     except Exception as e:
-        raise RuntimeError(f"Anthropic response parse error: {e}; raw: {json.dumps(data)[:500]}")
+        raise RuntimeError(f"Anthropic response parse error: {e}; raw: {orjson.dumps(data).decode()[:500]}")
 
 
 def _build_prompt(base: SummarizerConfig, text: str) -> tuple[str, str]:

@@ -8,11 +8,11 @@ Create Date: 2025-11-26 18:15:07.113528
 """
 
 # Standard
-import json
 from typing import Sequence, Union
 
 # Third-Party
 from alembic import op
+import orjson
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
@@ -66,7 +66,7 @@ def upgrade() -> None:
 
             # Parse JSON (SQLite returns string)
             if isinstance(tags_raw, str):
-                tags = json.loads(tags_raw)
+                tags = orjson.loads(tags_raw)
             else:
                 tags = tags_raw
 
@@ -87,7 +87,7 @@ def upgrade() -> None:
                     new_tags.append(t)
 
             # Convert back to JSON for storage using SQLAlchemy constructs
-            stmt = sa.update(tbl).where(tbl.c.id == rec_id).values(tags=json.dumps(new_tags))
+            stmt = sa.update(tbl).where(tbl.c.id == rec_id).values(tags=orjson.dumps(new_tags).decode())
             conn.execute(stmt)
 
 
@@ -127,7 +127,7 @@ def downgrade() -> None:
             tags_raw = row[1]
 
             if isinstance(tags_raw, str):
-                tags = json.loads(tags_raw)
+                tags = orjson.loads(tags_raw)
             else:
                 tags = tags_raw
 
@@ -145,5 +145,5 @@ def downgrade() -> None:
                 else:
                     old_tags.append(t)
 
-            stmt = sa.update(tbl).where(tbl.c.id == rec_id).values(tags=json.dumps(old_tags))
+            stmt = sa.update(tbl).where(tbl.c.id == rec_id).values(tags=orjson.dumps(old_tags).decode())
             conn.execute(stmt)

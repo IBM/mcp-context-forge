@@ -9,12 +9,12 @@ This module loads configurations for plugins.
 """
 
 # Standard
-import json
 import os
 from typing import cast
 
 # Third-Party
 from altk.core.llm import get_llm
+import orjson
 
 # Third-party
 from altk.core.toolkit import AgentPhase
@@ -121,7 +121,7 @@ class ALTKJsonProcessor(Plugin):
 
                     if len(response_str) > self._cfg["length_threshold"]:
                         try:
-                            response_json = json.loads(response_str)
+                            response_json = orjson.loads(response_str)
                         except json.decoder.JSONDecodeError:
                             # ignore anything that's not json
                             pass
