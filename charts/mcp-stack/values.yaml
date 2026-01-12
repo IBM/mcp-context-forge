@@ -713,6 +713,9 @@ mcpContextForge:
 
   extraEnvFrom: []
 
+  ## Additional environment variables to inject
+  extraEnv: []
+
 ########################################################################
 # DATABASE MIGRATION (Alembic)
 # Runs as a Job before mcpgateway deployment

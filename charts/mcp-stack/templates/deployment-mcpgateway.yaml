@@ -79,6 +79,9 @@ spec:
             # ---------- REDIS ----------
             - name: REDIS_HOST
               value: {{ printf "%s-redis" (include "mcp-stack.fullname" .) }}
+            {{- if .Values.mcpContextForge.extraEnv }}
+            {{- toYaml .Values.mcpContextForge.extraEnv | nindent 12 }}
+            {{- end }}
             - name: REDIS_PORT
               value: "{{ .Values.mcpContextForge.env.redis.port }}"
 

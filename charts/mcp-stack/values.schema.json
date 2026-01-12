@@ -49,6 +49,14 @@
             },
             "default": []
         },
+        "extraEnv": {
+            "type": "array",
+            "description": "Additional environment variables",
+            "items": {
+                "type": "object"
+            },
+            "default": []
+        },
         "hpa": {
           "type": "object",
           "description": "Horizontal Pod Autoscaler configuration",
