@@ -4306,15 +4306,29 @@ async def admin_view_team_members(
         owner_count = team_service.count_team_owners(team_id)
 
         # Build member data dict: email -> {role, joined_at, is_last_owner}
+        # Create a simple dict for template and a JSON-serializable dict for JavaScript
         team_member_data = {}
+        team_member_data_json = {}
         for team_user, membership in team_members:
             email = team_user.email
             is_last_owner = membership.role == "owner" and owner_count == 1
+            is_current_user = email == user_email
+
+            # For template (with object-like access)
             team_member_data[email] = type('MemberData', (), {
                 'role': membership.role,
                 'joined_at': membership.joined_at,
-                'is_last_owner': is_last_owner
+                'is_last_owner': is_last_owner,
+                'is_current_user': is_current_user
             })()
+
+            # For JSON (plain dict with ISO date string)
+            team_member_data_json[email] = {
+                'role': membership.role,
+                'joined_at': membership.joined_at.isoformat() if membership.joined_at else None,
+                'is_last_owner': is_last_owner,
+                'is_current_user': is_current_user
+            }
 
         # Escape team name to prevent XSS
         safe_team_name = html.escape(team.name)
@@ -4355,16 +4369,15 @@ async def admin_view_team_members(
                             type="text"
                             id="user-search-{team.id}"
                             data-team-id="{team.id}"
-                            data-search-url="{root_path}/admin/teams/{team.id}/users/search"
-                            data-search-limit="10"
                             placeholder="Search by name or email..."
                             class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white"
                         />
-                        <div id="user-search-results-{team.id}" class="relative"></div>
-                        <div id="user-search-loading-{team.id}" class="hidden text-sm text-gray-500 dark:text-gray-400 mt-1">
-                            Searching...
-                        </div>
                     </div>
+
+                    <!-- Team member data for client-side use -->
+                    <script id="team-member-data-{team.id}" type="application/json">
+                        {orjson.dumps(team_member_data_json).decode('utf-8')}
+                    </script>
 
                     <!-- User list container -->
                     <div id="team-members-list-{team.id}" class="max-h-96 overflow-y-auto mb-4">
@@ -5990,72 +6003,6 @@ async def admin_search_users(
     users_list = users_result.data
 
     # Format results for JSON response
-    results = [
-        {
-            "email": user_obj.email,
-            "full_name": user_obj.full_name or "",
-            "is_active": user_obj.is_active,
-            "is_admin": user_obj.is_admin,
-        }
-        for user_obj in users_list
-    ]
-
-    return {"users": results, "count": len(results)}
-
-
-@admin_router.get("/teams/{team_id}/users/search", response_class=JSONResponse)
-@require_permission("teams.manage_members")
-async def admin_search_team_users(
-    team_id: str,
-    q: str = Query("", description="Search query"),
-    limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Maximum number of results to return"),
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-):
-    """Search users by email or full name for a team selector.
-
-    Args:
-        team_id: Team identifier to scope membership checks.
-        q: Search query string to match against email or full name.
-        limit: Maximum number of results to return.
-        db: Database session dependency.
-        user: Current authenticated user context.
-
-    Returns:
-        JSONResponse: Dictionary containing list of matching users and count.
-    """
-    if not settings.email_auth_enabled:
-        return {"users": [], "count": 0}
-
-    team_service = TeamManagementService(db)
-    current_user_email = get_user_email(user)
-    try:
-        team_id = _normalize_team_id(team_id)
-    except ValueError:
-        return JSONResponse(content={"users": [], "count": 0}, status_code=400)
-
-    team = await team_service.get_team_by_id(team_id)
-    if not team:
-        return JSONResponse(content={"users": [], "count": 0}, status_code=404)
-
-    current_user_role = await team_service.get_user_role_in_team(current_user_email, team_id)
-    if current_user_role != "owner":
-        return JSONResponse(content={"users": [], "count": 0}, status_code=403)
-
-    search_query = q.strip().lower()
-    if not search_query:
-        return {"users": [], "count": 0}
-
-    LOGGER.debug(f"User {current_user_email} searching users with query: {search_query} (team {team_id})")
-
-    auth_service = EmailAuthService(db)
-
-    team_members = await team_service.get_team_members(team_id)
-    exclude_emails = {team_user.email for team_user, membership in team_members}
-
-    users_result = await auth_service.list_users(search=search_query, limit=limit, exclude_emails=exclude_emails)
-    users_list = users_result.data
-
     results = [
         {
             "email": user_obj.email,
