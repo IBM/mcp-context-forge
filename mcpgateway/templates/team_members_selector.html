@@ -21,7 +21,7 @@
     </div>
   </div>
 
-  <!-- Checkbox (disabled for current user and last owner) -->
+  <!-- Checkbox -->
   <input
     type="checkbox"
     name="associatedUsers"
@@ -30,7 +30,6 @@
     class="user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0"
     data-auto-check="true"
     {{ 'checked' if is_member else '' }}
-    {{ 'disabled' if is_current_user or is_last_owner else '' }}
   />
 
   <!-- User Info with Badges -->
@@ -58,11 +57,10 @@
     {% endif %}
   </div>
 
-  <!-- Role Selector (enabled for members, disabled for non-members and last owner) -->
+  <!-- Role Selector -->
   <select
     name="role_{{ user.email | urlencode }}"
     class="role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0"
-    {{ 'disabled' if not is_member or is_last_owner else '' }}
   >
     <option value="member" {{ 'selected' if member_role == 'member' else '' }}>Member</option>
     <option value="owner" {{ 'selected' if member_role == 'owner' else '' }}>Owner</option>

@@ -20607,13 +20607,7 @@ function initializeAddMembersForm(form) {
     form.addEventListener("change", function (event) {
         if (event.target?.name === "associatedUsers") {
             updateAddMembersCount(teamId);
-            const userItem = event.target.closest(".user-item");
-            if (userItem) {
-                const roleSelect = userItem.querySelector(".role-select");
-                if (roleSelect) {
-                    roleSelect.disabled = !event.target.checked;
-                }
-            }
+            // Role dropdown state is not managed client-side - all logic is server-side
         }
     });
 
@@ -20621,11 +20615,18 @@ function initializeAddMembersForm(form) {
 
     // If we have searchInput but no searchResults container, use client-side filtering (unified view)
     if (searchInput && !searchResults && userListContainer) {
-        searchInput.addEventListener("input", function () {
-            const query = this.value.trim().toLowerCase();
+        console.log(`[Team ${teamId}] Initializing client-side search for unified view`);
 
-            // Filter user items in the list
+        // Function to apply current search filter to all items
+        function applySearchFilter() {
+            const query = searchInput.value.trim().toLowerCase();
+            console.log(`[Team ${teamId}] Applying search filter: "${query}"`);
+
+            // Filter user items in the list (including dynamically loaded ones from infinite scroll)
             const userItems = userListContainer.querySelectorAll(".user-item");
+            console.log(`[Team ${teamId}] Found ${userItems.length} user items to filter`);
+
+            let visibleCount = 0;
             userItems.forEach((item) => {
                 const email = item.dataset.userEmail || "";
                 const checkbox = item.querySelector('input[name="associatedUsers"]');
@@ -20637,8 +20638,23 @@ function initializeAddMembersForm(form) {
                                      userName.toLowerCase().includes(query);
 
                 item.style.display = matchesSearch ? "" : "none";
+                if (matchesSearch) visibleCount++;
             });
-        });
+
+            console.log(`[Team ${teamId}] ${visibleCount} items visible after filter`);
+        }
+
+        // Apply filter on input
+        searchInput.addEventListener("input", applySearchFilter);
+
+        // Re-apply filter after HTMX loads more content (infinite scroll)
+        if (window.htmx) {
+            userListContainer.addEventListener("htmx:afterSwap", function(event) {
+                console.log(`[Team ${teamId}] HTMX content loaded, re-applying search filter`);
+                applySearchFilter();
+            });
+        }
+
         return;
     }
 

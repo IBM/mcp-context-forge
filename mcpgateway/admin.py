@@ -4887,18 +4887,20 @@ async def admin_add_team_members(
         # 2. Handle removals - members who were NOT in the submitted list (unchecked)
         for existing_email in existing_member_emails:
             if existing_email not in submitted_user_emails:
-                # This member was unchecked - remove them
+                member_info = existing_member_roles.get(existing_email, {})
+
+                # Validate removal is allowed - server-side protection
+                # Current user cannot be removed
+                if existing_email == user_email_from_jwt:
+                    errors.append(f"{existing_email} (cannot remove yourself)")
+                    continue
+                # Last owner cannot be removed
+                if member_info.get('is_last_owner', False):
+                    errors.append(f"{existing_email} (cannot remove last owner)")
+                    continue
+
+                # This member was unchecked and removal is allowed - remove them
                 try:
-                    member_info = existing_member_roles.get(existing_email, {})
-
-                    # Don't allow removing yourself or the last owner
-                    if existing_email == user_email_from_jwt:
-                        errors.append(f"{existing_email} (cannot remove yourself)")
-                        continue
-                    if member_info.get('is_last_owner', False):
-                        errors.append(f"{existing_email} (cannot remove last owner)")
-                        continue
-
                     await team_service.remove_member_from_team(
                         team_id=team_id,
                         user_email=existing_email,
