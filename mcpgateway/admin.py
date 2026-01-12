@@ -4354,9 +4354,16 @@ async def admin_view_team_members(
                         <input
                             type="text"
                             id="user-search-{team.id}"
+                            data-team-id="{team.id}"
+                            data-search-url="{root_path}/admin/teams/{team.id}/users/search"
+                            data-search-limit="10"
                             placeholder="Search by name or email..."
                             class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white"
                         />
+                        <div id="user-search-results-{team.id}" class="relative"></div>
+                        <div id="user-search-loading-{team.id}" class="hidden text-sm text-gray-500 dark:text-gray-400 mt-1">
+                            Searching...
+                        </div>
                     </div>
 
                     <!-- User list container -->
@@ -6017,6 +6024,7 @@ async def admin_search_team_users(
     Returns:
         JSONResponse: Dictionary containing list of matching users and count.
     """
+    print('hi')
     if not settings.email_auth_enabled:
         return {"users": [], "count": 0}
 

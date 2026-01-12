@@ -128,6 +128,78 @@ document.addEventListener("DOMContentLoaded", function () {
     initializePasswordValidation();
     initializeAddMembersForms();
 
+    // Event delegation for team member search - server-side search for unified view
+    let teamSearchTimeouts = {};
+    document.body.addEventListener("input", async function(event) {
+        const target = event.target;
+        if (target.id && target.id.startsWith("user-search-")) {
+            const teamId = target.id.replace("user-search-", "");
+            const listContainer = document.getElementById(`team-members-list-${teamId}`);
+            const loadingIndicator = document.getElementById(`user-search-loading-${teamId}`);
+
+            if (!listContainer) return;
+
+            const query = target.value.trim();
+
+            // Clear previous timeout for this team
+            if (teamSearchTimeouts[teamId]) {
+                clearTimeout(teamSearchTimeouts[teamId]);
+            }
+
+            // If query is empty, show all users
+            if (query.length === 0) {
+                const userItems = listContainer.querySelectorAll(".user-item");
+                userItems.forEach((item) => item.style.display = "");
+                if (loadingIndicator) loadingIndicator.classList.add("hidden");
+                console.log(`[Team ${teamId}] Search cleared`);
+                return;
+            }
+
+            // Debounce server call
+            teamSearchTimeouts[teamId] = setTimeout(async () => {
+                console.log(`[Team ${teamId}] Server search: "${query}"`);
+                if (loadingIndicator) loadingIndicator.classList.remove("hidden");
+
+                try {
+                    const searchUrl = target.dataset.searchUrl;
+                    const limit = target.dataset.searchLimit || "50";
+
+                    if (!searchUrl) {
+                        console.warn(`[Team ${teamId}] No search URL`);
+                        return;
+                    }
+
+                    const response = await fetchWithAuth(
+                        `${searchUrl}?q=${encodeURIComponent(query)}&limit=${limit}`
+                    );
+
+                    if (!response.ok) throw new Error(`Search failed: ${response.status}`);
+
+                    const data = await response.json();
+                    console.log(`[Team ${teamId}] Found ${data.count} users`);
+
+                    // Filter list to show only matching emails
+                    const matchingEmails = new Set(data.users.map(u => u.email.toLowerCase()));
+                    const userItems = listContainer.querySelectorAll(".user-item");
+
+                    let visibleCount = 0;
+                    userItems.forEach((item) => {
+                        const email = (item.dataset.userEmail || "").toLowerCase();
+                        const shouldShow = matchingEmails.has(email);
+                        item.style.display = shouldShow ? "" : "none";
+                        if (shouldShow) visibleCount++;
+                    });
+
+                    console.log(`[Team ${teamId}] ${visibleCount} visible`);
+                } catch (error) {
+                    console.error(`[Team ${teamId}] Search error:`, error);
+                } finally {
+                    if (loadingIndicator) loadingIndicator.classList.add("hidden");
+                }
+            }, 300);
+        }
+    });
+
     // Re-initialize search inputs when HTMX content loads
     document.body.addEventListener("htmx:afterSwap", function (event) {
         setTimeout(() => {
