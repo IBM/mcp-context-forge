@@ -2522,6 +2522,9 @@ class GatewayCreate(BaseModel):
     ca_certificate_sig: Optional[str] = Field(None, description="Signature of the custom CA certificate for integrity verification")
     signing_algorithm: Optional[str] = Field("ed25519", description="Algorithm used for signing the CA certificate")
 
+    # Per-gateway refresh configuration
+    refresh_interval_seconds: Optional[int] = Field(None, ge=60, description="Per-gateway refresh interval in seconds (minimum 60); uses global default if not set")
+
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
@@ -2786,6 +2789,9 @@ class GatewayUpdate(BaseModelWithConfigDict):
     team_id: Optional[str] = Field(None, description="Team ID this gateway belongs to")
     owner_email: Optional[str] = Field(None, description="Email of the gateway owner")
     visibility: Optional[str] = Field(None, description="Gateway visibility: private, team, or public")
+
+    # Per-gateway refresh configuration
+    refresh_interval_seconds: Optional[int] = Field(None, ge=60, description="Per-gateway refresh interval in seconds (minimum 60); uses global default if not set")
 
     @field_validator("tags")
     @classmethod
@@ -3068,6 +3074,10 @@ class GatewayRead(BaseModelWithConfigDict):
 
     slug: Optional[str] = Field(None, description="Slug for gateway endpoint URL")
 
+    # Per-gateway refresh configuration
+    refresh_interval_seconds: Optional[int] = Field(None, description="Per-gateway refresh interval in seconds")
+    last_refresh_at: Optional[datetime] = Field(None, description="Timestamp of last successful refresh")
+
     # This will be the main method to automatically populate fields
     @model_validator(mode="after")
     def _populate_auth(self) -> Self:
@@ -3227,6 +3237,30 @@ class GatewayRead(BaseModelWithConfigDict):
         masked_data["auth_header_value_unmasked"] = self.auth_header_value_unmasked
         masked_data["auth_headers_unmasked"] = [header.copy() for header in self.auth_headers_unmasked] if self.auth_headers_unmasked else None
         return GatewayRead.model_validate(masked_data)
+
+
+class GatewayRefreshResponse(BaseModelWithConfigDict):
+    """Response schema for manual gateway refresh API.
+
+    Contains counts of added, updated, and removed items for tools, resources, and prompts,
+    along with any validation errors encountered during the refresh operation.
+    """
+
+    gateway_id: str = Field(..., description="ID of the refreshed gateway")
+    success: bool = Field(default=True, description="Whether the refresh operation was successful")
+    error: Optional[str] = Field(None, description="Error message if the refresh failed")
+    tools_added: int = Field(default=0, description="Number of tools added")
+    tools_updated: int = Field(default=0, description="Number of tools updated")
+    tools_removed: int = Field(default=0, description="Number of tools removed")
+    resources_added: int = Field(default=0, description="Number of resources added")
+    resources_updated: int = Field(default=0, description="Number of resources updated")
+    resources_removed: int = Field(default=0, description="Number of resources removed")
+    prompts_added: int = Field(default=0, description="Number of prompts added")
+    prompts_updated: int = Field(default=0, description="Number of prompts updated")
+    prompts_removed: int = Field(default=0, description="Number of prompts removed")
+    validation_errors: List[str] = Field(default_factory=list, description="List of validation errors encountered")
+    duration_ms: float = Field(..., description="Duration of the refresh operation in milliseconds")
+    refreshed_at: datetime = Field(..., description="Timestamp when the refresh completed")
 
 
 class FederatedTool(BaseModelWithConfigDict):

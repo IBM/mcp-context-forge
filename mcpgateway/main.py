@@ -94,6 +94,7 @@ from mcpgateway.schemas import (
     CursorPaginatedToolsResponse,
     GatewayCreate,
     GatewayRead,
+    GatewayRefreshResponse,
     GatewayUpdate,
     JsonPathModifier,
     PromptCreate,
@@ -4487,6 +4488,53 @@ async def delete_gateway(gateway_id: str, db: Session = Depends(get_db), user=De
         raise HTTPException(status_code=404, detail=str(e))
     except GatewayError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@gateway_router.post("/{gateway_id}/tools/refresh", response_model=GatewayRefreshResponse)
+@require_permission("gateways.update")
+async def refresh_gateway_tools(
+    gateway_id: str,
+    request: Request,
+    include_resources: bool = Query(False, description="Include resources in refresh"),
+    include_prompts: bool = Query(False, description="Include prompts in refresh"),
+    user=Depends(get_current_user_with_permissions),
+) -> GatewayRefreshResponse:
+    """
+    Manually trigger a refresh of tools/resources/prompts from a gateway's MCP server.
+
+    This endpoint forces an immediate re-discovery of tools, resources, and prompts
+    from the specified gateway. It returns counts of added, updated, and removed items,
+    along with any validation errors encountered.
+
+    Args:
+        gateway_id: ID of the gateway to refresh.
+        request: The FastAPI request object.
+        include_resources: Whether to include resources in the refresh.
+        include_prompts: Whether to include prompts in the refresh.
+        user: Authenticated user.
+
+    Returns:
+        GatewayRefreshResponse with counts of changes and any validation errors.
+
+    Raises:
+        HTTPException: 404 if gateway not found, 409 if refresh already in progress.
+    """
+    logger.info(f"User '{user}' requested manual refresh for gateway {gateway_id}")
+    try:
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        result = await gateway_service.refresh_gateway_manually(
+            gateway_id=gateway_id,
+            include_resources=include_resources,
+            include_prompts=include_prompts,
+            user_email=user_email,
+            request_headers=dict(request.headers),
+        )
+        return GatewayRefreshResponse(gateway_id=gateway_id, **result)
+    except GatewayNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except GatewayError as e:
+        # 409 Conflict for concurrent refresh attempts
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
 
 ##############
