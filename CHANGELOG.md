@@ -8,6 +8,11 @@
 
 ### Added
 
+#### **🛑 Gateway-Orchestrated Cancellation of Tool Runs** ([#1983](https://github.com/IBM/mcp-context-forge/issues/1983))
+* **New endpoints & service** - Added an `OrchestrationService` and `/orchestrate/cancel` endpoint to allow gateway-authoritative cancellation of long-running tool executions.
+  - The gateway will attempt local cancellation and broadcast `notifications/cancelled` JSON-RPC notifications to connected sessions for remote peers to act on the cancellation.
+  - Backwards compatible: existing inbound `notifications/cancelled` handling is unchanged and clients should continue to work as before.
+
 #### **🎛️ Execution Metrics Recording Switch** ([#1804](https://github.com/IBM/mcp-context-forge/issues/1804))
 * **New setting** `DB_METRICS_RECORDING_ENABLED` - Disable execution metrics database writes
   - Controls tool/resource/prompt/server/A2A metrics recording (one DB row per operation)

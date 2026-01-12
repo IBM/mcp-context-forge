@@ -6404,6 +6404,14 @@ if settings.toolops_enabled:
     except ImportError:
         logger.debug("Toolops router not available")
 
+# Orchestrate router (cancellation / orchestration helpers)
+try:
+    from mcpgateway.routers.orchestrate_router import router as orchestrate_router
+    app.include_router(orchestrate_router)
+    logger.info("Orchestrate router included")
+except ImportError:
+    logger.debug("Orchestrate router not available")
+
 # Feature flags for admin UI and API
 UI_ENABLED = settings.mcpgateway_ui_enabled
 ADMIN_API_ENABLED = settings.mcpgateway_admin_api_enabled

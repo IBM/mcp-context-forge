@@ -783,6 +783,11 @@ class SessionRegistry(SessionBackend):
             except Exception as e:
                 logger.error(f"Database error during broadcast: {e}")
 
+    async def get_all_session_ids(self) -> list[str]:
+        """Return a snapshot list of all known local session IDs."""
+        async with self._lock:
+            return list(self._sessions.keys())
+
     def get_session_sync(self, session_id: str) -> Any:
         """Get session synchronously from local cache only.
 
