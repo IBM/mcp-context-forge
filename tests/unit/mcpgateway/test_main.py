@@ -1225,9 +1225,10 @@ class TestRPCEndpoints:
         headers = auth_headers
         headers["content-type"] = "application/json"
         response = test_client.post("/rpc/", content="invalid json", headers=headers)
-        assert response.status_code == 422  # Returns error response, not HTTP error
+        assert response.status_code == 400
         body = response.json()
-        assert "Method invalid" in body.get("message")
+        assert body["error"]["code"] == -32700
+        assert body["error"]["message"] == "Parse error"
 
     @patch("mcpgateway.main.logging_service.set_level")
     def test_set_log_level_endpoint(self, mock_set_level, test_client, auth_headers):

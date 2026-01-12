@@ -4608,11 +4608,14 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         try:
             body = orjson.loads(await request.body())
         except orjson.JSONDecodeError:
-            return {
-                "jsonrpc": "2.0",
-                "error": {"code": -32700, "message": "Parse error"},
-                "id": None,
-            }
+            return ORJSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32700, "message": "Parse error"},
+                    "id": None,
+                },
+            )
         method = body["method"]
         req_id = body.get("id")
         if req_id is None:
