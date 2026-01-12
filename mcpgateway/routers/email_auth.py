@@ -44,6 +44,7 @@ from mcpgateway.schemas import (
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, EmailValidationError, PasswordValidationError, UserExistsError
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_jwt_token import create_jwt_token
+from mcpgateway.utils.orjson_response import ORJSONResponse
 
 # Initialize logging
 logging_service = LoggingService()
@@ -261,9 +262,14 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
                 db.commit()
 
         if needs_password_change:
-            # For API login, return a specific error indicating password change is required
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN, detail="Password change required. Please change your password before continuing.", headers={"X-Password-Change-Required": "true"}
+            # For API login, return a specific error indicating password change is required.
+            # Return a response directly to avoid any exception handling layers converting
+            # the HTTPException into a 500 in some middleware paths.
+            logger.info(f"Login blocked for {login_request.email}: password change required")
+            return ORJSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={"detail": "Password change required. Please change your password before continuing."},
+                headers={"X-Password-Change-Required": "true"},
             )
 
         # Create access token
