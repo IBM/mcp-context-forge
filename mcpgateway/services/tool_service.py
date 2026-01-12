@@ -2809,6 +2809,7 @@ class ToolService:
                                     headers=headers,
                                     transport_type=TransportType.SSE,
                                     httpx_client_factory=get_httpx_client_factory,
+                                    user_identity=app_user_email,
                                 ) as pooled:
                                     tool_call_result = await pooled.session.call_tool(tool_name_original, arguments)
                             else:
@@ -2904,6 +2905,7 @@ class ToolService:
                                     headers=headers,
                                     transport_type=TransportType.STREAMABLE_HTTP,
                                     httpx_client_factory=get_httpx_client_factory,
+                                    user_identity=app_user_email,
                                 ) as pooled:
                                     tool_call_result = await pooled.session.call_tool(tool_name_original, arguments)
                             else:
