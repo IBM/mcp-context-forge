@@ -123,7 +123,7 @@ HttpxClientFactory = Callable[
 IdentityExtractor = Callable[[Dict[str, str]], Optional[str]]
 
 
-class MCPSessionPool:
+class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
     """
     Pool of MCP ClientSessions keyed by (server URL, identity hash, transport type).
 
@@ -668,24 +668,23 @@ class MCPSessionPool:
                     await asyncio.wait_for(pooled.session.send_ping(), timeout=self._health_check_timeout)
                     logger.debug(f"Health check passed: ping (url={pooled.url})")
                     return True
-                elif method == "list_tools":
+                if method == "list_tools":
                     await asyncio.wait_for(pooled.session.list_tools(), timeout=self._health_check_timeout)
                     logger.debug(f"Health check passed: list_tools (url={pooled.url})")
                     return True
-                elif method == "list_prompts":
+                if method == "list_prompts":
                     await asyncio.wait_for(pooled.session.list_prompts(), timeout=self._health_check_timeout)
                     logger.debug(f"Health check passed: list_prompts (url={pooled.url})")
                     return True
-                elif method == "list_resources":
+                if method == "list_resources":
                     await asyncio.wait_for(pooled.session.list_resources(), timeout=self._health_check_timeout)
                     logger.debug(f"Health check passed: list_resources (url={pooled.url})")
                     return True
-                elif method == "skip":
+                if method == "skip":
                     logger.debug(f"Health check skipped per configuration (url={pooled.url})")
                     return True
-                else:
-                    logger.warning(f"Unknown health check method '{method}', skipping")
-                    continue
+                logger.warning(f"Unknown health check method '{method}', skipping")
+                continue
 
             except McpError as e:
                 # METHOD_NOT_FOUND (-32601) means the method isn't supported - try next
