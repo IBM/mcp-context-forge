@@ -20134,7 +20134,6 @@ function getTeamNameById(teamId) {
  * Show token details modal with full token information
  * @param {Object} token - The token object with all fields
  */
-// eslint-disable-next-line no-unused-vars -- called via onclick in HTML
 function showTokenDetailsModal(token) {
     const formatDate = (dateStr) => {
         if (!dateStr) {
@@ -20671,7 +20670,7 @@ function initializeAddMembersForm(form) {
                             if (!container) {
                                 return;
                             }
-                            let checkbox = container.querySelector(
+                            const checkbox = container.querySelector(
                                 `input[value="${user.email}"]`,
                             );
 
@@ -20681,8 +20680,7 @@ function initializeAddMembersForm(form) {
                                     new Event("change", { bubbles: true }),
                                 );
                             } else {
-                                const userItem =
-                                    document.createElement("div");
+                                const userItem = document.createElement("div");
                                 userItem.className =
                                     "flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-2 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item";
                                 userItem.setAttribute(
@@ -20791,8 +20789,7 @@ function initializeAddMembersForm(form) {
 }
 
 function initializeAddMembersForms(root = document) {
-    const forms =
-        root?.querySelectorAll?.('[id^="add-members-form-"]') || [];
+    const forms = root?.querySelectorAll?.('[id^="add-members-form-"]') || [];
     forms.forEach((form) => initializeAddMembersForm(form));
 }
 
@@ -20803,13 +20800,14 @@ function handleAdminTeamAction(event) {
         if (detail.resetTeamCreateForm) {
             resetTeamCreateForm();
         }
-        if (detail.closeTeamEditModal && typeof hideTeamEditModal === "function") {
+        if (
+            detail.closeTeamEditModal &&
+            typeof hideTeamEditModal === "function"
+        ) {
             hideTeamEditModal();
         }
         if (detail.closeRoleModal) {
-            const roleModal = document.getElementById(
-                "role-assignment-modal",
-            );
+            const roleModal = document.getElementById("role-assignment-modal");
             if (roleModal) {
                 roleModal.classList.add("hidden");
             }
@@ -20878,7 +20876,10 @@ function handleAdminUserAction(event) {
     const detail = event.detail || {};
     const delayMs = Number(detail.delayMs) || 0;
     setTimeout(() => {
-        if (detail.closeUserEditModal && typeof hideUserEditModal === "function") {
+        if (
+            detail.closeUserEditModal &&
+            typeof hideUserEditModal === "function"
+        ) {
             hideUserEditModal();
         }
         if (detail.refreshUsersList) {
@@ -21354,27 +21355,30 @@ function validatePasswordRequirements() {
     const lengthCheck = password.length >= policy.minLength;
     updateRequirementIcon("req-length", lengthCheck);
 
-    const uppercaseCheck =
-        !policy.requireUppercase || /[A-Z]/.test(password);
+    const uppercaseCheck = !policy.requireUppercase || /[A-Z]/.test(password);
     updateRequirementIcon("req-uppercase", uppercaseCheck);
 
-    const lowercaseCheck =
-        !policy.requireLowercase || /[a-z]/.test(password);
+    const lowercaseCheck = !policy.requireLowercase || /[a-z]/.test(password);
     updateRequirementIcon("req-lowercase", lowercaseCheck);
 
     const numbersCheck = !policy.requireNumbers || /[0-9]/.test(password);
     updateRequirementIcon("req-numbers", numbersCheck);
 
+    const specialChars = "!@#$%^&*()_+-=[]{};:'\"\\|,.<>`~/?";
     const specialCheck =
         !policy.requireSpecial ||
-        /[!@#$%^&*()_+\-=\[\]{};:'"\\|,.<>`~\/\?]/.test(password);
+        [...password].some((char) => specialChars.includes(char));
     updateRequirementIcon("req-special", specialCheck);
 
     const submitButton = document.querySelector(
         '#user-edit-modal-content button[type="submit"]',
     );
     const allRequirementsMet =
-        lengthCheck && uppercaseCheck && lowercaseCheck && numbersCheck && specialCheck;
+        lengthCheck &&
+        uppercaseCheck &&
+        lowercaseCheck &&
+        numbersCheck &&
+        specialCheck;
     const passwordEmpty = password.length === 0;
 
     if (submitButton) {
