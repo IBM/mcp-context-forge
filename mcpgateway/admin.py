@@ -4296,40 +4296,11 @@ async def admin_view_team_members(
         current_user_role = await team_service.get_user_role_in_team(user_email, team_id)
         is_team_owner = current_user_role == "owner"
 
-        # Get ALL users (paginated) - this is the key difference from the old view
-        paginated_users = await auth_service.list_users(page=page, per_page=per_page)
-        users_data = paginated_users.data
-        pagination = paginated_users.pagination
-
-        # Get current team members to build member data dict
-        team_members = await team_service.get_team_members(team_id)
-        owner_count = team_service.count_team_owners(team_id)
-
-        # Build member data dict: email -> {role, joined_at, is_last_owner}
-        # Create a simple dict for template and a JSON-serializable dict for JavaScript
-        team_member_data = {}
-        team_member_data_json = {}
-        for team_user, membership in team_members:
-            email = team_user.email
-            is_last_owner = membership.role == "owner" and owner_count == 1
-            is_current_user = email == user_email
-
-            # For template (with object-like access)
-            team_member_data[email] = type("MemberData", (), {"role": membership.role, "joined_at": membership.joined_at, "is_last_owner": is_last_owner, "is_current_user": is_current_user})()
-
-            # For JSON (plain dict with ISO date string)
-            team_member_data_json[email] = {
-                "role": membership.role,
-                "joined_at": membership.joined_at.isoformat() if membership.joined_at else None,
-                "is_last_owner": is_last_owner,
-                "is_current_user": is_current_user,
-            }
-
         # Escape team name to prevent XSS
         safe_team_name = html.escape(team.name)
 
-        # Build the management interface header with form
-        management_header = f"""
+        # Build the two-section management interface with form
+        interface_html = f"""
         <div class="mb-4">
             <div class="flex justify-between items-center mb-4">
                 <h3 class="text-lg font-medium text-gray-900 dark:text-white">
@@ -4347,7 +4318,7 @@ async def admin_view_team_members(
             <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
                     <h4 class="text-sm font-semibold text-gray-900 dark:text-white">
-                        Select users to add/remove • Change roles • Uncheck to remove
+                        Manage Team Members • Change roles • Add or remove members
                     </h4>
                 </div>
 
@@ -4369,49 +4340,51 @@ async def admin_view_team_members(
                         />
                     </div>
 
-                    <!-- Team member data for client-side use -->
-                    <script id="team-member-data-{team.id}" type="application/json">
-                        {orjson.dumps(team_member_data_json).decode('utf-8')}
-                    </script>
+                    <!-- Current Members Section -->
+                    <div class="mb-6">
+                        <h5 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Current Members</h5>
+                        <div
+                            id="team-members-container-{team.id}"
+                            class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-64 overflow-y-auto dark:bg-gray-700"
+                            hx-get="{root_path}/admin/teams/{team.id}/members/partial?page=1&per_page=20"
+                            hx-trigger="load delay:100ms"
+                            hx-target="this"
+                            hx-swap="innerHTML"
+                        >
+                            <!-- Current members will be loaded here via HTMX -->
+                        </div>
+                    </div>
 
-                    <!-- User list container -->
-                    <div id="team-members-list-{team.id}" class="max-h-96 overflow-y-auto mb-4">
-        """
+                    <!-- Users to Add Section -->
+                    <div class="mb-4">
+                        <h5 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Users to Add</h5>
+                        <div
+                            id="team-non-members-container-{team.id}"
+                            class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-64 overflow-y-auto dark:bg-gray-700"
+                            hx-get="{root_path}/admin/teams/{team.id}/non-members/partial?page=1&per_page=20"
+                            hx-trigger="load delay:200ms"
+                            hx-target="this"
+                            hx-swap="innerHTML"
+                        >
+                            <!-- Non-members will be loaded here via HTMX -->
+                        </div>
+                    </div>
 
-        # Render users using the template
-        users_html = request.app.state.templates.get_template("team_members_selector.html").render(
-            request=request,
-            data=users_data,
-            pagination=pagination.model_dump(),
-            root_path=root_path,
-            team_id=team_id,
-            team_member_data=team_member_data,
-            current_user_email=user_email,
-            current_user_is_team_owner=is_team_owner,
-            selector_base_url=f"{root_path}/admin/teams/{team_id}/users/partial",
-        )
-
-        # Build footer with submit button (only for team owners)
-        submit_button = ""
-        if is_team_owner:
-            submit_button = """
+                    <!-- Submit button (only for team owners) -->
+                    {"" if not is_team_owner else '''
                     <div class="flex justify-end space-x-3 pt-4 border-t border-gray-200 dark:border-gray-700">
                         <button type="submit"
                                 class="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
                             Save Changes
                         </button>
                     </div>
-            """
-
-        footer_html = f"""
-                    </div>
-                    {submit_button}
+                    '''}
                 </form>
             </div>
         </div>
-        """
+        """  # nosec B608 - HTML template f-string, not SQL (uses SQLAlchemy ORM for DB)
 
-        return HTMLResponse(content=f"{management_header}{users_html}{footer_html}")
+        return HTMLResponse(content=interface_html)
 
     except Exception as e:
         LOGGER.error(f"Error viewing team members {team_id}: {e}")
@@ -5827,9 +5800,9 @@ async def admin_users_partial_html(
         return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading users: {html.escape(str(e))}</p></div>', status_code=200)
 
 
-@admin_router.get("/teams/{team_id}/users/partial", response_class=HTMLResponse)
+@admin_router.get("/teams/{team_id}/members/partial", response_class=HTMLResponse)
 @require_permission("teams.manage_members")
-async def admin_team_users_partial_html(
+async def admin_team_members_partial_html(
     team_id: str,
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
@@ -5837,10 +5810,10 @@ async def admin_team_users_partial_html(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Response:
-    """Return paginated users selector items for team member selection.
+    """Return paginated team members for two-section layout (top section).
 
     Args:
-        team_id: Team identifier to scope membership checks.
+        team_id: Team identifier.
         request: FastAPI request object.
         page: Page number (1-indexed). Default: 1.
         per_page: Items per page. Default: 50.
@@ -5848,18 +5821,18 @@ async def admin_team_users_partial_html(
         user: Current authenticated user context.
 
     Returns:
-        Response: HTML response with selector items and pagination data.
+        Response: HTML response with team members and pagination data.
     """
     try:
         if not settings.email_auth_enabled:
             return HTMLResponse(
-                content='<div class="text-center py-8"><p class="text-gray-500">Email authentication is disabled. User management requires email auth.</p></div>',
+                content='<div class="text-center py-8"><p class="text-gray-500">Email authentication is disabled.</p></div>',
                 status_code=200,
             )
 
-        auth_service = EmailAuthService(db)
         team_service = TeamManagementService(db)
         current_user_email = get_user_email(user)
+
         try:
             team_id = _normalize_team_id(team_id)
         except ValueError:
@@ -5871,65 +5844,120 @@ async def admin_team_users_partial_html(
 
         current_user_role = await team_service.get_user_role_in_team(current_user_email, team_id)
         if current_user_role != "owner":
-            return HTMLResponse(content='<div class="text-red-500">Only team owners can add members</div>', status_code=403)
+            return HTMLResponse(content='<div class="text-red-500">Only team owners can manage members</div>', status_code=403)
 
-        paginated_result = await auth_service.list_users(page=page, per_page=per_page)
-        users_db = paginated_result.data
-        pagination = typing_cast(PaginationMeta, paginated_result.pagination)
+        # Get paginated team members
+        paginated_result = await team_service.get_team_members(team_id, page=page, per_page=per_page)
+        members = paginated_result["data"]
+        pagination = paginated_result["pagination"]
 
-        users_data = [
-            {
-                "email": user_obj.email,
-                "full_name": user_obj.full_name,
-                "is_active": user_obj.is_active,
-                "is_admin": user_obj.is_admin,
-            }
-            for user_obj in users_db
-        ]
+        # Count owners for is_last_owner check
+        owner_count = sum(1 for _, membership in members if membership.role == "owner")
 
-        team_members = await team_service.get_team_members(team_id)
-        team_member_emails = {team_user.email for team_user, membership in team_members}
-
-        # Build enhanced member data from the same query result (no extra DB calls!)
-        # Count owners in-memory
-        owner_count = sum(1 for _, membership in team_members if membership.role == "owner")
-
-        # Build member data dict and check if current user is owner
-        team_member_data = {}
-        current_user_is_team_owner = False
-
-        for team_user, membership in team_members:
-            email = team_user.email
-            is_last_owner = membership.role == "owner" and owner_count == 1
-            team_member_data[email] = type("MemberData", (), {"role": membership.role, "joined_at": membership.joined_at, "is_last_owner": is_last_owner})()
-
-            # Check if current user is owner (in-memory check)
-            if email == current_user_email and membership.role == "owner":
-                current_user_is_team_owner = True
-
-        # End the read-only transaction early to avoid idle-in-transaction under load
+        # End the read-only transaction early
         db.commit()
 
         root_path = request.scope.get("root_path", "")
+        next_page_url = f"{root_path}/admin/teams/{team_id}/members/partial?page={pagination.page + 1}&per_page={pagination.per_page}"
         return request.app.state.templates.TemplateResponse(
-            "team_members_selector.html",
+            "team_users_selector.html",
             {
                 "request": request,
-                "data": users_data,
+                "data": members,  # List of (user, membership) tuples
                 "pagination": pagination.model_dump(),
                 "root_path": root_path,
-                "team_member_emails": team_member_emails,
-                "team_member_data": team_member_data,
                 "current_user_email": current_user_email,
-                "current_user_is_team_owner": current_user_is_team_owner,
+                "current_user_is_team_owner": True,  # Already verified above
+                "owner_count": owner_count,
                 "team_id": team_id,
-                "selector_base_url": f"{root_path}/admin/teams/{team_id}/users/partial",
+                "is_members_list": True,
+                "scroll_trigger_id": "members-scroll-trigger",
+                "next_page_url": next_page_url,
             },
         )
 
     except Exception as e:
-        LOGGER.error(f"Error loading team users selector for team {team_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading users: {html.escape(str(e))}</p></div>', status_code=200)
+        LOGGER.error(f"Error loading team members partial for team {team_id}: {e}")
+        return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading members: {html.escape(str(e))}</p></div>', status_code=200)
+
+
+@admin_router.get("/teams/{team_id}/non-members/partial", response_class=HTMLResponse)
+@require_permission("teams.manage_members")
+async def admin_team_non_members_partial_html(
+    team_id: str,
+    request: Request,
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Response:
+    """Return paginated non-members for two-section layout (bottom section).
+
+    Args:
+        team_id: Team identifier.
+        request: FastAPI request object.
+        page: Page number (1-indexed). Default: 1.
+        per_page: Items per page. Default: 50.
+        db: Database session.
+        user: Current authenticated user context.
+
+    Returns:
+        Response: HTML response with non-members and pagination data.
+    """
+    try:
+        if not settings.email_auth_enabled:
+            return HTMLResponse(
+                content='<div class="text-center py-8"><p class="text-gray-500">Email authentication is disabled.</p></div>',
+                status_code=200,
+            )
+
+        auth_service = EmailAuthService(db)
+        team_service = TeamManagementService(db)
+        current_user_email = get_user_email(user)
+
+        try:
+            team_id = _normalize_team_id(team_id)
+        except ValueError:
+            return HTMLResponse(content='<div class="text-red-500">Invalid team ID</div>', status_code=400)
+
+        team = await team_service.get_team_by_id(team_id)
+        if not team:
+            return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
+
+        current_user_role = await team_service.get_user_role_in_team(current_user_email, team_id)
+        if current_user_role != "owner":
+            return HTMLResponse(content='<div class="text-red-500">Only team owners can manage members</div>', status_code=403)
+
+        # Get paginated non-members
+        paginated_result = await auth_service.list_users_not_in_team(team_id, page=page, per_page=per_page)
+        users = paginated_result.data
+        pagination = typing_cast(PaginationMeta, paginated_result.pagination)
+
+        # End the read-only transaction early
+        db.commit()
+
+        root_path = request.scope.get("root_path", "")
+        next_page_url = f"{root_path}/admin/teams/{team_id}/non-members/partial?page={pagination.page + 1}&per_page={pagination.per_page}"
+        return request.app.state.templates.TemplateResponse(
+            "team_users_selector.html",
+            {
+                "request": request,
+                "data": users,  # List of user objects
+                "pagination": pagination.model_dump(),
+                "root_path": root_path,
+                "current_user_email": current_user_email,
+                "current_user_is_team_owner": True,  # Already verified above
+                "owner_count": 0,  # Not relevant for non-members
+                "team_id": team_id,
+                "is_members_list": False,
+                "scroll_trigger_id": "non-members-scroll-trigger",
+                "next_page_url": next_page_url,
+            },
+        )
+
+    except Exception as e:
+        LOGGER.error(f"Error loading team non-members partial for team {team_id}: {e}")
+        return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading non-members: {html.escape(str(e))}</p></div>', status_code=200)
 
 
 @admin_router.get("/users/search", response_class=JSONResponse)

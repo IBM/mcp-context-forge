@@ -20,7 +20,7 @@ Examples:
 # Standard
 import asyncio
 from datetime import timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 # Third-Party
 from sqlalchemy import func, select
@@ -797,20 +797,30 @@ class TeamManagementService:
             Team member management and role display.
         """
         try:
-            # Build base query - using select() for unified_paginate compatibility
-            query = (
-                select(EmailUser, EmailTeamMember)
-                .join(EmailTeamMember, EmailUser.email == EmailTeamMember.user_email)
-                .where(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True))
-                .order_by(EmailUser.full_name, EmailUser.email)
-            )
-
-            # If neither cursor nor page provided, return all members (backward compatibility)
+            # Build base query - for pagination, select EmailTeamMember and eager-load user
+            # For backward compat (no pagination), select both entities as tuple
             if cursor is None and page is None:
+                # Backward compatibility: return tuples
+                query = (
+                    select(EmailUser, EmailTeamMember)
+                    .join(EmailTeamMember, EmailUser.email == EmailTeamMember.user_email)
+                    .where(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True))
+                    .order_by(EmailUser.full_name, EmailUser.email)
+                )
                 result = self.db.execute(query)
                 members = list(result.all())
                 self.db.commit()
                 return members
+
+            # For pagination: select EmailTeamMember and eager-load user to avoid N+1
+            # This returns EmailTeamMember objects (not tuples), compatible with unified_paginate
+            query = (
+                select(EmailTeamMember)
+                .options(selectinload(EmailTeamMember.user))
+                .where(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True))
+                .join(EmailUser, EmailUser.email == EmailTeamMember.user_email)
+                .order_by(EmailUser.full_name, EmailUser.email)
+            )
 
             # Use unified_paginate for both cursor and page-based pagination
             from mcpgateway.utils.pagination import unified_paginate
@@ -828,18 +838,21 @@ class TeamManagementService:
 
             self.db.commit()
 
-            # Return appropriate format based on pagination type
+            # Convert EmailTeamMember objects to (user, membership) tuples for consistency
             if page is not None:
                 # Page-based format: dict
+                memberships = pag_result["data"]
+                tuples = [(m.user, m) for m in memberships]
                 return {
-                    "data": pag_result["data"],
+                    "data": tuples,
                     "pagination": pag_result["pagination"],
                     "links": pag_result["links"],
                 }
             else:
                 # Cursor-based format: tuple
-                members, next_cursor = pag_result
-                return (members, next_cursor)
+                memberships, next_cursor = pag_result
+                tuples = [(m.user, m) for m in memberships]
+                return (tuples, next_cursor)
 
         except Exception as e:
             self.db.rollback()
