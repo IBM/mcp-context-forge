@@ -148,7 +148,16 @@ def _get_cached_ssl_context(ca_certificate: str) -> ssl.SSLContext:
         ssl.SSLContext: Configured SSL context
     """
     # Use hash of cert as cache key
-    cert_hash = hashlib.sha256(ca_certificate.encode()).hexdigest()
+    # Handle bytes or string input
+    if isinstance(ca_certificate, bytes):
+        cert_bytes = ca_certificate
+    elif isinstance(ca_certificate, str):
+        cert_bytes = ca_certificate.encode()
+    else:
+        # For non-string/non-bytes (e.g., MagicMock in tests), convert to string first
+        cert_bytes = str(ca_certificate).encode()
+
+    cert_hash = hashlib.sha256(cert_bytes).hexdigest()
 
     if cert_hash in _ssl_context_cache:
         return _ssl_context_cache[cert_hash]
