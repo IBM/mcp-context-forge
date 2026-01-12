@@ -2637,6 +2637,48 @@ async def server_get_prompts(
     return [prompt.model_dump(by_alias=True) for prompt in prompts]
 
 
+@server_router.get("/{server_id}/.well-known/oauth-protected-resource")
+async def server_oauth_protected_resource(
+    request: Request,
+    server_id: str,
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    """
+    RFC 9728 OAuth 2.0 Protected Resource Metadata endpoint for a specific server.
+
+    Returns OAuth configuration for the server per RFC 9728, enabling MCP clients
+    to discover OAuth authorization servers and authenticate using browser-based SSO.
+    This endpoint does not require authentication per RFC 9728 requirements.
+
+    Args:
+        request: FastAPI request object for building resource URL.
+        server_id: The ID of the server to get OAuth configuration for.
+        db: Database session dependency.
+
+    Returns:
+        JSONResponse with RFC 9728 Protected Resource Metadata.
+
+    Raises:
+        HTTPException: 404 if server not found, disabled, non-public, OAuth not enabled, or not configured.
+    """
+    # Build resource URL using proper protocol detection for proxies
+    # Note: update_url_protocol uses request.base_url which already includes root_path
+    base_url = update_url_protocol(request)
+    resource_url = f"{base_url}/servers/{server_id}"
+
+    try:
+        response_data = server_service.get_oauth_protected_resource_metadata(db, server_id, resource_url)
+    except ServerNotFoundError:
+        raise HTTPException(status_code=404, detail="Server not found")
+    except ServerError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    # Add cache headers
+    headers = {"Cache-Control": f"public, max-age={settings.well_known_cache_max_age}"}
+
+    return JSONResponse(content=response_data, headers=headers)
+
+
 ##################
 # A2A Agent APIs #
 ##################

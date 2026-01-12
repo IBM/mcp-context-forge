@@ -786,6 +786,10 @@ class TokenScopingMiddleware:
             if any(request.url.path.startswith(path) for path in skip_paths):
                 return await call_next(request)
 
+            # Skip server-specific well-known endpoints (RFC 9728)
+            if re.match(r"^/servers/[^/]+/\.well-known/", request.url.path):
+                return await call_next(request)
+
             # Extract full token payload (not just scopes)
             payload = await self._extract_token_scopes(request)
 

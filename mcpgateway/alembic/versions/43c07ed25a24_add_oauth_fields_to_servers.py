@@ -9,11 +9,12 @@ Protected Resource Metadata support. This enables MCP clients to authenticate
 to virtual servers using browser-based OAuth/SSO.
 """
 
+# Standard
 from typing import Sequence, Union
 
+# Third-Party
 from alembic import op
 import sqlalchemy as sa
-
 
 # revision identifiers, used by Alembic.
 revision: str = "43c07ed25a24"

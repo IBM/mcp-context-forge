@@ -1842,3 +1842,80 @@ class ServerService:
 
         metrics_cache.invalidate("servers")
         metrics_cache.invalidate_prefix("top_servers:")
+
+    def get_oauth_protected_resource_metadata(self, db: Session, server_id: str, resource_base_url: str) -> Dict[str, Any]:
+        """
+        Get RFC 9728 OAuth 2.0 Protected Resource Metadata for a server.
+
+        This method retrieves the OAuth configuration for a server and formats it
+        according to RFC 9728 Protected Resource Metadata specification, enabling
+        MCP clients to discover OAuth authorization servers for browser-based SSO.
+
+        Args:
+            db: Database session.
+            server_id: The ID of the server.
+            resource_base_url: The base URL for the resource (e.g., "https://gateway.example.com/servers/abc123").
+
+        Returns:
+            Dict containing RFC 9728 Protected Resource Metadata:
+            - resource: The protected resource identifier (URL)
+            - authorization_servers: List of authorization server issuer URIs
+            - bearer_methods_supported: Supported bearer token methods
+            - scopes_supported: Optional list of supported scopes
+
+        Raises:
+            ServerNotFoundError: If server doesn't exist, is disabled, or is non-public.
+            ServerError: If OAuth is not enabled or not properly configured.
+
+        Examples:
+            >>> from mcpgateway.services.server_service import ServerService
+            >>> service = ServerService()
+            >>> # Method exists and is callable
+            >>> callable(service.get_oauth_protected_resource_metadata)
+            True
+        """
+        server = db.get(DbServer, server_id)
+
+        # Return not found for non-existent, disabled, or non-public servers
+        # (avoids leaking information about private/team servers)
+        if not server:
+            raise ServerNotFoundError(f"Server not found: {server_id}")
+
+        if not server.enabled:
+            raise ServerNotFoundError(f"Server not found: {server_id}")
+
+        if getattr(server, "visibility", "public") != "public":
+            raise ServerNotFoundError(f"Server not found: {server_id}")
+
+        # Check OAuth configuration
+        if not getattr(server, "oauth_enabled", False):
+            raise ServerError(f"OAuth not enabled for server: {server_id}")
+
+        oauth_config = getattr(server, "oauth_config", None)
+        if not oauth_config:
+            raise ServerError(f"OAuth not configured for server: {server_id}")
+
+        # Extract authorization server(s) - support both list and single value
+        authorization_servers = oauth_config.get("authorization_servers", [])
+        if not authorization_servers:
+            auth_server = oauth_config.get("authorization_server")
+            if auth_server:
+                authorization_servers = [auth_server]
+
+        if not authorization_servers:
+            raise ServerError(f"OAuth authorization_server not configured for server: {server_id}")
+
+        # Build RFC 9728 Protected Resource Metadata response
+        response_data: Dict[str, Any] = {
+            "resource": resource_base_url,
+            "authorization_servers": authorization_servers,
+            "bearer_methods_supported": ["header"],
+        }
+
+        # Add optional scopes if configured (never include secrets from oauth_config)
+        scopes = oauth_config.get("scopes_supported") or oauth_config.get("scopes")
+        if scopes:
+            response_data["scopes_supported"] = scopes
+
+        logger.debug(f"Returning OAuth protected resource metadata for server {server_id}")
+        return response_data
