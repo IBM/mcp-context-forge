@@ -32,6 +32,9 @@ class CancelRequest(BaseModel):
     reason: Optional[str] = None
 
     class Config:
+        """
+        Configuration to allow population by field name.
+        """
         allow_population_by_field_name = True
 
 
@@ -47,6 +50,9 @@ class CancelResponse(BaseModel):
     reason: Optional[str] = None
 
     class Config:
+        """
+        Configuration to allow population by field name.
+        """
         allow_population_by_field_name = True
 
 
@@ -88,6 +94,16 @@ async def cancel_run(payload: CancelRequest, _user=Depends(get_current_user_with
 @router.get("/status/{request_id}")
 @require_permission("admin.system_config")
 async def get_status(request_id: str, _user=Depends(get_current_user_with_permissions)):
+    """
+    Get the status of a run by its request ID.
+
+    :param request_id: The ID of the request to get the status for.
+    :param _user: The current user (dependency injection).
+    :return: The status of the run.
+    :raises HTTPException: If the run is not found.
+    """
+    if not orchestration_service.is_registered(request_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
     status_obj = await orchestration_service.get_status(request_id)
     if status_obj is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
