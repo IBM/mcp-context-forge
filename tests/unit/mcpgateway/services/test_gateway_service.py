@@ -1900,16 +1900,18 @@ class TestGatewayRefresh:
                 assert kwargs["pre_auth_headers"] == {"x-custom": "value"}
 
     def test_validate_tools_partial_failure(self, gateway_service):
-        """Test tool validation logs errors but returns valid tools."""
+        """Test tool validation logs errors but returns valid tools and validation errors."""
         tools = [
             {"name": "valid_tool", "description": "valid", "inputSchema": {}},
             {"name": "invalid_tool", "integration_type": "INVALID_TYPE"}, # Invalid integration_type, should fail
         ]
 
-        valid_tools = gateway_service._validate_tools(tools)
+        valid_tools, validation_errors = gateway_service._validate_tools(tools)
 
         assert len(valid_tools) == 1
         assert valid_tools[0].name == "valid_tool"
+        assert len(validation_errors) == 1
+        assert "invalid_tool" in validation_errors[0]
 
     def test_validate_tools_all_invalid(self, gateway_service):
         """Test failure when all tools are invalid."""

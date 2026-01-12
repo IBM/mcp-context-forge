@@ -4639,7 +4639,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         """
         await self._event_service.publish_event(event)
 
-    def _validate_tools(self, tools: list[dict[str, Any]], context: str = "default") -> list[ToolCreate]:
+    def _validate_tools(self, tools: list[dict[str, Any]], context: str = "default") -> tuple[list[ToolCreate], list[str]]:
         """Validate tools individually with richer logging and error aggregation.
 
         Args:
@@ -4647,7 +4647,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             context: caller context, e.g. "oauth" to tailor errors/messages
 
         Returns:
-            list[ToolCreate]: List of successfully validated tools
+            tuple[list[ToolCreate], list[str]]: Tuple of (valid tools, validation errors)
 
         Raises:
             OAuthToolValidationError: If all tools fail validation in OAuth context
@@ -4692,7 +4692,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 raise OAuthToolValidationError(f"OAuth tool fetch failed: all {len(tools)} tools failed validation. " f"First error: {validation_errors[0][:200]}")
             raise GatewayConnectionError(f"Failed to fetch tools: All {len(tools)} tools failed validation. " f"First error: {validation_errors[0][:200]}")
 
-        return valid_tools
+        return valid_tools, validation_errors
 
     async def _connect_to_sse_server_without_validation(self, server_url: str, authentication: Optional[Dict[str, str]] = None):
         """Connect to an MCP server running with SSE transport, skipping URL validation.
@@ -4723,7 +4723,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     tools = response.tools
                     tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
-                    tools = self._validate_tools(tools, context="oauth")
+                    tools, _ = self._validate_tools(tools, context="oauth")
                     if tools:
                         logger.info(f"Fetched {len(tools)} tools from gateway")
                     # Fetch resources if supported
@@ -4878,7 +4878,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 tools = response.tools
                 tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
-                tools = self._validate_tools(tools)
+                tools, _ = self._validate_tools(tools)
                 if tools:
                     logger.info(f"Fetched {len(tools)} tools from gateway")
                 # Fetch resources if supported
@@ -5032,7 +5032,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 tools = response.tools
                 tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
-                tools = self._validate_tools(tools)
+                tools, _ = self._validate_tools(tools)
                 for tool in tools:
                     tool.request_type = "STREAMABLEHTTP"
                 if tools:
