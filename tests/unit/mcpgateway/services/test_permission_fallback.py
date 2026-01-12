@@ -162,3 +162,45 @@ class TestPermissionFallback:
             with patch("mcpgateway.services.permission_service.getattr", return_value=""):
                 result = await permission_service._is_user_admin("admin@example.com")
                 assert result == False, "Should not grant admin privileges when platform_admin_email is empty"
+
+
+class TestTokenPermissionFallback:
+    """Test permission fallback functionality for token management."""
+
+    @pytest.mark.asyncio
+    async def test_regular_user_can_create_tokens(self, permission_service):
+        """Test that regular users can create their own tokens."""
+        with patch.object(permission_service, "_is_user_admin", return_value=False), patch.object(permission_service, "get_user_permissions", return_value=set()):
+            # Regular user should be able to create tokens
+            assert await permission_service.check_permission("user@example.com", "tokens.create") is True
+
+    @pytest.mark.asyncio
+    async def test_regular_user_can_read_tokens(self, permission_service):
+        """Test that regular users can read their own tokens."""
+        with patch.object(permission_service, "_is_user_admin", return_value=False), patch.object(permission_service, "get_user_permissions", return_value=set()):
+            # Regular user should be able to read tokens
+            assert await permission_service.check_permission("user@example.com", "tokens.read") is True
+
+    @pytest.mark.asyncio
+    async def test_regular_user_can_revoke_tokens(self, permission_service):
+        """Test that regular users can revoke their own tokens."""
+        with patch.object(permission_service, "_is_user_admin", return_value=False), patch.object(permission_service, "get_user_permissions", return_value=set()):
+            # Regular user should be able to revoke tokens
+            assert await permission_service.check_permission("user@example.com", "tokens.revoke") is True
+
+    @pytest.mark.asyncio
+    async def test_regular_user_can_update_tokens(self, permission_service):
+        """Test that regular users can update their own tokens."""
+        with patch.object(permission_service, "_is_user_admin", return_value=False), patch.object(permission_service, "get_user_permissions", return_value=set()):
+            # Regular user should be able to update tokens
+            assert await permission_service.check_permission("user@example.com", "tokens.update") is True
+
+    @pytest.mark.asyncio
+    async def test_admin_user_has_all_token_permissions(self, permission_service):
+        """Test that admin users have all token permissions."""
+        with patch.object(permission_service, "_is_user_admin", return_value=True):
+            # Admin should have all permissions
+            assert await permission_service.check_permission("admin@example.com", "tokens.create") is True
+            assert await permission_service.check_permission("admin@example.com", "tokens.read") is True
+            assert await permission_service.check_permission("admin@example.com", "tokens.update") is True
+            assert await permission_service.check_permission("admin@example.com", "tokens.revoke") is True

@@ -15,6 +15,7 @@ and error handling scenarios.
 from datetime import datetime, timedelta, timezone
 import hashlib
 import logging
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -25,6 +26,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user, get_db
+from mcpgateway.config import settings
 from mcpgateway.db import EmailApiToken, EmailUser
 
 
@@ -117,6 +119,61 @@ class TestGetCurrentUser:
 
                     assert user.email == mock_user.email
                     assert user.full_name == mock_user.full_name
+
+    @pytest.mark.asyncio
+    async def test_auth_method_set_on_cache_hit(self, monkeypatch):
+        """Ensure auth_method is set when auth cache returns early."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")
+
+        payload = {
+            "sub": "test@example.com",
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+            "jti": "jti-123",
+            "user": {"email": "test@example.com", "full_name": "Test User", "is_admin": False, "auth_provider": "local"},
+        }
+        cached_ctx = SimpleNamespace(
+            is_token_revoked=False,
+            user={"email": "test@example.com", "full_name": "Test User", "is_admin": False, "is_active": True},
+            personal_team_id="team_123",
+        )
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        monkeypatch.setattr(settings, "auth_cache_enabled", True)
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)):
+            with patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)):
+                user = await get_current_user(credentials=credentials, request=request)
+
+                assert user.email == "test@example.com"
+                assert request.state.auth_method == "jwt"
+
+    @pytest.mark.asyncio
+    async def test_auth_method_set_on_batched_query(self, monkeypatch):
+        """Ensure auth_method is set when batched DB path returns early."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")
+
+        payload = {
+            "sub": "test@example.com",
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+            "jti": "jti-456",
+            "user": {"email": "test@example.com", "full_name": "Test User", "is_admin": False, "auth_provider": "local"},
+        }
+        auth_ctx = {
+            "user": {"email": "test@example.com", "full_name": "Test User", "is_admin": False, "is_active": True},
+            "personal_team_id": "team_123",
+            "is_token_revoked": False,
+        }
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        monkeypatch.setattr(settings, "auth_cache_enabled", False)
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", True)
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)):
+            with patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx):
+                user = await get_current_user(credentials=credentials, request=request)
+
+                assert user.email == "test@example.com"
+                assert request.state.auth_method == "jwt"
 
     @pytest.mark.asyncio
     async def test_jwt_with_legacy_email_format(self):
