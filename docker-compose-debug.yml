@@ -146,18 +146,19 @@ services:
       # Auth Cache Configuration (reduces DB queries per auth request from 3-4 to 0-1)
       - AUTH_CACHE_ENABLED=true
       - AUTH_CACHE_USER_TTL=300
-      - AUTH_CACHE_REVOCATION_TTL=30
+      - AUTH_CACHE_REVOCATION_TTL=120
       - AUTH_CACHE_TEAM_TTL=300
       - AUTH_CACHE_ROLE_TTL=300
       - AUTH_CACHE_BATCH_QUERIES=true
+      - AUTH_CACHE_TEAMS_TTL=300
       # Registry Cache Configuration (reduces DB queries for list endpoints)
       - REGISTRY_CACHE_ENABLED=true
-      - REGISTRY_CACHE_TOOLS_TTL=60
-      - REGISTRY_CACHE_PROMPTS_TTL=60
-      - REGISTRY_CACHE_RESOURCES_TTL=60
-      - REGISTRY_CACHE_AGENTS_TTL=60
-      - REGISTRY_CACHE_SERVERS_TTL=60
-      - REGISTRY_CACHE_GATEWAYS_TTL=60
+      - REGISTRY_CACHE_TOOLS_TTL=300
+      - REGISTRY_CACHE_PROMPTS_TTL=300
+      - REGISTRY_CACHE_RESOURCES_TTL=300
+      - REGISTRY_CACHE_AGENTS_TTL=300
+      - REGISTRY_CACHE_SERVERS_TTL=300
+      - REGISTRY_CACHE_GATEWAYS_TTL=300
       - REGISTRY_CACHE_CATALOG_TTL=300
       # Admin Stats Cache Configuration (reduces aggregate queries for dashboard)
       - ADMIN_STATS_CACHE_ENABLED=true
@@ -537,8 +538,6 @@ services:
       - "log_connections=on"
       - "-c"
       - "log_disconnections=on"
-      - "-c"
-      - "idle_in_transaction_session_timeout=60s"
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=mysecretpassword

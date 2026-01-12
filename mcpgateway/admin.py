@@ -12333,7 +12333,14 @@ async def admin_list_tags(
 
 
 async def _read_request_json(request: Request) -> Any:
-    """Read JSON payload using orjson, falling back to request.json for mocks."""
+    """Read JSON payload using orjson, falling back to request.json for mocks.
+
+    Args:
+        request: Incoming FastAPI request to read JSON from.
+
+    Returns:
+        Parsed JSON payload (dict/list/etc.).
+    """
     body = await request.body()
     if isinstance(body, (bytes, bytearray, memoryview)):
         if body:

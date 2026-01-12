@@ -122,7 +122,7 @@ class ALTKJsonProcessor(Plugin):
                     if len(response_str) > self._cfg["length_threshold"]:
                         try:
                             response_json = orjson.loads(response_str)
-                        except json.decoder.JSONDecodeError:
+                        except orjson.JSONDecodeError:
                             # ignore anything that's not json
                             pass
 

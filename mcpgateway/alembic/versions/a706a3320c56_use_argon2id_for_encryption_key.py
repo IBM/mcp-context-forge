@@ -257,7 +257,7 @@ def _upgrade_json_client_secret(conn, table):
         if isinstance(cfg, str):
             try:
                 cfg = orjson.loads(cfg)
-            except json.JSONDecodeError as e:
+            except orjson.JSONDecodeError as e:
                 logger.warning("Skipping %s.id=%s: invalid JSON (%s)", table, rid, e)
                 continue
         if not isinstance(cfg, dict):
@@ -289,7 +289,7 @@ def _downgrade_json_client_secret(conn, table):
         if isinstance(cfg, str):
             try:
                 cfg = orjson.loads(cfg)
-            except json.JSONDecodeError as e:
+            except orjson.JSONDecodeError as e:
                 logger.warning("Skipping %s.id=%s: invalid JSON (%s)", table, rid, e)
                 continue
         if not isinstance(cfg, dict):

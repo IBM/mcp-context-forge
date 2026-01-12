@@ -1964,8 +1964,6 @@ async def get_model_info() -> str:
         >>> info = await get_model_info()
         >>> # Returns: {"available": true, "configured_model": "all-MiniLM-L6-v2", ...}
     """
-    import json
-
     info = similarity_engine.get_model_info()
     return _dump_json(info)
 
@@ -1995,15 +1993,12 @@ async def configure_model(model_name: str) -> str:
         >>> result = await configure_model("all-mpnet-base-v2")
         >>> # Changes model to higher quality version
     """
-    import json
-
     if not similarity_engine.available:
         return _dump_json(
             {
                 "success": False,
                 "error": "Similarity search not available. Install with: pip install sentence-transformers",
-            },
-            indent=2,
+            }
         )
 
     try:
@@ -2020,8 +2015,7 @@ async def configure_model(model_name: str) -> str:
                 "message": f"Model configured to: {model_name}",
                 "model_info": info,
                 "note": "Model will be loaded on first use",
-            },
-            indent=2,
+            }
         )
     except Exception as e:
         return _dump_json({"success": False, "error": f"Failed to configure model: {str(e)}"})
@@ -2068,15 +2062,12 @@ async def hybrid_search(
         ...     top_k=5
         ... )
     """
-    import json
-
     if not hybrid_engine.semantic_engine.available:
         return _dump_json(
             {
                 "success": False,
                 "error": "Hybrid search requires similarity features. Install with: pip install 'mcp-rss-search[similarity]'",
-            },
-            indent=2,
+            }
         )
 
     if not hybrid_engine.bm25_available:
@@ -2084,8 +2075,7 @@ async def hybrid_search(
             {
                 "success": False,
                 "error": "Hybrid search requires BM25. Install with: pip install rank-bm25",
-            },
-            indent=2,
+            }
         )
 
     # Validate weights
@@ -2132,8 +2122,7 @@ async def hybrid_search(
                 "threshold": threshold,
                 "match_count": len(results),
                 "matches": results,
-            },
-            indent=2,
+            }
         )
 
     except Exception as e:
@@ -2178,16 +2167,13 @@ async def document_search(
         ... )
         >>> # Searches: title, subtitle, summary, description, author
     """
-    import json
-
     # Check requirements based on what's enabled
     if use_semantic and not hybrid_engine.semantic_engine.available:
         return _dump_json(
             {
                 "success": False,
                 "error": "Semantic search requires similarity features. Install with: pip install 'mcp-rss-search[similarity]'",
-            },
-            indent=2,
+            }
         )
 
     if use_bm25 and not hybrid_engine.bm25_available:
@@ -2195,8 +2181,7 @@ async def document_search(
             {
                 "success": False,
                 "error": "BM25 search requires rank-bm25. Install with: pip install rank-bm25",
-            },
-            indent=2,
+            }
         )
 
     # Validate top_k

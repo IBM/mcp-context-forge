@@ -293,7 +293,7 @@ class BaseJudge(abc.ABC):
                 metadata={**metadata, "model": self.model_name},
             )
 
-        except (json.JSONDecodeError, KeyError) as e:
+        except (orjson.JSONDecodeError, KeyError) as e:
             return self._create_error_evaluation_result(criteria, str(e), response_text)
 
     def _parse_reference_response(self, response_text: str) -> "ReferenceEvaluationResult":
@@ -320,7 +320,7 @@ class BaseJudge(abc.ABC):
                 reasoning=result_data.get("reasoning", ""),
             )
 
-        except (json.JSONDecodeError, KeyError) as e:
+        except (orjson.JSONDecodeError, KeyError) as e:
             return self._create_error_reference_result(str(e))
 
     def _parse_pairwise_response(self, response_text: str, original_order: bool) -> "PairwiseResult":
@@ -362,7 +362,7 @@ class BaseJudge(abc.ABC):
                 margin=result_data.get("margin", 0.5),
             )
 
-        except (json.JSONDecodeError, KeyError) as e:
+        except (orjson.JSONDecodeError, KeyError) as e:
             return PairwiseResult(winner="tie", confidence_score=0.3, reasoning=f"Error parsing judge response: {str(e)}", criterion_scores={}, margin=0.0)
 
     async def _base_pairwise_comparison(
