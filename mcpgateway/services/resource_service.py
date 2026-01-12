@@ -23,6 +23,7 @@ Examples:
 # Standard
 from datetime import datetime, timezone
 from functools import lru_cache
+import hashlib
 import mimetypes
 import os
 import re
@@ -103,6 +104,46 @@ logger = logging_service.get_logger(__name__)
 # Initialize structured logger and audit trail for resource operations
 structured_logger = get_structured_logger("resource_service")
 audit_trail = get_audit_trail_service()
+
+# Cache for SSL contexts keyed by CA certificate hash
+_ssl_context_cache: dict[str, ssl.SSLContext] = {}
+
+
+def _get_cached_ssl_context(ca_certificate: str) -> ssl.SSLContext:
+    """Get or create cached SSL context for a CA certificate.
+
+    Args:
+        ca_certificate: CA certificate in PEM format
+
+    Returns:
+        ssl.SSLContext: Configured SSL context
+    """
+    # Use hash of cert as cache key
+    cert_hash = hashlib.sha256(ca_certificate.encode()).hexdigest()
+    
+    if cert_hash in _ssl_context_cache:
+        return _ssl_context_cache[cert_hash]
+    
+    # Create new SSL context
+    ctx = ssl.create_default_context()
+    ctx.load_verify_locations(cadata=ca_certificate)
+    
+    # Cache it (limit cache size)
+    if len(_ssl_context_cache) > 100:
+        _ssl_context_cache.clear()
+    _ssl_context_cache[cert_hash] = ctx
+    
+    return ctx
+
+
+def clear_ssl_context_cache() -> None:
+    """Clear the SSL context cache.
+
+    Call this function:
+    - In test fixtures to ensure test isolation
+    - After CA certificate rotation
+    """
+    _ssl_context_cache.clear()
 
 
 class ResourceError(Exception):
@@ -1268,15 +1309,15 @@ class ResourceService:
     def create_ssl_context(self, ca_certificate: str) -> ssl.SSLContext:
         """Create an SSL context with the provided CA certificate.
 
+        Uses caching to avoid repeated SSL context creation for the same certificate.
+
         Args:
             ca_certificate: CA certificate in PEM format
 
         Returns:
             ssl.SSLContext: Configured SSL context
         """
-        ctx = ssl.create_default_context()
-        ctx.load_verify_locations(cadata=ca_certificate)
-        return ctx
+        return _get_cached_ssl_context(ca_certificate)
 
     async def invoke_resource(self, db: Session, resource_id: str, resource_uri: str, resource_template_uri: Optional[str] = None, user_identity: Optional[Union[str, Dict[str, Any]]] = None) -> Any:
         """
