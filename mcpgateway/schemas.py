@@ -2523,7 +2523,7 @@ class GatewayCreate(BaseModel):
     signing_algorithm: Optional[str] = Field("ed25519", description="Algorithm used for signing the CA certificate")
 
     # Per-gateway refresh configuration
-    refresh_interval_seconds: Optional[int] = Field(None, ge=1, description="Per-gateway refresh interval in seconds (minimum 60); uses global default if not set")
+    refresh_interval_seconds: Optional[int] = Field(None, ge=60, description="Per-gateway refresh interval in seconds (minimum 60); uses global default if not set")
 
     @field_validator("tags")
     @classmethod
@@ -2791,7 +2791,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
     visibility: Optional[str] = Field(None, description="Gateway visibility: private, team, or public")
 
     # Per-gateway refresh configuration
-    refresh_interval_seconds: Optional[int] = Field(None, ge=1, description="Per-gateway refresh interval in seconds (minimum 60); uses global default if not set")
+    refresh_interval_seconds: Optional[int] = Field(None, ge=60, description="Per-gateway refresh interval in seconds (minimum 60); uses global default if not set")
 
     @field_validator("tags")
     @classmethod

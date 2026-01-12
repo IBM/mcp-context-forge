@@ -1824,7 +1824,7 @@ class TestGatewayRefresh:
         session.execute.return_value = _make_execute_result(scalar=mock_gateway_with_relations)
 
         with patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=mock_db_session):
-            # Mock the internal refresh method
+            # Mock the internal refresh method (which handles last_refresh_at update internally)
             gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock(return_value={
                 "success": True,
                 "tools_added": 5,
@@ -1839,10 +1839,12 @@ class TestGatewayRefresh:
 
             assert result["success"] is True
             assert result["tools_added"] == 5
+            assert "duration_ms" in result
+            assert "refreshed_at" in result
             gateway_service._refresh_gateway_tools_resources_prompts.assert_called_once()
-            # Verify last_refresh_at update was committed
-            assert mock_gateway_with_relations.last_refresh_at is not None
-            session.commit.assert_called()
+            # Verify internal method was called with correct params
+            args, kwargs = gateway_service._refresh_gateway_tools_resources_prompts.call_args
+            assert kwargs["created_via"] == "manual_refresh"
 
     @pytest.mark.asyncio
     async def test_manual_refresh_gateway_not_found(self, gateway_service, mock_db_session):

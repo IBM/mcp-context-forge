@@ -4371,8 +4371,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 return result
 
             new_tool_names = [tool.name for tool in tools]
-            new_resource_uris = [resource.uri for resource in resources]
-            new_prompt_names = [prompt.name for prompt in prompts]
+            new_resource_uris = [resource.uri for resource in resources] if include_resources else None
+            new_prompt_names = [prompt.name for prompt in prompts] if include_prompts else None
 
             # Track dirty objects before update operations to count per-type updates
             pending_tools_before = {obj for obj in db.dirty if isinstance(obj, DbTool)}
@@ -4381,8 +4381,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             # Update/create tools, resources, and prompts
             tools_to_add = self._update_or_create_tools(db, tools, gateway, created_via)
-            resources_to_add = self._update_or_create_resources(db, resources, gateway, created_via)
-            prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, created_via)
+            resources_to_add = self._update_or_create_resources(db, resources, gateway, created_via) if include_resources else []
+            prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, created_via) if include_prompts else []
 
             # Count per-type updates
             result["tools_updated"] = len({obj for obj in db.dirty if isinstance(obj, DbTool)} - pending_tools_before)
@@ -4403,26 +4403,30 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
                 result["tools_removed"] = len(stale_tool_ids)
 
-            # Find and remove stale resources (only MCP-discovered ones)
-            stale_resource_ids = [resource.id for resource in gateway.resources if resource.uri not in new_resource_uris and resource.created_via in mcp_created_via_values]
-            if stale_resource_ids:
-                for i in range(0, len(stale_resource_ids), 500):
-                    chunk = stale_resource_ids[i : i + 500]
-                    db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk)))
-                    db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk)))
-                    db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk)))
-                    db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
-                result["resources_removed"] = len(stale_resource_ids)
+            # Find and remove stale resources (only MCP-discovered ones, only if resources were fetched)
+            stale_resource_ids = []
+            if new_resource_uris is not None:
+                stale_resource_ids = [resource.id for resource in gateway.resources if resource.uri not in new_resource_uris and resource.created_via in mcp_created_via_values]
+                if stale_resource_ids:
+                    for i in range(0, len(stale_resource_ids), 500):
+                        chunk = stale_resource_ids[i : i + 500]
+                        db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk)))
+                        db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk)))
+                        db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk)))
+                        db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
+                    result["resources_removed"] = len(stale_resource_ids)
 
-            # Find and remove stale prompts (only MCP-discovered ones)
-            stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.original_name not in new_prompt_names and prompt.created_via in mcp_created_via_values]
-            if stale_prompt_ids:
-                for i in range(0, len(stale_prompt_ids), 500):
-                    chunk = stale_prompt_ids[i : i + 500]
-                    db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk)))
-                    db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
-                    db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
-                result["prompts_removed"] = len(stale_prompt_ids)
+            # Find and remove stale prompts (only MCP-discovered ones, only if prompts were fetched)
+            stale_prompt_ids = []
+            if new_prompt_names is not None:
+                stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.original_name not in new_prompt_names and prompt.created_via in mcp_created_via_values]
+                if stale_prompt_ids:
+                    for i in range(0, len(stale_prompt_ids), 500):
+                        chunk = stale_prompt_ids[i : i + 500]
+                        db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk)))
+                        db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
+                        db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
+                    result["prompts_removed"] = len(stale_prompt_ids)
 
             # Expire gateway if stale items were deleted
             if stale_tool_ids or stale_resource_ids or stale_prompt_ids:
@@ -4595,13 +4599,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 include_resources=include_resources,
                 include_prompts=include_prompts,
             )
-
-            # Update last_refresh_at timestamp
-            with fresh_db_session() as db:
-                gw = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
-                if gw:
-                    gw.last_refresh_at = datetime.now(timezone.utc)
-                    db.commit()
+            # Note: last_refresh_at is updated inside _refresh_gateway_tools_resources_prompts on success
 
         result["duration_ms"] = (time.monotonic() - start_time) * 1000
         result["refreshed_at"] = datetime.now(timezone.utc)
