@@ -41,6 +41,14 @@
           "maximum": 100,
           "default": 2
         },
+        "extraEnvFrom": {
+            "type": "array",
+            "description": "Additional environment variables from secrets or configs",
+            "items": {
+                "type": "object"
+            },
+            "default": []
+        },
         "hpa": {
           "type": "object",
           "description": "Horizontal Pod Autoscaler configuration",
