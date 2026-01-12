@@ -617,7 +617,7 @@ mcpContextForge:
     SSO_PRESERVE_ADMIN_AUTH: "true"        # preserve local admin authentication when SSO enabled
     SSO_REQUIRE_ADMIN_APPROVAL: "false"    # require admin approval for new SSO registrations
     SSO_AUTO_ADMIN_DOMAINS: "[]"           # email domains that automatically get admin privileges
-    SSO_ISSUERS: ""                        # optional JSON array of issuer URLs for SSO providers
+    SSO_ISSUERS: "[]"                      # optional JSON array of issuer URLs for SSO providers
 
     # ─ GitHub OAuth ─
     SSO_GITHUB_ENABLED: "false"            # enable GitHub OAuth authentication
