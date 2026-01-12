@@ -8,7 +8,6 @@ visualization, and transformation capabilities.
 
 # Standard
 import asyncio
-import json
 import logging
 import sys
 from collections.abc import Sequence
@@ -16,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import orjson
 import yaml
 
 # Third-Party
@@ -62,25 +62,21 @@ logger = logging.getLogger(__name__)
 server = Server("data-analysis-server")
 
 
-class NumpyJSONEncoder(json.JSONEncoder):
-    """Custom JSON encoder that handles NumPy data types and pandas objects."""
-
-    def default(self, obj):
-        if isinstance(obj, np.integer):
-            return int(obj)
-        elif isinstance(obj, np.floating):
-            return float(obj)
-        elif isinstance(obj, np.ndarray):
-            return obj.tolist()
-        elif hasattr(obj, "item"):  # pandas scalars
-            return obj.item()
-        # Handle pandas Timestamp objects
-        elif hasattr(obj, "isoformat"):  # datetime-like objects
-            return obj.isoformat()
-        # Handle pandas DataFrames and Series
-        elif hasattr(obj, "to_dict"):
-            return obj.to_dict()
-        return super().default(obj)
+def _orjson_default(obj: Any) -> Any:
+    """Serialize NumPy/Pandas objects for orjson."""
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if hasattr(obj, "item"):  # pandas scalars
+        return obj.item()
+    if hasattr(obj, "isoformat"):  # datetime-like objects
+        return obj.isoformat()
+    if hasattr(obj, "to_dict"):
+        return obj.to_dict()
+    raise TypeError
 
 
 class DataAnalysisServer:
@@ -764,7 +760,12 @@ async def handle_call_tool(
 
     return [
         TextContent(
-            type="text", text=json.dumps(result, indent=2, cls=NumpyJSONEncoder)
+            type="text",
+            text=orjson.dumps(
+                result,
+                default=_orjson_default,
+                option=orjson.OPT_INDENT_2 | orjson.OPT_SERIALIZE_NUMPY,
+            ).decode(),
         )
     ]
 

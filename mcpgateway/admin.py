@@ -25,7 +25,6 @@ from datetime import datetime, timedelta, timezone
 from functools import wraps
 import html
 import io
-import json
 import logging
 import math
 import os
@@ -4232,7 +4231,7 @@ async def admin_create_team(
         """
 
         response = HTMLResponse(content=team_html, status_code=201)
-        response.headers["HX-Trigger"] = json.dumps({"adminTeamAction": {"resetTeamCreateForm": True, "delayMs": 500}})
+        response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"resetTeamCreateForm": True, "delayMs": 500}}).decode()
         return response
 
     except IntegrityError as e:
@@ -4744,7 +4743,7 @@ async def admin_update_team(
             </div>
             """
             response = HTMLResponse(content=success_html)
-            response.headers["HX-Trigger"] = json.dumps({"adminTeamAction": {"closeTeamEditModal": True, "refreshTeamsList": True, "delayMs": 1500}})
+            response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"closeTeamEditModal": True, "refreshTeamsList": True, "delayMs": 1500}}).decode()
             return response
         # For regular form submission, redirect to admin page with teams section
         return RedirectResponse(url=f"{root_path}/admin/#teams", status_code=303)
@@ -4801,7 +4800,7 @@ async def admin_delete_team(
         </div>
         """
         response = HTMLResponse(content=success_html)
-        response.headers["HX-Trigger"] = json.dumps({"adminTeamAction": {"refreshUnifiedTeamsList": True, "delayMs": 1000}})
+        response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"refreshUnifiedTeamsList": True, "delayMs": 1000}}).decode()
         return response
 
     except Exception as e:
@@ -4949,7 +4948,7 @@ async def admin_add_team_members(
         </div>
         """
         response = HTMLResponse(content=success_html)
-        response.headers["HX-Trigger"] = json.dumps(
+        response.headers["HX-Trigger"] = orjson.dumps(
             {
                 "adminTeamAction": {
                     "teamId": team_id,
@@ -4958,7 +4957,7 @@ async def admin_add_team_members(
                     "delayMs": 1000 if len(user_emails) == 1 else 2000,
                 }
             }
-        )
+        ).decode()
         return response
 
     except Exception as e:
@@ -5024,7 +5023,7 @@ async def admin_update_team_member_role(
         </div>
         """
         response = HTMLResponse(content=success_html)
-        response.headers["HX-Trigger"] = json.dumps(
+        response.headers["HX-Trigger"] = orjson.dumps(
             {
                 "adminTeamAction": {
                     "teamId": team_id,
@@ -5034,7 +5033,7 @@ async def admin_update_team_member_role(
                     "delayMs": 1000,
                 }
             }
-        )
+        ).decode()
         return response
 
     except Exception as e:
@@ -5102,7 +5101,7 @@ async def admin_remove_team_member(
         </div>
         """
         response = HTMLResponse(content=success_html)
-        response.headers["HX-Trigger"] = json.dumps(
+        response.headers["HX-Trigger"] = orjson.dumps(
             {
                 "adminTeamAction": {
                     "teamId": team_id,
@@ -5111,7 +5110,7 @@ async def admin_remove_team_member(
                     "delayMs": 1000,
                 }
             }
-        )
+        ).decode()
         return response
 
     except Exception as e:
@@ -5179,7 +5178,7 @@ async def admin_leave_team(
         </div>
         """
         response = HTMLResponse(content=success_html)
-        response.headers["HX-Trigger"] = json.dumps({"adminTeamAction": {"refreshUnifiedTeamsList": True, "closeAllModals": True, "delayMs": 1500}})
+        response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"refreshUnifiedTeamsList": True, "closeAllModals": True, "delayMs": 1500}}).decode()
         return response
 
     except Exception as e:
@@ -5451,7 +5450,7 @@ async def admin_approve_join_request(
         """,
             status_code=200,
         )
-        response.headers["HX-Trigger"] = json.dumps({"adminTeamAction": {"teamId": team_id, "refreshJoinRequests": True, "delayMs": 1000}})
+        response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"teamId": team_id, "refreshJoinRequests": True, "delayMs": 1000}}).decode()
         return response
 
     except Exception as e:
@@ -5503,7 +5502,7 @@ async def admin_reject_join_request(
         """,
             status_code=200,
         )
-        response.headers["HX-Trigger"] = json.dumps({"adminTeamAction": {"teamId": team_id, "refreshJoinRequests": True, "delayMs": 1000}})
+        response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"teamId": team_id, "refreshJoinRequests": True, "delayMs": 1000}}).decode()
         return response
 
     except Exception as e:
@@ -6299,7 +6298,7 @@ async def admin_update_user(
         </div>
         """
         response = HTMLResponse(content=success_html)
-        response.headers["HX-Trigger"] = json.dumps({"adminUserAction": {"closeUserEditModal": True, "refreshUsersList": True, "delayMs": 1500}})
+        response.headers["HX-Trigger"] = orjson.dumps({"adminUserAction": {"closeUserEditModal": True, "refreshUsersList": True, "delayMs": 1500}}).decode()
         return response
 
     except Exception as e:
@@ -8686,7 +8685,7 @@ async def admin_add_tool(
         >>> from starlette.datastructures import FormData
         >>> from sqlalchemy.exc import IntegrityError
         >>> from mcpgateway.utils.error_formatter import ErrorFormatter
-        >>> import json
+        >>> import orjson
 
         >>> mock_db = MagicMock()
         >>> mock_user = {"email": "test_user", "db": mock_db}
@@ -8706,7 +8705,7 @@ async def admin_add_tool(
 
         >>> async def test_admin_add_tool_success():
         ...     response = await admin_add_tool(mock_request_success, mock_db, mock_user)
-        ...     return isinstance(response, JSONResponse) and response.status_code == 200 and json.loads(response.body.decode())["success"] is True
+        ...     return isinstance(response, JSONResponse) and response.status_code == 200 and orjson.loads(response.body.decode())["success"] is True
 
         >>> asyncio.run(test_admin_add_tool_success())
         True
@@ -8725,7 +8724,7 @@ async def admin_add_tool(
 
         >>> async def test_admin_add_tool_integrity_error():
         ...     response = await admin_add_tool(mock_request_conflict, mock_db, mock_user)
-        ...     return isinstance(response, JSONResponse) and response.status_code == 409 and json.loads(response.body.decode())["success"] is False
+        ...     return isinstance(response, JSONResponse) and response.status_code == 409 and orjson.loads(response.body.decode())["success"] is False
 
         >>> asyncio.run(test_admin_add_tool_integrity_error())
         True
@@ -8741,7 +8740,7 @@ async def admin_add_tool(
 
         >>> async def test_admin_add_tool_validation_error():
         ...     response = await admin_add_tool(mock_request_missing, mock_db, mock_user)
-        ...     return isinstance(response, JSONResponse) and response.status_code == 422 and json.loads(response.body.decode())["success"] is False
+        ...     return isinstance(response, JSONResponse) and response.status_code == 422 and orjson.loads(response.body.decode())["success"] is False
 
         >>> asyncio.run(test_admin_add_tool_validation_error())  # doctest: +ELLIPSIS
         True
@@ -8759,7 +8758,7 @@ async def admin_add_tool(
 
         >>> async def test_admin_add_tool_generic_exception():
         ...     response = await admin_add_tool(mock_request_generic_error, mock_db, mock_user)
-        ...     return isinstance(response, JSONResponse) and response.status_code == 500 and json.loads(response.body.decode())["success"] is False
+        ...     return isinstance(response, JSONResponse) and response.status_code == 500 and orjson.loads(response.body.decode())["success"] is False
 
         >>> asyncio.run(test_admin_add_tool_generic_exception())
         True
@@ -8918,7 +8917,7 @@ async def admin_edit_tool(
         >>> from mcpgateway.services.tool_service import ToolError
         >>> from pydantic import ValidationError
         >>> from mcpgateway.utils.error_formatter import ErrorFormatter
-        >>> import json
+        >>> import orjson
 
         >>> mock_db = MagicMock()
         >>> mock_user = {"email": "test_user", "db": mock_db}
@@ -8942,7 +8941,7 @@ async def admin_edit_tool(
 
         >>> async def test_admin_edit_tool_success():
         ...     response = await admin_edit_tool(tool_id, mock_request_success, mock_db, mock_user)
-        ...     return isinstance(response, JSONResponse) and response.status_code == 200 and json.loads(response.body.decode())["success"] is True
+        ...     return isinstance(response, JSONResponse) and response.status_code == 200 and orjson.loads(response.body.decode())["success"] is True
 
         >>> asyncio.run(test_admin_edit_tool_success())
         True
@@ -8961,7 +8960,7 @@ async def admin_edit_tool(
 
         >>> async def test_admin_edit_tool_inactive_checked():
         ...     response = await admin_edit_tool(tool_id, mock_request_inactive, mock_db, mock_user)
-        ...     return isinstance(response, JSONResponse) and response.status_code == 200 and json.loads(response.body.decode())["success"] is True
+        ...     return isinstance(response, JSONResponse) and response.status_code == 200 and orjson.loads(response.body.decode())["success"] is True
 
         >>> asyncio.run(test_admin_edit_tool_inactive_checked())
         True
@@ -8980,7 +8979,7 @@ async def admin_edit_tool(
 
         >>> async def test_admin_edit_tool_integrity_error():
         ...     response = await admin_edit_tool(tool_id, mock_request_conflict, mock_db, mock_user)
-        ...     return isinstance(response, JSONResponse) and response.status_code == 409 and json.loads(response.body.decode())["success"] is False
+        ...     return isinstance(response, JSONResponse) and response.status_code == 409 and orjson.loads(response.body.decode())["success"] is False
 
         >>> asyncio.run(test_admin_edit_tool_integrity_error())
         True
@@ -8999,7 +8998,7 @@ async def admin_edit_tool(
 
         >>> async def test_admin_edit_tool_tool_error():
         ...     response = await admin_edit_tool(tool_id, mock_request_tool_error, mock_db, mock_user)
-        ...     return isinstance(response, JSONResponse) and response.status_code == 500 and json.loads(response.body.decode())["success"] is False
+        ...     return isinstance(response, JSONResponse) and response.status_code == 500 and orjson.loads(response.body.decode())["success"] is False
 
         >>> asyncio.run(test_admin_edit_tool_tool_error())
         True
@@ -9017,7 +9016,7 @@ async def admin_edit_tool(
 
         >>> async def test_admin_edit_tool_validation_error():
         ...     response = await admin_edit_tool(tool_id, mock_request_validation_error, mock_db, mock_user)
-        ...     return isinstance(response, JSONResponse) and response.status_code == 422 and json.loads(response.body.decode())["success"] is False
+        ...     return isinstance(response, JSONResponse) and response.status_code == 422 and orjson.loads(response.body.decode())["success"] is False
 
         >>> asyncio.run(test_admin_edit_tool_validation_error())
         True
@@ -9036,7 +9035,7 @@ async def admin_edit_tool(
 
         >>> async def test_admin_edit_tool_unexpected_error():
         ...     response = await admin_edit_tool(tool_id, mock_request_unexpected, mock_db, mock_user)
-        ...     return isinstance(response, JSONResponse) and response.status_code == 500 and json.loads(response.body.decode())["success"] is False
+        ...     return isinstance(response, JSONResponse) and response.status_code == 500 and orjson.loads(response.body.decode())["success"] is False
 
         >>> asyncio.run(test_admin_edit_tool_unexpected_error())
         True
@@ -9480,7 +9479,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         >>> from pydantic import ValidationError
         >>> from sqlalchemy.exc import IntegrityError
         >>> from mcpgateway.utils.error_formatter import ErrorFormatter
-        >>> import json # Added import for json.loads
+        >>> import orjson
         >>>
         >>> mock_db = MagicMock()
         >>> mock_user = {"email": "test_user", "db": mock_db}
@@ -9502,7 +9501,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         >>> async def test_admin_add_gateway_success():
         ...     response = await admin_add_gateway(mock_request_success, mock_db, mock_user)
         ...     # Corrected: Access body and then parse JSON
-        ...     return isinstance(response, JSONResponse) and response.status_code == 200 and json.loads(response.body)["success"] is True
+        ...     return isinstance(response, JSONResponse) and response.status_code == 200 and orjson.loads(response.body)["success"] is True
         >>>
         >>> asyncio.run(test_admin_add_gateway_success())
         True
@@ -9515,7 +9514,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         >>>
         >>> async def test_admin_add_gateway_connection_error():
         ...     response = await admin_add_gateway(mock_request_conn_error, mock_db, mock_user)
-        ...     return isinstance(response, JSONResponse) and response.status_code == 502 and json.loads(response.body)["success"] is False
+        ...     return isinstance(response, JSONResponse) and response.status_code == 502 and orjson.loads(response.body)["success"] is False
         >>>
         >>> asyncio.run(test_admin_add_gateway_connection_error())
         True
@@ -9528,7 +9527,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         >>>
         >>> async def test_admin_add_gateway_validation_error():
         ...     response = await admin_add_gateway(mock_request_validation_error, mock_db, mock_user)
-        ...     return isinstance(response, JSONResponse) and response.status_code == 422 and json.loads(response.body.decode())["success"] is False
+        ...     return isinstance(response, JSONResponse) and response.status_code == 422 and orjson.loads(response.body.decode())["success"] is False
         >>>
         >>> asyncio.run(test_admin_add_gateway_validation_error())
         True
@@ -9542,7 +9541,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         >>>
         >>> async def test_admin_add_gateway_integrity_error():
         ...     response = await admin_add_gateway(mock_request_integrity_error, mock_db, mock_user)
-        ...     return isinstance(response, JSONResponse) and response.status_code == 409 and json.loads(response.body.decode())["success"] is False
+        ...     return isinstance(response, JSONResponse) and response.status_code == 409 and orjson.loads(response.body.decode())["success"] is False
         >>>
         >>> asyncio.run(test_admin_add_gateway_integrity_error())
         True
@@ -9555,7 +9554,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         >>>
         >>> async def test_admin_add_gateway_runtime_error():
         ...     response = await admin_add_gateway(mock_request_runtime_error, mock_db, mock_user)
-        ...     return isinstance(response, JSONResponse) and response.status_code == 500 and json.loads(response.body.decode())["success"] is False
+        ...     return isinstance(response, JSONResponse) and response.status_code == 500 and orjson.loads(response.body.decode())["success"] is False
         >>>
         >>> asyncio.run(test_admin_add_gateway_runtime_error())
         True
@@ -9840,7 +9839,7 @@ async def admin_edit_gateway(
         >>>
         >>> async def test_admin_edit_gateway_success():
         ...     response = await admin_edit_gateway(gateway_id, mock_request_success, mock_db, mock_user)
-        ...     return isinstance(response, JSONResponse) and response.status_code == 200 and json.loads(response.body)["success"] is True
+        ...     return isinstance(response, JSONResponse) and response.status_code == 200 and orjson.loads(response.body)["success"] is True
         >>>
         >>> asyncio.run(test_admin_edit_gateway_success())
         True
@@ -9870,8 +9869,8 @@ async def admin_edit_gateway(
         ...     return (
         ...         isinstance(response, JSONResponse)
         ...         and response.status_code == 500
-        ...         and json.loads(response.body)["success"] is False
-        ...         and "Update failed" in json.loads(response.body)["message"]
+        ...         and orjson.loads(response.body)["success"] is False
+        ...         and "Update failed" in orjson.loads(response.body)["message"]
         ...     )
         >>>
         >>> asyncio.run(test_admin_edit_gateway_exception())
@@ -9885,7 +9884,7 @@ async def admin_edit_gateway(
         >>>
         >>> async def test_admin_edit_gateway_validation_error():
         ...     response = await admin_edit_gateway(gateway_id, mock_request_validation_error, mock_db, mock_user)
-        ...     body = json.loads(response.body.decode())
+        ...     body = orjson.loads(response.body.decode())
         ...     return isinstance(response, JSONResponse) and response.status_code in (422,400) and body["success"] is False
         >>>
         >>> asyncio.run(test_admin_edit_gateway_validation_error())
@@ -11798,7 +11797,7 @@ async def admin_test_gateway(
         ...         self.status_code = 200
         ...         self.text = "plain text response"
         ...     def json(self):
-        ...         raise json.JSONDecodeError("Invalid JSON", "doc", 0)
+        ...         raise ValueError("Invalid JSON")
         >>>
         >>> class MockClientTextOnly:
         ...     async def __aenter__(self):
@@ -11952,7 +11951,7 @@ async def admin_test_gateway(
         latency_ms = int((time.monotonic() - start_time) * 1000)
         try:
             response_body: Union[Dict[str, Any], str] = response.json()
-        except json.JSONDecodeError:
+        except ValueError:
             response_body = {"details": response.text}
 
         # Structured logging: Log successful gateway test
@@ -12157,7 +12156,7 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
         Example:
             Basic doctest demonstrating SSE formatting from mock data:
 
-            >>> import json, asyncio
+            >>> import orjson, asyncio
             >>> class DummyRequest:
             ...     async def is_disconnected(self):
             ...         return False
@@ -12333,6 +12332,24 @@ async def admin_list_tags(
         raise HTTPException(status_code=500, detail=f"Failed to retrieve tags: {str(e)}")
 
 
+async def _read_request_json(request: Request) -> Any:
+    """Read JSON payload using orjson, falling back to request.json for mocks.
+
+    Args:
+        request: Incoming FastAPI request to read JSON from.
+
+    Returns:
+        Parsed JSON payload (dict/list/etc.).
+    """
+    body = await request.body()
+    if isinstance(body, (bytes, bytearray, memoryview)):
+        if body:
+            return orjson.loads(body)
+    elif isinstance(body, str) and body:
+        return orjson.loads(body)
+    return await request.json()
+
+
 @admin_router.post("/tools/import/")
 @admin_router.post("/tools/import")
 @rate_limit(requests_per_minute=settings.mcpgateway_bulk_import_rate_limit)
@@ -12368,7 +12385,7 @@ async def admin_import_tools(
         ctype = (request.headers.get("content-type") or "").lower()
         if "application/json" in ctype:
             try:
-                payload = await request.json()
+                payload = await _read_request_json(request)
             except Exception as ex:
                 LOGGER.exception("Invalid JSON body")
                 return ORJSONResponse({"success": False, "message": f"Invalid JSON: {ex}"}, status_code=422)
@@ -12880,7 +12897,7 @@ async def admin_export_logs(
 
     if export_format == "json":
         # Export as JSON
-        content = json.dumps(logs, indent=2, default=str)
+        content = orjson.dumps(logs, default=str, option=orjson.OPT_INDENT_2).decode()
         return Response(
             content=content,
             media_type="application/json",
@@ -12995,7 +13012,7 @@ async def admin_export_configuration(
         filename = f"mcpgateway-config-export-{timestamp}.json"
 
         # Return as downloadable file
-        content = json.dumps(export_data, indent=2, ensure_ascii=False)
+        content = orjson.dumps(export_data, option=orjson.OPT_INDENT_2).decode()
         return Response(
             content=content,
             media_type="application/json",
@@ -13041,7 +13058,7 @@ async def admin_export_selective(request: Request, db: Session = Depends(get_db)
     try:
         LOGGER.info(f"Admin user {user} requested selective configuration export")
 
-        body = await request.json()
+        body = await _read_request_json(request)
         entity_selections = body.get("entity_selections", {})
         include_dependencies = body.get("include_dependencies", True)
 
@@ -13059,7 +13076,7 @@ async def admin_export_selective(request: Request, db: Session = Depends(get_db)
         filename = f"mcpgateway-selective-export-{timestamp}.json"
 
         # Return as downloadable file
-        content = json.dumps(export_data, indent=2, ensure_ascii=False)
+        content = orjson.dumps(export_data, option=orjson.OPT_INDENT_2).decode()
         return Response(
             content=content,
             media_type="application/json",
@@ -13104,7 +13121,7 @@ async def admin_import_preview(request: Request, db: Session = Depends(get_db), 
 
         # Parse request data
         try:
-            data = await request.json()
+            data = await _read_request_json(request)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
 
@@ -13159,7 +13176,7 @@ async def admin_import_configuration(request: Request, db: Session = Depends(get
     try:
         LOGGER.info(f"Admin user {user} requested configuration import")
 
-        body = await request.json()
+        body = await _read_request_json(request)
         import_data = body.get("import_data")
         if not import_data:
             raise HTTPException(status_code=400, detail="Missing import_data in request body")
@@ -13731,7 +13748,7 @@ async def admin_edit_a2a_agent(
         >>>
         >>> async def test_admin_edit_a2a_agent_success():
         ...     response = await admin_edit_a2a_agent(agent_id, mock_request_success, mock_db, mock_user)
-        ...     body = json.loads(response.body)
+        ...     body = orjson.loads(response.body)
         ...     return isinstance(response, JSONResponse) and response.status_code == 200 and body["success"] is True
         >>>
         >>> asyncio.run(test_admin_edit_a2a_agent_success())
@@ -13751,7 +13768,7 @@ async def admin_edit_a2a_agent(
         >>>
         >>> async def test_admin_edit_a2a_agent_exception():
         ...     response = await admin_edit_a2a_agent(agent_id, mock_request_error, mock_db, mock_user)
-        ...     body = json.loads(response.body)
+        ...     body = orjson.loads(response.body)
         ...     return isinstance(response, JSONResponse) and response.status_code == 500 and body["success"] is False and "Update failed" in body["message"]
         >>>
         >>> asyncio.run(test_admin_edit_a2a_agent_exception())
@@ -13770,7 +13787,7 @@ async def admin_edit_a2a_agent(
         >>>
         >>> async def test_admin_edit_a2a_agent_validation():
         ...     response = await admin_edit_a2a_agent(agent_id, mock_request_validation, mock_db, mock_user)
-        ...     body = json.loads(response.body)
+        ...     body = orjson.loads(response.body)
         ...     return isinstance(response, JSONResponse) and response.status_code in (422, 400) and body["success"] is False
         >>>
         >>> asyncio.run(test_admin_edit_a2a_agent_validation())
@@ -14092,7 +14109,7 @@ async def admin_test_a2a_agent(
         # Parse request body to get user-provided query
         default_message = "Hello from MCP Gateway Admin UI test!"
         try:
-            body = await request.json()
+            body = await _read_request_json(request)
             # Use 'or' to also handle empty string queries
             user_query = (body.get("query") if body else None) or default_message
         except Exception:

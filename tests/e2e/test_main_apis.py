@@ -1502,7 +1502,10 @@ class TestUtilityAPIs:
     async def test_rpc_no_body(self, client: AsyncClient, mock_auth):
         """Test POST /rpc with no body (should fail validation)."""
         response = await client.post("/rpc", headers=TEST_AUTH_HEADER)
-        assert response.status_code in [400, 422]
+        assert response.status_code == 400
+        body = response.json()
+        assert body["error"]["code"] == -32700
+        assert body["error"]["message"] == "Parse error"
 
     """Test utility endpoints (RPC, logging, etc)."""
 

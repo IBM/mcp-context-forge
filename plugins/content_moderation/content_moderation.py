@@ -13,13 +13,13 @@ from __future__ import annotations
 
 # Standard
 from enum import Enum
-import json
 import logging
 import re
 from typing import Any, Dict, List, Optional
 
 # Third-Party
 import httpx
+import orjson
 from pydantic import BaseModel, Field
 
 # First-Party
@@ -375,8 +375,8 @@ Respond with JSON format:
 
             # Parse JSON response from Granite
             try:
-                categories = json.loads(response_text)
-            except json.JSONDecodeError:
+                categories = orjson.loads(response_text)
+            except orjson.JSONDecodeError:
                 # Fallback parsing if JSON is not perfect
                 categories = {}
                 for cat in ModerationCategory:

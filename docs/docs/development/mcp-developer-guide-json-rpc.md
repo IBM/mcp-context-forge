@@ -765,6 +765,11 @@ MCP follows JSON-RPC 2.0 error handling standards:
 | -32603 | Internal error | Internal JSON-RPC error |
 | -32000 to -32099 | Server error | Reserved for implementation-defined server-errors |
 
+!!! note
+    For parse errors (-32700), the response `id` is null per JSON-RPC. Some SDKs use
+    a placeholder like `"server-error"`; clients should not rely on an ID for parse
+    errors.
+
 ### Troubleshooting Common Issues
 
 #### 1. Authentication Problems

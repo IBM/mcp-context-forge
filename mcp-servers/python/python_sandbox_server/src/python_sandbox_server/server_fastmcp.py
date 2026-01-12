@@ -19,7 +19,6 @@ Security Features:
 - Comprehensive logging and monitoring
 """
 
-import json
 import logging
 import os
 import signal
@@ -30,6 +29,7 @@ from io import StringIO
 from typing import Any
 from uuid import uuid4
 
+import orjson
 from fastmcp import FastMCP
 from pydantic import Field
 
@@ -638,7 +638,7 @@ class PythonSandbox:
             # Format result for JSON serialization
             if result is not None:
                 try:
-                    json.dumps(result)
+                    orjson.dumps(result)
                 except (TypeError, ValueError):
                     result = str(result)
 

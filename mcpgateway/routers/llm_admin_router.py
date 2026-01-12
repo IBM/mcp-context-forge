@@ -14,6 +14,7 @@ from typing import Optional
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse
+import orjson
 
 # First-Party
 from mcpgateway.db import LLMProviderType
@@ -505,7 +506,7 @@ async def admin_test_api(
     from mcpgateway.utils.orjson_response import ORJSONResponse
 
     db = current_user_ctx["db"]
-    body = await request.json()
+    body = orjson.loads(await request.body())
 
     test_type = body.get("test_type", "models")
     model_id = body.get("model_id")

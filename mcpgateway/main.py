@@ -30,7 +30,6 @@ import asyncio
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime
 from functools import lru_cache
-import json
 import os as _os  # local alias to avoid collisions
 import sys
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
@@ -1188,7 +1187,7 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
         >>> result = asyncio.run(plugin_violation_exception_handler(None, mock_error))
         >>> result.status_code
         200
-        >>> content = json.loads(result.body.decode())
+        >>> content = orjson.loads(result.body.decode())
         >>> content["error"]["code"]
         -32602
         >>> "Plugin Violation:" in content["error"]["message"]
@@ -1247,7 +1246,7 @@ async def plugin_exception_handler(_request: Request, exc: PluginError):
         >>> result = asyncio.run(plugin_exception_handler(None, mock_error))
         >>> result.status_code
         200
-        >>> content = json.loads(result.body.decode())
+        >>> content = orjson.loads(result.body.decode())
         >>> content["error"]["code"]
         -32603
         >>> "Plugin Error:" in content["error"]["message"]
@@ -1695,6 +1694,27 @@ def get_db():
         db.close()
 
 
+async def _read_request_json(request: Request) -> Any:
+    """Read JSON payload using orjson.
+
+    Args:
+        request: Incoming FastAPI request to read JSON from.
+
+    Returns:
+        Parsed JSON payload.
+
+    Raises:
+        HTTPException: 400 for invalid JSON bodies.
+    """
+    body = await request.body()
+    if not body:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON in request body")
+    try:
+        return orjson.loads(body)
+    except orjson.JSONDecodeError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON in request body") from exc
+
+
 def require_api_key(api_key: str) -> None:
     """Validates the provided API key.
 
@@ -1925,12 +1945,12 @@ async def initialize(request: Request, user=Depends(get_current_user)) -> Initia
         HTTPException: If the request body contains invalid JSON, a 400 Bad Request error is raised.
     """
     try:
-        body = await request.json()
+        body = await _read_request_json(request)
 
         logger.debug(f"Authenticated user {user} is initializing the protocol.")
         return await session_registry.handle_initialize_logic(body)
 
-    except json.JSONDecodeError:
+    except orjson.JSONDecodeError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid JSON in request body",
@@ -1957,7 +1977,7 @@ async def ping(request: Request, user=Depends(get_current_user)) -> JSONResponse
     """
     req_id: Optional[str] = None
     try:
-        body: dict = await request.json()
+        body: dict = await _read_request_json(request)
         if body.get("method") != "ping":
             raise HTTPException(status_code=400, detail="Invalid method")
         req_id = body.get("id")
@@ -1984,7 +2004,7 @@ async def handle_notification(request: Request, user=Depends(get_current_user)) 
         request (Request): The incoming request containing the notification data.
         user (str): The authenticated user making the request.
     """
-    body = await request.json()
+    body = await _read_request_json(request)
     logger.debug(f"User {user} sent a notification")
     if body.get("method") == "notifications/initialized":
         logger.info("Client initialized")
@@ -2015,7 +2035,7 @@ async def handle_completion(request: Request, db: Session = Depends(get_db), use
     Returns:
         The result of the completion process.
     """
-    body = await request.json()
+    body = await _read_request_json(request)
     logger.debug(f"User {user['email']} sent a completion request")
     return await completion_service.handle_completion(db, body)
 
@@ -2034,7 +2054,7 @@ async def handle_sampling(request: Request, db: Session = Depends(get_db), user=
         The result of the message creation process.
     """
     logger.debug(f"User {user['email']} sent a sampling request")
-    body = await request.json()
+    body = await _read_request_json(request)
     return await sampling_handler.create_message(db, body)
 
 
@@ -2434,7 +2454,7 @@ async def message_endpoint(request: Request, server_id: str, user=Depends(get_cu
             logger.error("Missing session_id in message request")
             raise HTTPException(status_code=400, detail="Missing session_id")
 
-        message = await request.json()
+        message = await _read_request_json(request)
 
         # Check if this is an elicitation response (JSON-RPC response with result containing action)
         is_elicitation_response = False
@@ -4585,7 +4605,17 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             user_id = str(user)  # String username from basic auth
 
         logger.debug(f"User {user_id} made an RPC request")
-        body = await request.json()
+        try:
+            body = orjson.loads(await request.body())
+        except orjson.JSONDecodeError:
+            return ORJSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32700, "message": "Parse error"},
+                    "id": None,
+                },
+            )
         method = body["method"]
         req_id = body.get("id")
         if req_id is None:
@@ -5120,7 +5150,7 @@ async def utility_message_endpoint(request: Request, user=Depends(get_current_us
             logger.error("Missing session_id in message request")
             raise HTTPException(status_code=400, detail="Missing session_id")
 
-        message = await request.json()
+        message = await _read_request_json(request)
 
         await session_registry.broadcast(
             session_id=session_id,
@@ -5153,7 +5183,7 @@ async def set_log_level(request: Request, user=Depends(get_current_user_with_per
         None
     """
     logger.debug(f"User {user} requested to set log level")
-    body = await request.json()
+    body = await _read_request_json(request)
     level = LogLevel(body["level"])
     await logging_service.set_level(level)
     return None
