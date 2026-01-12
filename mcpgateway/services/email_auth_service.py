@@ -520,7 +520,14 @@ class EmailAuthService:
                 # First-Party
                 from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
-                asyncio.create_task(auth_cache.invalidate_user(email))
+                # Ensure cache invalidation runs before returning to avoid stale
+                # auth context being used by subsequent requests. Use a timeout
+                # to prevent blocking if Redis is slow or unresponsive.
+                # Shield the task to prevent cancellation on timeout - allows Redis
+                # operations to complete in background even if we stop waiting.
+                await asyncio.wait_for(asyncio.shield(auth_cache.invalidate_user(email)), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning(f"Auth cache invalidation timed out for {email} - continuing in background")
             except Exception as cache_error:
                 logger.debug(f"Failed to invalidate auth cache on password change: {cache_error}")
 
