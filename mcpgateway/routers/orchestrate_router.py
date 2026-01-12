@@ -28,6 +28,7 @@ class CancelRequest(BaseModel):
     :param request_id: The ID of the request to cancel.
     :param reason: Optional reason for cancellation.
     """
+
     request_id: str = Field(..., alias="requestId")
     reason: Optional[str] = None
 
@@ -35,6 +36,7 @@ class CancelRequest(BaseModel):
         """
         Configuration to allow population by field name.
         """
+
         allow_population_by_field_name = True
 
 
@@ -45,6 +47,7 @@ class CancelResponse(BaseModel):
     :param request_id: The ID of the request that was cancelled.
     :param reason: Optional reason for cancellation.
     """
+
     status: str  # "cancelled" | "queued"
     request_id: str = Field(..., alias="requestId")
     reason: Optional[str] = None
@@ -53,6 +56,7 @@ class CancelResponse(BaseModel):
         """
         Configuration to allow population by field name.
         """
+
         allow_population_by_field_name = True
 
 
@@ -62,9 +66,12 @@ async def cancel_run(payload: CancelRequest, _user=Depends(get_current_user_with
     """
     Cancel a run by its request ID.
 
-    :param payload: The cancellation request payload.
-    :param _user: The current user (dependency injection).
-    :return: The cancellation response.
+    Args:
+        payload: The cancellation request payload.
+        _user: The current user (dependency injection).
+
+    Returns:
+        CancelResponse: The cancellation response indicating whether the run was cancelled or queued.
     """
     request_id = payload.request_id
     reason = payload.reason
@@ -97,10 +104,15 @@ async def get_status(request_id: str, _user=Depends(get_current_user_with_permis
     """
     Get the status of a run by its request ID.
 
-    :param request_id: The ID of the request to get the status for.
-    :param _user: The current user (dependency injection).
-    :return: The status of the run.
-    :raises HTTPException: If the run is not found.
+    Args:
+        request_id: The ID of the request to get the status for.
+        _user: The current user (dependency injection).
+
+    Returns:
+        dict: The status dictionary for the run (e.g. keys: 'name', 'registered_at', 'cancelled').
+
+    Raises:
+        HTTPException: If the run is not found.
     """
     if not orchestration_service.is_registered(request_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
