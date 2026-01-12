@@ -263,6 +263,36 @@ def _lookup_api_token_sync(token_hash: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _is_api_token_jti_sync(jti: str) -> bool:
+    """Check if JTI belongs to an API token (legacy fallback) - SYNC version.
+
+    Used for tokens created before auth_provider was added to the payload.
+    Called via asyncio.to_thread() to avoid blocking the event loop.
+
+    SECURITY: Fail-closed on DB errors. If we can't verify the token isn't
+    an API token, treat it as one to preserve the hard-block policy.
+
+    Args:
+        jti: JWT ID to check
+
+    Returns:
+        bool: True if JTI exists in email_api_tokens table OR if lookup fails
+    """
+    # Third-Party
+    from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+    # First-Party
+    from mcpgateway.db import EmailApiToken  # pylint: disable=import-outside-toplevel
+
+    try:
+        with fresh_db_session() as db:
+            result = db.execute(select(EmailApiToken.id).where(EmailApiToken.jti == jti).limit(1))
+            return result.scalar_one_or_none() is not None
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Legacy API token check failed, failing closed: {e}")
+        return True  # FAIL-CLOSED: treat as API token to preserve hard-block
+
+
 def _get_user_by_email_sync(email: str) -> Optional[EmailUser]:
     """Synchronous helper to get user by email.
 
@@ -410,6 +440,43 @@ async def get_current_user(
         HTTPException: If authentication fails
     """
     logger = logging.getLogger(__name__)
+
+    async def _set_auth_method_from_payload(payload: dict) -> None:
+        """Set request.state.auth_method based on JWT payload.
+
+        Args:
+            payload: Decoded JWT payload
+        """
+        if not request:
+            return
+
+        # NOTE: Cannot use structural check (scopes dict) because email login JWTs
+        # also have scopes dict (see email_auth.py:160)
+        user_info = payload.get("user", {})
+        auth_provider = user_info.get("auth_provider")
+
+        if auth_provider == "api_token":
+            request.state.auth_method = "api_token"
+            return
+
+        if auth_provider:
+            # email, oauth, saml, or any other interactive auth provider
+            request.state.auth_method = "jwt"
+            return
+
+        # Legacy API token fallback: check if JTI exists in API token table
+        # This handles tokens created before auth_provider was added
+        jti_for_check = payload.get("jti")
+        if jti_for_check:
+            is_legacy_api_token = await asyncio.to_thread(_is_api_token_jti_sync, jti_for_check)
+            if is_legacy_api_token:
+                request.state.auth_method = "api_token"
+                logger.debug(f"Legacy API token detected via DB lookup (JTI: ...{jti_for_check[-8:]})")
+            else:
+                request.state.auth_method = "jwt"
+        else:
+            # No auth_provider or JTI; default to interactive
+            request.state.auth_method = "jwt"
 
     # NEW: Custom authentication hook - allows plugins to provide alternative auth
     # This hook is invoked BEFORE standard JWT/API token validation
@@ -593,6 +660,7 @@ async def get_current_user(
                         if isinstance(token_team_id, dict):
                             token_team_id = token_team_id.get("id")
                         request.state.team_id = token_team_id or cached_ctx.personal_team_id
+                        await _set_auth_method_from_payload(payload)
 
                     # Return user from cache
                     if cached_ctx.user:
@@ -626,6 +694,7 @@ async def get_current_user(
                 team_id = token_team_id or auth_ctx.get("personal_team_id")
                 if request:
                     request.state.team_id = team_id
+                    await _set_auth_method_from_payload(payload)
 
                 # Store in cache for future requests
                 if settings.auth_cache_enabled:
@@ -708,6 +777,7 @@ async def get_current_user(
         team_id = await get_team_from_token(payload)
         if request:
             request.state.team_id = team_id
+            await _set_auth_method_from_payload(payload)
 
     except HTTPException:
         # Re-raise HTTPException from verify_jwt_token (handles expired/invalid tokens)
@@ -743,6 +813,10 @@ async def get_current_user(
                 # Use the email from the API token
                 email = api_token_info["user_email"]
                 logger.debug(f"API token authentication successful for email: {email}")
+
+                # Set auth_method for database API tokens
+                if request:
+                    request.state.auth_method = "api_token"
             else:
                 logger.debug("API token not found in database")
                 logger.debug("No valid authentication method found")

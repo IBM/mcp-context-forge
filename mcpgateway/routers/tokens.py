@@ -9,7 +9,8 @@ Provides comprehensive API token management with scoping, revocation, and analyt
 """
 
 # Standard
-from typing import Optional
+import logging
+from typing import List, Optional
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -19,9 +20,81 @@ from sqlalchemy.orm import Session
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import TokenCreateRequest, TokenCreateResponse, TokenListResponse, TokenResponse, TokenRevokeRequest, TokenUpdateRequest, TokenUsageStatsResponse
+from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.token_catalog_service import TokenCatalogService, TokenScope
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/tokens", tags=["tokens"])
+
+
+def _require_interactive_session(current_user: dict) -> None:
+    """Block API token access to token management endpoints.
+
+    Token management requires interactive sessions (web UI login, SSO, OIDC, etc.)
+    to prevent privilege escalation via token chaining. This is a hard security
+    boundary that applies to ALL users including admins.
+
+    ALLOWED auth_methods:
+    - "jwt": Standard web login
+    - "oauth", "oidc", "saml": SSO providers via plugins
+    - "disabled": Development mode (auth disabled)
+    - Any other plugin-defined method that isn't "api_token"
+
+    BLOCKED:
+    - "api_token": Explicitly blocked
+    - None: Fail-secure - auth flow didn't set auth_method (code bug)
+
+    Args:
+        current_user: User context from get_current_user_with_permissions
+
+    Raises:
+        HTTPException: 403 if request is from an API token or auth_method not set
+    """
+    auth_method = current_user.get("auth_method")
+
+    # Fail-secure: block if auth_method not set (indicates incomplete auth flow)
+    if auth_method is None:
+        logger.warning("Token management blocked: auth_method not set. " "This indicates an auth code path that needs to set request.state.auth_method")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Token management requires interactive session. " "Authentication method could not be determined.",
+        )
+
+    # Block API tokens explicitly
+    if auth_method == "api_token":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Token management requires interactive session (web login). " "API tokens cannot create, modify, or revoke tokens.",
+        )
+
+    # All other auth_methods (jwt, oauth, oidc, saml, disabled, etc.) are allowed
+
+
+async def _get_caller_permissions(
+    db: Session,
+    current_user: dict,
+    team_id: Optional[str] = None,
+) -> Optional[List[str]]:
+    """Get caller's effective permissions for scope containment.
+
+    Args:
+        db: Database session
+        current_user: User context
+        team_id: Team context for permission lookup
+
+    Returns:
+        List of permissions, or ["*"] for admins
+    """
+    if current_user.get("is_admin"):
+        return ["*"]  # Admins can grant anything
+
+    permission_service = PermissionService(db)
+    permissions = await permission_service.get_user_permissions(
+        user_email=current_user["email"],
+        team_id=team_id,
+    )
+    return list(permissions) if permissions else None
 
 
 @router.post("", response_model=TokenCreateResponse, status_code=status.HTTP_201_CREATED)
@@ -49,12 +122,14 @@ async def create_token(
         >>> asyncio.iscoroutinefunction(create_token)
         True
     """
+    _require_interactive_session(current_user)
+
     service = TokenCatalogService(db)
 
-    # if not request.team_id:
-    #     raise HTTPException(
-    #         status_code=status.HTTP_400_BAD_REQUEST, detail="team_id is required. Please select a specific team before creating a token. You cannot create tokens while viewing 'All Teams'."
-    #     )
+    # Get caller permissions for scope containment (if custom scope requested)
+    caller_permissions = None
+    if request.scope and request.scope.permissions:
+        caller_permissions = await _get_caller_permissions(db, current_user, request.team_id)
 
     # Convert request to TokenScope if provided
     scope = None
@@ -76,6 +151,7 @@ async def create_token(
             expires_in_days=request.expires_in_days,
             tags=request.tags,
             team_id=request.team_id,
+            caller_permissions=caller_permissions,
         )
 
         # Create TokenResponse for the token info
@@ -131,6 +207,8 @@ async def list_tokens(
         >>> asyncio.iscoroutinefunction(list_tokens)
         True
     """
+    _require_interactive_session(current_user)
+
     service = TokenCatalogService(db)
     tokens = await service.list_user_tokens(
         user_email=current_user["email"],
@@ -172,6 +250,7 @@ async def list_tokens(
 
 
 @router.get("/{token_id}", response_model=TokenResponse)
+@require_permission("tokens.read")
 async def get_token(
     token_id: str,
     current_user=Depends(get_current_user_with_permissions),
@@ -195,6 +274,8 @@ async def get_token(
         >>> asyncio.iscoroutinefunction(get_token)
         True
     """
+    _require_interactive_session(current_user)
+
     service = TokenCatalogService(db)
     token = await service.get_token(token_id, current_user["email"])
 
@@ -221,6 +302,7 @@ async def get_token(
 
 
 @router.put("/{token_id}", response_model=TokenResponse)
+@require_permission("tokens.update")
 async def update_token(
     token_id: str,
     request: TokenUpdateRequest,
@@ -241,7 +323,19 @@ async def update_token(
     Raises:
         HTTPException: If token not found or validation fails
     """
+    _require_interactive_session(current_user)
+
     service = TokenCatalogService(db)
+
+    # For update, get caller permissions using token's team_id
+    caller_permissions = None
+    if request.scope and request.scope.permissions:
+        # Get existing token to find its team_id
+        existing_token = await service.get_token(token_id, current_user["email"])
+        if not existing_token:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Token not found")
+        # Use token's team_id for permission lookup
+        caller_permissions = await _get_caller_permissions(db, current_user, existing_token.team_id)
 
     # Convert request to TokenScope if provided
     scope = None
@@ -262,6 +356,7 @@ async def update_token(
             description=request.description,
             scope=scope,
             tags=request.tags,
+            caller_permissions=caller_permissions,
         )
 
         if not token:
@@ -289,6 +384,7 @@ async def update_token(
 
 
 @router.delete("/{token_id}", status_code=status.HTTP_204_NO_CONTENT)
+@require_permission("tokens.revoke")
 async def revoke_token(
     token_id: str,
     request: Optional[TokenRevokeRequest] = None,
@@ -306,16 +402,25 @@ async def revoke_token(
     Raises:
         HTTPException: If token not found
     """
+    _require_interactive_session(current_user)
+
     service = TokenCatalogService(db)
 
     reason = request.reason if request else "Revoked by user"
-    success = await service.revoke_token(token_id=token_id, revoked_by=current_user["email"], reason=reason)
+    # SECURITY FIX: Pass user_email for ownership verification
+    success = await service.revoke_token(
+        token_id=token_id,
+        user_email=current_user["email"],
+        revoked_by=current_user["email"],
+        reason=reason,
+    )
 
     if not success:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Token not found")
 
 
 @router.get("/{token_id}/usage", response_model=TokenUsageStatsResponse)
+@require_permission("tokens.read")
 async def get_token_usage_stats(
     token_id: str,
     days: int = 30,
@@ -336,6 +441,8 @@ async def get_token_usage_stats(
     Raises:
         HTTPException: If token not found or not owned by user
     """
+    _require_interactive_session(current_user)
+
     service = TokenCatalogService(db)
 
     # Verify token ownership
@@ -374,6 +481,8 @@ async def list_all_tokens(
     Raises:
         HTTPException: If user is not admin
     """
+    _require_interactive_session(current_user)
+
     if not current_user["is_admin"]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
@@ -442,6 +551,8 @@ async def admin_revoke_token(
     Raises:
         HTTPException: If user is not admin or token not found
     """
+    _require_interactive_session(current_user)
+
     if not current_user["is_admin"]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
@@ -449,7 +560,12 @@ async def admin_revoke_token(
     admin_email = current_user["email"]
     reason = request.reason if request else f"Revoked by admin {admin_email}"
 
-    success = await service.revoke_token(token_id=token_id, revoked_by=current_user["email"], reason=reason)
+    # Use admin method - no ownership check
+    success = await service.admin_revoke_token(
+        token_id=token_id,
+        revoked_by=admin_email,
+        reason=reason,
+    )
 
     if not success:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Token not found")
@@ -457,6 +573,7 @@ async def admin_revoke_token(
 
 # Team-based token endpoints
 @router.post("/teams/{team_id}", response_model=TokenCreateResponse, status_code=status.HTTP_201_CREATED)
+@require_permission("tokens.create")
 async def create_team_token(
     team_id: str,
     request: TokenCreateRequest,
@@ -477,7 +594,14 @@ async def create_team_token(
     Raises:
         HTTPException: If user is not team owner or validation fails
     """
+    _require_interactive_session(current_user)
+
     service = TokenCatalogService(db)
+
+    # Use team_id from path for permission context
+    caller_permissions = None
+    if request.scope and request.scope.permissions:
+        caller_permissions = await _get_caller_permissions(db, current_user, team_id)
 
     # Convert request to TokenScope if provided
     scope = None
@@ -499,6 +623,7 @@ async def create_team_token(
             expires_in_days=request.expires_in_days,
             tags=request.tags,
             team_id=team_id,  # This will validate team ownership
+            caller_permissions=caller_permissions,
         )
 
         # Create TokenResponse for the token info
@@ -529,6 +654,7 @@ async def create_team_token(
 
 
 @router.get("/teams/{team_id}", response_model=TokenListResponse)
+@require_permission("tokens.read")
 async def list_team_tokens(
     team_id: str,
     include_inactive: bool = False,
@@ -553,6 +679,8 @@ async def list_team_tokens(
     Raises:
         HTTPException: If user is not team owner
     """
+    _require_interactive_session(current_user)
+
     service = TokenCatalogService(db)
 
     try:

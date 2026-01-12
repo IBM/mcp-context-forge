@@ -954,8 +954,8 @@ class Permissions:
     # Token permissions
     TOKENS_CREATE = "tokens.create"
     TOKENS_READ = "tokens.read"
+    TOKENS_UPDATE = "tokens.update"
     TOKENS_REVOKE = "tokens.revoke"
-    TOKENS_SCOPE = "tokens.scope"
 
     # Admin permissions
     ADMIN_SYSTEM_CONFIG = "admin.system_config"
