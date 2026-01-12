@@ -13,7 +13,7 @@ Key files are cached with mtime tracking to avoid repeated disk I/O.
 # Standard
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Tuple
 
 # First-Party
 from mcpgateway.config import settings
@@ -52,20 +52,20 @@ def _read_key_file_cached(path: Path) -> str:
     try:
         path_str = str(path)
         mtime = path.stat().st_mtime
-        
+
         # Check cache
         cache_key = (path_str, mtime)
         if cache_key in _key_file_cache:
             return _key_file_cache[cache_key]
-        
+
         # Read file
         with open(path, "r") as f:
             content = f.read()
-        
+
         # Clear old entries for this path and cache new content
         _key_file_cache.clear()
         _key_file_cache[cache_key] = content
-        
+
         return content
     except Exception as e:
         raise IOError(f"Failed to read key file {path}: {e}") from e

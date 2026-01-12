@@ -101,16 +101,16 @@ def _load_public_key_cached(public_key_pem: str) -> ed25519.Ed25519PublicKey:
         ValueError: If the key cannot be loaded
     """
     key_hash = hashlib.sha256(public_key_pem.encode()).hexdigest()
-    
+
     if key_hash in _public_key_cache:
         return _public_key_cache[key_hash]
-    
+
     public_key = serialization.load_pem_public_key(public_key_pem.encode())
-    
+
     # Limit cache size
     if len(_public_key_cache) > 100:
         _public_key_cache.clear()
-    
+
     _public_key_cache[key_hash] = public_key
     return public_key
 
@@ -202,7 +202,7 @@ def validate_signature(data: bytes, signature: bytes | str, public_key_pem: str)
         items = list(_signature_validation_cache.items())
         _signature_validation_cache.clear()
         _signature_validation_cache.update(items[-500:])
-    
+
     _signature_validation_cache[cache_key] = result
     return result
 

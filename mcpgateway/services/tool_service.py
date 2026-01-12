@@ -149,19 +149,19 @@ def _get_cached_ssl_context(ca_certificate: str) -> ssl.SSLContext:
     """
     # Use hash of cert as cache key
     cert_hash = hashlib.sha256(ca_certificate.encode()).hexdigest()
-    
+
     if cert_hash in _ssl_context_cache:
         return _ssl_context_cache[cert_hash]
-    
+
     # Create new SSL context
     ctx = ssl.create_default_context()
     ctx.load_verify_locations(cadata=ca_certificate)
-    
+
     # Cache it (limit cache size)
     if len(_ssl_context_cache) > 100:
         _ssl_context_cache.clear()
     _ssl_context_cache[cert_hash] = ctx
-    
+
     return ctx
 
 

@@ -99,19 +99,19 @@ def get_key() -> bytes:
     error
     """
     passphrase = _get_passphrase()
-    
+
     # Check cache
     if passphrase in _crypto_cache:
         return _crypto_cache[passphrase][0]
-    
+
     # Derive key
     key = hashlib.sha256(passphrase.encode()).digest()  # 32-byte key
-    
+
     # Cache key and AESGCM together
     aesgcm = AESGCM(key)
     _crypto_cache.clear()  # Clear old entries
     _crypto_cache[passphrase] = (key, aesgcm)
-    
+
     return key
 
 
@@ -125,19 +125,19 @@ def _get_aesgcm() -> AESGCM:
         ValueError: If the passphrase is not set or empty
     """
     passphrase = _get_passphrase()
-    
+
     # Check cache
     if passphrase in _crypto_cache:
         return _crypto_cache[passphrase][1]
-    
+
     # Derive key and create AESGCM
     key = hashlib.sha256(passphrase.encode()).digest()
     aesgcm = AESGCM(key)
-    
+
     # Cache both
     _crypto_cache.clear()  # Clear old entries
     _crypto_cache[passphrase] = (key, aesgcm)
-    
+
     return aesgcm
 
 
