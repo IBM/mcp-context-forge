@@ -2,6 +2,11 @@
 source $WORKSPACE/$PIPELINE_CONFIG_REPO_PATH/scripts/utilities/python_utils.sh
 install_python3 3.11
 
+GH_USER="ISC-REL"
+GH_TOKEN="$(get_env git-token)"
+GH_URL="https://${GH_USER}:${GH_TOKEN}@github.ibm.com/cyberfraud/cyberfraud-mcp-management-service.git"
+git clone $GH_URL
+
 cd cyberfraud-mcp-management-service
 
 echo "#############################"
@@ -9,7 +14,7 @@ echo "Running smoke tests"
 echo "#############################"
 python3 -m pip install --upgrade pip setuptools
 python3 -m pip install uv --user
-alias uv="python3 -m uv"
+export PATH=/root/.local/bin/:$PATH
 python3 -m uv run pytest tests/integration -v -s --setup-show
 if [ $? != 0 ]; then
   echo "Integration test failed, exiting";
