@@ -715,13 +715,28 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Check for existing gateway with the same slug and visibility
             slug_name = slugify(gateway.name)
             if visibility.lower() == "public":
-                # Check for existing public gateway with the same slug
-                existing_gateway = db.execute(select(DbGateway).where(DbGateway.slug == slug_name, DbGateway.visibility == "public")).scalar_one_or_none()
+                # Check for existing public gateway with the same slug (row-locked)
+                existing_gateway = get_for_update(
+                    db,
+                    DbGateway,
+                    where=and_(
+                        DbGateway.slug == slug_name,
+                        DbGateway.visibility == "public"
+                    ),
+                )
                 if existing_gateway:
                     raise GatewayNameConflictError(existing_gateway.slug, enabled=existing_gateway.enabled, gateway_id=existing_gateway.id, visibility=existing_gateway.visibility)
             elif visibility.lower() == "team" and team_id:
-                # Check for existing team gateway with the same slug
-                existing_gateway = db.execute(select(DbGateway).where(DbGateway.slug == slug_name, DbGateway.visibility == "team", DbGateway.team_id == team_id)).scalar_one_or_none()
+                # Check for existing team gateway with the same slug (row-locked)
+                existing_gateway = get_for_update(
+                    db,
+                    DbGateway,
+                    where=and_(
+                        DbGateway.slug == slug_name,
+                        DbGateway.visibility == "team",
+                        DbGateway.team_id == team_id
+                    ),
+                )
                 if existing_gateway:
                     raise GatewayNameConflictError(existing_gateway.slug, enabled=existing_gateway.enabled, gateway_id=existing_gateway.id, visibility=existing_gateway.visibility)
 
@@ -1614,7 +1629,16 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     else:
                         vis = gateway.visibility
                     if vis == "public":
-                        existing_gateway = db.execute(select(DbGateway).where(DbGateway.slug == new_slug, DbGateway.visibility == "public", DbGateway.id != gateway_id)).scalar_one_or_none()
+                        # Check for existing public gateway with the same slug (row-locked)
+                        existing_gateway = get_for_update(
+                            db,
+                            DbGateway,
+                            where=and_(
+                                DbGateway.slug == new_slug,
+                                DbGateway.visibility == "public",
+                                DbGateway.id != gateway_id
+                            ),
+                        )
                         if existing_gateway:
                             raise GatewayNameConflictError(
                                 new_slug,
@@ -1623,9 +1647,17 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 visibility=existing_gateway.visibility,
                             )
                     elif vis == "team" and gateway.team_id:
-                        existing_gateway = db.execute(
-                            select(DbGateway).where(DbGateway.slug == new_slug, DbGateway.visibility == "team", DbGateway.team_id == gateway.team_id, DbGateway.id != gateway_id)
-                        ).scalar_one_or_none()
+                        # Check for existing team gateway with the same slug (row-locked)
+                        existing_gateway = get_for_update(
+                            db,
+                            DbGateway,
+                            where=and_(
+                                DbGateway.slug == new_slug,
+                                DbGateway.visibility == "team",
+                                DbGateway.team_id == gateway.team_id,
+                                DbGateway.id != gateway_id
+                            ),
+                        )
                         if existing_gateway:
                             raise GatewayNameConflictError(
                                 new_slug,
