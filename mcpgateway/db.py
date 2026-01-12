@@ -4336,6 +4336,10 @@ class Gateway(Base):
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
 
+    # Per-gateway refresh configuration
+    refresh_interval_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, comment="Per-gateway refresh interval in seconds; NULL uses global default")
+    last_refresh_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, comment="Timestamp of the last successful tools/resources/prompts refresh")
+
     # Relationship with OAuth tokens
     oauth_tokens: Mapped[List["OAuthToken"]] = relationship("OAuthToken", back_populates="gateway", cascade="all, delete-orphan")
 

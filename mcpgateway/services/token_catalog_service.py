@@ -317,11 +317,7 @@ class TokenCatalogService:
 
         # FAIL-SECURE: If caller has no permissions, deny any custom scope
         if not caller_permissions:
-            raise ValueError(
-                "Cannot specify custom token permissions. "
-                + "You have no explicit permissions to delegate. "
-                + "Create a token without scope to inherit permissions at runtime."
-            )
+            raise ValueError("Cannot specify custom token permissions. " + "You have no explicit permissions to delegate. " + "Create a token without scope to inherit permissions at runtime.")
 
         # Wildcard caller can grant anything
         if "*" in caller_permissions:
@@ -329,10 +325,7 @@ class TokenCatalogService:
 
         # Wildcard request requires wildcard caller
         if "*" in requested_permissions:
-            raise ValueError(
-                "Cannot create token with wildcard permissions. "
-                + "Your effective permissions do not include wildcard access."
-            )
+            raise ValueError("Cannot create token with wildcard permissions. " + "Your effective permissions do not include wildcard access.")
 
         # Check each requested permission
         for req_perm in requested_permissions:
