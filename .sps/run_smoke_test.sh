@@ -8,14 +8,13 @@ GH_URL="https://${GH_USER}:${GH_TOKEN}@github.ibm.com/cyberfraud/cyberfraud-mcp-
 git clone $GH_URL
 
 cd cyberfraud-mcp-management-service
-
 echo "#############################"
 echo "Running smoke tests"
 echo "#############################"
 python3 -m pip install --upgrade pip setuptools
 python3 -m pip install uv --user
 export PATH=/root/.local/bin/:$PATH
-python3 -m uv run pytest tests/integration -v -s --setup-show
+uv run pytest tests/integration -v -s --setup-show
 if [ $? != 0 ]; then
   echo "Integration test failed, exiting";
   exit 1;
