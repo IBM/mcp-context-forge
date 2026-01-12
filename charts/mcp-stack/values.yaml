@@ -417,6 +417,10 @@ mcpContextForge:
     MCP_SESSION_POOL_IDLE_EVICTION: "600.0"       # evict idle pool keys after (seconds)
     MCP_SESSION_POOL_TRANSPORT_TIMEOUT: "30.0"   # timeout for all HTTP operations (connect, read, write)
     MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC: "false" # force RPC on health checks (off for performance)
+    # Configurable health check chain - ordered list of methods to try (JSON array)
+    # Options: ping, list_tools, list_prompts, list_resources, skip
+    MCP_SESSION_POOL_HEALTH_CHECK_METHODS: '["ping", "skip"]' # try ping, skip if unsupported
+    MCP_SESSION_POOL_HEALTH_CHECK_TIMEOUT: "5.0"              # timeout per health check attempt
 
     # ─ Development toggles ─
     DEV_MODE: "false"                # enable dev-mode features

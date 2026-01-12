@@ -96,14 +96,16 @@ class TestValidateSession:
     @pytest.fixture
     def pool(self):
         # Use short health check interval so sessions become stale quickly
+        # Configure to use list_tools for testing (easier to mock than ping)
         return MCPSessionPool(
             health_check_interval_seconds=0.01,  # 10ms
-            default_transport_timeout_seconds=3.0,  # Custom timeout
+            health_check_timeout_seconds=3.0,  # Custom health check timeout
+            health_check_methods=["list_tools"],  # Use list_tools for testing
         )
 
     @pytest.mark.asyncio
     async def test_validate_session_uses_configurable_timeout(self, pool):
-        """Test that _validate_session uses _default_transport_timeout (not hardcoded 5.0)."""
+        """Test that _validate_session uses _health_check_timeout (not hardcoded 5.0)."""
         mock_session = MagicMock()
         mock_list_tools = AsyncMock(return_value=[])
         mock_session.list_tools = mock_list_tools
@@ -130,7 +132,7 @@ class TestValidateSession:
         with patch('mcpgateway.services.mcp_session_pool.asyncio.wait_for', side_effect=capture_wait_for):
             result = await pool._validate_session(pooled)
 
-        # Should have used the configurable timeout (3.0), not hardcoded 5.0
+        # Should have used the configurable health check timeout (3.0), not hardcoded 5.0
         assert captured_timeout == 3.0
         assert result is True
         # Verify list_tools() was actually awaited (health check executed)
