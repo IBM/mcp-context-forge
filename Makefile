@@ -2971,7 +2971,7 @@ endef
 # =============================================================================
 # help: 🐳 UNIFIED CONTAINER OPERATIONS (Auto-detects Docker/Podman)
 # help: container-build      - Build image using detected runtime
-# help: container-build-multi - Build multiplatform image (amd64/arm64/s390x) locally
+# help: container-build-multi - Build multiplatform image (amd64/arm64/s390x,ppc64le) locally
 # help: container-inspect-manifest - Inspect multiplatform manifest in registry
 # help: container-build-rust - Build image WITH Rust plugins (ENABLE_RUST_BUILD=1)
 # help: container-build-rust-lite - Build lite image WITH Rust plugins
@@ -3307,7 +3307,7 @@ container-health:
 	@$(CONTAINER_RUNTIME) inspect $(PROJECT_NAME) --format='{{range .State.Health.Log}}{{.Output}}{{end}}' 2>/dev/null || true
 
 container-build-multi:
-	@echo "🔨 Building multi-architecture image (amd64, arm64, s390x)..."
+	@echo "🔨 Building multi-architecture image (amd64, arm64, s390x, ppc64le)..."
 	@echo "💡 Note: Multiplatform images require a registry. Use REGISTRY= to push, or omit to validate only."
 	@if [ "$(CONTAINER_RUNTIME)" = "docker" ]; then \
 		if ! docker buildx inspect $(PROJECT_NAME)-builder >/dev/null 2>&1; then \
@@ -3317,7 +3317,7 @@ container-build-multi:
 		docker buildx use $(PROJECT_NAME)-builder; \
 		if [ -n "$(REGISTRY)" ]; then \
 			docker buildx build \
-				--platform=linux/amd64,linux/arm64,linux/s390x \
+				--platform=linux/amd64,linux/arm64,linux/s390x,linux/ppc64le \
 				-f $(CONTAINER_FILE) \
 				--tag $(REGISTRY)/$(IMAGE_BASE):$(IMAGE_TAG) \
 				--push \
@@ -3325,7 +3325,7 @@ container-build-multi:
 			echo "✅ Multiplatform image pushed to $(REGISTRY)/$(IMAGE_BASE):$(IMAGE_TAG)"; \
 		else \
 			docker buildx build \
-				--platform=linux/amd64,linux/arm64,linux/s390x \
+				--platform=linux/amd64,linux/arm64,linux/s390x,linux/ppc64le \
 				-f $(CONTAINER_FILE) \
 				--tag $(IMAGE_BASE):$(IMAGE_TAG) \
 				.; \
@@ -3333,7 +3333,7 @@ container-build-multi:
 		fi; \
 	elif [ "$(CONTAINER_RUNTIME)" = "podman" ]; then \
 		echo "📦 Building manifest with Podman..."; \
-		$(CONTAINER_RUNTIME) build --platform=linux/amd64,linux/arm64,linux/s390x \
+		$(CONTAINER_RUNTIME) build --platform=linux/amd64,linux/arm64,linux/s390x,linux/ppc64le \
 			-f $(CONTAINER_FILE) \
 			--manifest $(IMAGE_BASE):$(IMAGE_TAG) \
 			.; \

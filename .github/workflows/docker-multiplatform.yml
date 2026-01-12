@@ -6,6 +6,7 @@
 #   - linux/amd64 (native on ubuntu-latest)
 #   - linux/arm64 (native on ubuntu-24.04-arm)
 #   - linux/s390x (QEMU emulation on ubuntu-latest)
+#   - linux/ppc64le (QEMU emulation on ubuntu-latest)
 #
 # Pipeline:
 #   1. Build platform images in parallel
@@ -42,7 +43,7 @@ on:
       platforms:
         description: 'Platforms to build (comma-separated)'
         required: false
-        default: 'linux/amd64,linux/arm64,linux/s390x'
+        default: 'linux/amd64,linux/arm64,linux/s390x,linux/ppc64le'
 
 permissions:
   contents: read
@@ -67,13 +68,21 @@ jobs:
           - platform: linux/amd64
             runner: ubuntu-latest
             suffix: amd64
+            cache_mode: max
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
             suffix: arm64
+            cache_mode: max
           - platform: linux/s390x
             runner: ubuntu-latest
             suffix: s390x
             qemu: true
+            cache_mode: max
+          - platform: linux/ppc64le
+            runner: ubuntu-latest
+            suffix: ppc64le
+            qemu: true
+            cache_mode: min
 
     runs-on: ${{ matrix.runner }}
 
@@ -125,7 +134,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=build-${{ matrix.suffix }}
-          cache-to: type=gha,mode=max,scope=build-${{ matrix.suffix }}
+          cache-to: type=gha,mode=${{ matrix.cache_mode }},scope=build-${{ matrix.suffix }}
           provenance: false
 
       - name: Export digest
@@ -181,7 +190,8 @@ jobs:
             --tag "${IMAGE}:latest" \
             "${IMAGE}:amd64-${SHA}" \
             "${IMAGE}:arm64-${SHA}" \
-            "${IMAGE}:s390x-${SHA}"
+            "${IMAGE}:s390x-${SHA}" \
+            "${IMAGE}:ppc64le-${SHA}"
 
           echo "Manifest created successfully"
 
