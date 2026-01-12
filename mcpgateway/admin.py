@@ -1419,7 +1419,7 @@ async def get_configuration_settings(
 @admin_router.get("/servers", response_model=PaginatedResponse)
 async def admin_list_servers(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
+    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -1524,7 +1524,7 @@ async def admin_list_servers(
 async def admin_servers_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
+    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
     team_id: Optional[str] = Depends(_validated_team_id_param),
@@ -2454,7 +2454,7 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
 @admin_router.get("/resources", response_model=PaginatedResponse)
 async def admin_list_resources(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
+    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -2545,7 +2545,7 @@ async def admin_list_resources(
 @admin_router.get("/prompts", response_model=PaginatedResponse)
 async def admin_list_prompts(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
+    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -2642,7 +2642,7 @@ async def admin_list_prompts(
 @admin_router.get("/gateways", response_model=PaginatedResponse)
 async def admin_list_gateways(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
+    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -4251,6 +4251,8 @@ async def admin_create_team(
 async def admin_view_team_members(
     team_id: str,
     request: Request,
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
@@ -4284,11 +4286,19 @@ async def admin_view_team_members(
         if not team:
             return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
 
-        # Get team members
-        members = await team_service.get_team_members(team_id)
+        base_url = f"{root_path}/admin/teams/{team_id}/members"
+        paginated_result = await team_service.list_team_members_paginated(
+            team_id=team_id,
+            page=page,
+            per_page=per_page,
+            base_url=base_url,
+        )
+        members = paginated_result.get("data", [])
+        pagination = paginated_result.get("pagination")
+        links = paginated_result.get("links")
 
         # Count owners to determine if this is the last owner
-        owner_count = sum(1 for _, membership in members if membership.role == "owner")
+        owner_count = team_service.count_team_owners(team_id)
 
         # Check if current user is team owner
         current_user_role = await team_service.get_user_role_in_team(user_email, team_id)
@@ -4303,10 +4313,14 @@ async def admin_view_team_members(
             <div class="divide-y divide-gray-200 dark:divide-gray-700">
         """
 
-        for member_user, membership in members:
+        for membership in members:
+            member_user = membership.user
+            member_email = member_user.email if member_user else membership.user_email
+            member_name = (member_user.full_name if member_user else None) or member_email or "Unknown"
+            member_initial = (member_email or "?")[0].upper()
             role_display = membership.role.replace("_", " ").title() if membership.role else "Member"
             is_last_owner = membership.role == "owner" and owner_count == 1
-            is_current_user = member_user.email == user_email
+            is_current_user = member_email == user_email
 
             # Role selection - only show for team owners and not for last owner
             if is_team_owner and not is_last_owner:
@@ -4315,7 +4329,7 @@ async def admin_view_team_members(
                         name="role"
                         class="text-xs px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                         hx-post="{root_path}/admin/teams/{team_id}/update-member-role"
-                        hx-vals='{{"user_email": "{member_user.email}"}}'
+                        hx-vals='{{"user_email": "{member_email}"}}'
                         hx-target="#team-edit-modal-content"
                         hx-swap="innerHTML"
                         hx-trigger="change">
@@ -4334,8 +4348,8 @@ async def admin_view_team_members(
                     <button
                         class="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 focus:outline-none"
                         hx-post="{root_path}/admin/teams/{team_id}/remove-member"
-                        hx-vals='{{"user_email": "{member_user.email}"}}'
-                        hx-confirm="Remove {member_user.email} from this team?"
+                        hx-vals='{{"user_email": "{member_email}"}}'
+                        hx-confirm="Remove {member_email} from this team?"
                         hx-target="#team-edit-modal-content"
                         hx-swap="innerHTML"
                         title="Remove member">
@@ -4361,15 +4375,15 @@ async def admin_view_team_members(
                     <div class="flex items-center space-x-4 flex-1">
                         <div class="flex-shrink-0">
                             <div class="w-8 h-8 bg-gray-300 dark:bg-gray-600 rounded-full flex items-center justify-center">
-                                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{member_user.email[0].upper()}</span>
+                                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{member_initial}</span>
                             </div>
                         </div>
                         <div class="min-w-0 flex-1">
                             <div class="flex items-center space-x-2">
-                                <p class="text-sm font-medium text-gray-900 dark:text-white truncate">{member_user.full_name or member_user.email}</p>
+                                <p class="text-sm font-medium text-gray-900 dark:text-white truncate">{member_name}</p>
                                 {" ".join(indicators)}
                             </div>
-                            <p class="text-sm text-gray-500 dark:text-gray-400 truncate">{member_user.email}</p>
+                            <p class="text-sm text-gray-500 dark:text-gray-400 truncate">{member_email or ""}</p>
                             <p class="text-xs text-gray-400 dark:text-gray-500">Joined: {membership.joined_at.strftime("%b %d, %Y") if membership.joined_at else "Unknown"}</p>
                         </div>
                     </div>
@@ -4387,6 +4401,35 @@ async def admin_view_team_members(
 
         if not members:
             members_html = '<div class="text-center py-8 text-gray-500 dark:text-gray-400">No members found</div>'
+
+        pagination_html = ""
+        if pagination and pagination.total_pages > 1:
+            prev_attrs = f'hx-get="{links.prev}" hx-target="#team-edit-modal-content" hx-swap="innerHTML"' if links and links.prev else ""
+            next_attrs = f'hx-get="{links.next}" hx-target="#team-edit-modal-content" hx-swap="innerHTML"' if links and links.next else ""
+            prev_disabled = "disabled" if not (links and links.prev) else ""
+            next_disabled = "disabled" if not (links and links.next) else ""
+
+            pagination_html = f"""
+            <div class="flex items-center justify-between border-t border-gray-200 dark:border-gray-700 pt-3 text-xs text-gray-600 dark:text-gray-300">
+                <button
+                    class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 disabled:opacity-50"
+                    {prev_attrs}
+                    {prev_disabled}
+                >
+                    Prev
+                </button>
+                <div>
+                    Page {pagination.page} of {pagination.total_pages} • {pagination.total_items} members
+                </div>
+                <button
+                    class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 disabled:opacity-50"
+                    {next_attrs}
+                    {next_disabled}
+                >
+                    Next
+                </button>
+            </div>
+            """
 
         # Add member management interface
         add_members_button = (
@@ -4421,7 +4464,7 @@ async def admin_view_team_members(
         </div>
         """
 
-        return HTMLResponse(content=f'{management_html}<div class="space-y-2">{members_html}</div>')
+        return HTMLResponse(content=f'{management_html}<div class="space-y-2">{members_html}{pagination_html}</div>')
 
     except Exception as e:
         LOGGER.error(f"Error viewing team members {team_id}: {e}")
@@ -5584,7 +5627,7 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
 async def admin_list_users(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
+    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Response:
@@ -5647,7 +5690,7 @@ async def admin_list_users(
 async def admin_users_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
+    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     render: Optional[str] = Query(None, description="Render mode: 'selector' for user selector items, 'controls' for pagination controls"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
@@ -5776,7 +5819,7 @@ async def admin_team_users_partial_html(
     team_id: str,
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
+    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Response:
@@ -5859,7 +5902,7 @@ async def admin_team_users_partial_html(
 @require_permission("admin.user_management")
 async def admin_search_users(
     q: str = Query("", description="Search query"),
-    limit: int = Query(100, ge=1, le=settings.pagination_max_page_size, description="Maximum number of results to return"),
+    limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Maximum number of results to return"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -5914,7 +5957,7 @@ async def admin_search_users(
 async def admin_search_team_users(
     team_id: str,
     q: str = Query("", description="Search query"),
-    limit: int = Query(100, ge=1, le=settings.pagination_max_page_size, description="Maximum number of results to return"),
+    limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Maximum number of results to return"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -6492,7 +6535,7 @@ async def admin_force_password_change(
 @admin_router.get("/tools", response_model=PaginatedResponse)
 async def admin_list_tools(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
+    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -6541,7 +6584,7 @@ async def admin_list_tools(
 async def admin_tools_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
+    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
@@ -6804,7 +6847,7 @@ async def admin_get_all_tool_ids(
 async def admin_search_tools(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
-    limit: int = Query(100, ge=1, le=settings.pagination_max_page_size, description="Maximum number of results to return"),
+    limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Maximum number of results to return"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
@@ -6924,7 +6967,7 @@ async def admin_search_tools(
 async def admin_prompts_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
+    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
@@ -7112,7 +7155,7 @@ async def admin_prompts_partial_html(
 async def admin_gateways_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
+    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
     team_id: Optional[str] = Depends(_validated_team_id_param),
@@ -7335,7 +7378,7 @@ async def admin_get_all_gateways_ids(
 async def admin_search_gateways(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
-    limit: int = Query(100, ge=1, le=settings.pagination_max_page_size),
+    limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -7495,7 +7538,7 @@ async def admin_get_all_server_ids(
 async def admin_search_servers(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
-    limit: int = Query(100, ge=1, le=settings.pagination_max_page_size),
+    limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -7591,7 +7634,7 @@ async def admin_search_servers(
 async def admin_resources_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
+    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
@@ -7942,7 +7985,7 @@ async def admin_get_all_resource_ids(
 async def admin_search_resources(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
-    limit: int = Query(100, ge=1, le=settings.pagination_max_page_size),
+    limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
@@ -8047,7 +8090,7 @@ async def admin_search_resources(
 async def admin_search_prompts(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
-    limit: int = Query(100, ge=1, le=settings.pagination_max_page_size),
+    limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
@@ -8165,7 +8208,7 @@ async def admin_search_prompts(
 async def admin_a2a_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
+    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
@@ -8401,7 +8444,7 @@ async def admin_get_all_agent_ids(
 async def admin_search_a2a_agents(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
-    limit: int = Query(100, ge=1, le=settings.pagination_max_page_size),
+    limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -13296,7 +13339,7 @@ async def admin_get_agent(
 @admin_router.get("/a2a", response_model=PaginatedResponse)
 async def admin_list_a2a_agents(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
+    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),

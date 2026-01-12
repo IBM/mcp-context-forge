@@ -10872,14 +10872,6 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           });
         }
 
-        // Listen for userCreated event from HX-Trigger header
-        document.body.addEventListener('userCreated', function() {
-          // Refresh the users list by triggering HTMX on the container
-          const usersList = document.getElementById('users-list-container');
-          if (usersList) {
-            htmx.trigger(usersList, 'refreshUsers');
-          }
-        });
       });
 
       // Build mapping objects using your existing tools, resources, and prompts arrays

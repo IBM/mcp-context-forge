@@ -20893,6 +20893,9 @@ function handleAdminUserAction(event) {
 
 document.body.addEventListener("adminTeamAction", handleAdminTeamAction);
 document.body.addEventListener("adminUserAction", handleAdminUserAction);
+document.body.addEventListener("userCreated", function () {
+    handleAdminUserAction({ detail: { refreshUsersList: true } });
+});
 
 document.body.addEventListener("htmx:afterSwap", function (event) {
     initializeAddMembersForms(event.target);
