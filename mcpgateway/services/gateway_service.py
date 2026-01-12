@@ -719,10 +719,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 existing_gateway = get_for_update(
                     db,
                     DbGateway,
-                    where=and_(
-                        DbGateway.slug == slug_name,
-                        DbGateway.visibility == "public"
-                    ),
+                    where=and_(DbGateway.slug == slug_name, DbGateway.visibility == "public"),
                 )
                 if existing_gateway:
                     raise GatewayNameConflictError(existing_gateway.slug, enabled=existing_gateway.enabled, gateway_id=existing_gateway.id, visibility=existing_gateway.visibility)
@@ -731,11 +728,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 existing_gateway = get_for_update(
                     db,
                     DbGateway,
-                    where=and_(
-                        DbGateway.slug == slug_name,
-                        DbGateway.visibility == "team",
-                        DbGateway.team_id == team_id
-                    ),
+                    where=and_(DbGateway.slug == slug_name, DbGateway.visibility == "team", DbGateway.team_id == team_id),
                 )
                 if existing_gateway:
                     raise GatewayNameConflictError(existing_gateway.slug, enabled=existing_gateway.enabled, gateway_id=existing_gateway.id, visibility=existing_gateway.visibility)
@@ -1633,11 +1626,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         existing_gateway = get_for_update(
                             db,
                             DbGateway,
-                            where=and_(
-                                DbGateway.slug == new_slug,
-                                DbGateway.visibility == "public",
-                                DbGateway.id != gateway_id
-                            ),
+                            where=and_(DbGateway.slug == new_slug, DbGateway.visibility == "public", DbGateway.id != gateway_id),
                         )
                         if existing_gateway:
                             raise GatewayNameConflictError(
@@ -1651,12 +1640,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         existing_gateway = get_for_update(
                             db,
                             DbGateway,
-                            where=and_(
-                                DbGateway.slug == new_slug,
-                                DbGateway.visibility == "team",
-                                DbGateway.team_id == gateway.team_id,
-                                DbGateway.id != gateway_id
-                            ),
+                            where=and_(DbGateway.slug == new_slug, DbGateway.visibility == "team", DbGateway.team_id == gateway.team_id, DbGateway.id != gateway_id),
                         )
                         if existing_gateway:
                             raise GatewayNameConflictError(
@@ -2486,7 +2470,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 )
                 .where(DbGateway.id == gateway_id)
             ).scalar_one_or_none()
-            
+
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
@@ -2540,15 +2524,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Expire gateway to clear cached relationships after bulk deletes
             db.expire(gateway)
 
-            
             stmt = delete(DbGateway).where(DbGateway.id == gateway_id).returning(DbGateway.id)
             result = db.execute(stmt)
             deleted_row = result.fetchone()
-            
+
             if not deleted_row:
                 # Gateway was already deleted by another concurrent request
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
-            
+
             db.commit()
 
             # Invalidate cache after successful deletion

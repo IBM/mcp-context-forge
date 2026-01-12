@@ -40,7 +40,6 @@ from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload, selectinload, Session
 
-
 # First-Party
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import Gateway as PydanticGateway
@@ -2077,11 +2076,11 @@ class ToolService:
             stmt = delete(DbTool).where(DbTool.id == tool_id).returning(DbTool.id)
             result = db.execute(stmt)
             deleted_row = result.fetchone()
-            
+
             if not deleted_row:
                 # Tool was already deleted by another concurrent request
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
-            
+
             db.commit()
             await self._notify_tool_deleted(tool_info)
             logger.info(f"Permanently deleted tool: {tool_info['name']}")
