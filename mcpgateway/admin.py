@@ -4261,6 +4261,8 @@ async def admin_view_team_members(
     Args:
         team_id: ID of the team to view members for
         request: FastAPI request object
+        page: Page number (1-indexed).
+        per_page: Items per page.
         db: Database session
         user: Current authenticated user context
 
