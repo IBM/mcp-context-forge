@@ -104,6 +104,7 @@ from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
+from mcpgateway.utils.ssl_context_cache import clear_ssl_context_cache, get_cached_ssl_context
 from mcpgateway.utils.validate_signature import validate_signature
 from mcpgateway.validation.tags import validate_tags_field
 
@@ -149,55 +150,6 @@ logger = logging_service.get_logger(__name__)
 # Initialize structured logger and audit trail for gateway operations
 structured_logger = get_structured_logger("gateway_service")
 audit_trail = get_audit_trail_service()
-
-# Cache for SSL contexts keyed by CA certificate hash
-_ssl_context_cache: dict[str, ssl.SSLContext] = {}
-
-
-def _get_cached_ssl_context(ca_certificate: str) -> ssl.SSLContext:
-    """Get or create cached SSL context for a CA certificate.
-
-    Args:
-        ca_certificate: CA certificate in PEM format
-
-    Returns:
-        ssl.SSLContext: Configured SSL context
-    """
-    # Use hash of cert as cache key
-    # Handle bytes or string input
-    if isinstance(ca_certificate, bytes):
-        cert_bytes = ca_certificate
-    elif isinstance(ca_certificate, str):
-        cert_bytes = ca_certificate.encode()
-    else:
-        # For non-string/non-bytes (e.g., MagicMock in tests), convert to string first
-        cert_bytes = str(ca_certificate).encode()
-
-    cert_hash = hashlib.sha256(cert_bytes).hexdigest()
-
-    if cert_hash in _ssl_context_cache:
-        return _ssl_context_cache[cert_hash]
-
-    # Create new SSL context
-    ctx = ssl.create_default_context()
-    ctx.load_verify_locations(cadata=ca_certificate)
-
-    # Cache it (limit cache size)
-    if len(_ssl_context_cache) > 100:
-        _ssl_context_cache.clear()
-    _ssl_context_cache[cert_hash] = ctx
-
-    return ctx
-
-
-def clear_ssl_context_cache() -> None:
-    """Clear the SSL context cache.
-
-    Call this function:
-    - In test fixtures to ensure test isolation
-    - After CA certificate rotation
-    """
-    _ssl_context_cache.clear()
 
 
 GW_FAILURE_THRESHOLD = settings.unhealthy_threshold
@@ -505,7 +457,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         Returns:
             ssl.SSLContext: Configured SSL context
         """
-        return _get_cached_ssl_context(ca_certificate)
+        return get_cached_ssl_context(ca_certificate)
 
     async def initialize(self) -> None:
         """Initialize the service and start health check if this instance is the leader.

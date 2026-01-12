@@ -45,7 +45,7 @@ from mcpgateway.utils.pagination import decode_cursor
 def mock_logging_services():
     """Mock audit_trail and structured_logger to prevent database writes during tests."""
     # Clear SSL context cache before each test for isolation
-    from mcpgateway.services.tool_service import clear_ssl_context_cache
+    from mcpgateway.utils.ssl_context_cache import clear_ssl_context_cache
     clear_ssl_context_cache()
     
     with patch("mcpgateway.services.tool_service.audit_trail") as mock_audit, patch("mcpgateway.services.tool_service.structured_logger") as mock_logger:
