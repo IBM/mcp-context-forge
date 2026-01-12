@@ -4,8 +4,23 @@
 # To build WITHOUT Rust (default): docker build .
 ###############################################################################
 ARG ENABLE_RUST=false
+ARG TARGETPLATFORM
 
 FROM quay.io/pypa/manylinux2014:2025.12.13-1 AS rust-builder-base
+FROM quay.io/pypa/manylinux2014_ppc64le:2025.10.19-2 AS rust-builder-base-ppc64le
+
+FROM rust-builder-base-ppc64le AS rust-builder-selector-ppc64le
+ARG TARGETPLATFORM
+RUN if [ "$TARGETPLATFORM" != "linux/ppc64le" ]; then exit 0; fi
+
+FROM rust-builder-base AS rust-builder-selector
+ARG TARGETPLATFORM
+RUN if [ "$TARGETPLATFORM" = "linux/ppc64le" ]; then exit 0; fi
+
+FROM rust-builder-selector AS rust-builder-base-final
+FROM rust-builder-selector-ppc64le AS rust-builder-base-final
+
+FROM rust-builder-base-final AS rust-builder-base
 ARG ENABLE_RUST
 
 # Set shell with pipefail for safety
@@ -71,9 +86,10 @@ WORKDIR /app
 # ----------------------------------------------------------------------------
 # s390x architecture does not support BoringSSL when building wheel grpcio.
 # Force Python whl to use OpenSSL.
+# NOTE: ppc64le has the same OpenSSL requirement
 # ----------------------------------------------------------------------------
-RUN if [ `uname -m` = "s390x" ]; then \
-        echo "Building for s390x."; \
+RUN if [ "$TARGETPLATFORM" = "linux/s390x" ] || [ "$TARGETPLATFORM" = "linux/ppc64le" ]; then \
+        echo "Building for $TARGETPLATFORM."; \
         echo "export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='True'" > /etc/profile.d/use-openssl.sh; \
     else \
         echo "export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'" > /etc/profile.d/use-openssl.sh; \
