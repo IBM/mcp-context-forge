@@ -2476,18 +2476,17 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             ...     pass
         """
         try:
-            # Acquire row lock and eager-load relationships while locked so
-            # deletion and child cleanup happen atomically on Postgres.
-            gateway = get_for_update(
-                db,
-                DbGateway,
-                gateway_id,
-                options=[
+            # Find gateway with eager loading for deletion to avoid N+1 queries
+            gateway = db.execute(
+                select(DbGateway)
+                .options(
                     selectinload(DbGateway.tools),
                     selectinload(DbGateway.resources),
                     selectinload(DbGateway.prompts),
-                ],
-            )
+                )
+                .where(DbGateway.id == gateway_id)
+            ).scalar_one_or_none()
+            
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
@@ -2540,8 +2539,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Expire gateway to clear cached relationships after bulk deletes
             db.expire(gateway)
 
-            # Hard delete gateway
-            db.delete(gateway)
+            
+            stmt = delete(DbGateway).where(DbGateway.id == gateway_id).returning(DbGateway.id)
+            result = db.execute(stmt)
+            deleted_row = result.fetchone()
+            
+            if not deleted_row:
+                # Gateway was already deleted by another concurrent request
+                raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
+            
             db.commit()
 
             # Invalidate cache after successful deletion

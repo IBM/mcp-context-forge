@@ -40,6 +40,7 @@ from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload, selectinload, Session
 
+
 # First-Party
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import Gateway as PydanticGateway
@@ -2049,8 +2050,7 @@ class ToolService:
             >>> asyncio.run(service.delete_tool(db, 'tool_id'))
         """
         try:
-            # tool = db.get(DbTool, tool_id)
-            tool = get_for_update(db, DbTool, tool_id)
+            tool = db.get(DbTool, tool_id)
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
 
@@ -2072,7 +2072,16 @@ class ToolService:
                     delete_metrics_in_batches(db, ToolMetric, ToolMetric.tool_id, tool_id)
                     delete_metrics_in_batches(db, ToolMetricsHourly, ToolMetricsHourly.tool_id, tool_id)
 
-            db.delete(tool)
+            # Use DELETE ... RETURNING to atomically delete and return the deleted row
+            # This ensures only one concurrent delete succeeds
+            stmt = delete(DbTool).where(DbTool.id == tool_id).returning(DbTool.id)
+            result = db.execute(stmt)
+            deleted_row = result.fetchone()
+            
+            if not deleted_row:
+                # Tool was already deleted by another concurrent request
+                raise ToolNotFoundError(f"Tool not found: {tool_id}")
+            
             db.commit()
             await self._notify_tool_deleted(tool_info)
             logger.info(f"Permanently deleted tool: {tool_info['name']}")
