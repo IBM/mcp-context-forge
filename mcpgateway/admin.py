@@ -266,7 +266,17 @@ def _normalize_team_id(team_id: Optional[str]) -> Optional[str]:
 
 
 def _validated_team_id_param(team_id: Optional[str] = Query(None, description="Filter by team ID")) -> Optional[str]:
-    """Normalize team ID query params and raise on invalid UUIDs."""
+    """Normalize team ID query params and raise on invalid UUIDs.
+
+    Args:
+        team_id: Raw team ID from query params.
+
+    Returns:
+        Normalized team ID string or None.
+
+    Raises:
+        HTTPException: If the team ID is not a valid UUID.
+    """
     try:
         return _normalize_team_id(team_id)
     except ValueError as exc:
@@ -5441,7 +5451,7 @@ async def admin_reject_join_request(
             return HTMLResponse(content='<div class="text-red-500">Join request not found</div>', status_code=404)
 
         response = HTMLResponse(
-            content=f"""
+            content="""
         <div class="text-green-600 text-center p-4">
             <p>Join request rejected.</p>
         </div>

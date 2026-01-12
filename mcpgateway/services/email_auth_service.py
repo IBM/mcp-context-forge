@@ -47,7 +47,6 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 _GET_ALL_USERS_LIMIT = 10000
-_GET_ALL_USERS_DEPRECATED_WARNED = False
 
 
 @dataclass(frozen=True)
@@ -124,6 +123,8 @@ class EmailAuthService:
         ...     service = EmailAuthService(db)
         ...     # Service is ready to use
     """
+
+    get_all_users_deprecated_warned = False
 
     def __init__(self, db: Session):
         """Initialize the email authentication service.
@@ -672,7 +673,14 @@ class EmailAuthService:
 
     @staticmethod
     def _escape_like(value: str) -> str:
-        """Escape LIKE wildcards for prefix search."""
+        """Escape LIKE wildcards for prefix search.
+
+        Args:
+            value: Raw value to escape for LIKE matching.
+
+        Returns:
+            Escaped string safe for LIKE patterns.
+        """
         return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
     async def list_users(
@@ -816,14 +824,13 @@ class EmailAuthService:
             # For searching
             users = await service.list_users(search="john", page=1, per_page=50).data
         """
-        global _GET_ALL_USERS_DEPRECATED_WARNED
-        if not _GET_ALL_USERS_DEPRECATED_WARNED:
+        if not self.__class__.get_all_users_deprecated_warned:
             warnings.warn(
                 "get_all_users() is deprecated and limited to 10,000 users. " + "Use list_users() with pagination instead.",
                 DeprecationWarning,
                 stacklevel=2,
             )
-            _GET_ALL_USERS_DEPRECATED_WARNED = True
+            self.__class__.get_all_users_deprecated_warned = True
 
         total_users = await self.count_users()
         if total_users > _GET_ALL_USERS_LIMIT:
