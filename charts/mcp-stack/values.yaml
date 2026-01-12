@@ -711,6 +711,8 @@ mcpContextForge:
     - configMapRef:
         name: mcp-gateway-config
 
+  extraEnvFrom: []
+
 ########################################################################
 # DATABASE MIGRATION (Alembic)
 # Runs as a Job before mcpgateway deployment

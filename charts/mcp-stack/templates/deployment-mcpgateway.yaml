@@ -116,6 +116,9 @@ spec:
                 name: {{ include "mcp-stack.fullname" . }}-gateway-secret
             - configMapRef:
                 name: {{ include "mcp-stack.fullname" . }}-gateway-config
+            {{- if .Values.mcpContextForge.extraEnvFrom }}
+            {{- toYaml .Values.mcpContextForge.extraEnvFrom | nindent 12 }}
+            {{- end }}
 
           ################################################################
           # HEALTH & READINESS PROBES
