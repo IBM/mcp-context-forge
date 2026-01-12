@@ -739,3 +739,9 @@ quiet = false
 whitelist-regex = []
 color = true
 omit-covered-files = false
+
+# --------------------------------------------------------------------
+# Bandit security scanner configuration
+# --------------------------------------------------------------------
+[tool.bandit]
+# No global skips - use inline # nosec comments for specific false positives

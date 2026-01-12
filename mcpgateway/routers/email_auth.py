@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, UTC
 from typing import Optional
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -31,7 +31,16 @@ from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, SessionLocal
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
-from mcpgateway.schemas import AuthenticationResponse, AuthEventResponse, ChangePasswordRequest, EmailLoginRequest, EmailRegistrationRequest, EmailUserResponse, SuccessResponse, UserListResponse
+from mcpgateway.schemas import (
+    AuthenticationResponse,
+    AuthEventResponse,
+    ChangePasswordRequest,
+    CursorPaginatedUsersResponse,
+    EmailLoginRequest,
+    EmailRegistrationRequest,
+    EmailUserResponse,
+    SuccessResponse,
+)
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, EmailValidationError, PasswordValidationError, UserExistsError
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_jwt_token import create_jwt_token
@@ -429,24 +438,36 @@ async def get_auth_events(limit: int = 50, offset: int = 0, current_user: EmailU
 
 
 # Admin-only endpoints
-@email_auth_router.get("/admin/users", response_model=UserListResponse)
+@email_auth_router.get("/admin/users", response_model=CursorPaginatedUsersResponse)
 @require_permission("admin.user_management")
-async def list_users(limit: int = 100, offset: int = 0, current_user_ctx: dict = Depends(get_current_user_with_permissions)):
-    """List all users (admin only).
+async def list_users(
+    cursor: Optional[str] = Query(None, description="Pagination cursor for fetching the next set of results"),
+    limit: Optional[int] = Query(
+        None,
+        ge=0,
+        le=settings.pagination_max_page_size,
+        description="Maximum number of users to return. 0 means all (no limit). Default uses pagination_default_page_size.",
+    ),
+    offset: int = Query(0, ge=0, description="Number of users to skip (deprecated; use cursor pagination)."),
+    current_user_ctx: dict = Depends(get_current_user_with_permissions),
+):
+    """List all users (admin only) with cursor-based pagination support.
 
     Args:
-        limit: Maximum number of users to return
-        offset: Number of users to skip
+        cursor: Pagination cursor for fetching the next set of results
+        limit: Maximum number of users to return. Use 0 for all users (no limit).
+            If not specified, uses pagination_default_page_size (default: 50).
+        offset: Number of users to skip (deprecated; use cursor pagination)
         current_user_ctx: Currently authenticated user context with permissions
 
     Returns:
-        UserListResponse: List of users with pagination
+        CursorPaginatedUsersResponse: List of users with pagination metadata
 
     Raises:
         HTTPException: If user is not admin
 
     Examples:
-        >>> # GET /auth/email/admin/users?limit=10&offset=0
+        >>> # Cursor-based: GET /auth/email/admin/users?cursor=eyJlbWFpbCI6Li4ufQ
         >>> # Headers: Authorization: Bearer <admin_token>
     """
 
@@ -454,10 +475,11 @@ async def list_users(limit: int = 100, offset: int = 0, current_user_ctx: dict =
     auth_service = EmailAuthService(db)
 
     try:
-        users = await auth_service.list_users(limit=limit, offset=offset)
-        total_count = await auth_service.count_users()
-
-        return UserListResponse(users=[EmailUserResponse.from_email_user(user) for user in users], total_count=total_count, limit=limit, offset=offset)
+        result = await auth_service.list_users(cursor=cursor, limit=limit, offset=offset)
+        return CursorPaginatedUsersResponse(
+            users=[EmailUserResponse.from_email_user(user) for user in result.data],
+            next_cursor=result.next_cursor,
+        )
 
     except Exception as e:
         logger.error(f"Error listing users: {e}")

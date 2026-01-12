@@ -86,11 +86,13 @@
       defer
     ></script>
     {% endif %}
+    {% if is_admin %}
     <!-- Chart.js -->
     {% if ui_airgapped %}
     <script src="{{ root_path }}/static/vendor/chartjs/chart.umd.min.js"></script>
     {% else %}
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    {% endif %}
     {% endif %}
     <!-- Markdown and Sanitization -->
     {% if ui_airgapped %}
@@ -101,8 +103,10 @@
     <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
     {% endif %}
     <script src="{{ root_path }}/static/admin.js"></script>
+    {% if is_admin %}
     <script src="{{ root_path }}/static/gantt-chart.js?v=3"></script>
     <script src="{{ root_path }}/static/flame-graph.js?v=1"></script>
+    {% endif %}
     <!-- CodeMirror CSS -->
     {% if ui_airgapped %}
     <link
@@ -348,6 +352,7 @@
           </div>
           {% endif %}
 
+          {% if is_admin %}
           <!-- Monitoring Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Monitoring</span>
@@ -379,7 +384,9 @@
             </a>
             {% endif %}
           </div>
+          {% endif %}
 
+          {% if is_admin %}
           <!-- Extensions Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Extensions</span>
@@ -393,6 +400,7 @@
               <span x-show="!sidebarCollapsed">Plugins</span>
             </a>
           </div>
+          {% endif %}
 
           <!-- Organization Section -->
           {% if email_auth_enabled %}
@@ -407,6 +415,7 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">👥</span>
               <span x-show="!sidebarCollapsed">Teams</span>
             </a>
+            {% if is_admin %}
             <a href="#users" id="tab-users"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -414,6 +423,7 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">👤</span>
               <span x-show="!sidebarCollapsed">Users</span>
             </a>
+            {% endif %}
             <a href="#tokens" id="tab-tokens"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -424,6 +434,7 @@
           </div>
           {% endif %}
 
+          {% if is_admin %}
           <!-- Admin Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Admin</span>
@@ -450,7 +461,6 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">ℹ️</span>
               <span x-show="!sidebarCollapsed">Version Info</span>
             </a>
-            {% if is_admin %}
             <a href="#maintenance" id="tab-maintenance"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -458,8 +468,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔧</span>
               <span x-show="!sidebarCollapsed">Maintenance</span>
             </a>
-            {% endif %}
           </div>
+          {% endif %}
         </nav>
 
         <!-- Sidebar Footer -->
@@ -619,6 +629,7 @@
         <!-- Tab Panels Container -->
         <main class="flex-1 overflow-y-auto bg-gray-100 dark:bg-gray-900 p-4 lg:p-6">
 
+      {% if is_admin %}
       <!-- Logs Panel -->
       <div id="logs-panel" class="tab-panel hidden">
           <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
@@ -831,7 +842,9 @@
             </div>
           </div>
       </div>
+      {% endif %}
 
+      {% if is_admin %}
       <!-- Export/Import Panel -->
       <div id="export-import-panel" class="tab-panel hidden">
           <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
@@ -1265,12 +1278,15 @@
 
       <!-- Maintenance Panel (admin only) -->
       <div id="maintenance-panel" class="tab-panel hidden"></div>
+      {% endif %}
 
+      {% if is_admin %}
       <!-- Plugins Panel -->
       <div id="plugins-panel" class="tab-panel hidden"></div>
+      {% endif %}
 
       <!-- Performance Panel -->
-      {% if performance_enabled %}
+      {% if performance_enabled and is_admin %}
       <div id="performance-panel" class="tab-panel hidden"
            hx-get="{{ root_path }}/admin/performance/stats"
            hx-trigger="revealed once"
@@ -1286,7 +1302,7 @@
       {% endif %}
 
       <!-- Observability Panel -->
-      {% if observability_enabled %}
+      {% if observability_enabled and is_admin %}
       <div id="observability-panel" class="tab-panel hidden"
            hx-get="{{ root_path }}/admin/observability/partial"
            hx-trigger="revealed once"
@@ -4150,7 +4166,7 @@
             <!-- HTMX container: will be replaced by /admin/prompts/partial -->
             <div id="prompts-list-container"
               hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
-              hx-trigger="load"
+              hx-trigger="load, refreshUsers"
               hx-swap="outerHTML"
               hx-indicator="#prompts-loading"
             >
@@ -5547,7 +5563,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       {% endif %}
 
       <!-- User Management Panel -->
-      {% if email_auth_enabled %}
+      {% if email_auth_enabled and is_admin %}
       <div id="users-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-2xl font-bold dark:text-gray-200">User Management</h2>
@@ -5568,8 +5584,8 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             <form
               id="create-user-form"
               hx-post="{{ root_path }}/admin/users"
-              hx-target="#users-list"
-              hx-swap="afterbegin"
+              hx-target="#user-creation-messages"
+              hx-swap="innerHTML"
               class="space-y-4"
             >
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -5755,18 +5771,29 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">
               System Users
             </h3>
-            <div
-              id="users-list"
-              hx-get="{{ root_path }}/admin/users"
-              hx-trigger="load"
-            >
-              <p class="text-gray-500 dark:text-gray-400">
-                <span class="animate-pulse">Loading users...</span>
-                <br /><small class="text-xs"
-                  >Note: User management requires email authentication</small
-                >
-              </p>
+
+            <!-- Loading indicator -->
+            <div id="users-loading" class="htmx-indicator flex items-center justify-center p-8">
+              <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span class="ml-3 text-gray-600 dark:text-gray-400">Loading users...</span>
             </div>
+
+            <!-- Users list container -->
+            <div
+              id="users-list-container"
+              hx-get="{{ root_path }}/admin/users/partial?page=1&per_page=50"
+              hx-trigger="load, refreshUsers"
+              hx-swap="outerHTML"
+              hx-indicator="#users-loading"
+            >
+              <!-- Content will be loaded via HTMX -->
+            </div>
+
+            <!-- Pagination controls container -->
+            <div id="users-pagination-controls"></div>
           </div>
         </div>
       </div>
@@ -7298,6 +7325,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         </div>
       </div>
 
+      {% if is_admin %}
       <!-- Metrics Panel -->
       <div id="metrics-panel" class="tab-panel hidden">
         <!-- System Metrics Section (isolated from JavaScript clearing) -->
@@ -7447,6 +7475,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <canvas id="metricsChart"></canvas>
         </div>
       </div>
+      {% endif %}
 
       <!-- Modals -->
       <!-- Tool Detail Modal -->
@@ -10842,6 +10871,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             }
           });
         }
+
       });
 
       // Build mapping objects using your existing tools, resources, and prompts arrays
@@ -11244,6 +11274,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         setTimeout(refreshVisibilityRules, 1000);
       }
 
+      {% if is_admin %}
       function openInviteUserModal() {
         console.log('Opening invite user modal...');
 
@@ -11603,6 +11634,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         });
       }
 
+      {% endif %}
       function exportPermissions() {
         console.log('Exporting permissions...');
 
@@ -13720,6 +13752,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       </div>
     </div>
 
+    {% if is_admin %}
     <!-- User Invitation Modal -->
     <div id="invite-user-modal" class="fixed inset-0 z-50 hidden">
       <div
@@ -13929,6 +13962,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         </div>
       </div>
     </div>
+    {% endif %}
 
     <script>
       // Safely inject teams data for Alpine.js
@@ -14046,8 +14080,22 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
       function manageTeamMembersSafe(button) {
         const teamId = button.getAttribute('data-team-id');
+        loadTeamMembersView(teamId);
+      }
+
+      function loadTeamMembersView(teamId) {
         // Load team members management modal
         htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/' + teamId + '/members', {
+          target: '#team-edit-modal-content',
+          swap: 'innerHTML'
+        }).then(() => {
+          document.getElementById('team-edit-modal').classList.remove('hidden');
+        });
+      }
+
+      function loadAddMembersView(teamId) {
+        // Load add members interface
+        htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/' + teamId + '/members/add', {
           target: '#team-edit-modal-content',
           swap: 'innerHTML'
         }).then(() => {
