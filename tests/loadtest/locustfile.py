@@ -959,7 +959,8 @@ class AdminUIUser(BaseUser):
     @tag("admin", "users")
     def admin_users(self):
         """Load users management page."""
-        with self.client.get("/admin/users", headers=self.admin_headers, name="/admin/users", catch_response=True) as response:
+        headers = {**self.admin_headers, "HX-Request": "true"}
+        with self.client.get("/admin/users/partial", headers=headers, name="/admin/users/partial", catch_response=True) as response:
             self._validate_html_response(response)
 
     @task(1)

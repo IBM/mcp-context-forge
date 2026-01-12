@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 # Standard
-import json
 import logging
 import time
 import uuid
@@ -12,6 +11,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+import orjson
 
 try:
     # Local
@@ -217,7 +217,7 @@ async def _stream_chat_completion(request: ChatCompletionRequest) -> AsyncGenera
             "choices": [{"index": 0, "delta": {"content": chunk}, "finish_reason": None}],
         }
 
-        yield f"data: {json.dumps(stream_chunk)}\n\n"
+        yield f"data: {orjson.dumps(stream_chunk).decode()}\n\n"
 
     # Send final chunk
     final_chunk = {
@@ -228,7 +228,7 @@ async def _stream_chat_completion(request: ChatCompletionRequest) -> AsyncGenera
         "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
     }
 
-    yield f"data: {json.dumps(final_chunk)}\n\n"
+    yield f"data: {orjson.dumps(final_chunk).decode()}\n\n"
     yield "data: [DONE]\n\n"
 
 

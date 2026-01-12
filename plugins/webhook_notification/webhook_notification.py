@@ -17,12 +17,12 @@ from datetime import datetime, timezone
 from enum import Enum
 import hashlib
 import hmac
-import json
 import logging
 from typing import Any, Dict, List, Optional
 
 # Third-Party
 import httpx
+import orjson
 from pydantic import BaseModel, Field
 
 # First-Party
@@ -160,7 +160,7 @@ class WebhookNotificationPlugin(Plugin):
             if value is None:
                 result = result.replace(placeholder, "null")
             elif isinstance(value, (dict, list)):
-                result = result.replace(placeholder, json.dumps(value))
+                result = result.replace(placeholder, orjson.dumps(value).decode())
             else:
                 result = result.replace(placeholder, str(value))
         return result
@@ -217,7 +217,7 @@ class WebhookNotificationPlugin(Plugin):
 
         # Add payload data if enabled and size is reasonable
         if self._cfg.include_payload_data and payload_data:
-            payload_str = json.dumps(payload_data)
+            payload_str = orjson.dumps(payload_data).decode()
             if len(payload_str) <= self._cfg.max_payload_size:
                 template_context["payload"] = payload_data
 

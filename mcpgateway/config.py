@@ -47,7 +47,6 @@ Examples:
 # Standard
 from functools import lru_cache
 from importlib.resources import files
-import json  # Used only for indent=2 pretty-printing in print_schema()
 import logging
 import os
 from pathlib import Path
@@ -1993,6 +1992,6 @@ settings = LazySettingsWrapper()
 if __name__ == "__main__":
     if "--schema" in sys.argv:
         schema = generate_settings_schema()
-        print(json.dumps(schema, indent=2))
+        print(orjson.dumps(schema, option=orjson.OPT_INDENT_2).decode())
         sys.exit(0)
     settings.log_summary()

@@ -4,12 +4,13 @@
 Provides both in-memory and file-based token storage for simple authentication tokens.
 """
 
-import json
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
+
+import orjson
 
 logger = logging.getLogger(__name__)
 
@@ -90,8 +91,8 @@ class TokenStorage:
         """Load tokens from file if it exists."""
         if self.storage_file and self.storage_file.exists():
             try:
-                with open(self.storage_file, "r") as f:
-                    data = json.load(f)
+                with open(self.storage_file, "rb") as f:
+                    data = orjson.loads(f.read())
                     for token_dict in data.get("tokens", []):
                         token_data = TokenData.from_dict(token_dict)
                         if not token_data.is_expired():
@@ -112,8 +113,8 @@ class TokenStorage:
             # Save active tokens only
             data = {"tokens": [td.to_dict() for td in self.tokens.values() if not td.is_expired()]}
 
-            with open(self.storage_file, "w") as f:
-                json.dump(data, f, indent=2)
+            with open(self.storage_file, "wb") as f:
+                f.write(orjson.dumps(data, option=orjson.OPT_INDENT_2))
             logger.debug(f"Saved {len(data['tokens'])} tokens to {self.storage_file}")
         except Exception as e:
             logger.error(f"Failed to save tokens to {self.storage_file}: {e}")
