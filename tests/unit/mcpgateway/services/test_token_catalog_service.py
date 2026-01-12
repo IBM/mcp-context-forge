@@ -403,7 +403,13 @@ class TestTokenCatalogService:
         with patch.object(token_service, "_generate_token", new_callable=AsyncMock) as mock_gen_token:
             mock_gen_token.return_value = "jwt_token_scoped"
 
-            token, raw_token = await token_service.create_token(user_email="test@example.com", name="Scoped Token", scope=token_scope)
+            # Must provide caller_permissions that include the requested scope permissions
+            token, raw_token = await token_service.create_token(
+                user_email="test@example.com",
+                name="Scoped Token",
+                scope=token_scope,
+                caller_permissions=["tools.read", "resources.read"],  # Caller has these permissions
+            )
 
             assert raw_token == "jwt_token_scoped"
             added_token = mock_db.add.call_args[0][0]
@@ -559,7 +565,13 @@ class TestTokenCatalogService:
         with patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_api_token
 
-            updated = await token_service.update_token(token_id="token-123", user_email="test@example.com", scope=token_scope)
+            # Must provide caller_permissions that include the requested scope permissions
+            updated = await token_service.update_token(
+                token_id="token-123",
+                user_email="test@example.com",
+                scope=token_scope,
+                caller_permissions=["tools.read", "resources.read"],  # Caller has these permissions
+            )
 
             assert mock_api_token.server_id == "server-123"
             assert mock_api_token.resource_scopes == ["tools.read", "resources.read"]
@@ -573,7 +585,13 @@ class TestTokenCatalogService:
         with patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_api_token
 
-            result = await token_service.revoke_token(token_id="token-123", revoked_by="admin@example.com", reason="Security concern")
+            # Must provide user_email for ownership verification
+            result = await token_service.revoke_token(
+                token_id="token-123",
+                user_email="test@example.com",  # Token owner
+                revoked_by="test@example.com",
+                reason="Security concern",
+            )
 
             assert result is True
             assert mock_api_token.is_active is False
@@ -584,7 +602,7 @@ class TestTokenCatalogService:
             revocation = mock_db.add.call_args[0][0]
             assert isinstance(revocation, TokenRevocation)
             assert revocation.jti == "jti-123"
-            assert revocation.revoked_by == "admin@example.com"
+            assert revocation.revoked_by == "test@example.com"
             assert revocation.reason == "Security concern"
 
     @pytest.mark.asyncio
@@ -593,7 +611,12 @@ class TestTokenCatalogService:
         with patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = None
 
-            result = await token_service.revoke_token(token_id="nonexistent", revoked_by="admin@example.com")
+            # Must provide user_email for ownership verification
+            result = await token_service.revoke_token(
+                token_id="nonexistent",
+                user_email="test@example.com",
+                revoked_by="test@example.com",
+            )
 
             assert result is False
 
@@ -966,7 +989,11 @@ class TestTokenCatalogServiceIntegration:
         # Revoke token
         with patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_api_token
-            result = await token_service.revoke_token(token_id="token-123", revoked_by="admin@example.com")
+            result = await token_service.revoke_token(
+                token_id="token-123",
+                user_email="test@example.com",
+                revoked_by="test@example.com",
+            )
             assert result is True
 
         # Check if revoked

@@ -66,6 +66,7 @@ def mock_current_user(mock_db):
         "is_admin": False,
         "permissions": ["tokens.create", "tokens.read"],
         "db": mock_db,  # Include db in user context for RBAC decorator
+        "auth_method": "jwt",  # Required for interactive session check
     }
 
 
@@ -77,6 +78,7 @@ def mock_admin_user(mock_db):
         "is_admin": True,
         "permissions": ["*"],
         "db": mock_db,  # Include db in user context for RBAC decorator
+        "auth_method": "jwt",  # Required for interactive session check
     }
 
 
@@ -301,9 +303,11 @@ class TestUpdateToken:
             scope=scope_data,
         )
 
-        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class, patch("mcpgateway.routers.tokens._get_caller_permissions", new_callable=AsyncMock) as mock_perms:
             mock_service = mock_service_class.return_value
+            mock_service.get_token = AsyncMock(return_value=mock_token_record)  # For scope containment lookup
             mock_service.update_token = AsyncMock(return_value=mock_token_record)
+            mock_perms.return_value = ["tools.admin"]  # Return sufficient permissions
 
             response = await update_token(token_id="token-123", request=request, current_user=mock_current_user, db=mock_db)
 
@@ -355,6 +359,7 @@ class TestRevokeToken:
 
             mock_service.revoke_token.assert_called_with(
                 token_id="token-123",
+                user_email="test@example.com",
                 revoked_by="test@example.com",
                 reason="Revoked by user",
             )
@@ -372,6 +377,7 @@ class TestRevokeToken:
 
             mock_service.revoke_token.assert_called_with(
                 token_id="token-123",
+                user_email="test@example.com",
                 revoked_by="test@example.com",
                 reason="Security breach",
             )
@@ -463,11 +469,11 @@ class TestAdminEndpoints:
         """Test admin revoking any token."""
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
-            mock_service.revoke_token = AsyncMock(return_value=True)
+            mock_service.admin_revoke_token = AsyncMock(return_value=True)
 
             await admin_revoke_token(token_id="token-123", request=None, current_user=mock_admin_user, db=mock_db)
 
-            mock_service.revoke_token.assert_called_once()
+            mock_service.admin_revoke_token.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_admin_revoke_token_non_admin(self, mock_db, mock_current_user):
@@ -482,7 +488,7 @@ class TestAdminEndpoints:
         """Test admin revoking non-existent token."""
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
-            mock_service.revoke_token = AsyncMock(return_value=False)
+            mock_service.admin_revoke_token = AsyncMock(return_value=False)
 
             with pytest.raises(HTTPException) as exc_info:
                 await admin_revoke_token(token_id="nonexistent", request=None, current_user=mock_admin_user, db=mock_db)

@@ -582,9 +582,9 @@ class PermissionService:
         Returns:
             bool: True if user has fallback permission for token operations
         """
-        # Any authenticated user can create, read, and revoke their own tokens
+        # Any authenticated user can create, read, update, and revoke their own tokens
         # The actual filtering by user_email happens in the token service layer
-        if permission in ["tokens.create", "tokens.read", "tokens.revoke"]:
+        if permission in ["tokens.create", "tokens.read", "tokens.update", "tokens.revoke"]:
             return True
 
         return False

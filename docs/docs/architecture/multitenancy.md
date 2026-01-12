@@ -489,7 +489,7 @@ The RBAC system defines permissions across multiple resource categories:
 - `servers.create`, `servers.read`, `servers.update`, `servers.delete`, `servers.manage`
 
 #### Token Management
-- `tokens.create`, `tokens.read`, `tokens.revoke`, `tokens.scope`
+- `tokens.create`, `tokens.read`, `tokens.update`, `tokens.revoke`
 
 #### Admin Functions
 - `admin.system_config`, `admin.user_management`, `admin.security_audit`
