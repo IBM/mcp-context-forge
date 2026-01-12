@@ -31,9 +31,9 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 import hashlib
+import json
 import logging
 import time
-import json
 from typing import Any, Callable, Dict, Optional, Set, Tuple, TYPE_CHECKING
 
 # Third-Party
@@ -343,14 +343,14 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
     def _make_pool_key(self, url: str, headers: Optional[Dict[str, str]], transport_type: TransportType, user_identity: str) -> PoolKey:
         """Create composite pool key from URL, identity, transport type, and user identity."""
         identity_hash = self._compute_identity_hash(headers)
-        
+
         # Anonymize user identity by hashing it (unless it's commonly "anonymous")
         # We also want to maintain the requested order: user_id, url, headers, transport
         if user_identity == "anonymous":
             user_hash = "anonymous"
         else:
             user_hash = hashlib.sha256(user_identity.encode()).hexdigest()[:16]
-            
+
         return (user_hash, url, identity_hash, transport_type.value)
 
     async def _get_or_create_lock(self, pool_key: PoolKey) -> asyncio.Lock:
@@ -494,7 +494,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             # Store identity components for key reconstruction
             pooled.identity_key = pool_key[2]
             pooled.user_identity = user_id
-            
+
             self._misses += 1
             self._record_success(url)
             async with lock:
@@ -525,7 +525,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         user_hash = "anonymous"
         if pooled.user_identity != "anonymous":
             user_hash = hashlib.sha256(pooled.user_identity.encode()).hexdigest()[:16]
-            
+
         pool_key = (user_hash, pooled.url, pooled.identity_key, pooled.transport_type.value)
         lock = await self._get_or_create_lock(pool_key)
         pool = await self._get_or_create_pool(pool_key)
