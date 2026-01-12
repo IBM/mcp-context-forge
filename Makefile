@@ -886,6 +886,102 @@ testing-logs:                              ## Show testing stack logs
 	$(COMPOSE_CMD_MONITOR) --profile testing logs -f --tail=100
 
 # =============================================================================
+# help: 🤖 A2A DEMO AGENTS (Issue #2002 Authentication Testing)
+# help: demo-a2a-up           - Start all 3 A2A demo agents (basic, bearer, apikey) with auto-registration
+# help: demo-a2a-down         - Stop all A2A demo agents
+# help: demo-a2a-status       - Show status of A2A demo agents
+# help: demo-a2a-basic        - Start only Basic Auth demo agent (port 9001)
+# help: demo-a2a-bearer       - Start only Bearer Token demo agent (port 9002)
+# help: demo-a2a-apikey       - Start only X-API-Key demo agent (port 9003)
+
+# A2A Demo Agent configuration
+DEMO_A2A_BASIC_PORT ?= 9001
+DEMO_A2A_BEARER_PORT ?= 9002
+DEMO_A2A_APIKEY_PORT ?= 9003
+DEMO_A2A_BASIC_PID := /tmp/demo-a2a-basic.pid
+DEMO_A2A_BEARER_PID := /tmp/demo-a2a-bearer.pid
+DEMO_A2A_APIKEY_PID := /tmp/demo-a2a-apikey.pid
+
+.PHONY: demo-a2a-up demo-a2a-down demo-a2a-status demo-a2a-basic demo-a2a-bearer demo-a2a-apikey
+
+demo-a2a-up:                               ## Start all 3 A2A demo agents with auto-registration
+	@echo "🤖 Starting A2A demo agents for authentication testing (Issue #2002)..."
+	@echo ""
+	@# Start Basic Auth agent (PYTHONUNBUFFERED=1 ensures print output is captured immediately)
+	@echo "Starting Basic Auth agent on port $(DEMO_A2A_BASIC_PORT)..."
+	@PYTHONUNBUFFERED=1 uv run python scripts/demo_a2a_agent_auth.py \
+		--auth-type basic --port $(DEMO_A2A_BASIC_PORT) --auto-register > /tmp/demo-a2a-basic.log 2>&1 & echo $$! > $(DEMO_A2A_BASIC_PID)
+	@sleep 1
+	@# Start Bearer Token agent
+	@echo "Starting Bearer Token agent on port $(DEMO_A2A_BEARER_PORT)..."
+	@PYTHONUNBUFFERED=1 uv run python scripts/demo_a2a_agent_auth.py \
+		--auth-type bearer --port $(DEMO_A2A_BEARER_PORT) --auto-register > /tmp/demo-a2a-bearer.log 2>&1 & echo $$! > $(DEMO_A2A_BEARER_PID)
+	@sleep 1
+	@# Start X-API-Key agent
+	@echo "Starting X-API-Key agent on port $(DEMO_A2A_APIKEY_PORT)..."
+	@PYTHONUNBUFFERED=1 uv run python scripts/demo_a2a_agent_auth.py \
+		--auth-type apikey --port $(DEMO_A2A_APIKEY_PORT) --auto-register > /tmp/demo-a2a-apikey.log 2>&1 & echo $$! > $(DEMO_A2A_APIKEY_PID)
+	@sleep 2
+	@echo ""
+	@echo "✅ A2A demo agents started!"
+	@echo ""
+	@echo "   🔐 Basic Auth:    http://localhost:$(DEMO_A2A_BASIC_PORT)  (log: /tmp/demo-a2a-basic.log)"
+	@echo "   🎫 Bearer Token:  http://localhost:$(DEMO_A2A_BEARER_PORT)  (log: /tmp/demo-a2a-bearer.log)"
+	@echo "   🔑 X-API-Key:     http://localhost:$(DEMO_A2A_APIKEY_PORT)  (log: /tmp/demo-a2a-apikey.log)"
+	@echo ""
+	@echo "   View credentials: cat /tmp/demo-a2a-*.log | grep -A5 'Configuration:'"
+	@echo "   Stop agents:      make demo-a2a-down"
+	@echo ""
+
+demo-a2a-down:                             ## Stop all A2A demo agents
+	@echo "🤖 Stopping A2A demo agents..."
+	@# Send SIGTERM first to allow graceful unregistration
+	@-if [ -f $(DEMO_A2A_BASIC_PID) ]; then kill -15 $$(cat $(DEMO_A2A_BASIC_PID)) 2>/dev/null || true; fi
+	@-if [ -f $(DEMO_A2A_BEARER_PID) ]; then kill -15 $$(cat $(DEMO_A2A_BEARER_PID)) 2>/dev/null || true; fi
+	@-if [ -f $(DEMO_A2A_APIKEY_PID) ]; then kill -15 $$(cat $(DEMO_A2A_APIKEY_PID)) 2>/dev/null || true; fi
+	@sleep 2
+	@# Force kill any remaining processes
+	@-if [ -f $(DEMO_A2A_BASIC_PID) ]; then kill -9 $$(cat $(DEMO_A2A_BASIC_PID)) 2>/dev/null || true; rm -f $(DEMO_A2A_BASIC_PID); fi
+	@-if [ -f $(DEMO_A2A_BEARER_PID) ]; then kill -9 $$(cat $(DEMO_A2A_BEARER_PID)) 2>/dev/null || true; rm -f $(DEMO_A2A_BEARER_PID); fi
+	@-if [ -f $(DEMO_A2A_APIKEY_PID) ]; then kill -9 $$(cat $(DEMO_A2A_APIKEY_PID)) 2>/dev/null || true; rm -f $(DEMO_A2A_APIKEY_PID); fi
+	@echo "✅ A2A demo agents stopped."
+
+demo-a2a-status:                           ## Show status of A2A demo agents
+	@echo "🤖 A2A demo agent status:"
+	@echo ""
+	@if [ -f $(DEMO_A2A_BASIC_PID) ] && kill -0 $$(cat $(DEMO_A2A_BASIC_PID)) 2>/dev/null; then \
+		echo "   ✅ Basic Auth (port $(DEMO_A2A_BASIC_PORT)):   running (PID $$(cat $(DEMO_A2A_BASIC_PID)))"; \
+	else \
+		echo "   ❌ Basic Auth (port $(DEMO_A2A_BASIC_PORT)):   stopped"; \
+		rm -f $(DEMO_A2A_BASIC_PID) 2>/dev/null || true; \
+	fi
+	@if [ -f $(DEMO_A2A_BEARER_PID) ] && kill -0 $$(cat $(DEMO_A2A_BEARER_PID)) 2>/dev/null; then \
+		echo "   ✅ Bearer Token (port $(DEMO_A2A_BEARER_PORT)): running (PID $$(cat $(DEMO_A2A_BEARER_PID)))"; \
+	else \
+		echo "   ❌ Bearer Token (port $(DEMO_A2A_BEARER_PORT)): stopped"; \
+		rm -f $(DEMO_A2A_BEARER_PID) 2>/dev/null || true; \
+	fi
+	@if [ -f $(DEMO_A2A_APIKEY_PID) ] && kill -0 $$(cat $(DEMO_A2A_APIKEY_PID)) 2>/dev/null; then \
+		echo "   ✅ X-API-Key (port $(DEMO_A2A_APIKEY_PORT)):    running (PID $$(cat $(DEMO_A2A_APIKEY_PID)))"; \
+	else \
+		echo "   ❌ X-API-Key (port $(DEMO_A2A_APIKEY_PORT)):    stopped"; \
+		rm -f $(DEMO_A2A_APIKEY_PID) 2>/dev/null || true; \
+	fi
+	@echo ""
+
+demo-a2a-basic:                            ## Start only Basic Auth demo agent
+	@echo "🔐 Starting Basic Auth demo agent on port $(DEMO_A2A_BASIC_PORT)..."
+	uv run python scripts/demo_a2a_agent_auth.py --auth-type basic --port $(DEMO_A2A_BASIC_PORT) --auto-register
+
+demo-a2a-bearer:                           ## Start only Bearer Token demo agent
+	@echo "🎫 Starting Bearer Token demo agent on port $(DEMO_A2A_BEARER_PORT)..."
+	uv run python scripts/demo_a2a_agent_auth.py --auth-type bearer --port $(DEMO_A2A_BEARER_PORT) --auto-register
+
+demo-a2a-apikey:                           ## Start only X-API-Key demo agent
+	@echo "🔑 Starting X-API-Key demo agent on port $(DEMO_A2A_APIKEY_PORT)..."
+	uv run python scripts/demo_a2a_agent_auth.py --auth-type apikey --port $(DEMO_A2A_APIKEY_PORT) --auto-register
+
+# =============================================================================
 # help: 🎯 BENCHMARK STACK (Go benchmark-server)
 # help: benchmark-up           - Start benchmark stack (MCP servers + auto-registration)
 # help: benchmark-down         - Stop benchmark stack

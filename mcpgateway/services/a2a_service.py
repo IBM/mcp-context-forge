@@ -33,7 +33,7 @@ from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.pagination import unified_paginate
-from mcpgateway.utils.services_auth import encode_auth  # ,decode_auth
+from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 
 # Cache import (lazy to avoid circular dependencies)
@@ -1107,12 +1107,19 @@ class A2AAgentService:
         agent_type = agent.agent_type
         agent_protocol_version = agent.protocol_version
         agent_auth_type = agent.auth_type
+        agent_auth_value = agent.auth_value
 
-        # Fetch auth_value if needed (before closing session)
-        auth_token_value = None
-        if agent_auth_type in ("api_key", "bearer"):
-            db_row = db.execute(select(DbA2AAgent).where(DbA2AAgent.name == agent_name)).scalar_one_or_none()
-            auth_token_value = getattr(db_row, "auth_value", None) if db_row else None
+        # Decode auth_value for supported auth types (before closing session)
+        auth_headers = {}
+        if agent_auth_type in ("basic", "bearer", "authheaders") and agent_auth_value:
+            # Decrypt auth_value and extract headers (follows gateway_service pattern)
+            if isinstance(agent_auth_value, str):
+                try:
+                    auth_headers = decode_auth(agent_auth_value)
+                except Exception as e:
+                    raise A2AAgentError(f"Failed to decrypt authentication for agent '{agent_name}': {e}")
+            elif isinstance(agent_auth_value, dict):
+                auth_headers = {str(k): str(v) for k, v in agent_auth_value.items()}
 
         # ═══════════════════════════════════════════════════════════════════════════
         # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls
@@ -1146,9 +1153,8 @@ class A2AAgentService:
             client = await get_http_client()
             headers = {"Content-Type": "application/json"}
 
-            # Add authentication if configured
-            if auth_token_value:
-                headers["Authorization"] = f"Bearer {auth_token_value}"
+            # Add authentication if configured (using decoded auth headers)
+            headers.update(auth_headers)
 
             # Add correlation ID to outbound headers for distributed tracing
             correlation_id = get_correlation_id()
