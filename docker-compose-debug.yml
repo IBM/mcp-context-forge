@@ -571,6 +571,10 @@ services:
     image: edoburu/pgbouncer:latest
     restart: unless-stopped
     networks: [mcpnet]
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     ports:
       - "6432:6432"    # PgBouncer port (optional external access)
     environment:
