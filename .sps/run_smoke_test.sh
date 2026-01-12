@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+source $WORKSPACE/$PIPELINE_CONFIG_REPO_PATH/scripts/utilities/python_utils.sh
+install_python3 3.11
+
 cd cyberfraud-mcp-management-service
 
 echo "#############################"
