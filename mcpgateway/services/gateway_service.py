@@ -2503,6 +2503,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             gateway_info = {"id": gateway.id, "name": gateway.name, "url": gateway.url}
             gateway_name = gateway.name
             gateway_team_id = gateway.team_id
+            gateway_url = gateway.url  # Store URL before expiring the object
 
             # Manually delete children first to avoid FK constraint violations
             # (passive_deletes=True means ORM won't auto-cascade, we must do it explicitly)
@@ -2562,12 +2563,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             await admin_stats_cache.invalidate_tags()
 
             # Update tracking
-            self._active_gateways.discard(gateway.url)
+            self._active_gateways.discard(gateway_url)
 
             # Notify subscribers
             await self._notify_gateway_deleted(gateway_info)
 
-            logger.info(f"Permanently deleted gateway: {gateway.name}")
+            logger.info(f"Permanently deleted gateway: {gateway_name}")
 
             # Structured logging: Audit trail for gateway deletion
             audit_trail.log_action(
