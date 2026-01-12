@@ -125,6 +125,8 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // Initialize search functionality for all entity types
     initializeSearchInputs();
+    initializePasswordValidation();
+    initializeAddMembersForms();
 
     // Re-initialize search inputs when HTMX content loads
     document.body.addEventListener("htmx:afterSwap", function (event) {
@@ -6754,10 +6756,42 @@ if (window.htmx && !window._promptsHtmxHandlerAttached) {
 // ENHANCED TAB HANDLING with Better Error Management
 // ===================================================================
 
+const ADMIN_ONLY_TABS = new Set([
+    "users",
+    "metrics",
+    "performance",
+    "observability",
+    "plugins",
+    "logs",
+    "export-import",
+    "version-info",
+    "maintenance",
+]);
+
+function isAdminUser() {
+    return Boolean(window.IS_ADMIN);
+}
+
+function isAdminOnlyTab(tabName) {
+    return ADMIN_ONLY_TABS.has(tabName);
+}
+
+function getDefaultTabName() {
+    return safeGetElement("overview-panel", true) ? "overview" : "gateways";
+}
+
 let tabSwitchTimeout = null;
 
 function showTab(tabName) {
     try {
+        if (!isAdminUser() && isAdminOnlyTab(tabName)) {
+            console.warn(`Blocked non-admin access to tab: ${tabName}`);
+            const fallbackTab = getDefaultTabName();
+            if (tabName !== fallbackTab) {
+                showTab(fallbackTab);
+            }
+            return;
+        }
         console.log(`Switching to tab: ${tabName}`);
 
         // Clear any pending tab switch
@@ -15490,10 +15524,15 @@ function setupTabNavigation() {
         "version-info",
     ];
 
-    tabs.forEach((tabName) => {
+    const visibleTabs = isAdminUser()
+        ? tabs
+        : tabs.filter((tabName) => !ADMIN_ONLY_TABS.has(tabName));
+
+    visibleTabs.forEach((tabName) => {
         // Suppress warnings for optional tabs that might not be enabled
         const optionalTabs = [
             "roots",
+            "metrics",
             "logs",
             "export-import",
             "version-info",
@@ -16825,7 +16864,7 @@ function initializeTabState() {
     }
 
     // Pre-load version info if that's the initial tab
-    if (window.location.hash === "#version-info") {
+    if (isAdminUser() && window.location.hash === "#version-info") {
         setTimeout(() => {
             const panel = safeGetElement("version-info-panel");
             if (panel && panel.innerHTML.trim() === "") {
@@ -16852,7 +16891,7 @@ function initializeTabState() {
     }
 
     // Pre-load maintenance panel if that's the initial tab
-    if (window.location.hash === "#maintenance") {
+    if (isAdminUser() && window.location.hash === "#maintenance") {
         setTimeout(() => {
             const panel = safeGetElement("maintenance-panel");
             if (panel && panel.innerHTML.trim() === "") {
@@ -20095,7 +20134,6 @@ function getTeamNameById(teamId) {
  * Show token details modal with full token information
  * @param {Object} token - The token object with all fields
  */
-// eslint-disable-next-line no-unused-vars -- called via onclick in HTML
 function showTokenDetailsModal(token) {
     const formatDate = (dateStr) => {
         if (!dateStr) {
@@ -20475,6 +20513,411 @@ function hideAddMemberForm(teamId) {
 // Expose team member management functions to global scope
 window.showAddMemberForm = showAddMemberForm;
 window.hideAddMemberForm = hideAddMemberForm;
+
+// Reset team creation form after successful HTMX actions
+function resetTeamCreateForm() {
+    const form = document.querySelector('form[hx-post*="/admin/teams"]');
+    if (form) {
+        form.reset();
+    }
+}
+
+// Normalize team ID from element IDs like "add-members-form-<id>"
+function extractTeamId(prefix, elementId) {
+    if (!elementId || !elementId.startsWith(prefix)) {
+        return null;
+    }
+    return elementId.slice(prefix.length);
+}
+
+function updateAddMembersCount(teamId) {
+    const form = document.getElementById(`add-members-form-${teamId}`);
+    const countEl = document.getElementById(`selected-count-${teamId}`);
+    if (!form || !countEl) {
+        return;
+    }
+    const checked = form.querySelectorAll(
+        'input[name="associatedUsers"]:checked',
+    );
+    countEl.textContent =
+        checked.length === 0
+            ? "No users selected"
+            : `${checked.length} user${checked.length !== 1 ? "s" : ""} selected`;
+}
+
+function dedupeSelectorItems(container) {
+    if (!container) {
+        return;
+    }
+    const seen = new Set();
+    const items = Array.from(container.querySelectorAll(".user-item"));
+    items.forEach((item) => {
+        const email = item.getAttribute("data-user-email") || "";
+        if (!email) {
+            return;
+        }
+        if (seen.has(email)) {
+            item.remove();
+            return;
+        }
+        seen.add(email);
+    });
+}
+
+function initializeAddMembersForm(form) {
+    if (!form || form.dataset.initialized === "true") {
+        return;
+    }
+    form.dataset.initialized = "true";
+
+    const teamId =
+        form.dataset.teamId ||
+        extractTeamId("add-members-form-", form.id) ||
+        "";
+    if (!teamId) {
+        return;
+    }
+
+    const searchInput = document.getElementById(`user-search-${teamId}`);
+    const searchResults = document.getElementById(
+        `user-search-results-${teamId}`,
+    );
+    const searchLoading = document.getElementById(
+        `user-search-loading-${teamId}`,
+    );
+
+    const memberEmails = [];
+    if (searchResults?.dataset.memberEmails) {
+        try {
+            const parsed = JSON.parse(searchResults.dataset.memberEmails);
+            if (Array.isArray(parsed)) {
+                memberEmails.push(...parsed);
+            }
+        } catch (error) {
+            console.warn("Failed to parse member emails", error);
+        }
+    }
+    const memberEmailSet = new Set(memberEmails);
+
+    form.addEventListener("change", function (event) {
+        if (event.target?.name === "associatedUsers") {
+            updateAddMembersCount(teamId);
+            const userItem = event.target.closest(".user-item");
+            if (userItem) {
+                const roleSelect = userItem.querySelector(".role-select");
+                if (roleSelect) {
+                    roleSelect.disabled = !event.target.checked;
+                }
+            }
+        }
+    });
+
+    updateAddMembersCount(teamId);
+
+    if (!searchInput || !searchResults) {
+        return;
+    }
+
+    let searchTimeout;
+    searchInput.addEventListener("input", function () {
+        clearTimeout(searchTimeout);
+        const query = this.value.trim();
+
+        if (query.length < 2) {
+            searchResults.innerHTML = "";
+            if (searchLoading) {
+                searchLoading.classList.add("hidden");
+            }
+            return;
+        }
+
+        searchTimeout = setTimeout(async () => {
+            if (searchLoading) {
+                searchLoading.classList.remove("hidden");
+            }
+            try {
+                const searchUrl = searchInput.dataset.searchUrl || "";
+                const limit = searchInput.dataset.searchLimit || "10";
+                if (!searchUrl) {
+                    throw new Error("Search URL missing");
+                }
+                const response = await fetchWithAuth(
+                    `${searchUrl}?q=${encodeURIComponent(query)}&limit=${limit}`,
+                );
+                if (!response.ok) {
+                    throw new Error(`Search failed: ${response.status}`);
+                }
+                const data = await response.json();
+
+                searchResults.innerHTML = "";
+                if (data.users && data.users.length > 0) {
+                    const container = document.createElement("div");
+                    container.className =
+                        "bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md p-2 mt-1";
+
+                    data.users.forEach((user) => {
+                        if (memberEmailSet.has(user.email)) {
+                            return;
+                        }
+                        const item = document.createElement("div");
+                        item.className =
+                            "p-2 hover:bg-gray-50 dark:hover:bg-gray-700 rounded cursor-pointer text-sm";
+                        item.textContent = `${user.full_name || ""} (${user.email})`;
+                        item.addEventListener("click", () => {
+                            const container = document.getElementById(
+                                `user-selector-container-${teamId}`,
+                            );
+                            if (!container) {
+                                return;
+                            }
+                            const checkbox = container.querySelector(
+                                `input[value="${user.email}"]`,
+                            );
+
+                            if (checkbox) {
+                                checkbox.checked = true;
+                                checkbox.dispatchEvent(
+                                    new Event("change", { bubbles: true }),
+                                );
+                            } else {
+                                const userItem = document.createElement("div");
+                                userItem.className =
+                                    "flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-2 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item";
+                                userItem.setAttribute(
+                                    "data-user-email",
+                                    user.email,
+                                );
+
+                                const newCheckbox =
+                                    document.createElement("input");
+                                newCheckbox.type = "checkbox";
+                                newCheckbox.name = "associatedUsers";
+                                newCheckbox.value = user.email;
+                                newCheckbox.setAttribute(
+                                    "data-user-name",
+                                    user.full_name || "",
+                                );
+                                newCheckbox.className =
+                                    "user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0";
+                                newCheckbox.setAttribute(
+                                    "data-auto-check",
+                                    "true",
+                                );
+                                newCheckbox.checked = true;
+
+                                const label = document.createElement("span");
+                                label.className = "select-none flex-grow";
+                                label.textContent = `${user.full_name || ""} (${user.email})`;
+
+                                const roleSelect =
+                                    document.createElement("select");
+                                roleSelect.name = `role_${encodeURIComponent(
+                                    user.email,
+                                )}`;
+                                roleSelect.className =
+                                    "role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0";
+
+                                const memberOption =
+                                    document.createElement("option");
+                                memberOption.value = "member";
+                                memberOption.textContent = "Member";
+                                memberOption.selected = true;
+
+                                const ownerOption =
+                                    document.createElement("option");
+                                ownerOption.value = "owner";
+                                ownerOption.textContent = "Owner";
+
+                                roleSelect.appendChild(memberOption);
+                                roleSelect.appendChild(ownerOption);
+
+                                userItem.appendChild(newCheckbox);
+                                userItem.appendChild(label);
+                                userItem.appendChild(roleSelect);
+
+                                const firstChild = container.firstChild;
+                                if (firstChild) {
+                                    container.insertBefore(
+                                        userItem,
+                                        firstChild,
+                                    );
+                                } else {
+                                    container.appendChild(userItem);
+                                }
+
+                                newCheckbox.dispatchEvent(
+                                    new Event("change", { bubbles: true }),
+                                );
+                            }
+
+                            searchInput.value = "";
+                            searchResults.innerHTML = "";
+                        });
+                        container.appendChild(item);
+                    });
+
+                    if (container.childElementCount > 0) {
+                        searchResults.appendChild(container);
+                    } else {
+                        const empty = document.createElement("div");
+                        empty.className =
+                            "text-sm text-gray-500 dark:text-gray-400 mt-1";
+                        empty.textContent = "No users found";
+                        searchResults.appendChild(empty);
+                    }
+                } else {
+                    const empty = document.createElement("div");
+                    empty.className =
+                        "text-sm text-gray-500 dark:text-gray-400 mt-1";
+                    empty.textContent = "No users found";
+                    searchResults.appendChild(empty);
+                }
+            } catch (error) {
+                console.error("Search error:", error);
+                searchResults.innerHTML = "";
+                const errorEl = document.createElement("div");
+                errorEl.className = "text-sm text-red-500 mt-1";
+                errorEl.textContent = "Search failed";
+                searchResults.appendChild(errorEl);
+            } finally {
+                if (searchLoading) {
+                    searchLoading.classList.add("hidden");
+                }
+            }
+        }, 300);
+    });
+}
+
+function initializeAddMembersForms(root = document) {
+    const forms = root?.querySelectorAll?.('[id^="add-members-form-"]') || [];
+    forms.forEach((form) => initializeAddMembersForm(form));
+}
+
+function handleAdminTeamAction(event) {
+    const detail = event.detail || {};
+    const delayMs = Number(detail.delayMs) || 0;
+    setTimeout(() => {
+        if (detail.resetTeamCreateForm) {
+            resetTeamCreateForm();
+        }
+        if (
+            detail.closeTeamEditModal &&
+            typeof hideTeamEditModal === "function"
+        ) {
+            hideTeamEditModal();
+        }
+        if (detail.closeRoleModal) {
+            const roleModal = document.getElementById("role-assignment-modal");
+            if (roleModal) {
+                roleModal.classList.add("hidden");
+            }
+        }
+        if (detail.closeAllModals) {
+            const modals = document.querySelectorAll('[id$="-modal"]');
+            modals.forEach((modal) => modal.classList.add("hidden"));
+        }
+        if (detail.refreshTeamsList) {
+            const teamsList = safeGetElement("teams-list");
+            if (teamsList && window.htmx) {
+                window.htmx.trigger(teamsList, "load");
+            }
+        }
+        if (detail.refreshUnifiedTeamsList && window.htmx) {
+            const unifiedList = document.getElementById("unified-teams-list");
+            if (unifiedList) {
+                window.htmx.ajax(
+                    "GET",
+                    `${window.ROOT_PATH || ""}/admin/teams?unified=true`,
+                    {
+                        target: "#unified-teams-list",
+                        swap: "innerHTML",
+                    },
+                );
+            }
+        }
+        if (detail.refreshTeamMembers && detail.teamId) {
+            if (typeof window.loadTeamMembersView === "function") {
+                window.loadTeamMembersView(detail.teamId);
+            } else if (window.htmx) {
+                const modalContent = document.getElementById(
+                    "team-edit-modal-content",
+                );
+                if (modalContent) {
+                    window.htmx.ajax(
+                        "GET",
+                        `${window.ROOT_PATH || ""}/admin/teams/${detail.teamId}/members`,
+                        {
+                            target: "#team-edit-modal-content",
+                            swap: "innerHTML",
+                        },
+                    );
+                }
+            }
+        }
+        if (detail.refreshJoinRequests && detail.teamId && window.htmx) {
+            const joinRequests = document.getElementById(
+                "team-join-requests-modal-content",
+            );
+            if (joinRequests) {
+                window.htmx.ajax(
+                    "GET",
+                    `${window.ROOT_PATH || ""}/admin/teams/${detail.teamId}/join-requests`,
+                    {
+                        target: "#team-join-requests-modal-content",
+                        swap: "innerHTML",
+                    },
+                );
+            }
+        }
+    }, delayMs);
+}
+
+function handleAdminUserAction(event) {
+    const detail = event.detail || {};
+    const delayMs = Number(detail.delayMs) || 0;
+    setTimeout(() => {
+        if (
+            detail.closeUserEditModal &&
+            typeof hideUserEditModal === "function"
+        ) {
+            hideUserEditModal();
+        }
+        if (detail.refreshUsersList) {
+            const usersList = document.getElementById("users-list-container");
+            if (usersList && window.htmx) {
+                window.htmx.trigger(usersList, "refreshUsers");
+            }
+        }
+    }, delayMs);
+}
+
+document.body.addEventListener("adminTeamAction", handleAdminTeamAction);
+document.body.addEventListener("adminUserAction", handleAdminUserAction);
+document.body.addEventListener("userCreated", function () {
+    handleAdminUserAction({ detail: { refreshUsersList: true } });
+});
+
+document.body.addEventListener("htmx:afterSwap", function (event) {
+    initializeAddMembersForms(event.target);
+    initializePasswordValidation(event.target);
+    const target = event.target;
+    if (
+        target &&
+        target.id &&
+        target.id.startsWith("user-selector-container-")
+    ) {
+        const teamId = extractTeamId("user-selector-container-", target.id);
+        if (teamId) {
+            dedupeSelectorItems(target);
+            updateAddMembersCount(teamId);
+        }
+    }
+});
+
+document.body.addEventListener("htmx:load", function (event) {
+    initializeAddMembersForms(event.target);
+    initializePasswordValidation(event.target);
+});
 
 // Logs refresh function
 function refreshLogs() {
@@ -20870,6 +21313,100 @@ window.rejectJoinRequest = rejectJoinRequest;
 /**
  * Validate password match in user edit form
  */
+function getPasswordPolicy() {
+    const policyEl = document.getElementById("password-policy-data");
+    if (!policyEl) {
+        return null;
+    }
+    return {
+        minLength: parseInt(policyEl.dataset.minLength || "0", 10),
+        requireUppercase: policyEl.dataset.requireUppercase === "true",
+        requireLowercase: policyEl.dataset.requireLowercase === "true",
+        requireNumbers: policyEl.dataset.requireNumbers === "true",
+        requireSpecial: policyEl.dataset.requireSpecial === "true",
+    };
+}
+
+function updateRequirementIcon(elementId, isValid) {
+    const req = document.getElementById(elementId);
+    if (!req) {
+        return;
+    }
+    const icon = req.querySelector("span");
+    if (!icon) {
+        return;
+    }
+    if (isValid) {
+        icon.className =
+            "inline-flex items-center justify-center w-4 h-4 bg-green-500 text-white rounded-full text-xs mr-2";
+        icon.textContent = "✓";
+    } else {
+        icon.className =
+            "inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2";
+        icon.textContent = "✗";
+    }
+}
+
+function validatePasswordRequirements() {
+    const policy = getPasswordPolicy();
+    const passwordField = document.getElementById("password-field");
+    if (!policy || !passwordField) {
+        return;
+    }
+
+    const password = passwordField.value || "";
+    const lengthCheck = password.length >= policy.minLength;
+    updateRequirementIcon("req-length", lengthCheck);
+
+    const uppercaseCheck = !policy.requireUppercase || /[A-Z]/.test(password);
+    updateRequirementIcon("req-uppercase", uppercaseCheck);
+
+    const lowercaseCheck = !policy.requireLowercase || /[a-z]/.test(password);
+    updateRequirementIcon("req-lowercase", lowercaseCheck);
+
+    const numbersCheck = !policy.requireNumbers || /[0-9]/.test(password);
+    updateRequirementIcon("req-numbers", numbersCheck);
+
+    const specialChars = "!@#$%^&*()_+-=[]{};:'\"\\|,.<>`~/?";
+    const specialCheck =
+        !policy.requireSpecial ||
+        [...password].some((char) => specialChars.includes(char));
+    updateRequirementIcon("req-special", specialCheck);
+
+    const submitButton = document.querySelector(
+        '#user-edit-modal-content button[type="submit"]',
+    );
+    const allRequirementsMet =
+        lengthCheck &&
+        uppercaseCheck &&
+        lowercaseCheck &&
+        numbersCheck &&
+        specialCheck;
+    const passwordEmpty = password.length === 0;
+
+    if (submitButton) {
+        if (passwordEmpty || allRequirementsMet) {
+            submitButton.disabled = false;
+            submitButton.className =
+                "px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500";
+        } else {
+            submitButton.disabled = true;
+            submitButton.className =
+                "px-4 py-2 text-sm font-medium text-white bg-gray-400 border border-transparent rounded-md cursor-not-allowed";
+        }
+    }
+}
+
+function initializePasswordValidation(root = document) {
+    if (
+        root?.querySelector?.("#password-field") ||
+        document.getElementById("password-field")
+    ) {
+        validatePasswordRequirements();
+        validatePasswordMatch();
+    }
+}
+
 function validatePasswordMatch() {
     const passwordField = document.getElementById("password-field");
     const confirmPasswordField = document.getElementById(
@@ -20910,6 +21447,7 @@ function validatePasswordMatch() {
 
 // Expose password validation function to global scope
 window.validatePasswordMatch = validatePasswordMatch;
+window.validatePasswordRequirements = validatePasswordRequirements;
 
 // ===================================================================
 // SELECTIVE IMPORT FUNCTIONS
@@ -22069,7 +22607,7 @@ function initializePluginFunctions() {
 }
 
 // Initialize plugin functions if plugins panel exists
-if (document.getElementById("plugins-panel")) {
+if (isAdminUser() && document.getElementById("plugins-panel")) {
     initializePluginFunctions();
     // Populate filter dropdowns on initial load
     if (window.populatePluginFilters) {
@@ -22307,7 +22845,32 @@ function initializeChatScroll() {
 /**
  * Generate a unique user ID for the session
  */
+function getAuthenticatedUserId() {
+    const currentUser = window.CURRENT_USER;
+    if (!currentUser) {
+        return "";
+    }
+    if (typeof currentUser === "string") {
+        return currentUser;
+    }
+    if (typeof currentUser === "object") {
+        return (
+            currentUser.id ||
+            currentUser.user_id ||
+            currentUser.sub ||
+            currentUser.email ||
+            ""
+        );
+    }
+    return "";
+}
+
 function generateUserId() {
+    const authenticatedUserId = getAuthenticatedUserId();
+    if (authenticatedUserId) {
+        sessionStorage.setItem("llm_chat_user_id", authenticatedUserId);
+        return authenticatedUserId;
+    }
     // Check if user ID exists in session storage
     let userId = sessionStorage.getItem("llm_chat_user_id");
     if (!userId) {

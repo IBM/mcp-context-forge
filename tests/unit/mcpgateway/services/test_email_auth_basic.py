@@ -848,9 +848,102 @@ class TestEmailAuthServiceUserListing:
 
         result = await service.list_users(limit=3, offset=0)
 
-        assert len(result) == 3
-        assert result[0].email == "user0@example.com"
+        assert len(result.data) == 3
+        assert result.data[0].email == "user0@example.com"
         mock_db.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_cursor_paginate_users_next_cursor(self, service, mock_db):
+        """Test cursor pagination returns next_cursor when more results exist."""
+        query = MagicMock()
+        query.limit.return_value = query
+        query.where.return_value = query
+
+        users = []
+        for i in range(3):
+            user = MagicMock(spec=EmailUser)
+            user.email = f"user{i}@example.com"
+            user.created_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
+            users.append(user)
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = users
+        mock_db.execute.return_value = mock_result
+
+        result_users, next_cursor = await service._cursor_paginate_users(query, cursor=None, limit=2)
+
+        assert len(result_users) == 2
+        assert next_cursor is not None
+        query.limit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_cursor_paginate_users_last_page(self, service, mock_db):
+        """Test cursor pagination returns no next_cursor on final page."""
+        query = MagicMock()
+        query.limit.return_value = query
+        query.where.return_value = query
+
+        users = []
+        for i in range(2):
+            user = MagicMock(spec=EmailUser)
+            user.email = f"user{i}@example.com"
+            user.created_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
+            users.append(user)
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = users
+        mock_db.execute.return_value = mock_result
+
+        result_users, next_cursor = await service._cursor_paginate_users(query, cursor=None, limit=2)
+
+        assert len(result_users) == 2
+        assert next_cursor is None
+
+    @pytest.mark.asyncio
+    async def test_cursor_paginate_users_invalid_cursor(self, service, mock_db):
+        """Test cursor pagination ignores invalid cursor values."""
+        query = MagicMock()
+        query.limit.return_value = query
+        query.where.return_value = query
+
+        users = []
+        for i in range(3):
+            user = MagicMock(spec=EmailUser)
+            user.email = f"user{i}@example.com"
+            user.created_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
+            users.append(user)
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = users
+        mock_db.execute.return_value = mock_result
+
+        result_users, next_cursor = await service._cursor_paginate_users(query, cursor="not-base64", limit=2)
+
+        assert len(result_users) == 2
+        assert next_cursor is not None
+
+    @pytest.mark.asyncio
+    async def test_cursor_paginate_users_no_limit(self, service, mock_db):
+        """Test cursor pagination returns all users when limit=0."""
+        query = MagicMock()
+        query.where.return_value = query
+
+        users = []
+        for i in range(3):
+            user = MagicMock(spec=EmailUser)
+            user.email = f"user{i}@example.com"
+            user.created_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
+            users.append(user)
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = users
+        mock_db.execute.return_value = mock_result
+
+        result_users, next_cursor = await service._cursor_paginate_users(query, cursor=None, limit=0)
+
+        assert len(result_users) == 3
+        assert next_cursor is None
+        query.limit.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_list_users_database_error(self, service, mock_db):
@@ -859,19 +952,31 @@ class TestEmailAuthServiceUserListing:
 
         result = await service.list_users()
 
-        assert result == []
+        assert result.data == []
 
     @pytest.mark.asyncio
     async def test_get_all_users(self, service, mock_db, mock_users):
         """Test getting all users without explicit pagination."""
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = mock_users
-        mock_db.execute.return_value = mock_result
+        mock_count_result = MagicMock()
+        mock_count_result.scalar.return_value = len(mock_users)
+        mock_list_result = MagicMock()
+        mock_list_result.scalars.return_value.all.return_value = mock_users
+        mock_db.execute.side_effect = [mock_count_result, mock_list_result]
 
         result = await service.get_all_users()
 
         assert len(result) == 5
-        mock_db.execute.assert_called_once()
+        assert mock_db.execute.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_get_all_users_raises_when_exceeds_limit(self, service, mock_db):
+        """Test get_all_users raises when total exceeds limit."""
+        mock_count_result = MagicMock()
+        mock_count_result.scalar.return_value = 10001
+        mock_db.execute.return_value = mock_count_result
+
+        with pytest.raises(ValueError):
+            await service.get_all_users()
 
     @pytest.mark.asyncio
     async def test_count_users_success(self, service, mock_db, mock_users):

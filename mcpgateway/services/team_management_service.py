@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 # Third-Party
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import selectinload, Session
 
 # First-Party
 from mcpgateway.cache.admin_stats_cache import admin_stats_cache
@@ -32,6 +32,7 @@ from mcpgateway.cache.auth_cache import auth_cache
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailTeamMemberHistory, EmailUser, utc_now
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.pagination import offset_paginate
 
 # Initialize logging
 logging_service = LoggingService()
@@ -796,6 +797,49 @@ class TeamManagementService:
             self.db.rollback()
             logger.error(f"Failed to get members for team {team_id}: {e}")
             return []
+
+    async def list_team_members_paginated(
+        self,
+        team_id: str,
+        page: int = 1,
+        per_page: Optional[int] = None,
+        base_url: str = "",
+        query_params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Get team members with offset-based pagination.
+
+        Args:
+            team_id: ID of the team.
+            page: Page number (1-indexed).
+            per_page: Items per page (uses default if None).
+            base_url: Base URL for pagination links.
+            query_params: Additional query parameters to include in links.
+
+        Returns:
+            Dict[str, Any]: Pagination result with data, pagination, and links.
+        """
+        try:
+            query = (
+                select(EmailTeamMember).options(selectinload(EmailTeamMember.user)).where(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)).order_by(EmailTeamMember.user_email)
+            )
+            result = await offset_paginate(
+                db=self.db,
+                query=query,
+                page=page,
+                per_page=per_page or settings.pagination_default_page_size,
+                base_url=base_url,
+                query_params=query_params,
+            )
+            self.db.commit()  # Release transaction to avoid idle-in-transaction
+            return result
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Failed to paginate members for team {team_id}: {e}")
+            return {
+                "data": [],
+                "pagination": None,
+                "links": None,
+            }
 
     def count_team_owners(self, team_id: str) -> int:
         """Count the number of owners in a team using SQL COUNT.
