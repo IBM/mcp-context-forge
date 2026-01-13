@@ -43,7 +43,7 @@ IMAGE_BASE="${REGISTRY_URL}/${IMAGE_NAME}"
 IMAGE="${IMAGE_BASE}:${IMAGE_TAG}"
 
 make IMAGE_TAG="base" docker-prod
-    make IMAGE_TAG="${IMAGE_TAG}" CONTAINER_RUNTIME=docker CONTAINER_FILE=./Containerfile.cyberfraud container-build && \
+    make IMAGE_TAG="${IMAGE_TAG}" CONTAINER_RUNTIME=docker CONTAINER_FILE=./Containerfile.cyberfraud container-build-multi && \
     docker tag "mcpgateway/mcpgateway:${IMAGE_TAG}" "${IMAGE}" && \
     docker push "${IMAGE}"
 
