@@ -548,14 +548,16 @@ class TestTeamsRouter:
                 team_id=team_id,
                 cursor=None,
                 limit=None,
-                include_pagination=False,
+                include_pagination=True,
                 current_user=mock_current_user,
                 db=mock_db
             )
 
-            assert len(result) == 1
-            assert result[0].user_email == mock_team_member.user_email
-            assert result[0].role == mock_team_member.role
+            assert hasattr(result, 'members')
+            assert len(result.members) == 1
+            assert result.members[0].user_email == mock_team_member.user_email
+            assert result.members[0].role == mock_team_member.role
+            assert result.nextCursor is None
 
     @pytest.mark.asyncio
     async def test_list_team_members_access_denied(self, mock_current_user, mock_db):

@@ -5469,6 +5469,26 @@ class TeamMemberResponse(BaseModel):
     is_active: bool = Field(..., description="Whether the membership is active")
 
 
+class PaginatedTeamMembersResponse(BaseModel):
+    """Schema for paginated team member list response.
+
+    Attributes:
+        members: List of team members
+        nextCursor: Optional cursor for next page of results
+
+    Examples:
+        >>> response = PaginatedTeamMembersResponse(
+        ...     members=[member1, member2],
+        ...     nextCursor="cursor-token-123"
+        ... )
+        >>> len(response.members)
+        2
+    """
+
+    members: List[TeamMemberResponse] = Field(..., description="List of team members")
+    nextCursor: Optional[str] = Field(None, description="Cursor for next page of results")
+
+
 class TeamInviteRequest(BaseModel):
     """Schema for inviting users to a team.
 

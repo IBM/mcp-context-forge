@@ -32,6 +32,7 @@ from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import (
     EmailUserResponse,
+    PaginatedTeamMembersResponse,
     SuccessResponse,
     TeamCreateRequest,
     TeamDiscoveryResponse,
@@ -323,28 +324,29 @@ async def delete_team(team_id: str, current_user: EmailUserResponse = Depends(ge
 # ---------------------------------------------------------------------------
 
 
-@teams_router.get("/{team_id}/members", response_model=List[TeamMemberResponse])
+@teams_router.get("/{team_id}/members", response_model=Union[PaginatedTeamMembersResponse, List[TeamMemberResponse]])
 @require_permission("teams.read")
 async def list_team_members(
     team_id: str,
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     limit: Optional[int] = Query(None, ge=0, description="Maximum number of members to return (default: 50)"),
-    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
+    include_pagination: bool = Query(True, description="Include cursor pagination metadata in response"),
     current_user: EmailUserResponse = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> Union[List[TeamMemberResponse], Dict]:
+) -> Union[PaginatedTeamMembersResponse, List[TeamMemberResponse]]:
     """List team members with cursor-based pagination.
 
     Args:
         team_id: Team UUID
         cursor: Pagination cursor for fetching the next set of results
         limit: Maximum number of members to return (default: 50)
-        include_pagination: Whether to include cursor pagination metadata in the response
+        include_pagination: Whether to include cursor pagination metadata in the response (default: true)
         current_user: Currently authenticated user
         db: Database session
 
     Returns:
-        List of team members or dict with members and nextCursor if include_pagination=true
+        PaginatedTeamMembersResponse with members and nextCursor by default, or
+        List of team members if include_pagination=false
 
     Raises:
         HTTPException: If team not found or access denied
@@ -377,10 +379,7 @@ async def list_team_members(
 
         # Return with pagination metadata if requested
         if include_pagination:
-            payload = {"members": member_responses}
-            if next_cursor:
-                payload["nextCursor"] = next_cursor
-            return payload
+            return PaginatedTeamMembersResponse(members=member_responses, nextCursor=next_cursor)
 
         return member_responses
     except HTTPException:
