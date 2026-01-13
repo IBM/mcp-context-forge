@@ -30,7 +30,9 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
      Otherwise the chart-managed default "postgres-secret" is returned.
      -------------------------------------------------------------------- */}}
 {{- define "mcp-stack.postgresSecretName" -}}
-{{- if .Values.postgres.existingSecret }}
+{{- if .Values.postgres.external.enabled }}
+{{- .Values.postgres.external.existingSecret | default (printf "%s-postgres-external" (include "mcp-stack.fullname" .)) }}
+{{- else if .Values.postgres.existingSecret }}
 {{- .Values.postgres.existingSecret }}
 {{- else }}
 postgres-secret
