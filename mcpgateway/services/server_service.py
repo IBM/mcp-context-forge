@@ -499,7 +499,7 @@ class ServerService:
             if server_in.id:
                 conditions.append(DbServer.id != server_in.id)
 
-            existing_server = get_for_update(db, DbServer, where=and_(*conditions), skip_locked=True)
+            existing_server = get_for_update(db, DbServer, where=and_(*conditions))
             if existing_server:
                 raise ServerNameConflictError(server_in.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
             # Set custom UUID if provided
@@ -961,18 +961,17 @@ class ServerService:
             >>> asyncio.run(service.get_server(db, 'server_id'))
             'server_read'
         """
-        server = get_for_update(
-            db,
-            DbServer,
-            server_id,
-            options=[
+        server = db.execute(
+            select(DbServer)
+            .options(
                 selectinload(DbServer.tools),
                 selectinload(DbServer.resources),
                 selectinload(DbServer.prompts),
                 selectinload(DbServer.a2a_agents),
                 joinedload(DbServer.email_team),
-            ],
-        )
+            )
+            .where(DbServer.id == server_id)
+        ).scalar_one_or_none()
         if not server:
             raise ServerNotFoundError(f"Server not found: {server_id}")
         server_data = {

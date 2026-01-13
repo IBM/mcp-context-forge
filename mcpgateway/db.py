@@ -5295,7 +5295,7 @@ def get_db() -> Generator[Session, Any, None]:
         db.close()
 
 
-def get_for_update(db: Session, model, entity_id=None, where: Optional[Any] = None, skip_locked: bool = True, options: Optional[List] = None):
+def get_for_update(db: Session, model, entity_id=None, where: Optional[Any] = None, skip_locked: bool = False, options: Optional[List] = None):
     """Get entity with row lock for update operations.
 
     Args:
@@ -5303,7 +5303,9 @@ def get_for_update(db: Session, model, entity_id=None, where: Optional[Any] = No
         model: ORM model class
         entity_id: Primary key value (optional if `where` provided)
         where: Optional SQLAlchemy WHERE clause to locate rows for conflict detection
-        skip_locked: Pass-through to FOR UPDATE(skip_locked=...)
+        skip_locked: If False (default), wait for locked rows. If True, skip locked
+            rows (returns None if row is locked). Use False for conflict checks and
+            entity updates to ensure consistency. Use True only for job-queue patterns.
         options: Optional list of loader options (e.g., selectinload(...))
 
     Returns:

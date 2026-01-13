@@ -2158,20 +2158,18 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             PermissionError: If user doesn't own the agent.
         """
         try:
-            # Build a single select that eager-loads collections and, when
-            # supported by the backend, applies FOR UPDATE to acquire a row
-            # lock so the multi-field state check and subsequent
-            # initialization are atomic.
-            gateway = get_for_update(
-                db,
-                DbGateway,
-                gateway_id,
-                options=[
+            # Eager-load collections for the gateway. Note: we don't use FOR UPDATE
+            # here because _initialize_gateway does network I/O, and holding a row
+            # lock during network calls would block other operations and risk timeouts.
+            gateway = db.execute(
+                select(DbGateway)
+                .options(
                     selectinload(DbGateway.tools),
                     selectinload(DbGateway.resources),
                     selectinload(DbGateway.prompts),
-                ],
-            )
+                )
+                .where(DbGateway.id == gateway_id)
+            ).scalar_one_or_none()
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
