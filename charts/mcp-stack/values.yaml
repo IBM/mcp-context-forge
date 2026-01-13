@@ -711,6 +711,25 @@ mcpContextForge:
     - configMapRef:
         name: mcp-gateway-config
 
+  ## -- Additional environment variables from secrets or configmaps
+  ## Example:
+  ##   extraEnvFrom:
+  ##     - secretRef:
+  ##         name: my-secret
+  extraEnvFrom: []
+
+  ## -- Additional environment variables to inject directly
+  ## Example:
+  ##   extraEnv:
+  ##     - name: MY_VAR
+  ##       value: my-value
+  ##     - name: SECRET_VAR
+  ##       valueFrom:
+  ##         secretKeyRef:
+  ##           name: my-secret
+  ##           key: secret-key
+  extraEnv: []
+
 ########################################################################
 # DATABASE MIGRATION (Alembic)
 # Runs as a Job before mcpgateway deployment

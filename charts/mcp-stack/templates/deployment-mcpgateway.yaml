@@ -108,6 +108,12 @@ spec:
             - name: REDIS_URL
               value: "redis://$(REDIS_HOST):$(REDIS_PORT)/0"
 
+            # ---------- EXTRA ENV (user-defined) ----------
+            # Placed last so users can override any variable including derived URLs
+            {{- if .Values.mcpContextForge.extraEnv }}
+            {{- toYaml .Values.mcpContextForge.extraEnv | nindent 12 }}
+            {{- end }}
+
           ################################################################
           # BULK ENV-VARS - pulled from ConfigMap + Secret
           ################################################################
@@ -116,6 +122,9 @@ spec:
                 name: {{ include "mcp-stack.fullname" . }}-gateway-secret
             - configMapRef:
                 name: {{ include "mcp-stack.fullname" . }}-gateway-config
+            {{- if .Values.mcpContextForge.extraEnvFrom }}
+            {{- toYaml .Values.mcpContextForge.extraEnvFrom | nindent 12 }}
+            {{- end }}
 
           ################################################################
           # HEALTH & READINESS PROBES

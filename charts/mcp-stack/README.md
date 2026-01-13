@@ -314,6 +314,8 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.env.redis.port | int | `6379` |  |
 | mcpContextForge.envFrom[0].secretRef.name | string | `"mcp-gateway-secret"` |  |
 | mcpContextForge.envFrom[1].configMapRef.name | string | `"mcp-gateway-config"` |  |
+| mcpContextForge.extraEnv | list | `[]` | Additional environment variables to inject directly |
+| mcpContextForge.extraEnvFrom | list | `[]` | Additional environment variables from secrets or configmaps |
 | mcpContextForge.hpa | object | `{"enabled":true,"maxReplicas":10,"minReplicas":2,"targetCPUUtilizationPercentage":90,"targetMemoryUtilizationPercentage":90}` | ------------------------------------------------------------------ |
 | mcpContextForge.image.pullPolicy | string | `"Always"` |  |
 | mcpContextForge.image.repository | string | `"ghcr.io/ibm/mcp-context-forge"` |  |

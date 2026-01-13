@@ -41,6 +41,72 @@
           "maximum": 100,
           "default": 2
         },
+        "extraEnvFrom": {
+            "type": "array",
+            "description": "Additional environment variables from secrets or configmaps",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "secretRef": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string" }
+                        },
+                        "required": ["name"]
+                    },
+                    "configMapRef": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string" }
+                        },
+                        "required": ["name"]
+                    },
+                    "prefix": { "type": "string" }
+                }
+            },
+            "default": []
+        },
+        "extraEnv": {
+            "type": "array",
+            "description": "Additional environment variables",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "value": { "type": "string" },
+                    "valueFrom": {
+                        "type": "object",
+                        "properties": {
+                            "secretKeyRef": {
+                                "type": "object",
+                                "properties": {
+                                    "name": { "type": "string" },
+                                    "key": { "type": "string" }
+                                },
+                                "required": ["name", "key"]
+                            },
+                            "configMapKeyRef": {
+                                "type": "object",
+                                "properties": {
+                                    "name": { "type": "string" },
+                                    "key": { "type": "string" }
+                                },
+                                "required": ["name", "key"]
+                            },
+                            "fieldRef": {
+                                "type": "object",
+                                "properties": {
+                                    "fieldPath": { "type": "string" }
+                                },
+                                "required": ["fieldPath"]
+                            }
+                        }
+                    }
+                },
+                "required": ["name"]
+            },
+            "default": []
+        },
         "hpa": {
           "type": "object",
           "description": "Horizontal Pod Autoscaler configuration",
