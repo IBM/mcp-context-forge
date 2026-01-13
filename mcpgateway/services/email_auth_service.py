@@ -697,7 +697,6 @@ class EmailAuthService:
         page: Optional[int] = None,
         per_page: Optional[int] = None,
         search: Optional[str] = None,
-        exclude_emails: Optional[set[str]] = None,
     ) -> UsersListResult:
         """List all users with cursor or page-based pagination support and optional search.
 
@@ -714,7 +713,6 @@ class EmailAuthService:
             page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
             per_page: Items per page for page-based pagination
             search: Optional search term to filter by email or full name (case-insensitive)
-            exclude_emails: Optional set of email addresses to exclude from results
 
         Returns:
             UsersListResult with data and optional pagination metadata.
@@ -748,10 +746,6 @@ class EmailAuthService:
                         EmailUser.full_name.ilike(search_term, escape="\\"),
                     )
                 )
-
-            # Apply email exclusion filter if provided
-            if exclude_emails:
-                query = query.where(~EmailUser.email.in_(exclude_emails))
 
             # Use unified pagination helper - handles both page and cursor pagination
             pag_result = await unified_paginate(
