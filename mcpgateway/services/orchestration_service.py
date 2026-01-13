@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # mcpgateway/services/orchestration_service.py
 """Location: ./mcpgateway/services/orchestration_service.py
 Copyright 2025
@@ -18,11 +19,14 @@ from __future__ import annotations
 
 # Standard
 import asyncio
-import logging
 import time
 from typing import Any, Awaitable, Callable, Dict, Optional
 
-logger = logging.getLogger(__name__)
+# First-Party
+from mcpgateway.services.logging_service import LoggingService
+
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 CancelCallback = Callable[[Optional[str]], Awaitable[None]]  # async callback(reason)
 

@@ -68,11 +68,11 @@ async def test_cancel_logs_reason_and_metadata():
     """Test that cancellation logs include reason and metadata."""
     svc = OrchestrationService()
     await svc.register_run("r5", name="test_tool")
-    
+
     # Cancel with reason
     result = await svc.cancel_run("r5", reason="user requested")
     assert result is True
-    
+
     # Verify status includes cancellation metadata
     status = await svc.get_status("r5")
     assert status is not None

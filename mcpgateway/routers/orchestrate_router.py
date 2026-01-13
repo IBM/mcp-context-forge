@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # mcpgateway/routers/orchestrate_router.py
 """Location: ./mcpgateway/routers/orchestrate_router.py
 Copyright 2025
@@ -17,7 +18,7 @@ from typing import Optional
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # First-Party
 import mcpgateway.main as main_module
@@ -35,39 +36,33 @@ router = APIRouter(prefix="/orchestrate", tags=["Orchestrate"])
 class CancelRequest(BaseModel):
     """
     Request model for cancelling a run/requestId.
-    :param request_id: The ID of the request to cancel.
-    :param reason: Optional reason for cancellation.
+
+    Attributes:
+        request_id: The ID of the request to cancel.
+        reason: Optional reason for cancellation.
     """
+
+    model_config = ConfigDict(populate_by_name=True)
 
     request_id: str = Field(..., alias="requestId")
     reason: Optional[str] = None
-
-    class Config:
-        """
-        Configuration to allow population by field name.
-        """
-
-        allow_population_by_field_name = True
 
 
 class CancelResponse(BaseModel):
     """
     Response model for cancellation requests.
-    :param status: Status of the cancellation request ("cancelled" or "queued").
-    :param request_id: The ID of the request that was cancelled.
-    :param reason: Optional reason for cancellation.
+
+    Attributes:
+        status: Status of the cancellation request ("cancelled" or "queued").
+        request_id: The ID of the request that was cancelled.
+        reason: Optional reason for cancellation.
     """
+
+    model_config = ConfigDict(populate_by_name=True)
 
     status: str  # "cancelled" | "queued"
     request_id: str = Field(..., alias="requestId")
     reason: Optional[str] = None
-
-    class Config:
-        """
-        Configuration to allow population by field name.
-        """
-
-        allow_population_by_field_name = True
 
 
 @router.post("/cancel", response_model=CancelResponse)
@@ -124,9 +119,10 @@ async def get_status(request_id: str, _user=Depends(get_current_user_with_permis
     Raises:
         HTTPException: If the run is not found.
     """
-    if not orchestration_service.is_registered(request_id):
+    if not await orchestration_service.is_registered(request_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
     status_obj = await orchestration_service.get_status(request_id)
     if status_obj is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
-    return status_obj
+    # Filter out non-serializable fields (cancel_callback is a function reference)
+    return {k: v for k, v in status_obj.items() if k != "cancel_callback"}
