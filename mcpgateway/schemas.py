@@ -5474,7 +5474,7 @@ class PaginatedTeamMembersResponse(BaseModel):
 
     Attributes:
         members: List of team members
-        nextCursor: Optional cursor for next page of results
+        next_cursor: Optional cursor for next page of results
 
     Examples:
         >>> member1 = TeamMemberResponse(
@@ -5502,7 +5502,7 @@ class PaginatedTeamMembersResponse(BaseModel):
     """
 
     members: List[TeamMemberResponse] = Field(..., description="List of team members")
-    nextCursor: Optional[str] = Field(None, description="Cursor for next page of results")
+    next_cursor: Optional[str] = Field(None, alias="nextCursor", description="Cursor for next page of results")
 
 
 class TeamInviteRequest(BaseModel):
