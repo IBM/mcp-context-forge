@@ -42,7 +42,7 @@ on:
       platforms:
         description: 'Platforms to build (comma-separated)'
         required: false
-        default: 'linux/amd64,linux/arm64,linux/s390x'
+        default: 'linux/amd64,linux/arm64,linux/s390x,linux/ppc64le'
 
 permissions:
   contents: read
@@ -73,6 +73,10 @@ jobs:
           - platform: linux/s390x
             runner: ubuntu-latest
             suffix: s390x
+            qemu: true
+          - platform: linux/ppc64le
+            runner: ubuntu-latest
+            suffix: ppc64le
             qemu: true
 
     runs-on: ${{ matrix.runner }}
@@ -181,7 +185,8 @@ jobs:
             --tag "${IMAGE}:latest" \
             "${IMAGE}:amd64-${SHA}" \
             "${IMAGE}:arm64-${SHA}" \
-            "${IMAGE}:s390x-${SHA}"
+            "${IMAGE}:s390x-${SHA}" \
+            "${IMAGE}:ppc64le-${SHA}"
 
           echo "Manifest created successfully"
 
