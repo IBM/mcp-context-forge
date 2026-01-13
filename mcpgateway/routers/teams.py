@@ -20,7 +20,7 @@ Examples:
 """
 
 # Standard
-from typing import Any, cast, List, Optional, Union, Dict
+from typing import Any, cast, Dict, List, Optional, Union
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -331,7 +331,7 @@ async def list_team_members(
     limit: Optional[int] = Query(None, ge=0, description="Maximum number of members to return (default: 50)"),
     include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     current_user: EmailUserResponse = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ) -> Union[List[TeamMemberResponse], Dict]:
     """List team members with cursor-based pagination.
 
@@ -371,7 +371,7 @@ async def list_team_members(
                     role=membership.role,
                     joined_at=membership.joined_at,
                     invited_by=membership.invited_by,
-                    is_active=membership.is_active
+                    is_active=membership.is_active,
                 )
             )
 

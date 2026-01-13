@@ -32,7 +32,7 @@ from mcpgateway.cache.auth_cache import auth_cache
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailTeamMemberHistory, EmailUser, utc_now
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.utils.pagination import offset_paginate
+from mcpgateway.utils.pagination import unified_paginate
 
 # Initialize logging
 logging_service = LoggingService()
@@ -823,8 +823,6 @@ class TeamManagementService:
             )
 
             # Use unified_paginate for both cursor and page-based pagination
-            from mcpgateway.utils.pagination import unified_paginate
-
             pag_result = await unified_paginate(
                 db=self.db,
                 query=query,
@@ -848,11 +846,11 @@ class TeamManagementService:
                     "pagination": pag_result["pagination"],
                     "links": pag_result["links"],
                 }
-            else:
-                # Cursor-based format: tuple
-                memberships, next_cursor = pag_result
-                tuples = [(m.user, m) for m in memberships]
-                return (tuples, next_cursor)
+
+            # Cursor-based format: tuple
+            memberships, next_cursor = pag_result
+            tuples = [(m.user, m) for m in memberships]
+            return (tuples, next_cursor)
 
         except Exception as e:
             self.db.rollback()
@@ -861,11 +859,11 @@ class TeamManagementService:
             # Return appropriate empty response based on mode
             if page is not None:
                 return {"data": [], "pagination": {"page": page, "per_page": per_page or 30, "total": 0, "has_next": False, "has_prev": False}, "links": None}
-            elif cursor is not None:
-                return ([], None)
-            else:
-                return []
 
+            if cursor is not None:
+                return ([], None)
+
+            return []
 
     def count_team_owners(self, team_id: str) -> int:
         """Count the number of owners in a team using SQL COUNT.

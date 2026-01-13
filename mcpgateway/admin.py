@@ -4285,7 +4285,7 @@ async def admin_view_team_members(
 
         # First-Party
         team_service = TeamManagementService(db)
-        auth_service = EmailAuthService(db)
+        EmailAuthService(db)
 
         # Get team details
         team = await team_service.get_team_by_id(team_id)
@@ -4347,7 +4347,7 @@ async def admin_view_team_members(
                         <div
                             id="team-members-container-{team.id}"
                             class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-64 overflow-y-auto dark:bg-gray-700"
-                            hx-get="{root_path}/admin/teams/{team.id}/members/partial?page=1&per_page=20"
+                            hx-get="{root_path}/admin/teams/{team.id}/members/partial?page={page}&per_page={per_page}"
                             hx-trigger="load delay:100ms"
                             hx-target="this"
                             hx-swap="innerHTML"

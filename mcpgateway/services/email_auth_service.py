@@ -36,7 +36,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailAuthEvent, EmailTeamMember, EmailUser
+from mcpgateway.db import EmailAuthEvent, EmailTeamMember, EmailUser, EmailTeam
 from mcpgateway.schemas import PaginationLinks, PaginationMeta
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.logging_service import LoggingService
@@ -850,17 +850,8 @@ class EmailAuthService:
                 )
 
             # Exclude team members using NOT IN subquery
-            member_emails_subquery = (
-                select(EmailTeamMember.user_email)
-                .where(
-                    EmailTeamMember.team_id == team_id,
-                    EmailTeamMember.is_active.is_(True)
-                )
-            )
-            query = query.where(
-                EmailUser.is_active.is_(True),
-                ~EmailUser.email.in_(member_emails_subquery)
-            )
+            member_emails_subquery = select(EmailTeamMember.user_email).where(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True))
+            query = query.where(EmailUser.is_active.is_(True), ~EmailUser.email.in_(member_emails_subquery))
 
             # Use unified pagination for both cursor and page-based
             pag_result = await unified_paginate(
@@ -877,15 +868,11 @@ class EmailAuthService:
             # Return appropriate format based on pagination type
             if page is not None:
                 # Page-based format
-                return UsersListResult(
-                    data=pag_result["data"],
-                    pagination=pag_result["pagination"],
-                    links=pag_result["links"]
-                )
-            else:
-                # Cursor-based format
-                users, next_cursor = pag_result
-                return UsersListResult(data=users, next_cursor=next_cursor)
+                return UsersListResult(data=pag_result["data"], pagination=pag_result["pagination"], links=pag_result["links"])
+
+            # Cursor-based format
+            users, next_cursor = pag_result
+            return UsersListResult(data=users, next_cursor=next_cursor)
 
         except Exception as e:
             logger.error(f"Error listing non-members for team {team_id}: {e}")
@@ -894,22 +881,15 @@ class EmailAuthService:
             if page is not None:
                 return UsersListResult(
                     data=[],
-                    pagination=PaginationMeta(
-                        page=page,
-                        per_page=per_page or 30,
-                        total_items=0,
-                        total_pages=0,
-                        has_next=False,
-                        has_prev=False
-                    ),
+                    pagination=PaginationMeta(page=page, per_page=per_page or 30, total_items=0, total_pages=0, has_next=False, has_prev=False),
                     links=PaginationLinks(  # pylint: disable=kwarg-superseded-by-positional-arg
                         self=f"/admin/teams/{team_id}/non-members?page=1&per_page={per_page or 30}",
                         first=f"/admin/teams/{team_id}/non-members?page=1&per_page={per_page or 30}",
-                        last=f"/admin/teams/{team_id}/non-members?page=1&per_page={per_page or 30}"
+                        last=f"/admin/teams/{team_id}/non-members?page=1&per_page={per_page or 30}",
                     ),
                 )
-            else:
-                return UsersListResult(data=[], next_cursor=None)
+
+            return UsersListResult(data=[], next_cursor=None)
 
     async def get_all_users(self) -> list[EmailUser]:
         """Get all users without pagination.
@@ -1129,9 +1109,6 @@ class EmailAuthService:
                 raise ValueError(f"User {email} not found")
 
             # Check if user owns any teams
-            # First-Party
-            from mcpgateway.db import EmailTeam, EmailTeamMember  # pylint: disable=import-outside-toplevel
-
             teams_owned_stmt = select(EmailTeam).where(EmailTeam.created_by == email)
             teams_owned = self.db.execute(teams_owned_stmt).scalars().all()
 

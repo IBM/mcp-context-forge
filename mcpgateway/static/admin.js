@@ -30325,30 +30325,38 @@ window.llmApiInfoApp = llmApiInfoApp;
 
 // Team user search function - searches all users and splits into members/non-members
 async function serverSideUserSearch(teamId, searchTerm) {
-    const membersContainer = document.getElementById(`team-members-container-${teamId}`);
-    const nonMembersContainer = document.getElementById(`team-non-members-container-${teamId}`);
+    const membersContainer = document.getElementById(
+        `team-members-container-${teamId}`,
+    );
+    const nonMembersContainer = document.getElementById(
+        `team-non-members-container-${teamId}`,
+    );
 
     if (!membersContainer || !nonMembersContainer) {
-        console.error('Team containers not found');
+        console.error("Team containers not found");
         return;
     }
 
     // If search is empty, reload both sections with full data
-    if (!searchTerm || searchTerm.trim() === '') {
+    if (!searchTerm || searchTerm.trim() === "") {
         try {
             // Reload members
-            const membersResponse = await fetch(`${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=20`);
+            const membersResponse = await fetch(
+                `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=20`,
+            );
             if (membersResponse.ok) {
                 membersContainer.innerHTML = await membersResponse.text();
             }
 
             // Reload non-members
-            const nonMembersResponse = await fetch(`${window.ROOT_PATH}/admin/teams/${teamId}/non-members/partial?page=1&per_page=20`);
+            const nonMembersResponse = await fetch(
+                `${window.ROOT_PATH}/admin/teams/${teamId}/non-members/partial?page=1&per_page=20`,
+            );
             if (nonMembersResponse.ok) {
                 nonMembersContainer.innerHTML = await nonMembersResponse.text();
             }
         } catch (error) {
-            console.error('Error reloading user lists:', error);
+            console.error("Error reloading user lists:", error);
         }
         return;
     }
@@ -30367,8 +30375,10 @@ async function serverSideUserSearch(teamId, searchTerm) {
         if (data.users && data.users.length > 0) {
             // Get current member emails from original DOM data to determine membership
             const currentMemberEmails = new Set();
-            const existingMembers = document.querySelectorAll(`#team-members-container-${teamId} .user-item`);
-            existingMembers.forEach(item => {
+            const existingMembers = document.querySelectorAll(
+                `#team-members-container-${teamId} .user-item`,
+            );
+            existingMembers.forEach((item) => {
                 const email = item.dataset.userEmail;
                 if (email) currentMemberEmails.add(email);
             });
@@ -30376,17 +30386,21 @@ async function serverSideUserSearch(teamId, searchTerm) {
             // If no members found in DOM yet, fetch from server to get membership data
             if (currentMemberEmails.size === 0) {
                 try {
-                    const membersResp = await fetch(`${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=100`);
+                    const membersResp = await fetch(
+                        `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=100`,
+                    );
                     if (membersResp.ok) {
-                        const tempDiv = document.createElement('div');
+                        const tempDiv = document.createElement("div");
                         tempDiv.innerHTML = await membersResp.text();
-                        tempDiv.querySelectorAll('.user-item').forEach(item => {
-                            const email = item.dataset.userEmail;
-                            if (email) currentMemberEmails.add(email);
-                        });
+                        tempDiv
+                            .querySelectorAll(".user-item")
+                            .forEach((item) => {
+                                const email = item.dataset.userEmail;
+                                if (email) currentMemberEmails.add(email);
+                            });
                     }
                 } catch (e) {
-                    console.error('Error fetching member emails:', e);
+                    console.error("Error fetching member emails:", e);
                 }
             }
 
@@ -30394,7 +30408,7 @@ async function serverSideUserSearch(teamId, searchTerm) {
             const members = [];
             const nonMembers = [];
 
-            data.users.forEach(user => {
+            data.users.forEach((user) => {
                 if (currentMemberEmails.has(user.email)) {
                     members.push(user);
                 } else {
@@ -30404,14 +30418,14 @@ async function serverSideUserSearch(teamId, searchTerm) {
 
             // Helper to escape HTML
             function escapeHtml(text) {
-                const div = document.createElement('div');
+                const div = document.createElement("div");
                 div.textContent = text;
                 return div.innerHTML;
             }
 
             // Render members
-            let membersHtml = '';
-            members.forEach(user => {
+            let membersHtml = "";
+            members.forEach((user) => {
                 const fullName = escapeHtml(user.full_name || user.email);
                 const email = escapeHtml(user.email);
                 membersHtml += `
@@ -30437,8 +30451,8 @@ async function serverSideUserSearch(teamId, searchTerm) {
             });
 
             // Render non-members
-            let nonMembersHtml = '';
-            nonMembers.forEach(user => {
+            let nonMembersHtml = "";
+            nonMembers.forEach((user) => {
                 const fullName = escapeHtml(user.full_name || user.email);
                 const email = escapeHtml(user.email);
                 nonMembersHtml += `
@@ -30463,17 +30477,25 @@ async function serverSideUserSearch(teamId, searchTerm) {
                 `;
             });
 
-            membersContainer.innerHTML = membersHtml || '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching members</div>';
-            nonMembersContainer.innerHTML = nonMembersHtml || '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching users</div>';
+            membersContainer.innerHTML =
+                membersHtml ||
+                '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching members</div>';
+            nonMembersContainer.innerHTML =
+                nonMembersHtml ||
+                '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching users</div>';
         } else {
             // No results
-            membersContainer.innerHTML = '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching members</div>';
-            nonMembersContainer.innerHTML = '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching users</div>';
+            membersContainer.innerHTML =
+                '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching members</div>';
+            nonMembersContainer.innerHTML =
+                '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching users</div>';
         }
     } catch (error) {
-        console.error('Error searching users:', error);
-        membersContainer.innerHTML = '<div class="text-center py-4 text-red-600">Error searching users</div>';
-        nonMembersContainer.innerHTML = '<div class="text-center py-4 text-red-600">Error searching users</div>';
+        console.error("Error searching users:", error);
+        membersContainer.innerHTML =
+            '<div class="text-center py-4 text-red-600">Error searching users</div>';
+        nonMembersContainer.innerHTML =
+            '<div class="text-center py-4 text-red-600">Error searching users</div>';
     }
 }
 
