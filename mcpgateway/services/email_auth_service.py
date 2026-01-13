@@ -36,7 +36,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailAuthEvent, EmailTeamMember, EmailUser, EmailTeam
+from mcpgateway.db import EmailAuthEvent, EmailTeam, EmailTeamMember, EmailUser
 from mcpgateway.schemas import PaginationLinks, PaginationMeta
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.logging_service import LoggingService

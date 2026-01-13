@@ -20,7 +20,7 @@ Examples:
 """
 
 # Standard
-from typing import Any, cast, Dict, List, Optional, Union
+from typing import Any, cast, List, Optional, Union
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, status
