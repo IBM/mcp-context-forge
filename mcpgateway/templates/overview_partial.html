@@ -296,28 +296,3 @@
     </div>
   </div>
 </div>
-
-<script>
-function overviewDashboard() {
-  return {
-    init() {
-      // Update SVG colors based on dark mode
-      this.updateSvgColors();
-      // Listen for dark mode changes
-      const observer = new MutationObserver(() => this.updateSvgColors());
-      observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-    },
-    updateSvgColors() {
-      const isDark = document.documentElement.classList.contains('dark');
-      const svg = document.getElementById('overview-architecture');
-      if (!svg) return;
-
-      // Update arrow marker color
-      const marker = svg.querySelector('#arrowhead polygon');
-      if (marker) {
-        marker.setAttribute('class', isDark ? 'fill-gray-500' : 'fill-gray-400');
-      }
-    }
-  }
-}
-</script>

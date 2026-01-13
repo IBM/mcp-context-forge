@@ -20891,33 +20891,49 @@ function handleAdminUserAction(event) {
     }, delayMs);
 }
 
-document.body.addEventListener("adminTeamAction", handleAdminTeamAction);
-document.body.addEventListener("adminUserAction", handleAdminUserAction);
-document.body.addEventListener("userCreated", function () {
-    handleAdminUserAction({ detail: { refreshUsersList: true } });
-});
-
-document.body.addEventListener("htmx:afterSwap", function (event) {
-    initializeAddMembersForms(event.target);
-    initializePasswordValidation(event.target);
-    const target = event.target;
-    if (
-        target &&
-        target.id &&
-        target.id.startsWith("user-selector-container-")
-    ) {
-        const teamId = extractTeamId("user-selector-container-", target.id);
-        if (teamId) {
-            dedupeSelectorItems(target);
-            updateAddMembersCount(teamId);
-        }
+function registerAdminActionListeners() {
+    if (!document.body) {
+        return;
     }
-});
+    if (document.body.dataset.adminActionListeners === "1") {
+        return;
+    }
+    document.body.dataset.adminActionListeners = "1";
 
-document.body.addEventListener("htmx:load", function (event) {
-    initializeAddMembersForms(event.target);
-    initializePasswordValidation(event.target);
-});
+    document.body.addEventListener("adminTeamAction", handleAdminTeamAction);
+    document.body.addEventListener("adminUserAction", handleAdminUserAction);
+    document.body.addEventListener("userCreated", function () {
+        handleAdminUserAction({ detail: { refreshUsersList: true } });
+    });
+
+    document.body.addEventListener("htmx:afterSwap", function (event) {
+        initializeAddMembersForms(event.target);
+        initializePasswordValidation(event.target);
+        const target = event.target;
+        if (
+            target &&
+            target.id &&
+            target.id.startsWith("user-selector-container-")
+        ) {
+            const teamId = extractTeamId("user-selector-container-", target.id);
+            if (teamId) {
+                dedupeSelectorItems(target);
+                updateAddMembersCount(teamId);
+            }
+        }
+    });
+
+    document.body.addEventListener("htmx:load", function (event) {
+        initializeAddMembersForms(event.target);
+        initializePasswordValidation(event.target);
+    });
+}
+
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", registerAdminActionListeners);
+} else {
+    registerAdminActionListeners();
+}
 
 // Logs refresh function
 function refreshLogs() {
@@ -29923,6 +29939,34 @@ function llmApiInfoApp() {
         },
     };
 }
+
+window.overviewDashboard = function () {
+    return {
+        init() {
+            this.updateSvgColors();
+            const observer = new MutationObserver(() => this.updateSvgColors());
+            observer.observe(document.documentElement, {
+                attributes: true,
+                attributeFilter: ["class"],
+            });
+        },
+        updateSvgColors() {
+            const isDark = document.documentElement.classList.contains("dark");
+            const svg = document.getElementById("overview-architecture");
+            if (!svg) {
+                return;
+            }
+
+            const marker = svg.querySelector("#arrowhead polygon");
+            if (marker) {
+                marker.setAttribute(
+                    "class",
+                    isDark ? "fill-gray-500" : "fill-gray-400",
+                );
+            }
+        },
+    };
+};
 
 // Make LLM functions globally available
 window.switchLLMSettingsTab = switchLLMSettingsTab;
