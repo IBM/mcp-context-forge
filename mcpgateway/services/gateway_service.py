@@ -76,7 +76,7 @@ except ImportError:
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import get_db
+from mcpgateway.db import get_db, get_for_update
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
 from mcpgateway.db import Resource as DbResource
@@ -715,13 +715,21 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Check for existing gateway with the same slug and visibility
             slug_name = slugify(gateway.name)
             if visibility.lower() == "public":
-                # Check for existing public gateway with the same slug
-                existing_gateway = db.execute(select(DbGateway).where(DbGateway.slug == slug_name, DbGateway.visibility == "public")).scalar_one_or_none()
+                # Check for existing public gateway with the same slug (row-locked)
+                existing_gateway = get_for_update(
+                    db,
+                    DbGateway,
+                    where=and_(DbGateway.slug == slug_name, DbGateway.visibility == "public"),
+                )
                 if existing_gateway:
                     raise GatewayNameConflictError(existing_gateway.slug, enabled=existing_gateway.enabled, gateway_id=existing_gateway.id, visibility=existing_gateway.visibility)
             elif visibility.lower() == "team" and team_id:
-                # Check for existing team gateway with the same slug
-                existing_gateway = db.execute(select(DbGateway).where(DbGateway.slug == slug_name, DbGateway.visibility == "team", DbGateway.team_id == team_id)).scalar_one_or_none()
+                # Check for existing team gateway with the same slug (row-locked)
+                existing_gateway = get_for_update(
+                    db,
+                    DbGateway,
+                    where=and_(DbGateway.slug == slug_name, DbGateway.visibility == "team", DbGateway.team_id == team_id),
+                )
                 if existing_gateway:
                     raise GatewayNameConflictError(existing_gateway.slug, enabled=existing_gateway.enabled, gateway_id=existing_gateway.id, visibility=existing_gateway.visibility)
 
@@ -1572,16 +1580,18 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             ValidationError: If validation fails
         """
         try:  # pylint: disable=too-many-nested-blocks
-            # Find gateway with eager loading for sync operations to avoid N+1 queries
-            gateway = db.execute(
-                select(DbGateway)
-                .options(
+            # Acquire row lock and eager-load relationships while locked so
+            # concurrent updates are serialized on Postgres.
+            gateway = get_for_update(
+                db,
+                DbGateway,
+                gateway_id,
+                options=[
                     selectinload(DbGateway.tools),
                     selectinload(DbGateway.resources),
                     selectinload(DbGateway.prompts),
-                )
-                .where(DbGateway.id == gateway_id)
-            ).scalar_one_or_none()
+                ],
+            )
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
@@ -1612,7 +1622,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     else:
                         vis = gateway.visibility
                     if vis == "public":
-                        existing_gateway = db.execute(select(DbGateway).where(DbGateway.slug == new_slug, DbGateway.visibility == "public", DbGateway.id != gateway_id)).scalar_one_or_none()
+                        # Check for existing public gateway with the same slug (row-locked)
+                        existing_gateway = get_for_update(
+                            db,
+                            DbGateway,
+                            where=and_(DbGateway.slug == new_slug, DbGateway.visibility == "public", DbGateway.id != gateway_id),
+                        )
                         if existing_gateway:
                             raise GatewayNameConflictError(
                                 new_slug,
@@ -1621,9 +1636,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 visibility=existing_gateway.visibility,
                             )
                     elif vis == "team" and gateway.team_id:
-                        existing_gateway = db.execute(
-                            select(DbGateway).where(DbGateway.slug == new_slug, DbGateway.visibility == "team", DbGateway.team_id == gateway.team_id, DbGateway.id != gateway_id)
-                        ).scalar_one_or_none()
+                        # Check for existing team gateway with the same slug (row-locked)
+                        existing_gateway = get_for_update(
+                            db,
+                            DbGateway,
+                            where=and_(DbGateway.slug == new_slug, DbGateway.visibility == "team", DbGateway.team_id == gateway.team_id, DbGateway.id != gateway_id),
+                        )
                         if existing_gateway:
                             raise GatewayNameConflictError(
                                 new_slug,
@@ -2140,7 +2158,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             PermissionError: If user doesn't own the agent.
         """
         try:
-            # Get gateway with eager loading for sync operations to avoid N+1 queries
+            # Eager-load collections for the gateway. Note: we don't use FOR UPDATE
+            # here because _initialize_gateway does network I/O, and holding a row
+            # lock during network calls would block other operations and risk timeouts.
             gateway = db.execute(
                 select(DbGateway)
                 .options(
@@ -2448,6 +2468,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 )
                 .where(DbGateway.id == gateway_id)
             ).scalar_one_or_none()
+
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
@@ -2464,6 +2485,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             gateway_info = {"id": gateway.id, "name": gateway.name, "url": gateway.url}
             gateway_name = gateway.name
             gateway_team_id = gateway.team_id
+            gateway_url = gateway.url  # Store URL before expiring the object
 
             # Manually delete children first to avoid FK constraint violations
             # (passive_deletes=True means ORM won't auto-cascade, we must do it explicitly)
@@ -2500,8 +2522,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Expire gateway to clear cached relationships after bulk deletes
             db.expire(gateway)
 
-            # Hard delete gateway
-            db.delete(gateway)
+            # Use DELETE with rowcount check for database-agnostic atomic delete
+            # (RETURNING is not supported on MySQL/MariaDB)
+            stmt = delete(DbGateway).where(DbGateway.id == gateway_id)
+            result = db.execute(stmt)
+            if result.rowcount == 0:
+                # Gateway was already deleted by another concurrent request
+                raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
+
             db.commit()
 
             # Invalidate cache after successful deletion
@@ -2516,12 +2544,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             await admin_stats_cache.invalidate_tags()
 
             # Update tracking
-            self._active_gateways.discard(gateway.url)
+            self._active_gateways.discard(gateway_url)
 
             # Notify subscribers
             await self._notify_gateway_deleted(gateway_info)
 
-            logger.info(f"Permanently deleted gateway: {gateway.name}")
+            logger.info(f"Permanently deleted gateway: {gateway_name}")
 
             # Structured logging: Audit trail for gateway deletion
             audit_trail.log_action(

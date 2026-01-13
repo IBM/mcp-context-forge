@@ -27,6 +27,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import EmailTeam as DbEmailTeam
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
+from mcpgateway.db import get_for_update
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
@@ -484,17 +485,23 @@ class ServerService:
                 created_user_agent=created_user_agent,
                 version=1,
             )
-            # Check for existing server with the same name
-            if visibility.lower() == "public":
-                # Check for existing public server with the same name
-                existing_server = db.execute(select(DbServer).where(DbServer.name == server_in.name, DbServer.visibility == "public")).scalar_one_or_none()
-                if existing_server:
-                    raise ServerNameConflictError(server_in.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
-            elif visibility.lower() == "team" and team_id:
-                # Check for existing team server with the same name
-                existing_server = db.execute(select(DbServer).where(DbServer.name == server_in.name, DbServer.visibility == "team", DbServer.team_id == team_id)).scalar_one_or_none()
-                if existing_server:
-                    raise ServerNameConflictError(server_in.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
+            # Check for existing server with the same name (with row locking to prevent race conditions)
+            # The unique constraint is on (team_id, owner_email, name), so we check based on that
+            owner_email_to_check = getattr(server_in, "owner_email", None) or owner_email or created_by
+            team_id_to_check = getattr(server_in, "team_id", None) or team_id
+
+            # Build conditions based on the actual unique constraint: (team_id, owner_email, name)
+            conditions = [
+                DbServer.name == server_in.name,
+                DbServer.team_id == team_id_to_check if team_id_to_check else DbServer.team_id.is_(None),
+                DbServer.owner_email == owner_email_to_check if owner_email_to_check else DbServer.owner_email.is_(None),
+            ]
+            if server_in.id:
+                conditions.append(DbServer.id != server_in.id)
+
+            existing_server = get_for_update(db, DbServer, where=and_(*conditions))
+            if existing_server:
+                raise ServerNameConflictError(server_in.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
             # Set custom UUID if provided
             if server_in.id:
                 logger.info(f"Setting custom UUID for server: {server_in.id}")
@@ -954,17 +961,17 @@ class ServerService:
             >>> asyncio.run(service.get_server(db, 'server_id'))
             'server_read'
         """
-        server = db.get(
-            DbServer,
-            server_id,
-            options=[
+        server = db.execute(
+            select(DbServer)
+            .options(
                 selectinload(DbServer.tools),
                 selectinload(DbServer.resources),
                 selectinload(DbServer.prompts),
                 selectinload(DbServer.a2a_agents),
                 joinedload(DbServer.email_team),
-            ],
-        )
+            )
+            .where(DbServer.id == server_id)
+        ).scalar_one_or_none()
         if not server:
             raise ServerNotFoundError(f"Server not found: {server_id}")
         server_data = {
@@ -1057,6 +1064,7 @@ class ServerService:
             >>> db = MagicMock()
             >>> server = MagicMock()
             >>> server.id = 'server_id'
+            >>> server.name = 'test_server'
             >>> server.owner_email = 'user_email'  # Set owner to match user performing update
             >>> server.team_id = None
             >>> server.visibility = 'public'
@@ -1070,12 +1078,19 @@ class ServerService:
             >>> ServerRead.model_validate = MagicMock(return_value='server_read')
             >>> server_update = MagicMock()
             >>> server_update.id = None  # No UUID change
+            >>> server_update.name = None  # No name change
+            >>> server_update.description = None
+            >>> server_update.icon = None
+            >>> server_update.visibility = None
+            >>> server_update.team_id = None
             >>> import asyncio
-            >>> asyncio.run(service.update_server(db, 'server_id', server_update, 'user_email'))
+            >>> with patch('mcpgateway.services.server_service.get_for_update', return_value=server):
+            ...     asyncio.run(service.update_server(db, 'server_id', server_update, 'user_email'))
             'server_read'
         """
         try:
-            server = db.get(
+            server = get_for_update(
+                db,
                 DbServer,
                 server_id,
                 options=[
@@ -1104,12 +1119,14 @@ class ServerService:
                 team_id = server_update.team_id or server.team_id
                 if visibility.lower() == "public":
                     # Check for existing public server with the same name
-                    existing_server = db.execute(select(DbServer).where(DbServer.name == server_update.name, DbServer.visibility == "public")).scalar_one_or_none()
+                    existing_server = get_for_update(db, DbServer, where=and_(DbServer.name == server_update.name, DbServer.visibility == "public", DbServer.id != server.id))
                     if existing_server:
                         raise ServerNameConflictError(server_update.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
                 elif visibility.lower() == "team" and team_id:
                     # Check for existing team server with the same name
-                    existing_server = db.execute(select(DbServer).where(DbServer.name == server_update.name, DbServer.visibility == "team", DbServer.team_id == team_id)).scalar_one_or_none()
+                    existing_server = get_for_update(
+                        db, DbServer, where=and_(DbServer.name == server_update.name, DbServer.visibility == "team", DbServer.team_id == team_id, DbServer.id != server.id)
+                    )
                     if existing_server:
                         raise ServerNameConflictError(server_update.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
 
@@ -1372,7 +1389,8 @@ class ServerService:
             'server_read'
         """
         try:
-            server = db.get(
+            server = get_for_update(
+                db,
                 DbServer,
                 server_id,
                 options=[

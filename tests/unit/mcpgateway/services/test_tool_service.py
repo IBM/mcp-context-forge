@@ -988,8 +988,14 @@ class TestToolService:
         """Test deleting a tool."""
         # Mock DB get to return tool
         test_db.get = Mock(return_value=mock_tool)
-        test_db.delete = Mock()
+
+        # Mock the fetchone result for DELETE ... RETURNING
+        mock_fetch_result = Mock()
+        mock_fetch_result.fetchone.return_value = (mock_tool.id,)
+        mock_fetch_result.rowcount = 1  # Indicate successful deletion
+        test_db.execute = Mock(return_value=mock_fetch_result)
         test_db.commit = Mock()
+        test_db.rollback = Mock()
 
         # Mock notification
         tool_service._notify_tool_deleted = AsyncMock()
@@ -999,7 +1005,8 @@ class TestToolService:
 
         # Verify DB operations
         test_db.get.assert_called_once_with(DbTool, 1)
-        test_db.delete.assert_called_once_with(mock_tool)
+        # Verify execute was called for DELETE ... RETURNING
+        test_db.execute.assert_called_once()
         test_db.commit.assert_called_once()
 
         # Verify notification
@@ -1009,15 +1016,22 @@ class TestToolService:
     async def test_delete_tool_purge_metrics(self, tool_service, mock_tool, test_db):
         """Test deleting a tool with metric purge."""
         test_db.get = Mock(return_value=mock_tool)
-        test_db.delete = Mock()
         test_db.commit = Mock()
-        test_db.execute = Mock()
+        test_db.rollback = Mock()
+
+        # Mock execute results: batch deletes return rowcount=0 to stop loop, final DELETE returns rowcount=1
+        batch_result = Mock()
+        batch_result.rowcount = 0  # No rows to delete (stops the batch loop)
+        delete_result = Mock()
+        delete_result.rowcount = 1  # Final DELETE succeeded
+        test_db.execute = Mock(side_effect=[batch_result, batch_result, delete_result])
+
         tool_service._notify_tool_deleted = AsyncMock()
 
         await tool_service.delete_tool(test_db, 1, purge_metrics=True)
 
-        assert test_db.execute.call_count == 2
-        test_db.delete.assert_called_once_with(mock_tool)
+        # Verify execute was called: 1 for ToolMetric + 1 for ToolMetricsHourly + 1 for DELETE = 3
+        assert test_db.execute.call_count == 3
         test_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
@@ -1503,14 +1517,10 @@ class TestToolService:
         # Set tool to inactive
         mock_tool.enabled = False
 
-        # Mock DB to return inactive tool for first query, None for second query
-        mock_scalar1 = Mock()
-        mock_scalar1.scalar_one_or_none.return_value = None
-
-        mock_scalar2 = Mock()
-        mock_scalar2.scalar_one_or_none.return_value = mock_tool
-
-        test_db.execute = Mock(side_effect=[mock_scalar1, mock_scalar2])
+        # Mock DB to return inactive tool in single query
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = mock_tool
+        test_db.execute = Mock(return_value=mock_scalar)
 
         # Should raise NotFoundError with "inactive" message
         with pytest.raises(ToolNotFoundError) as exc_info:
@@ -3155,9 +3165,7 @@ class TestToolServiceTokenTeamsFiltering:
 
         with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock()
-            result = await tool_service.list_server_tools(
-                test_db, server_id="server-1", include_inactive=False, user_email="user@example.com", token_teams=["team_x"]
-            )
+            result = await tool_service.list_server_tools(test_db, server_id="server-1", include_inactive=False, user_email="user@example.com", token_teams=["team_x"])
 
             # TeamManagementService should NOT be called since token_teams was provided
             mock_team_service.return_value.get_user_teams.assert_not_called()

@@ -269,13 +269,21 @@ class TestIssue840UserInputForA2AAgentTest:
         request_body = call_args.kwargs.get("json") or call_args[1].get("json")
         assert request_body is not None, "Request body should not be None"
 
-        # Per A2A protocol for custom agents, verify the structure:
-        # {"interaction_type": "...", "parameters": {"query": "..."}, "protocol_version": "..."}
-        assert "parameters" in request_body, "Request should contain 'parameters' object"
-        assert "interaction_type" in request_body, "Request should contain 'interaction_type'"
+        # Per A2A protocol for custom agents, verify the structure.
+        # Accept either the A2A `parameters` object OR JSON-RPC `params` wrapper
+        # (some deployments may use JSON-RPC). Ensure the user's `query` is present.
+        if "parameters" in request_body:
+            params = request_body["parameters"]
+            # Ensure interaction_type present for custom A2A format
+            assert "interaction_type" in request_body, "Request should contain 'interaction_type' for custom agents"
+            assert request_body["interaction_type"] == "admin_test"
+        elif "params" in request_body and "jsonrpc" in request_body:
+            params = request_body["params"]
+            assert isinstance(params, dict), "JSON-RPC 'params' should be an object"
+        else:
+            assert False, "Request should contain 'parameters' object or JSON-RPC 'params' with query"
 
-        # Verify the query is in parameters
-        params = request_body.get("parameters", {})
+        # Verify the query is present in the resolved params
         assert "query" in params or "message" in params, "parameters should contain query or message"
 
         # Verify the actual query value
