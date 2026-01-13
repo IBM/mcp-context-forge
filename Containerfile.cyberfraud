@@ -1,4 +1,4 @@
-FROM docker-na.artifactory.swg-devops.com/sec-isc-team-isc-icp-docker-local/mcpgateway/mcpgateway:BASE_IMAGE_TAG
+FROM BASE_IMAGE_REPO
 
 USER root 
 # Install missing psycopg2 dependency for postgres support
