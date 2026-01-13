@@ -103,6 +103,11 @@ def _matches_any_regex(path: str, patterns: Tuple[Pattern[str], ...]) -> bool:
 
 @lru_cache(maxsize=1)
 def _get_observability_include_regex() -> Tuple[Pattern[str], ...]:
+    """Compile include regex patterns from settings for observability filtering.
+
+    Returns:
+        Tuple of compiled regex patterns; invalid patterns are skipped.
+    """
     compiled: list[Pattern[str]] = []
     for pattern in settings.observability_include_paths:
         try:
@@ -114,6 +119,11 @@ def _get_observability_include_regex() -> Tuple[Pattern[str], ...]:
 
 @lru_cache(maxsize=1)
 def _get_observability_exclude_regex() -> Tuple[Pattern[str], ...]:
+    """Compile exclude regex patterns from settings for observability filtering.
+
+    Returns:
+        Tuple of compiled regex patterns; invalid patterns are skipped.
+    """
     compiled: list[Pattern[str]] = []
     for pattern in settings.observability_exclude_paths:
         try:
