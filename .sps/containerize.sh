@@ -53,8 +53,7 @@ if [ $MULTI_ARCH_BUILD == "1" ]; then
    BASE_IMAGE_REPO="${DOCKER_REGISTRY}/${IMAGE_BASE}:${BASE_IMAGE_TAG}"
    sed -i "s/BASE_IMAGE_REPO/${BASE_IMAGE_REPO}/g" Containerfile.cyberfraud
    make REGISTRY="${DOCKER_REGISTRY}" IMAGE_BASE="$IMAGE_BASE" IMAGE_TAG="$BASE_IMAGE_TAG" CONTAINER_RUNTIME=docker CONTAINER_FILE=./Containerfile.lite  container-build-multi && \
-   make REGISTRY="${DOCKER_REGISTRY}" IMAGE_TAG="${IMAGE_TAG}" CONTAINER_RUNTIME=docker CONTAINER_FILE=./Containerfile.cyberfraud  container-build-multi && \
-   docker tag "${DOCKER_REGISTRY}/${IMAGE_BASE}:${IMAGE_TAG}" "${IMAGE}" && \
+   make REGISTRY="${DOCKER_REGISTRY}" IMAGE_BASE="${IMAGE_NAME}" IMAGE_TAG="${IMAGE_TAG}" CONTAINER_RUNTIME=docker CONTAINER_FILE=./Containerfile.cyberfraud  container-build-multi && \
    docker push "${IMAGE}"
 else
    echo "Building single architecture image"
@@ -62,7 +61,7 @@ else
    sed -i "s/BASE_IMAGE_REPO/${BASE_IMAGE_REPO}/g" Containerfile.cyberfraud
    make IMAGE_BASE="$IMAGE_BASE" IMAGE_TAG="$BASE_IMAGE_TAG" docker-prod && \
    make IMAGE_TAG="${IMAGE_TAG}" CONTAINER_RUNTIME=docker CONTAINER_FILE=./Containerfile.cyberfraud container-build && \
-   docker tag "mcpgateway/mcpgateway:${IMAGE_TAG}" "${IMAGE}" && \
+   docker tag "${IMAGE_BASE}:${IMAGE_TAG}" "${IMAGE}" && \
    docker push "${IMAGE}"
 fi
 
