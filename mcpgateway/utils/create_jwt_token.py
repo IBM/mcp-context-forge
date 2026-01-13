@@ -45,7 +45,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime as _dt
-import json
 import sys
 from typing import Any, Dict, List, Sequence
 
@@ -411,7 +410,7 @@ def main() -> None:  # pragma: no cover
     # Decode mode takes precedence
     if args.decode:
         decoded = _decode_jwt_token(args.decode, algorithms=[args.algo])
-        json.dump(decoded, sys.stdout, indent=2, default=str)
+        sys.stdout.write(orjson.dumps(decoded, default=str, option=orjson.OPT_INDENT_2).decode())
         sys.stdout.write("\n")
         return
 
@@ -419,7 +418,7 @@ def main() -> None:  # pragma: no cover
 
     if args.pretty:
         print("Payload:")
-        print(json.dumps(payload, indent=2, default=str))
+        print(orjson.dumps(payload, default=str, option=orjson.OPT_INDENT_2).decode())
         print("-")
 
     token = _create_jwt_token(payload, args.exp, args.secret, args.algo)

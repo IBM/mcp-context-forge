@@ -13,10 +13,10 @@ Hook: tool_pre_invoke
 
 # Standard
 from enum import Enum
-import json
 from urllib.parse import urlparse
 
 # Third-Party
+import orjson
 from pydantic import BaseModel
 
 # First-Party
@@ -180,8 +180,8 @@ class Vault(Plugin):
             return ToolPreInvokeResult()
 
         try:
-            vault_tokens: dict[str, str] = json.loads(headers[self._sconfig.vault_header_name])
-        except (json.JSONDecodeError, TypeError) as e:
+            vault_tokens: dict[str, str] = orjson.loads(headers[self._sconfig.vault_header_name])
+        except (orjson.JSONDecodeError, TypeError) as e:
             logger.error(f"Failed to parse vault tokens from header: {e}")
             return ToolPreInvokeResult()
 

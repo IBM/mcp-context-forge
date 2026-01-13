@@ -26,11 +26,11 @@ retrieves tool schemas from the global context metadata.
 from __future__ import annotations
 
 # Standard
-import json
 import logging
 from typing import Any, Dict, List, Optional
 
 # Third-Party
+import orjson
 from pydantic import BaseModel, Field
 
 # First-Party
@@ -262,7 +262,7 @@ class SPARCStaticValidatorPlugin(Plugin):
                 "type": "function",
                 "function": {
                     "name": tool_name,
-                    "arguments": json.dumps(args),
+                    "arguments": orjson.dumps(args).decode(),
                 },
             }
         )

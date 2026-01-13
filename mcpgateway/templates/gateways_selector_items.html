@@ -1,0 +1,54 @@
+<!-- htmlhint doctype-first:false -->
+<!-- gateway selector items for infinite scroll -->
+{% if pagination.page == 1 %}
+<!-- Special checkbox for RestTool (no gateway id) -->
+<label
+  class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1 tool-item"
+>
+  <input
+    type="checkbox"
+    name="associatedGateways"
+    value=""
+    data-gateway-null="true"
+    class="mcpserver-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+  />
+  <span class="select-none">REST/A2A</span>
+</label>
+{% endif %}
+{% for gateway in data %}
+{% set gateway_label = gateway.displayName or gateway.originalName or gateway.name or gateway.id %}
+<label
+  class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-purple-50 dark:hover:bg-purple-900 rounded-md p-1 tool-item"
+  data-gateway-id="{{ gateway.id }}"
+>
+  <input
+    type="checkbox"
+    name="associatedgateways"
+    value="{{ gateway.id }}"
+    data-gateway-name="{{ gateway_label }}"
+    class="gateway-checkbox form-checkbox h-5 w-5 text-purple-600 dark:bg-gray-800 dark:border-gray-600"
+    data-auto-check="true"
+  />
+  <span class="select-none">{{ gateway_label }}</span>
+</label>
+{% endfor %}
+
+{% if pagination.has_next %}
+<!-- Infinite scroll trigger element -->
+<div
+  id="gateways-scroll-trigger-{{ pagination.page }}"
+  hx-get="{{ root_path }}/admin/gateways/partial?page={{ pagination.page + 1 }}&per_page={{ pagination.per_page }}&render=selector{% if gateway_id %}&gateway_id={{ gateway_id }}{% endif %}"
+  hx-trigger="intersect once"
+  hx-swap="outerHTML"
+  class="text-center py-2 text-xs text-gray-500 dark:text-gray-400"
+>
+  <span class="inline-block">
+    <svg class="animate-spin h-4 w-4 text-purple-600 dark:text-purple-400 inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+    </svg>
+    Loading more gateways...
+  </span>
+</div>
+
+{% endif %}

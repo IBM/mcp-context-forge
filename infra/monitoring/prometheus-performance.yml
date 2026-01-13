@@ -14,17 +14,19 @@ scrape_configs:
     static_configs:
       - targets: ['localhost:9090']
 
-  # PostgreSQL metrics via postgres_exporter (primary + replica)
+  # PostgreSQL metrics via postgres_exporter (primary)
   - job_name: 'postgresql'
     static_configs:
       - targets: ['postgres_exporter:9187']
         labels:
           role: 'primary'
-          server: 'postgres'
+
+  # PostgreSQL metrics via postgres_exporter (replica)
+  - job_name: 'postgresql-replica'
+    static_configs:
       - targets: ['postgres_exporter_replica:9187']
         labels:
           role: 'replica'
-          server: 'postgres-replica'
 
   # Redis metrics via redis_exporter
   - job_name: 'redis'

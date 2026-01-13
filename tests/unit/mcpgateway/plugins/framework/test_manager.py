@@ -2,7 +2,7 @@
 """Location: ./tests/unit/mcpgateway/plugins/framework/test_manager.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Teryl Taylor
+Authors: Teryl Taylor, Fred Araujo
 
 Unit tests for plugin manager.
 """
@@ -283,3 +283,229 @@ async def test_manager_tool_hooks_with_header_mods():
     assert result.modified_payload.headers["Content-Type"] == "application/json"
 
     await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_plugin_manager_singleton_behavior():
+    """Test that PluginManager implements proper singleton pattern (Borg pattern).
+
+    Verifies that:
+    1. Multiple instances share the same internal state
+    2. Initialization only happens once per process
+    3. reset() properly clears the shared state
+    4. After reset, a new instance can be initialized with different config
+    """
+    # Clean up any previous state
+    PluginManager.reset()
+
+    # Create first instance with a specific config
+    config1_path = "./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml"
+    manager1 = PluginManager(config1_path)
+    await manager1.initialize()
+
+    # Verify first instance is initialized
+    assert manager1.initialized
+    assert manager1.config is not None
+    assert manager1.config.plugins[0].name == "ReplaceBadWordsPlugin"
+    plugin_count_1 = manager1.plugin_count
+    assert plugin_count_1 > 0
+
+    # Create second instance with same config - should share state
+    manager2 = PluginManager(config1_path)
+
+    # Verify both instances share the same state (Borg pattern)
+    assert manager2.initialized is True, "Second instance should already be initialized"
+    assert manager2.config is manager1.config, "Both instances should share the same config object"
+    assert manager2.plugin_count == plugin_count_1, "Both instances should report same plugin count"
+    assert id(manager1.__dict__) == id(manager2.__dict__), "Both instances should share the same __dict__"
+
+    # Verify that calling initialize again on second instance doesn't re-initialize
+    await manager2.initialize()
+    assert manager2.plugin_count == plugin_count_1, "Plugin count should not change on re-initialization"
+
+    # Create third instance with different config path
+    config2_path = "./tests/unit/mcpgateway/plugins/fixtures/configs/valid_multiple_plugins.yaml"
+    manager3 = PluginManager(config2_path)
+
+    # Verify third instance STILL shares state (config path is ignored after first init)
+    assert manager3.initialized is True, "Third instance should already be initialized"
+    assert manager3.config is manager1.config, "Third instance should share config from first instance"
+    assert manager3.config.plugins[0].name == "ReplaceBadWordsPlugin", "Config should not change"
+
+    # Shutdown the manager
+    await manager1.shutdown()
+
+    # Now test reset functionality
+    PluginManager.reset()
+
+    # Verify reset clears the state
+    manager4 = PluginManager(config2_path)
+    assert not manager4.initialized, "After reset, new instance should not be initialized"
+    assert manager4.config is not None, "After reset, config should be loaded from new path"
+
+    # Initialize with the new config
+    await manager4.initialize()
+    assert manager4.initialized
+    assert manager4.config.plugins[0].name == "SynonymsPlugin", "Should have different config after reset"
+    plugin_count_2 = manager4.plugin_count
+    assert plugin_count_2 != plugin_count_1, "Plugin count should differ with different config"
+
+    # Create fifth instance - should share new state
+    manager5 = PluginManager(config1_path)
+    assert manager5.initialized is True
+    assert manager5.config is manager4.config, "New instances after reset should share new state"
+    assert manager5.config.plugins[0].name == "SynonymsPlugin", "Should still have config from after reset"
+
+    # Clean up
+    await manager4.shutdown()
+    PluginManager.reset()
+
+
+@pytest.mark.asyncio
+async def test_plugin_manager_thread_safety():
+    """Test that PluginManager is thread-safe during concurrent initialization.
+
+    Verifies that when multiple threads create PluginManager instances simultaneously,
+    the config is only loaded once and all instances share the same state.
+    """
+    import threading
+    import time
+
+    # Clean up any previous state
+    PluginManager.reset()
+
+    config_path = "./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml"
+    managers = []
+    exceptions = []
+
+    # Track config loads by wrapping ConfigLoader
+    from mcpgateway.plugins.framework.loader.config import ConfigLoader
+    original_load = ConfigLoader.load_config
+    load_count = {"value": 0}
+
+    def counting_load(*args, **kwargs):
+        load_count["value"] += 1
+        # Add small delay to increase likelihood of race condition
+        time.sleep(0.01)
+        return original_load(*args, **kwargs)
+
+    # Monkey-patch the load_config to track calls
+    ConfigLoader.load_config = staticmethod(counting_load)
+
+    def create_manager(index):
+        """Thread worker that creates a PluginManager instance."""
+        try:
+            manager = PluginManager(config_path)
+            managers.append((index, manager))
+        except Exception as e:
+            exceptions.append((index, e))
+
+    # Create multiple threads that simultaneously create PluginManager instances
+    num_threads = 10
+    threads = []
+
+    for i in range(num_threads):
+        thread = threading.Thread(target=create_manager, args=(i,))
+        threads.append(thread)
+
+    # Start all threads at approximately the same time
+    for thread in threads:
+        thread.start()
+
+    # Wait for all threads to complete
+    for thread in threads:
+        thread.join(timeout=5.0)
+
+    # Restore original load_config
+    ConfigLoader.load_config = staticmethod(original_load)
+
+    # Verify results
+    assert len(exceptions) == 0, f"Exceptions occurred during concurrent initialization: {exceptions}"
+    assert len(managers) == num_threads, f"Expected {num_threads} managers, got {len(managers)}"
+
+    # CRITICAL: Config should only be loaded once despite multiple threads
+    assert load_count["value"] == 1, f"Config was loaded {load_count['value']} times instead of 1 (race condition detected)"
+
+    # Verify all managers share the same state
+    first_manager = managers[0][1]
+    for i, manager in managers:
+        assert manager.config is first_manager.config, f"Manager {i} has different config object"
+        assert id(manager.__dict__) == id(first_manager.__dict__), f"Manager {i} has different __dict__"
+        assert manager.config.plugins[0].name == "ReplaceBadWordsPlugin"
+
+    # Initialize one of them and verify all show initialized
+    await first_manager.initialize()
+    for i, manager in managers:
+        assert manager.initialized, f"Manager {i} not showing as initialized"
+
+    # Clean up
+    await first_manager.shutdown()
+    PluginManager.reset()
+
+
+@pytest.mark.asyncio
+async def test_plugin_manager_async_concurrency():
+    """Test that PluginManager handles concurrent async initialization and shutdown.
+
+    Verifies that when multiple coroutines try to initialize/shutdown simultaneously,
+    the asyncio.Lock prevents race conditions and ensures proper state management.
+    """
+    import asyncio
+
+    # Clean up any previous state
+    PluginManager.reset()
+
+    config_path = "./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml"
+
+    # Test 1: Concurrent initializations
+    managers = [PluginManager(config_path) for _ in range(5)]
+
+    # Try to initialize all managers concurrently
+    await asyncio.gather(*[m.initialize() for m in managers])
+
+    # All should be initialized and share the same state
+    for manager in managers:
+        assert manager.initialized
+        assert manager.plugin_count == 1
+        assert manager.config.plugins[0].name == "ReplaceBadWordsPlugin"
+
+    # Test 2: Concurrent initialize + shutdown (should be serialized by lock)
+    manager1 = managers[0]
+    await manager1.shutdown()
+
+    # Reset for second test
+    PluginManager.reset()
+    manager2 = PluginManager(config_path)
+
+    # Create tasks that will race
+    async def init_task():
+        await asyncio.sleep(0.01)  # Small delay
+        await manager2.initialize()
+        return "init"
+
+    async def shutdown_task():
+        await asyncio.sleep(0.01)  # Small delay
+        await manager2.shutdown()
+        return "shutdown"
+
+    # Run init and shutdown concurrently (lock should serialize them)
+    results = await asyncio.gather(init_task(), shutdown_task())
+
+    # One should succeed, the other should be no-op
+    # The key is that no exception should occur due to race condition
+    assert len(results) == 2
+
+    # Test 3: Multiple shutdowns (should be idempotent)
+    PluginManager.reset()
+    manager3 = PluginManager(config_path)
+    await manager3.initialize()
+    assert manager3.initialized
+
+    # Shutdown multiple times concurrently
+    await asyncio.gather(*[manager3.shutdown() for _ in range(5)])
+
+    # Should be cleanly shutdown
+    assert not manager3.initialized
+
+    # Clean up
+    PluginManager.reset()

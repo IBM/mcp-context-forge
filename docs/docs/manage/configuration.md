@@ -186,8 +186,8 @@ DB_POOL_SIZE=200                   # Pool size (QueuePool only)
 DB_MAX_OVERFLOW=5                  # Max overflow connections (QueuePool only)
 DB_POOL_TIMEOUT=60                 # Wait timeout for connection
 DB_POOL_RECYCLE=3600               # Recycle connections after N seconds
-DB_MAX_RETRIES=5                   # Retry attempts on connection failure
-DB_RETRY_INTERVAL_MS=2000          # Delay between retries
+DB_MAX_RETRIES=30                  # Retry attempts on connection failure (default: 30)
+DB_RETRY_INTERVAL_MS=2000          # Base retry interval in ms (uses exponential backoff with jitter)
 
 # Connection pool class selection
 # - "auto": NullPool with PgBouncer, QueuePool otherwise (default)
@@ -205,6 +205,16 @@ DB_POOL_PRE_PING=auto
 # Queries executed N+ times are prepared server-side for performance
 DB_PREPARE_THRESHOLD=5
 ```
+
+#### Database Startup Resilience
+
+The gateway uses **exponential backoff with jitter** when waiting for the database at startup:
+
+- **Retry progression**: 2s → 4s → 8s → 16s → 30s (capped) → 30s...
+- **Jitter**: ±25% randomization prevents thundering herd when multiple workers reconnect
+- **Default behavior**: 30 retries with 2s base interval ≈ 5 minutes total wait
+
+This prevents CPU-intensive crash-respawn loops when the database is temporarily unavailable.
 
 ### Server Configuration
 
@@ -375,11 +385,6 @@ MCPGATEWAY_A2A_MAX_AGENTS=100
 MCPGATEWAY_A2A_DEFAULT_TIMEOUT=30
 MCPGATEWAY_A2A_MAX_RETRIES=3
 MCPGATEWAY_A2A_METRICS_ENABLED=true
-
-# Federation & Discovery
-FEDERATION_ENABLED=true
-FEDERATION_DISCOVERY=true
-FEDERATION_PEERS=["https://gateway-1.internal", "https://gateway-2.internal"]
 ```
 
 ### Airgapped Deployments
@@ -417,6 +422,10 @@ CACHE_TYPE=redis                    # Options: memory, redis, database, none
 REDIS_URL=redis://localhost:6379/0
 CACHE_PREFIX=mcpgateway
 
+# Redis Startup Resilience (exponential backoff with jitter)
+REDIS_MAX_RETRIES=30                # Max attempts before worker exits (default: 30)
+REDIS_RETRY_INTERVAL_MS=2000        # Base interval in ms (uses exponential backoff with jitter)
+
 # Cache TTL (seconds)
 SESSION_TTL=3600
 MESSAGE_TTL=600
@@ -445,6 +454,16 @@ AUTH_CACHE_REVOCATION_TTL=30        # Token revocation cache TTL (5-120, securit
 AUTH_CACHE_TEAM_TTL=60              # Team membership cache TTL in seconds (10-300)
 AUTH_CACHE_BATCH_QUERIES=true       # Batch auth DB queries into single call
 ```
+
+#### Redis Startup Resilience
+
+The gateway uses **exponential backoff with jitter** when waiting for Redis at startup:
+
+- **Retry progression**: 2s → 4s → 8s → 16s → 30s (capped) → 30s...
+- **Jitter**: ±25% randomization prevents thundering herd when multiple workers reconnect
+- **Default behavior**: 30 retries with 2s base interval ≈ 5 minutes total wait
+
+This prevents CPU-intensive crash-respawn loops when Redis is temporarily unavailable.
 
 #### Authentication Cache
 
@@ -684,6 +703,7 @@ When disabled (default), logs only go to console/file. This improves performance
 ENVIRONMENT=development             # development, staging, production
 DEV_MODE=true
 RELOAD=true
+TEMPLATES_AUTO_RELOAD=true          # Auto-reload Jinja2 templates (default: false for production)
 DEBUG=true
 
 # Observability
@@ -1103,6 +1123,17 @@ METRICS_DELETE_RAW_AFTER_ROLLUP=true   # Delete raw after rollup (default: true)
 METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS=1  # Hours before deletion (default: 1)
 ```
 
+**Performance Optimization (PostgreSQL):**
+
+```bash
+USE_POSTGRESDB_PERCENTILES=true  # Use PostgreSQL-native percentile_cont (default: true)
+YIELD_BATCH_SIZE=1000            # Rows per batch for streaming queries (default: 1000)
+```
+
+When `USE_POSTGRESDB_PERCENTILES=true` (default), PostgreSQL uses native `percentile_cont()` for p50/p95/p99 calculations, which is 5-10x faster than Python-based percentile computation. For SQLite or when disabled, falls back to Python linear interpolation.
+
+`YIELD_BATCH_SIZE` controls memory usage by streaming query results in batches instead of loading all rows into RAM at once.
+
 #### Configuration Examples
 
 **Default (recommended for most deployments):**
@@ -1178,8 +1209,11 @@ OBSERVABILITY_MAX_TRACES=100000
 # 1.0 = trace everything, 0.1 = trace 10% of requests
 OBSERVABILITY_SAMPLE_RATE=1.0
 
-# Paths to exclude from tracing (comma-separated regex patterns)
-OBSERVABILITY_EXCLUDE_PATHS=/health,/healthz,/ready,/metrics,/static/.*
+# Paths to include for tracing (JSON array of regex patterns)
+OBSERVABILITY_INCLUDE_PATHS=["^/rpc/?$","^/sse$","^/message$","^/mcp(?:/|$)","^/servers/[^/]+/mcp/?$","^/servers/[^/]+/sse$","^/servers/[^/]+/message$","^/a2a(?:/|$)"]
+
+# Paths to exclude from tracing (JSON array of regex patterns, applied after include patterns)
+OBSERVABILITY_EXCLUDE_PATHS=["/health","/healthz","/ready","/metrics","/static/.*"]
 
 # Enable metrics collection
 OBSERVABILITY_METRICS_ENABLED=true

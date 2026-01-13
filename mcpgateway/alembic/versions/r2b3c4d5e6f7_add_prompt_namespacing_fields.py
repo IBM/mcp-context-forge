@@ -131,14 +131,14 @@ def upgrade() -> None:
 
     connection.commit()
 
+    unique_constraints = {uc["name"] for uc in inspector.get_unique_constraints("prompts")}
+
     with op.batch_alter_table("prompts") as batch_op:
         batch_op.alter_column("original_name", nullable=False)
         batch_op.alter_column("custom_name", nullable=False)
         batch_op.alter_column("custom_name_slug", nullable=False)
-
-    unique_constraints = {uc["name"] for uc in inspector.get_unique_constraints("prompts")}
-    if "uq_gateway_id__original_name_prompt" not in unique_constraints:
-        op.create_unique_constraint("uq_gateway_id__original_name_prompt", "prompts", ["gateway_id", "original_name"])
+        if "uq_gateway_id__original_name_prompt" not in unique_constraints:
+            batch_op.create_unique_constraint("uq_gateway_id__original_name_prompt", ["gateway_id", "original_name"])
 
 
 def downgrade() -> None:
@@ -150,11 +150,11 @@ def downgrade() -> None:
         return
 
     unique_constraints = {uc["name"] for uc in inspector.get_unique_constraints("prompts")}
-    if "uq_gateway_id__original_name_prompt" in unique_constraints:
-        op.drop_constraint("uq_gateway_id__original_name_prompt", "prompts", type_="unique")
-
     columns = [col["name"] for col in inspector.get_columns("prompts")]
+
     with op.batch_alter_table("prompts") as batch_op:
+        if "uq_gateway_id__original_name_prompt" in unique_constraints:
+            batch_op.drop_constraint("uq_gateway_id__original_name_prompt", type_="unique")
         if "display_name" in columns:
             batch_op.drop_column("display_name")
         if "custom_name_slug" in columns:

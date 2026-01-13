@@ -472,4 +472,7 @@ livenessProbe:
   periodSeconds: 15
 ```
 
+!!! tip "Startup Resilience"
+    If the database or Redis becomes temporarily unavailable, the Gateway uses **exponential backoff with jitter** for connection retries (2s → 4s → 8s → ... capped at 30s, ±25% jitter). This prevents CPU-intensive crash-respawn loops during dependency outages. Configure with `DB_MAX_RETRIES`, `REDIS_MAX_RETRIES` (default: 30 each). See [Startup Resilience](../architecture/performance-architecture.md#startup-resilience) for details.
+
 ---

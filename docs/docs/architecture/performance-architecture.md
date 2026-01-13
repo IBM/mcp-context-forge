@@ -232,6 +232,80 @@ This diagram showcases the performance-optimized architecture of MCP Gateway (Co
 | #1816, #1819, #1830 | Precompiled regex patterns | CPU reduction in hot paths |
 | #1828, #1837 | SSE/logging micro-optimizations | Reduced allocation overhead |
 | #1844 | Monitoring profile | Production observability |
+| #2025 | Startup resilience (exponential backoff) | Prevents crash-loop CPU storms |
+
+## Startup Resilience
+
+The gateway implements **exponential backoff with jitter** for database and Redis connection retries at startup. This prevents CPU-intensive crash-respawn loops when dependencies are temporarily unavailable.
+
+### Problem Solved
+
+Without exponential backoff, a dependency outage would cause:
+```
+Worker starts → Connection fails after 3 attempts (6s) → Worker crashes
+    ↓
+Granian respawns worker immediately → Worker starts → Connection fails → Crashes
+    ↓
+Tight crash-respawn loop → 500%+ CPU consumption → System destabilization
+```
+
+### Solution: Exponential Backoff with Jitter
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    EXPONENTIAL BACKOFF RETRY PATTERN                        │
+│                                                                             │
+│   Attempt 1    Attempt 2    Attempt 3    Attempt 4    Attempt 5+            │
+│      │            │            │            │            │                  │
+│      ▼            ▼            ▼            ▼            ▼                  │
+│   ┌─────┐     ┌─────┐     ┌─────┐     ┌──────┐     ┌──────┐                │
+│   │ 2s  │     │ 4s  │     │ 8s  │     │ 16s  │     │ 30s  │ (capped)       │
+│   └─────┘     └─────┘     └─────┘     └──────┘     └──────┘                │
+│      │            │            │            │            │                  │
+│      └────────────┴────────────┴────────────┴────────────┘                  │
+│                              │                                              │
+│                              ▼                                              │
+│                    ±25% Random Jitter                                       │
+│                 (prevents thundering herd)                                  │
+│                                                                             │
+│   Formula: sleep = min(base × 2^(attempt-1), 30s) × (1 ± 0.25 × random)    │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Performance Impact
+
+| Metric | Before | After |
+|--------|--------|-------|
+| **Retry attempts** | 3 (~6 seconds) | 30 (~5 minutes) |
+| **CPU during outage** | ~500% (crash loop) | ~0% (sleeping) |
+| **Recovery pattern** | Thundering herd | Staggered with jitter |
+| **System stability** | Cascading failures | Graceful degradation |
+
+### Configuration
+
+```bash
+# Database Startup Resilience
+DB_MAX_RETRIES=30              # Max attempts before worker exits (default: 30)
+DB_RETRY_INTERVAL_MS=2000      # Base interval in ms (doubles each attempt)
+
+# Redis Startup Resilience
+REDIS_MAX_RETRIES=30           # Max attempts before worker exits (default: 30)
+REDIS_RETRY_INTERVAL_MS=2000   # Base interval in ms (doubles each attempt)
+```
+
+### Retry Progression Example
+
+With default settings (2s base interval):
+
+| Attempt | Base Delay | With Jitter (±25%) | Cumulative Time |
+|---------|------------|---------------------|-----------------|
+| 1 | 2s | 1.5s - 2.5s | ~2s |
+| 2 | 4s | 3s - 5s | ~6s |
+| 3 | 8s | 6s - 10s | ~14s |
+| 4 | 16s | 12s - 20s | ~30s |
+| 5+ | 30s (cap) | 22.5s - 37.5s | ~60s+ |
+
+After 30 retries: approximately **5 minutes** total wait time before the worker gives up, providing ample time for dependencies to recover during maintenance windows or transient outages.
 
 ## Future: Python 3.14 Free-Threading (GIL Removal)
 

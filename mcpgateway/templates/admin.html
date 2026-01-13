@@ -88,6 +88,7 @@
       defer
     ></script>
     {% endif %}
+    {% if is_admin %}
     <!-- Alpine.js Stores for Bulk Plugin Modals -->
     <script>
       document.addEventListener('alpine:init', () => {
@@ -124,6 +125,7 @@
     {% else %}
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     {% endif %}
+    {% endif %}
     <!-- Markdown and Sanitization -->
     {% if ui_airgapped %}
     <script src="{{ root_path }}/static/vendor/marked/marked.min.js"></script>
@@ -133,8 +135,10 @@
     <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
     {% endif %}
     <script src="{{ root_path }}/static/admin.js"></script>
+    {% if is_admin %}
     <script src="{{ root_path }}/static/gantt-chart.js?v=3"></script>
     <script src="{{ root_path }}/static/flame-graph.js?v=1"></script>
+    {% endif %}
     <!-- CodeMirror CSS -->
     {% if ui_airgapped %}
     <link
@@ -259,13 +263,24 @@
 
         <!-- Sidebar Navigation -->
         <nav class="flex-1 overflow-y-auto py-4 sidebar-scroll">
+          <!-- Overview Section -->
+          <div class="space-y-1 px-2 mb-4">
+            <a href="#overview" id="tab-overview" data-testid="overview-tab"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors active"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('overview')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📊</span>
+              <span x-show="!sidebarCollapsed">Overview</span>
+            </a>
+          </div>
+
           <!-- MCP Section -->
           <div class="sidebar-section" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">MCP</span>
           </div>
           <div class="space-y-1 px-2">
             <a href="#gateways" id="tab-gateways" data-testid="gateways-tab"
-               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors active"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
                onclick="showTab('gateways')">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🖥️</span>
@@ -374,6 +389,7 @@
           </div>
           {% endif %}
 
+          {% if is_admin %}
           <!-- Monitoring Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Monitoring</span>
@@ -405,7 +421,9 @@
             </a>
             {% endif %}
           </div>
+          {% endif %}
 
+          {% if is_admin %}
           <!-- Extensions Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Extensions</span>
@@ -419,6 +437,7 @@
               <span x-show="!sidebarCollapsed">Plugins</span>
             </a>
           </div>
+          {% endif %}
 
           <!-- Organization Section -->
           {% if email_auth_enabled %}
@@ -433,6 +452,7 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">👥</span>
               <span x-show="!sidebarCollapsed">Teams</span>
             </a>
+            {% if is_admin %}
             <a href="#users" id="tab-users"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -440,6 +460,7 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">👤</span>
               <span x-show="!sidebarCollapsed">Users</span>
             </a>
+            {% endif %}
             <a href="#tokens" id="tab-tokens"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -450,6 +471,7 @@
           </div>
           {% endif %}
 
+          {% if is_admin %}
           <!-- Admin Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Admin</span>
@@ -476,7 +498,6 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">ℹ️</span>
               <span x-show="!sidebarCollapsed">Version Info</span>
             </a>
-            {% if is_admin %}
             <a href="#maintenance" id="tab-maintenance"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -484,8 +505,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔧</span>
               <span x-show="!sidebarCollapsed">Maintenance</span>
             </a>
-            {% endif %}
           </div>
+          {% endif %}
         </nav>
 
         <!-- Sidebar Footer -->
@@ -645,6 +666,7 @@
         <!-- Tab Panels Container -->
         <main class="flex-1 overflow-y-auto bg-gray-100 dark:bg-gray-900 p-4 lg:p-6">
 
+      {% if is_admin %}
       <!-- Logs Panel -->
       <div id="logs-panel" class="tab-panel hidden">
           <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
@@ -857,7 +879,9 @@
             </div>
           </div>
       </div>
+      {% endif %}
 
+      {% if is_admin %}
       <!-- Export/Import Panel -->
       <div id="export-import-panel" class="tab-panel hidden">
           <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
@@ -1291,12 +1315,15 @@
 
       <!-- Maintenance Panel (admin only) -->
       <div id="maintenance-panel" class="tab-panel hidden"></div>
+      {% endif %}
 
+      {% if is_admin %}
       <!-- Plugins Panel -->
       <div id="plugins-panel" class="tab-panel hidden"></div>
+      {% endif %}
 
       <!-- Performance Panel -->
-      {% if performance_enabled %}
+      {% if performance_enabled and is_admin %}
       <div id="performance-panel" class="tab-panel hidden"
            hx-get="{{ root_path }}/admin/performance/stats"
            hx-trigger="revealed once"
@@ -1312,7 +1339,7 @@
       {% endif %}
 
       <!-- Observability Panel -->
-      {% if observability_enabled %}
+      {% if observability_enabled and is_admin %}
       <div id="observability-panel" class="tab-panel hidden"
            hx-get="{{ root_path }}/admin/observability/partial"
            hx-trigger="revealed once"
@@ -2078,6 +2105,79 @@
 
         <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
           <div class="overflow-x-auto">
+            <!-- Table will be loaded via HTMX -->
+            <div id="servers-table"
+                 hx-get="{{ root_path }}/admin/servers/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+                 hx-trigger="load"
+                 hx-swap="outerHTML"
+                 hx-indicator="#servers-loading">
+              <!-- Loading placeholder -->
+              <div class="flex items-center justify-center p-8">
+                <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span class="ml-3 text-gray-600 dark:text-gray-400">Loading servers...</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Loading Indicator for HTMX -->
+          <div id="servers-loading" class="htmx-indicator">
+            <div class="flex items-center justify-center p-4">
+              <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span class="ml-2 text-gray-600 dark:text-gray-400">Loading servers...</span>
+            </div>
+          </div>
+
+          <!-- Pagination Controls -->
+          {# ---- compute safe pagination values first ---- #}
+          {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
+          {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
+          {% set total_items = (pagination.total_items if pagination is defined else (total_items if total_items is defined else (servers|length if servers is defined else 0))) %}
+          {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
+          {% set has_prev = page > 1 %}
+          {% set has_next = (page * per_page) < total_items %}
+
+          {% set pagination = {
+            'page': page,
+            'per_page': per_page,
+            'total_items': total_items,
+            'total_pages': total_pages,
+            'has_prev': has_prev,
+            'has_next': has_next
+          } %}
+
+          {# build the refresh URL for controls #}
+          {% set controls_url = root_path + '/admin/servers/partial'
+            + '?render=controls'
+            + '&page=' + page|string
+            + '&per_page=' + per_page|string
+            + '&include_inactive=' + (include_inactive|default(false)|string|lower) %}
+
+          <div id="servers-pagination-controls"
+              hx-get="{{ controls_url }}"
+              hx-trigger="refreshControls"
+              hx-target="#servers-pagination-controls"
+              hx-swap="outerHTML"
+              hx-indicator="#servers-loading">
+
+            {# helpers used by pagination_controls.html #}
+            {% set base_url = root_path + '/admin/servers/partial' %}
+            {% set hx_target = '#servers-table' %}
+            {% set hx_indicator = '#servers-loading' %}
+            {% set query_params = {'include_inactive': include_inactive} %}
+
+            {% include 'pagination_controls.html' %}
+          </div>
+        </div>
+
+        <!-- Old table for reference (hidden) -->
+        <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800" style="display: none;">
+          <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200">
               <thead class="bg-gray-50 dark:bg-gray-700">
                 <tr>
@@ -2388,7 +2488,7 @@
             id="add-server-form"
             onreset="document.getElementById('associatedTools').selectedIndex = -1;"
           >
-            <div class="grid grid-cols-1 gap-6">
+            <div class="grid grid-cols-1 gap-7">
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
@@ -2405,17 +2505,20 @@
                   server ID
                 </p>
               </div>
-              <div>
+              <div class="relative">
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  for="server-name"
                   >Name</label
                 >
                 <input
                   type="text"
                   name="name"
                   required
+                  id="server-name"
                   class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
+                <p data-error-message-for="name" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">Name is required.</p>
               </div>
               <div>
                 <label
@@ -2457,44 +2560,14 @@
                   <div
                     id="associatedGateways"
                     class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
+                    hx-get="{{ root_path }}/admin/gateways/partial?page=1&per_page=50&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+                    hx-trigger="load"
+                    hx-swap="innerHTML"
                   >
-                    {% for gateway in gateways %}
-                    <label
-                      class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1 tool-item"
-                    >
-                      <input
-                        type="checkbox"
-                        name="associatedGateways"
-                        value="{{ gateway.id }}"
-                        class="mcpserver-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                      />
-                      <span class="select-none"
-                        >{{ gateway.slug or gateway.name
-                        }}</span
-                      >
-                    </label>
-                    {% endfor %}
-
-                    <!-- Special checkbox for RestTool (no gateway id) -->
-                    <label
-                      class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1 tool-item"
-                    >
-                      <input
-                        type="checkbox"
-                        name="associatedGateways"
-                        value=""
-                        data-gateway-null="true"
-                        class="mcpserver-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                      />
-                      <span class="select-none">REST/A2A</span>
-                    </label>
-                    <p
-                      id="noGatewayMessage"
-                      class="text-gray-700 dark:text-gray-300"
-                      style="display: none"
-                    >
-                      No MCP server found containing "<span id="searchQueryServers"></span>"
-                    </p>
+                    <!-- Gateway checkboxes will be loaded here via HTMX -->
+                    <div class="flex items-center justify-center p-4">
+                      <span class="text-gray-500 dark:text-gray-400 text-sm">Loading MCP servers...</span>
+                    </div>
                   </div>
                   <div class="flex justify-end mt-3 gap-2">
                     <button
@@ -2552,7 +2625,7 @@
                   <div
                     id="associatedTools"
                     class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                    hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=50&render=selector"
+                    hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=50&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                     hx-trigger="load"
                     hx-swap="innerHTML"
                     hx-on::after-swap="initToolSelect('associatedTools', 'selectedToolsPills', 'selectedToolsWarning', 6, 'selectAllToolsBtn', 'clearAllToolsBtn')"
@@ -2624,7 +2697,7 @@
                 <div
                   id="associatedResources"
                   class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                  hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector"
+                  hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                   hx-trigger="load"
                   hx-swap="innerHTML"
                   hx-on::after-swap="initResourceSelect('associatedResources', 'selectedResourcesPills', 'selectedResourcesWarning', 6, 'selectAllResourcesBtn', 'clearAllResourcesBtn')"
@@ -2684,7 +2757,7 @@
                 <div
                   id="associatedPrompts"
                   class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                  hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector"
+                  hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                   hx-trigger="load"
                   hx-swap="innerHTML"
                   hx-on::after-swap="initPromptSelect('associatedPrompts', 'selectedPromptsPills', 'selectedPromptsWarning', 6, 'selectAllPromptsBtn', 'clearAllPromptsBtn')"
@@ -2921,7 +2994,7 @@
           <div class="overflow-x-auto">
             <!-- Table will be loaded via HTMX -->
             <div id="tools-table"
-                 hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}"
+                 hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#tools-loading">
@@ -3289,18 +3362,21 @@
           </div>
 
           <form method="POST" id="add-tool-form">
-            <div class="grid grid-cols-1 gap-6">
-              <div>
+            <div class="grid grid-cols-1 gap-7">
+              <div class="relative">
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  for="tool-name"
                   >Name</label
                 >
                 <input
                   type="text"
                   name="name"
                   required
+                  id="tool-name"
                   class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
+                <p data-error-message-for="name" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">Name is required.</p>
               </div>
 
               <div>
@@ -3316,17 +3392,20 @@
                 />
               </div>
 
-              <div>
+              <div class="relative">
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  for="tool-url"
                   >URL</label
                 >
                 <input
                   type="url"
                   name="url"
                   required
+                  id="tool-url"
                   class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
+                <p data-error-message-for="url" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">URL is required.</p>
               </div>
               <div>
                 <label
@@ -3938,7 +4017,7 @@
           <div class="overflow-x-auto">
             <!-- HTMX container: will be replaced by /admin/resources/partial -->
             <div id="resources-list-container"
-              hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}"
+              hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-trigger="load"
               hx-swap="outerHTML"
               hx-indicator="#resources-loading"
@@ -3959,7 +4038,7 @@
             Add New Resource
           </h3>
           <form method="POST" id="add-resource-form">
-            <div class="grid grid-cols-1 gap-6">
+            <div class="grid grid-cols-1 gap-7">
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
@@ -3972,17 +4051,20 @@
                   class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
-              <div>
+              <div class="relative">
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  for="resource-name"
                   >Name</label
                 >
                 <input
                   type="text"
                   name="name"
                   required
+                  id="resource-name"
                   class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
+                <p data-error-message-for="name" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">Name is required.</p>
               </div>
               <div>
                 <label
@@ -4177,8 +4259,8 @@
           <div class="overflow-x-auto">
             <!-- HTMX container: will be replaced by /admin/prompts/partial -->
             <div id="prompts-list-container"
-              hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}"
-              hx-trigger="load"
+              hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+              hx-trigger="load, refreshUsers"
               hx-swap="outerHTML"
               hx-indicator="#prompts-loading"
             >
@@ -4220,18 +4302,21 @@
             action="{{ root_path }}/admin/prompts"
             id="add-prompt-form"
           >
-            <div class="grid grid-cols-1 gap-6">
-              <div>
+            <div class="grid grid-cols-1 gap-7">
+              <div class="relative">
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  for="prompt-name"
                   >Name</label
                 >
                 <input
                   type="text"
                   name="name"
                   required
+                  id="prompt-name"
                   class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
+                <p data-error-message-for="name" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">Prompt name is required.</p>
               </div>
               <div>
                 <label
@@ -4386,6 +4471,22 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         </div>
       </div>
 
+      <!-- Overview Panel -->
+      <div id="overview-panel" class="tab-panel"
+           hx-get="{{ root_path }}/admin/overview/partial"
+           hx-trigger="load"
+           hx-swap="innerHTML">
+        <div class="flex items-center justify-center py-12">
+          <div class="animate-pulse flex items-center space-x-2 text-gray-400 dark:text-gray-500">
+            <svg class="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span>Loading overview...</span>
+          </div>
+        </div>
+      </div>
+
       <!-- Gateways Panel -->
       <div id="gateways-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
@@ -4438,6 +4539,77 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         </div>
 
         <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
+          <div class="overflow-x-auto">
+            <!-- Table will be loaded via HTMX -->
+            <div id="gateways-table"
+                 hx-get="{{ root_path }}/admin/gateways/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+                 hx-trigger="load"
+                 hx-swap="outerHTML"
+                 hx-indicator="#gateways-loading">
+              <!-- Loading placeholder -->
+              <div class="flex items-center justify-center p-8">
+                <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span class="ml-3 text-gray-600 dark:text-gray-400">Loading gateways...</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Loading Indicator for HTMX -->
+          <div id="gateways-loading" class="htmx-indicator">
+            <div class="flex items-center justify-center p-4">
+              <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span class="ml-2 text-gray-600 dark:text-gray-400">Loading gateways...</span>
+            </div>
+          </div>
+
+          <!-- Pagination Controls -->
+          {# ---- compute safe pagination values first ---- #}
+          {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
+          {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
+          {% set total_items = (pagination.total_items if pagination is defined else (total_items if total_items is defined else (gateways|length if gateways is defined else 0))) %}
+          {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
+          {% set has_prev = page > 1 %}
+          {% set has_next = (page * per_page) < total_items %}
+
+          {% set pagination = {
+            'page': page,
+            'per_page': per_page,
+            'total_items': total_items,
+            'total_pages': total_pages,
+            'has_prev': has_prev,
+            'has_next': has_next
+          } %}
+
+          {# build the refresh URL for controls #}
+          {% set controls_url = root_path + '/admin/gateways/partial'
+            + '?render=controls'
+            + '&page=' + page|string
+            + '&per_page=' + per_page|string
+            + '&include_inactive=' + (include_inactive|default(false)|string|lower) %}
+
+          <div id="gateways-pagination-controls"
+              hx-get="{{ controls_url }}"
+              hx-trigger="refreshControls"
+              hx-target="#gateways-pagination-controls"
+              hx-swap="outerHTML"
+              hx-indicator="#gateways-loading">
+
+            {# helpers used by pagination_controls.html #}
+            {% set base_url = root_path + '/admin/gateways/partial' %}
+            {% set hx_target = '#gateways-table' %}
+            {% set hx_indicator = '#gateways-loading' %}
+            {% set query_params = {'include_inactive': include_inactive} %}
+
+            {% include 'pagination_controls.html' %}
+          </div>
+        </div>
+        <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800" style="display: none;">
           <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200">
               <thead class="bg-gray-50 dark:bg-gray-700">
@@ -4761,35 +4933,41 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           </div>
         </div>
 
-        <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
+        <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800 mt-8">
           <h3 class="text-lg font-bold mb-4 dark:text-gray-200">
             Add New MCP Server or Gateway
           </h3>
           <form method="POST" id="add-gateway-form">
-            <div class="grid grid-cols-1 gap-6">
-              <div>
+            <div class="grid grid-cols-1 gap-7">
+              <div class="relative">
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  for="mcp-server-name"
                   >MCP Server Name</label
                 >
                 <input
                   type="text"
                   name="name"
                   required
+                  id="mcp-server-name"
                   class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
+                <p data-error-message-for="name" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">MCP Server Name is required.</p>
               </div>
-              <div>
+              <div class="relative">
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  for="mcp-server-url"
                   >MCP Server URL</label
                 >
                 <input
                   type="url"
                   name="url"
                   required
+                  id="mcp-server-url"
                   class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
+                <p data-error-message-for="url" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">MCP Server URL is required.</p>
               </div>
               <div>
                 <label
@@ -5479,7 +5657,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       {% endif %}
 
       <!-- User Management Panel -->
-      {% if email_auth_enabled %}
+      {% if email_auth_enabled and is_admin %}
       <div id="users-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-2xl font-bold dark:text-gray-200">User Management</h2>
@@ -5500,8 +5678,8 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             <form
               id="create-user-form"
               hx-post="{{ root_path }}/admin/users"
-              hx-target="#users-list"
-              hx-swap="afterbegin"
+              hx-target="#user-creation-messages"
+              hx-swap="innerHTML"
               class="space-y-4"
             >
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -5519,7 +5697,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     placeholder="user@example.com"
                   />
                 </div>
-                <div>
+                <div class="relative">
                   <label
                     class="block text-sm font-medium text-gray-700 dark:text-gray-300"
                   >
@@ -5687,18 +5865,29 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">
               System Users
             </h3>
-            <div
-              id="users-list"
-              hx-get="{{ root_path }}/admin/users"
-              hx-trigger="load"
-            >
-              <p class="text-gray-500 dark:text-gray-400">
-                <span class="animate-pulse">Loading users...</span>
-                <br /><small class="text-xs"
-                  >Note: User management requires email authentication</small
-                >
-              </p>
+
+            <!-- Loading indicator -->
+            <div id="users-loading" class="htmx-indicator flex items-center justify-center p-8">
+              <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span class="ml-3 text-gray-600 dark:text-gray-400">Loading users...</span>
             </div>
+
+            <!-- Users list container -->
+            <div
+              id="users-list-container"
+              hx-get="{{ root_path }}/admin/users/partial?page=1&per_page=50"
+              hx-trigger="load, refreshUsers"
+              hx-swap="outerHTML"
+              hx-indicator="#users-loading"
+            >
+              <!-- Content will be loaded via HTMX -->
+            </div>
+
+            <!-- Pagination controls container -->
+            <div id="users-pagination-controls"></div>
           </div>
         </div>
       </div>
@@ -5721,11 +5910,12 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">
             Create New API Token
           </h3>
-          <form id="create-token-form" class="space-y-4">
+          <form id="create-token-form" class="space-y-7">
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
+              <div class="relative">
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                  for="api-token-name"
                 >
                   Token Name *
                 </label>
@@ -5733,10 +5923,12 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   type="text"
                   name="name"
                   required
+                  id="api-token-name"
                   maxlength="255"
                   class="mt-1 px-1.5 block w-full border border-gray-300 rounded-md shadow-sm bg-gray-100 dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
                   placeholder="Production API Access"
                 />
+                <p data-error-message-for="name" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">Token Name is required.</p>
               </div>
               <div>
                 <label
@@ -5776,16 +5968,16 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         <div class="flex-shrink-0">
                         </div>
                         <div class="ml-3 flex-1">
-                            <!-- Public Access Token Section -->
+                            <!-- Token Scope Section -->
                             <div class="space-y-2">
                                 <div class="flex items-center">
                                     <h3 class="text-sm font-bold text-yellow-800 dark:text-yellow-200">
-                                        ⚠️ <span class="font-semibold">Public Access Token</span>
+                                        ⚠️ <span class="font-semibold">Token Scope</span>
                                     </h3>
                                 </div>
                                 <div class="mt-1 text-sm text-yellow-700 dark:text-yellow-300">
                                     <p class="mb-1">
-                                        You are currently viewing <span class="font-semibold">"All Teams"</span>. Tokens created in this context will have <span class="font-semibold">public-only access</span>.
+                                        Tokens created without selecting a team will have access to <span class="font-semibold">public resources only</span>.
                                     </p>
                                     <p class="mb-1"><span class="font-semibold">✅ This token CAN access:</span></p>
                                     <ul class="list-disc list-inside ml-4 space-y-1">
@@ -5794,7 +5986,8 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                                     </ul>
                                     <p class="mt-2 mb-1"><span class="font-semibold">❌ This token CANNOT access:</span></p>
                                     <ul class="list-disc list-inside ml-4 space-y-1">
-                                        <li>Team-scoped or private servers, tools, resources, and prompts</li>
+                                        <li>Your own private or team-scoped resources</li>
+                                        <li>Team-scoped servers, tools, resources, and prompts</li>
                                     </ul>
                                 </div>
                             </div>
@@ -5803,7 +5996,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                             <div class="mt-4 bg-yellow-50 dark:bg-yellow-900 p-2 rounded-md border border-yellow-200 dark:border-yellow-600 flex items-center">
                                 <span class="text-yellow-600 dark:text-yellow-400 text-lg">💡</span>
                                 <p class="ml-2 text-sm font-semibold text-yellow-700 dark:text-yellow-300">
-                                    To create a token with full Team Access, select a specific team from the header above.
+                                    For team-level access, select a specific team from the header above before creating a token.
                                 </p>
                             </div>
                         </div>
@@ -5965,6 +6158,86 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               Registered A2A Agents
             </h3>
             <div class="overflow-x-auto">
+              <!-- Table will be loaded via HTMX -->
+              <div id="agents-table"
+                   hx-get="{{ root_path }}/admin/a2a/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+                   hx-trigger="load"
+                   hx-swap="outerHTML"
+                   hx-indicator="#agents-loading">
+                <!-- Loading placeholder -->
+                <div class="flex items-center justify-center p-8">
+                  <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span class="ml-3 text-gray-600 dark:text-gray-400">Loading agents...</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Loading Indicator for HTMX -->
+            <div id="agents-loading" class="htmx-indicator">
+              <div class="flex items-center justify-center p-4">
+                <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span class="ml-2 text-gray-600 dark:text-gray-400">Loading agents...</span>
+              </div>
+            </div>
+
+            <!-- Pagination Controls -->
+            {# ---- compute safe pagination values first ---- #}
+            {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
+            {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
+            {% set total_items = (pagination.total_items if pagination is defined else (total_items if total_items is defined else (a2a_agents|length if a2a_agents is defined else 0))) %}
+            {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
+            {% set has_prev = page > 1 %}
+            {% set has_next = (page * per_page) < total_items %}
+
+            {% set pagination = {
+              'page': page,
+              'per_page': per_page,
+              'total_items': total_items,
+              'total_pages': total_pages,
+              'has_prev': has_prev,
+              'has_next': has_next
+            } %}
+
+            {# build the refresh URL for controls #}
+            {% set controls_url = root_path + '/admin/a2a/partial'
+              + '?render=controls'
+              + '&page=' + page|string
+              + '&per_page=' + per_page|string
+              + '&include_inactive=' + (include_inactive|default(false)|string|lower) %}
+
+            <div id="agents-pagination-controls"
+                hx-get="{{ controls_url }}"
+                hx-trigger="refreshControls"
+                hx-target="#agents-pagination-controls"
+                hx-swap="outerHTML"
+                hx-indicator="#agents-loading">
+
+              {# helpers used by pagination_controls.html #}
+              {% set base_url = root_path + '/admin/a2a/partial' %}
+              {% set hx_target = '#agents-table' %}
+              {% set hx_indicator = '#agents-loading' %}
+              {% set query_params = {'include_inactive': include_inactive} %}
+
+              {% include 'pagination_controls.html' %}
+            </div>
+          </div>
+        </div>
+
+        <!-- Old table for reference (hidden) -->
+        <div class="bg-white shadow rounded-lg p-4 mb-4 dark:bg-gray-800" style="display: none;">
+          <div class="p-0">
+            <h3
+              class="text-lg font-medium text-gray-900 dark:text-gray-200 mb-4"
+            >
+              Registered A2A Agents
+            </h3>
+            <div class="overflow-x-auto">
               <table class="min-w-full divide-y divide-gray-200">
                 <thead class="bg-gray-50 dark:bg-gray-700">
                   <tr>
@@ -6116,14 +6389,14 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         </div>
 
         <!-- A2A Agent Add Form -->
-        <div class="bg-white shadow rounded-lg p-6 mb-6 dark:bg-gray-800">
+        <div class="bg-white shadow rounded-lg p-6 mb-6 dark:bg-gray-800 mt-8">
           <h3 class="text-lg font-medium text-gray-900 dark:text-gray-200 mb-4">
             Add New A2A Agent
           </h3>
           <form method="POST" id="add-a2a-form">
-            <div class="grid grid-cols-1 gap-6 sm:grid-cols-2">
+            <div class="grid grid-cols-1 gap-7 sm:grid-cols-2">
               <!-- Agent Name -->
-              <div>
+              <div class="relative">
                 <label
                   for="a2a-agent-name"
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
@@ -6131,16 +6404,17 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 >
                 <input
                   type="text"
-                  id="a2a-agent-name"
                   name="name"
                   required
+                  id="a2a-agent-name"
                   placeholder="my-assistant-agent"
                   class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
+                <p data-error-message-for="name" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">Agent Name is required.</p>
               </div>
 
               <!-- Endpoint URL -->
-              <div>
+              <div class="relative">
                 <label
                   for="a2a-agent-endpoint-url"
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
@@ -6148,12 +6422,13 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 >
                 <input
                   type="url"
-                  id="a2a-agent-endpoint-url"
                   name="endpoint_url"
                   required
+                  id="a2a-agent-endpoint-url"
                   placeholder="https://api.example.com/agent"
                   class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
+                <p data-error-message-for="url" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">Endpoint URL is required.</p>
               </div>
 
               <!-- Agent Type -->
@@ -6722,9 +6997,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             Register New gRPC Service
           </h3>
           <form action="{{ root_path }}/grpc" method="POST" id="add-grpc-service-form">
-            <div class="grid grid-cols-1 gap-6 sm:grid-cols-2">
+            <div class="grid grid-cols-1 gap-7 sm:grid-cols-2">
               <!-- Service Name -->
-              <div>
+              <div class="relative">
                 <label
                   for="grpc-service-name"
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
@@ -6732,12 +7007,13 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 >
                 <input
                   type="text"
-                  id="grpc-service-name"
                   name="name"
                   required
+                  id="grpc-service-name"
                   placeholder="my-grpc-service"
                   class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
+                <p data-error-message-for="name" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">Service Name is required.</p>
               </div>
 
               <!-- Target (host:port) -->
@@ -7103,7 +7379,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             id="add-root-form"
             onsubmit="return handleToggleSubmit(event, 'roots')"
           >
-            <div class="grid grid-cols-1 gap-6">
+            <div class="grid grid-cols-1 gap-7">
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-300"
@@ -7117,7 +7393,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   placeholder="file:///path/to/directory"
                 />
               </div>
-              <div>
+              <div class="relative">
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-300"
                   >Name</label
@@ -7143,6 +7419,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         </div>
       </div>
 
+      {% if is_admin %}
       <!-- Metrics Panel -->
       <div id="metrics-panel" class="tab-panel hidden">
         <!-- System Metrics Section (isolated from JavaScript clearing) -->
@@ -7292,6 +7569,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <canvas id="metricsChart"></canvas>
         </div>
       </div>
+      {% endif %}
 
       <!-- Modals -->
       <!-- Tool Detail Modal -->
@@ -7713,12 +7991,13 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               </h3>
               <div class="mt-4">
                 <form id="edit-tool-form" method="POST">
-                  <div class="grid grid-cols-1 gap-6">
+                  <div class="grid grid-cols-1 gap-7">
                     <input type="hidden" name="name" id="edit-tool-name" />
 
-                    <div>
+                    <div class="relative">
                       <label
                         class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                        for="edit-tool-custom-name"
                         >Name</label
                       >
                       <input
@@ -7728,6 +8007,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         id="edit-tool-custom-name"
                         class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       />
+                      <p data-error-message-for="name" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">Name is required.</p>
                     </div>
 
                     <div>
@@ -7744,8 +8024,9 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       />
                     </div>
 
-                    <div>
+                    <div class="relative">
                       <label
+                        for="edit-tool-url"
                         class="block text-sm font-medium text-gray-700 dark:text-gray-300"
                         >URL</label
                       >
@@ -7756,6 +8037,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         id="edit-tool-url"
                         class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       />
+                      <p data-error-message-for="url" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">URL is required.</p>
                     </div>
                     <div>
                       <label
@@ -7867,7 +8149,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       </select>
                     </div>
                     <div id="edit-auth-basic-fields" style="display: none">
-                      <div>
+                      <div class="relative">
                         <label
                           class="block text-sm font-medium text-gray-700 dark:text-gray-300"
                           >Username</label
@@ -8195,7 +8477,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               </h3>
               <div class="mt-4">
                 <form id="edit-resource-form" method="POST">
-                  <div class="grid grid-cols-1 gap-6">
+                  <div class="grid grid-cols-1 gap-7">
                     <div>
                       <label class="block text-sm font-medium text-gray-700"
                         >URI</label
@@ -8210,8 +8492,10 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       />
                     </div>
-                    <div>
-                      <label class="block text-sm font-medium text-gray-700"
+                    <div class="relative">
+                      <label
+                        class="block text-sm font-medium text-gray-700"
+                        for="edit-resource-name"
                         >Name</label
                       >
                       <input
@@ -8221,6 +8505,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         id="edit-resource-name"
                         class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       />
+                      <p data-error-message-for="name" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">Name is required.</p>
                     </div>
                     <div>
                       <label class="block text-sm font-medium text-gray-700"
@@ -8413,10 +8698,12 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               </h3>
               <div class="mt-4">
                 <form id="edit-prompt-form" method="POST">
-                  <div class="grid grid-cols-1 gap-6">
+                  <div class="grid grid-cols-1 gap-7">
                     <input type="hidden" name="name" id="edit-prompt-name" />
-                    <div>
-                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    <div class="relative">
+                      <label
+                        for="edit-prompt-custom-name"
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-300"
                         >Name</label
                       >
                       <input
@@ -8426,6 +8713,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         id="edit-prompt-custom-name"
                         class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       />
+                      <p data-error-message-for="name" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">Name is required.</p>
                     </div>
                     <div>
                       <label class="block text-sm font-medium text-gray-700 dark:text-gray-300"
@@ -8733,7 +9021,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             class="space-y-4 text-gray-800 dark:text-gray-100"
             novalidate
           >
-            <div>
+            <div class="relative">
               <label
                 for="gateway-test-url"
                 class="block text-sm font-medium text-gray-700 dark:text-gray-300"
@@ -8746,6 +9034,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                 id="gateway-test-url"
                 class="mt-1 px-1.5 block w-full rounded-md shadow-sm p-1 bg-gray-200 dark:bg-gray-800"
               />
+              <p
+                data-error-message-for="url"
+                class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible"
+                >Server URL is required.</p
+              >
             </div>
             <div>
               <label
@@ -8886,9 +9179,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               </h3>
               <div class="mt-4">
                 <form id="edit-gateway-form" method="POST">
-                  <div class="grid grid-cols-1 gap-6">
-                    <div>
-                      <label class="block text-sm font-medium text-gray-700"
+                  <div class="grid grid-cols-1 gap-7">
+                    <div class="relative">
+                      <label
+                        for="edit-gateway-name"
+                        class="block text-sm font-medium text-gray-700"
                         >Name</label
                       >
                       <input
@@ -8898,9 +9193,12 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         id="edit-gateway-name"
                         class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       />
+                      <p data-error-message-for="name" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">Name is required.</p>
                     </div>
-                    <div>
-                      <label class="block text-sm font-medium text-gray-700"
+                    <div class="relative">
+                      <label
+                        for="edit-gateway-url"
+                        class="block text-sm font-medium text-gray-700"
                         >URL</label
                       >
                       <input
@@ -8910,6 +9208,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         id="edit-gateway-url"
                         class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       />
+                      <p data-error-message-for="url" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">URL is required.</p>
                     </div>
                     <div>
                       <label class="block text-sm font-medium text-gray-700"
@@ -9408,9 +9707,9 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                 </h3>
                 <div class="mt-4">
                   <form id="edit-a2a-agent-form" method="POST">
-                    <div class="grid grid-cols-1 gap-6">
+                    <div class="grid grid-cols-1 gap-7">
                       <!-- Agent Name -->
-                      <div>
+                      <div class="relative">
                         <label for="a2a-agent-name-edit" class="block text-sm font-medium text-gray-700 dark:text-gray-400">
                           Agent Name
                         </label>
@@ -9423,10 +9722,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
                                 focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                         />
+                        <p data-error-message-for="name" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">Agent Name is required.</p>
                       </div>
 
                       <!-- Endpoint URL -->
-                      <div>
+                      <div class="relative">
                         <label for="a2a-agent-endpoint-url-edit" class="block text-sm font-medium text-gray-700 dark:text-gray-400">
                           Endpoint URL
                         </label>
@@ -9439,6 +9739,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
                                 focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                         />
+                        <p data-error-message-for="url" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">Endpoint URL is required.</p>
                       </div>
 
                       <!-- Agent Type -->
@@ -9930,7 +10231,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               </h3>
               <div class="mt-4">
                 <form id="edit-server-form" method="POST">
-                  <div class="grid grid-cols-1 gap-6">
+                  <div class="grid grid-cols-1 gap-7">
                     <!-- Existing fields -->
                     <div>
                       <label
@@ -9948,7 +10249,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         with caution.
                       </p>
                     </div>
-                    <div>
+                    <div class="relative">
                       <label
                         class="block text-sm font-medium text-gray-700 dark:text-gray-300"
                         >Name</label
@@ -9960,6 +10261,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         id="edit-server-name"
                         class="mt-1 px-1.5 block w-full rounded-md border border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       />
+                      <p data-error-message-for="name" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">Name is required.</p>
                     </div>
                     <div>
                       <label
@@ -10076,44 +10378,14 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   <div
                     id="associatedEditGateways"
                     class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
+                    hx-get="{{ root_path }}/admin/gateways/partial?page=1&per_page=50&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+                    hx-trigger="load"
+                    hx-swap="innerHTML"
                   >
-                    {% for gateway in gateways %}
-                    <label
-                      class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1 tool-item"
-                    >
-                      <input
-                        type="checkbox"
-                        name="associatedEditGateways"
-                        value="{{ gateway.id }}"
-                        class="mcpserver-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                      />
-                      <span class="select-none"
-                        >{{ gateway.slug or gateway.name
-                        }}</span
-                      >
-                    </label>
-                    {% endfor %}
-
-                    <!-- Special checkbox for RestTool (no gateway id) -->
-                    <label
-                      class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1 tool-item"
-                    >
-                      <input
-                        type="checkbox"
-                        name="associatedEditGateways"
-                        value=""
-                        data-gateway-null="true"
-                        class="mcpserver-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                      />
-                      <span class="select-none">REST/A2A</span>
-                    </label>
-                    <p
-                      id="noGatewayEditMessage"
-                      class="text-gray-700 dark:text-gray-300"
-                      style="display: none"
-                    >
-                      No MCP server found containing "<span id="searchEditQueryServers"></span>"
-                    </p>
+                    <!-- Gateway checkboxes will be loaded here via HTMX -->
+                    <div class="flex items-center justify-center p-4">
+                      <span class="text-gray-500 dark:text-gray-400 text-sm">Loading MCP servers...</span>
+                    </div>
                   </div>
                   <div class="flex justify-end mt-3 gap-2">
                     <button
@@ -10245,7 +10517,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       <div
                         id="edit-server-resources"
                         class="max-h-60 overflow-y-auto rounded-md border border-gray-600 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                        hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector"
+                        hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
                         hx-on::after-swap="initResourceSelect('edit-server-resources', 'selectedEditResourcesPills', 'selectedEditResourcesWarning', 6, 'selectAllEditResourcesBtn', 'clearAllEditResourcesBtn')"
@@ -10312,7 +10584,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       <div
                         id="edit-server-prompts"
                         class="max-h-60 overflow-y-auto rounded-md border border-gray-600 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                        hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector"
+                        hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
                         hx-on::after-swap="initPromptSelect('edit-server-prompts', 'selectedEditPromptsPills', 'selectedEditPromptsWarning', 6, 'selectAllEditPromptsBtn', 'clearAllEditPromptsBtn')"
@@ -10422,6 +10694,81 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               </button>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- A2A Agent Test Modal -->
+      <div
+        id="a2a-test-modal"
+        class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center hidden"
+      >
+        <div
+          class="bg-white dark:bg-gray-900 w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-lg shadow-lg p-6"
+        >
+          <h2 id="a2a-test-modal-title" class="text-xl font-bold mb-4 text-gray-800 dark:text-gray-100">
+            Test A2A Agent
+          </h2>
+          <p id="a2a-test-modal-description" class="text-sm text-gray-600 dark:text-gray-400 mb-4"></p>
+
+          <form id="a2a-test-form" class="space-y-4 text-gray-800 dark:text-gray-100" novalidate>
+            <!-- Hidden field for agent ID -->
+            <input type="hidden" id="a2a-test-agent-id" name="agent_id" />
+
+            <div class="relative">
+              <label
+                for="a2a-test-query"
+                class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+              >Query</label>
+              <textarea
+                required
+                name="query"
+                id="a2a-test-query"
+                rows="4"
+                class="mt-1 px-1.5 block w-full rounded-md shadow-sm p-2 bg-gray-200 dark:bg-gray-800"
+                placeholder="Enter your query (e.g., calc: 5*10+2 or weather: Dallas)"
+                aria-describedby="a2a-test-query-help"
+              >Hello from MCP Gateway Admin UI test!</textarea>
+              <p id="a2a-test-query-help" class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Enter the message/query to send to the A2A agent
+              </p>
+            </div>
+
+            <div class="flex gap-2">
+              <button
+                type="submit"
+                id="a2a-test-submit"
+                class="flex-1 text-center px-3 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700"
+              >
+                Test Agent
+              </button>
+              <button
+                id="a2a-test-close"
+                type="button"
+                class="flex-1 text-center px-3 py-2 border border-blue-600 rounded bg-white text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300"
+              >
+                Close
+              </button>
+            </div>
+
+            <div
+              id="a2a-test-loading"
+              class="mt-4 hidden flex items-center justify-center"
+            >
+              <div
+                class="spinner border-t-4 border-blue-600 w-6 h-6 rounded-full animate-spin"
+                role="status"
+                aria-label="Testing agent, please wait"
+              ></div>
+            </div>
+
+            <div id="a2a-test-result" class="hidden mt-4">
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Response</label>
+              <div
+                id="a2a-test-response-json"
+                class="bg-gray-100 dark:bg-gray-800 p-2 rounded overflow-auto text-sm text-gray-800 dark:text-gray-100 max-h-64"
+              ></div>
+            </div>
+          </form>
         </div>
       </div>
 
@@ -10618,6 +10965,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             }
           });
         }
+
       });
 
       // Build mapping objects using your existing tools, resources, and prompts arrays
@@ -10691,12 +11039,14 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       function updateTeamContext(teamId) {
         // Prevent double-invocation if user clicks rapidly
         if (window.__teamSwitchingInProgress) {
+          console.log('Team switch already in progress, ignoring');
           return;
         }
         window.__teamSwitchingInProgress = true;
 
         try {
           const url = new URL(window.location.href);
+
           if (teamId && teamId !== '') {
             url.searchParams.set('team_id', teamId);
           } else {
@@ -11018,6 +11368,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         setTimeout(refreshVisibilityRules, 1000);
       }
 
+      {% if is_admin %}
       function openInviteUserModal() {
         console.log('Opening invite user modal...');
 
@@ -11377,6 +11728,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         });
       }
 
+      {% endif %}
       function exportPermissions() {
         console.log('Exporting permissions...');
 
@@ -13494,6 +13846,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       </div>
     </div>
 
+    {% if is_admin %}
     <!-- User Invitation Modal -->
     <div id="invite-user-modal" class="fixed inset-0 z-50 hidden">
       <div
@@ -13703,6 +14056,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         </div>
       </div>
     </div>
+    {% endif %}
 
     <script>
       // Safely inject teams data for Alpine.js
@@ -13820,8 +14174,22 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
       function manageTeamMembersSafe(button) {
         const teamId = button.getAttribute('data-team-id');
+        loadTeamMembersView(teamId);
+      }
+
+      function loadTeamMembersView(teamId) {
         // Load team members management modal
         htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/' + teamId + '/members', {
+          target: '#team-edit-modal-content',
+          swap: 'innerHTML'
+        }).then(() => {
+          document.getElementById('team-edit-modal').classList.remove('hidden');
+        });
+      }
+
+      function loadAddMembersView(teamId) {
+        // Load add members interface
+        htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/' + teamId + '/members/add', {
           target: '#team-edit-modal-content',
           swap: 'innerHTML'
         }).then(() => {

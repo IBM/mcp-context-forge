@@ -44,6 +44,7 @@ authors = [
 ]
 
 dependencies = [
+    "httpx>=0.28.0",
     "mcp>=1.16.0",
     "mcp-contextforge-gateway",
 ]

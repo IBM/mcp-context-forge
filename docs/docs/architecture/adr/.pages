@@ -33,3 +33,5 @@ nav:
   - 29 Registry Admin Stats Caching: 029-registry-admin-stats-caching.md
   - 30 Metrics Cleanup Rollup: 030-metrics-cleanup-rollup.md
   - 31 Parallel Session Cleanup: 031-parallel-session-cleanup.md
+  - 32 MCP Session Pool: 032-mcp-session-pool.md
+  - 33 Tool Lookup Cache: 033-tool-lookup-cache.md

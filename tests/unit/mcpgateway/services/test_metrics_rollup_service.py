@@ -7,8 +7,6 @@ SPDX-License-Identifier: Apache-2.0
 
 # Standard
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
-import uuid
 
 # Third-Party
 import pytest

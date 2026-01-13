@@ -33,6 +33,7 @@ dependencies = [
     "langchain-core>=0.3.75",
     "langchain-openai>=0.3.32",
     "openai>=1.106.1",
+    "orjson>=3.11.5",
     "pydantic>=2.11.7",
     "python-dotenv>=1.1.1",
     "python-multipart>=0.0.20",

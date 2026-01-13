@@ -9,11 +9,11 @@ Reporting helpers (status reports, dashboards).
 
 from __future__ import annotations
 
-import json
 from collections import defaultdict
 from collections.abc import Iterable
 
 from jinja2 import Template
+import orjson
 
 from pm_mcp_server.resource_store import GLOBAL_RESOURCE_STORE
 from pm_mcp_server.schemata import HealthDashboard, StatusReportPayload
@@ -52,7 +52,9 @@ def project_health_dashboard(snapshot: HealthDashboard) -> dict[str, object]:
         "notes": snapshot.notes,
     }
     resource_id = GLOBAL_RESOURCE_STORE.add(
-        json.dumps(summary, indent=2).encode("utf-8"), "application/json", prefix="dashboard"
+        orjson.dumps(summary, option=orjson.OPT_INDENT_2),
+        "application/json",
+        prefix="dashboard",
     )
     summary["resource_id"] = resource_id
     return summary
@@ -75,7 +77,9 @@ def project_brief_generator(
         "timeline": timeline,
     }
     resource_id = GLOBAL_RESOURCE_STORE.add(
-        json.dumps(brief, indent=2).encode("utf-8"), "application/json", prefix="brief"
+        orjson.dumps(brief, option=orjson.OPT_INDENT_2),
+        "application/json",
+        prefix="brief",
     )
     brief["resource_id"] = resource_id
     return brief

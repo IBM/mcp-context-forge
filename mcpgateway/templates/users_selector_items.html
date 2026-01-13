@@ -1,0 +1,50 @@
+<!-- htmlhint doctype-first:false, tag-pair:false -->
+<!-- User selector items for infinite scroll -->
+{% set selector_url = selector_base_url or (root_path + '/admin/users/partial') %}
+{% set include_team_param = team_id and not selector_base_url %}
+{% for user in data %}
+{% set is_member = team_member_emails and user.email in team_member_emails %}
+<div
+  class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-2 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item"
+  data-user-email="{{ user.email }}"
+>
+  <input
+    type="checkbox"
+    name="associatedUsers"
+    value="{{ user.email }}"
+    data-user-name="{{ user.full_name }}"
+    class="user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0"
+    data-auto-check="true"
+    {{ 'checked' if is_member else '' }}
+  />
+  <span class="select-none flex-grow">{{ user.full_name }} ({{ user.email }})</span>
+  <select
+    name="role_{{ user.email | urlencode }}"
+    class="role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0"
+    {{ 'disabled' if not is_member else '' }}
+  >
+    <option value="member" selected>Member</option>
+    <option value="owner">Owner</option>
+  </select>
+</div>
+{% endfor %}
+
+{% if pagination.has_next %}
+<!-- Infinite scroll trigger element -->
+<div
+  id="users-scroll-trigger-{{ pagination.page }}"
+  hx-get="{{ selector_url }}?page={{ pagination.page + 1 }}&per_page={{ pagination.per_page }}&render=selector{% if include_team_param %}&team_id={{ team_id }}{% endif %}"
+  hx-trigger="intersect once"
+  hx-swap="outerHTML"
+  class="text-center py-2 text-xs text-gray-500 dark:text-gray-400"
+>
+  <span class="inline-block">
+    <svg class="animate-spin h-4 w-4 text-indigo-600 dark:text-indigo-400 inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+    </svg>
+    Loading more users...
+  </span>
+</div>
+
+{% endif %}

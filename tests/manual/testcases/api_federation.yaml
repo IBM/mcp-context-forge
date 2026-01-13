@@ -30,7 +30,6 @@ tests:
     request_body: ""
     expected_status: 200
     expected_response: "Array of registered peer gateways"
-    setup_required: "FEDERATION_ENABLED=true"
 
   - test_id: "FED-002"
     endpoint: "/gateways"
@@ -94,22 +93,3 @@ tests:
     request_body: ""
     expected_status: 204
     expected_response: "Peer gateway unregistered successfully"
-
-  - test_id: "FED-009"
-    endpoint: "/federation/discover"
-    method: "GET"
-    description: "Auto-discover peer gateways"
-    curl_command: 'curl http://localhost:4444/federation/discover -H "Authorization: Bearer <TOKEN>"'
-    request_body: ""
-    expected_status: 200
-    expected_response: "Discovered peer gateways via mDNS/Zeroconf"
-    setup_required: "FEDERATION_DISCOVERY=true"
-
-  - test_id: "FED-010"
-    endpoint: "/federation/status"
-    method: "GET"
-    description: "Get federation status and metrics"
-    curl_command: 'curl http://localhost:4444/federation/status -H "Authorization: Bearer <TOKEN>"'
-    request_body: ""
-    expected_status: 200
-    expected_response: "Federation status with peer connectivity metrics"

@@ -422,13 +422,18 @@
             },
             "REDIS_MAX_RETRIES": {
               "type": "string",
-              "description": "Redis max retries",
-              "default": "3"
+              "description": "Max Redis connection retries at startup (uses exponential backoff with jitter)",
+              "default": "30"
             },
             "REDIS_RETRY_INTERVAL_MS": {
               "type": "string",
-              "description": "Redis retry interval in milliseconds",
+              "description": "Base retry interval in ms (doubles each attempt)",
               "default": "2000"
+            },
+            "REDIS_MAX_BACKOFF_SECONDS": {
+              "type": "string",
+              "description": "Max backoff cap in seconds (jitter ±25% applied after)",
+              "default": "30"
             },
             "REDIS_MAX_CONNECTIONS": {
               "type": "string",
@@ -479,13 +484,18 @@
             },
             "DB_MAX_RETRIES": {
               "type": "string",
-              "description": "Database max retries",
-              "default": "3"
+              "description": "Max DB connection retries at startup (uses exponential backoff with jitter)",
+              "default": "30"
             },
             "DB_RETRY_INTERVAL_MS": {
               "type": "string",
-              "description": "Database retry interval in milliseconds",
+              "description": "Base retry interval in ms (doubles each attempt)",
               "default": "2000"
+            },
+            "DB_MAX_BACKOFF_SECONDS": {
+              "type": "string",
+              "description": "Max backoff cap in seconds (jitter ±25% applied after)",
+              "default": "30"
             },
             "PROTOCOL_VERSION": {
               "type": "string",
@@ -660,32 +670,10 @@
               "description": "Enable JSON responses",
               "default": "true"
             },
-            "FEDERATION_ENABLED": {
-              "type": "string",
-              "enum": ["true", "false"],
-              "description": "Enable federation",
-              "default": "true"
-            },
-            "FEDERATION_DISCOVERY": {
-              "type": "string",
-              "enum": ["true", "false"],
-              "description": "Enable federation discovery",
-              "default": "false"
-            },
-            "FEDERATION_PEERS": {
-              "type": "string",
-              "description": "Federation peers (JSON array)",
-              "default": "[]"
-            },
             "FEDERATION_TIMEOUT": {
               "type": "string",
-              "description": "Federation timeout in seconds",
-              "default": "30"
-            },
-            "FEDERATION_SYNC_INTERVAL": {
-              "type": "string",
-              "description": "Federation sync interval in seconds",
-              "default": "300"
+              "description": "HTTP timeout in seconds for gateway and MCP server requests (health checks, tool invocations)",
+              "default": "120"
             },
             "RESOURCE_CACHE_SIZE": {
               "type": "string",
@@ -757,6 +745,12 @@
               "description": "Unhealthy threshold",
               "default": "3"
             },
+            "AUTO_REFRESH_SERVERS": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable automatic tools/prompts/resources refresh from the mcp servers during gateway health checks",
+              "default": "false"
+            },
             "FILELOCK_NAME": {
               "type": "string",
               "description": "File lock path",
@@ -772,6 +766,12 @@
               "type": "string",
               "enum": ["true", "false"],
               "description": "Enable auto-reload",
+              "default": "false"
+            },
+            "TEMPLATES_AUTO_RELOAD": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Auto-reload Jinja2 templates on change (disable for production performance)",
               "default": "false"
             },
             "DEBUG": {

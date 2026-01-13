@@ -27,6 +27,9 @@ Environment Variables (also reads from .env file):
     JWT_ALGORITHM: JWT algorithm (default: HS256)
     JWT_AUDIENCE: JWT audience claim
     JWT_ISSUER: JWT issuer claim
+    LOADTEST_BENCHMARK_START_PORT: First port for benchmark servers (default: 9000)
+    LOADTEST_BENCHMARK_SERVER_COUNT: Number of benchmark servers available (default: 1000)
+    LOADTEST_BENCHMARK_HOST: Host where benchmark servers run (default: benchmark_server for Docker, use localhost for native)
 
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
@@ -42,7 +45,7 @@ from typing import Any
 import uuid
 
 # Third-Party
-from locust import between, events, tag, task
+from locust import between, constant_throughput, events, tag, task
 from locust.contrib.fasthttp import FastHttpUser
 from locust.runners import MasterRunner, WorkerRunner
 
@@ -142,6 +145,7 @@ JWT_USERNAME = _get_config("JWT_USERNAME", _get_config("PLATFORM_ADMIN_EMAIL", "
 # JTI (JWT ID) is automatically generated for each token for proper cache keying
 JWT_TOKEN_EXPIRY_HOURS = int(_get_config("LOADTEST_JWT_EXPIRY_HOURS", "8760"))
 
+
 # Log loaded configuration (masking sensitive values)
 logger.info("Configuration loaded:")
 logger.info(f"  BASIC_AUTH_USER: {BASIC_AUTH_USER}")
@@ -188,6 +192,7 @@ def on_locust_init(environment, **_kwargs):  # pylint: disable=unused-argument
         logger.info("Running as worker node")
     else:
         logger.info("Running in standalone mode")
+    _log_auth_mode()
 
 
 def _fetch_json(url: str, headers: dict[str, str], timeout: float = 30.0) -> tuple[int, Any]:
@@ -276,6 +281,10 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
     except Exception as e:
         logger.warning(f"Failed to fetch entity IDs: {e}")
         logger.info("Tests will continue without pre-fetched IDs")
+
+    # Note: All gateways (fast-time, fast-test, benchmark) are registered
+    # at compose startup via dedicated registration services.
+    # Locust only performs load testing, not registration.
 
 
 @events.test_stop.add_listener
@@ -460,6 +469,22 @@ def _get_auth_headers() -> dict[str, str]:
     return headers
 
 
+def _log_auth_mode() -> None:
+    """Log which authentication mode the load test will use."""
+    headers = _get_auth_headers()
+    auth_header = headers.get("Authorization", "")
+
+    if auth_header.startswith("Bearer "):
+        if BEARER_TOKEN:
+            logger.info("Auth mode: Bearer (MCPGATEWAY_BEARER_TOKEN)")
+        else:
+            logger.info("Auth mode: Bearer (auto-generated JWT via PyJWT)")
+    elif auth_header.startswith("Basic "):
+        logger.warning("!!! WARNING !!! BASIC AUTH IN USE - /rpc calls will 401. Set MCPGATEWAY_BEARER_TOKEN or install PyJWT.")
+    else:
+        logger.warning("!!! WARNING !!! NO AUTH HEADER - /rpc calls will 401. Set MCPGATEWAY_BEARER_TOKEN or install PyJWT.")
+
+
 def _json_rpc_request(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
     """Create a JSON-RPC 2.0 request."""
     return {
@@ -479,10 +504,15 @@ class BaseUser(FastHttpUser):
     """Base user class with common configuration.
 
     Uses FastHttpUser (gevent-based) for maximum throughput.
+    Optimized for 4000+ concurrent users.
     """
 
     abstract = True
     wait_time = between(0.1, 0.5)
+
+    # Connection tuning for high concurrency
+    connection_timeout = 30.0
+    network_timeout = 30.0
 
     def __init__(self, *args, **kwargs):
         """Initialize base user with auth headers."""
@@ -929,7 +959,8 @@ class AdminUIUser(BaseUser):
     @tag("admin", "users")
     def admin_users(self):
         """Load users management page."""
-        with self.client.get("/admin/users", headers=self.admin_headers, name="/admin/users", catch_response=True) as response:
+        headers = {**self.admin_headers, "HX-Request": "true"}
+        with self.client.get("/admin/users/partial", headers=headers, name="/admin/users/partial", catch_response=True) as response:
             self._validate_html_response(response)
 
     @task(1)
@@ -1392,14 +1423,19 @@ class WriteAPIUser(BaseUser):
 
 
 class StressTestUser(BaseUser):
-    """User for stress testing with rapid requests.
+    """User for stress testing with predictable request rate.
 
-    Simulates high-load scenarios with minimal wait times.
+    Uses constant_throughput for predictable RPS instead of minimal wait times.
     Weight: Very low (only for stress tests)
+
+    Target RPS calculation: rps_per_user = target_total_rps / num_users
+    Example: 8000 RPS target with 4000 users = constant_throughput(2)
     """
 
     weight = 1
-    wait_time = between(0.05, 0.2)
+    # 2 requests/second per user. With 4000 users = 8000 RPS theoretical max.
+    # Adjust based on server capacity. Start conservative and increase.
+    wait_time = constant_throughput(2)
 
     @task(10)
     @tag("stress", "health")
@@ -1632,7 +1668,7 @@ class FastTestTimeUser(BaseUser):
     @task(10)
     @tag("mcp", "fasttest", "time")
     def call_get_system_time(self):
-        """Call fast-test-get-system-time with a random timezone."""
+        """Call fast-time-get-system-time with a random timezone."""
         timezone = random.choice(self.TIMEZONES)
         payload = _json_rpc_request(
             "tools/call",

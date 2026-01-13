@@ -8,7 +8,7 @@ Tests for server service implementation.
 """
 
 # Standard
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
 import pytest
@@ -85,12 +85,25 @@ def mock_server(mock_tool, mock_resource, mock_prompt):
     # Ownership fields for RBAC
     server.owner_email = "user@example.com"  # Match default test user
     server.team_id = None
+    server.team = None  # Team name loaded via email_team relationship
     server.visibility = "public"
+
+    # Optional tracking fields (must be explicitly set to avoid MagicMock auto-creation)
+    server.created_from_ip = None
+    server.created_via = None
+    server.created_user_agent = None
+    server.modified_from_ip = None
+    server.modified_via = None
+    server.modified_user_agent = None
+    server.import_batch_id = None
+    server.federation_source = None
+    server.version = 1
 
     # Associated objects -------------------------------------------------- #
     server.tools = [mock_tool]
     server.resources = [mock_resource]
     server.prompts = [mock_prompt]
+    server.a2a_agents = []
 
     # Dummy metrics
     server.metrics = []
@@ -463,6 +476,57 @@ class TestServerService:
         server_service.convert_server_to_read.assert_called_once_with(mock_server, include_metrics=False)
 
     @pytest.mark.asyncio
+    async def test_list_servers_for_user_includes_team_name(self, server_service, test_db):
+        """Test that list_servers_for_user properly populates team name via email_team relationship.
+
+        This test guards against regressions if the joinedload strategy is changed.
+        """
+        # Mock a server with an active team relationship
+        mock_email_team = Mock()
+        mock_email_team.name = "Engineering Team"
+        mock_server = Mock(
+            enabled=True,
+            team_id="team-123",
+            email_team=mock_email_team,
+            tools=[],
+            resources=[],
+            prompts=[],
+            a2a_agents=[],
+            metrics=[],
+            visibility="public",
+            owner_email="user@example.com",
+        )
+        # The team property should return the team name from email_team
+        mock_server.team = mock_email_team.name
+
+        exec_result = MagicMock()
+        exec_result.scalars.return_value.all.return_value = [mock_server]
+        test_db.execute = MagicMock(return_value=exec_result)
+
+        # Use a mock that captures the server's team value
+        captured_servers = []
+
+        def capture_server(server, include_metrics=False):
+            captured_servers.append({"team": server.team, "team_id": server.team_id})
+            return "converted_server"
+
+        server_service.convert_server_to_read = Mock(side_effect=capture_server)
+
+        # Mock team service to return user's teams
+        with patch("mcpgateway.services.server_service.TeamManagementService") as mock_team_service_class:
+            mock_team_service = MagicMock()
+            mock_team_service.get_user_teams = AsyncMock(return_value=[])
+            mock_team_service_class.return_value = mock_team_service
+
+            servers = await server_service.list_servers_for_user(test_db, "user@example.com")
+
+        assert servers == ["converted_server"]
+        # Verify the server's team was accessible during conversion
+        assert len(captured_servers) == 1
+        assert captured_servers[0]["team"] == "Engineering Team"
+        assert captured_servers[0]["team_id"] == "team-123"
+
+    @pytest.mark.asyncio
     async def test_get_server(self, server_service, mock_server, test_db):
         mock_server.team_id = 1
         test_db.get = MagicMock(return_value=mock_server)
@@ -493,7 +557,7 @@ class TestServerService:
 
         result = await server_service.get_server(test_db, 1)
 
-        test_db.get.assert_called_once_with(DbServer, 1)
+        test_db.get.assert_called_once_with(DbServer, 1, options=ANY)
         assert result == server_read
 
     @pytest.mark.asyncio
@@ -521,14 +585,8 @@ class TestServerService:
         new_prompt.name = "new_prompt"
         new_prompt._sa_instance_state = MagicMock()
 
-        # db.get is still used to retrieve the Server itself
-        test_db.get = Mock(
-            side_effect=lambda cls, _id: (
-                mock_server
-                if (cls, _id) == (DbServer, 1)
-                else None
-            )
-        )
+        # db.get is still used to retrieve the Server itself (now with eager loading options)
+        test_db.get = Mock(side_effect=lambda cls, _id, options=None: (mock_server if (cls, _id) == (DbServer, 1) else None))
 
         # FIX: Configure db.execute to handle both the conflict check and the bulk item fetches
         mock_db_result = MagicMock()
@@ -539,9 +597,9 @@ class TestServerService:
         # 2. Handle bulk fetches: scalars().all() -> lists of items
         # The code executes bulk queries in this order: Tools -> Resources -> Prompts
         mock_db_result.scalars.return_value.all.side_effect = [
-            [new_tool],      # First call: select(DbTool)...
+            [new_tool],  # First call: select(DbTool)...
             [new_resource],  # Second call: select(DbResource)...
-            [new_prompt]     # Third call: select(DbPrompt)...
+            [new_prompt],  # Third call: select(DbPrompt)...
         ]
 
         test_db.execute = Mock(return_value=mock_db_result)
@@ -756,9 +814,8 @@ class TestServerService:
 
         result = await server_service.toggle_server_status(test_db, 1, activate=False)
 
-        test_db.get.assert_called_once_with(DbServer, 1)
-        # commit called twice: once for status change, once in _get_team_name to release transaction
-        assert test_db.commit.call_count == 2
+        test_db.get.assert_called_once_with(DbServer, 1, options=ANY)
+        assert test_db.commit.call_count == 1
         test_db.refresh.assert_called_once()
         server_service._notify_server_deactivated.assert_called_once()
         assert result.enabled is False
@@ -1058,7 +1115,7 @@ class TestServerService:
         expected_hex_uuid = str(uuid_module.UUID(new_standard_uuid)).replace("-", "")
 
         # Mock db.get to return existing server for the initial lookup, then None for the UUID check
-        test_db.get = Mock(side_effect=lambda cls, _id: existing_server if _id == "oldserverid" else None)
+        test_db.get = Mock(side_effect=lambda cls, _id, options=None: existing_server if _id == "oldserverid" else None)
 
         # Mock name conflict check
         mock_scalar = Mock()

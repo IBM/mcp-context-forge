@@ -43,6 +43,12 @@ services:
 
 {gateway_services}
 
+{fast_time_server}
+
+{fast_test_server}
+
+{benchmark_servers}
+
 {load_balancer}
 
 volumes:
@@ -107,13 +113,72 @@ REDIS_SERVICE = """  redis:
       retries: 5
 """
 
+FAST_TIME_SERVER_TEMPLATE = """  fast_time_server:
+    build:
+      context: ./mcp-servers/go/fast-time-server
+      dockerfile: Dockerfile
+    container_name: fast_time_server
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: ["-transport=sse", "-port=8002"]
+    ports:
+      - "8002:8002"
+    networks:
+      - mcpnet
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8002/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+"""
+
+FAST_TEST_SERVER_TEMPLATE = """  fast_test_server:
+    build:
+      context: ./mcp-servers/rust/fast-test-server
+      dockerfile: Dockerfile
+    container_name: fast_test_server
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - BIND_ADDRESS=0.0.0.0:8880
+      - RUST_LOG=info
+    ports:
+      - "8880:8880"
+    networks:
+      - mcpnet
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8880/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+"""
+
+BENCHMARK_SERVER_TEMPLATE = """  benchmark_server:
+    build:
+      context: ./mcp-servers/go/benchmark-server
+      dockerfile: Dockerfile
+    container_name: benchmark_server
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: ["-transport=http", "-server-count={server_count}", "-start-port={start_port}", "-tools={tools_per_server}", "-resources={resources_per_server}", "-prompts={prompts_per_server}"]
+    ports:
+      - "{port_range}"
+    networks:
+      - mcpnet
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:{start_port}/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+"""
+
 NGINX_LOAD_BALANCER = """  nginx:
     image: nginx:alpine
     container_name: nginx_lb
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "8000:80"
+      - "8080:80"
     networks:
       - mcpnet
     volumes:
@@ -162,6 +227,12 @@ class DockerComposeGenerator:
         pg_version = postgres_version or infra.get("postgres_version", "17-alpine")
         num_instances = instances or infra.get("gateway_instances", 1)
         redis_enabled = infra.get("redis_enabled", False)
+        benchmark_enabled = infra.get("benchmark_server_enabled", False)
+        benchmark_count = infra.get("benchmark_server_count", 10)
+        benchmark_start_port = infra.get("benchmark_start_port", 9000)
+        benchmark_tools = infra.get("benchmark_tools_per_server", 100)
+        benchmark_resources = infra.get("benchmark_resources_per_server", 10)
+        benchmark_prompts = infra.get("benchmark_prompts_per_server", 5)
 
         # Generate PostgreSQL configuration commands
         postgres_commands = self._generate_postgres_config(infra)
@@ -177,6 +248,19 @@ class DockerComposeGenerator:
         # Generate gateway services
         gateway_services = self._generate_gateway_services(num_instances, server, redis_enabled)
 
+        # Generate fast-time server (Go - always included for basic MCP testing)
+        fast_time_server = FAST_TIME_SERVER_TEMPLATE
+
+        # Generate fast-test server (Rust - always included for echo/stats tools)
+        fast_test_server = FAST_TEST_SERVER_TEMPLATE
+
+        # Generate benchmark servers
+        benchmark_servers = ""
+        if benchmark_enabled:
+            benchmark_servers = self._generate_benchmark_servers(
+                benchmark_count, benchmark_start_port, benchmark_tools, benchmark_resources, benchmark_prompts
+            )
+
         # Generate load balancer if multiple instances
         load_balancer = ""
         if num_instances > 1:
@@ -190,6 +274,9 @@ class DockerComposeGenerator:
             postgres_config_commands=postgres_commands,
             redis_service=redis_service,
             gateway_services=gateway_services,
+            fast_time_server=fast_time_server,
+            fast_test_server=fast_test_server,
+            benchmark_servers=benchmark_servers,
             load_balancer=load_balancer,
             redis_volume=redis_volume,
         )
@@ -272,6 +359,34 @@ class DockerComposeGenerator:
 
         return "\n".join(services)
 
+    def _generate_benchmark_servers(self, count: int, start_port: int, tools_per_server: int, resources_per_server: int, prompts_per_server: int) -> str:
+        """Generate benchmark server service definition.
+
+        Uses the benchmark server's multi-server mode to spawn multiple
+        HTTP servers within a single container, avoiding resource overhead
+        of running thousands of containers.
+
+        Args:
+            count: Number of MCP servers to spawn
+            start_port: First port number
+            tools_per_server: Number of tools each server should provide
+            resources_per_server: Number of resources each server should provide
+            prompts_per_server: Number of prompts each server should provide
+        """
+        end_port = start_port + count - 1
+        port_range = f"{start_port}-{end_port}:{start_port}-{end_port}"
+
+        service = BENCHMARK_SERVER_TEMPLATE.format(
+            server_count=count,
+            start_port=start_port,
+            port_range=port_range,
+            tools_per_server=tools_per_server,
+            resources_per_server=resources_per_server,
+            prompts_per_server=prompts_per_server,
+        )
+
+        return service
+
     def _generate_load_balancer(self, num_instances: int) -> str:
         """Generate nginx load balancer service"""
         depends = []
@@ -340,7 +455,7 @@ http {{
 def main():
     parser = argparse.ArgumentParser(description="Generate docker-compose.yml from infrastructure profiles")
     parser.add_argument("--config", type=Path, default=Path("config.yaml"), help="Configuration file path")
-    parser.add_argument("--infrastructure", required=True, help="Infrastructure profile name")
+    parser.add_argument("--infrastructure", default="staging", help="Infrastructure profile name (default: staging)")
     parser.add_argument("--server-profile", default="standard", help="Server profile name")
     parser.add_argument("--postgres-version", help="PostgreSQL version (e.g., 17-alpine)")
     parser.add_argument("--instances", type=int, help="Number of gateway instances")

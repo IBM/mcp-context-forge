@@ -93,7 +93,6 @@ For production deployments, always include JTI in issued tokens to enable proper
 - **Scoped API credentials.** Tokens can be restricted to individual virtual servers, explicit permission strings, and IP ranges; blocked requests are captured via `TokenUsageLog.blocked`.
 - **Header passthrough controls.** `utils/passthrough_headers.py` keeps passthrough disabled unless `ENABLE_HEADER_PASSTHROUGH=true`, sanitises header names/values, rejects conflicting `Authorization` headers, and lets clients safely supply `X-Upstream-Authorization` for upstream delegation.
 - **Policy-as-code plugins.** The plugin framework powers deny/allow decisions before and after prompt/tool/resource execution. Security-focused plugins include `deny_filter`, `pii_filter`, `content_moderation`, `output_length_guard`, `schema_guard`, `sql_sanitizer`, `secrets_detection`, `rate_limiter`, `url_reputation`, `vault`, `watchdog`, and the optional external OPA integration for Rego policies (`plugins/external/opa`).
-- **Federation safeguards.** Startup validation warns when `federation_enabled` is combined with unauthenticated deployments, and federation forwarding honours global rate limits to protect upstream peers.
 
 ## Data Protection & Secret Handling
 
@@ -134,7 +133,6 @@ For production deployments, always include JTI in issued tokens to enable proper
 - [ ] **Leave header passthrough off.** `ENABLE_HEADER_PASSTHROUGH=false` (default) should only change after reviewing downstream requirements and allowlists.
 - [ ] **Secure the data plane.** Terminate TLS with real certificates (`make certs`/`make serve-ssl` or a fronting proxy), and prefer PostgreSQL/MySQL with TLS over SQLite in production.
 - [ ] **Monitor activity.** Ship `token_usage_logs`, `email_auth_events`, audit trails, and structured logs to your SIEM/observability stack; alert on repeated failures or blocked requests.
-- [ ] **Lock down federation.** If `federation_enabled` remains on, restrict `FEDERATION_PEERS`, ensure every peer enforces auth, and monitor health-check traffic.
 - [ ] **Automate security checks.** Integrate the security Make targets into CI/CD so images, dependencies, and IaC are scanned before deployment.
 
 ## Planned & In-Progress Enhancements (🚧 Planned)

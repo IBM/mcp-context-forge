@@ -9,13 +9,13 @@ Caching system for MCP Eval Server.
 
 # Standard
 from hashlib import sha256
-import json
 import time
 from typing import Any, Dict, Optional
 
 # Third-Party
 from cachetools import TTLCache
 import diskcache as dc
+import orjson
 
 
 class EvaluationCache:
@@ -44,8 +44,8 @@ class EvaluationCache:
         """
         # Sort kwargs for consistent key generation
         sorted_items = sorted(kwargs.items())
-        key_string = json.dumps(sorted_items, sort_keys=True)
-        return sha256(key_string.encode()).hexdigest()
+        key_bytes = orjson.dumps(sorted_items, option=orjson.OPT_SORT_KEYS)
+        return sha256(key_bytes).hexdigest()
 
     async def get(self, **kwargs) -> Optional[Dict[str, Any]]:
         """Get cached evaluation result.

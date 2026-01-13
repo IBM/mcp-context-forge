@@ -5,7 +5,7 @@
 #  See docs/docs/testing/performance.md for full details
 #
 #  One-liner (TCP + VM + I/O tuning):
-#  sudo sysctl -w net.core.somaxconn=65535 net.core.netdev_max_backlog=65535 net.ipv4.tcp_max_syn_backlog=65535 net.ipv4.tcp_tw_reuse=2 net.ipv4.tcp_fin_timeout=15 net.ipv4.ip_local_port_range="1024 65535" vm.swappiness=10 fs.aio-max-nr=1048576
+#  sudo sysctl -w net.core.somaxconn=65535 net.core.netdev_max_backlog=65535 net.ipv4.tcp_max_syn_backlog=65535 net.ipv4.tcp_tw_reuse=1 net.ipv4.tcp_fin_timeout=15 net.ipv4.ip_local_port_range="1024 65535" vm.swappiness=10 fs.aio-max-nr=1048576
 #
 #  Make persistent: sudo tee /etc/sysctl.d/99-mcp-loadtest.conf (see docs)
 ###############################################################################
@@ -120,6 +120,9 @@ services:
       - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@pgbouncer:6432/mcp
       # Direct PostgreSQL connection (bypass PgBouncer - increase DB_POOL_SIZE if using):
       # - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
+      # SQLAlchemy query logging (useful for N+1 detection; noisy under load)
+      # NOTE: SQLALCHEMY_ECHO logs at INFO; set LOG_LEVEL=INFO/DEBUG to see output.
+      - SQLALCHEMY_ECHO=false
       # - DATABASE_URL=mysql+pymysql://mysql:${MYSQL_PASSWORD:-changeme}@mariadb:3306/mcp
       # - DATABASE_URL=mysql+pymysql://admin:${MARIADB_PASSWORD:-changeme}@mariadb:3306/mcp
       # - DATABASE_URL=mongodb://admin:${MONGO_PASSWORD:-changeme}@mongodb:27017/mcp
@@ -132,21 +135,30 @@ services:
       - REDIS_SOCKET_TIMEOUT=5.0
       - REDIS_SOCKET_CONNECT_TIMEOUT=5.0
       - REDIS_HEALTH_CHECK_INTERVAL=30
+      # ═══════════════════════════════════════════════════════════════════════════
+      # Redis Startup Resilience (prevents crash-loop on Redis outage)
+      # ═══════════════════════════════════════════════════════════════════════════
+      # With exponential backoff: 2s, 4s, 8s, 16s, 30s (capped), 30s...
+      # 30 retries = ~5 minutes total wait before worker gives up
+      - REDIS_MAX_RETRIES=30             # Max attempts before worker exits (default: 30)
+      - REDIS_RETRY_INTERVAL_MS=2000     # Base interval, grows exponentially with jitter
+      - REDIS_MAX_BACKOFF_SECONDS=30     # Max backoff cap (jitter ±25% applied after)
       # Auth Cache Configuration (reduces DB queries per auth request from 3-4 to 0-1)
       - AUTH_CACHE_ENABLED=true
       - AUTH_CACHE_USER_TTL=300
-      - AUTH_CACHE_REVOCATION_TTL=30
+      - AUTH_CACHE_REVOCATION_TTL=120
       - AUTH_CACHE_TEAM_TTL=300
       - AUTH_CACHE_ROLE_TTL=300
       - AUTH_CACHE_BATCH_QUERIES=true
+      - AUTH_CACHE_TEAMS_TTL=300
       # Registry Cache Configuration (reduces DB queries for list endpoints)
       - REGISTRY_CACHE_ENABLED=true
-      - REGISTRY_CACHE_TOOLS_TTL=60
-      - REGISTRY_CACHE_PROMPTS_TTL=60
-      - REGISTRY_CACHE_RESOURCES_TTL=60
-      - REGISTRY_CACHE_AGENTS_TTL=60
-      - REGISTRY_CACHE_SERVERS_TTL=60
-      - REGISTRY_CACHE_GATEWAYS_TTL=60
+      - REGISTRY_CACHE_TOOLS_TTL=300
+      - REGISTRY_CACHE_PROMPTS_TTL=300
+      - REGISTRY_CACHE_RESOURCES_TTL=300
+      - REGISTRY_CACHE_AGENTS_TTL=300
+      - REGISTRY_CACHE_SERVERS_TTL=300
+      - REGISTRY_CACHE_GATEWAYS_TTL=300
       - REGISTRY_CACHE_CATALOG_TTL=300
       # Admin Stats Cache Configuration (reduces aggregate queries for dashboard)
       - ADMIN_STATS_CACHE_ENABLED=true
@@ -208,8 +220,11 @@ services:
       - MCP_CLIENT_AUTH_ENABLED=true
       - TRUST_PROXY_AUTH=false
       # Logging configuration
-      - LOG_LEVEL=ERROR  # Default to ERROR for production performance
+      # NOTE: LOG_LEVEL=INFO/DEBUG is required for SQLALCHEMY_ECHO output.
+      - LOG_LEVEL=ERROR  # Required for SQLALCHEMY_ECHO output during load testing
       - DISABLE_ACCESS_LOG=true  # Disable uvicorn access logs for performance (massive I/O overhead)
+      # Template auto-reload disabled for performance (prevents re-parsing templates on each request)
+      - TEMPLATES_AUTO_RELOAD=false
       - STRUCTURED_LOGGING_DATABASE_ENABLED=false  # Disable DB logging for performance (use true only for debugging)
       # Audit trail logging - disabled by default for performance
       # WARNING: Causes a DB write on EVERY API request - can generate millions of rows during load testing!
@@ -244,11 +259,19 @@ services:
       - DB_MAX_OVERFLOW=10             # Extra connections under load
       - DB_POOL_TIMEOUT=60             # Time to wait for connection before failing
       - DB_POOL_RECYCLE=60             # Recycle before PgBouncer CLIENT_IDLE_TIMEOUT (half of 120s)
+      # ═══════════════════════════════════════════════════════════════════════════
+      # Database Startup Resilience (prevents crash-loop on DB outage)
+      # ═══════════════════════════════════════════════════════════════════════════
+      # With exponential backoff: 2s, 4s, 8s, 16s, 30s (capped), 30s...
+      # 30 retries = ~5 minutes total wait before worker gives up
+      - DB_MAX_RETRIES=30              # Max attempts before worker exits (default: 30)
+      - DB_RETRY_INTERVAL_MS=2000      # Base interval, grows exponentially with jitter
+      - DB_MAX_BACKOFF_SECONDS=30      # Max backoff cap (jitter ±25% applied after)
       # Tool configuration for high-concurrency load testing
       - TOOL_TIMEOUT=60               # Seconds before tool invocation times out
       - MAX_TOOL_RETRIES=3            # Retry attempts for failed tool invocations
-      - TOOL_RATE_LIMIT=3000          # Max tool invocations per minute
-      - TOOL_CONCURRENT_LIMIT=100     # Max concurrent tool invocations
+      - TOOL_RATE_LIMIT=60000         # Max tool invocations per minute
+      - TOOL_CONCURRENT_LIMIT=1000    # Max concurrent tool invocations
       - FEDERATION_TIMEOUT=30
       # ═══════════════════════════════════════════════════════════════════════════
       # HTTPX Client Connection Pool Configuration
@@ -271,11 +294,11 @@ services:
       # ═══════════════════════════════════════════════════════════════════════════
       # Backpressure provides overload protection by rejecting excess requests with
       # immediate 503 responses instead of queuing them (which can cause OOM/timeouts).
-      # Total capacity = GRANIAN_WORKERS × GRANIAN_BACKPRESSURE = 16 × 64 = 1024 concurrent
+      # Total capacity = GRANIAN_WORKERS × GRANIAN_BACKPRESSURE = 16 × 128 = 2048 concurrent
       # Requests beyond this limit receive immediate 503 (no queuing, no OOM)
       - GRANIAN_WORKERS=16
       - GRANIAN_BACKLOG=4096
-      - GRANIAN_BACKPRESSURE=64
+      - GRANIAN_BACKPRESSURE=128
       - GRANIAN_HTTP1_BUFFER_SIZE=524288
       - GRANIAN_RESPAWN_FAILED=true
       # HTTP/2: Granian supports native HTTP/2 multiplexing, but not useful here because:
@@ -284,6 +307,29 @@ services:
       # - Internal Docker network is fast enough that HTTP/2 gains are negligible
       # To use HTTP/2, either bypass nginx or use Granian with TLS directly.
       # - GRANIAN_HTTP=2
+
+      # ═══════════════════════════════════════════════════════════════════════════
+      # MCP Session Pool Configuration
+      # ═══════════════════════════════════════════════════════════════════════════
+      # Session pooling for MCP ClientSessions reduces per-request overhead from
+      # ~20ms to ~1-2ms (10-20x improvement). Sessions are isolated per user/tenant
+      # via identity hashing to prevent cross-user session sharing.
+      - MCP_SESSION_POOL_ENABLED=true              # Enable session pooling (default: false, enabled for docker-compose)
+      - MCP_SESSION_POOL_MAX_PER_KEY=50            # Max sessions per (URL, identity, transport)
+      - MCP_SESSION_POOL_TTL=300.0                 # Session TTL in seconds (default: 300)
+      - MCP_SESSION_POOL_HEALTH_CHECK_INTERVAL=60.0  # Idle time before health check (default: 60)
+      - MCP_SESSION_POOL_ACQUIRE_TIMEOUT=60.0     # Timeout waiting for session slot (default: 30)
+      - MCP_SESSION_POOL_CREATE_TIMEOUT=30.0       # Timeout creating new session (default: 30)
+      - MCP_SESSION_POOL_CIRCUIT_BREAKER_THRESHOLD=5  # Failures before circuit opens
+      - MCP_SESSION_POOL_CIRCUIT_BREAKER_RESET=60.0   # Seconds before circuit resets
+      - MCP_SESSION_POOL_IDLE_EVICTION=600.0      # Evict idle pool keys after (default: 600)
+      - MCP_SESSION_POOL_TRANSPORT_TIMEOUT=30.0   # Timeout for all HTTP operations (default: 30)
+      - MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC=false  # Force RPC on health checks (default: false)
+      # Configurable health check chain - ordered list of methods to try (JSON array)
+      # Options: ping, list_tools, list_prompts, list_resources, skip
+      # - MCP_SESSION_POOL_HEALTH_CHECK_METHODS=["ping", "skip"]  # Try ping, skip if unsupported
+      - MCP_SESSION_POOL_HEALTH_CHECK_METHODS=["skip"]  # skip, highest performance
+      - MCP_SESSION_POOL_HEALTH_CHECK_TIMEOUT=5.0               # Timeout per health check attempt
 
       # ═══════════════════════════════════════════════════════════════════════════
       # Execution Metrics Recording
@@ -401,6 +447,10 @@ services:
 
   postgres:
     image: postgres:18
+    ulimits:
+      nofile:
+        soft: 8192
+        hard: 8192
     ports:
       - "5433:5432"      # Expose for baseline load testing (5433 to avoid conflict with local postgres)
     # Performance tuning for high-load testing (3000 sustained users)
@@ -437,7 +487,7 @@ services:
       # Application code now properly closes transactions via get_db() commit-on-success pattern
       # This timeout is a safety net for any edge cases
       - "-c"
-      - "idle_in_transaction_session_timeout=120s"  # Kill stuck transactions after 120s (aligned with PgBouncer)
+      - "idle_in_transaction_session_timeout=300s"  # Kill stuck transactions after 300s (aligned with PgBouncer)
       - "-c"
       - "statement_timeout=120s"           # Kill runaway queries after 120s
       - "-c"
@@ -456,21 +506,20 @@ services:
       # - "autovacuum_vacuum_scale_factor=0.05" # Vacuum at 5% dead tuples (default: 0.2)
       # - "-c"
       # - "autovacuum_vacuum_cost_limit=1000"   # More vacuum work per cycle (default: 200)
-      # === PG_STAT_STATEMENTS - Query performance tracking ===
-      # Uncomment to enable query statistics (slight overhead, ~2-5%)
+      # === PG_STAT_STATEMENTS + AUTO_EXPLAIN ===
+      # Query performance tracking and slow query plan logging
+      # NOTE: Both extensions must be in the SAME shared_preload_libraries line!
       # After enabling, run in psql:
       #   CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
       #   SELECT * FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 10;
       # - "-c"
       # - "shared_preload_libraries=pg_stat_statements"
+      # - "shared_preload_libraries=pg_stat_statements,auto_explain"  # Use this line to enable both
       # - "-c"
       # - "pg_stat_statements.track=all"
       # - "-c"
-      # - "pg_stat_statements.max=10000"
-      # === AUTO_EXPLAIN - Slow query plan logging ===
-      # Uncomment to auto-log execution plans for slow queries
-      # - "-c"
-      # - "shared_preload_libraries=auto_explain"
+      #- "pg_stat_statements.max=10000"
+      # AUTO_EXPLAIN settings (uncomment if using combined shared_preload_libraries above)
       # - "-c"
       # - "auto_explain.log_min_duration=1000"
       # - "-c"
@@ -530,6 +579,10 @@ services:
     image: edoburu/pgbouncer:latest
     restart: unless-stopped
     networks: [mcpnet]
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     ports:
       - "6432:6432"    # PgBouncer port (optional external access)
     environment:
@@ -561,9 +614,11 @@ services:
       - CLIENT_IDLE_TIMEOUT=300        # Close idle client connections (aligned with pool_recycle)
       - SERVER_CONNECT_TIMEOUT=5       # Timeout for new connections to PostgreSQL
       # Transaction cleanup - critical for avoiding idle-in-transaction buildup
+      # NOTE: In transaction pooling, session-level advisory locks (used by migrations)
+      # can stick unless the reset query clears them; DISCARD ALL is safest.
       - SERVER_RESET_QUERY=DISCARD ALL # Reset connection state when returned to pool
       - SERVER_RESET_QUERY_ALWAYS=1    # Always run reset query even after clean transactions
-      - IDLE_TRANSACTION_TIMEOUT=120   # Kill transactions idle > 120s (prevents connection starvation)
+      - IDLE_TRANSACTION_TIMEOUT=300   # Kill transactions idle > 300s (allows slow admin page rendering)
       # Authentication
       - AUTH_TYPE=scram-sha-256        # Match PostgreSQL auth method
     depends_on:
@@ -659,6 +714,10 @@ services:
 ###############################################################################
   redis:
     image: redis:latest
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     # Performance tuning for 1000+ RPS high-concurrency load testing
     command:
       - "redis-server"
@@ -1248,9 +1307,9 @@ services:
     restart: unless-stopped
     networks: [mcpnet]
     ports:
-      - "9080:9080"    # Port 9080 (avoids conflict with nginx on 8080)
+      - "8880:8880"    # Port 8880 (avoids conflict with benchmark servers on 9000+)
     environment:
-      - BIND_ADDRESS=0.0.0.0:9080
+      - BIND_ADDRESS=0.0.0.0:8880
       - RUST_LOG=info
     # TCP kernel tuning for high-concurrency load testing
     sysctls:
@@ -1262,7 +1321,7 @@ services:
         soft: 65535
         hard: 65535
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9080/health"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8880/health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -1275,7 +1334,7 @@ services:
         reservations:
           cpus: '0.5'
           memory: 128M
-    profiles: ["testing"]
+    profiles: ["testing", "monitoring"]
 
   ###############################################################################
   # Auto-registration service - registers fast_test_server with gateway
@@ -1332,7 +1391,7 @@ services:
         try:
             result = api_request('POST', '/gateways', {
                 'name': 'fast_test',
-                'url': 'http://fast_test_server:9080/mcp',
+                'url': 'http://fast_test_server:8880/mcp',
                 'transport': 'STREAMABLEHTTP'
             })
             print(f'✅ Registered fast_test_server: {result.get(\"id\", \"unknown\")}')
@@ -1341,7 +1400,123 @@ services:
             exit(1)
         "
         echo "✅ Registration complete!"
-    profiles: ["testing"]
+    profiles: ["testing", "monitoring"]
+
+  ###############################################################################
+  # Benchmark Server - Multi-server MCP benchmark tool
+  # Spawns multiple lightweight MCP servers for load testing
+  # Usage: make benchmark-up (or: docker compose --profile benchmark up -d)
+  #
+  # Environment variables:
+  #   BENCHMARK_SERVER_COUNT - Number of servers to spawn (default: 10)
+  #   BENCHMARK_START_PORT   - Starting port number (default: 9000)
+  ###############################################################################
+  benchmark_server:
+    build:
+      context: ./mcp-servers/go/benchmark-server
+      dockerfile: Dockerfile
+    image: mcpgateway/benchmark-server:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    command:
+      - "-transport=http"
+      - "-server-count=${BENCHMARK_SERVER_COUNT:-10}"
+      - "-start-port=${BENCHMARK_START_PORT:-9000}"
+      - "-tools=50"
+      - "-resources=20"
+      - "-prompts=10"
+    ports:
+      # Port range supports up to 100 servers (9000-9099)
+      # Actual servers spawned controlled by BENCHMARK_SERVER_COUNT
+      - "9000-9099:9000-9099"
+    # Note: No healthcheck - scratch-based Go image has no shell
+    # Verify health via: curl http://localhost:9000/health
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    profiles: ["benchmark"]
+
+  ###############################################################################
+  # Auto-registration service - registers benchmark servers with gateway
+  # Uses BENCHMARK_SERVER_COUNT and BENCHMARK_START_PORT environment variables
+  ###############################################################################
+  register_benchmark:
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    networks: [mcpnet]
+    depends_on:
+      gateway:
+        condition: service_healthy
+      benchmark_server:
+        condition: service_started
+    environment:
+      - JWT_SECRET_KEY=my-test-key
+      - BENCHMARK_SERVER_COUNT=${BENCHMARK_SERVER_COUNT:-10}
+      - BENCHMARK_START_PORT=${BENCHMARK_START_PORT:-9000}
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Registering benchmark servers with gateway..."
+
+        # Wait for benchmark servers to start (no healthcheck available)
+        echo "Waiting for benchmark servers to start..."
+        sleep 5
+
+        # Generate JWT token
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+
+        # Register benchmark servers using environment variables
+        python3 -c "
+        import urllib.request
+        import json
+        import os
+
+        token = os.environ.get('MCPGATEWAY_BEARER_TOKEN', '')
+        server_count = int(os.environ.get('BENCHMARK_SERVER_COUNT', '10'))
+        start_port = int(os.environ.get('BENCHMARK_START_PORT', '9000'))
+
+        headers = {
+            'Authorization': f'Bearer {token}',
+            'Content-Type': 'application/json'
+        }
+
+        def api_request(method, path, data=None):
+            url = f'http://gateway:4444{path}'
+            body = json.dumps(data).encode() if data else None
+            req = urllib.request.Request(url, data=body, headers=headers, method=method)
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read().decode())
+
+        # Register benchmark servers
+        print(f'Registering {server_count} benchmark servers (ports {start_port}-{start_port + server_count - 1})...')
+        registered = 0
+        for port in range(start_port, start_port + server_count):
+            name = f'benchmark-{port}'
+            try:
+                result = api_request('POST', '/gateways', {
+                    'name': name,
+                    'url': f'http://benchmark_server:{port}/mcp',
+                    'transport': 'STREAMABLEHTTP'
+                })
+                print(f'✅ Registered {name}: {result.get(\"id\", \"unknown\")}')
+                registered += 1
+            except urllib.error.HTTPError as e:
+                if e.code == 409:
+                    print(f'⏭️  {name} already registered')
+                    registered += 1
+                else:
+                    print(f'❌ Failed to register {name}: HTTP {e.code}')
+            except Exception as e:
+                print(f'❌ Failed to register {name}: {e}')
+
+        print(f'✅ Registration complete: {registered}/{server_count} benchmark servers')
+        "
+    profiles: ["benchmark"]
 
   ###############################################################################
   # Hashicorp Terraform MCP Server

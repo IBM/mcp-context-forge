@@ -954,8 +954,8 @@ class Permissions:
     # Token permissions
     TOKENS_CREATE = "tokens.create"
     TOKENS_READ = "tokens.read"
+    TOKENS_UPDATE = "tokens.update"
     TOKENS_REVOKE = "tokens.revoke"
-    TOKENS_SCOPE = "tokens.scope"
 
     # Admin permissions
     ADMIN_SYSTEM_CONFIG = "admin.system_config"
@@ -2726,6 +2726,12 @@ class Tool(Base):
 
     The property `metrics_summary` returns a dictionary with these aggregated values.
 
+    Team association is handled via the `email_team` relationship (default lazy loading)
+    which only includes active teams. For list operations, use explicit joinedload()
+    to eager load team names. The `team` property provides convenient access to
+    the team name:
+        - team: Returns the team name if the tool belongs to an active team, otherwise None.
+
     The following fields have been added to support tool invocation configuration:
         - request_type: HTTP method to use when invoking the tool.
         - auth_type: Type of authentication ("basic", "bearer", or None).
@@ -2806,6 +2812,25 @@ class Tool(Base):
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
+
+    # Relationship for loading team names (only active teams)
+    # Uses default lazy loading - team name is only loaded when accessed
+    # For list/admin views, use explicit joinedload(DbTool.email_team) for single-query loading
+    # This avoids adding overhead to hot paths like tool invocation that don't need team names
+    email_team: Mapped[Optional["EmailTeam"]] = relationship(
+        "EmailTeam",
+        primaryjoin="and_(Tool.team_id == EmailTeam.id, EmailTeam.is_active == True)",
+        foreign_keys=[team_id],
+    )
+
+    @property
+    def team(self) -> Optional[str]:
+        """Return the team name from the eagerly-loaded email_team relationship.
+
+        Returns:
+            Optional[str]: The team name if the tool belongs to an active team, otherwise None.
+        """
+        return self.email_team.name if self.email_team else None
 
     # @property
     # def gateway_slug(self) -> str:
@@ -4213,6 +4238,26 @@ class Server(Base):
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
+
+    # Relationship for loading team names (only active teams)
+    # Uses default lazy loading - team name is only loaded when accessed
+    # For list/admin views, use explicit joinedload(DbServer.email_team) for single-query loading
+    # This avoids adding overhead to hot paths that don't need team names
+    email_team: Mapped[Optional["EmailTeam"]] = relationship(
+        "EmailTeam",
+        primaryjoin="and_(Server.team_id == EmailTeam.id, EmailTeam.is_active == True)",
+        foreign_keys=[team_id],
+    )
+
+    @property
+    def team(self) -> Optional[str]:
+        """Return the team name from the `email_team` relationship.
+
+        Returns:
+            Optional[str]: The team name if the server belongs to an active team, otherwise None.
+        """
+        return self.email_team.name if self.email_team else None
+
     __table_args__ = (
         UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_server"),
         Index("idx_servers_created_at_id", "created_at", "id"),
@@ -4290,6 +4335,10 @@ class Gateway(Base):
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
+
+    # Per-gateway refresh configuration
+    refresh_interval_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, comment="Per-gateway refresh interval in seconds; NULL uses global default")
+    last_refresh_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, comment="Timestamp of the last successful tools/resources/prompts refresh")
 
     # Relationship with OAuth tokens
     oauth_tokens: Mapped[List["OAuthToken"]] = relationship("OAuthToken", back_populates="gateway", cascade="all, delete-orphan")
@@ -4434,12 +4483,17 @@ class A2AAgent(Base):
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
 
+    # Associated tool ID (A2A agents are automatically registered as tools)
+    tool_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("tools.id", ondelete="SET NULL"), nullable=True)
+
     # Relationships
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_a2a_association, back_populates="a2a_agents")
+    tool: Mapped[Optional["Tool"]] = relationship("Tool", foreign_keys=[tool_id])
     metrics: Mapped[List["A2AAgentMetric"]] = relationship("A2AAgentMetric", back_populates="a2a_agent", cascade="all, delete-orphan")
     __table_args__ = (
         UniqueConstraint("team_id", "owner_email", "slug", name="uq_team_owner_slug_a2a_agent"),
         Index("idx_a2a_agents_created_at_id", "created_at", "id"),
+        Index("idx_a2a_agents_tool_id", "tool_id"),
     )
 
     # Relationship with OAuth tokens
@@ -5305,7 +5359,7 @@ def patch_string_columns_for_mariadb(base, engine_) -> None:
                 column.type = VARCHAR(255)
 
 
-def extract_json_field(column, json_path: str):
+def extract_json_field(column, json_path: str, dialect_name: Optional[str] = None):
     """Extract a JSON field in a database-agnostic way.
 
     This function provides cross-database compatibility for JSON field extraction,
@@ -5314,6 +5368,9 @@ def extract_json_field(column, json_path: str):
     Args:
         column: SQLAlchemy column containing JSON data
         json_path: JSON path in SQLite format (e.g., '$.\"tool.name\"')
+        dialect_name: Optional database dialect name to override global backend.
+            If not provided, uses the global backend from DATABASE_URL.
+            Use this when querying a different database than the default.
 
     Returns:
         SQLAlchemy expression for extracting the JSON field as text
@@ -5323,8 +5380,9 @@ def extract_json_field(column, json_path: str):
         - For PostgreSQL: Uses column ->> 'key' operator
         - Backend-specific behavior is tested via unit tests in test_db.py
     """
+    effective_backend = dialect_name if dialect_name is not None else backend
 
-    if backend == "postgresql":
+    if effective_backend == "postgresql":
         # PostgreSQL uses ->> operator for text extraction
         # Convert $.\"key\" or $.\"nested.key\" format to just the key
         # Handle both simple keys and nested keys with dots

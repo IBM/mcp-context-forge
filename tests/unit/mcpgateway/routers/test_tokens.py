@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.routers.tokens import (
+    _require_interactive_session,
     admin_revoke_token,
     create_team_token,
     create_token,
@@ -66,6 +67,7 @@ def mock_current_user(mock_db):
         "is_admin": False,
         "permissions": ["tokens.create", "tokens.read"],
         "db": mock_db,  # Include db in user context for RBAC decorator
+        "auth_method": "jwt",  # Required for interactive session check
     }
 
 
@@ -77,6 +79,7 @@ def mock_admin_user(mock_db):
         "is_admin": True,
         "permissions": ["*"],
         "db": mock_db,  # Include db in user context for RBAC decorator
+        "auth_method": "jwt",  # Required for interactive session check
     }
 
 
@@ -101,6 +104,32 @@ def mock_token_record():
     token.tags = ["test"]
     token.jti = "jti-123"
     return token
+
+
+class TestInteractiveSessionGate:
+    """Test interactive session gating for token endpoints."""
+
+    def test_api_token_blocked(self):
+        """API tokens are blocked from token management."""
+        with pytest.raises(HTTPException) as exc_info:
+            _require_interactive_session({"auth_method": "api_token"})
+
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_missing_auth_method_blocked(self):
+        """Missing auth_method fails secure."""
+        with pytest.raises(HTTPException) as exc_info:
+            _require_interactive_session({})
+
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_oauth_allowed(self):
+        """SSO/OAuth sessions are allowed."""
+        _require_interactive_session({"auth_method": "oauth"})
+
+    def test_disabled_allowed(self):
+        """auth_disabled mode is allowed."""
+        _require_interactive_session({"auth_method": "disabled"})
 
 
 class TestCreateToken:
@@ -132,7 +161,7 @@ class TestCreateToken:
         """Test token creation with scope restrictions."""
         scope_data = {
             "server_id": "server-123",
-            "permissions": ["read", "write"],
+            "permissions": ["tools.read", "tools.write"],
             "ip_restrictions": ["192.168.1.0/24"],
             "time_restrictions": {"start_time": "09:00", "end_time": "17:00"},
             "usage_limits": {"max_calls": 1000},
@@ -294,16 +323,18 @@ class TestUpdateToken:
         """Test token update with new scope."""
         scope_data = {
             "server_id": "new-server",
-            "permissions": ["admin"],
+            "permissions": ["tools.admin"],
         }
         request = TokenUpdateRequest(
             name="Updated Token",
             scope=scope_data,
         )
 
-        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class, patch("mcpgateway.routers.tokens._get_caller_permissions", new_callable=AsyncMock) as mock_perms:
             mock_service = mock_service_class.return_value
+            mock_service.get_token = AsyncMock(return_value=mock_token_record)  # For scope containment lookup
             mock_service.update_token = AsyncMock(return_value=mock_token_record)
+            mock_perms.return_value = ["tools.admin"]  # Return sufficient permissions
 
             response = await update_token(token_id="token-123", request=request, current_user=mock_current_user, db=mock_db)
 
@@ -355,6 +386,7 @@ class TestRevokeToken:
 
             mock_service.revoke_token.assert_called_with(
                 token_id="token-123",
+                user_email="test@example.com",
                 revoked_by="test@example.com",
                 reason="Revoked by user",
             )
@@ -372,6 +404,7 @@ class TestRevokeToken:
 
             mock_service.revoke_token.assert_called_with(
                 token_id="token-123",
+                user_email="test@example.com",
                 revoked_by="test@example.com",
                 reason="Security breach",
             )
@@ -463,11 +496,22 @@ class TestAdminEndpoints:
         """Test admin revoking any token."""
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
-            mock_service.revoke_token = AsyncMock(return_value=True)
+            mock_service.admin_revoke_token = AsyncMock(return_value=True)
 
             await admin_revoke_token(token_id="token-123", request=None, current_user=mock_admin_user, db=mock_db)
 
-            mock_service.revoke_token.assert_called_once()
+            mock_service.admin_revoke_token.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_admin_revoke_token_blocked_for_api_token(self, mock_db, mock_admin_user):
+        """Admin API tokens are blocked from admin endpoints."""
+        current_user = dict(mock_admin_user)
+        current_user["auth_method"] = "api_token"
+
+        with pytest.raises(HTTPException) as exc_info:
+            await admin_revoke_token(token_id="token-123", request=None, current_user=current_user, db=mock_db)
+
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
 
     @pytest.mark.asyncio
     async def test_admin_revoke_token_non_admin(self, mock_db, mock_current_user):
@@ -482,7 +526,7 @@ class TestAdminEndpoints:
         """Test admin revoking non-existent token."""
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
-            mock_service.revoke_token = AsyncMock(return_value=False)
+            mock_service.admin_revoke_token = AsyncMock(return_value=False)
 
             with pytest.raises(HTTPException) as exc_info:
                 await admin_revoke_token(token_id="nonexistent", request=None, current_user=mock_admin_user, db=mock_db)
@@ -615,7 +659,7 @@ class TestEdgeCases:
         """Test token creation with all scope fields."""
         scope_data = {
             "server_id": "srv-123",
-            "permissions": ["read", "write", "delete"],
+            "permissions": ["tools.read", "tools.write", "tools.delete"],
             "ip_restrictions": ["192.168.1.0/24", "10.0.0.0/8"],
             "time_restrictions": {"start_time": "08:00", "end_time": "18:00", "timezone": "UTC", "days": ["mon", "tue", "wed", "thu", "fri"]},
             "usage_limits": {"max_calls": 10000, "max_bytes": 1048576, "rate_limit": "100/hour"},

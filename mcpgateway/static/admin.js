@@ -125,6 +125,8 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // Initialize search functionality for all entity types
     initializeSearchInputs();
+    initializePasswordValidation();
+    initializeAddMembersForms();
 
     // Re-initialize search inputs when HTMX content loads
     document.body.addEventListener("htmx:afterSwap", function (event) {
@@ -190,6 +192,50 @@ function escapeHtml(unsafe) {
 }
 
 /**
+ * Extract a human-readable error message from an API error response.
+ * Handles both string errors and Pydantic validation error arrays.
+ * @param {Object} error - The parsed JSON error response
+ * @param {string} fallback - Fallback message if no detail found
+ * @returns {string} Human-readable error message
+ */
+function extractApiError(error, fallback = "An error occurred") {
+    if (!error || !error.detail) {
+        return fallback;
+    }
+    if (typeof error.detail === "string") {
+        return error.detail;
+    }
+    if (Array.isArray(error.detail)) {
+        // Pydantic validation errors - extract messages
+        return error.detail
+            .map((err) => err.msg || JSON.stringify(err))
+            .join("; ");
+    }
+    return fallback;
+}
+
+/**
+ * Safely parse an error response, handling both JSON and plain text bodies.
+ * @param {Response} response - The fetch Response object
+ * @param {string} fallback - Fallback message if parsing fails
+ * @returns {Promise<string>} Human-readable error message
+ */
+async function parseErrorResponse(response, fallback = "An error occurred") {
+    try {
+        const contentType = response.headers.get("content-type") || "";
+        if (contentType.includes("application/json")) {
+            const error = await response.json();
+            return extractApiError(error, fallback);
+        }
+        // Non-JSON response - try to get text
+        const text = await response.text();
+        return text || fallback;
+    } catch {
+        return fallback;
+    }
+}
+
+/**
  * Header validation constants and functions
  */
 const HEADER_NAME_REGEX = /^[A-Za-z0-9-]+$/;
@@ -247,7 +293,7 @@ function validatePassthroughHeader(name, value) {
  */
 function validateInputName(name, type = "input") {
     if (!name || typeof name !== "string") {
-        return { valid: false, error: `${type} name is required` };
+        return { valid: false, error: `${type} is required` };
     }
 
     // Remove any HTML tags
@@ -266,20 +312,20 @@ function validateInputName(name, type = "input") {
         if (pattern.test(name)) {
             return {
                 valid: false,
-                error: `${type} name contains invalid characters`,
+                error: `${type} contains invalid characters`,
             };
         }
     }
 
     // Length validation
     if (cleaned.length < 1) {
-        return { valid: false, error: `${type} name cannot be empty` };
+        return { valid: false, error: `${type} cannot be empty` };
     }
 
     if (cleaned.length > window.MAX_NAME_LENGTH) {
         return {
             valid: false,
-            error: `${type} name must be ${window.MAX_NAME_LENGTH} characters or less`,
+            error: `${type} must be ${window.MAX_NAME_LENGTH} characters or less`,
         };
     }
 
@@ -322,9 +368,9 @@ function extractContent(content, fallback = "") {
 /**
  * SECURITY: Validate URL inputs
  */
-function validateUrl(url) {
+function validateUrl(url, label = "") {
     if (!url || typeof url !== "string") {
-        return { valid: false, error: "URL is required" };
+        return { valid: false, error: `${label || "URL"} is required` };
     }
 
     try {
@@ -706,11 +752,13 @@ function closeModal(modalId, clearId = null) {
         if (modalId === "gateway-test-modal") {
             cleanupGatewayTestModal();
         } else if (modalId === "tool-test-modal") {
-            cleanupToolTestModal(); // ADD THIS LINE
+            cleanupToolTestModal();
         } else if (modalId === "prompt-test-modal") {
             cleanupPromptTestModal();
         } else if (modalId === "resource-test-modal") {
             cleanupResourceTestModal();
+        } else if (modalId === "a2a-test-modal") {
+            cleanupA2ATestModal();
         }
 
         modal.classList.add("hidden");
@@ -740,6 +788,24 @@ function resetModalState(modalId) {
                 // Clear any error messages
                 const errorElements = form.querySelectorAll(".error-message");
                 errorElements.forEach((el) => el.remove());
+                // Clear inline validation error styling
+                const inlineErrors = form.querySelectorAll(
+                    "p[data-error-message-for]",
+                );
+                inlineErrors.forEach((el) => el.classList.add("invisible"));
+                // Clear red border styling from inputs
+                const invalidInputs = form.querySelectorAll(
+                    ".border-red-500, .focus\\:ring-red-500, .dark\\:border-red-500, .dark\\:ring-red-500",
+                );
+                invalidInputs.forEach((el) => {
+                    el.classList.remove(
+                        "border-red-500",
+                        "focus:ring-red-500",
+                        "dark:border-red-500",
+                        "dark:ring-red-500",
+                    );
+                    el.setCustomValidity("");
+                });
             } catch (error) {
                 console.error("Error resetting form:", error);
             }
@@ -6690,10 +6756,42 @@ if (window.htmx && !window._promptsHtmxHandlerAttached) {
 // ENHANCED TAB HANDLING with Better Error Management
 // ===================================================================
 
+const ADMIN_ONLY_TABS = new Set([
+    "users",
+    "metrics",
+    "performance",
+    "observability",
+    "plugins",
+    "logs",
+    "export-import",
+    "version-info",
+    "maintenance",
+]);
+
+function isAdminUser() {
+    return Boolean(window.IS_ADMIN);
+}
+
+function isAdminOnlyTab(tabName) {
+    return ADMIN_ONLY_TABS.has(tabName);
+}
+
+function getDefaultTabName() {
+    return safeGetElement("overview-panel", true) ? "overview" : "gateways";
+}
+
 let tabSwitchTimeout = null;
 
 function showTab(tabName) {
     try {
+        if (!isAdminUser() && isAdminOnlyTab(tabName)) {
+            console.warn(`Blocked non-admin access to tab: ${tabName}`);
+            const fallbackTab = getDefaultTabName();
+            if (tabName !== fallbackTab) {
+                showTab(fallbackTab);
+            }
+            return;
+        }
         console.log(`Switching to tab: ${tabName}`);
 
         // Clear any pending tab switch
@@ -6731,6 +6829,23 @@ function showTab(tabName) {
         // Debounced content loading
         tabSwitchTimeout = setTimeout(() => {
             try {
+                if (tabName === "overview") {
+                    // Load overview content if not already loaded
+                    const overviewPanel = safeGetElement("overview-panel");
+                    if (overviewPanel) {
+                        const hasLoadingMessage =
+                            overviewPanel.innerHTML.includes(
+                                "Loading overview",
+                            );
+                        if (hasLoadingMessage) {
+                            // Trigger HTMX load manually if HTMX is available
+                            if (window.htmx && window.htmx.trigger) {
+                                window.htmx.trigger(overviewPanel, "load");
+                            }
+                        }
+                    }
+                }
+
                 if (tabName === "metrics") {
                     // Only load if we're still on the metrics tab
                     if (!panel.classList.contains("hidden")) {
@@ -6766,6 +6881,24 @@ function showTab(tabName) {
                     }
                 }
 
+                if (tabName === "gateways") {
+                    // Load Gateways table if not already loaded
+                    const gatewaysTable = safeGetElement("gateways-table");
+                    if (gatewaysTable) {
+                        const hasLoadingMessage =
+                            gatewaysTable.innerHTML.includes(
+                                "Loading gateways...",
+                            );
+                        const isEmpty = gatewaysTable.innerHTML.trim() === "";
+                        if (hasLoadingMessage || isEmpty) {
+                            // Trigger HTMX load manually if HTMX is available
+                            if (window.htmx && window.htmx.trigger) {
+                                window.htmx.trigger(gatewaysTable, "load");
+                            }
+                        }
+                    }
+                }
+
                 if (tabName === "tokens") {
                     // Load Tokens list and set up form handling
                     const tokensList = safeGetElement("tokens-list");
@@ -6789,13 +6922,34 @@ function showTab(tabName) {
                     updateTeamScopingWarning();
                 }
 
+                if (tabName === "catalog") {
+                    // Load servers list if not already loaded
+                    const serversList = safeGetElement("servers-table");
+                    if (serversList) {
+                        const hasLoadingMessage =
+                            serversList.innerHTML.includes(
+                                "Loading servers...",
+                            );
+                        if (hasLoadingMessage) {
+                            // Trigger HTMX load manually if HTMX is available
+                            if (window.htmx && window.htmx.trigger) {
+                                window.htmx.trigger(serversList, "load");
+                            }
+                        }
+                    }
+                }
+
                 if (tabName === "a2a-agents") {
                     // Load A2A agents list if not already loaded
-                    const agentsList = safeGetElement("a2a-agents-list");
-                    if (agentsList && agentsList.innerHTML.trim() === "") {
-                        // Trigger HTMX load manually if HTMX is available
-                        if (window.htmx && window.htmx.trigger) {
-                            window.htmx.trigger(agentsList, "load");
+                    const agentsList = safeGetElement("agents-table");
+                    if (agentsList) {
+                        const hasLoadingMessage =
+                            agentsList.innerHTML.includes("Loading agents...");
+                        if (hasLoadingMessage) {
+                            // Trigger HTMX load manually if HTMX is available
+                            if (window.htmx && window.htmx.trigger) {
+                                window.htmx.trigger(agentsList, "load");
+                            }
                         }
                     }
                 }
@@ -6866,15 +7020,17 @@ function showTab(tabName) {
                 }
 
                 if (tabName === "gateways") {
-                    // Reload gateways list to show any newly registered servers
-                    const gatewaysSection = safeGetElement("gateways-panel");
-                    if (gatewaysSection) {
-                        const gatewaysTbody =
-                            gatewaysSection.querySelector("tbody");
-                        if (gatewaysTbody) {
-                            // Trigger HTMX reload if available
+                    // Load gateways list if not already loaded
+                    const gatewaysList = safeGetElement("gateways-table");
+                    if (gatewaysList) {
+                        const hasLoadingMessage =
+                            gatewaysList.innerHTML.includes(
+                                "Loading gateways...",
+                            );
+                        if (hasLoadingMessage) {
+                            // Trigger HTMX load manually if HTMX is available
                             if (window.htmx && window.htmx.trigger) {
-                                window.htmx.trigger(gatewaysTbody, "load");
+                                window.htmx.trigger(gatewaysList, "load");
                             } else {
                                 // Fallback: reload the page section via fetch
                                 const rootPath = window.ROOT_PATH || "";
@@ -6887,16 +7043,17 @@ function showTab(tabName) {
                                             html,
                                             "text/html",
                                         );
-                                        const newTbody = doc.querySelector(
-                                            "#gateways-section tbody",
-                                        );
-                                        if (newTbody) {
-                                            gatewaysTbody.innerHTML =
-                                                newTbody.innerHTML;
+                                        const newTable =
+                                            doc.querySelector(
+                                                "#gateways-table",
+                                            );
+                                        if (newTable) {
+                                            gatewaysList.innerHTML =
+                                                newTable.innerHTML;
                                             // Process any HTMX attributes in the new content
                                             if (window.htmx) {
                                                 window.htmx.process(
-                                                    gatewaysTbody,
+                                                    gatewaysList,
                                                 );
                                             }
                                         }
@@ -7825,12 +7982,17 @@ function initToolSelect(
                     const selectedGatewayIds = getSelectedGatewayIds
                         ? getSelectedGatewayIds()
                         : [];
-                    const gatewayParam =
-                        selectedGatewayIds && selectedGatewayIds.length
-                            ? `?gateway_id=${encodeURIComponent(selectedGatewayIds.join(","))}`
-                            : "";
+                    const selectedTeamId = getCurrentTeamId();
+                    const params = new URLSearchParams();
+                    if (selectedGatewayIds && selectedGatewayIds.length) {
+                        params.set("gateway_id", selectedGatewayIds.join(","));
+                    }
+                    if (selectedTeamId) {
+                        params.set("team_id", selectedTeamId);
+                    }
+                    const queryString = params.toString();
                     const response = await fetch(
-                        `${window.ROOT_PATH}/admin/tools/ids${gatewayParam}`,
+                        `${window.ROOT_PATH}/admin/tools/ids${queryString ? `?${queryString}` : ""}`,
                     );
                     if (!response.ok) {
                         throw new Error("Failed to fetch tool IDs");
@@ -8268,12 +8430,17 @@ function initResourceSelect(
                     const selectedGatewayIds = getSelectedGatewayIds
                         ? getSelectedGatewayIds()
                         : [];
-                    const gatewayParam =
-                        selectedGatewayIds && selectedGatewayIds.length
-                            ? `?gateway_id=${encodeURIComponent(selectedGatewayIds.join(","))}`
-                            : "";
+                    const selectedTeamId = getCurrentTeamId();
+                    const params = new URLSearchParams();
+                    if (selectedGatewayIds && selectedGatewayIds.length) {
+                        params.set("gateway_id", selectedGatewayIds.join(","));
+                    }
+                    if (selectedTeamId) {
+                        params.set("team_id", selectedTeamId);
+                    }
+                    const queryString = params.toString();
                     const resp = await fetch(
-                        `${window.ROOT_PATH}/admin/resources/ids${gatewayParam}`,
+                        `${window.ROOT_PATH}/admin/resources/ids${queryString ? `?${queryString}` : ""}`,
                     );
                     if (!resp.ok) {
                         throw new Error("Failed to fetch resource IDs");
@@ -8696,12 +8863,17 @@ function initPromptSelect(
                     const selectedGatewayIds = getSelectedGatewayIds
                         ? getSelectedGatewayIds()
                         : [];
-                    const gatewayParam =
-                        selectedGatewayIds && selectedGatewayIds.length
-                            ? `?gateway_id=${encodeURIComponent(selectedGatewayIds.join(","))}`
-                            : "";
+                    const selectedTeamId = getCurrentTeamId();
+                    const params = new URLSearchParams();
+                    if (selectedGatewayIds && selectedGatewayIds.length) {
+                        params.set("gateway_id", selectedGatewayIds.join(","));
+                    }
+                    if (selectedTeamId) {
+                        params.set("team_id", selectedTeamId);
+                    }
+                    const queryString = params.toString();
                     const resp = await fetch(
-                        `${window.ROOT_PATH}/admin/prompts/ids${gatewayParam}`,
+                        `${window.ROOT_PATH}/admin/prompts/ids${queryString ? `?${queryString}` : ""}`,
                     );
                     if (!resp.ok) {
                         throw new Error("Failed to fetch prompt IDs");
@@ -9099,8 +9271,14 @@ function initGatewaySelect(
 
             try {
                 // Fetch all gateway IDs from the server
+                const selectedTeamId = getCurrentTeamId();
+                const params = new URLSearchParams();
+                if (selectedTeamId) {
+                    params.set("team_id", selectedTeamId);
+                }
+                const queryString = params.toString();
                 const response = await fetch(
-                    `${window.ROOT_PATH}/admin/gateways/ids`,
+                    `${window.ROOT_PATH}/admin/gateways/ids${queryString ? `?${queryString}` : ""}`,
                 );
                 if (!response.ok) {
                     throw new Error("Failed to fetch gateway IDs");
@@ -14803,13 +14981,41 @@ function setupFormValidation() {
         );
         nameFields.forEach((field) => {
             field.addEventListener("blur", function () {
-                const validation = validateInputName(this.value, "name");
+                const parentNode = this.parentNode;
+                const inputLabel = parentNode?.querySelector(
+                    `label[for="${this.id}"]`,
+                );
+                const errorMessageElement = parentNode?.querySelector(
+                    'p[data-error-message-for="name"]',
+                );
+                const validation = validateInputName(
+                    this.value,
+                    inputLabel?.innerText,
+                );
                 if (!validation.valid) {
                     this.setCustomValidity(validation.error);
-                    this.reportValidity();
+                    this.classList.add(
+                        "border-red-500",
+                        "focus:ring-red-500",
+                        "dark:border-red-500",
+                        "dark:ring-red-500",
+                    );
+                    if (errorMessageElement) {
+                        errorMessageElement.innerText = validation.error;
+                        errorMessageElement.classList.remove("invisible");
+                    }
                 } else {
                     this.setCustomValidity("");
                     this.value = validation.value;
+                    this.classList.remove(
+                        "border-red-500",
+                        "focus:ring-red-500",
+                        "dark:border-red-500",
+                        "dark:ring-red-500",
+                    );
+                    if (errorMessageElement) {
+                        errorMessageElement.classList.add("invisible");
+                    }
                 }
             });
         });
@@ -14820,32 +15026,58 @@ function setupFormValidation() {
         );
         urlFields.forEach((field) => {
             field.addEventListener("blur", function () {
-                if (this.value) {
-                    const validation = validateUrl(this.value);
-                    if (!validation.valid) {
-                        this.setCustomValidity(validation.error);
-                        this.reportValidity();
-                    } else {
-                        this.setCustomValidity("");
-                        this.value = validation.value;
+                // Skip validation for empty optional URL fields
+                if (!this.value && !this.required) {
+                    this.setCustomValidity("");
+                    this.classList.remove(
+                        "border-red-500",
+                        "focus:ring-red-500",
+                        "dark:border-red-500",
+                        "dark:ring-red-500",
+                    );
+                    const errorMessageElement = this.parentNode?.querySelector(
+                        'p[data-error-message-for="url"]',
+                    );
+                    if (errorMessageElement) {
+                        errorMessageElement.classList.add("invisible");
                     }
+                    return;
                 }
-            });
-        });
-
-        // Special validation for prompt name fields
-        const promptNameFields = form.querySelectorAll(
-            'input[name="prompt-name"], input[name="edit-prompt-name"]',
-        );
-        promptNameFields.forEach((field) => {
-            field.addEventListener("blur", function () {
-                const validation = validateInputName(this.value, "prompt");
+                const parentNode = this.parentNode;
+                const inputLabel = parentNode?.querySelector(
+                    `label[for="${this.id}"]`,
+                );
+                const errorMessageElement = parentNode?.querySelector(
+                    'p[data-error-message-for="url"]',
+                );
+                const validation = validateUrl(
+                    this.value,
+                    inputLabel?.innerText,
+                );
                 if (!validation.valid) {
                     this.setCustomValidity(validation.error);
-                    this.reportValidity();
+                    this.classList.add(
+                        "border-red-500",
+                        "focus:ring-red-500",
+                        "dark:border-red-500",
+                        "dark:ring-red-500",
+                    );
+                    if (errorMessageElement) {
+                        errorMessageElement.innerText = validation.error;
+                        errorMessageElement.classList.remove("invisible");
+                    }
                 } else {
                     this.setCustomValidity("");
                     this.value = validation.value;
+                    this.classList.remove(
+                        "border-red-500",
+                        "focus:ring-red-500",
+                        "dark:border-red-500",
+                        "dark:ring-red-500",
+                    );
+                    if (errorMessageElement) {
+                        errorMessageElement.classList.add("invisible");
+                    }
                 }
             });
         });
@@ -15293,10 +15525,15 @@ function setupTabNavigation() {
         "version-info",
     ];
 
-    tabs.forEach((tabName) => {
+    const visibleTabs = isAdminUser()
+        ? tabs
+        : tabs.filter((tabName) => !ADMIN_ONLY_TABS.has(tabName));
+
+    visibleTabs.forEach((tabName) => {
         // Suppress warnings for optional tabs that might not be enabled
         const optionalTabs = [
             "roots",
+            "metrics",
             "logs",
             "export-import",
             "version-info",
@@ -15759,9 +15996,14 @@ function setupSelectorSearch() {
  */
 function filterServerTable(searchText) {
     try {
-        const tbody = document.querySelector(
-            'tbody[data-testid="server-list"]',
-        );
+        // Try to find the table using multiple strategies
+        let tbody = document.querySelector("#servers-table-body");
+
+        // Fallback to data-testid selector for backward compatibility
+        if (!tbody) {
+            tbody = document.querySelector('tbody[data-testid="server-list"]');
+        }
+
         if (!tbody) {
             console.warn("Server table not found");
             return;
@@ -15936,7 +16178,14 @@ function filterPromptsTable(searchText) {
  */
 function filterA2AAgentsTable(searchText) {
     try {
-        const tbody = document.querySelector("#a2a-agents-panel tbody");
+        // Try to find the table using multiple strategies
+        let tbody = document.querySelector("#agents-table tbody");
+
+        // Fallback to panel selector for backward compatibility
+        if (!tbody) {
+            tbody = document.querySelector("#a2a-agents-panel tbody");
+        }
+
         if (!tbody) {
             console.warn("A2A Agents table body not found");
             return;
@@ -16616,7 +16865,7 @@ function initializeTabState() {
     }
 
     // Pre-load version info if that's the initial tab
-    if (window.location.hash === "#version-info") {
+    if (isAdminUser() && window.location.hash === "#version-info") {
         setTimeout(() => {
             const panel = safeGetElement("version-info-panel");
             if (panel && panel.innerHTML.trim() === "") {
@@ -16643,7 +16892,7 @@ function initializeTabState() {
     }
 
     // Pre-load maintenance panel if that's the initial tab
-    if (window.location.hash === "#maintenance") {
+    if (isAdminUser() && window.location.hash === "#maintenance") {
         setTimeout(() => {
             const panel = safeGetElement("maintenance-panel");
             if (panel && panel.innerHTML.trim() === "") {
@@ -18823,58 +19072,129 @@ function getCookie(name) {
 window.resetImportFile = resetImportFile;
 
 // ===================================================================
-// A2A AGENT TESTING FUNCTIONALITY
+// A2A AGENT TEST MODAL FUNCTIONALITY
 // ===================================================================
 
+let a2aTestFormHandler = null;
+let a2aTestCloseHandler = null;
+
 /**
- * Test an A2A agent by making a direct invocation call
+ * Open A2A test modal with agent details
  * @param {string} agentId - ID of the agent to test
  * @param {string} agentName - Name of the agent for display
  * @param {string} endpointUrl - Endpoint URL of the agent
  */
 async function testA2AAgent(agentId, agentName, endpointUrl) {
     try {
-        // Show loading state
-        const testResult = document.getElementById(`test-result-${agentId}`);
-        testResult.innerHTML =
-            '<div class="text-blue-600">🔄 Testing agent...</div>';
-        testResult.classList.remove("hidden");
+        console.log("Opening A2A test modal for:", agentName);
 
-        // Get auth token using the robust getAuthToken function
+        // Clean up any existing event listeners
+        cleanupA2ATestModal();
+
+        // Open the modal
+        openModal("a2a-test-modal");
+
+        // Set modal title and description
+        const titleElement = safeGetElement("a2a-test-modal-title");
+        const descElement = safeGetElement("a2a-test-modal-description");
+        const agentIdInput = safeGetElement("a2a-test-agent-id");
+        const queryInput = safeGetElement("a2a-test-query");
+        const resultDiv = safeGetElement("a2a-test-result");
+
+        if (titleElement) {
+            titleElement.textContent = `Test A2A Agent: ${agentName}`;
+        }
+        if (descElement) {
+            descElement.textContent = `Endpoint: ${endpointUrl}`;
+        }
+        if (agentIdInput) {
+            agentIdInput.value = agentId;
+        }
+        if (queryInput) {
+            // Reset to default value
+            queryInput.value = "Hello from MCP Gateway Admin UI test!";
+        }
+        if (resultDiv) {
+            resultDiv.classList.add("hidden");
+        }
+
+        // Set up form submission handler
+        const form = safeGetElement("a2a-test-form");
+        if (form) {
+            a2aTestFormHandler = async (e) => {
+                await handleA2ATestSubmit(e);
+            };
+            form.addEventListener("submit", a2aTestFormHandler);
+        }
+
+        // Set up close button handler
+        const closeButton = safeGetElement("a2a-test-close");
+        if (closeButton) {
+            a2aTestCloseHandler = () => {
+                handleA2ATestClose();
+            };
+            closeButton.addEventListener("click", a2aTestCloseHandler);
+        }
+    } catch (error) {
+        console.error("Error setting up A2A test modal:", error);
+        showErrorMessage("Failed to open A2A test modal");
+    }
+}
+
+/**
+ * Handle A2A test form submission
+ * @param {Event} e - Form submit event
+ */
+async function handleA2ATestSubmit(e) {
+    e.preventDefault();
+
+    const loading = safeGetElement("a2a-test-loading");
+    const responseDiv = safeGetElement("a2a-test-response-json");
+    const resultDiv = safeGetElement("a2a-test-result");
+    const testButton = safeGetElement("a2a-test-submit");
+
+    try {
+        // Show loading
+        if (loading) {
+            loading.classList.remove("hidden");
+        }
+        if (resultDiv) {
+            resultDiv.classList.add("hidden");
+        }
+        if (testButton) {
+            testButton.disabled = true;
+            testButton.textContent = "Testing...";
+        }
+
+        const agentId = safeGetElement("a2a-test-agent-id")?.value;
+        const query =
+            safeGetElement("a2a-test-query")?.value ||
+            "Hello from MCP Gateway Admin UI test!";
+
+        if (!agentId) {
+            throw new Error("Agent ID is missing");
+        }
+
+        // Get auth token
         const token = await getAuthToken();
-
-        // Debug logging
-        console.log("Available cookies:", document.cookie);
-        console.log(
-            "Found token:",
-            token ? "Yes (length: " + token.length + ")" : "No",
-        );
-
-        // Prepare headers
-        const headers = {
-            "Content-Type": "application/json",
-        };
-
+        const headers = { "Content-Type": "application/json" };
         if (token) {
             headers.Authorization = `Bearer ${token}`;
         } else {
             // Fallback to basic auth if JWT not available
             console.warn("JWT token not found, attempting basic auth fallback");
-            headers.Authorization = "Basic " + btoa("admin:changeme"); // Default admin credentials
+            headers.Authorization = "Basic " + btoa("admin:changeme");
         }
 
-        // Test payload is now determined server-side based on agent configuration
-        const testPayload = {};
-
-        // Make test request to A2A agent via admin endpoint
+        // Send test request with user query
         const response = await fetchWithTimeout(
             `${window.ROOT_PATH}/admin/a2a/${agentId}/test`,
             {
                 method: "POST",
                 headers,
-                body: JSON.stringify(testPayload),
+                body: JSON.stringify({ query }),
             },
-            window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000, // Use configurable timeout
+            window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000,
         );
 
         if (!response.ok) {
@@ -18884,57 +19204,100 @@ async function testA2AAgent(agentId, agentName, endpointUrl) {
         const result = await response.json();
 
         // Display result
-        let resultHtml;
-        if (!result.success || result.error) {
-            resultHtml = `
-                <div class="text-red-600">
-                    <div>❌ Test Failed</div>
-                    <div class="text-xs mt-1">Error: ${escapeHtml(result.error || "Unknown error")}</div>
-                </div>`;
-        } else {
-            // Check if the agent result contains an error (agent-level error)
-            const agentResult = result.result;
-            if (agentResult && agentResult.error) {
-                resultHtml = `
-                    <div class="text-yellow-600">
-                        <div>⚠️ Agent Error</div>
-                        <div class="text-xs mt-1">Agent Response: ${escapeHtml(JSON.stringify(agentResult).substring(0, 150))}...</div>
-                    </div>`;
-            } else {
-                resultHtml = `
-                    <div class="text-green-600">
-                        <div>✅ Test Successful</div>
-                        <div class="text-xs mt-1">Response: ${escapeHtml(JSON.stringify(agentResult).substring(0, 150))}...</div>
-                    </div>`;
-            }
+        const isSuccess = result.success && !result.error;
+        const icon = isSuccess ? "✅" : "❌";
+        const title = isSuccess ? "Test Successful" : "Test Failed";
+
+        let bodyHtml = "";
+        if (result.result) {
+            bodyHtml = `<details open>
+                <summary class='cursor-pointer font-medium'>Response</summary>
+                <pre class="text-sm px-4 max-h-96 dark:bg-gray-800 dark:text-gray-100 overflow-auto whitespace-pre-wrap">${escapeHtml(JSON.stringify(result.result, null, 2))}</pre>
+            </details>`;
         }
 
-        testResult.innerHTML = resultHtml;
-
-        // Auto-hide after 10 seconds
-        setTimeout(() => {
-            testResult.classList.add("hidden");
-        }, 10000);
+        responseDiv.innerHTML = `
+            <div class="p-3 rounded ${isSuccess ? "bg-green-50 dark:bg-green-900/20" : "bg-red-50 dark:bg-red-900/20"}">
+                <h4 class="font-bold ${isSuccess ? "text-green-700 dark:text-green-400" : "text-red-700 dark:text-red-400"}">${icon} ${title}</h4>
+                ${result.error ? `<p class="text-red-600 dark:text-red-400 mt-2">Error: ${escapeHtml(result.error)}</p>` : ""}
+                ${bodyHtml}
+            </div>
+        `;
     } catch (error) {
-        console.error("A2A agent test failed:", error);
-
-        const testResult = document.getElementById(`test-result-${agentId}`);
-        testResult.innerHTML = `
-            <div class="text-red-600">
-                <div>❌ Test Failed</div>
-                <div class="text-xs mt-1">Error: ${escapeHtml(error.message)}</div>
-            </div>`;
-        testResult.classList.remove("hidden");
-
-        // Auto-hide after 10 seconds
-        setTimeout(() => {
-            testResult.classList.add("hidden");
-        }, 10000);
+        console.error("A2A test error:", error);
+        if (responseDiv) {
+            responseDiv.innerHTML = `<div class="text-red-600 dark:text-red-400 p-4 bg-red-50 dark:bg-red-900/20 rounded">❌ Error: ${escapeHtml(error.message)}</div>`;
+        }
+    } finally {
+        if (loading) {
+            loading.classList.add("hidden");
+        }
+        if (resultDiv) {
+            resultDiv.classList.remove("hidden");
+        }
+        if (testButton) {
+            testButton.disabled = false;
+            testButton.textContent = "Test Agent";
+        }
     }
 }
 
-// Expose A2A test function to global scope
+/**
+ * Handle A2A test modal close
+ */
+function handleA2ATestClose() {
+    try {
+        // Reset form
+        const form = safeGetElement("a2a-test-form");
+        if (form) {
+            form.reset();
+        }
+
+        // Clear response
+        const responseDiv = safeGetElement("a2a-test-response-json");
+        const resultDiv = safeGetElement("a2a-test-result");
+        if (responseDiv) {
+            responseDiv.innerHTML = "";
+        }
+        if (resultDiv) {
+            resultDiv.classList.add("hidden");
+        }
+
+        // Close modal
+        closeModal("a2a-test-modal");
+    } catch (error) {
+        console.error("Error closing A2A test modal:", error);
+    }
+}
+
+/**
+ * Clean up A2A test modal event listeners
+ */
+function cleanupA2ATestModal() {
+    try {
+        const form = safeGetElement("a2a-test-form");
+        const closeButton = safeGetElement("a2a-test-close");
+
+        if (form && a2aTestFormHandler) {
+            form.removeEventListener("submit", a2aTestFormHandler);
+            a2aTestFormHandler = null;
+        }
+
+        if (closeButton && a2aTestCloseHandler) {
+            closeButton.removeEventListener("click", a2aTestCloseHandler);
+            a2aTestCloseHandler = null;
+        }
+
+        console.log("✓ Cleaned up A2A test modal listeners");
+    } catch (error) {
+        console.error("Error cleaning up A2A test modal:", error);
+    }
+}
+
+// Expose A2A test functions to global scope
 window.testA2AAgent = testA2AAgent;
+window.openA2ATestModal = testA2AAgent;
+window.cleanupA2ATestModal = cleanupA2ATestModal;
 
 /**
  * Token Management Functions
@@ -19005,13 +19368,34 @@ function displayTokensList(tokens) {
             ? '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-100">Active</span>'
             : '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-100">Inactive</span>';
 
+        // Build scope badges
+        const teamName = token.team_id ? getTeamNameById(token.team_id) : null;
+        const teamBadge = teamName
+            ? `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-800 dark:text-purple-100">Team: ${escapeHtml(teamName)}</span>`
+            : '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300">Public-only</span>';
+
+        const ipBadge =
+            token.ip_restrictions && token.ip_restrictions.length > 0
+                ? `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-800 dark:text-orange-100">${token.ip_restrictions.length} IP${token.ip_restrictions.length > 1 ? "s" : ""}</span>`
+                : "";
+
+        const serverBadge = token.server_id
+            ? '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-800 dark:text-blue-100">Server-scoped</span>'
+            : "";
+
+        // Safely encode token data for data attribute (URL encoding preserves all characters)
+        const tokenDataEncoded = encodeURIComponent(JSON.stringify(token));
+
         tokensHTML += `
             <div class="border border-gray-200 dark:border-gray-600 rounded-lg p-4 mb-4">
                 <div class="flex justify-between items-start">
                     <div class="flex-1">
-                        <div class="flex items-center space-x-2">
+                        <div class="flex items-center flex-wrap gap-2">
                             <h4 class="text-lg font-medium text-gray-900 dark:text-white">${escapeHtml(token.name)}</h4>
                             ${statusBadge}
+                            ${teamBadge}
+                            ${serverBadge}
+                            ${ipBadge}
                         </div>
                         ${token.description ? `<p class="text-sm text-gray-600 dark:text-gray-400 mt-1">${escapeHtml(token.description)}</p>` : ""}
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3 text-sm text-gray-500 dark:text-gray-400">
@@ -19028,15 +19412,25 @@ function displayTokensList(tokens) {
                         ${token.server_id ? `<div class="mt-2 text-sm"><span class="font-medium text-gray-700 dark:text-gray-300">Scoped to Server:</span> ${escapeHtml(token.server_id)}</div>` : ""}
                         ${token.resource_scopes && token.resource_scopes.length > 0 ? `<div class="mt-1 text-sm"><span class="font-medium text-gray-700 dark:text-gray-300">Permissions:</span> ${token.resource_scopes.map((p) => escapeHtml(p)).join(", ")}</div>` : ""}
                     </div>
-                    <div class="flex space-x-2 ml-4">
+                    <div class="flex flex-wrap gap-2 ml-4">
                         <button
-                            onclick="viewTokenUsage('${token.id}')"
+                            data-action="token-details"
+                            data-token="${tokenDataEncoded}"
+                            class="px-3 py-1 text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 border border-gray-300 dark:border-gray-600 hover:border-gray-500 dark:hover:border-gray-400 rounded-md"
+                        >
+                            Details
+                        </button>
+                        <button
+                            data-action="token-usage"
+                            data-token-id="${escapeHtml(token.id)}"
                             class="px-3 py-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 border border-blue-300 dark:border-blue-600 hover:border-blue-500 dark:hover:border-blue-400 rounded-md"
                         >
                             Usage Stats
                         </button>
                         <button
-                            onclick="revokeToken('${token.id}', '${escapeHtml(token.name)}')"
+                            data-action="token-revoke"
+                            data-token-id="${escapeHtml(token.id)}"
+                            data-token-name="${escapeHtml(token.name)}"
                             class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md"
                         >
                             Revoke
@@ -19048,6 +19442,55 @@ function displayTokensList(tokens) {
     });
 
     tokensList.innerHTML = tokensHTML;
+
+    // Attach event handlers via delegation (avoids inline JS and XSS risks)
+    setupTokenListEventHandlers(tokensList);
+}
+
+/**
+ * Set up event handlers for token list buttons using event delegation.
+ * This avoids inline onclick handlers and associated XSS risks.
+ * Uses a one-time guard to prevent duplicate handlers on repeated renders.
+ * @param {HTMLElement} container - The tokens list container element
+ */
+function setupTokenListEventHandlers(container) {
+    // Guard against duplicate handlers on repeated renders
+    if (container.dataset.handlersAttached === "true") {
+        return;
+    }
+    container.dataset.handlersAttached = "true";
+
+    container.addEventListener("click", (event) => {
+        const button = event.target.closest("button[data-action]");
+        if (!button) {
+            return;
+        }
+
+        const action = button.dataset.action;
+
+        if (action === "token-details") {
+            const tokenData = button.dataset.token;
+            if (tokenData) {
+                try {
+                    const token = JSON.parse(decodeURIComponent(tokenData));
+                    showTokenDetailsModal(token);
+                } catch (e) {
+                    console.error("Failed to parse token data:", e);
+                }
+            }
+        } else if (action === "token-usage") {
+            const tokenId = button.dataset.tokenId;
+            if (tokenId) {
+                viewTokenUsage(tokenId);
+            }
+        } else if (action === "token-revoke") {
+            const tokenId = button.dataset.tokenId;
+            const tokenName = button.dataset.tokenName;
+            if (tokenId) {
+                revokeToken(tokenId, tokenName || "");
+            }
+        }
+    });
 }
 
 /**
@@ -19074,7 +19517,7 @@ function getCurrentTeamId() {
 
     // Fallback: check URL parameters
     const urlParams = new URLSearchParams(window.location.search);
-    const teamId = urlParams.get("teamid");
+    const teamId = urlParams.get("team_id");
 
     if (!teamId || teamId === "" || teamId === "all") {
         return null;
@@ -19220,6 +19663,73 @@ function setupCreateTokenForm() {
 }
 
 /**
+ * Validate an IP address or CIDR notation string.
+ * @param {string} value - The IP/CIDR string to validate
+ * @returns {boolean} True if valid IPv4/IPv6 address or CIDR notation
+ */
+function isValidIpOrCidr(value) {
+    if (!value || typeof value !== "string") {
+        return false;
+    }
+
+    const trimmed = value.trim();
+
+    // IPv4 with optional CIDR (e.g., 192.168.1.0/24 or 192.168.1.1)
+    const ipv4Segment = "(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)";
+    const ipv4Pattern = new RegExp(
+        `^(?:${ipv4Segment}\\.){3}${ipv4Segment}(?:\\/(?:[0-9]|[1-2][0-9]|3[0-2]))?$`,
+    );
+
+    // IPv6 with optional CIDR (supports compressed forms and IPv4-embedded)
+    const ipv6Segment = "[0-9A-Fa-f]{1,4}";
+    const ipv4Embedded = `(?:${ipv4Segment}\\.){3}${ipv4Segment}`;
+    const ipv6Pattern = new RegExp(
+        "^(?:" +
+            `(?:${ipv6Segment}:){7}${ipv6Segment}|` +
+            `(?:${ipv6Segment}:){1,7}:|` +
+            `(?:${ipv6Segment}:){1,6}:${ipv6Segment}|` +
+            `(?:${ipv6Segment}:){1,5}(?::${ipv6Segment}){1,2}|` +
+            `(?:${ipv6Segment}:){1,4}(?::${ipv6Segment}){1,3}|` +
+            `(?:${ipv6Segment}:){1,3}(?::${ipv6Segment}){1,4}|` +
+            `(?:${ipv6Segment}:){1,2}(?::${ipv6Segment}){1,5}|` +
+            `${ipv6Segment}:(?::${ipv6Segment}){1,6}|` +
+            `:(?::${ipv6Segment}){1,7}|` +
+            "::|" +
+            `(?:${ipv6Segment}:){1,4}:${ipv4Embedded}|` +
+            `::(?:ffff(?::0{1,4}){0,1}:)?${ipv4Embedded}` +
+            ")(?:\\/(?:[0-9]|[1-9][0-9]|1[01][0-9]|12[0-8]))?$",
+    );
+
+    return ipv4Pattern.test(trimmed) || ipv6Pattern.test(trimmed);
+}
+
+/**
+ * Validate a permission scope string.
+ * Permissions should follow format: resource.action (e.g., tools.read, resources.write)
+ * Also allows wildcard (*) for full access.
+ * @param {string} value - The permission string to validate
+ * @returns {boolean} True if valid permission format
+ */
+function isValidPermission(value) {
+    if (!value || typeof value !== "string") {
+        return false;
+    }
+
+    const trimmed = value.trim();
+
+    // Allow wildcard
+    if (trimmed === "*") {
+        return true;
+    }
+
+    // Permission format: resource.action (alphanumeric with underscores, dot-separated)
+    // Examples: tools.read, resources.write, prompts.list, tools.execute
+    const permissionPattern = /^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/i;
+
+    return permissionPattern.test(trimmed);
+}
+
+/**
  * Create a new API token
  */
 // Create a new API token
@@ -19253,21 +19763,48 @@ async function createToken(form) {
             scope.server_id = formData.get("server_id");
         }
 
+        // Parse and validate IP restrictions
         if (formData.get("ip_restrictions")) {
             const ipRestrictions = formData.get("ip_restrictions").trim();
-            scope.ip_restrictions = ipRestrictions
-                ? ipRestrictions.split(",").map((ip) => ip.trim())
-                : [];
+            if (ipRestrictions) {
+                const ipList = ipRestrictions
+                    .split(",")
+                    .map((ip) => ip.trim())
+                    .filter((ip) => ip.length > 0);
+
+                // Validate each IP/CIDR
+                const invalidIps = ipList.filter((ip) => !isValidIpOrCidr(ip));
+                if (invalidIps.length > 0) {
+                    throw new Error(
+                        `Invalid IP address or CIDR format: ${invalidIps.join(", ")}. ` +
+                            "Use formats like 192.168.1.0/24 or 10.0.0.1",
+                    );
+                }
+                scope.ip_restrictions = ipList;
+            } else {
+                scope.ip_restrictions = [];
+            }
         } else {
             scope.ip_restrictions = [];
         }
 
+        // Parse and validate permissions
         if (formData.get("permissions")) {
-            scope.permissions = formData
+            const permList = formData
                 .get("permissions")
                 .split(",")
                 .map((p) => p.trim())
                 .filter((p) => p.length > 0);
+
+            // Validate each permission
+            const invalidPerms = permList.filter((p) => !isValidPermission(p));
+            if (invalidPerms.length > 0) {
+                throw new Error(
+                    `Invalid permission format: ${invalidPerms.join(", ")}. ` +
+                        "Use formats like tools.read, resources.write, or * for full access",
+                );
+            }
+            scope.permissions = permList;
         } else {
             scope.permissions = [];
         }
@@ -19286,10 +19823,11 @@ async function createToken(form) {
         });
 
         if (!response.ok) {
-            const error = await response.json();
-            throw new Error(
-                error.detail || `Failed to create token (${response.status})`,
+            const errorMsg = await parseErrorResponse(
+                response,
+                `Failed to create token (${response.status})`,
             );
+            throw new Error(errorMsg);
         }
 
         const result = await response.json();
@@ -19432,10 +19970,11 @@ async function revokeToken(tokenId, tokenName) {
         );
 
         if (!response.ok) {
-            const error = await response.json();
-            throw new Error(
-                error.detail || `Failed to revoke token: ${response.status}`,
+            const errorMsg = await parseErrorResponse(
+                response,
+                `Failed to revoke token: ${response.status}`,
             );
+            throw new Error(errorMsg);
         }
 
         showNotification("Token revoked successfully", "success");
@@ -19552,6 +20091,253 @@ function showUsageStatsModal(stats) {
     `;
 
     document.body.appendChild(modal);
+}
+
+/**
+ * Get team name by team ID from cached team data
+ * @param {string} teamId - The team ID to look up
+ * @returns {string} Team name or truncated ID if not found
+ */
+function getTeamNameById(teamId) {
+    if (!teamId) {
+        return null;
+    }
+
+    // Try from window.USERTEAMSDATA (most reliable source)
+    if (window.USERTEAMSDATA && Array.isArray(window.USERTEAMSDATA)) {
+        const teamObj = window.USERTEAMSDATA.find((t) => t.id === teamId);
+        if (teamObj) {
+            return teamObj.name;
+        }
+    }
+
+    // Try from Alpine.js component
+    const teamSelector = document.querySelector('[x-data*="selectedTeam"]');
+    if (
+        teamSelector &&
+        teamSelector._x_dataStack &&
+        teamSelector._x_dataStack[0]
+    ) {
+        const alpineData = teamSelector._x_dataStack[0];
+        if (alpineData.teams && Array.isArray(alpineData.teams)) {
+            const teamObj = alpineData.teams.find((t) => t.id === teamId);
+            if (teamObj) {
+                return teamObj.name;
+            }
+        }
+    }
+
+    // Fallback: return truncated ID
+    return teamId.substring(0, 8) + "...";
+}
+
+/**
+ * Show token details modal with full token information
+ * @param {Object} token - The token object with all fields
+ */
+function showTokenDetailsModal(token) {
+    const formatDate = (dateStr) => {
+        if (!dateStr) {
+            return "Never";
+        }
+        return new Date(dateStr).toLocaleString();
+    };
+
+    const formatList = (list) => {
+        if (!list || list.length === 0) {
+            return "None";
+        }
+        return list
+            .map((item) => `<li class="ml-4">• ${escapeHtml(item)}</li>`)
+            .join("");
+    };
+
+    const formatJson = (obj) => {
+        if (!obj || Object.keys(obj).length === 0) {
+            return "None";
+        }
+        return `<pre class="bg-gray-100 dark:bg-gray-700 p-2 rounded text-xs overflow-x-auto">${escapeHtml(JSON.stringify(obj, null, 2))}</pre>`;
+    };
+
+    const teamName = token.team_id ? getTeamNameById(token.team_id) : null;
+    const statusClass = token.is_active
+        ? "bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-100"
+        : "bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-100";
+    const statusText = token.is_active ? "Active" : "Inactive";
+
+    const modal = document.createElement("div");
+    modal.className =
+        "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50";
+    modal.innerHTML = `
+        <div class="relative top-10 mx-auto p-5 border w-11/12 max-w-2xl shadow-lg rounded-md bg-white dark:bg-gray-800 mb-10">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-medium text-gray-900 dark:text-white">Token Details</h3>
+                <button data-action="close-modal" class="text-gray-400 hover:text-gray-600">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Basic Information -->
+            <div class="mb-6">
+                <h4 class="text-md font-semibold text-gray-900 dark:text-white mb-3 border-b border-gray-200 dark:border-gray-600 pb-2">Basic Information</h4>
+                <div class="grid grid-cols-1 gap-2 text-sm">
+                    <div class="flex items-center">
+                        <span class="font-medium text-gray-700 dark:text-gray-300 w-28">ID:</span>
+                        <code class="bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded text-xs flex-1 overflow-hidden text-ellipsis">${escapeHtml(token.id)}</code>
+                        <button data-action="copy-id" data-copy-value="${escapeHtml(token.id)}"
+                                class="ml-2 px-2 py-0.5 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 border border-blue-300 dark:border-blue-600 rounded">
+                            Copy
+                        </button>
+                    </div>
+                    <div class="flex">
+                        <span class="font-medium text-gray-700 dark:text-gray-300 w-28">Name:</span>
+                        <span class="text-gray-900 dark:text-white">${escapeHtml(token.name)}</span>
+                    </div>
+                    <div class="flex">
+                        <span class="font-medium text-gray-700 dark:text-gray-300 w-28">Description:</span>
+                        <span class="text-gray-600 dark:text-gray-400">${token.description ? escapeHtml(token.description) : "None"}</span>
+                    </div>
+                    <div class="flex">
+                        <span class="font-medium text-gray-700 dark:text-gray-300 w-28">Created by:</span>
+                        <span class="text-gray-900 dark:text-white">${escapeHtml(token.user_email || "Unknown")}</span>
+                    </div>
+                    <div class="flex">
+                        <span class="font-medium text-gray-700 dark:text-gray-300 w-28">Team:</span>
+                        <span class="text-gray-900 dark:text-white">${teamName ? `${escapeHtml(teamName)} <code class="text-xs text-gray-500">(${escapeHtml(token.team_id.substring(0, 8))}...)</code>` : "None (Public-only)"}</span>
+                    </div>
+                    <div class="flex">
+                        <span class="font-medium text-gray-700 dark:text-gray-300 w-28">Created:</span>
+                        <span class="text-gray-600 dark:text-gray-400">${formatDate(token.created_at)}</span>
+                    </div>
+                    <div class="flex">
+                        <span class="font-medium text-gray-700 dark:text-gray-300 w-28">Expires:</span>
+                        <span class="text-gray-600 dark:text-gray-400">${formatDate(token.expires_at)}</span>
+                    </div>
+                    <div class="flex">
+                        <span class="font-medium text-gray-700 dark:text-gray-300 w-28">Last Used:</span>
+                        <span class="text-gray-600 dark:text-gray-400">${formatDate(token.last_used)}</span>
+                    </div>
+                    <div class="flex items-center">
+                        <span class="font-medium text-gray-700 dark:text-gray-300 w-28">Status:</span>
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusClass}">${statusText}</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Scope & Restrictions -->
+            <div class="mb-6">
+                <h4 class="text-md font-semibold text-gray-900 dark:text-white mb-3 border-b border-gray-200 dark:border-gray-600 pb-2">Scope & Restrictions</h4>
+                <div class="grid grid-cols-1 gap-3 text-sm">
+                    <div>
+                        <span class="font-medium text-gray-700 dark:text-gray-300">Server:</span>
+                        <span class="ml-2 text-gray-600 dark:text-gray-400">${token.server_id ? escapeHtml(token.server_id) : "All servers"}</span>
+                    </div>
+                    <div>
+                        <span class="font-medium text-gray-700 dark:text-gray-300">Permissions:</span>
+                        ${
+                            token.resource_scopes &&
+                            token.resource_scopes.length > 0
+                                ? `<ul class="mt-1 text-gray-600 dark:text-gray-400">${formatList(token.resource_scopes)}</ul>`
+                                : '<span class="ml-2 text-gray-600 dark:text-gray-400">All (no restrictions)</span>'
+                        }
+                    </div>
+                    <div>
+                        <span class="font-medium text-gray-700 dark:text-gray-300">IP Restrictions:</span>
+                        ${
+                            token.ip_restrictions &&
+                            token.ip_restrictions.length > 0
+                                ? `<ul class="mt-1 text-gray-600 dark:text-gray-400">${formatList(token.ip_restrictions)}</ul>`
+                                : '<span class="ml-2 text-gray-600 dark:text-gray-400">None</span>'
+                        }
+                    </div>
+                    <div>
+                        <span class="font-medium text-gray-700 dark:text-gray-300">Time Restrictions:</span>
+                        <div class="mt-1">${formatJson(token.time_restrictions)}</div>
+                    </div>
+                    <div>
+                        <span class="font-medium text-gray-700 dark:text-gray-300">Usage Limits:</span>
+                        <div class="mt-1">${formatJson(token.usage_limits)}</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tags -->
+            ${
+                token.tags && token.tags.length > 0
+                    ? `
+            <div class="mb-6">
+                <h4 class="text-md font-semibold text-gray-900 dark:text-white mb-3 border-b border-gray-200 dark:border-gray-600 pb-2">Tags</h4>
+                <div class="flex flex-wrap gap-2">
+                    ${token.tags.map((tag) => `<span class="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs rounded">${escapeHtml(tag)}</span>`).join("")}
+                </div>
+            </div>
+            `
+                    : ""
+            }
+
+            <!-- Revocation Details (if revoked) -->
+            ${
+                token.is_revoked
+                    ? `
+            <div class="mb-6">
+                <h4 class="text-md font-semibold text-red-600 dark:text-red-400 mb-3 border-b border-red-200 dark:border-red-600 pb-2">Revocation Details</h4>
+                <div class="grid grid-cols-1 gap-2 text-sm bg-red-50 dark:bg-red-900/20 p-3 rounded">
+                    <div class="flex">
+                        <span class="font-medium text-red-700 dark:text-red-300 w-28">Revoked at:</span>
+                        <span class="text-red-600 dark:text-red-400">${formatDate(token.revoked_at)}</span>
+                    </div>
+                    <div class="flex">
+                        <span class="font-medium text-red-700 dark:text-red-300 w-28">Revoked by:</span>
+                        <span class="text-red-600 dark:text-red-400">${token.revoked_by ? escapeHtml(token.revoked_by) : "Unknown"}</span>
+                    </div>
+                    <div class="flex">
+                        <span class="font-medium text-red-700 dark:text-red-300 w-28">Reason:</span>
+                        <span class="text-red-600 dark:text-red-400">${token.revocation_reason ? escapeHtml(token.revocation_reason) : "No reason provided"}</span>
+                    </div>
+                </div>
+            </div>
+            `
+                    : ""
+            }
+
+            <div class="flex justify-end">
+                <button
+                    data-action="close-modal"
+                    class="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500"
+                >
+                    Close
+                </button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    // Attach event handlers (avoids inline JS and XSS risks)
+    modal.addEventListener("click", (event) => {
+        const button = event.target.closest("button[data-action]");
+        if (!button) {
+            return;
+        }
+
+        const action = button.dataset.action;
+
+        if (action === "close-modal") {
+            modal.remove();
+        } else if (action === "copy-id") {
+            const value = button.dataset.copyValue;
+            if (value) {
+                navigator.clipboard.writeText(value).then(() => {
+                    button.textContent = "Copied!";
+                    setTimeout(() => {
+                        button.textContent = "Copy";
+                    }, 1500);
+                });
+            }
+        }
+    });
 }
 
 /**
@@ -19728,6 +20514,427 @@ function hideAddMemberForm(teamId) {
 // Expose team member management functions to global scope
 window.showAddMemberForm = showAddMemberForm;
 window.hideAddMemberForm = hideAddMemberForm;
+
+// Reset team creation form after successful HTMX actions
+function resetTeamCreateForm() {
+    const form = document.querySelector('form[hx-post*="/admin/teams"]');
+    if (form) {
+        form.reset();
+    }
+}
+
+// Normalize team ID from element IDs like "add-members-form-<id>"
+function extractTeamId(prefix, elementId) {
+    if (!elementId || !elementId.startsWith(prefix)) {
+        return null;
+    }
+    return elementId.slice(prefix.length);
+}
+
+function updateAddMembersCount(teamId) {
+    const form = document.getElementById(`add-members-form-${teamId}`);
+    const countEl = document.getElementById(`selected-count-${teamId}`);
+    if (!form || !countEl) {
+        return;
+    }
+    const checked = form.querySelectorAll(
+        'input[name="associatedUsers"]:checked',
+    );
+    countEl.textContent =
+        checked.length === 0
+            ? "No users selected"
+            : `${checked.length} user${checked.length !== 1 ? "s" : ""} selected`;
+}
+
+function dedupeSelectorItems(container) {
+    if (!container) {
+        return;
+    }
+    const seen = new Set();
+    const items = Array.from(container.querySelectorAll(".user-item"));
+    items.forEach((item) => {
+        const email = item.getAttribute("data-user-email") || "";
+        if (!email) {
+            return;
+        }
+        if (seen.has(email)) {
+            item.remove();
+            return;
+        }
+        seen.add(email);
+    });
+}
+
+function initializeAddMembersForm(form) {
+    if (!form || form.dataset.initialized === "true") {
+        return;
+    }
+    form.dataset.initialized = "true";
+
+    const teamId =
+        form.dataset.teamId ||
+        extractTeamId("add-members-form-", form.id) ||
+        "";
+    if (!teamId) {
+        return;
+    }
+
+    const searchInput = document.getElementById(`user-search-${teamId}`);
+    const searchResults = document.getElementById(
+        `user-search-results-${teamId}`,
+    );
+    const searchLoading = document.getElementById(
+        `user-search-loading-${teamId}`,
+    );
+
+    const memberEmails = [];
+    if (searchResults?.dataset.memberEmails) {
+        try {
+            const parsed = JSON.parse(searchResults.dataset.memberEmails);
+            if (Array.isArray(parsed)) {
+                memberEmails.push(...parsed);
+            }
+        } catch (error) {
+            console.warn("Failed to parse member emails", error);
+        }
+    }
+    const memberEmailSet = new Set(memberEmails);
+
+    form.addEventListener("change", function (event) {
+        if (event.target?.name === "associatedUsers") {
+            updateAddMembersCount(teamId);
+            const userItem = event.target.closest(".user-item");
+            if (userItem) {
+                const roleSelect = userItem.querySelector(".role-select");
+                if (roleSelect) {
+                    roleSelect.disabled = !event.target.checked;
+                }
+            }
+        }
+    });
+
+    updateAddMembersCount(teamId);
+
+    if (!searchInput || !searchResults) {
+        return;
+    }
+
+    let searchTimeout;
+    searchInput.addEventListener("input", function () {
+        clearTimeout(searchTimeout);
+        const query = this.value.trim();
+
+        if (query.length < 2) {
+            searchResults.innerHTML = "";
+            if (searchLoading) {
+                searchLoading.classList.add("hidden");
+            }
+            return;
+        }
+
+        searchTimeout = setTimeout(async () => {
+            if (searchLoading) {
+                searchLoading.classList.remove("hidden");
+            }
+            try {
+                const searchUrl = searchInput.dataset.searchUrl || "";
+                const limit = searchInput.dataset.searchLimit || "10";
+                if (!searchUrl) {
+                    throw new Error("Search URL missing");
+                }
+                const response = await fetchWithAuth(
+                    `${searchUrl}?q=${encodeURIComponent(query)}&limit=${limit}`,
+                );
+                if (!response.ok) {
+                    throw new Error(`Search failed: ${response.status}`);
+                }
+                const data = await response.json();
+
+                searchResults.innerHTML = "";
+                if (data.users && data.users.length > 0) {
+                    const container = document.createElement("div");
+                    container.className =
+                        "bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md p-2 mt-1";
+
+                    data.users.forEach((user) => {
+                        if (memberEmailSet.has(user.email)) {
+                            return;
+                        }
+                        const item = document.createElement("div");
+                        item.className =
+                            "p-2 hover:bg-gray-50 dark:hover:bg-gray-700 rounded cursor-pointer text-sm";
+                        item.textContent = `${user.full_name || ""} (${user.email})`;
+                        item.addEventListener("click", () => {
+                            const container = document.getElementById(
+                                `user-selector-container-${teamId}`,
+                            );
+                            if (!container) {
+                                return;
+                            }
+                            const checkbox = container.querySelector(
+                                `input[value="${user.email}"]`,
+                            );
+
+                            if (checkbox) {
+                                checkbox.checked = true;
+                                checkbox.dispatchEvent(
+                                    new Event("change", { bubbles: true }),
+                                );
+                            } else {
+                                const userItem = document.createElement("div");
+                                userItem.className =
+                                    "flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-2 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item";
+                                userItem.setAttribute(
+                                    "data-user-email",
+                                    user.email,
+                                );
+
+                                const newCheckbox =
+                                    document.createElement("input");
+                                newCheckbox.type = "checkbox";
+                                newCheckbox.name = "associatedUsers";
+                                newCheckbox.value = user.email;
+                                newCheckbox.setAttribute(
+                                    "data-user-name",
+                                    user.full_name || "",
+                                );
+                                newCheckbox.className =
+                                    "user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0";
+                                newCheckbox.setAttribute(
+                                    "data-auto-check",
+                                    "true",
+                                );
+                                newCheckbox.checked = true;
+
+                                const label = document.createElement("span");
+                                label.className = "select-none flex-grow";
+                                label.textContent = `${user.full_name || ""} (${user.email})`;
+
+                                const roleSelect =
+                                    document.createElement("select");
+                                roleSelect.name = `role_${encodeURIComponent(
+                                    user.email,
+                                )}`;
+                                roleSelect.className =
+                                    "role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0";
+
+                                const memberOption =
+                                    document.createElement("option");
+                                memberOption.value = "member";
+                                memberOption.textContent = "Member";
+                                memberOption.selected = true;
+
+                                const ownerOption =
+                                    document.createElement("option");
+                                ownerOption.value = "owner";
+                                ownerOption.textContent = "Owner";
+
+                                roleSelect.appendChild(memberOption);
+                                roleSelect.appendChild(ownerOption);
+
+                                userItem.appendChild(newCheckbox);
+                                userItem.appendChild(label);
+                                userItem.appendChild(roleSelect);
+
+                                const firstChild = container.firstChild;
+                                if (firstChild) {
+                                    container.insertBefore(
+                                        userItem,
+                                        firstChild,
+                                    );
+                                } else {
+                                    container.appendChild(userItem);
+                                }
+
+                                newCheckbox.dispatchEvent(
+                                    new Event("change", { bubbles: true }),
+                                );
+                            }
+
+                            searchInput.value = "";
+                            searchResults.innerHTML = "";
+                        });
+                        container.appendChild(item);
+                    });
+
+                    if (container.childElementCount > 0) {
+                        searchResults.appendChild(container);
+                    } else {
+                        const empty = document.createElement("div");
+                        empty.className =
+                            "text-sm text-gray-500 dark:text-gray-400 mt-1";
+                        empty.textContent = "No users found";
+                        searchResults.appendChild(empty);
+                    }
+                } else {
+                    const empty = document.createElement("div");
+                    empty.className =
+                        "text-sm text-gray-500 dark:text-gray-400 mt-1";
+                    empty.textContent = "No users found";
+                    searchResults.appendChild(empty);
+                }
+            } catch (error) {
+                console.error("Search error:", error);
+                searchResults.innerHTML = "";
+                const errorEl = document.createElement("div");
+                errorEl.className = "text-sm text-red-500 mt-1";
+                errorEl.textContent = "Search failed";
+                searchResults.appendChild(errorEl);
+            } finally {
+                if (searchLoading) {
+                    searchLoading.classList.add("hidden");
+                }
+            }
+        }, 300);
+    });
+}
+
+function initializeAddMembersForms(root = document) {
+    const forms = root?.querySelectorAll?.('[id^="add-members-form-"]') || [];
+    forms.forEach((form) => initializeAddMembersForm(form));
+}
+
+function handleAdminTeamAction(event) {
+    const detail = event.detail || {};
+    const delayMs = Number(detail.delayMs) || 0;
+    setTimeout(() => {
+        if (detail.resetTeamCreateForm) {
+            resetTeamCreateForm();
+        }
+        if (
+            detail.closeTeamEditModal &&
+            typeof hideTeamEditModal === "function"
+        ) {
+            hideTeamEditModal();
+        }
+        if (detail.closeRoleModal) {
+            const roleModal = document.getElementById("role-assignment-modal");
+            if (roleModal) {
+                roleModal.classList.add("hidden");
+            }
+        }
+        if (detail.closeAllModals) {
+            const modals = document.querySelectorAll('[id$="-modal"]');
+            modals.forEach((modal) => modal.classList.add("hidden"));
+        }
+        if (detail.refreshTeamsList) {
+            const teamsList = safeGetElement("teams-list");
+            if (teamsList && window.htmx) {
+                window.htmx.trigger(teamsList, "load");
+            }
+        }
+        if (detail.refreshUnifiedTeamsList && window.htmx) {
+            const unifiedList = document.getElementById("unified-teams-list");
+            if (unifiedList) {
+                window.htmx.ajax(
+                    "GET",
+                    `${window.ROOT_PATH || ""}/admin/teams?unified=true`,
+                    {
+                        target: "#unified-teams-list",
+                        swap: "innerHTML",
+                    },
+                );
+            }
+        }
+        if (detail.refreshTeamMembers && detail.teamId) {
+            if (typeof window.loadTeamMembersView === "function") {
+                window.loadTeamMembersView(detail.teamId);
+            } else if (window.htmx) {
+                const modalContent = document.getElementById(
+                    "team-edit-modal-content",
+                );
+                if (modalContent) {
+                    window.htmx.ajax(
+                        "GET",
+                        `${window.ROOT_PATH || ""}/admin/teams/${detail.teamId}/members`,
+                        {
+                            target: "#team-edit-modal-content",
+                            swap: "innerHTML",
+                        },
+                    );
+                }
+            }
+        }
+        if (detail.refreshJoinRequests && detail.teamId && window.htmx) {
+            const joinRequests = document.getElementById(
+                "team-join-requests-modal-content",
+            );
+            if (joinRequests) {
+                window.htmx.ajax(
+                    "GET",
+                    `${window.ROOT_PATH || ""}/admin/teams/${detail.teamId}/join-requests`,
+                    {
+                        target: "#team-join-requests-modal-content",
+                        swap: "innerHTML",
+                    },
+                );
+            }
+        }
+    }, delayMs);
+}
+
+function handleAdminUserAction(event) {
+    const detail = event.detail || {};
+    const delayMs = Number(detail.delayMs) || 0;
+    setTimeout(() => {
+        if (
+            detail.closeUserEditModal &&
+            typeof hideUserEditModal === "function"
+        ) {
+            hideUserEditModal();
+        }
+        if (detail.refreshUsersList) {
+            const usersList = document.getElementById("users-list-container");
+            if (usersList && window.htmx) {
+                window.htmx.trigger(usersList, "refreshUsers");
+            }
+        }
+    }, delayMs);
+}
+
+function registerAdminActionListeners() {
+    if (!document.body) {
+        return;
+    }
+    if (document.body.dataset.adminActionListeners === "1") {
+        return;
+    }
+    document.body.dataset.adminActionListeners = "1";
+
+    document.body.addEventListener("adminTeamAction", handleAdminTeamAction);
+    document.body.addEventListener("adminUserAction", handleAdminUserAction);
+    document.body.addEventListener("userCreated", function () {
+        handleAdminUserAction({ detail: { refreshUsersList: true } });
+    });
+
+    document.body.addEventListener("htmx:afterSwap", function (event) {
+        initializeAddMembersForms(event.target);
+        initializePasswordValidation(event.target);
+        const target = event.target;
+        if (
+            target &&
+            target.id &&
+            target.id.startsWith("user-selector-container-")
+        ) {
+            const teamId = extractTeamId("user-selector-container-", target.id);
+            if (teamId) {
+                dedupeSelectorItems(target);
+                updateAddMembersCount(teamId);
+            }
+        }
+    });
+
+    document.body.addEventListener("htmx:load", function (event) {
+        initializeAddMembersForms(event.target);
+        initializePasswordValidation(event.target);
+    });
+}
+
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", registerAdminActionListeners);
+} else {
+    registerAdminActionListeners();
+}
 
 // Logs refresh function
 function refreshLogs() {
@@ -20123,6 +21330,100 @@ window.rejectJoinRequest = rejectJoinRequest;
 /**
  * Validate password match in user edit form
  */
+function getPasswordPolicy() {
+    const policyEl = document.getElementById("password-policy-data");
+    if (!policyEl) {
+        return null;
+    }
+    return {
+        minLength: parseInt(policyEl.dataset.minLength || "0", 10),
+        requireUppercase: policyEl.dataset.requireUppercase === "true",
+        requireLowercase: policyEl.dataset.requireLowercase === "true",
+        requireNumbers: policyEl.dataset.requireNumbers === "true",
+        requireSpecial: policyEl.dataset.requireSpecial === "true",
+    };
+}
+
+function updateRequirementIcon(elementId, isValid) {
+    const req = document.getElementById(elementId);
+    if (!req) {
+        return;
+    }
+    const icon = req.querySelector("span");
+    if (!icon) {
+        return;
+    }
+    if (isValid) {
+        icon.className =
+            "inline-flex items-center justify-center w-4 h-4 bg-green-500 text-white rounded-full text-xs mr-2";
+        icon.textContent = "✓";
+    } else {
+        icon.className =
+            "inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2";
+        icon.textContent = "✗";
+    }
+}
+
+function validatePasswordRequirements() {
+    const policy = getPasswordPolicy();
+    const passwordField = document.getElementById("password-field");
+    if (!policy || !passwordField) {
+        return;
+    }
+
+    const password = passwordField.value || "";
+    const lengthCheck = password.length >= policy.minLength;
+    updateRequirementIcon("req-length", lengthCheck);
+
+    const uppercaseCheck = !policy.requireUppercase || /[A-Z]/.test(password);
+    updateRequirementIcon("req-uppercase", uppercaseCheck);
+
+    const lowercaseCheck = !policy.requireLowercase || /[a-z]/.test(password);
+    updateRequirementIcon("req-lowercase", lowercaseCheck);
+
+    const numbersCheck = !policy.requireNumbers || /[0-9]/.test(password);
+    updateRequirementIcon("req-numbers", numbersCheck);
+
+    const specialChars = "!@#$%^&*()_+-=[]{};:'\"\\|,.<>`~/?";
+    const specialCheck =
+        !policy.requireSpecial ||
+        [...password].some((char) => specialChars.includes(char));
+    updateRequirementIcon("req-special", specialCheck);
+
+    const submitButton = document.querySelector(
+        '#user-edit-modal-content button[type="submit"]',
+    );
+    const allRequirementsMet =
+        lengthCheck &&
+        uppercaseCheck &&
+        lowercaseCheck &&
+        numbersCheck &&
+        specialCheck;
+    const passwordEmpty = password.length === 0;
+
+    if (submitButton) {
+        if (passwordEmpty || allRequirementsMet) {
+            submitButton.disabled = false;
+            submitButton.className =
+                "px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500";
+        } else {
+            submitButton.disabled = true;
+            submitButton.className =
+                "px-4 py-2 text-sm font-medium text-white bg-gray-400 border border-transparent rounded-md cursor-not-allowed";
+        }
+    }
+}
+
+function initializePasswordValidation(root = document) {
+    if (
+        root?.querySelector?.("#password-field") ||
+        document.getElementById("password-field")
+    ) {
+        validatePasswordRequirements();
+        validatePasswordMatch();
+    }
+}
+
 function validatePasswordMatch() {
     const passwordField = document.getElementById("password-field");
     const confirmPasswordField = document.getElementById(
@@ -20163,6 +21464,7 @@ function validatePasswordMatch() {
 
 // Expose password validation function to global scope
 window.validatePasswordMatch = validatePasswordMatch;
+window.validatePasswordRequirements = validatePasswordRequirements;
 
 // ===================================================================
 // SELECTIVE IMPORT FUNCTIONS
@@ -21322,7 +22624,7 @@ function initializePluginFunctions() {
 }
 
 // Initialize plugin functions if plugins panel exists
-if (document.getElementById("plugins-panel")) {
+if (isAdminUser() && document.getElementById("plugins-panel")) {
     initializePluginFunctions();
     // Populate filter dropdowns on initial load
     if (window.populatePluginFilters) {
@@ -21560,7 +22862,32 @@ function initializeChatScroll() {
 /**
  * Generate a unique user ID for the session
  */
+function getAuthenticatedUserId() {
+    const currentUser = window.CURRENT_USER;
+    if (!currentUser) {
+        return "";
+    }
+    if (typeof currentUser === "string") {
+        return currentUser;
+    }
+    if (typeof currentUser === "object") {
+        return (
+            currentUser.id ||
+            currentUser.user_id ||
+            currentUser.sub ||
+            currentUser.email ||
+            ""
+        );
+    }
+    return "";
+}
+
 function generateUserId() {
+    const authenticatedUserId = getAuthenticatedUserId();
+    if (authenticatedUserId) {
+        sessionStorage.setItem("llm_chat_user_id", authenticatedUserId);
+        return authenticatedUserId;
+    }
     // Check if user ID exists in session storage
     let userId = sessionStorage.getItem("llm_chat_user_id");
     if (!userId) {
@@ -23780,10 +25107,18 @@ async function serverSideToolSearch(searchTerm) {
     }
 
     try {
-        // Call the search API with gateway filter
-        const searchUrl = gatewayIdParam
-            ? `${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100&gateway_id=${encodeURIComponent(gatewayIdParam)}`
-            : `${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
+        // Call the search API with gateway and team filters
+        const selectedTeamId = getCurrentTeamId();
+        const params = new URLSearchParams();
+        params.set("q", searchTerm);
+        params.set("limit", "100");
+        if (gatewayIdParam) {
+            params.set("gateway_id", gatewayIdParam);
+        }
+        if (selectedTeamId) {
+            params.set("team_id", selectedTeamId);
+        }
+        const searchUrl = `${window.ROOT_PATH}/admin/tools/search?${params.toString()}`;
 
         console.log(`[Tool Search] Searching tools with URL: ${searchUrl}`);
 
@@ -24200,10 +25535,18 @@ async function serverSidePromptSearch(searchTerm) {
     }
 
     try {
-        // Call the search API with gateway filter
-        const searchUrl = gatewayIdParam
-            ? `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100&gateway_id=${encodeURIComponent(gatewayIdParam)}`
-            : `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
+        // Call the search API with gateway and team filters
+        const selectedTeamId = getCurrentTeamId();
+        const params = new URLSearchParams();
+        params.set("q", searchTerm);
+        params.set("limit", "100");
+        if (gatewayIdParam) {
+            params.set("gateway_id", gatewayIdParam);
+        }
+        if (selectedTeamId) {
+            params.set("team_id", selectedTeamId);
+        }
+        const searchUrl = `${window.ROOT_PATH}/admin/prompts/search?${params.toString()}`;
 
         console.log(`[Prompt Search] Searching prompts with URL: ${searchUrl}`);
 
@@ -24507,10 +25850,18 @@ async function serverSideResourceSearch(searchTerm) {
     }
 
     try {
-        // Call the search API with gateway filter
-        const searchUrl = gatewayIdParam
-            ? `${window.ROOT_PATH}/admin/resources/search?q=${encodeURIComponent(searchTerm)}&limit=100&gateway_id=${encodeURIComponent(gatewayIdParam)}`
-            : `${window.ROOT_PATH}/admin/resources/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
+        // Call the search API with gateway and team filters
+        const selectedTeamId = getCurrentTeamId();
+        const params = new URLSearchParams();
+        params.set("q", searchTerm);
+        params.set("limit", "100");
+        if (gatewayIdParam) {
+            params.set("gateway_id", gatewayIdParam);
+        }
+        if (selectedTeamId) {
+            params.set("team_id", selectedTeamId);
+        }
+        const searchUrl = `${window.ROOT_PATH}/admin/resources/search?${params.toString()}`;
 
         console.log(
             `[Resource Search] Searching resources with URL: ${searchUrl}`,
@@ -24815,10 +26166,18 @@ async function serverSideEditToolSearch(searchTerm) {
     }
 
     try {
-        // Call the search API with gateway filter
-        const searchUrl = gatewayIdParam
-            ? `${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100&gateway_id=${encodeURIComponent(gatewayIdParam)}`
-            : `${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
+        // Call the search API with gateway and team filters
+        const selectedTeamId = getCurrentTeamId();
+        const params = new URLSearchParams();
+        params.set("q", searchTerm);
+        params.set("limit", "100");
+        if (gatewayIdParam) {
+            params.set("gateway_id", gatewayIdParam);
+        }
+        if (selectedTeamId) {
+            params.set("team_id", selectedTeamId);
+        }
+        const searchUrl = `${window.ROOT_PATH}/admin/tools/search?${params.toString()}`;
 
         console.log(
             `[Edit Tool Search] Searching tools with URL: ${searchUrl}`,
@@ -25090,10 +26449,18 @@ async function serverSideEditPromptsSearch(searchTerm) {
     }
 
     try {
-        // Call the search API with gateway filter
-        const searchUrl = gatewayIdParam
-            ? `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100&gateway_id=${encodeURIComponent(gatewayIdParam)}`
-            : `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
+        // Call the search API with gateway and team filters
+        const selectedTeamId = getCurrentTeamId();
+        const params = new URLSearchParams();
+        params.set("q", searchTerm);
+        params.set("limit", "100");
+        if (gatewayIdParam) {
+            params.set("gateway_id", gatewayIdParam);
+        }
+        if (selectedTeamId) {
+            params.set("team_id", selectedTeamId);
+        }
+        const searchUrl = `${window.ROOT_PATH}/admin/prompts/search?${params.toString()}`;
 
         console.log(
             `[Edit Prompt Search] Searching prompts with URL: ${searchUrl}`,
@@ -25373,10 +26740,18 @@ async function serverSideEditResourcesSearch(searchTerm) {
     }
 
     try {
-        // Call the search API with gateway filter
-        const searchUrl = gatewayIdParam
-            ? `${window.ROOT_PATH}/admin/resources/search?q=${encodeURIComponent(searchTerm)}&limit=100&gateway_id=${encodeURIComponent(gatewayIdParam)}`
-            : `${window.ROOT_PATH}/admin/resources/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
+        // Call the search API with gateway and team filters
+        const selectedTeamId = getCurrentTeamId();
+        const params = new URLSearchParams();
+        params.set("q", searchTerm);
+        params.set("limit", "100");
+        if (gatewayIdParam) {
+            params.set("gateway_id", gatewayIdParam);
+        }
+        if (selectedTeamId) {
+            params.set("team_id", selectedTeamId);
+        }
+        const searchUrl = `${window.ROOT_PATH}/admin/resources/search?${params.toString()}`;
 
         console.log(
             `[Edit Resource Search] Searching resources with URL: ${searchUrl}`,
@@ -27937,8 +29312,11 @@ async function saveLLMProvider(event) {
         });
 
         if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || "Failed to save provider");
+            const errorMsg = await parseErrorResponse(
+                response,
+                "Failed to save provider",
+            );
+            throw new Error(errorMsg);
         }
 
         closeLLMProviderModal();
@@ -27979,8 +29357,11 @@ async function deleteLLMProvider(providerId, providerName) {
         );
 
         if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || "Failed to delete provider");
+            const errorMsg = await parseErrorResponse(
+                response,
+                "Failed to delete provider",
+            );
+            throw new Error(errorMsg);
         }
 
         showToast("Provider deleted successfully", "success");
@@ -28318,8 +29699,11 @@ async function saveLLMModel(event) {
         });
 
         if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || "Failed to save model");
+            const errorMsg = await parseErrorResponse(
+                response,
+                "Failed to save model",
+            );
+            throw new Error(errorMsg);
         }
 
         closeLLMModelModal();
@@ -28356,8 +29740,11 @@ async function deleteLLMModel(modelId, modelName) {
         );
 
         if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || "Failed to delete model");
+            const errorMsg = await parseErrorResponse(
+                response,
+                "Failed to delete model",
+            );
+            throw new Error(errorMsg);
         }
 
         showToast("Model deleted successfully", "success");
@@ -28553,6 +29940,34 @@ function llmApiInfoApp() {
         },
     };
 }
+
+window.overviewDashboard = function () {
+    return {
+        init() {
+            this.updateSvgColors();
+            const observer = new MutationObserver(() => this.updateSvgColors());
+            observer.observe(document.documentElement, {
+                attributes: true,
+                attributeFilter: ["class"],
+            });
+        },
+        updateSvgColors() {
+            const isDark = document.documentElement.classList.contains("dark");
+            const svg = document.getElementById("overview-architecture");
+            if (!svg) {
+                return;
+            }
+
+            const marker = svg.querySelector("#arrowhead polygon");
+            if (marker) {
+                marker.setAttribute(
+                    "class",
+                    isDark ? "fill-gray-500" : "fill-gray-400",
+                );
+            }
+        },
+    };
+};
 
 // Make LLM functions globally available
 window.switchLLMSettingsTab = switchLLMSettingsTab;

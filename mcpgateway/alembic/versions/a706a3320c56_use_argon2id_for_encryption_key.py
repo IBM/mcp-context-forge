@@ -9,7 +9,6 @@ Create Date: 2025-10-30 15:31:25.115536
 
 # Standard
 import base64
-import json
 import logging
 import os
 from typing import Optional, Sequence, Union
@@ -20,6 +19,7 @@ from argon2.low_level import hash_secret_raw, Type
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+import orjson
 import sqlalchemy as sa
 from sqlalchemy import text
 
@@ -74,7 +74,7 @@ def reencrypt_with_argon2id(encrypted_text: str) -> str:
     argon2id_key = base64.urlsafe_b64encode(argon2id_raw)
     argon2id_fernet = Fernet(argon2id_key)
     argon2id_encrypted_bytes = argon2id_fernet.encrypt(original_decrypted_bytes)
-    return json.dumps(
+    return orjson.dumps(
         {
             "kdf": "argon2id",
             "t": time_cost,
@@ -83,7 +83,7 @@ def reencrypt_with_argon2id(encrypted_text: str) -> str:
             "salt": base64.b64encode(salt).decode(),
             "token": argon2id_encrypted_bytes.decode(),
         }
-    )
+    ).decode()
 
 
 def reencrypt_with_pbkdf2hmac(argon2id_bundle: str) -> Optional[str]:
@@ -99,7 +99,7 @@ def reencrypt_with_pbkdf2hmac(argon2id_bundle: str) -> Optional[str]:
         ValueError: If the input is not a valid Argon2id bundle.
     """
     try:
-        argon2id_data = json.loads(argon2id_bundle)
+        argon2id_data = orjson.loads(argon2id_bundle)
         if argon2id_data.get("kdf") != "argon2id":
             raise ValueError("Not an Argon2id bundle")
 
@@ -177,7 +177,7 @@ def _looks_argon2_bundle(val: Optional[str]) -> bool:
     # Fast path: Fernet tokens usually start with 'gAAAAA'; Argon2 bundle is JSON
     if val and val[:1] in ("{", "["):
         try:
-            obj = json.loads(val)
+            obj = orjson.loads(val)
             return isinstance(obj, dict) and obj.get("kdf") == "argon2id"
         except Exception:
             return False
@@ -256,8 +256,8 @@ def _upgrade_json_client_secret(conn, table):
         cfg = row["oauth_config"]
         if isinstance(cfg, str):
             try:
-                cfg = json.loads(cfg)
-            except json.JSONDecodeError as e:
+                cfg = orjson.loads(cfg)
+            except orjson.JSONDecodeError as e:
                 logger.warning("Skipping %s.id=%s: invalid JSON (%s)", table, rid, e)
                 continue
         if not isinstance(cfg, dict):
@@ -269,7 +269,7 @@ def _upgrade_json_client_secret(conn, table):
             continue
 
         cfg["client_secret"] = new
-        value = cfg if _is_json(t.c.oauth_config) else json.dumps(cfg)
+        value = cfg if _is_json(t.c.oauth_config) else orjson.dumps(cfg).decode()
         upd = sa.update(t).where(t.c.id == rid).values(oauth_config=value)
         conn.execute(upd)
 
@@ -288,8 +288,8 @@ def _downgrade_json_client_secret(conn, table):
         cfg = row["oauth_config"]
         if isinstance(cfg, str):
             try:
-                cfg = json.loads(cfg)
-            except json.JSONDecodeError as e:
+                cfg = orjson.loads(cfg)
+            except orjson.JSONDecodeError as e:
                 logger.warning("Skipping %s.id=%s: invalid JSON (%s)", table, rid, e)
                 continue
         if not isinstance(cfg, dict):
@@ -301,7 +301,7 @@ def _downgrade_json_client_secret(conn, table):
             continue
 
         cfg["client_secret"] = new
-        value = cfg if _is_json(t.c.oauth_config) else json.dumps(cfg)
+        value = cfg if _is_json(t.c.oauth_config) else orjson.dumps(cfg).decode()
         upd = sa.update(t).where(t.c.id == rid).values(oauth_config=value)
         conn.execute(upd)
 

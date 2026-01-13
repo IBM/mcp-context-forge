@@ -292,7 +292,7 @@ max-positional-arguments = 16
 
 # Maximum number of attributes for a class (see R0902).
 # AuthCache has many attributes for different cache types and TTLs
-max-attributes=25
+max-attributes=30
 
 # Maximum number of boolean expressions in an if statement (see R0916).
 max-bool-expr=5
@@ -310,7 +310,7 @@ max-parents=7
 max-public-methods=20
 
 # Maximum number of return / yield for function / method body.
-max-returns=12
+max-returns=14
 
 # Maximum number of statements in function / method body.
 max-statements=50

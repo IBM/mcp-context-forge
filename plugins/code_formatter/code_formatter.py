@@ -24,6 +24,7 @@ from textwrap import dedent
 from typing import Any, Optional
 
 # Third-Party
+import orjson
 from pydantic import BaseModel
 
 # First-Party
@@ -108,12 +109,9 @@ def _try_format_json(text: str) -> Optional[str]:
     Returns:
         Pretty-printed JSON string or None if parsing fails.
     """
-    # Standard
-    import json
-
     try:
-        obj = json.loads(text)
-        return json.dumps(obj, indent=2, ensure_ascii=False) + "\n"
+        obj = orjson.loads(text)
+        return orjson.dumps(obj, option=orjson.OPT_INDENT_2).decode() + "\n"
     except Exception:
         return None
 

@@ -35,7 +35,6 @@ from __future__ import annotations
 
 # Standard
 from datetime import datetime, timezone
-import json
 import os
 from pathlib import Path
 import platform
@@ -46,6 +45,7 @@ from typing import Any, Dict, Optional
 import zipfile
 
 # Third-Party
+import orjson
 from pydantic import BaseModel, Field
 
 # First-Party
@@ -424,25 +424,25 @@ class SupportBundleService:
         with zipfile.ZipFile(bundle_path, "w", zipfile.ZIP_DEFLATED) as zf:
             # Add manifest
             manifest = self._create_manifest(config)
-            zf.writestr("MANIFEST.json", json.dumps(manifest, indent=2))
+            zf.writestr("MANIFEST.json", orjson.dumps(manifest, option=orjson.OPT_INDENT_2))
 
             # Add version info
             version_info = self._collect_version_info()
-            zf.writestr("version.json", json.dumps(version_info, indent=2))
+            zf.writestr("version.json", orjson.dumps(version_info, option=orjson.OPT_INDENT_2))
 
             # Add system info
             if config.include_system_info:
                 system_info = self._collect_system_info()
-                zf.writestr("system_info.json", json.dumps(system_info, indent=2))
+                zf.writestr("system_info.json", orjson.dumps(system_info, option=orjson.OPT_INDENT_2))
 
             # Add settings
             if config.include_env:
                 app_settings = self._collect_settings()
-                zf.writestr("settings.json", json.dumps(app_settings, indent=2, default=str))
+                zf.writestr("settings.json", orjson.dumps(app_settings, default=str, option=orjson.OPT_INDENT_2))
 
                 # Add environment variables
                 env_config = self._collect_env_config()
-                zf.writestr("environment.json", json.dumps(env_config, indent=2))
+                zf.writestr("environment.json", orjson.dumps(env_config, option=orjson.OPT_INDENT_2))
 
             # Add logs
             if config.include_logs:

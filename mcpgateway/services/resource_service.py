@@ -56,6 +56,7 @@ from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, Re
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
@@ -821,6 +822,7 @@ class ResourceService:
         user_email: Optional[str] = None,
         team_id: Optional[str] = None,
         visibility: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
     ) -> Union[tuple[List[ResourceRead], Optional[str]], Dict[str, Any]]:
         """
         Retrieve a list of registered resources from the database with pagination support.
@@ -843,6 +845,8 @@ class ResourceService:
             user_email (Optional[str]): User email for team-based access control. If None, no access control is applied.
             team_id (Optional[str]): Filter by specific team ID. Requires user_email for access validation.
             visibility (Optional[str]): Filter by visibility (private, team, public).
+            token_teams (Optional[List[str]]): Override DB team lookup with token's teams. Used for MCP/API token access
+                where the token scope should be respected instead of the user's full team memberships.
 
         Returns:
             If page is provided: Dict with {"data": [...], "pagination": {...}, "links": {...}}
@@ -892,12 +896,20 @@ class ResourceService:
 
         # Apply team-based access control if user_email is provided
         if user_email:
-            # First-Party
-            from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+            # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
+            if token_teams is not None:
+                team_ids = token_teams
+            else:
+                # First-Party
+                from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
 
-            team_service = TeamManagementService(db)
-            user_teams = await team_service.get_user_teams(user_email)
-            team_ids = [team.id for team in user_teams]
+                team_service = TeamManagementService(db)
+                user_teams = await team_service.get_user_teams(user_email)
+                team_ids = [team.id for team in user_teams]
+
+            # Check if this is a public-only token (empty teams array)
+            # Public-only tokens can ONLY see public resources - no owner access
+            is_public_only_token = token_teams is not None and len(token_teams) == 0
 
             if team_id:
                 # User requesting specific team - verify access
@@ -906,15 +918,19 @@ class ResourceService:
 
                 access_conditions = [
                     and_(DbResource.team_id == team_id, DbResource.visibility.in_(["team", "public"])),
-                    and_(DbResource.team_id == team_id, DbResource.owner_email == user_email),
                 ]
+                # Only include owner access for non-public-only tokens
+                if not is_public_only_token:
+                    access_conditions.append(and_(DbResource.team_id == team_id, DbResource.owner_email == user_email))
                 query = query.where(or_(*access_conditions))
             else:
-                # General access: user's resources + public resources + team resources
+                # General access: public resources + team resources (+ owner resources if not public-only token)
                 access_conditions = [
-                    DbResource.owner_email == user_email,
                     DbResource.visibility == "public",
                 ]
+                # Only include owner access for non-public-only tokens
+                if not is_public_only_token:
+                    access_conditions.append(DbResource.owner_email == user_email)
                 if team_ids:
                     access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
 
@@ -1102,7 +1118,14 @@ class ResourceService:
             result.append(self.convert_resource_to_read(t, include_metrics=False))
         return result
 
-    async def list_server_resources(self, db: Session, server_id: str, include_inactive: bool = False) -> List[ResourceRead]:
+    async def list_server_resources(
+        self,
+        db: Session,
+        server_id: str,
+        include_inactive: bool = False,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> List[ResourceRead]:
         """
         Retrieve a list of registered resources from the database.
 
@@ -1116,6 +1139,9 @@ class ResourceService:
             server_id (str): Server ID
             include_inactive (bool): If True, include inactive resources in the result.
                 Defaults to False.
+            user_email (Optional[str]): User email for visibility filtering. If None, no filtering applied.
+            token_teams (Optional[List[str]]): Override DB team lookup with token's teams. Used for MCP/API
+                token access where the token scope should be respected.
 
         Returns:
             List[ResourceRead]: A list of resources represented as ResourceRead objects.
@@ -1146,6 +1172,34 @@ class ResourceService:
         )
         if not include_inactive:
             query = query.where(DbResource.enabled)
+
+        # Add visibility filtering if user context provided
+        if user_email:
+            # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
+            if token_teams is not None:
+                team_ids = token_teams
+            else:
+                # First-Party
+                from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+
+                team_service = TeamManagementService(db)
+                user_teams = await team_service.get_user_teams(user_email)
+                team_ids = [team.id for team in user_teams]
+
+            # Check if this is a public-only token (empty teams array)
+            # Public-only tokens can ONLY see public resources - no owner access
+            is_public_only_token = token_teams is not None and len(token_teams) == 0
+
+            access_conditions = [
+                DbResource.visibility == "public",
+            ]
+            # Only include owner access for non-public-only tokens
+            if not is_public_only_token:
+                access_conditions.append(DbResource.owner_email == user_email)
+            if team_ids:
+                access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
+            query = query.where(or_(*access_conditions))
+
         # Cursor-based pagination logic can be implemented here in the future.
         resources = db.execute(query).scalars().all()
 
@@ -1528,15 +1582,37 @@ class ResourceService:
                             if authentication is None:
                                 authentication = {}
                             try:
-                                async with sse_client(url=server_url, headers=authentication, timeout=settings.health_check_timeout, httpx_client_factory=_get_httpx_client_factory) as (
-                                    read_stream,
-                                    write_stream,
-                                    _get_session_id,
-                                ):
-                                    async with ClientSession(read_stream, write_stream) as session:
-                                        _ = await session.initialize()
-                                        resource_response = await session.read_resource(uri=uri)
+                                # Use session pool if enabled for 10-20x latency improvement
+                                use_pool = False
+                                pool = None
+                                if settings.mcp_session_pool_enabled:
+                                    try:
+                                        pool = get_mcp_session_pool()
+                                        use_pool = True
+                                    except RuntimeError:
+                                        # Pool not initialized (e.g., in tests), fall back to per-call sessions
+                                        pass
+
+                                if use_pool and pool is not None:
+                                    async with pool.session(
+                                        url=server_url,
+                                        headers=authentication,
+                                        transport_type=TransportType.SSE,
+                                        httpx_client_factory=_get_httpx_client_factory,
+                                    ) as pooled:
+                                        resource_response = await pooled.session.read_resource(uri=uri)
                                         return getattr(getattr(resource_response, "contents")[0], "text")
+                                else:
+                                    # Fallback to per-call sessions when pool disabled or not initialized
+                                    async with sse_client(url=server_url, headers=authentication, timeout=settings.health_check_timeout, httpx_client_factory=_get_httpx_client_factory) as (
+                                        read_stream,
+                                        write_stream,
+                                        _get_session_id,
+                                    ):
+                                        async with ClientSession(read_stream, write_stream) as session:
+                                            _ = await session.initialize()
+                                            resource_response = await session.read_resource(uri=uri)
+                                            return getattr(getattr(resource_response, "contents")[0], "text")
                             except Exception as e:
                                 logger.debug(f"Exception while connecting to sse gateway: {e}")
                                 return None
@@ -1578,15 +1654,37 @@ class ResourceService:
                             if authentication is None:
                                 authentication = {}
                             try:
-                                async with streamablehttp_client(url=server_url, headers=authentication, timeout=settings.health_check_timeout, httpx_client_factory=_get_httpx_client_factory) as (
-                                    read_stream,
-                                    write_stream,
-                                    _get_session_id,
-                                ):
-                                    async with ClientSession(read_stream, write_stream) as session:
-                                        _ = await session.initialize()
-                                        resource_response = await session.read_resource(uri=uri)
+                                # Use session pool if enabled for 10-20x latency improvement
+                                use_pool = False
+                                pool = None
+                                if settings.mcp_session_pool_enabled:
+                                    try:
+                                        pool = get_mcp_session_pool()
+                                        use_pool = True
+                                    except RuntimeError:
+                                        # Pool not initialized (e.g., in tests), fall back to per-call sessions
+                                        pass
+
+                                if use_pool and pool is not None:
+                                    async with pool.session(
+                                        url=server_url,
+                                        headers=authentication,
+                                        transport_type=TransportType.STREAMABLE_HTTP,
+                                        httpx_client_factory=_get_httpx_client_factory,
+                                    ) as pooled:
+                                        resource_response = await pooled.session.read_resource(uri=uri)
                                         return getattr(getattr(resource_response, "contents")[0], "text")
+                                else:
+                                    # Fallback to per-call sessions when pool disabled or not initialized
+                                    async with streamablehttp_client(url=server_url, headers=authentication, timeout=settings.health_check_timeout, httpx_client_factory=_get_httpx_client_factory) as (
+                                        read_stream,
+                                        write_stream,
+                                        _get_session_id,
+                                    ):
+                                        async with ClientSession(read_stream, write_stream) as session:
+                                            _ = await session.initialize()
+                                            resource_response = await session.read_resource(uri=uri)
+                                            return getattr(getattr(resource_response, "contents")[0], "text")
                             except Exception as e:
                                 logger.debug(f"Exception while connecting to streamablehttp gateway: {e}")
                                 return None
