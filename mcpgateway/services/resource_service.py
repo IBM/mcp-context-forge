@@ -1277,7 +1277,7 @@ class ResourceService:
         ctx.load_verify_locations(cadata=ca_certificate)
         return ctx
 
-    async def invoke_resource(self, db: Session, resource_id: str, resource_uri: str, resource_template_uri: Optional[str] = None) -> Any:
+    async def invoke_resource(self, db: Session, resource_id: str, resource_uri: str, resource_template_uri: Optional[str] = None, user_identity: Optional[str] = None) -> Any:
         """
         Invoke a resource via its configured gateway using SSE or StreamableHTTP transport.
 
@@ -1302,6 +1302,9 @@ class ResourceService:
                 Direct resource URI configured for the resource.
             resource_template_uri (Optional[str]):
                 URI from the template. Overrides `resource_uri` when provided.
+            user_identity (Optional[str]):
+                Identity of the user making the request, used for session pool isolation.
+                Defaults to platform_admin_email if not provided.
 
         Returns:
             Any: The text content returned by the remote resource, or ``None`` if the
@@ -1382,7 +1385,8 @@ class ResourceService:
         gateway_id = None
         resource_info = None
         resource_info = db.execute(select(DbResource).where(DbResource.id == resource_id)).scalar_one_or_none()
-        user_email = settings.platform_admin_email
+        # Use provided user_identity for session pool isolation, fall back to platform admin for OAuth
+        user_email = user_identity or settings.platform_admin_email
 
         if resource_info:
             gateway_id = getattr(resource_info, "gateway_id", None)
@@ -2013,7 +2017,7 @@ class ResourceService:
                 # If content is already a Pydantic content model, return as-is
                 if isinstance(content, (ResourceContent, TextContent)):
                     resource_response = await self.invoke_resource(
-                        db=db, resource_id=getattr(content, "id"), resource_uri=getattr(content, "uri") or None, resource_template_uri=getattr(content, "text") or None
+                        db=db, resource_id=getattr(content, "id"), resource_uri=getattr(content, "uri") or None, resource_template_uri=getattr(content, "text") or None, user_identity=user
                     )
                     if resource_response:
                         setattr(content, "text", resource_response)
@@ -2022,12 +2026,12 @@ class ResourceService:
                 if hasattr(content, "text") or hasattr(content, "blob"):
                     if hasattr(content, "blob"):
                         resource_response = await self.invoke_resource(
-                            db=db, resource_id=getattr(content, "id"), resource_uri=getattr(content, "uri") or None, resource_template_uri=getattr(content, "blob") or None
+                            db=db, resource_id=getattr(content, "id"), resource_uri=getattr(content, "uri") or None, resource_template_uri=getattr(content, "blob") or None, user_identity=user
                         )
                         setattr(content, "blob", resource_response)
                     elif hasattr(content, "text"):
                         resource_response = await self.invoke_resource(
-                            db=db, resource_id=getattr(content, "id"), resource_uri=getattr(content, "uri") or None, resource_template_uri=getattr(content, "text") or None
+                            db=db, resource_id=getattr(content, "id"), resource_uri=getattr(content, "uri") or None, resource_template_uri=getattr(content, "text") or None, user_identity=user
                         )
                         setattr(content, "text", resource_response)
                     return content
