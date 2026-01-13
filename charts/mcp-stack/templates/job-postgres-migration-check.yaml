@@ -1,5 +1,5 @@
 {{- $targetVersion := .Values.postgres.upgrade.targetVersion | toString -}}
-{{- if and .Values.postgres.upgrade.enabled (eq $targetVersion "18") }}
+{{- if and .Values.postgres.upgrade.enabled (eq $targetVersion "18") (not .Values.postgres.external.enabled) }}
 apiVersion: batch/v1
 kind: Job
 metadata:

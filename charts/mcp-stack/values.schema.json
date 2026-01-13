@@ -1040,6 +1040,33 @@
           "description": "Enable PostgreSQL",
           "default": true
         },
+        "external": {
+          "type": "object",
+          "description": "External PostgreSQL configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable external PostgreSQL",
+              "default": false
+            },
+            "existingSecret": {
+              "type": "string",
+              "description": "Secret containing connection details",
+              "default": ""
+            },
+            "host": { "type": "string" },
+            "hostKey": { "type": "string", "default": "host" },
+            "port": { "type": "integer", "default": 5432 },
+            "portKey": { "type": "string", "default": "port" },
+            "database": { "type": "string" },
+            "databaseKey": { "type": "string", "default": "dbname" },
+            "user": { "type": "string" },
+            "userKey": { "type": "string", "default": "user" },
+            "password": { "type": "string" },
+            "passwordKey": { "type": "string", "default": "password" }
+          },
+          "additionalProperties": false
+        },
         "image": {
           "type": "object",
           "description": "PostgreSQL image configuration",
