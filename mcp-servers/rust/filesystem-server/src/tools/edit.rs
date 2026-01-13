@@ -1,12 +1,10 @@
 use std::io::Write;
-
 use anyhow::{Context, Result};
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 use similar::{ChangeTag, TextDiff};
 use tempfile::NamedTempFile;
 use tokio::fs;
-use tracing_subscriber::fmt::format;
 
 pub async fn move_file(source: &str, destination: &str) -> Result<()> {
     fs::rename(source, destination)
