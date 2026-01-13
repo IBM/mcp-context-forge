@@ -3576,9 +3576,6 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                 try:
                     pwd_changed = getattr(user, "password_changed_at", None)
                     if pwd_changed:
-                        # First-Party
-                        from mcpgateway.db import utc_now
-
                         age_days = (utc_now() - pwd_changed).days
                         if age_days >= getattr(settings, "password_max_age_days", 90):
                             needs_password_change = True
