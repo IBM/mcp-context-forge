@@ -1305,7 +1305,8 @@ class ResourceService:
             user_identity (Optional[Union[str, Dict[str, Any]]]):
                 Identity of the user making the request, used for session pool isolation.
                 Can be a string (email) or a dict with an 'email' key.
-                Defaults to platform_admin_email if not provided.
+                Defaults to "anonymous" for pool isolation if not provided.
+                OAuth token lookup always uses platform_admin_email (service account).
 
         Returns:
             Any: The text content returned by the remote resource, or ``None`` if the

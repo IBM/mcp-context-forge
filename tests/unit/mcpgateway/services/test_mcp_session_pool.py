@@ -299,10 +299,10 @@ class TestSessionPoolIsolation:
     async def test_session_isolation_by_user_identity(self):
         """Test that sessions are isolated by user identity."""
         pool = MCPSessionPool(max_sessions_per_key=10)
-        
+
         # Mock _create_session to avoid network calls and return a mock PooledSession
         pool._create_session = AsyncMock()
-        
+
         async def create_mock_session(url, headers, transport_type, *args, **kwargs):
             # Create a mock that mimics PooledSession behavior needed by acquire/release
             real_pooled = MagicMock()
@@ -313,19 +313,19 @@ class TestSessionPoolIsolation:
             real_pooled.idle_seconds = 0.5
             real_pooled.last_used = time.time()
             real_pooled.created_at = time.time()
-            
+
             # Setup session mock behavior
             real_pooled.session = AsyncMock()
             real_pooled.session.send_ping = AsyncMock(return_value=True)
-            
+
             # Mock transport context
             real_pooled.transport_context = AsyncMock()
             real_pooled.transport_context.__aexit__ = AsyncMock()
-            
+
             return real_pooled
 
         pool._create_session.side_effect = create_mock_session
-        
+
         # Mock validation to always succeed so we can reuse sessions
         pool._validate_session = AsyncMock(return_value=True)
 
@@ -334,27 +334,27 @@ class TestSessionPoolIsolation:
 
         # 1. Acquire for User A
         session_a = await pool.acquire(url, headers=headers, user_identity="user_a")
-        
+
         # 2. Acquire for User B (same headers, should be different pool)
         session_b = await pool.acquire(url, headers=headers, user_identity="user_b")
 
         # 3. Assert they are different objects (created separately)
         assert session_a is not session_b
-        
+
         # 4. Release both to put them back in their respective pools
         await pool.release(session_a)
         await pool.release(session_b)
-        
+
         # 5. Re-acquire for User A
         session_a_2 = await pool.acquire(url, headers=headers, user_identity="user_a")
-        
+
         # 6. Assert reuse: Should get the exact same object back if isolation works
         assert session_a_2 is session_a
-        
+
         # 7. Re-acquire for User B
         session_b_2 = await pool.acquire(url, headers=headers, user_identity="user_b")
         assert session_b_2 is session_b
-        
+
         # 8. Verify Metrics keys contain user identities
         metrics = pool.get_metrics()
         pools = metrics["pools"]
@@ -362,13 +362,13 @@ class TestSessionPoolIsolation:
 
         assert any(hashlib.sha256(b"user_a").hexdigest() in k for k in keys), "Pool keys missing user_a hash"
         assert any(hashlib.sha256(b"user_b").hexdigest() in k for k in keys), "Pool keys missing user_b hash"
-        
+
         # 9. Verify Isolation: Ensure User A cannot get User B's session
         # If we request for User A again, we should get session_a (already acquired as session_a_2)
         # Wait, session_a_2 is still active (not released).
         # Requesting another session for User A should create a NEW one or wait (max=10)
         # Since max=10, it creates a new one.
-        
+
         session_a_3 = await pool.acquire(url, headers=headers, user_identity="user_a")
         assert session_a_3 is not session_b  # Should definitively NOT be user B's session
         assert session_a_3 is not session_a  # Should be a new session for user A
@@ -380,7 +380,7 @@ class TestSessionPoolIsolation:
         """Test backward compatibility (defaulting to anonymous)."""
         pool = MCPSessionPool(max_sessions_per_key=10)
         pool._create_session = AsyncMock()
-        
+
         async def create_mock_session(url, headers, transport_type, *args, **kwargs):
             real_pooled = MagicMock()
             real_pooled.url = url
@@ -389,21 +389,21 @@ class TestSessionPoolIsolation:
             real_pooled.age_seconds = 0
             real_pooled.idle_seconds = 0
             return real_pooled
-            
+
         pool._create_session.side_effect = create_mock_session
         pool._validate_session = AsyncMock(return_value=True)
-        
+
         url = "http://example.com"
-        
+
         # Acquire without user_identity
         session = await pool.acquire(url, headers={})
-        
+
         # Check that user_identity was set to "anonymous" on the pooled object
         # Note: acquire sets this on the returned object
         assert session.user_identity == "anonymous"
-        
+
         await pool.release(session)
-        
+
         # Check metrics for anonymous key
         metrics = pool.get_metrics()
         pools = metrics["pools"]
