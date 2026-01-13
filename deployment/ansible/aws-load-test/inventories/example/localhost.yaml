@@ -1,0 +1,13 @@
+# =============================================================================
+# Static Inventory for localhost
+# =============================================================================
+# This file defines localhost as an inventory host for running local Ansible
+# tasks. Many playbooks (vpc-up, security-up, etc.) run on localhost to
+# provision AWS resources via the AWS APIs.
+#
+# The 'ansible_connection=local' setting tells Ansible to run tasks directly
+# on the control machine without SSH.
+# =============================================================================
+
+[ungrouped]
+localhost ansible_connection=local

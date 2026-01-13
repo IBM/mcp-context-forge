@@ -1,0 +1,58 @@
+# =============================================================================
+# Global Variables (apply to all hosts)
+# =============================================================================
+# These variables are shared across all hosts in the inventory, including
+# localhost (for provisioning) and bastion hosts (for in-VPC operations).
+# Defining them here ensures consistency and avoids duplication.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Deployment Identification
+# -----------------------------------------------------------------------------
+# prefix_v: A unique identifier prefix for all AWS resources created by this
+#           deployment. Used in resource naming (VPC, subnets, security groups,
+#           ECS clusters, etc.) to identify and group related resources.
+#           Format recommendation: <project>-<region>-<environment>
+#           Example: mcf-eu-west-1-dev, mcf-us-east-1-prod
+prefix_v: mcf-eu-west-1-dev
+
+# region_v: The AWS region where all resources will be deployed.
+#           Must be a valid AWS region identifier.
+#           See: https://docs.aws.amazon.com/general/latest/gr/rande.html
+region_v: eu-west-1
+
+# -----------------------------------------------------------------------------
+# EC2 Key Pair Configuration
+# -----------------------------------------------------------------------------
+# keypair_v: The name of an existing AWS EC2 key pair used for SSH access
+#            to the bastion host. Must already exist in the target region.
+#            Create via: aws ec2 create-key-pair --key-name <name>
+keypair_v: my-keypair
+
+# -----------------------------------------------------------------------------
+# Resource Ownership
+# -----------------------------------------------------------------------------
+# owner_v: A human-readable identifier for the resource owner.
+#          Applied as a tag to EC2 instances for cost tracking and ownership.
+owner_v: Your Name
+
+# -----------------------------------------------------------------------------
+# EC2 Bastion Host Configuration
+# -----------------------------------------------------------------------------
+# instance_type_v: The EC2 instance type for the bastion host.
+#                  Recommend t4g.micro (ARM) or t3.micro (x86) for cost savings.
+#                  See: https://aws.amazon.com/ec2/instance-types/
+instance_type_v: t4g.micro
+
+# -----------------------------------------------------------------------------
+# ECS EC2 Instance Configuration
+# -----------------------------------------------------------------------------
+# ecs_instance_type_v: The EC2 instance type for the ECS cluster node.
+#                      Default c6i.12xlarge provides 48 vCPU and 96GB RAM,
+#                      sufficient for 3 gateway replicas + supporting services.
+#                      See resource calculations in README.md
+ecs_instance_type_v: c6i.12xlarge
+
+# ecs_volume_size_v: Root volume size in GB for the ECS instance.
+#                    100GB provides space for container images and logs.
+ecs_volume_size_v: 100

@@ -1,0 +1,547 @@
+---
+- name: Create ECS services for MCP ContextForge
+  hosts: "_bastion"
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ access_key_v }}"
+    AWS_SECRET_ACCESS_KEY: "{{ secret_key_v }}"
+    AWS_REGION: "{{ region_v }}"
+  vars:
+    ansible_python_interpreter: /home/ubuntu/.venv/bin/python3
+    debug_container_p: true
+  tasks:
+    - name: Get VPC private subnets
+      amazon.aws.ec2_vpc_subnet_info:
+        filters:
+          "tag:Project": "{{ prefix_v }}"
+          "map-public-ip-on-launch": false
+      register: vpc_private_subnets_r
+
+    - name: Get VPC public subnets
+      amazon.aws.ec2_vpc_subnet_info:
+        filters:
+          "tag:Project": "{{ prefix_v }}"
+          "map-public-ip-on-launch": true
+      register: vpc_public_subnets_r
+
+    - name: Get all security groups of interest
+      amazon.aws.ec2_security_group_info:
+        filters:
+          group-name:
+            - "{{ prefix_v }}-alb-sg"
+            - "{{ prefix_v }}-ecs-ec2-sg"
+      register: sg_r
+
+    - name: Retrieve information about the RDS cluster
+      amazon.aws.rds_cluster_info:
+        cluster_id: "{{ prefix_v }}-mcf-postgres"
+      register: rds_cluster_info_r
+
+    - name: Set facts based on everything we've retrieved
+      ansible.builtin.set_fact:
+        alb_sg_group_id_f: >-
+          {{ (sg_r.security_groups |
+            selectattr('group_name', 'eq', prefix_v + '-alb-sg') |
+            first).group_id
+          }}
+        ecs_ec2_sg_group_id_f: >-
+          {{ (sg_r.security_groups |
+            selectattr('group_name', 'eq', prefix_v + '-ecs-ec2-sg') |
+            first).group_id
+          }}
+
+    - name: Create CloudWatch log group for MCF
+      amazon.aws.cloudwatchlogs_log_group:
+        log_group_name: /ecs/mcf
+        state: present
+        retention: 7
+
+    - name: Create an execution role for the containers
+      amazon.aws.iam_role:
+        name: "{{ prefix_v }}-container-execution-role"
+        assume_role_policy_document: |
+            {
+              "Version":"2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "",
+                  "Effect": "Allow",
+                  "Principal": {
+                    "Service": "ecs-tasks.amazonaws.com"
+                  },
+                  "Action": "sts:AssumeRole"
+                }
+              ]
+            }
+        managed_policies:
+          - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+        wait: true
+      register: execution_role_r
+
+    - name: Add Secrets Manager access policy to the execution role
+      amazon.aws.iam_policy:
+        iam_type: role
+        iam_name: "{{ prefix_v }}-container-execution-role"
+        policy_name: "{{ prefix_v }}-access-credentials"
+        policy_json: |
+            {
+              "Version":"2012-10-17",
+              "Statement": [
+                  {
+                      "Effect": "Allow",
+                      "Action": [
+                          "secretsmanager:GetSecretValue"
+                      ],
+                      "Resource": [
+                          "arn:aws:secretsmanager:{{ region_v }}:*:secret:{{ prefix_v }}-*"
+                      ]
+                  }
+              ]
+            }
+
+    - name: Create a task role for the containers
+      amazon.aws.iam_role:
+        name: "{{ prefix_v }}-container-task-role"
+        assume_role_policy_document: |
+            {
+              "Version":"2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "",
+                  "Effect": "Allow",
+                  "Principal": {
+                    "Service": "ecs-tasks.amazonaws.com"
+                  },
+                  "Action": [
+                    "sts:AssumeRole"
+                  ]
+                }
+              ]
+            }
+        managed_policies:
+          - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+        wait: true
+      register: task_role_r
+
+    - name: Create a policy to allow execute command in debug containers
+      amazon.aws.iam_policy:
+        state: present
+        iam_type: role
+        iam_name: "{{ task_role_r.iam_role.role_name }}"
+        policy_name: "{{ prefix_v }}-execute-command-policy"
+        policy_json: |
+            {
+              "Version":"2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ssmmessages:CreateControlChannel",
+                    "ssmmessages:CreateDataChannel",
+                    "ssmmessages:OpenControlChannel",
+                    "ssmmessages:OpenDataChannel"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+      when: debug_container_p
+
+    - name: Allocate an ECS cluster (EC2 capacity provider)
+      community.aws.ecs_cluster:
+        name: "{{ prefix_v }}-ecs-cluster"
+        state: "present"
+
+    - name: Create Cloud Map namespace for service discovery
+      cloudmap_namespace:
+        state: present
+        name: "{{ prefix_v }}.local"
+        namespace_type: private
+        vpc: "{{ vpc_private_subnets_r.subnets[0].vpc_id }}"
+        description: |
+            Service discovery namespace for {{ prefix_v }} ECS services
+        tags:
+          Name: "{{ prefix_v }}-ecs-namespace"
+          Project: "{{ prefix_v }}"
+        wait: true
+        wait_timeout: 300
+      register: cloudmap_namespace_r
+
+    - name: Create target group for nginx service
+      community.aws.elb_target_group:
+        name: "{{ prefix_v }}-nginx-tg"
+        protocol: HTTP
+        port: 80
+        vpc_id: "{{ vpc_private_subnets_r.subnets[0].vpc_id }}"
+        health_check_path: /health
+        health_check_protocol: HTTP
+        health_check_interval: 30
+        health_check_timeout: 5
+        healthy_threshold_count: 2
+        unhealthy_threshold_count: 2
+        target_type: ip
+        state: present
+      register: nginx_target_group_r
+
+    - name: Create Application Load Balancer
+      elb_application_lb:
+        name: "{{ prefix_v }}-alb"
+        security_groups:
+          - "{{ alb_sg_group_id_f }}"
+        subnets: "{{ vpc_public_subnets_r.subnets | map(attribute='id') }}"
+        scheme: internet-facing
+        state: present
+        tags:
+          "Name": "{{ prefix_v }}-alb"
+          "Project": "{{ prefix_v }}"
+        listeners:
+          - Protocol: HTTPS
+            SslPolicy: ELBSecurityPolicy-TLS13-1-2-Ext2-PQ-2025-09
+            Port: 443
+            DefaultActions:
+              - Type: forward
+                Order: 1
+                TargetGroupArn: "{{ nginx_target_group_r.target_group_arn }}"
+            Certificates:
+              - CertificateArn: "{{ ca_certificate_arn }}"
+      register: alb_r
+
+    # ==========================================================================
+    # Task Definitions
+    # ==========================================================================
+
+    - name: ECS Task Definition for gateway
+      community.aws.ecs_taskdefinition:
+        family: "{{ prefix_v }}-gateway-td"
+        state: "present"
+        requires_compatibilities:
+          - EC2
+        memory: "6144"
+        cpu: "4096"
+        network_mode: awsvpc
+        execution_role_arn: "{{ execution_role_r.iam_role.arn }}"
+        task_role_arn: "{{ task_role_r.iam_role.arn }}"
+        force_create: true
+        containers:
+          - name: gateway
+            image: >-
+              ghcr.io/ibm/mcp-context-forge:{{ gateway_image_tag_v | default('latest') }}
+            logConfiguration:
+              logDriver: awslogs
+              options:
+                awslogs-group: /ecs/mcf
+                awslogs-region: "{{ region_v }}"
+                awslogs-stream-prefix: gateway
+            environment:
+              - name: HOST
+                value: "0.0.0.0"
+              - name: PORT
+                value: "4444"
+              - name: HTTP_SERVER
+                value: "granian"
+              - name: DATABASE_URL
+                value: "postgresql+psycopg://postgres:{{ lookup('amazon.aws.secretsmanager_secret',
+                  prefix_v + '-postgres-master-user-password') }}@pgbouncer.{{ prefix_v }}.local:6432/mcp"
+              - name: REDIS_URL
+                value: "redis://redis.{{ prefix_v }}.local:6379/0"
+              - name: CACHE_TYPE
+                value: "redis"
+              - name: AUTH_REQUIRED
+                value: "true"
+              - name: LOG_LEVEL
+                value: "ERROR"
+              - name: GRANIAN_WORKERS
+                value: "16"
+              - name: GRANIAN_BACKPRESSURE
+                value: "256"
+              - name: DB_POOL_CLASS
+                value: "queue"
+              - name: DB_POOL_SIZE
+                value: "20"
+              - name: MCP_SESSION_POOL_ENABLED
+                value: "true"
+            portMappings:
+              - name: gateway
+                containerPort: 4444
+                protocol: tcp
+      register: gateway_td_r
+
+    - name: ECS Task Definition for nginx
+      community.aws.ecs_taskdefinition:
+        family: "{{ prefix_v }}-nginx-td"
+        state: "present"
+        requires_compatibilities:
+          - EC2
+        memory: "1024"
+        cpu: "4096"
+        network_mode: awsvpc
+        execution_role_arn: "{{ execution_role_r.iam_role.arn }}"
+        task_role_arn: "{{ task_role_r.iam_role.arn }}"
+        force_create: true
+        containers:
+          - name: nginx
+            image: >-
+              ghcr.io/ibm/mcp-context-forge-nginx:{{ nginx_image_tag_v | default('latest') }}
+            logConfiguration:
+              logDriver: awslogs
+              options:
+                awslogs-group: /ecs/mcf
+                awslogs-region: "{{ region_v }}"
+                awslogs-stream-prefix: nginx
+            environment:
+              - name: GATEWAY_HOST
+                value: "gateway.{{ prefix_v }}.local"
+              - name: GATEWAY_PORT
+                value: "4444"
+            portMappings:
+              - name: nginx
+                containerPort: 80
+                protocol: tcp
+      register: nginx_td_r
+
+    - name: ECS Task Definition for pgbouncer
+      community.aws.ecs_taskdefinition:
+        family: "{{ prefix_v }}-pgbouncer-td"
+        state: "present"
+        requires_compatibilities:
+          - EC2
+        memory: "256"
+        cpu: "1024"
+        network_mode: awsvpc
+        execution_role_arn: "{{ execution_role_r.iam_role.arn }}"
+        task_role_arn: "{{ task_role_r.iam_role.arn }}"
+        force_create: true
+        containers:
+          - name: pgbouncer
+            image: "edoburu/pgbouncer:latest"
+            logConfiguration:
+              logDriver: awslogs
+              options:
+                awslogs-group: /ecs/mcf
+                awslogs-region: "{{ region_v }}"
+                awslogs-stream-prefix: pgbouncer
+            environment:
+              - name: DATABASE_URL
+                value: "postgres://postgres:{{ lookup('amazon.aws.secretsmanager_secret',
+                  prefix_v + '-postgres-master-user-password') }}@{{ rds_cluster_info_r.clusters[0].endpoint }}:5432/mcp"
+              - name: LISTEN_PORT
+                value: "6432"
+              - name: POOL_MODE
+                value: "transaction"
+              - name: MAX_CLIENT_CONN
+                value: "5000"
+              - name: DEFAULT_POOL_SIZE
+                value: "600"
+              - name: MAX_DB_CONNECTIONS
+                value: "700"
+            portMappings:
+              - name: pgbouncer
+                containerPort: 6432
+                protocol: tcp
+      register: pgbouncer_td_r
+
+    - name: ECS Task Definition for redis
+      community.aws.ecs_taskdefinition:
+        family: "{{ prefix_v }}-redis-td"
+        state: "present"
+        requires_compatibilities:
+          - EC2
+        memory: "2048"
+        cpu: "2048"
+        network_mode: awsvpc
+        execution_role_arn: "{{ execution_role_r.iam_role.arn }}"
+        task_role_arn: "{{ task_role_r.iam_role.arn }}"
+        force_create: true
+        containers:
+          - name: redis
+            image: "redis:latest"
+            command:
+              - "redis-server"
+              - "--maxmemory"
+              - "1gb"
+              - "--maxmemory-policy"
+              - "allkeys-lru"
+              - "--tcp-backlog"
+              - "2048"
+              - "--maxclients"
+              - "10000"
+            logConfiguration:
+              logDriver: awslogs
+              options:
+                awslogs-group: /ecs/mcf
+                awslogs-region: "{{ region_v }}"
+                awslogs-stream-prefix: redis
+            portMappings:
+              - name: redis
+                containerPort: 6379
+                protocol: tcp
+      register: redis_td_r
+
+    # ==========================================================================
+    # ECS Services
+    # ==========================================================================
+
+    - name: Redis service
+      ecs_service:
+        state: present
+        name: "{{ prefix_v }}-redis-svc"
+        cluster: "{{ prefix_v }}-ecs-cluster"
+        desired_count: 1
+        task_definition: "{{ redis_td_r.taskdefinition.taskDefinitionArn }}"
+        network_configuration:
+          assign_public_ip: false
+          subnets: "{{ vpc_private_subnets_r.subnets | map(attribute='id') }}"
+          security_groups:
+            - "{{ ecs_ec2_sg_group_id_f }}"
+        enable_execute_command: "{{ debug_container_p }}"
+        service_connect_configuration:
+          enabled: true
+          namespace: "{{ prefix_v }}.local"
+          logConfiguration:
+            logDriver: awslogs
+            options:
+              awslogs-group: /ecs/mcf
+              awslogs-region: "{{ region_v }}"
+              awslogs-stream-prefix: redis-service-connect
+          services:
+            - port_name: redis
+              client_aliases:
+                - port: 6379
+                  dns_name: redis
+
+    - name: PgBouncer service
+      ecs_service:
+        state: present
+        name: "{{ prefix_v }}-pgbouncer-svc"
+        cluster: "{{ prefix_v }}-ecs-cluster"
+        desired_count: 1
+        task_definition: "{{ pgbouncer_td_r.taskdefinition.taskDefinitionArn }}"
+        network_configuration:
+          assign_public_ip: false
+          subnets: "{{ vpc_private_subnets_r.subnets | map(attribute='id') }}"
+          security_groups:
+            - "{{ ecs_ec2_sg_group_id_f }}"
+        enable_execute_command: "{{ debug_container_p }}"
+        service_connect_configuration:
+          enabled: true
+          namespace: "{{ prefix_v }}.local"
+          logConfiguration:
+            logDriver: awslogs
+            options:
+              awslogs-group: /ecs/mcf
+              awslogs-region: "{{ region_v }}"
+              awslogs-stream-prefix: pgbouncer-service-connect
+          services:
+            - port_name: pgbouncer
+              client_aliases:
+                - port: 6432
+                  dns_name: pgbouncer
+
+    - name: Gateway service
+      ecs_service:
+        state: present
+        name: "{{ prefix_v }}-gateway-svc"
+        cluster: "{{ prefix_v }}-ecs-cluster"
+        desired_count: "{{ gateway_replicas | default(3) }}"
+        task_definition: "{{ gateway_td_r.taskdefinition.taskDefinitionArn }}"
+        network_configuration:
+          assign_public_ip: false
+          subnets: "{{ vpc_private_subnets_r.subnets | map(attribute='id') }}"
+          security_groups:
+            - "{{ ecs_ec2_sg_group_id_f }}"
+        enable_execute_command: "{{ debug_container_p }}"
+        service_connect_configuration:
+          enabled: true
+          namespace: "{{ prefix_v }}.local"
+          logConfiguration:
+            logDriver: awslogs
+            options:
+              awslogs-group: /ecs/mcf
+              awslogs-region: "{{ region_v }}"
+              awslogs-stream-prefix: gateway-service-connect
+          services:
+            - port_name: gateway
+              client_aliases:
+                - port: 4444
+                  dns_name: gateway
+
+    - name: Nginx service
+      ecs_service:
+        state: present
+        name: "{{ prefix_v }}-nginx-svc"
+        cluster: "{{ prefix_v }}-ecs-cluster"
+        desired_count: 1
+        task_definition: "{{ nginx_td_r.taskdefinition.taskDefinitionArn }}"
+        load_balancers:
+          - targetGroupArn: "{{ nginx_target_group_r.target_group_arn }}"
+            containerName: nginx
+            containerPort: 80
+        network_configuration:
+          assign_public_ip: false
+          subnets: "{{ vpc_private_subnets_r.subnets | map(attribute='id') }}"
+          security_groups:
+            - "{{ ecs_ec2_sg_group_id_f }}"
+        enable_execute_command: "{{ debug_container_p }}"
+        service_connect_configuration:
+          enabled: true
+          namespace: "{{ prefix_v }}.local"
+          logConfiguration:
+            logDriver: awslogs
+            options:
+              awslogs-group: /ecs/mcf
+              awslogs-region: "{{ region_v }}"
+              awslogs-stream-prefix: nginx-service-connect
+          services:
+            - port_name: nginx
+              client_aliases:
+                - port: 80
+                  dns_name: nginx
+
+    # ==========================================================================
+    # Wait and Configure DNS
+    # ==========================================================================
+
+    - name: Wait for the services to be available in Cloud Map
+      cloudmap_info:
+        namespace_name: "{{ prefix_v }}.local"
+        service_name: "{{ item }}"
+        include_instances: true
+      register: cloudmap_info_r
+      retries: 30
+      delay: 20
+      until: "('services' in cloudmap_info_r)
+        and (cloudmap_info_r.services
+          | map(attribute='instances') | flatten
+          | map(attribute='ipv4') | flatten)
+        is truthy"
+      loop:
+        - gateway
+        - nginx
+        - redis
+        - pgbouncer
+
+    - name: ALB DNS Name is
+      ansible.builtin.debug:
+        var: alb_r.dns_name
+
+    - name: Wait for DNS to be available
+      ansible.builtin.command: dig +short {{ alb_r.dns_name }}
+      changed_when: false
+      register: alb_dig_r
+      retries: 30
+      delay: 20
+      until: alb_dig_r.stdout is truthy
+
+    - name: Create Route 53 A records for ALB IP addresses
+      amazon.aws.route53:
+        state: present
+        zone: "{{ (mcf_domain | split('.'))[-2:] | join('.') }}"
+        record: "{{ prefix_v + '.' + mcf_domain }}"
+        type: A
+        ttl: 60
+        value: "{{ alb_dig_r.stdout | split('\n') }}"
+        overwrite: true
+        wait: true
+
+    - name: Display target domain name
+      ansible.builtin.debug:
+        msg: Application is reachable at https://{{ prefix_v + '.' + mcf_domain }}

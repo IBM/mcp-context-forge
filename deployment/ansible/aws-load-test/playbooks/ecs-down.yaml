@@ -1,0 +1,139 @@
+---
+- name: Delete ECS services and artifacts for MCP ContextForge
+  hosts: "_bastion"
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ access_key_v }}"
+    AWS_SECRET_ACCESS_KEY: "{{ secret_key_v }}"
+    AWS_REGION: "{{ region_v }}"
+  tasks:
+    # Delete Route 53 records
+    - name: Delete Route 53 A record for ALB
+      amazon.aws.route53:
+        state: absent
+        zone: "{{ (mcf_domain | split('.'))[-2:] | join('.') }}"
+        record: "{{ prefix_v + '.' + mcf_domain }}"
+        type: A
+
+    # Delete the ECS services
+    - name: Delete ECS services
+      ecs_service:
+        state: absent
+        name: "{{ prefix_v }}-{{ item }}-svc"
+        cluster: "{{ prefix_v }}-ecs-cluster"
+        force_deletion: true
+      loop:
+        - nginx
+        - gateway
+        - pgbouncer
+        - redis
+      register: services_delete_result
+
+    # Wait for services to drain before deleting ALB
+    - name: Wait for services to drain
+      ansible.builtin.pause:
+        seconds: 30
+
+    # Delete the ALB
+    - name: Delete Application Load Balancer
+      amazon.aws.elb_application_lb:
+        name: "{{ prefix_v }}-alb"
+        state: absent
+        wait: true
+      retries: 5
+      delay: 30
+
+    # Delete the target groups (retry until ALB is fully deleted)
+    - name: Delete target groups
+      community.aws.elb_target_group:
+        name: "{{ prefix_v }}-nginx-tg"
+        state: absent
+      retries: 10
+      delay: 15
+
+    # Delete the Cloud Map namespace (wait for services to fully delete)
+    - name: Delete Cloud Map namespace
+      cloudmap_namespace:
+        state: absent
+        name: "{{ prefix_v }}.local"
+      retries: 20
+      delay: 30
+
+    # Delete the ECS cluster
+    - name: Deallocate ECS cluster
+      community.aws.ecs_cluster:
+        name: "{{ prefix_v }}-ecs-cluster"
+        state: absent
+      retries: 10
+      delay: 20
+
+    # Detach policies before deleting roles
+    - name: Detach managed policies from task role
+      amazon.aws.iam_role:
+        name: "{{ prefix_v }}-container-task-role"
+        state: present
+        managed_policies: []
+        purge_policies: true
+      register: detach_task_role
+      retries: 5
+      delay: 10
+
+    - name: Delete inline policies from task role
+      amazon.aws.iam_policy:
+        state: absent
+        iam_type: role
+        iam_name: "{{ prefix_v }}-container-task-role"
+        policy_name: "{{ prefix_v }}-execute-command-policy"
+      retries: 5
+      delay: 10
+
+    - name: Delete IAM task role
+      amazon.aws.iam_role:
+        name: "{{ prefix_v }}-container-task-role"
+        state: absent
+      retries: 10
+      delay: 15
+
+    # Detach policies before deleting execution role
+    - name: Detach managed policies from execution role
+      amazon.aws.iam_role:
+        name: "{{ prefix_v }}-container-execution-role"
+        state: present
+        managed_policies: []
+        purge_policies: true
+      retries: 5
+      delay: 10
+
+    - name: Delete inline policies from execution role
+      amazon.aws.iam_policy:
+        state: absent
+        iam_type: role
+        iam_name: "{{ prefix_v }}-container-execution-role"
+        policy_name: "{{ prefix_v }}-access-credentials"
+      retries: 5
+      delay: 10
+
+    - name: Delete IAM execution role
+      amazon.aws.iam_role:
+        name: "{{ prefix_v }}-container-execution-role"
+        state: absent
+      retries: 10
+      delay: 15
+
+    - name: Delete task definitions
+      ecs_taskdefinition:
+        family: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ prefix_v }}-gateway-td"
+        - "{{ prefix_v }}-nginx-td"
+        - "{{ prefix_v }}-pgbouncer-td"
+        - "{{ prefix_v }}-redis-td"
+      retries: 5
+      delay: 10
+
+    - name: Delete CloudWatch log group
+      amazon.aws.cloudwatchlogs_log_group:
+        log_group_name: /ecs/mcf
+        state: absent
+      retries: 5
+      delay: 10

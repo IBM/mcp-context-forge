@@ -1,0 +1,39 @@
+---
+- name: MCP ContextForge containers
+  hosts: all
+  connection: local
+  gather_facts: False
+
+  tasks:
+    - name: UP
+      when: state == "present"
+      block:
+        - name: Refresh the inventory
+          ansible.builtin.meta: refresh_inventory
+
+        - name: Allocate the postgres database
+          ansible.builtin.include_tasks:
+            file: ./tasks/postgres-up.yaml
+
+        - name: Bring up the containers
+          ansible.builtin.include_tasks:
+            file: ./tasks/containers-up.yaml
+
+        - name: Bring up the services
+          ansible.builtin.include_tasks:
+            file: ./tasks/services_up.yaml
+
+    - name: DOWN
+      when: state == "absent"
+      block:
+        - name: Terminate the services
+          ansible.builtin.include_tasks:
+            file: ./tasks/services-down.yaml
+
+        - name: Bring down the containers
+          ansible.builtin.include_tasks:
+            file: ./tasks/containers-down.yaml
+
+        - name: Deallocate the postgres database
+          ansible.builtin.include_tasks:
+            file: ./tasks/postgres-down.yaml

@@ -1,0 +1,42 @@
+- hosts: localhost
+  connection: local
+  gather_facts: False
+  vars:
+    ansible_python_interpreter: ../.venv/bin/python
+  tasks:
+    # RETRIEVE VPC INFORMATION
+    - name: Get VPC info by name
+      amazon.aws.ec2_vpc_net_info:
+        region: "{{ region_v }}"
+        filters:
+          "tag:Name": "{{ prefix_v }}-vpc"
+      register: vpc_info
+
+    - name: Fail if VPC not found
+      ansible.builtin.fail:
+        msg: "VPC with name '{{ prefix_v }}-vpc' not found in region {{ region_v }}"
+      when: vpc_info.vpcs | length == 0
+
+    - name: Set VPC ID fact
+      ansible.builtin.set_fact:
+        vpc_id: "{{ vpc_info.vpcs[0].id }}"
+
+    # RETRIEVE EC2 INSTANCES (BASTION)
+    - name: Get EC2 instances for VPC
+      amazon.aws.ec2_instance_info:
+        region: "{{ region_v }}"
+        filters:
+          vpc-id: "{{ vpc_id }}"
+          instance-state-name: [running, stopped, stopping, pending]
+          "tag:Project": "{{ prefix_v }}"
+      register: ec2_info
+
+    # DELETE EC2 INSTANCES (BASTION)
+    - name: Terminate EC2 instances
+      amazon.aws.ec2_instance:
+        region: "{{ region_v }}"
+        instance_ids: "{{ item.instance_id }}"
+        state: absent
+        wait: yes
+      loop: "{{ ec2_info.instances }}"
+      when: ec2_info.instances | length > 0

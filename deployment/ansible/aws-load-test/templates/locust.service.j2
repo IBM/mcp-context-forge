@@ -1,0 +1,19 @@
+[Unit]
+Description=Locust Load Testing for MCP ContextForge
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/locust
+ExecStart=/home/ubuntu/.locust-venv/bin/locust \
+    -f /home/ubuntu/locust/locustfile.py \
+    --host=https://{{ prefix_v }}.{{ mcf_domain }} \
+    --web-host=127.0.0.1 \
+    --web-port=8089
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

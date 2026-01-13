@@ -1,0 +1,150 @@
+- hosts: localhost
+  connection: local
+  gather_facts: False
+  vars:
+    ansible_python_interpreter: ../.venv/bin/python
+  tasks:
+    # Retrieve all extant AWS VPC CIDR ranges in the region
+    - name: Retrieve allocated VPC ranges
+      amazon.aws.ec2_vpc_net_info:
+        region: "{{ region_v }}"
+      register: vpcs_r
+
+    # The AWS module determines idempotence for VPCs based on Name AND CIDR,
+    # so we need to pick the pre-existing CIDR for our name to keep ansible
+    # flowing smoothly
+    - name: Determine if the named VPC already exists
+      ansible.builtin.set_fact:
+        vpc_exists_f: "{{ vpcs_r | community.general.json_query(query_l) }}"
+      vars:
+        query_l: "vpcs[?tags.Name=='{{ prefix_v }}-vpc']"
+
+    - name: Select a CIDR for the VPC
+      when: vpc_exists_f | length == 0
+      cidr_allocate:
+        master_cidr: "172.16.0.0/12"
+        used_cidrs: "{{ vpcs_r.vpcs | map(attribute='cidr_block') }}"
+        prefix_length: 21
+      register: vpc_cidr_r
+
+    - name: Set the final verdict for the VPC CIDR
+      ansible.builtin.set_fact:
+        vpc_cidr_f: "{{ (vpc_exists_f | length > 0) | ternary(
+            vpc_exists_f | map(attribute='cidr_block') | first,
+            vpc_cidr_r.allocated_cidrs|first
+          )}}"
+
+    - name: Retrieve Availability Zones
+      amazon.aws.aws_az_info:
+        region: "{{ region_v }}"
+      register: azs_r
+
+    - name: Select CIDRs for the public subnets
+      cidr_allocate:
+        master_cidr: "{{ vpc_cidr_f }}"
+        used_cidrs: []
+        prefix_length: 24
+        count: "{{ azs_r.availability_zones | length }}"
+      register: vpc_public_subnet_cidrs_r
+
+    - name: Select CIDRs for the private subnets
+      cidr_allocate:
+        master_cidr: "{{ vpc_cidr_f }}"
+        used_cidrs: "{{ vpc_public_subnet_cidrs_r.allocated_cidrs }}"
+        prefix_length: 24
+        count: "{{ azs_r.availability_zones | length }}"
+      register: vpc_private_subnet_cidrs_r
+
+    # VPC
+    - name: Create VPC
+      amazon.aws.ec2_vpc_net:
+        name: "{{ prefix_v }}-vpc"
+        cidr_block: "{{ vpc_cidr_f }}"
+        region: "{{region_v}}"
+        dns_support: yes
+        dns_hostnames: yes
+        tenancy: default
+        state: present
+        tags:
+          "Project": "{{ prefix_v }}"
+      register: vpc_out
+
+    # Subnets are identified by VPC and CIDR.  The "good news" is that as long as
+    # the CIDR selection algorithms are deterministic, we SHOULD get the same
+    # combinations each time.  I'm going to add sort filters in the loops to
+    # avoid any non-deterministic sort result problems.
+
+    # PUBLIC SUBNETS
+    - name: create Public Subnets
+      amazon.aws.ec2_vpc_subnet:
+        vpc_id: "{{ vpc_out.vpc.id }}"
+        region: "{{ region_v }}"
+        az: "{{ item[0] }}"
+        state: present
+        cidr: "{{ item[1] }}"
+        map_public: yes
+        tags:
+          "Project": "{{ prefix_v }}"
+      loop: "{{ azs_r.availability_zones|map(attribute='zone_name') | sort |
+                ansible.builtin.zip(vpc_public_subnet_cidrs_r.allocated_cidrs | sort)
+             }}"
+      register: public_subnets_r
+
+    # PRIVATE SUBNETS
+    - name: create Private Subnets
+      amazon.aws.ec2_vpc_subnet:
+        vpc_id: "{{ vpc_out.vpc.id }}"
+        region: "{{ region_v }}"
+        az: "{{ item[0] }}"
+        state: present
+        cidr: "{{ item[1] }}"
+        tags:
+          "Project": "{{ prefix_v }}"
+      loop: "{{ azs_r.availability_zones|map(attribute='zone_name') | sort |
+                ansible.builtin.zip(vpc_private_subnet_cidrs_r.allocated_cidrs | sort)
+             }}"
+      register: private_subnets_r
+
+    # GATEWAY
+    - name: Internet Gateway Setup
+      amazon.aws.ec2_vpc_igw:
+        vpc_id: "{{ vpc_out.vpc.id }}"
+        region: "{{ region_v }}"
+        state: present
+      register: igw_out
+
+    # PUBLIC ROUTE TABLE
+    - name: Set up public subnet route table
+      amazon.aws.ec2_vpc_route_table:
+        vpc_id: "{{vpc_out.vpc.id}}"
+        region: "{{ region_v }}"
+        subnets: "{{ public_subnets_r.results | map(attribute='subnet') | map(attribute='id') }}"
+        tags:
+          Name: "{{ prefix_v }}-public-route-table"
+        routes:
+          - dest: 0.0.0.0/0
+            gateway_id: "{{igw_out.gateway_id}}"
+      register: pubRT_out
+
+    # NAT GATEWAY
+    - name: Create new nat gateway
+      amazon.aws.ec2_vpc_nat_gateway:
+        state: present
+        subnet_id: "{{ public_subnets_r.results[0].subnet.id }}"
+        wait: yes
+        region: "{{ region_v }}"
+        if_exist_do_not_create: true
+      register: NATGW_out
+
+    # PRIVATE ROUTE TABLE
+    - name: Set up Private subnet route table
+      amazon.aws.ec2_vpc_route_table:
+        vpc_id: "{{ vpc_out.vpc.id }}"
+        region: "{{ region_v }}"
+        subnets: "{{ private_subnets_r.results | map(attribute='subnet') | map(attribute='id') }}"
+        tags:
+          Name: "{{ prefix_v }}-private-route-table"
+        routes:
+          - dest: 0.0.0.0/0
+            gateway_id: "{{ NATGW_out.nat_gateway_id }}"
+      register: privRT_out

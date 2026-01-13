@@ -1,0 +1,79 @@
+---
+- name: Delete Security Groups
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: ../.venv/bin/python
+    fail_on_missed_group_v: true
+  tasks:
+    # RETRIEVE VPC INFORMATION
+    - name: Get VPC info by name
+      amazon.aws.ec2_vpc_net_info:
+        region: "{{ region_v }}"
+        filters:
+          "tag:Name": "{{ prefix_v }}-vpc"
+      register: vpc_info
+
+    - name: Fail if VPC not found
+      ansible.builtin.fail:
+        msg: >-
+          VPC with name '{{ prefix_v }}-vpc' not found in region {{ region_v }}
+      when: vpc_info.vpcs | length == 0
+
+    - name: Set VPC ID fact
+      ansible.builtin.set_fact:
+        vpc_id: "{{ vpc_info.vpcs[0].id }}"
+
+    # Delete security groups in reverse order of dependencies
+    # Aurora SG (referenced by bastion, ecs-ec2)
+    - name: Delete Aurora PostgreSQL security group
+      amazon.aws.ec2_security_group:
+        region: "{{ region_v }}"
+        name: "{{ prefix_v }}-aurora-postgresql-sg"
+        state: absent
+
+    # ECS EC2 SG
+    - name: Delete ECS EC2 security group
+      amazon.aws.ec2_security_group:
+        region: "{{ region_v }}"
+        name: "{{ prefix_v }}-ecs-ec2-sg"
+        state: absent
+
+    # ALB SG (no dependents)
+    - name: Delete ALB security group
+      amazon.aws.ec2_security_group:
+        region: "{{ region_v }}"
+        name: "{{ prefix_v }}-alb-sg"
+        state: absent
+
+    # Bastion SG (referenced by aurora and ecs-ec2)
+    - name: Delete Bastion security group
+      amazon.aws.ec2_security_group:
+        region: "{{ region_v }}"
+        name: "{{ prefix_v }}-bastion-sg"
+        state: absent
+      retries: 10
+      delay: 10
+
+    # Catch any remaining security groups that might have been missed
+    - name: Get remaining security groups for VPC
+      amazon.aws.ec2_security_group_info:
+        region: "{{ region_v }}"
+        filters:
+          vpc-id: "{{ vpc_id }}"
+      register: sg_info
+
+    - name: Delete any remaining security groups
+      amazon.aws.ec2_security_group:
+        region: "{{ region_v }}"
+        group_id: "{{ item.group_id }}"
+        state: absent
+      loop: "{{ sg_info.security_groups }}"
+      when: item.group_name != 'default'
+      register: remaining_sg_r
+
+    - name: Fail if we deleted any additional groups
+      when: fail_on_missed_group_v and remaining_sg_r is changed
+      ansible.builtin.fail:
+        msg: "security-down playbook needs attention -- some security groups were missed"

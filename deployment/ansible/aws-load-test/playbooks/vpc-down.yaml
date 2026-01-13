@@ -1,0 +1,118 @@
+- hosts: localhost
+  connection: local
+  gather_facts: False
+  vars:
+    ansible_python_interpreter: ../.venv/bin/python
+  tasks:
+    # RETRIEVE VPC INFORMATION
+    - name: Get VPC info by name
+      amazon.aws.ec2_vpc_net_info:
+        region: "{{ region_v }}"
+        filters:
+          "tag:Name": "{{ prefix_v }}-vpc"
+      register: vpc_info
+
+    - name: Fail if VPC not found
+      ansible.builtin.fail:
+        msg: "VPC with name '{{ prefix_v }}-vpc' not found in region {{ region_v }}"
+      when: vpc_info.vpcs | length == 0
+
+    - name: Set VPC ID fact
+      ansible.builtin.set_fact:
+        vpc_id: "{{ vpc_info.vpcs[0].id }}"
+
+    - name: Display VPC ID to be deleted
+      ansible.builtin.debug:
+        msg: "Found VPC {{ prefix_v }}-vpc with ID: {{ vpc_id }}"
+
+    # RETRIEVE ROUTE TABLES
+    - name: Get route tables for VPC
+      amazon.aws.ec2_vpc_route_table_info:
+        region: "{{ region_v }}"
+        filters:
+          vpc-id: "{{ vpc_id }}"
+      register: route_tables_info
+
+    # RETRIEVE NAT GATEWAYS
+    - name: Get NAT gateways for VPC
+      amazon.aws.ec2_vpc_nat_gateway_info:
+        region: "{{ region_v }}"
+        filters:
+          vpc-id: "{{ vpc_id }}"
+          state: [available, pending]
+      register: nat_gw_info
+
+    # RETRIEVE INTERNET GATEWAYS
+    - name: Get Internet Gateway for VPC
+      amazon.aws.ec2_vpc_igw_info:
+        region: "{{ region_v }}"
+        filters:
+          attachment.vpc-id: "{{ vpc_id }}"
+      register: igw_info
+
+    # RETRIEVE SUBNETS
+    - name: Get subnets for VPC
+      amazon.aws.ec2_vpc_subnet_info:
+        region: "{{ region_v }}"
+        filters:
+          vpc-id: "{{ vpc_id }}"
+      register: subnet_info
+
+    - name: Route Tables
+      ansible.builtin.debug:
+        var: route_tables_info.route_tables
+        verbosity: 2
+
+    # DELETE ROUTE TABLES (except main)
+    - name: Delete custom route tables
+      amazon.aws.ec2_vpc_route_table:
+        region: "{{ region_v }}"
+        vpc_id: "{{ vpc_id }}"
+        route_table_id: "{{ item.id }}"
+        lookup: id
+        state: absent
+      loop: "{{ route_tables_info.route_tables }}"
+      when: item.associations|length == 0 or not item.associations[0].main
+
+    # DELETE NAT GATEWAYS
+    - name: Delete NAT gateways
+      amazon.aws.ec2_vpc_nat_gateway:
+        region: "{{ region_v }}"
+        nat_gateway_id: "{{ item.nat_gateway_id }}"
+        state: absent
+        wait: yes
+        release_eip: yes
+      retries: 5
+      loop: "{{ nat_gw_info.result }}"
+      when: nat_gw_info.result | length > 0
+
+    # DELETE INTERNET GATEWAY
+    - name: Detach and delete Internet Gateway
+      amazon.aws.ec2_vpc_igw:
+        region: "{{ region_v }}"
+        vpc_id: "{{ vpc_id }}"
+        state: absent
+      when: igw_info.internet_gateways | length > 0
+
+    # DELETE SUBNETS
+    - name: Delete subnets
+      amazon.aws.ec2_vpc_subnet:
+        region: "{{ region_v }}"
+        vpc_id: "{{ vpc_id }}"
+        cidr: "{{ item.cidr_block }}"
+        state: absent
+      loop: "{{ subnet_info.subnets }}"
+
+    # DELETE VPC
+    - name: Delete VPC
+      amazon.aws.ec2_vpc_net:
+        region: "{{ region_v }}"
+        name: "{{ prefix_v }}-vpc"
+        cidr_block: "{{ vpc_info.vpcs[0].cidr_block }}"
+        state: absent
+      register: vpc_delete_result
+
+    - name: Display deletion result
+      ansible.builtin.debug:
+        msg: "VPC {{ prefix_v }}-vpc ({{ vpc_id }}) has been deleted"
+      when: vpc_delete_result is changed

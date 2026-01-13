@@ -1,0 +1,51 @@
+# =============================================================================
+# AWS EC2 Dynamic Inventory Plugin Configuration
+# =============================================================================
+# This file configures the amazon.aws.aws_ec2 inventory plugin to dynamically
+# discover EC2 instances in AWS. Ansible uses this to automatically find and
+# connect to running instances without manual inventory maintenance.
+#
+# Documentation: https://docs.ansible.com/ansible/latest/collections/amazon/aws/aws_ec2_inventory.html
+# =============================================================================
+
+# plugin: Specifies which inventory plugin to use.
+#         The amazon.aws.aws_ec2 plugin queries the AWS EC2 API.
+plugin: amazon.aws.aws_ec2
+
+# regions: List of AWS regions to scan for EC2 instances.
+#          Should match the region where your infrastructure is deployed.
+#          Can be a list for multi-region deployments.
+regions: eu-west-1
+
+# -----------------------------------------------------------------------------
+# Host Grouping Configuration
+# -----------------------------------------------------------------------------
+# keyed_groups: Creates Ansible inventory groups based on instance attributes.
+#               The 'Role' tag is used to group instances (e.g., bastion hosts
+#               are tagged with Role=bastion and placed in the '_bastion' group).
+keyed_groups:
+  - key: tags['Role']
+
+# -----------------------------------------------------------------------------
+# Hostname Resolution
+# -----------------------------------------------------------------------------
+# hostnames: Determines how Ansible identifies hosts in inventory output.
+#            Uses the Name tag to provide human-readable hostnames.
+#            The order matters - first matching attribute is used.
+hostnames:
+  - tag:Name
+
+# -----------------------------------------------------------------------------
+# Connection Configuration
+# -----------------------------------------------------------------------------
+# compose: Defines variables that are composed from instance attributes.
+#          These become host variables automatically set for each discovered host.
+compose:
+  # ansible_host: The IP address Ansible will use to connect.
+  #               Uses public IP since we connect from outside the VPC.
+  ansible_host: public_ip_address
+
+  # ansible_ssh_private_key_file: Path to the SSH private key.
+  #                               Must match the keypair used when launching instances.
+  #                               Update this path to match your key location.
+  ansible_ssh_private_key_file: "~/.ssh/my-keypair.pem"

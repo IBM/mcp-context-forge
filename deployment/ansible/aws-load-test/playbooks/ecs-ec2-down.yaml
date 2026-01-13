@@ -1,0 +1,71 @@
+---
+- name: Terminate ECS EC2 instance
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: ../.venv/bin/python
+  tasks:
+    # Find and terminate the ECS EC2 instance
+    - name: Get ECS EC2 instance
+      amazon.aws.ec2_instance_info:
+        region: "{{ region_v }}"
+        filters:
+          "tag:Name": "{{ prefix_v }}-ecs-node"
+          "instance-state-name":
+            - running
+            - stopped
+            - pending
+      register: ecs_ec2_instances_r
+
+    - name: Terminate ECS EC2 instance
+      amazon.aws.ec2_instance:
+        region: "{{ region_v }}"
+        instance_ids: "{{ ecs_ec2_instances_r.instances | map(attribute='instance_id') | list }}"
+        state: terminated
+        wait: true
+      when: ecs_ec2_instances_r.instances | length > 0
+
+    # Wait for instance to fully terminate before cleaning up IAM
+    - name: Wait for instance termination
+      amazon.aws.ec2_instance_info:
+        region: "{{ region_v }}"
+        filters:
+          "tag:Name": "{{ prefix_v }}-ecs-node"
+          "instance-state-name":
+            - running
+            - stopped
+            - pending
+            - stopping
+            - shutting-down
+      register: ecs_wait_r
+      until: ecs_wait_r.instances | length == 0
+      retries: 30
+      delay: 10
+      when: ecs_ec2_instances_r.instances | length > 0
+
+    # Delete instance profile (retry as instance may still be detaching)
+    - name: Delete ECS instance profile
+      amazon.aws.iam_instance_profile:
+        name: "{{ prefix_v }}-ecs-instance-profile"
+        state: absent
+      retries: 10
+      delay: 15
+
+    # Detach policies before deleting role
+    - name: Detach managed policies from ECS instance role
+      amazon.aws.iam_role:
+        name: "{{ prefix_v }}-ecs-instance-role"
+        state: present
+        managed_policies: []
+        purge_policies: true
+      retries: 5
+      delay: 10
+
+    # Delete IAM role
+    - name: Delete ECS instance IAM role
+      amazon.aws.iam_role:
+        name: "{{ prefix_v }}-ecs-instance-role"
+        state: absent
+      retries: 10
+      delay: 15

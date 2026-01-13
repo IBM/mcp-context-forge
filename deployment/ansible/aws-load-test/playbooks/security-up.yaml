@@ -1,0 +1,134 @@
+---
+- name: Set up security groups
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: ../.venv/bin/python
+  tasks:
+    # Get VPC information
+    - name: Get VPC info
+      amazon.aws.ec2_vpc_net_info:
+        region: "{{ region_v }}"
+        filters:
+          "tag:Name": "{{ prefix_v }}-vpc"
+      register: vpc_info_r
+
+    - name: Set VPC ID fact
+      ansible.builtin.set_fact:
+        vpc_id_f: "{{ vpc_info_r.vpcs[0].id }}"
+
+    # Find my public IP for bastion and ALB access
+    - name: Find my public IP
+      ansible.builtin.uri:
+        url: http://ifconfig.me/ip
+        return_content: true
+      register: ip_response
+
+    # BASTION SECURITY GROUP (no dependencies)
+    - name: Create Security Group for bastion host
+      amazon.aws.ec2_security_group:
+        name: "{{ prefix_v }}-bastion-sg"
+        description: Allow port 22 from my IP
+        region: "{{ region_v }}"
+        vpc_id: "{{ vpc_id_f }}"
+        tags:
+          "Name": "{{ prefix_v }}-bastion-sg"
+        rules:
+          - proto: tcp
+            from_port: 22
+            to_port: 22
+            cidr_ip: "{{ ip_response.content }}/32"
+      register: bastion_sg_r
+
+    # ALB SECURITY GROUP (no dependencies - create before ECS SG)
+    - name: Create Security Group for ALB
+      amazon.aws.ec2_security_group:
+        name: "{{ prefix_v }}-alb-sg"
+        description: Allow HTTPS traffic from my IP to ALB
+        region: "{{ region_v }}"
+        vpc_id: "{{ vpc_id_f }}"
+        tags:
+          "Name": "{{ prefix_v }}-alb-sg"
+        rules:
+          - proto: tcp
+            from_port: 80
+            to_port: 80
+            cidr_ip: "{{ ip_response.content }}/32"
+          - proto: tcp
+            from_port: 443
+            to_port: 443
+            cidr_ip: "{{ ip_response.content }}/32"
+      register: alb_sg_r
+
+    # ECS EC2 INSTANCE SECURITY GROUP
+    # This is for the EC2 instance running ECS tasks
+    - name: Create Security Group for ECS EC2 instance
+      amazon.aws.ec2_security_group:
+        name: "{{ prefix_v }}-ecs-ec2-sg"
+        description: >-
+          Security group for ECS EC2 instance - allows ECS agent communication
+          and container traffic
+        region: "{{ region_v }}"
+        vpc_id: "{{ vpc_id_f }}"
+        tags:
+          "Name": "{{ prefix_v }}-ecs-ec2-sg"
+        rules:
+          # Allow all traffic from ALB to nginx (port 80)
+          - proto: tcp
+            from_port: 80
+            to_port: 80
+            group_id: "{{ alb_sg_r.group_id }}"
+          # Allow bastion SSH for debugging
+          - proto: tcp
+            from_port: 22
+            to_port: 22
+            group_id: "{{ bastion_sg_r.group_id }}"
+          # Allow all internal container traffic within the instance
+          # (nginx -> gateway, gateway -> pgbouncer, gateway -> redis)
+          - proto: tcp
+            from_port: 80
+            to_port: 80
+            group_name: "{{ prefix_v }}-ecs-ec2-sg"
+          - proto: tcp
+            from_port: 4444
+            to_port: 4444
+            group_name: "{{ prefix_v }}-ecs-ec2-sg"
+          - proto: tcp
+            from_port: 6379
+            to_port: 6379
+            group_name: "{{ prefix_v }}-ecs-ec2-sg"
+          - proto: tcp
+            from_port: 6432
+            to_port: 6432
+            group_name: "{{ prefix_v }}-ecs-ec2-sg"
+          # Allow bastion to access containers for debugging
+          - proto: tcp
+            from_port: 80
+            to_port: 80
+            group_id: "{{ bastion_sg_r.group_id }}"
+          - proto: tcp
+            from_port: 4444
+            to_port: 4444
+            group_id: "{{ bastion_sg_r.group_id }}"
+      register: ecs_ec2_sg_r
+
+    # AURORA POSTGRESQL SECURITY GROUP
+    - name: Create Security Group for Aurora PostgreSQL
+      amazon.aws.ec2_security_group:
+        name: "{{ prefix_v }}-aurora-postgresql-sg"
+        description: Allow port 5432 from the bastion server and ECS EC2 instance
+        region: "{{ region_v }}"
+        vpc_id: "{{ vpc_id_f }}"
+        tags:
+          "Name": "{{ prefix_v }}-aurora-postgresql-sg"
+        rules:
+          - proto: tcp
+            from_port: 5432
+            to_port: 5432
+            group_id: "{{ bastion_sg_r.group_id }}"
+          - proto: tcp
+            from_port: 5432
+            to_port: 5432
+            group_id: "{{ ecs_ec2_sg_r.group_id }}"
+      register: aurora_sg_r

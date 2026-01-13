@@ -1,0 +1,121 @@
+---
+- name: Launch EC2 instance for ECS cluster
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: ../.venv/bin/python
+  tasks:
+    # Get VPC and subnet information
+    - name: Get VPC private subnets
+      amazon.aws.ec2_vpc_subnet_info:
+        region: "{{ region_v }}"
+        filters:
+          "tag:Project": "{{ prefix_v }}"
+          "map-public-ip-on-launch": false
+      register: vpc_private_subnets_r
+
+    - name: Set first private subnet
+      ansible.builtin.set_fact:
+        private_subnet_id: "{{ vpc_private_subnets_r.subnets[0].id }}"
+
+    # Get ECS EC2 security group
+    - name: Get ECS EC2 Security Group
+      amazon.aws.ec2_security_group_info:
+        region: "{{ region_v }}"
+        filters:
+          "tag:Name": "{{ prefix_v }}-ecs-ec2-sg"
+      register: ecs_ec2_sg_r
+
+    # Get the latest ECS-optimized AMI
+    - name: Get latest ECS-optimized Amazon Linux 2023 AMI
+      amazon.aws.ec2_ami_info:
+        region: "{{ region_v }}"
+        owners:
+          - amazon
+        filters:
+          name: "al2023-ami-ecs-hvm-*-x86_64"
+          state: available
+      register: ecs_ami_info
+
+    - name: Set ECS AMI ID
+      ansible.builtin.set_fact:
+        ecs_ami_id: "{{ (ecs_ami_info.images | sort(attribute='creation_date', reverse=true) | first).image_id }}"
+
+    # Create IAM role for ECS EC2 instance
+    - name: Create ECS instance IAM role
+      amazon.aws.iam_role:
+        name: "{{ prefix_v }}-ecs-instance-role"
+        assume_role_policy_document: |
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Principal": {
+                  "Service": "ec2.amazonaws.com"
+                },
+                "Action": "sts:AssumeRole"
+              }
+            ]
+          }
+        managed_policies:
+          - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+          - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        state: present
+      register: ecs_instance_role_r
+
+    # Create instance profile
+    - name: Create ECS instance profile
+      amazon.aws.iam_instance_profile:
+        name: "{{ prefix_v }}-ecs-instance-profile"
+        role: "{{ prefix_v }}-ecs-instance-role"
+        state: present
+      register: ecs_instance_profile_r
+
+    # Wait for instance profile to be ready
+    - name: Wait for instance profile propagation
+      ansible.builtin.pause:
+        seconds: 10
+      when: ecs_instance_profile_r.changed
+
+    # Launch EC2 instance
+    - name: Launch ECS EC2 instance
+      amazon.aws.ec2_instance:
+        name: "{{ prefix_v }}-ecs-node"
+        region: "{{ region_v }}"
+        instance_type: "{{ ecs_instance_type_v | default('c6i.12xlarge') }}"
+        image_id: "{{ ecs_ami_id }}"
+        key_name: "{{ keypair_v }}"
+        vpc_subnet_id: "{{ private_subnet_id }}"
+        security_groups:
+          - "{{ ecs_ec2_sg_r.security_groups[0].group_id }}"
+        iam_instance_profile: "{{ prefix_v }}-ecs-instance-profile"
+        user_data: |
+          #!/bin/bash
+          echo "ECS_CLUSTER={{ prefix_v }}-ecs-cluster" >> /etc/ecs/ecs.config
+          echo "ECS_ENABLE_CONTAINER_METADATA=true" >> /etc/ecs/ecs.config
+          echo "ECS_ENABLE_TASK_IAM_ROLE=true" >> /etc/ecs/ecs.config
+          echo "ECS_ENABLE_TASK_IAM_ROLE_NETWORK_HOST=true" >> /etc/ecs/ecs.config
+        volumes:
+          - device_name: /dev/xvda
+            ebs:
+              volume_size: "{{ ecs_volume_size_v | default(100) }}"
+              volume_type: gp3
+              iops: 3000
+              throughput: 125
+              delete_on_termination: true
+        tags:
+          Name: "{{ prefix_v }}-ecs-node"
+          Role: ecs-node
+          Project: "{{ prefix_v }}"
+        wait: true
+        state: running
+      register: ecs_ec2_instance_r
+
+    - name: Display ECS EC2 instance info
+      ansible.builtin.debug:
+        msg: >-
+          ECS EC2 instance launched: {{ ecs_ec2_instance_r.instances[0].instance_id }}
+          ({{ ecs_instance_type_v | default('c6i.12xlarge') }})
+          in subnet {{ private_subnet_id }}

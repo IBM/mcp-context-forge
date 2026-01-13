@@ -1,0 +1,60 @@
+---
+- name: Delete the PostgreSQL database
+  hosts: "_bastion"
+  vars:
+    ansible_python_interpreter: /home/ubuntu/.venv/bin/python3
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ access_key_v }}"
+    AWS_SECRET_ACCESS_KEY: "{{ secret_key_v }}"
+    AWS_REGION: "{{ region_v }}"
+  tasks:
+
+    - name: Wait for connection in case it's a fresh setup
+      ansible.builtin.wait_for_connection:
+
+    - name: Retrieve cluster information (including instances)
+      amazon.aws.rds_cluster_info:
+        cluster_id: "{{ prefix_v }}-mcf-postgres"
+      register: mcf_postgres_cluster_info_r
+
+    - name: Set cluster exists fact
+      ansible.builtin.set_fact:
+        cluster_exists: "{{ mcf_postgres_cluster_info_r.clusters | length > 0 }}"
+
+    - name: Extract instances
+      ansible.builtin.set_fact:
+        instances_f: "{{ mcf_postgres_cluster_info_r |
+            community.general.json_query('clusters[*].db_cluster_members[*].db_instance_identifier')
+            | flatten }}"
+      when: cluster_exists
+
+    - name: Delete the database instances
+      amazon.aws.rds_instance:
+        id: "{{ item }}"
+        state: absent
+        skip_final_snapshot: true
+        wait: true
+      loop: "{{ instances_f | default([]) }}"
+      when: cluster_exists
+
+    - name: Delete the cluster itself
+      amazon.aws.rds_cluster:
+        state: absent
+        cluster_id: "{{ prefix_v }}-mcf-postgres"
+        skip_final_snapshot: true
+        wait: true
+      when: cluster_exists
+      retries: 10
+      delay: 30
+
+    - name: Delete the DB Subnet Group (wait for cluster deletion)
+      amazon.aws.rds_subnet_group:
+        state: absent
+        name: "{{ prefix_v }}-db-subnet-group"
+      retries: 45
+      delay: 20
+
+    - name: Delete the master user secret
+      community.aws.secretsmanager_secret:
+        name: '{{ prefix_v }}-postgres-master-user-password'
+        state: absent

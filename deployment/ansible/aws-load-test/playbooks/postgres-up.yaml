@@ -1,0 +1,94 @@
+---
+- name: Create a python virtual environment for PostgreSQL operations
+  hosts: "_bastion"
+  tasks:
+    - name: Install packages needed for PostgreSQL client
+      ansible.builtin.apt:
+        name:
+          - libpq-dev
+          - postgresql-client
+          - python3-pip
+          - python3-virtualenv
+      become: true
+
+    - name: Install psycopg2 into a virtual environment
+      ansible.builtin.pip:
+        virtualenv: /home/ubuntu/.venv
+        name:
+          - boto3
+          - botocore
+          - psycopg2
+
+- name: Create PostgreSQL database in an RDS Aurora instance
+  hosts: "_bastion"
+  vars:
+    ansible_python_interpreter: /home/ubuntu/.venv/bin/python3
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ access_key_v }}"
+    AWS_SECRET_ACCESS_KEY: "{{ secret_key_v }}"
+    AWS_REGION: "{{ region_v }}"
+  tasks:
+    - name: Create a password for the database (if it does not exist)
+      community.aws.secretsmanager_secret:
+        name: '{{ prefix_v }}-postgres-master-user-password'
+        state: present
+        secret_type: string
+        secret: "{{ lookup('ansible.builtin.password', '/dev/null',
+          chars=['ascii_letters','digits'], length=32) }}"
+        overwrite: false
+
+    - name: Get Aurora PostgreSQL Security Group
+      amazon.aws.ec2_security_group_info:
+        filters: {"tag:Name": "{{ prefix_v }}-aurora-postgresql-sg"}
+      register: aurora_postgresql_sq_f
+
+    - name: Set Aurora PostgreSQL security group fact
+      ansible.builtin.set_fact:
+        aurora_postgresql_sq_r:
+          group_id: "{{ aurora_postgresql_sq_f.security_groups[0].group_id }}"
+
+    - name: Get VPC subnets
+      amazon.aws.ec2_vpc_subnet_info:
+        filters:
+          "tag:Project": "{{ prefix_v }}"
+          "map-public-ip-on-launch": false
+      register: vpc_private_subnet_f
+
+    - name: Create a DB Subnet Group for the RDS Aurora cluster
+      amazon.aws.rds_subnet_group:
+        state: present
+        name: "{{ prefix_v }}-db-subnet-group"
+        description: "RDS Subnet Group for MCP ContextForge"
+        subnets: "{{ vpc_private_subnet_f.subnets | map(attribute='id') }}"
+
+    - name: Create RDS Cluster
+      amazon.aws.rds_cluster:
+        state: present
+        cluster_id: "{{ prefix_v }}-mcf-postgres"
+        database_name: "mcp"
+        engine: aurora-postgresql
+        engine_mode: provisioned
+        master_username: postgres
+        master_user_password: "{{ lookup('amazon.aws.secretsmanager_secret',
+          prefix_v + '-postgres-master-user-password') }}"
+        db_subnet_group_name: "{{ prefix_v }}-db-subnet-group"
+        vpc_security_group_ids:
+          - "{{ aurora_postgresql_sq_r.group_id }}"
+      register: postgres_db_cluster_r
+
+    - name: Add an EC2 instance to the PostgreSQL cluster
+      amazon.aws.rds_instance:
+        state: present
+        id: "{{ prefix_v }}-mcf-postgres-1"
+        cluster_id: "{{ prefix_v }}-mcf-postgres"
+        engine: aurora-postgresql
+        db_instance_class: db.t4g.medium
+        wait: false
+
+    - name: Wait for database to become available
+      amazon.aws.rds_cluster_info:
+        cluster_id: "{{ prefix_v }}-mcf-postgres"
+      register: postgres_cluster_info
+      until: postgres_cluster_info.clusters[0].status == 'available'
+      retries: 45
+      delay: 20
