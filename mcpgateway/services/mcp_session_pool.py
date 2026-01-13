@@ -40,8 +40,8 @@ import httpx
 from mcp import ClientSession, McpError
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
-import mcp.types as mcp_types
 from mcp.shared.session import RequestResponder
+import mcp.types as mcp_types
 import orjson
 
 # JSON-RPC standard error code for method not found
@@ -1038,7 +1038,6 @@ def init_mcp_session_pool(
         # First-Party
         from mcpgateway.services.notification_service import (  # pylint: disable=import-outside-toplevel
             init_notification_service,
-            get_notification_service,
         )
 
         # Initialize notification service (will be started during acquire with gateway context)
@@ -1085,6 +1084,7 @@ async def close_mcp_session_pool() -> None:
         from mcpgateway.services.notification_service import (  # pylint: disable=import-outside-toplevel
             close_notification_service,
         )
+
         await close_notification_service()
     except (ImportError, RuntimeError):
         pass  # Notification service not initialized

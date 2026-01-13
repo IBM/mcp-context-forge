@@ -39,21 +39,20 @@ from __future__ import annotations
 
 # Standard
 import asyncio
-import logging
-import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Set
+import time
+from typing import Any, Callable, Dict, Optional, Set, TYPE_CHECKING
 
 # Third-Party
-import mcp.types as mcp_types
 from mcp.shared.session import RequestResponder
+import mcp.types as mcp_types
 
 # First-Party
-from mcpgateway.config import settings
 from mcpgateway.services.logging_service import LoggingService
 
 if TYPE_CHECKING:
+    # First-Party
     from mcpgateway.services.gateway_service import GatewayService
 
 # Initialize logging
@@ -345,9 +344,7 @@ class NotificationService:
         """
 
         async def message_handler(
-            message: RequestResponder[mcp_types.ServerRequest, mcp_types.ClientResult]
-            | mcp_types.ServerNotification
-            | Exception,
+            message: RequestResponder[mcp_types.ServerRequest, mcp_types.ClientResult] | mcp_types.ServerNotification | Exception,
         ) -> None:
             """Handle incoming messages from MCP server.
 
@@ -516,6 +513,7 @@ class NotificationService:
 
         try:
             # Use the existing refresh method with locking
+            # pylint: disable=protected-access
             result = await self._gateway_service._refresh_gateway_tools_resources_prompts(
                 gateway_id=pending.gateway_id,
                 created_via="notification_service",
@@ -527,8 +525,7 @@ class NotificationService:
 
             if result.get("success"):
                 logger.info(
-                    "Event-driven refresh completed for gateway %s: "
-                    "tools_added=%d, tools_removed=%d",
+                    "Event-driven refresh completed for gateway %s: tools_added=%d, tools_removed=%d",
                     pending.gateway_id,
                     result.get("tools_added", 0),
                     result.get("tools_removed", 0),
