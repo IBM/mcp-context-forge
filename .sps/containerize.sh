@@ -44,7 +44,7 @@ IMAGE="${IMAGE_BASE}:${IMAGE_TAG}"
 
 IMAGE_BASE="mcpgateway/mcpgateway"
 BASE_IMAGE_TAG="${IMAGE_TAG}_base"
-DOCKER_REGISTRY="docker-na.artifactory.swg-devops.com/sec-isc-team-isc-icp-docker-local"
+DOCKER_REGISTRY=$(get_env artifactory-docker-full-url "docker-na.artifactory.swg-devops.com/sec-isc-team-isc-icp-docker-local")
 
 
 MULTI_ARCH_BUILD=$(get_env multi-arch-build "1")
