@@ -30,6 +30,7 @@ spec:
         - name: {{ . }}
         {{- end }}
       {{- end }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       containers:
         - name: pgbouncer
           image: "{{ .Values.pgbouncer.image.repository }}:{{ .Values.pgbouncer.image.tag }}"
