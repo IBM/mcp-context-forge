@@ -1,12 +1,24 @@
 ---
-- name: Launch EC2 instance for ECS cluster
+- name: Create ECS cluster with Auto Scaling Group capacity provider
   hosts: localhost
   connection: local
   gather_facts: false
   vars:
     ansible_python_interpreter: ../.venv/bin/python
+    capacity_provider_name: "{{ prefix_v }}-ecs-capacity-provider"
+    ecs_user_data: |
+      #!/bin/bash
+      cat <<'EOF' >> /etc/ecs/ecs.config
+      ECS_CLUSTER={{ prefix_v }}-ecs-cluster
+      ECS_ENABLE_CONTAINER_METADATA=true
+      ECS_ENABLE_TASK_IAM_ROLE=true
+      ECS_ENABLE_TASK_IAM_ROLE_NETWORK_HOST=true
+      EOF
   tasks:
-    # Get VPC and subnet information
+    # =========================================================================
+    # Gather Infrastructure Information
+    # =========================================================================
+
     - name: Get VPC private subnets
       amazon.aws.ec2_vpc_subnet_info:
         region: "{{ region_v }}"
@@ -15,11 +27,6 @@
           "map-public-ip-on-launch": false
       register: vpc_private_subnets_r
 
-    - name: Set first private subnet
-      ansible.builtin.set_fact:
-        private_subnet_id: "{{ vpc_private_subnets_r.subnets[0].id }}"
-
-    # Get ECS EC2 security group
     - name: Get ECS EC2 Security Group
       amazon.aws.ec2_security_group_info:
         region: "{{ region_v }}"
@@ -27,25 +34,20 @@
           "tag:Name": "{{ prefix_v }}-ecs-ec2-sg"
       register: ecs_ec2_sg_r
 
-    # Get the latest ECS-optimized AMI
-    - name: Get latest ECS-optimized Amazon Linux 2023 AMI
-      amazon.aws.ec2_ami_info:
-        region: "{{ region_v }}"
-        owners:
-          - amazon
-        filters:
-          name: "al2023-ami-ecs-hvm-*-x86_64"
-          state: available
-      register: ecs_ami_info
-
-    - name: Set ECS AMI ID
+    - name: Set ECS AMI ID from SSM Parameter Store
       ansible.builtin.set_fact:
-        ecs_ami_id: "{{ (ecs_ami_info.images | sort(attribute='creation_date', reverse=true) | first).image_id }}"
+        ecs_ami_id: "{{ lookup('amazon.aws.ssm_parameter',
+          '/aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id',
+          region=region_v) }}"
 
-    # Create IAM role for ECS EC2 instance
+    # =========================================================================
+    # IAM Roles and Instance Profile
+    # =========================================================================
+
     - name: Create ECS instance IAM role
       amazon.aws.iam_role:
         name: "{{ prefix_v }}-ecs-instance-role"
+        region: "{{ region_v }}"
         assume_role_policy_document: |
           {
             "Version": "2012-10-17",
@@ -65,39 +67,48 @@
         state: present
       register: ecs_instance_role_r
 
-    # Create instance profile
     - name: Create ECS instance profile
       amazon.aws.iam_instance_profile:
         name: "{{ prefix_v }}-ecs-instance-profile"
         role: "{{ prefix_v }}-ecs-instance-role"
+        region: "{{ region_v }}"
         state: present
       register: ecs_instance_profile_r
 
-    # Wait for instance profile to be ready
     - name: Wait for instance profile propagation
       ansible.builtin.pause:
         seconds: 10
       when: ecs_instance_profile_r.changed
 
-    # Launch EC2 instance
-    - name: Launch ECS EC2 instance
-      amazon.aws.ec2_instance:
-        name: "{{ prefix_v }}-ecs-node"
+    # =========================================================================
+    # ECS Cluster
+    # =========================================================================
+
+    - name: Create ECS cluster
+      community.aws.ecs_cluster:
+        name: "{{ prefix_v }}-ecs-cluster"
         region: "{{ region_v }}"
-        instance_type: "{{ ecs_instance_type_v | default('c6i.12xlarge') }}"
+        state: present
+      register: ecs_cluster_r
+
+    # =========================================================================
+    # Launch Template
+    # =========================================================================
+
+    - name: Create EC2 Launch Template for ECS instances
+      amazon.aws.ec2_launch_template:
+        name: "{{ prefix_v }}-ecs-launch-template"
+        region: "{{ region_v }}"
         image_id: "{{ ecs_ami_id }}"
+        instance_type: "{{ ecs_instance_type_v | default('c6i.12xlarge') }}"
         key_name: "{{ keypair_v }}"
-        vpc_subnet_id: "{{ private_subnet_id }}"
-        security_groups:
-          - "{{ ecs_ec2_sg_r.security_groups[0].group_id }}"
         iam_instance_profile: "{{ prefix_v }}-ecs-instance-profile"
-        user_data: |
-          #!/bin/bash
-          echo "ECS_CLUSTER={{ prefix_v }}-ecs-cluster" >> /etc/ecs/ecs.config
-          echo "ECS_ENABLE_CONTAINER_METADATA=true" >> /etc/ecs/ecs.config
-          echo "ECS_ENABLE_TASK_IAM_ROLE=true" >> /etc/ecs/ecs.config
-          echo "ECS_ENABLE_TASK_IAM_ROLE_NETWORK_HOST=true" >> /etc/ecs/ecs.config
-        volumes:
+        network_interfaces:
+          - device_index: 0
+            associate_public_ip_address: false
+            groups:
+              - "{{ ecs_ec2_sg_r.security_groups[0].group_id }}"
+        block_device_mappings:
           - device_name: /dev/xvda
             ebs:
               volume_size: "{{ ecs_volume_size_v | default(100) }}"
@@ -105,17 +116,75 @@
               iops: 3000
               throughput: 125
               delete_on_termination: true
+        user_data: "{{ ecs_user_data | b64encode }}"
         tags:
-          Name: "{{ prefix_v }}-ecs-node"
-          Role: ecs-node
+          Name: "{{ prefix_v }}-ecs-launch-template"
           Project: "{{ prefix_v }}"
-        wait: true
-        state: running
-      register: ecs_ec2_instance_r
+        state: present
+      register: launch_template_r
 
-    - name: Display ECS EC2 instance info
-      ansible.builtin.debug:
-        msg: >-
-          ECS EC2 instance launched: {{ ecs_ec2_instance_r.instances[0].instance_id }}
-          ({{ ecs_instance_type_v | default('c6i.12xlarge') }})
-          in subnet {{ private_subnet_id }}
+    # =========================================================================
+    # Auto Scaling Group
+    # =========================================================================
+
+    - name: Create Auto Scaling Group for ECS
+      amazon.aws.autoscaling_group:
+        name: "{{ prefix_v }}-ecs-asg"
+        region: "{{ region_v }}"
+        launch_template:
+          launch_template_name: "{{ prefix_v }}-ecs-launch-template"
+          version: "$Latest"
+        min_size: 0
+        max_size: "{{ ecs_max_instances_v | default(10) }}"
+        desired_capacity: "{{ ecs_desired_instances_v | default(1) }}"
+        vpc_zone_identifier: "{{ vpc_private_subnets_r.subnets | map(attribute='id') | list }}"
+        health_check_type: EC2
+        health_check_period: 300
+        tags:
+          - Name: "{{ prefix_v }}-ecs-node"
+            propagate_at_launch: true
+          - Project: "{{ prefix_v }}"
+            propagate_at_launch: true
+          - AmazonECSManaged: "true"
+            propagate_at_launch: true
+        wait_for_instances: true
+        state: present
+      register: asg_r
+
+    # =========================================================================
+    # ECS Capacity Provider
+    # =========================================================================
+
+    - name: Create ECS Capacity Provider
+      ecs_capacity_provider:
+        state: present
+        name: "{{ capacity_provider_name }}"
+        auto_scaling_group_provider:
+          auto_scaling_group_arn: "{{ asg_r.auto_scaling_group_arn }}"
+          managed_scaling:
+            status: ENABLED
+            target_capacity: 100
+            minimum_scaling_step_size: 1
+            maximum_scaling_step_size: 10
+          managed_termination_protection: DISABLED
+          managed_draining: ENABLED
+        wait: true
+        wait_timeout: 300
+      register: capacity_provider_r
+
+    # =========================================================================
+    # Associate Capacity Provider with Cluster
+    # =========================================================================
+
+    - name: Associate capacity provider with ECS cluster
+      community.aws.ecs_cluster:
+        name: "{{ prefix_v }}-ecs-cluster"
+        region: "{{ region_v }}"
+        state: present
+        capacity_providers:
+          - "{{ capacity_provider_name }}"
+        capacity_provider_strategy:
+          - capacity_provider: "{{ capacity_provider_name }}"
+            weight: 1
+            base: 1
+      register: cluster_cp_assoc

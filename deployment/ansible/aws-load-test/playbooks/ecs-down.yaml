@@ -24,7 +24,6 @@
       loop:
         - nginx
         - gateway
-        - pgbouncer
         - redis
       register: services_delete_result
 
@@ -126,7 +125,6 @@
       loop:
         - "{{ prefix_v }}-gateway-td"
         - "{{ prefix_v }}-nginx-td"
-        - "{{ prefix_v }}-pgbouncer-td"
         - "{{ prefix_v }}-redis-td"
       retries: 5
       delay: 10

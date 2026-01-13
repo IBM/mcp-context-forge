@@ -146,11 +146,6 @@
             }
       when: debug_container_p
 
-    - name: Allocate an ECS cluster (EC2 capacity provider)
-      community.aws.ecs_cluster:
-        name: "{{ prefix_v }}-ecs-cluster"
-        state: "present"
-
     - name: Create Cloud Map namespace for service discovery
       cloudmap_namespace:
         state: present
@@ -213,8 +208,7 @@
       community.aws.ecs_taskdefinition:
         family: "{{ prefix_v }}-gateway-td"
         state: "present"
-        requires_compatibilities:
-          - EC2
+        launch_type: EC2
         memory: "6144"
         cpu: "4096"
         network_mode: awsvpc
@@ -240,7 +234,7 @@
                 value: "granian"
               - name: DATABASE_URL
                 value: "postgresql+psycopg://postgres:{{ lookup('amazon.aws.secretsmanager_secret',
-                  prefix_v + '-postgres-master-user-password') }}@pgbouncer.{{ prefix_v }}.local:6432/mcp"
+                  prefix_v + '-postgres-master-user-password') }}@{{ rds_cluster_info_r.clusters[0].endpoint }}:5432/mcp"
               - name: REDIS_URL
                 value: "redis://redis.{{ prefix_v }}.local:6379/0"
               - name: CACHE_TYPE
@@ -269,8 +263,7 @@
       community.aws.ecs_taskdefinition:
         family: "{{ prefix_v }}-nginx-td"
         state: "present"
-        requires_compatibilities:
-          - EC2
+        launch_type: EC2
         memory: "1024"
         cpu: "4096"
         network_mode: awsvpc
@@ -298,53 +291,11 @@
                 protocol: tcp
       register: nginx_td_r
 
-    - name: ECS Task Definition for pgbouncer
-      community.aws.ecs_taskdefinition:
-        family: "{{ prefix_v }}-pgbouncer-td"
-        state: "present"
-        requires_compatibilities:
-          - EC2
-        memory: "256"
-        cpu: "1024"
-        network_mode: awsvpc
-        execution_role_arn: "{{ execution_role_r.iam_role.arn }}"
-        task_role_arn: "{{ task_role_r.iam_role.arn }}"
-        force_create: true
-        containers:
-          - name: pgbouncer
-            image: "edoburu/pgbouncer:latest"
-            logConfiguration:
-              logDriver: awslogs
-              options:
-                awslogs-group: /ecs/mcf
-                awslogs-region: "{{ region_v }}"
-                awslogs-stream-prefix: pgbouncer
-            environment:
-              - name: DATABASE_URL
-                value: "postgres://postgres:{{ lookup('amazon.aws.secretsmanager_secret',
-                  prefix_v + '-postgres-master-user-password') }}@{{ rds_cluster_info_r.clusters[0].endpoint }}:5432/mcp"
-              - name: LISTEN_PORT
-                value: "6432"
-              - name: POOL_MODE
-                value: "transaction"
-              - name: MAX_CLIENT_CONN
-                value: "5000"
-              - name: DEFAULT_POOL_SIZE
-                value: "600"
-              - name: MAX_DB_CONNECTIONS
-                value: "700"
-            portMappings:
-              - name: pgbouncer
-                containerPort: 6432
-                protocol: tcp
-      register: pgbouncer_td_r
-
     - name: ECS Task Definition for redis
       community.aws.ecs_taskdefinition:
         family: "{{ prefix_v }}-redis-td"
         state: "present"
-        requires_compatibilities:
-          - EC2
+        launch_type: EC2
         memory: "2048"
         cpu: "2048"
         network_mode: awsvpc
@@ -407,34 +358,6 @@
               client_aliases:
                 - port: 6379
                   dns_name: redis
-
-    - name: PgBouncer service
-      ecs_service:
-        state: present
-        name: "{{ prefix_v }}-pgbouncer-svc"
-        cluster: "{{ prefix_v }}-ecs-cluster"
-        desired_count: 1
-        task_definition: "{{ pgbouncer_td_r.taskdefinition.taskDefinitionArn }}"
-        network_configuration:
-          assign_public_ip: false
-          subnets: "{{ vpc_private_subnets_r.subnets | map(attribute='id') }}"
-          security_groups:
-            - "{{ ecs_ec2_sg_group_id_f }}"
-        enable_execute_command: "{{ debug_container_p }}"
-        service_connect_configuration:
-          enabled: true
-          namespace: "{{ prefix_v }}.local"
-          logConfiguration:
-            logDriver: awslogs
-            options:
-              awslogs-group: /ecs/mcf
-              awslogs-region: "{{ region_v }}"
-              awslogs-stream-prefix: pgbouncer-service-connect
-          services:
-            - port_name: pgbouncer
-              client_aliases:
-                - port: 6432
-                  dns_name: pgbouncer
 
     - name: Gateway service
       ecs_service:
@@ -517,7 +440,6 @@
         - gateway
         - nginx
         - redis
-        - pgbouncer
 
     - name: ALB DNS Name is
       ansible.builtin.debug:
