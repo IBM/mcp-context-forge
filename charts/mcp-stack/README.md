@@ -1,6 +1,6 @@
 # mcp-stack
 
-![Version: 1.0.0-BETA-1](https://img.shields.io/badge/Version-1.0.0--BETA--1-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.0.0-BETA-1](https://img.shields.io/badge/AppVersion-1.0.0--BETA--1-informational?style=flat-square)
+![Version: 1.0.0-BETA-2](https://img.shields.io/badge/Version-1.0.0--BETA--2-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.0.0-BETA-2](https://img.shields.io/badge/AppVersion-1.0.0--BETA--2-informational?style=flat-square)
 
 A full-stack Helm chart for IBM's **Model Context Protocol (MCP) Gateway
 & Registry - Context-Forge**.  It bundles:
@@ -314,8 +314,8 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.env.redis.port | int | `6379` |  |
 | mcpContextForge.envFrom[0].secretRef.name | string | `"mcp-gateway-secret"` |  |
 | mcpContextForge.envFrom[1].configMapRef.name | string | `"mcp-gateway-config"` |  |
-| mcpContextForge.extraEnv | list | `[]` | Additional environment variables to inject directly |
-| mcpContextForge.extraEnvFrom | list | `[]` | Additional environment variables from secrets or configmaps |
+| mcpContextForge.extraEnv | list | `[]` |  |
+| mcpContextForge.extraEnvFrom | list | `[]` |  |
 | mcpContextForge.hpa | object | `{"enabled":true,"maxReplicas":10,"minReplicas":2,"targetCPUUtilizationPercentage":90,"targetMemoryUtilizationPercentage":90}` | ------------------------------------------------------------------ |
 | mcpContextForge.image.pullPolicy | string | `"Always"` |  |
 | mcpContextForge.image.repository | string | `"ghcr.io/ibm/mcp-context-forge"` |  |
@@ -608,6 +608,7 @@ Kubernetes: `>=1.21.0-0`
 | postgres.credentials.password | string | `"test123"` |  |
 | postgres.credentials.user | string | `"admin"` |  |
 | postgres.enabled | bool | `true` |  |
+| postgres.existingSecret | string | `""` |  |
 | postgres.external.database | string | `""` |  |
 | postgres.external.databaseKey | string | `"dbname"` |  |
 | postgres.external.enabled | bool | `false` |  |
@@ -620,7 +621,6 @@ Kubernetes: `>=1.21.0-0`
 | postgres.external.portKey | string | `"port"` |  |
 | postgres.external.user | string | `""` |  |
 | postgres.external.userKey | string | `"user"` |  |
-| postgres.existingSecret | string | `""` |  |
 | postgres.image.pullPolicy | string | `"IfNotPresent"` |  |
 | postgres.image.repository | string | `"postgres"` |  |
 | postgres.image.tag | string | `"17"` |  |
@@ -715,4 +715,8 @@ Kubernetes: `>=1.21.0-0`
 | redisCommander.resources.requests.memory | string | `"128Mi"` |  |
 | redisCommander.service.port | int | `8081` |  |
 | redisCommander.service.type | string | `"ClusterIP"` |  |
+| serviceAccount.annotations | object | `{}` | Annotations for the ServiceAccount (e.g., AWS IRSA, GCP Workload Identity) |
+| serviceAccount.automountServiceAccountToken | bool | `true` | Mount the ServiceAccount token in pods. Only applies when create=true (existing ServiceAccounts control their own token mounting) |
+| serviceAccount.create | bool | `false` | Create a ServiceAccount for all pods in this release |
+| serviceAccount.name | string | `""` | ServiceAccount name. If empty and create=true, uses release fullname. If create=false, uses this name or "default" |
 
