@@ -1061,6 +1061,7 @@ class ServerService:
             >>> db = MagicMock()
             >>> server = MagicMock()
             >>> server.id = 'server_id'
+            >>> server.name = 'test_server'
             >>> server.owner_email = 'user_email'  # Set owner to match user performing update
             >>> server.team_id = None
             >>> server.visibility = 'public'
@@ -1074,8 +1075,14 @@ class ServerService:
             >>> ServerRead.model_validate = MagicMock(return_value='server_read')
             >>> server_update = MagicMock()
             >>> server_update.id = None  # No UUID change
+            >>> server_update.name = None  # No name change
+            >>> server_update.description = None
+            >>> server_update.icon = None
+            >>> server_update.visibility = None
+            >>> server_update.team_id = None
             >>> import asyncio
-            >>> asyncio.run(service.update_server(db, 'server_id', server_update, 'user_email'))
+            >>> with patch('mcpgateway.services.server_service.get_for_update', return_value=server):
+            ...     asyncio.run(service.update_server(db, 'server_id', server_update, 'user_email'))
             'server_read'
         """
         try:
