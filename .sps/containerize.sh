@@ -60,8 +60,8 @@ else
    BASE_IMAGE_REPO="${IMAGE_BASE}:${BASE_IMAGE_TAG}"
    sed -i "s/BASE_IMAGE_REPO/${BASE_IMAGE_REPO}/g" Containerfile.cyberfraud
    make IMAGE_BASE="$IMAGE_BASE" IMAGE_TAG="$BASE_IMAGE_TAG" docker-prod && \
-   make IMAGE_TAG="${IMAGE_TAG}" CONTAINER_RUNTIME=docker CONTAINER_FILE=./Containerfile.cyberfraud container-build && \
-   docker tag "${IMAGE_BASE}:${IMAGE_TAG}" "${IMAGE}" && \
+   make IMAGE_BASE="$IMAGE_NAME" IMAGE_TAG="${IMAGE_TAG}" CONTAINER_RUNTIME=docker CONTAINER_FILE=./Containerfile.cyberfraud container-build && \
+   docker tag "${IMAGE_NAME}:${IMAGE_TAG}" "${IMAGE}" && \
    docker push "${IMAGE}"
 fi
 
