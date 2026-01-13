@@ -1277,7 +1277,7 @@ class ResourceService:
         ctx.load_verify_locations(cadata=ca_certificate)
         return ctx
 
-    async def invoke_resource(self, db: Session, resource_id: str, resource_uri: str, resource_template_uri: Optional[str] = None, user_identity: Optional[str] = None) -> Any:
+    async def invoke_resource(self, db: Session, resource_id: str, resource_uri: str, resource_template_uri: Optional[str] = None, user_identity: Optional[Union[str, Dict[str, Any]]] = None) -> Any:
         """
         Invoke a resource via its configured gateway using SSE or StreamableHTTP transport.
 
@@ -1302,8 +1302,9 @@ class ResourceService:
                 Direct resource URI configured for the resource.
             resource_template_uri (Optional[str]):
                 URI from the template. Overrides `resource_uri` when provided.
-            user_identity (Optional[str]):
+            user_identity (Optional[Union[str, Dict[str, Any]]]):
                 Identity of the user making the request, used for session pool isolation.
+                Can be a string (email) or a dict with an 'email' key.
                 Defaults to platform_admin_email if not provided.
 
         Returns:
@@ -1385,8 +1386,14 @@ class ResourceService:
         gateway_id = None
         resource_info = None
         resource_info = db.execute(select(DbResource).where(DbResource.id == resource_id)).scalar_one_or_none()
-        # Use provided user_identity for session pool isolation, fall back to platform admin for OAuth
-        user_email = user_identity or settings.platform_admin_email
+
+        # Normalize user_identity to string email for session pool isolation and OAuth
+        if isinstance(user_identity, dict):
+            user_email = user_identity.get("email") or settings.platform_admin_email
+        elif isinstance(user_identity, str):
+            user_email = user_identity
+        else:
+            user_email = settings.platform_admin_email
 
         if resource_info:
             gateway_id = getattr(resource_info, "gateway_id", None)
