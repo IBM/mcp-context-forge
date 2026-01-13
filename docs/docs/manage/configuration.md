@@ -1123,6 +1123,17 @@ METRICS_DELETE_RAW_AFTER_ROLLUP=true   # Delete raw after rollup (default: true)
 METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS=1  # Hours before deletion (default: 1)
 ```
 
+**Performance Optimization (PostgreSQL):**
+
+```bash
+USE_POSTGRESDB_PERCENTILES=true  # Use PostgreSQL-native percentile_cont (default: true)
+YIELD_BATCH_SIZE=1000            # Rows per batch for streaming queries (default: 1000)
+```
+
+When `USE_POSTGRESDB_PERCENTILES=true` (default), PostgreSQL uses native `percentile_cont()` for p50/p95/p99 calculations, which is 5-10x faster than Python-based percentile computation. For SQLite or when disabled, falls back to Python linear interpolation.
+
+`YIELD_BATCH_SIZE` controls memory usage by streaming query results in batches instead of loading all rows into RAM at once.
+
 #### Configuration Examples
 
 **Default (recommended for most deployments):**

@@ -998,6 +998,15 @@ class Settings(BaseSettings):
     metrics_aggregation_backfill_hours: int = Field(default=6, ge=0, le=168, description="Hours of structured logs to backfill into performance metrics on startup")
     metrics_aggregation_window_minutes: int = Field(default=5, description="Time window for metrics aggregation (minutes)")
     metrics_aggregation_auto_start: bool = Field(default=False, description="Automatically run the log aggregation loop on application startup")
+    yield_batch_size: int = Field(
+        default=1000,
+        ge=100,
+        le=100000,
+        description="Number of rows fetched per batch when streaming hourly metric data from the database. "
+        "Used to limit memory usage during aggregation and percentile calculations. "
+        "Smaller values reduce memory footprint but increase DB round-trips; larger values improve throughput "
+        "at the cost of higher memory usage.",
+    )
 
     # Execution Metrics Recording
     # Controls whether tool/resource/prompt/server/A2A execution metrics are written to the database.
