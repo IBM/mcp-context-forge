@@ -1,19 +1,25 @@
 use anyhow::{Context, Result};
-use tokio::fs;
 use futures::future::join_all;
+use tokio::{fs, io::AsyncReadExt};
 
 static MAX_FILE_SIZE: u64 = 1 * 1024 * 1024; // 1 MiB
 
 pub async fn read_file(path: &str) -> Result<String> {
     tracing::info!("Starting read file for {}", path);
+    let mut file = fs::File::open(path)
+        .await
+        .with_context(|| format!("failed to read file '{path}'"))?;
 
-    let metadata = fs::metadata(path)
+    let metadata = file
+        .metadata()
         .await
         .with_context(|| format!("Could not read file {}", path))?;
 
     if !metadata.is_file() {
-        tracing::warn!("path is not a regular file: '{path}'");
-        anyhow::bail!("path is not a regular file: '{path}'");
+        anyhow::bail!(
+            "file '{path}' exceeds size limit ({} bytes)",
+            metadata.len()
+        );
     }
 
     if metadata.len() > MAX_FILE_SIZE {
@@ -26,12 +32,13 @@ pub async fn read_file(path: &str) -> Result<String> {
             metadata.len()
         );
     }
-
-    fs::read_to_string(path)
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)
         .await
-        .with_context(|| format!("failed to read file '{path}'"))
-}
+        .with_context(|| format!("failed to read file '{path}'"))?;
 
+    Ok(contents)
+}
 
 pub async fn read_multiple_files(paths: Vec<String>) -> Result<Vec<String>> {
     tracing::info!("Starting reading multiple files for {:?}", paths);
