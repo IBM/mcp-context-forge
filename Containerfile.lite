@@ -20,7 +20,6 @@
 # Python major.minor series to track
 ARG PYTHON_VERSION=3.12
 ARG ENABLE_RUST=false
-ARG TARGETPLATFORM
 
 ###############################################################################
 # Rust builder stage - builds Rust plugins in manylinux2014 container
@@ -99,8 +98,8 @@ WORKDIR /app
 # Force Python whl to use OpenSSL.
 # NOTE: ppc64le has the same OpenSSL requirement
 # ----------------------------------------------------------------------------
-RUN if [ "$TARGETPLATFORM" = "linux/s390x" ] || [ "$TARGETPLATFORM" = "linux/ppc64le" ]; then \
-        echo "Building for $TARGETPLATFORM."; \
+RUN if [ "$(uname -m)" = "s390x" ] || [ "$(uname -m)" = "ppc64le" ]; then \
+        echo "Building for $(uname -m)."; \
         echo "export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='True'" > /etc/profile.d/use-openssl.sh; \
     else \
         echo "export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'" > /etc/profile.d/use-openssl.sh; \
