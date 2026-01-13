@@ -113,20 +113,20 @@ class TestTransportIsolationE2E:
             headers = {"Authorization": "Bearer user-token"}
 
             # Get pool keys for same URL, same identity, different transports
-            sse_key = pool._make_pool_key("http://server:8080/sse", headers, TransportType.SSE)
-            http_key = pool._make_pool_key("http://server:8080/sse", headers, TransportType.STREAMABLE_HTTP)
+            sse_key = pool._make_pool_key("http://server:8080/sse", headers, TransportType.SSE, user_identity="anonymous")
+            http_key = pool._make_pool_key("http://server:8080/sse", headers, TransportType.STREAMABLE_HTTP, user_identity="anonymous")
 
             # Keys should be different due to transport
             assert sse_key != http_key
 
             # URL and identity should be same
-            assert sse_key[0] == http_key[0]  # URL
-            assert sse_key[1] == http_key[1]  # Identity hash
+            assert sse_key[1] == http_key[1]  # URL
+            assert sse_key[2] == http_key[2]  # Identity hash
 
             # Transport should be different
-            assert sse_key[2] != http_key[2]
-            assert sse_key[2] == "sse"
-            assert http_key[2] == "streamablehttp"
+            assert sse_key[3] != http_key[3]
+            assert sse_key[3] == "sse"
+            assert http_key[3] == "streamablehttp"
         finally:
             await pool.close_all()
 
@@ -164,7 +164,7 @@ class TestIdleEvictionE2E:
                     assert pool.get_metrics()["pool_key_count"] == 1
 
                     # Set old last_used time to trigger eviction
-                    pool_key = ("http://test:8080", "anonymous", "streamablehttp")
+                    pool_key = ("anonymous", "http://test:8080", "anonymous", "streamablehttp")
                     pool._pool_last_used[pool_key] = time.time() - 1000
 
                     # Wait and trigger eviction
@@ -205,7 +205,7 @@ class TestIdleEvictionE2E:
                     session = await pool.acquire("http://test:8080")
 
                     # Force session back into pool
-                    pool_key = ("http://test:8080", "anonymous", "streamablehttp")
+                    pool_key = ("anonymous", "http://test:8080", "anonymous", "streamablehttp")
                     pool._active.get(pool_key, set()).discard(session)
                     pool._pools[pool_key].put_nowait(session)
 
