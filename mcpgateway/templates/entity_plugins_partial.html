@@ -9,7 +9,7 @@
           🔌 Plugin Configuration for: <span class="text-indigo-600 dark:text-indigo-400">{{ entity_name }}</span>
         </h3>
         <button
-          onclick="document.getElementById('plugins-{{ entity_type }}-{{ entity_id }}').classList.add('hidden')"
+          onclick="this.closest('tr').classList.add('hidden')"
           class="px-3 py-1 text-sm text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
         >
           ✕ Close
@@ -30,10 +30,20 @@
           {% if pre_hooks %}
           <ul class="space-y-2">
             {% for plugin in pre_hooks %}
-            <li class="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700">
+            {% set has_mode_override = plugin.mode and plugin.mode != '' %}
+            {% set is_disabled_by_override = has_mode_override and plugin.mode == 'disabled' %}
+            {% set plugin_config = available_plugins | selectattr('name', 'equalto', plugin.name) | first %}
+            {% set is_disabled_globally = plugin_config and not plugin_config.enabled %}
+            {% set is_disabled = is_disabled_by_override or (not has_mode_override and is_disabled_globally) %}
+            <li class="flex items-center justify-between p-2 rounded border {% if is_disabled %}bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800{% else %}bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700{% endif %}">
               <div class="flex items-center space-x-2">
                 <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ loop.index }}.</span>
-                <span class="text-sm text-gray-900 dark:text-gray-100">{{ plugin.name }}</span>
+                <span class="text-sm {% if is_disabled %}text-red-700 dark:text-red-300{% else %}text-gray-900 dark:text-gray-100{% endif %}">{{ plugin.name }}</span>
+                {% if is_disabled %}
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
+                  Disabled
+                </span>
+                {% endif %}
                 <div class="flex items-center space-x-1">
                   <label class="text-xs text-gray-500 dark:text-gray-400">p:</label>
                   <input type="number"
@@ -123,10 +133,20 @@
           {% if post_hooks %}
           <ul class="space-y-2">
             {% for plugin in post_hooks %}
-            <li class="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700">
+            {% set has_mode_override = plugin.mode and plugin.mode != '' %}
+            {% set is_disabled_by_override = has_mode_override and plugin.mode == 'disabled' %}
+            {% set plugin_config = available_plugins | selectattr('name', 'equalto', plugin.name) | first %}
+            {% set is_disabled_globally = plugin_config and not plugin_config.enabled %}
+            {% set is_disabled = is_disabled_by_override or (not has_mode_override and is_disabled_globally) %}
+            <li class="flex items-center justify-between p-2 rounded border {% if is_disabled %}bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800{% else %}bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700{% endif %}">
               <div class="flex items-center space-x-2">
                 <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ loop.index }}.</span>
-                <span class="text-sm text-gray-900 dark:text-gray-100">{{ plugin.name }}</span>
+                <span class="text-sm {% if is_disabled %}text-red-700 dark:text-red-300{% else %}text-gray-900 dark:text-gray-100{% endif %}">{{ plugin.name }}</span>
+                {% if is_disabled %}
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
+                  Disabled
+                </span>
+                {% endif %}
                 <div class="flex items-center space-x-1">
                   <label class="text-xs text-gray-500 dark:text-gray-400">p:</label>
                   <input type="number"
@@ -184,8 +204,61 @@
         </div>
       </div>
 
+      <!-- Available plugins data (hidden script tag for JSON) -->
+      <script type="application/json" id="available-plugins-data-{{ entity_type }}-{{ entity_id }}">
+{{ available_plugins|tojson if available_plugins else '[]' }}
+      </script>
+
       <!-- Add Plugin Form -->
-      <div class="mt-6 bg-white dark:bg-gray-900 rounded-lg shadow p-4">
+      <div class="mt-6 bg-white dark:bg-gray-900 rounded-lg shadow p-4"
+           x-data="{
+             availablePlugins: [],
+             selectedPluginDisabled: false,
+             selectedPluginMode: '',
+             init() {
+               try {
+                 const dataEl = document.getElementById('available-plugins-data-{{ entity_type }}-{{ entity_id }}');
+                 if (dataEl) {
+                   this.availablePlugins = JSON.parse(dataEl.textContent);
+                   console.log('Loaded available plugins for {{ entity_type }} {{ entity_id }}:', this.availablePlugins.length);
+                 } else {
+                   console.warn('Available plugins data element not found');
+                   this.availablePlugins = [];
+                 }
+               } catch (e) {
+                 console.error('Failed to parse available plugins:', e);
+                 this.availablePlugins = [];
+               }
+             },
+             onPluginSelect(event) {
+               const selectEl = event.target;
+               const selectedOption = selectEl.options[selectEl.selectedIndex];
+               const pluginName = selectedOption.value;
+
+               if (!pluginName) {
+                 this.selectedPluginDisabled = false;
+                 this.selectedPluginMode = '';
+                 return;
+               }
+
+               const plugin = this.availablePlugins.find(p => p.name === pluginName);
+               if (plugin) {
+                 this.selectedPluginDisabled = !plugin.enabled;
+                 this.selectedPluginMode = plugin.mode || '';
+
+                 const form = selectEl.closest('form');
+                 const modeField = form.querySelector('[name=mode]');
+                 if (modeField && plugin.mode) {
+                   modeField.value = plugin.mode;
+                   if (!plugin.enabled) {
+                     modeField.classList.add('border-red-500', 'dark:border-red-500', 'bg-red-50', 'dark:bg-red-900/20');
+                   } else {
+                     modeField.classList.remove('border-red-500', 'dark:border-red-500', 'bg-red-50', 'dark:bg-red-900/20');
+                   }
+                 }
+               }
+             }
+           }">
         <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">➕ Add Plugin</h4>
         <form hx-post="{{ root_path }}/admin/{{ entity_type }}s/{{ entity_id }}/plugins"
               hx-target="#plugins-{{ entity_type }}-{{ entity_id }}"
@@ -195,12 +268,24 @@
           <div class="flex-1 min-w-[200px]">
             <label class="block text-xs text-gray-600 dark:text-gray-400 mb-1">Plugin</label>
             <select name="plugin_name" required
+                    @change="onPluginSelect($event)"
                     class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500">
               <option value="">Select a plugin...</option>
               {% for plugin in available_plugins %}
-              <option value="{{ plugin.name }}">{{ plugin.name }}</option>
+              <option value="{{ plugin.name }}" data-mode="{{ plugin.mode }}" data-enabled="{{ plugin.enabled|lower }}">
+                {{ plugin.name }}{% if not plugin.enabled %} (disabled){% endif %}{% if plugin.description %} - {{ plugin.description }}{% endif %}
+              </option>
               {% endfor %}
             </select>
+            <!-- Disabled warning -->
+            <div x-show="selectedPluginDisabled && (!selectedPluginMode || selectedPluginMode === 'disabled')" class="mt-2">
+              <div class="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
+                <svg class="h-3 w-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                  <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+                </svg>
+                This plugin is disabled in config - set mode below to enable it
+              </div>
+            </div>
           </div>
 
           <div class="w-32">
@@ -256,6 +341,7 @@
                 <div>
                   <label class="block text-xs text-gray-600 dark:text-gray-400 mb-1">Mode</label>
                   <select name="mode"
+                          @change="selectedPluginMode = $event.target.value; if ($event.target.value && $event.target.value !== 'disabled') { $event.target.classList.remove('border-red-500', 'dark:border-red-500', 'bg-red-50', 'dark:bg-red-900/20'); }"
                           class="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500">
                     <option value="">Default</option>
                     <option value="enforce">Enforce (block on error)</option>

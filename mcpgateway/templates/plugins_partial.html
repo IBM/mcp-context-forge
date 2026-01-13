@@ -628,7 +628,6 @@
       availableTags: [],
       tags: [],
       newTag: '',
-      hooks: [],
       whenExpression: '',
       reverseOrderOnPost: false,
       selectedPlugins: [],
@@ -676,7 +675,6 @@
         this.selectedEntityNames = [];
         this.tags = [];
         this.newTag = '';
-        this.hooks = [];
         this.whenExpression = '';
         this.reverseOrderOnPost = false;
         this.selectedPlugins = [];
@@ -727,10 +725,18 @@
           }
 
           this.tags = ruleData.tags || [];
-          this.hooks = ruleData.hooks || [];
           this.whenExpression = ruleData.when || '';
           this.reverseOrderOnPost = ruleData.reverse_order_on_post || false;
           this.selectedPlugins = ruleData.plugins || [];
+
+          // Ensure all plugins have hooks array initialized and set disabled flag
+          this.selectedPlugins.forEach(p => {
+            if (!p.hooks) p.hooks = [];
+            // Set the _isDisabledByDefault flag based on enabled status from backend
+            if (p.enabled !== undefined) {
+              p._isDisabledByDefault = !p.enabled;
+            }
+          });
           console.log('selectedPlugins after assignment:', this.selectedPlugins.length);
 
           // Fetch available entities after loading entity types
@@ -828,7 +834,25 @@
           ? Math.max(...this.selectedPlugins.map(p => p.priority || 0))
           : 0;
         const nextPriority = maxPriority > 0 ? maxPriority + 10 : 10;
-        this.selectedPlugins.push({ name: '', priority: nextPriority });
+        this.selectedPlugins.push({ name: '', priority: nextPriority, hooks: [] });
+      },
+      onPluginSelect(plugin, pluginName) {
+        // Find the selected plugin's default mode from available_plugins
+        const selectElement = event.target;
+        const selectedOption = selectElement.options[selectElement.selectedIndex];
+        const defaultMode = selectedOption.getAttribute('data-mode');
+        const isEnabled = selectedOption.getAttribute('data-enabled') === 'true';
+
+        // Always update the mode to match the selected plugin's configuration
+        // This ensures when switching plugins, the mode reflects the new plugin
+        if (defaultMode && defaultMode !== 'null') {
+          plugin.mode = defaultMode;
+        } else {
+          plugin.mode = '';  // Clear mode if no default
+        }
+
+        // Store enabled status for display
+        plugin._isDisabledByDefault = !isEnabled;
       },
       removePlugin(index) {
         this.selectedPlugins.splice(index, 1);
@@ -853,9 +877,6 @@
 
         // Add tags
         this.tags.forEach(tag => formData.append('tags', tag));
-
-        // Add hooks
-        this.hooks.forEach(hook => formData.append('hooks', hook));
 
         // Add when expression
         if (this.whenExpression) {
@@ -972,6 +993,21 @@
               </button>
             </div>
             <div class="space-y-2">
+              <!-- Column headers (shown when there are plugins) -->
+              <div x-show="selectedPlugins.length > 0" class="flex gap-2 items-center px-3 pb-1">
+                <div class="flex-1">
+                  <span class="text-xs font-medium text-gray-600 dark:text-gray-400">Plugin Name</span>
+                </div>
+                <div class="w-24">
+                  <span class="text-xs font-medium text-gray-600 dark:text-gray-400">Priority</span>
+                </div>
+                <div class="w-40">
+                  <span class="text-xs font-medium text-gray-600 dark:text-gray-400">Mode</span>
+                </div>
+                <div class="w-20">
+                  <!-- Space for buttons -->
+                </div>
+              </div>
               <template x-for="(plugin, index) in selectedPlugins" :key="index">
                 <div class="p-3 bg-gray-50 dark:bg-gray-700 rounded-md border border-gray-200 dark:border-gray-600"
                      x-data="{ showAdvanced: false }">
@@ -980,12 +1016,15 @@
                     <div class="flex-1">
                       <select
                         x-model="plugin.name"
+                        @change="onPluginSelect(plugin, $event.target.value)"
                         class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500"
                         required
                       >
                         <option value="">Select plugin...</option>
                         {% for available_plugin in available_plugins %}
-                        <option value="{{ available_plugin.name }}">{{ available_plugin.name }}</option>
+                        <option value="{{ available_plugin.name }}" data-mode="{{ available_plugin.mode }}" data-enabled="{{ available_plugin.enabled|lower }}">
+                          {{ available_plugin.name }}{% if not available_plugin.enabled %} (disabled){% endif %}
+                        </option>
                         {% endfor %}
                       </select>
                     </div>
@@ -998,6 +1037,20 @@
                         max="1000"
                         class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500"
                       />
+                    </div>
+                    <div class="w-40">
+                      <select
+                        x-model="plugin.mode"
+                        class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500"
+                        :class="{ 'border-red-500 dark:border-red-500 bg-red-50 dark:bg-red-900/20': plugin._isDisabledByDefault && (!plugin.mode || plugin.mode === 'disabled') }"
+                        title="Plugin execution mode"
+                      >
+                        <option value="">Use default</option>
+                        <option value="enforce">Enforce</option>
+                        <option value="enforce_ignore_error">Enforce (ignore error)</option>
+                        <option value="permissive">Permissive</option>
+                        <option value="disabled">Disabled</option>
+                      </select>
                     </div>
                     <button
                       @click="showAdvanced = !showAdvanced"
@@ -1022,8 +1075,39 @@
                     </button>
                   </div>
 
+                  <!-- Disabled warning badge (reactive) -->
+                  <div x-show="plugin._isDisabledByDefault && (!plugin.mode || plugin.mode === 'disabled')" class="mt-2">
+                    <div class="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
+                      <svg class="h-3 w-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+                      </svg>
+                      This plugin is disabled in config - change mode above to enable it
+                    </div>
+                  </div>
+
                   <!-- Advanced Configuration (expandable) -->
                   <div x-show="showAdvanced" x-collapse class="mt-3 space-y-2 pt-3 border-t border-gray-300 dark:border-gray-600">
+                    <!-- Hook Override -->
+                    <div>
+                      <label class="block text-xs text-gray-600 dark:text-gray-400 mb-1">
+                        Hook Override
+                        <span class="text-gray-500">(leave empty to use plugin defaults)</span>
+                      </label>
+                      <div class="grid grid-cols-2 gap-1 text-xs">
+                        <template x-for="hookType in ['tool_pre_invoke', 'tool_post_invoke', 'prompt_pre_invoke', 'prompt_post_invoke', 'resource_pre_invoke', 'resource_post_invoke', 'http_pre_request', 'http_post_response']" :key="hookType">
+                          <label class="inline-flex items-center">
+                            <input
+                              type="checkbox"
+                              :value="hookType"
+                              x-model="plugin.hooks"
+                              class="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 h-3 w-3"
+                            />
+                            <span class="ml-1.5 text-xs text-gray-700 dark:text-gray-300" x-text="hookType.replace(/_/g, ' ')"></span>
+                          </label>
+                        </template>
+                      </div>
+                    </div>
+
                     <!-- Config JSON -->
                     <div>
                       <label class="block text-xs text-gray-600 dark:text-gray-400 mb-1">Config (JSON)</label>
@@ -1035,34 +1119,17 @@
                       ></textarea>
                     </div>
 
-                    <div class="grid grid-cols-2 gap-2">
-                      <!-- Override -->
-                      <div class="flex items-center space-x-2">
-                        <input
-                          type="checkbox"
-                          x-model="plugin.override"
-                          class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 dark:border-gray-600 dark:bg-gray-700"
-                        />
-                        <label class="text-xs text-gray-600 dark:text-gray-400">
-                          Override
-                          <span class="block text-gray-500">Replace config</span>
-                        </label>
-                      </div>
-
-                      <!-- Mode -->
-                      <div>
-                        <label class="block text-xs text-gray-600 dark:text-gray-400 mb-1">Mode</label>
-                        <select
-                          x-model="plugin.mode"
-                          class="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500"
-                        >
-                          <option value="">Default</option>
-                          <option value="enforce">Enforce</option>
-                          <option value="enforce_ignore_error">Enforce (ignore error)</option>
-                          <option value="permissive">Permissive</option>
-                          <option value="disabled">Disabled</option>
-                        </select>
-                      </div>
+                    <!-- Override -->
+                    <div class="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        x-model="plugin.override"
+                        class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 dark:border-gray-600 dark:bg-gray-700"
+                      />
+                      <label class="text-xs text-gray-600 dark:text-gray-400">
+                        Override
+                        <span class="block text-gray-500">Replace config</span>
+                      </label>
                     </div>
                   </div>
                 </div>
@@ -1262,51 +1329,6 @@
                   </template>
                 </div>
                 <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Tag-based matching for flexible filtering</p>
-              </div>
-            </div>
-
-            <!-- Filter on Hook Types -->
-            <div class="mb-3" x-data="{ expanded: false }">
-              <button
-                @click="expanded = !expanded"
-                type="button"
-                class="w-full flex items-center justify-between px-4 py-2 bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 rounded-md transition-colors"
-              >
-                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  🪝 Filter on Hook Types
-                  <span x-show="hooks.length > 0" class="ml-2 text-xs text-indigo-600 dark:text-indigo-400">
-                    (<span x-text="hooks.length"></span>)
-                  </span>
-                </span>
-                <svg class="h-5 w-5 transition-transform text-gray-500" :class="{ 'rotate-180': expanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
-              <div x-show="expanded" x-collapse class="mt-2 px-4 py-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-md">
-                <div class="mb-2">
-                  <div class="inline-flex items-center px-3 py-2 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-md">
-                    <svg class="h-4 w-4 text-indigo-600 dark:text-indigo-400 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                      <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
-                    </svg>
-                    <span class="text-xs text-indigo-800 dark:text-indigo-200">
-                      <strong>Default:</strong> No selection = applies to all hooks
-                    </span>
-                  </div>
-                </div>
-                <div class="grid grid-cols-2 gap-2">
-                  <template x-for="hookType in ['tool_pre_invoke', 'tool_post_invoke', 'prompt_pre_invoke', 'prompt_post_invoke', 'resource_pre_invoke', 'resource_post_invoke', 'http_pre_request', 'http_post_response']" :key="hookType">
-                    <label class="inline-flex items-center">
-                      <input
-                        type="checkbox"
-                        :value="hookType"
-                        x-model="hooks"
-                        class="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                      />
-                      <span class="ml-2 text-xs text-gray-700 dark:text-gray-300" x-text="hookType.replace(/_/g, ' ')"></span>
-                    </label>
-                  </template>
-                </div>
-                <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Select specific hook types to restrict when this rule applies</p>
               </div>
             </div>
 

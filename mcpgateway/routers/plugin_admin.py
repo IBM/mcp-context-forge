@@ -99,9 +99,11 @@ async def get_routing_rules(
         rules = []
         if route_service.config and route_service.config.routes:
             for idx, route in enumerate(route_service.config.routes):
-                # Try to get display name from metadata, fallback to entity name filter, then to index
-                display_name = route.metadata.get("display_name") if route.metadata else None
+                # Use display_name field, with auto-generation fallback
+                # Priority: 1) route.display_name, 2) route.name, 3) "Rule N"
+                display_name = route.display_name
                 if not display_name:
+                    # Auto-generate from entity name filter
                     if isinstance(route.name, str):
                         display_name = route.name
                     elif isinstance(route.name, list) and route.name:
@@ -212,6 +214,54 @@ async def get_routing_rules(
                                 if resource:
                                     name_filters_with_types.append({"type": "resource", "name": name})
 
+                # Get config to access all plugins (including disabled)
+                # Try plugin route service first, fall back to plugin manager
+                # First-Party
+                from mcpgateway.plugins.framework import get_plugin_manager
+                from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+                config = None
+                try:
+                    route_service = get_plugin_route_service()
+                    config = route_service.config if route_service else None
+                except RuntimeError:
+                    # Service not initialized, fall back to plugin manager
+                    plugin_manager = get_plugin_manager()
+                    config = plugin_manager.config if plugin_manager else None
+
+                # Build plugin data with default hooks and enabled status
+                plugin_data_list = []
+                for p in route.plugins or []:
+                    plugin_dict = {
+                        "name": p.name,
+                        "priority": p.priority or 0,
+                        "hooks": p.hooks,  # Plugin-level override (may be None)
+                        "mode": p.mode,
+                        "when": p.when,
+                        "config": p.config,
+                        "default_hooks": [],  # Default to empty
+                        "enabled": True,  # Default to enabled
+                    }
+
+                    # Look up default hooks and enabled status from config
+                    # This includes ALL plugins (enabled and disabled)
+                    if config and config.plugins:
+                        try:
+                            # Find plugin config by name
+                            plugin_config = next((pc for pc in config.plugins if pc.name == p.name), None)
+                            if plugin_config:
+                                # Get default hooks from plugin config
+                                plugin_dict["default_hooks"] = list(plugin_config.hooks) if plugin_config.hooks else []
+                                # Determine enabled status based on rule-specific mode or global mode
+                                # Priority: rule-specific mode override > global plugin config mode
+                                effective_mode = p.mode if p.mode else plugin_config.mode
+                                plugin_dict["enabled"] = effective_mode != "disabled"
+                        except Exception as e:
+                            LOGGER.error(f"Error looking up plugin config for {p.name}: {e}")
+                            plugin_dict["default_hooks"] = []
+
+                    plugin_data_list.append(plugin_dict)
+
                 rule_data = {
                     "index": idx,
                     "name": display_name,
@@ -223,13 +273,7 @@ async def get_routing_rules(
                     "entities": [str(e) for e in (route.entities or [])],
                     "tags": route.tags or [],
                     "hooks": route.hooks or [],
-                    "plugins": [
-                        {
-                            "name": p.name,
-                            "priority": p.priority or 0,
-                        }
-                        for p in (route.plugins or [])
-                    ],
+                    "plugins": plugin_data_list,
                     "reverse_order_on_post": route.reverse_order_on_post or False,
                     "when": route.when or None,
                     "matching_entities": matching_entities,
@@ -473,9 +517,10 @@ async def get_routing_rule(
         if not rule:
             return JSONResponse(content={"error": f"Rule at index {rule_index} not found"}, status_code=404)
 
-        # Get display name from metadata or fallback
-        display_name = rule.metadata.get("display_name") if rule.metadata else None
+        # Get display name from first-class field or fallback
+        display_name = rule.display_name
         if not display_name:
+            # Auto-generate from entity name filter
             if isinstance(rule.name, str):
                 display_name = rule.name
             elif isinstance(rule.name, list) and rule.name:
@@ -490,6 +535,41 @@ async def get_routing_rule(
         elif isinstance(rule.name, list):
             name_filter = ", ".join(rule.name)
 
+        # Get config to determine enabled status for plugins
+        config = None
+        try:
+            config = route_service.config if route_service else None
+        except Exception:
+            pass
+
+        # Build plugin list with all fields needed for editing
+        plugins_list = []
+        for p in rule.plugins or []:
+            plugin_dict = {
+                "name": p.name,
+                "priority": p.priority or 0,
+                "hooks": p.hooks or [],
+                "mode": p.mode or "",
+                "when": p.when or "",
+                "config": p.config or {},
+                "override": p.override or False,
+            }
+
+            # Determine enabled status
+            if config and config.plugins:
+                try:
+                    plugin_config = next((pc for pc in config.plugins if pc.name == p.name), None)
+                    if plugin_config:
+                        # Use rule-specific mode or fall back to global mode
+                        effective_mode = p.mode if p.mode else plugin_config.mode
+                        plugin_dict["enabled"] = effective_mode != "disabled"
+                except Exception:
+                    plugin_dict["enabled"] = True
+            else:
+                plugin_dict["enabled"] = True
+
+            plugins_list.append(plugin_dict)
+
         # Convert rule to dict for JSON serialization
         rule_data = {
             "index": rule_index,
@@ -498,7 +578,7 @@ async def get_routing_rule(
             "entities": [str(e) for e in (rule.entities or [])],
             "tags": rule.tags or [],
             "hooks": rule.hooks or [],
-            "plugins": [{"name": p.name, "priority": p.priority or 0} for p in (rule.plugins or [])],
+            "plugins": plugins_list,
             "reverse_order_on_post": rule.reverse_order_on_post or False,
             "when": rule.when or "",
         }
@@ -633,10 +713,6 @@ async def create_or_update_routing_rule(
         tags = form_data.getlist("tags")
         tags = [t.strip() for t in tags if t.strip()] or None
 
-        # Parse hooks - filter empty strings and convert empty list to None
-        hooks = form_data.getlist("hooks")
-        hooks = [h.strip() for h in hooks if h.strip()] or None
-
         # Parse when expression
         when_expression = form_data.get("when_expression", "").strip()
         when_expression = when_expression if when_expression else None
@@ -645,7 +721,7 @@ async def create_or_update_routing_rule(
         reverse_order_on_post = form_data.get("reverse_order_on_post") == "true"
 
         # Debug logging to see what we received
-        LOGGER.info(f"Parsed routing rule data: entities={entity_types}, name_list={name_list}, " f"tags={tags}, hooks={hooks}, when={when_expression}")
+        LOGGER.info(f"Parsed routing rule data: entities={entity_types}, name_list={name_list}, " f"tags={tags}, when={when_expression}")
 
         # Global rules support: Allow rules with no matching criteria
         # Empty rules (no filters) will match ALL entities and hooks globally
@@ -689,10 +765,16 @@ async def create_or_update_routing_rule(
             # Parse mode (convert empty string to None)
             mode = p.get("mode", "").strip() or None
 
+            # Parse hooks (plugin-level override)
+            plugin_hooks = p.get("hooks", [])
+            # Convert empty list to None
+            plugin_hooks = plugin_hooks if plugin_hooks else None
+
             plugin_attachments.append(
                 PluginAttachment(
                     name=p["name"],
                     priority=int(p.get("priority", 10)),
+                    hooks=plugin_hooks,
                     config=config,
                     when=when,
                     override=override,
@@ -707,16 +789,16 @@ async def create_or_update_routing_rule(
 
         # Create PluginHookRule
         # Note: 'name' field is for entity name filtering, not rule display name
-        # We'll store the display name in metadata
+        # Hook filtering is now done at plugin-level, not rule-level
         rule = PluginHookRule(
+            display_name=rule_name,  # Human-readable name for UI
             name=name_list,  # Entity name filter
             entities=entity_types,
             tags=tags,
-            hooks=hooks,
+            hooks=None,  # Hook filtering moved to plugin-level
             when=when_expression,
             reverse_order_on_post=reverse_order_on_post,
             plugins=plugin_attachments,
-            metadata={"display_name": rule_name},  # Store friendly name in metadata
         )
 
         # Save to config (add_or_update_rule saves internally with file locking)
@@ -846,7 +928,7 @@ async def _get_plugins_for_entity_and_hook(
         hook_type=hook_type,
     )
 
-    return [{"name": p.name, "priority": p.priority, "config": p.config} for p in plugins]
+    return [{"name": p.name, "priority": p.priority, "config": p.config, "mode": p.mode} for p in plugins]
 
 
 async def _get_entity_plugins_ui_context(
@@ -928,10 +1010,18 @@ async def _get_entity_plugins_ui_context(
             hook_type=str(post_hook_value),
         )
 
-    # Get available plugins from plugin manager
+    # Get available plugins from plugin manager with mode and enabled status
     available_plugins = []
-    if plugin_manager:
-        available_plugins = [{"name": name} for name in plugin_manager.get_plugin_names()]
+    if plugin_manager and plugin_manager.config and plugin_manager.config.plugins:
+        available_plugins = [
+            {
+                "name": str(p.name) if p.name else "",
+                "description": str(p.description) if p.description else "",
+                "mode": str(p.mode) if p.mode else "",
+                "enabled": p.mode != "disabled" if p.mode else True,
+            }
+            for p in plugin_manager.config.plugins
+        ]
 
     # Get reverse post-hooks state for this entity
     reverse_post_hooks = route_service.get_reverse_post_hooks_state(
@@ -1488,16 +1578,22 @@ async def get_bulk_plugin_status(
                 for p in pre_plugins:
                     name = p.get("name", p.get("plugin_name", ""))
                     if name not in plugin_info:
-                        plugin_info[name] = {"pre": False, "post": False, "priority": p.get("priority", 0)}
+                        plugin_info[name] = {"pre": False, "post": False, "priority": p.get("priority", 0), "mode": p.get("mode")}
                     plugin_info[name]["pre"] = True
                     plugin_info[name]["priority"] = max(plugin_info[name]["priority"], p.get("priority", 0))
+                    # Update mode if set (non-None)
+                    if p.get("mode") is not None:
+                        plugin_info[name]["mode"] = p.get("mode")
 
                 for p in post_plugins:
                     name = p.get("name", p.get("plugin_name", ""))
                     if name not in plugin_info:
-                        plugin_info[name] = {"pre": False, "post": False, "priority": p.get("priority", 0)}
+                        plugin_info[name] = {"pre": False, "post": False, "priority": p.get("priority", 0), "mode": p.get("mode")}
                     plugin_info[name]["post"] = True
                     plugin_info[name]["priority"] = max(plugin_info[name]["priority"], p.get("priority", 0))
+                    # Update mode if set (non-None)
+                    if p.get("mode") is not None:
+                        plugin_info[name]["mode"] = p.get("mode")
 
                 tool_plugins[tool_id] = plugin_info
 
@@ -1534,6 +1630,14 @@ async def get_bulk_plugin_status(
             # Get max priority across tools
             max_priority = max((plugins.get(plugin, {}).get("priority", 0) for plugins in tool_plugins.values()), default=0)
 
+            # Collect modes across tools - get first non-None mode
+            # Note: If a plugin has different modes across tools, we show the first one found
+            mode = None
+            for plugins in tool_plugins.values():
+                if plugin in plugins and plugins[plugin].get("mode") is not None:
+                    mode = plugins[plugin].get("mode")
+                    break
+
             plugin_status[plugin] = {
                 "status": status,
                 "count": tool_count,
@@ -1541,6 +1645,7 @@ async def get_bulk_plugin_status(
                 "pre_hooks": ["tool_pre_invoke"] if has_pre else [],
                 "post_hooks": ["tool_post_invoke"] if has_post else [],
                 "priority": max_priority,
+                "mode": mode,
             }
 
         return JSONResponse(
@@ -1644,16 +1749,22 @@ async def get_bulk_plugin_status_prompts(
                 for p in pre_plugins:
                     name = p.get("name", p.get("plugin_name", ""))
                     if name not in plugin_info:
-                        plugin_info[name] = {"pre": False, "post": False, "priority": p.get("priority", 0)}
+                        plugin_info[name] = {"pre": False, "post": False, "priority": p.get("priority", 0), "mode": p.get("mode")}
                     plugin_info[name]["pre"] = True
                     plugin_info[name]["priority"] = max(plugin_info[name]["priority"], p.get("priority", 0))
+                    # Update mode if set (non-None)
+                    if p.get("mode") is not None:
+                        plugin_info[name]["mode"] = p.get("mode")
 
                 for p in post_plugins:
                     name = p.get("name", p.get("plugin_name", ""))
                     if name not in plugin_info:
-                        plugin_info[name] = {"pre": False, "post": False, "priority": p.get("priority", 0)}
+                        plugin_info[name] = {"pre": False, "post": False, "priority": p.get("priority", 0), "mode": p.get("mode")}
                     plugin_info[name]["post"] = True
                     plugin_info[name]["priority"] = max(plugin_info[name]["priority"], p.get("priority", 0))
+                    # Update mode if set (non-None)
+                    if p.get("mode") is not None:
+                        plugin_info[name]["mode"] = p.get("mode")
 
                 prompt_plugins[prompt_id] = plugin_info
 
@@ -1682,6 +1793,13 @@ async def get_bulk_plugin_status_prompts(
             has_post = any(plugins.get(plugin, {}).get("post", False) for plugins in prompt_plugins.values())
             max_priority = max((plugins.get(plugin, {}).get("priority", 0) for plugins in prompt_plugins.values()), default=0)
 
+            # Collect modes across prompts - get first non-None mode
+            mode = None
+            for plugins in prompt_plugins.values():
+                if plugin in plugins and plugins[plugin].get("mode") is not None:
+                    mode = plugins[plugin].get("mode")
+                    break
+
             plugin_status[plugin] = {
                 "status": status,
                 "count": prompt_count,
@@ -1689,6 +1807,7 @@ async def get_bulk_plugin_status_prompts(
                 "pre_hooks": ["prompt_pre_invoke"] if has_pre else [],
                 "post_hooks": ["prompt_post_invoke"] if has_post else [],
                 "priority": max_priority,
+                "mode": mode,
             }
 
         return JSONResponse(
@@ -1792,16 +1911,22 @@ async def get_bulk_plugin_status_resources(
                 for p in pre_plugins:
                     name = p.get("name", p.get("plugin_name", ""))
                     if name not in plugin_info:
-                        plugin_info[name] = {"pre": False, "post": False, "priority": p.get("priority", 0)}
+                        plugin_info[name] = {"pre": False, "post": False, "priority": p.get("priority", 0), "mode": p.get("mode")}
                     plugin_info[name]["pre"] = True
                     plugin_info[name]["priority"] = max(plugin_info[name]["priority"], p.get("priority", 0))
+                    # Update mode if set (non-None)
+                    if p.get("mode") is not None:
+                        plugin_info[name]["mode"] = p.get("mode")
 
                 for p in post_plugins:
                     name = p.get("name", p.get("plugin_name", ""))
                     if name not in plugin_info:
-                        plugin_info[name] = {"pre": False, "post": False, "priority": p.get("priority", 0)}
+                        plugin_info[name] = {"pre": False, "post": False, "priority": p.get("priority", 0), "mode": p.get("mode")}
                     plugin_info[name]["post"] = True
                     plugin_info[name]["priority"] = max(plugin_info[name]["priority"], p.get("priority", 0))
+                    # Update mode if set (non-None)
+                    if p.get("mode") is not None:
+                        plugin_info[name]["mode"] = p.get("mode")
 
                 resource_plugins[resource_id] = plugin_info
 
@@ -1830,6 +1955,13 @@ async def get_bulk_plugin_status_resources(
             has_post = any(plugins.get(plugin, {}).get("post", False) for plugins in resource_plugins.values())
             max_priority = max((plugins.get(plugin, {}).get("priority", 0) for plugins in resource_plugins.values()), default=0)
 
+            # Collect modes across resources - get first non-None mode
+            mode = None
+            for plugins in resource_plugins.values():
+                if plugin in plugins and plugins[plugin].get("mode") is not None:
+                    mode = plugins[plugin].get("mode")
+                    break
+
             plugin_status[plugin] = {
                 "status": status,
                 "count": resource_count,
@@ -1837,6 +1969,7 @@ async def get_bulk_plugin_status_resources(
                 "pre_hooks": ["resource_pre_invoke"] if has_pre else [],
                 "post_hooks": ["resource_post_invoke"] if has_post else [],
                 "priority": max_priority,
+                "mode": mode,
             }
 
         return JSONResponse(
@@ -3033,13 +3166,20 @@ async def remove_resource_plugin(
         # Get plugin route service
         route_service = get_plugin_route_service()
 
-        # Remove route
-        await route_service.remove_simple_route(
+        # Remove plugin from entity (optionally for specific hook only)
+        removed = await route_service.remove_plugin_from_entity(
             entity_type="resource",
             entity_name=resource.name,
             plugin_name=plugin_name,
-            hook_type=hook,
+            hook=hook,
         )
+
+        if not removed:
+            hook_msg = f" for hook {hook}" if hook else ""
+            raise HTTPException(
+                status_code=404,
+                detail=f"Plugin {plugin_name} not found in simple rules for resource {resource.name}{hook_msg}",
+            )
 
         # Save configuration
         await route_service.save_config()

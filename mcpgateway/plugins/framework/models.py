@@ -915,6 +915,8 @@ class PluginHookRule(BaseModel):
     tag-based matching, and complex expressions. Replaces hierarchical cascading.
 
     Attributes:
+        display_name: Human-readable name for UI display. Optional - auto-generated
+                     from entity name filter if not provided.
         entities: Entity types this rule applies to (tools, prompts, resources, agents).
                  If None, applies to HTTP-level hooks (before entity resolution).
         name: Exact entity name match(es) - fast path with hash lookup.
@@ -1024,6 +1026,7 @@ class PluginHookRule(BaseModel):
     """
 
     model_config = ConfigDict(use_enum_values=True)
+    display_name: Optional[str] = None  # Human-readable name for UI (auto-generated if not provided)
     entities: Optional[list[EntityType]] = None  # None = HTTP-level
     name: Optional[str | list[str]] = None  # Exact match (fast path)
     tags: Optional[list[str]] = None  # Tag match (fast path)

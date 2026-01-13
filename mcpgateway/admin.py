@@ -2796,6 +2796,29 @@ async def admin_ui(
     root_path = settings.app_root_path
     max_name_length = settings.validation_max_name_length
 
+    # Get list of available plugins for bulk plugin modals and routing rules
+    # First-Party
+    from mcpgateway.plugins.framework import get_plugin_manager
+
+    plugin_manager = get_plugin_manager()
+    available_plugins = []
+    if plugin_manager:
+        try:
+            # Get all plugins from config (including disabled ones)
+            if plugin_manager.config and plugin_manager.config.plugins:
+                available_plugins = [
+                    {
+                        "name": str(p.name) if p.name else "",
+                        "description": str(p.description) if p.description else "",
+                        "mode": str(p.mode) if p.mode else "",
+                        "enabled": p.mode != "disabled" if p.mode else True,
+                    }
+                    for p in plugin_manager.config.plugins
+                ]
+        except Exception as e:
+            LOGGER.warning(f"Failed to get available plugins: {e}")
+            available_plugins = []
+
     response = request.app.state.templates.TemplateResponse(
         request,
         "admin.html",
@@ -2834,7 +2857,8 @@ async def admin_ui(
             "password_require_lowercase": getattr(settings, "password_require_lowercase", False),
             "password_require_numbers": getattr(settings, "password_require_numbers", False),
             "password_require_special": getattr(settings, "password_require_special", False),
-            "plugin_manager": getattr(request.app.state, "plugin_manager", None),
+            "plugin_manager": plugin_manager,
+            "available_plugins": available_plugins,
         },
     )
 
@@ -12744,9 +12768,17 @@ async def get_plugins_partial(request: Request, db: Session = Depends(get_db), u
         available_plugins = []
         if plugin_manager:
             try:
-                # Get all plugins from config
+                # Get all plugins from config (including disabled ones)
                 if plugin_manager.config and plugin_manager.config.plugins:
-                    available_plugins = [{"name": p.name, "description": p.description} for p in plugin_manager.config.plugins]
+                    available_plugins = [
+                        {
+                            "name": p.name,
+                            "description": p.description,
+                            "mode": p.mode,
+                            "enabled": p.mode != "disabled",
+                        }
+                        for p in plugin_manager.config.plugins
+                    ]
             except Exception as e:
                 LOGGER.warning(f"Failed to get available plugins: {e}")
 

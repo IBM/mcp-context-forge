@@ -337,14 +337,70 @@ class PluginRouteService:
             for rule in self.config.routes:
                 if not rule.entities or entity_type_enum not in rule.entities:
                     continue
-                if rule.name != entity_name:
+
+                # Handle both string and list names
+                rule_names = rule.name if isinstance(rule.name, list) else [rule.name] if rule.name else []
+                if entity_name not in rule_names:
                     continue
+
                 if rule.tags or rule.when:
                     continue  # Skip complex rules - only looking for simple rules
 
                 # Found existing simple rule for this entity
                 existing_simple_rule = rule
                 break
+
+            # If we found a multi-entity rule, split out this entity into its own rule
+            if existing_simple_rule:
+                rule_names = existing_simple_rule.name if isinstance(existing_simple_rule.name, list) else [existing_simple_rule.name] if existing_simple_rule.name else []
+                if len(rule_names) > 1:
+                    # This is a multi-entity rule - split out this entity
+                    logger.info(f"Splitting {entity_name} out of multi-entity rule with {len(rule_names)} entities")
+
+                    # Remove this entity from the multi-entity rule's name list
+                    rule_names.remove(entity_name)
+                    existing_simple_rule.name = rule_names if len(rule_names) > 1 else rule_names[0]
+
+                    # Create a new single-entity rule with all existing plugins from the multi-entity rule
+                    new_plugins = []
+                    for p in existing_simple_rule.plugins:
+                        new_plugins.append(
+                            PluginAttachment(
+                                name=p.name,
+                                priority=p.priority,
+                                config=p.config if p.config else {},
+                                when=p.when,
+                                override=p.override,
+                                mode=p.mode,
+                            )
+                        )
+
+                    # Add the new plugin to the list
+                    new_plugins.append(
+                        PluginAttachment(
+                            name=plugin_name,
+                            priority=priority,
+                            config=config if config is not None else {},
+                            when=when,
+                            override=override,
+                            mode=mode,
+                        )
+                    )
+
+                    # Create new single-entity rule
+                    new_rule = PluginHookRule(
+                        entities=[entity_type_enum],
+                        name=entity_name,
+                        hooks=existing_simple_rule.hooks,
+                        reverse_order_on_post=existing_simple_rule.reverse_order_on_post,
+                        plugins=new_plugins,
+                    )
+                    self.config.routes.append(new_rule)
+                    logger.info(f"Created new single-entity rule for {entity_name} with {len(new_plugins)} plugins")
+
+                    # Save and return early
+                    await self.save_config()
+                    return
 
             if existing_simple_rule:
                 # Found a simple rule for this entity - add or update plugin in it
