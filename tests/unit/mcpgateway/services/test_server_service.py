@@ -8,7 +8,7 @@ Tests for server service implementation.
 """
 
 # Standard
-from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
 import pytest
@@ -574,7 +574,7 @@ class TestServerService:
         # `db.get(..., options=...)` or execute a select; assert at least one
         # of those was used and the result is as expected.
         assert result == server_read
-        assert (test_db.get.called or test_db.execute.called)
+        assert test_db.get.called or test_db.execute.called
         assert result == server_read
 
     @pytest.mark.asyncio
@@ -620,13 +620,15 @@ class TestServerService:
         mock_result_prompts = Mock()
         mock_result_prompts.scalars.return_value.all.return_value = [new_prompt]
 
-        test_db.execute = Mock(side_effect=[
-            mock_result_get_server,
-            mock_result_name_conflict,
-            mock_result_tools,
-            mock_result_resources,
-            mock_result_prompts,
-        ])
+        test_db.execute = Mock(
+            side_effect=[
+                mock_result_get_server,
+                mock_result_name_conflict,
+                mock_result_tools,
+                mock_result_resources,
+                mock_result_prompts,
+            ]
+        )
 
         test_db.commit = Mock()
         test_db.refresh = Mock()
@@ -851,7 +853,7 @@ class TestServerService:
 
         # get_for_update may use `db.get(..., options=...)` or execute a select;
         # accept either approach.
-        assert (test_db.get.called or test_db.execute.called)
+        assert test_db.get.called or test_db.execute.called
         assert test_db.commit.call_count == 1
         test_db.refresh.assert_called_once()
         server_service._notify_server_deactivated.assert_called_once()

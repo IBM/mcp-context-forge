@@ -233,7 +233,7 @@ class TestA2AAgentService:
         # Mock get_for_update to return the agent
         with patch("mcpgateway.services.a2a_service.get_for_update") as mock_get_for_update:
             mock_get_for_update.return_value = sample_db_agent
-            
+
             mock_db.commit = MagicMock()
             mock_db.refresh = MagicMock()
 
@@ -369,10 +369,10 @@ class TestA2AAgentService:
         disabled_agent.enabled = False
         disabled_agent.name = sample_db_agent.name
         disabled_agent.id = sample_db_agent.id
-        
+
         # Mock the database query to return agent ID
         mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent.id
-        
+
         # Mock get_for_update to return the disabled agent
         with patch("mcpgateway.services.a2a_service.get_for_update") as mock_get_for_update:
             mock_get_for_update.return_value = disabled_agent
