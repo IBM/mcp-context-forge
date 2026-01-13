@@ -489,16 +489,16 @@ class ServerService:
             # The unique constraint is on (team_id, owner_email, name), so we check based on that
             owner_email_to_check = getattr(server_in, "owner_email", None) or owner_email or created_by
             team_id_to_check = getattr(server_in, "team_id", None) or team_id
-            
+
             # Build conditions based on the actual unique constraint: (team_id, owner_email, name)
             conditions = [
                 DbServer.name == server_in.name,
                 DbServer.team_id == team_id_to_check if team_id_to_check else DbServer.team_id.is_(None),
-                DbServer.owner_email == owner_email_to_check if owner_email_to_check else DbServer.owner_email.is_(None)
+                DbServer.owner_email == owner_email_to_check if owner_email_to_check else DbServer.owner_email.is_(None),
             ]
             if server_in.id:
                 conditions.append(DbServer.id != server_in.id)
-            
+
             existing_server = get_for_update(db, DbServer, where=and_(*conditions), skip_locked=True)
             if existing_server:
                 raise ServerNameConflictError(server_in.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)

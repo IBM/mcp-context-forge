@@ -2371,14 +2371,14 @@ class ResourceService:
                 team_id = resource_update.team_id or resource.team_id
                 if visibility.lower() == "public":
                     # Check for existing public resources with the same uri
-                    existing_resource = get_for_update(
-                        db, DbResource, where=and_(DbResource.uri == resource_update.uri, DbResource.visibility == "public", DbResource.id != resource_id)
-                    )
+                    existing_resource = get_for_update(db, DbResource, where=and_(DbResource.uri == resource_update.uri, DbResource.visibility == "public", DbResource.id != resource_id))
                     if existing_resource:
                         raise ResourceURIConflictError(resource_update.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
                 elif visibility.lower() == "team" and team_id:
                     # Check for existing team resource with the same uri
-                    existing_resource = get_for_update(db, DbResource, where=and_(DbResource.uri == resource_update.uri, DbResource.visibility == "team", DbResource.team_id == team_id, DbResource.id != resource_id))
+                    existing_resource = get_for_update(
+                        db, DbResource, where=and_(DbResource.uri == resource_update.uri, DbResource.visibility == "team", DbResource.team_id == team_id, DbResource.id != resource_id)
+                    )
                     if existing_resource:
                         raise ResourceURIConflictError(resource_update.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
 
