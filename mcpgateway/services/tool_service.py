@@ -2071,13 +2071,11 @@ class ToolService:
                     delete_metrics_in_batches(db, ToolMetric, ToolMetric.tool_id, tool_id)
                     delete_metrics_in_batches(db, ToolMetricsHourly, ToolMetricsHourly.tool_id, tool_id)
 
-            # Use DELETE ... RETURNING to atomically delete and return the deleted row
-            # This ensures only one concurrent delete succeeds
-            stmt = delete(DbTool).where(DbTool.id == tool_id).returning(DbTool.id)
+            # Use DELETE with rowcount check for database-agnostic atomic delete
+            # (RETURNING is not supported on MySQL/MariaDB)
+            stmt = delete(DbTool).where(DbTool.id == tool_id)
             result = db.execute(stmt)
-            deleted_row = result.fetchone()
-
-            if not deleted_row:
+            if result.rowcount == 0:
                 # Tool was already deleted by another concurrent request
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
 

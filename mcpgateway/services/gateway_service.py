@@ -2522,11 +2522,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Expire gateway to clear cached relationships after bulk deletes
             db.expire(gateway)
 
-            stmt = delete(DbGateway).where(DbGateway.id == gateway_id).returning(DbGateway.id)
+            # Use DELETE with rowcount check for database-agnostic atomic delete
+            # (RETURNING is not supported on MySQL/MariaDB)
+            stmt = delete(DbGateway).where(DbGateway.id == gateway_id)
             result = db.execute(stmt)
-            deleted_row = result.fetchone()
-
-            if not deleted_row:
+            if result.rowcount == 0:
                 # Gateway was already deleted by another concurrent request
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
