@@ -125,7 +125,8 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.METRICS_SUBSYSTEM | string | `""` |  |
 | mcpContextForge.config.OBSERVABILITY_ENABLED | string | `"false"` |  |
 | mcpContextForge.config.OBSERVABILITY_EVENTS_ENABLED | string | `"true"` |  |
-| mcpContextForge.config.OBSERVABILITY_EXCLUDE_PATHS | string | `"[\"/health\", \"/healthz\", \"/ready\", \"/metrics\", \"/static/.*\"]"` |  |
+| mcpContextForge.config.OBSERVABILITY_INCLUDE_PATHS | string | `"[\"^/rpc/?$\", \"^/sse$\", \"^/message$\", \"^/mcp(?:/|$)\", \"^/servers/[^/]+/mcp/?$\", \"^/servers/[^/]+/sse$\", \"^/servers/[^/]+/message$\", \"^/a2a(?:/|$)\"]"` | Regex patterns to include for tracing |
+| mcpContextForge.config.OBSERVABILITY_EXCLUDE_PATHS | string | `"[\"/health\", \"/healthz\", \"/ready\", \"/metrics\", \"/static/.*\"]"` | Regex patterns to exclude after include patterns |
 | mcpContextForge.config.OBSERVABILITY_MAX_TRACES | string | `"100000"` |  |
 | mcpContextForge.config.OBSERVABILITY_METRICS_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.OBSERVABILITY_SAMPLE_RATE | string | `"1.0"` |  |

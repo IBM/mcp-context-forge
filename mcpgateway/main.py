@@ -1589,7 +1589,7 @@ if settings.observability_enabled:
     from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware
 
     app.add_middleware(ObservabilityMiddleware, enabled=True)
-    logger.info("🔍 Observability middleware enabled - tracing all HTTP requests")
+    logger.info("🔍 Observability middleware enabled - tracing include-listed requests")
 else:
     logger.info("🔍 Observability middleware disabled")
 

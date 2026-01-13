@@ -911,8 +911,26 @@ class Settings(BaseSettings):
     # Sample rate (0.0 to 1.0) - 1.0 means trace everything
     observability_sample_rate: float = Field(default=1.0, ge=0.0, le=1.0, description="Trace sampling rate (0.0-1.0)")
 
+    # Include paths for tracing (regex patterns)
+    observability_include_paths: List[str] = Field(
+        default_factory=lambda: [
+            r"^/rpc/?$",
+            r"^/sse$",
+            r"^/message$",
+            r"^/mcp(?:/|$)",
+            r"^/servers/[^/]+/mcp/?$",
+            r"^/servers/[^/]+/sse$",
+            r"^/servers/[^/]+/message$",
+            r"^/a2a(?:/|$)",
+        ],
+        description="Regex patterns to include for tracing (when empty, all paths are eligible before excludes)",
+    )
+
     # Exclude paths from tracing (regex patterns)
-    observability_exclude_paths: List[str] = Field(default_factory=lambda: ["/health", "/healthz", "/ready", "/metrics", "/static/.*"], description="Paths to exclude from tracing (regex)")
+    observability_exclude_paths: List[str] = Field(
+        default_factory=lambda: ["/health", "/healthz", "/ready", "/metrics", "/static/.*"],
+        description="Regex patterns to exclude from tracing (applies after include patterns)",
+    )
 
     # Enable performance metrics
     observability_metrics_enabled: bool = Field(default=True, description="Enable metrics collection")

@@ -1198,8 +1198,11 @@ OBSERVABILITY_MAX_TRACES=100000
 # 1.0 = trace everything, 0.1 = trace 10% of requests
 OBSERVABILITY_SAMPLE_RATE=1.0
 
-# Paths to exclude from tracing (comma-separated regex patterns)
-OBSERVABILITY_EXCLUDE_PATHS=/health,/healthz,/ready,/metrics,/static/.*
+# Paths to include for tracing (JSON array of regex patterns)
+OBSERVABILITY_INCLUDE_PATHS=["^/rpc/?$","^/sse$","^/message$","^/mcp(?:/|$)","^/servers/[^/]+/mcp/?$","^/servers/[^/]+/sse$","^/servers/[^/]+/message$","^/a2a(?:/|$)"]
+
+# Paths to exclude from tracing (JSON array of regex patterns, applied after include patterns)
+OBSERVABILITY_EXCLUDE_PATHS=["/health","/healthz","/ready","/metrics","/static/.*"]
 
 # Enable metrics collection
 OBSERVABILITY_METRICS_ENABLED=true

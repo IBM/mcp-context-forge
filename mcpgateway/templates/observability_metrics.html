@@ -12,7 +12,7 @@ window.createMetricsController = function() {
     error: null,
     autoRefreshInterval: null,
     visibilityHandler: null,
-    
+
     /**
      * Destroy all Chart.js instances to prevent canvas reuse errors
      */
@@ -28,20 +28,20 @@ window.createMetricsController = function() {
         }
       });
     },
-    
+
     /**
      * Initialize the metrics dashboard with proper cleanup
      */
     async init() {
       // Clean up any existing charts first
       this.destroyAllCharts();
-      
+
       // Load initial data
       await this.loadAllMetrics();
-      
+
       // Start auto-refresh
       this.startAutoRefresh();
-      
+
       // Handle visibility changes to pause updates when tab is hidden
       this.visibilityHandler = () => {
         if (document.hidden) {
@@ -55,11 +55,11 @@ window.createMetricsController = function() {
         }
       };
       document.addEventListener('visibilitychange', this.visibilityHandler);
-      
+
       // Add cleanup on page unload as fallback
       window.addEventListener('beforeunload', () => this.cleanup());
     },
-    
+
     /**
      * Cleanup resources on component destroy
      */
@@ -79,14 +79,14 @@ window.createMetricsController = function() {
         console.log('Refresh already in progress, skipping');
         return;
       }
-      
+
       this.loading = true;
       this.error = null;
-      
+
       try {
         // Destroy existing charts before loading new data
         this.destroyAllCharts();
-        
+
         // Load all metrics in parallel
         await Promise.all([
           this.loadPercentiles(),
@@ -517,7 +517,7 @@ window.createMetricsController = function() {
       if (this.autoRefreshInterval) {
         clearInterval(this.autoRefreshInterval);
       }
-      
+
       // Refresh every 60 seconds, only if not already loading
       this.autoRefreshInterval = setInterval(() => {
         if (!this.loading) {

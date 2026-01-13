@@ -385,6 +385,7 @@ class CatalogService:
                 gateway=gateway_create,
                 created_via="catalog",
                 visibility="public",  # Catalog servers should be public
+                initialize_timeout=settings.httpx_admin_read_timeout,
             )
 
             logger.info(f"Registered catalog server: {gateway_read.name} ({catalog_id})")
