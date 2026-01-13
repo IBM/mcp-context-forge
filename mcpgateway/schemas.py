@@ -5477,6 +5477,22 @@ class PaginatedTeamMembersResponse(BaseModel):
         nextCursor: Optional cursor for next page of results
 
     Examples:
+        >>> member1 = TeamMemberResponse(
+        ...     id="member-1",
+        ...     team_id="team-123",
+        ...     user_email="user1@example.com",
+        ...     role="member",
+        ...     joined_at=datetime.now(timezone.utc),
+        ...     is_active=True
+        ... )
+        >>> member2 = TeamMemberResponse(
+        ...     id="member-2",
+        ...     team_id="team-123",
+        ...     user_email="user2@example.com",
+        ...     role="member",
+        ...     joined_at=datetime.now(timezone.utc),
+        ...     is_active=True
+        ... )
         >>> response = PaginatedTeamMembersResponse(
         ...     members=[member1, member2],
         ...     nextCursor="cursor-token-123"
