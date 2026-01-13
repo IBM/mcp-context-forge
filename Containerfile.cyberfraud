@@ -1,4 +1,4 @@
-FROM mcpgateway/mcpgateway:base
+FROM mcpgateway/mcpgateway:BASE_IMAGE_TAG
 
 USER root 
 # Install missing psycopg2 dependency for postgres support
