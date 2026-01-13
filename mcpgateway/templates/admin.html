@@ -5784,7 +5784,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             <!-- Users list container -->
             <div
               id="users-list-container"
-              hx-get="{{ root_path }}/admin/users/partial?page=1&per_page=50"
+              hx-get="{{ root_path }}/admin/users/partial?page=1&per_page=10"
               hx-trigger="load, refreshUsers"
               hx-swap="outerHTML"
               hx-indicator="#users-loading"

@@ -4346,7 +4346,7 @@ async def admin_view_team_members(
                         <h5 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Current Members</h5>
                         <div
                             id="team-members-container-{team.id}"
-                            class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-64 overflow-y-auto dark:bg-gray-700"
+                            class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-32 overflow-y-auto dark:bg-gray-700"
                             hx-get="{root_path}/admin/teams/{team.id}/members/partial?page={page}&per_page={per_page}"
                             hx-trigger="load delay:100ms"
                             hx-target="this"
@@ -4361,7 +4361,7 @@ async def admin_view_team_members(
                         <h5 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Users to Add</h5>
                         <div
                             id="team-non-members-container-{team.id}"
-                            class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-64 overflow-y-auto dark:bg-gray-700"
+                            class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-32 overflow-y-auto dark:bg-gray-700"
                             hx-get="{root_path}/admin/teams/{team.id}/non-members/partial?page=1&per_page=20"
                             hx-trigger="load delay:200ms"
                             hx-target="this"
@@ -4490,8 +4490,8 @@ async def admin_add_team_members_view(
                             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Available Users</label>
                             <div
                                 id="user-selector-container-{team.id}"
-                                class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-64 overflow-y-auto dark:bg-gray-700"
-                                hx-get="{root_path}/admin/teams/{team.id}/users/partial?page=1&per_page=20&render=selector"
+                                class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-32 overflow-y-auto dark:bg-gray-700"
+                                hx-get="{root_path}/admin/teams/{team.id}/users/partial?page=1&per_page=10&render=selector"
                                 hx-trigger="load"
                                 hx-swap="innerHTML"
                                 hx-target="#user-selector-container-{team.id}"
@@ -4903,24 +4903,29 @@ async def admin_add_team_members(
 
         result_html = "\n".join(result_parts)
 
-        # Return success message with script to refresh modal
+        # Return success message and close modal
         success_html = f"""
         <div class="text-center p-4">
             {result_html}
         </div>
+        <script>
+            // Close modal after showing success message briefly
+            setTimeout(() => {{
+                const modal = document.getElementById('team-edit-modal');
+                if (modal) {{
+                    modal.classList.add('hidden');
+                }}
+            }}, 1000);
+        </script>
         """
         response = HTMLResponse(content=success_html)
-        # Calculate delay based on total operations
-        total_operations = len(added) + len(updated) + len(removed)
-        delay_ms = 1500 if total_operations > 0 else 500
 
+        # Trigger refresh of teams list (but don't reopen modal)
         response.headers["HX-Trigger"] = orjson.dumps(
             {
                 "adminTeamAction": {
                     "teamId": team_id,
-                    "refreshTeamMembers": True,
                     "refreshUnifiedTeamsList": True,
-                    "delayMs": delay_ms,
                 }
             }
         ).decode()
