@@ -28,20 +28,6 @@ ARG TARGETPLATFORM
 # To build WITHOUT Rust (default): docker build -f Containerfile.lite .
 ###############################################################################
 FROM quay.io/pypa/manylinux2014:2025.12.13-1 AS rust-builder-base
-FROM quay.io/pypa/manylinux2014_ppc64le:2025.10.19-2 AS rust-builder-base-ppc64le
-
-FROM rust-builder-base-ppc64le AS rust-builder-selector-ppc64le
-ARG TARGETPLATFORM
-RUN if [ "$TARGETPLATFORM" != "linux/ppc64le" ]; then exit 0; fi
-
-FROM rust-builder-base AS rust-builder-selector
-ARG TARGETPLATFORM
-RUN if [ "$TARGETPLATFORM" = "linux/ppc64le" ]; then exit 0; fi
-
-FROM rust-builder-selector AS rust-builder-base-final
-FROM rust-builder-selector-ppc64le AS rust-builder-base-final
-
-FROM rust-builder-base-final AS rust-builder-base
 ARG ENABLE_RUST
 
 # Set shell with pipefail for safety
