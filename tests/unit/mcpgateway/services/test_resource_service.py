@@ -16,7 +16,6 @@ This suite provides complete test coverage for:
 """
 
 # Standard
-import asyncio
 import time
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -41,8 +40,7 @@ from mcpgateway.services.resource_service import (
 @pytest.fixture(autouse=True)
 def mock_logging_services():
     """Mock audit_trail and structured_logger to prevent database writes during tests."""
-    with patch("mcpgateway.services.resource_service.audit_trail") as mock_audit, \
-         patch("mcpgateway.services.resource_service.structured_logger") as mock_logger:
+    with patch("mcpgateway.services.resource_service.audit_trail") as mock_audit, patch("mcpgateway.services.resource_service.structured_logger") as mock_logger:
         mock_audit.log_action = MagicMock(return_value=None)
         mock_logger.log = MagicMock(return_value=None)
         yield {"audit_trail": mock_audit, "structured_logger": mock_logger}
@@ -441,10 +439,13 @@ class TestResourceListing:
 
         assert len(result) == 1
 
+
 # --------------------------------------------------------------------------- #
 # Resource reading tests                                                      #
 # --------------------------------------------------------------------------- #
 from unittest.mock import patch
+
+
 class TestResourceReading:
     """Test resource reading functionality."""
 
@@ -460,6 +461,7 @@ class TestResourceReading:
         mock_db.execute.return_value = mock_scalar
 
         from mcpgateway.services.resource_service import ResourceService
+
         service = ResourceService()
 
         result = await service.read_resource(mock_db, resource_id=mock_resource.id)
@@ -484,7 +486,7 @@ class TestResourceReading:
         mock_db.execute.return_value = mock_scalar
 
         with pytest.raises(ResourceNotFoundError):
-            await resource_service.read_resource(mock_db, resource_uri = "test://missing")
+            await resource_service.read_resource(mock_db, resource_uri="test://missing")
 
     @pytest.mark.asyncio
     async def test_read_resource_inactive(self, resource_service, mock_db, mock_inactive_resource):
@@ -538,8 +540,6 @@ class TestResourceReading:
         assert result.text == "Good Day, John"
         assert result.uri == "greetme://morning/{name}"
         assert result.id == "template-id"
-
-
 
 
 # --------------------------------------------------------------------------- #
@@ -672,7 +672,6 @@ class TestResourceManagement:
         """Test successful resource update."""
         update_data = ResourceUpdate(name="Updated Name", description="Updated description", content="Updated content")
 
-
         mock_scalar = MagicMock()
         mock_scalar.scalar_one_or_none.return_value = mock_resource
         mock_db.execute.return_value = mock_scalar
@@ -713,7 +712,6 @@ class TestResourceManagement:
         """Test updating non-existent resource."""
         update_data = ResourceUpdate(name="New Name")
 
-
         mock_scalar = MagicMock()
         mock_scalar.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_scalar
@@ -726,7 +724,6 @@ class TestResourceManagement:
     async def test_update_resource_inactive(self, resource_service, mock_db, mock_inactive_resource):
         """Test updating inactive resource."""
         update_data = ResourceUpdate(name="New Name")
-
 
         # First query (for active) returns None, second (for inactive) returns resource
         mock_scalar1 = MagicMock()
@@ -774,7 +771,6 @@ class TestResourceManagement:
                     "last_execution_time": None,
                 },
             )
-
 
             mock_db.get.return_value = mock_resource
             result = await resource_service.update_resource(mock_db, mock_resource.id, update_data)
@@ -935,12 +931,10 @@ class TestResourceSubscriptions:
         """Subscribing to a resource that exists but is inactive."""
         subscription = ResourceSubscription(uri="test://inactive", subscriber_id="subscriber1")
 
-        # Active lookup → None, inactive lookup → object
-        mock_scalar1 = MagicMock()
-        mock_scalar1.scalar_one_or_none.return_value = None
-        mock_scalar2 = MagicMock()
-        mock_scalar2.scalar_one_or_none.return_value = mock_inactive_resource
-        mock_db.execute.side_effect = [mock_scalar1, mock_scalar2]
+        # Mock single query that returns the inactive resource
+        mock_scalar = MagicMock()
+        mock_scalar.scalar_one_or_none.return_value = mock_inactive_resource
+        mock_db.execute.return_value = mock_scalar
 
         with pytest.raises(ResourceError) as exc_info:
             await resource_service.subscribe_resource(mock_db, subscription)
@@ -977,14 +971,13 @@ class TestResourceSubscriptions:
     @pytest.mark.asyncio
     async def test_subscribe_events(self, resource_service):
         """Test event subscription via EventService."""
+
         # Create a mock async generator for EventService
         async def mock_generator():
             yield {"type": "test", "data": "test_data"}
 
         # Mock the EventService's subscribe_events method
-        resource_service._event_service.subscribe_events = MagicMock(
-            return_value=mock_generator()
-        )
+        resource_service._event_service.subscribe_events = MagicMock(return_value=mock_generator())
 
         # Subscribe and get one event
         event_gen = resource_service.subscribe_events()
@@ -1000,14 +993,13 @@ class TestResourceSubscriptions:
     @pytest.mark.asyncio
     async def test_subscribe_events_global(self, resource_service):
         """Test global event subscription via EventService."""
+
         # Create a mock async generator
         async def mock_generator():
             yield {"type": "resource_created", "data": {"uri": "any://resource"}}
 
         # Mock the EventService method
-        resource_service._event_service.subscribe_events = MagicMock(
-            return_value=mock_generator()
-        )
+        resource_service._event_service.subscribe_events = MagicMock(return_value=mock_generator())
 
         # Subscribe globally (no uri parameter)
         event_gen = resource_service.subscribe_events()
@@ -1058,6 +1050,7 @@ class TestResourceTemplates:
 
     def test_uri_matches_template(self):
         from mcpgateway.services import ResourceService
+
         resource_service_instance = ResourceService()
 
         """Test URI template matching."""
@@ -1113,26 +1106,25 @@ class TestResourceTemplates:
         from sqlalchemy.orm import Session
         from mcpgateway.services.resource_service import ResourceService
         from mcpgateway.services.resource_service import ResourceNotFoundError
-        from mcpgateway.common.models import ResourceContent, ResourceTemplate
+        from mcpgateway.common.models import ResourceTemplate
+
         # Arrange
         db = MagicMock(spec=Session)
         service = ResourceService()
 
         # Correct template object (NOT ResourceContent)
         template_obj = ResourceTemplate(
-                        id="1",
-                        uriTemplate="file://search/{query}",  # alias is used in constructor
-                        name="search_template",
-                        description="Template for performing a file search",
-                        mime_type="text/plain",
-                        annotations={"color": "blue"},
-                        _meta={"version": "1.0"}
-                    )
+            id="1",
+            uriTemplate="file://search/{query}",  # alias is used in constructor
+            name="search_template",
+            description="Template for performing a file search",
+            mime_type="text/plain",
+            annotations={"color": "blue"},
+            _meta={"version": "1.0"},
+        )
 
         # Cache contains ONE template
-        service._template_cache = {
-            "1": template_obj
-        }
+        service._template_cache = {"1": template_obj}
 
         # URI that DOES NOT match the template
         uri = "file://searching/hello"
@@ -1159,33 +1151,23 @@ class TestResourceTemplates:
 
         # Create a valid ResourceTemplate object
         template_obj = ResourceTemplate(
-            id="1",
-            uriTemplate="test://template/{id}",   # alias for uri_template
-            name="template",
-            description="Test template",
-            mime_type="text/plain",
-            annotations=None,
-            _meta=None
+            id="1", uriTemplate="test://template/{id}", name="template", description="Test template", mime_type="text/plain", annotations=None, _meta=None  # alias for uri_template
         )
 
         # Pre-load template cache
-        service._template_cache = {
-            "template": template_obj
-        }
+        service._template_cache = {"template": template_obj}
 
         # URI that should match
         uri = "test://template/123"
 
         # Patch match + extraction to force an error
-        with patch.object(service, "_uri_matches_template", return_value=True), \
-            patch.object(service, "_extract_template_params", side_effect=Exception("Template error")):
+        with patch.object(service, "_uri_matches_template", return_value=True), patch.object(service, "_extract_template_params", side_effect=Exception("Template error")):
 
             # Assert failure path
             with pytest.raises(ResourceError) as exc_info:
                 await service._read_template_resource(db, uri)
 
             assert "Failed to process template" in str(exc_info.value)
-
 
     @pytest.mark.asyncio
     async def test_read_template_resource_binary_not_supported(self):
@@ -1211,8 +1193,7 @@ class TestResourceTemplates:
 
         service._template_cache = {"binary": template}
 
-        with patch.object(service, "_uri_matches_template", return_value=True), \
-            patch.object(service, "_extract_template_params", return_value={"id": "123"}):
+        with patch.object(service, "_uri_matches_template", return_value=True), patch.object(service, "_extract_template_params", return_value={"id": "123"}):
 
             with pytest.raises(ResourceError) as exc_info:
                 await service._read_template_resource(db, uri)
@@ -1359,6 +1340,7 @@ class TestUtilityMethods:
 # Notification tests                                                          #
 # --------------------------------------------------------------------------- #
 
+
 class TestNotifications:
     """Test notification functionality."""
 
@@ -1449,6 +1431,7 @@ class TestNotifications:
 
         # Verify EventService.publish_event was called with the event
         resource_service._event_service.publish_event.assert_called_once_with(event)
+
 
 # --------------------------------------------------------------------------- #
 # Error handling tests                                                        #
@@ -1590,9 +1573,7 @@ class TestResourceServiceMetricsExtended:
         async def mock_generator():
             yield test_event
 
-        resource_service._event_service.subscribe_events = MagicMock(
-            return_value=mock_generator()
-        )
+        resource_service._event_service.subscribe_events = MagicMock(return_value=mock_generator())
 
         # Subscribe (no uri parameter in new implementation)
         subscriber = resource_service.subscribe_events()
@@ -1610,9 +1591,7 @@ class TestResourceServiceMetricsExtended:
         async def mock_generator():
             yield test_event
 
-        resource_service._event_service.subscribe_events = MagicMock(
-            return_value=mock_generator()
-        )
+        resource_service._event_service.subscribe_events = MagicMock(return_value=mock_generator())
 
         # Subscribe globally (same as specific - no uri param)
         subscriber = resource_service.subscribe_events()
@@ -1642,9 +1621,7 @@ class TestResourceServiceMetricsExtended:
             _meta={"version": "1.0"},
         )
 
-        service._template_cache = {
-            "1": template_obj
-        }
+        service._template_cache = {"1": template_obj}
 
         # URI that does NOT match any template
         uri = "file://searching/hello"

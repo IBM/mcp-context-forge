@@ -5295,6 +5295,58 @@ def get_db() -> Generator[Session, Any, None]:
         db.close()
 
 
+def get_for_update(db: Session, model, entity_id=None, where: Optional[Any] = None, skip_locked: bool = False, options: Optional[List] = None):
+    """Get entity with row lock for update operations.
+
+    Args:
+        db: SQLAlchemy Session
+        model: ORM model class
+        entity_id: Primary key value (optional if `where` provided)
+        where: Optional SQLAlchemy WHERE clause to locate rows for conflict detection
+        skip_locked: If False (default), wait for locked rows. If True, skip locked
+            rows (returns None if row is locked). Use False for conflict checks and
+            entity updates to ensure consistency. Use True only for job-queue patterns.
+        options: Optional list of loader options (e.g., selectinload(...))
+
+    Returns:
+        The model instance or None
+
+    Notes:
+        - On PostgreSQL this acquires a FOR UPDATE row lock.
+        - On SQLite (or other backends that don't support FOR UPDATE) it
+          falls back to a regular select; when ``options`` is None it uses
+          ``db.get`` for efficiency, otherwise it executes a select with
+          the provided loader options.
+    """
+    dialect = ""
+    try:
+        dialect = db.bind.dialect.name
+    except Exception:
+        dialect = ""
+
+    # Build base select statement. Prefer `where` when provided, otherwise use primary key `entity_id`.
+    if where is not None:
+        stmt = select(model).where(where)
+    elif entity_id is not None:
+        stmt = select(model).where(model.id == entity_id)
+    else:
+        return None
+
+    if options:
+        stmt = stmt.options(*options)
+
+    if dialect != "postgresql":
+        # SQLite and others: no FOR UPDATE support
+        # Use db.get optimization only when querying by primary key without loader options
+        if not options and where is None and entity_id is not None:
+            return db.get(model, entity_id)
+        return db.execute(stmt).scalar_one_or_none()
+
+    # PostgreSQL: apply FOR UPDATE
+    stmt = stmt.with_for_update(skip_locked=skip_locked)
+    return db.execute(stmt).scalar_one_or_none()
+
+
 @contextmanager
 def fresh_db_session() -> Generator[Session, Any, None]:
     """Get a fresh database session for isolated operations.
