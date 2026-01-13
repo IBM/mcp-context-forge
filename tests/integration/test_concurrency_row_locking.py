@@ -1062,13 +1062,14 @@ async def test_concurrent_prompt_creation_same_name(client: AsyncClient):
     prompt_name = f"test-prompt-{uuid.uuid4()}"
     
     async def create_prompt():
-        prompt_data = {
+        form_data = {
             "name": prompt_name,
             "description": "Test prompt",
-            "arguments": [],
+            "template": "Test template",
+            "arguments": "[]",
             "visibility": "public"
         }
-        return await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+        return await client.post("/admin/prompts", data=form_data, headers=TEST_AUTH_HEADER)
     
     # Run 10 concurrent creations with same name
     results = await asyncio.gather(*[create_prompt() for _ in range(10)], return_exceptions=True)
@@ -1102,18 +1103,20 @@ async def test_concurrent_prompt_update_same_name(client: AsyncClient):
     prompt1_data = {
         "name": prompt1_name,
         "description": "Prompt 1",
-        "arguments": [],
+        "template": "Template 1",
+        "arguments": "[]",
         "visibility": "public"
     }
     prompt2_data = {
         "name": prompt2_name,
         "description": "Prompt 2",
-        "arguments": [],
+        "template": "Template 2",
+        "arguments": "[]",
         "visibility": "public"
     }
     
-    resp1 = await client.post("/prompts", json=prompt1_data, headers=TEST_AUTH_HEADER)
-    resp2 = await client.post("/prompts", json=prompt2_data, headers=TEST_AUTH_HEADER)
+    resp1 = await client.post("/admin/prompts", data=prompt1_data, headers=TEST_AUTH_HEADER)
+    resp2 = await client.post("/admin/prompts", data=prompt2_data, headers=TEST_AUTH_HEADER)
     
     assert resp1.status_code == 200
     assert resp2.status_code == 200
@@ -1121,7 +1124,7 @@ async def test_concurrent_prompt_update_same_name(client: AsyncClient):
     # Get prompt IDs
     list_resp = await client.get("/prompts", headers=TEST_AUTH_HEADER)
     assert list_resp.status_code == 200
-    prompts = list_resp.json()["data"]
+    prompts = list_resp.json()  # Returns list directly, not {"data": [...]}
     
     prompt1 = next((p for p in prompts if p["name"] == prompt1_name), None)
     prompt2 = next((p for p in prompts if p["name"] == prompt2_name), None)
@@ -1136,9 +1139,10 @@ async def test_concurrent_prompt_update_same_name(client: AsyncClient):
         update_data = {
             "name": target_name,
             "description": "Updated prompt",
-            "arguments": []
+            "template": "Updated template",
+            "arguments": "[]"
         }
-        return await client.put(f"/prompts/{prompt_id}", json=update_data, headers=TEST_AUTH_HEADER)
+        return await client.post(f"/admin/prompts/{prompt_id}/edit", data=update_data, headers=TEST_AUTH_HEADER)
     
     # Try to update both prompts to same name concurrently
     results = await asyncio.gather(
@@ -1164,23 +1168,24 @@ async def test_concurrent_prompt_toggle(client: AsyncClient):
     prompt_data = {
         "name": prompt_name,
         "description": "Toggle test prompt",
-        "arguments": [],
+        "template": "Toggle template",
+        "arguments": "[]",
         "visibility": "public"
     }
     
-    resp = await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+    resp = await client.post("/admin/prompts", data=prompt_data, headers=TEST_AUTH_HEADER)
     assert resp.status_code == 200
     
     # Get prompt ID
     list_resp = await client.get("/prompts", headers=TEST_AUTH_HEADER)
     assert list_resp.status_code == 200
-    prompts = list_resp.json()["data"]
+    prompts = list_resp.json()  # Returns list directly, not {"data": [...]}
     prompt = next((p for p in prompts if p["name"] == prompt_name), None)
     assert prompt is not None
     prompt_id = prompt["id"]
     
     async def toggle():
-        return await client.post(f"/prompts/{prompt_id}/toggle", json={}, headers=TEST_AUTH_HEADER)
+        return await client.post(f"/admin/prompts/{prompt_id}/toggle", data={}, headers=TEST_AUTH_HEADER)
     
     # Run 20 concurrent toggles
     results = await asyncio.gather(
@@ -1206,23 +1211,24 @@ async def test_concurrent_prompt_delete_operations(client: AsyncClient):
     prompt_data = {
         "name": prompt_name,
         "description": "Delete test prompt",
-        "arguments": [],
+        "template": "Delete template",
+        "arguments": "[]",
         "visibility": "public"
     }
     
-    resp = await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+    resp = await client.post("/admin/prompts", data=prompt_data, headers=TEST_AUTH_HEADER)
     assert resp.status_code == 200
     
     # Get prompt ID
     list_resp = await client.get("/prompts", headers=TEST_AUTH_HEADER)
     assert list_resp.status_code == 200
-    prompts = list_resp.json()["data"]
+    prompts = list_resp.json()  # Returns list directly, not {"data": [...]}
     prompt = next((p for p in prompts if p["name"] == prompt_name), None)
     assert prompt is not None
     prompt_id = prompt["id"]
     
     async def delete_prompt():
-        return await client.delete(f"/prompts/{prompt_id}", headers=TEST_AUTH_HEADER)
+        return await client.post(f"/admin/prompts/{prompt_id}/delete", data={}, headers=TEST_AUTH_HEADER)
     
     # Run 10 concurrent deletes
     results = await asyncio.gather(
@@ -1230,12 +1236,23 @@ async def test_concurrent_prompt_delete_operations(client: AsyncClient):
         return_exceptions=True
     )
     
-    success_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code in [200, 204])
-    error_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 404)
+    # Admin delete always returns 303, but with error in URL if failed
+    success_count = sum(
+        1 for r in results
+        if not isinstance(r, Exception)
+        and r.status_code == 303
+        and "error=" not in r.headers.get("location", "")
+    )
+    error_count = sum(
+        1 for r in results
+        if not isinstance(r, Exception)
+        and r.status_code == 303
+        and "error=" in r.headers.get("location", "")
+    )
     
-    # Exactly one should succeed
+    # Exactly one should succeed (admin delete returns 303 redirect without error)
     assert success_count == 1, f"Expected 1 successful delete, got {success_count}"
-    assert error_count == 9, f"Expected 9 not found errors, got {error_count}"
+    assert error_count == 9, f"Expected 9 failed deletes with error, got {error_count}"
 
 
 @pytest.mark.asyncio
@@ -1249,10 +1266,11 @@ async def test_high_concurrency_prompt_creation(client: AsyncClient):
         prompt_data = {
             "name": f"prompt-{uuid.uuid4()}-{index}",
             "description": f"Prompt {index}",
-            "arguments": [],
+            "template": f"Template {index}",
+            "arguments": "[]",
             "visibility": "public"
         }
-        return await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+        return await client.post("/admin/prompts", data=prompt_data, headers=TEST_AUTH_HEADER)
     
     # Create 50 unique prompts concurrently
     results = await asyncio.gather(
@@ -1981,15 +1999,16 @@ async def test_skip_locked_behavior_prompt_updates(client: AsyncClient):
         prompt_data = {
             "name": prompt_name,
             "description": f"Skip lock test prompt {i}",
-            "arguments": [],
+            "template": f"Skip lock template {i}",
+            "arguments": "[]",
             "visibility": "public"
         }
-        resp = await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+        resp = await client.post("/admin/prompts", data=prompt_data, headers=TEST_AUTH_HEADER)
         assert resp.status_code == 200, f"Failed to create prompt {i}: {resp.status_code}"
         
         # Get prompt ID
         list_resp = await client.get("/prompts", headers=TEST_AUTH_HEADER)
-        prompts = list_resp.json()["data"]
+        prompts = list_resp.json()  # Returns list directly, not {"data": [...]}
         prompt = next((p for p in prompts if p["name"] == prompt_name), None)
         if prompt:
             prompt_ids.append(prompt["id"])
@@ -1999,9 +2018,10 @@ async def test_skip_locked_behavior_prompt_updates(client: AsyncClient):
         update_data = {
             "name": prompt_name,
             "description": f"Updated description {index}",
-            "arguments": []
+            "template": f"Updated template {index}",
+            "arguments": "[]"
         }
-        return await client.put(f"/prompts/{prompt_id}", json=update_data, headers=TEST_AUTH_HEADER)
+        return await client.post(f"/admin/prompts/{prompt_id}/edit", data=update_data, headers=TEST_AUTH_HEADER)
     
     # Update all prompts concurrently
     results = await asyncio.gather(
@@ -2178,28 +2198,31 @@ async def test_mixed_visibility_concurrent_prompt_operations(client: AsyncClient
         prompt_data = {
             "name": f"mixed-vis-public-prompt-{base_uuid}",
             "description": "Public prompt",
-            "arguments": [],
+            "template": "Public template",
+            "arguments": "[]",
             "visibility": "public"
         }
-        return await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+        return await client.post("/admin/prompts", data=prompt_data, headers=TEST_AUTH_HEADER)
     
     async def create_team_prompt():
         prompt_data = {
             "name": f"mixed-vis-team-prompt-{base_uuid}",
             "description": "Team prompt",
-            "arguments": [],
+            "template": "Team template",
+            "arguments": "[]",
             "visibility": "team"
         }
-        return await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+        return await client.post("/admin/prompts", data=prompt_data, headers=TEST_AUTH_HEADER)
     
     async def create_private_prompt():
         prompt_data = {
             "name": f"mixed-vis-private-prompt-{base_uuid}",
             "description": "Private prompt",
-            "arguments": [],
+            "template": "Private template",
+            "arguments": "[]",
             "visibility": "private"
         }
-        return await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+        return await client.post("/admin/prompts", data=prompt_data, headers=TEST_AUTH_HEADER)
     
     # Create prompts with different names and visibility concurrently
     results = await asyncio.gather(
