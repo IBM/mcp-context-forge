@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [1.0.0-BETA-2] - TBD
 
+### Added
+
+#### **🔧 Extra Environment Variables Support** ([#2047](https://github.com/IBM/mcp-context-forge/issues/2047))
+* `extraEnv` - Inject additional environment variables directly into the gateway container
+* `extraEnvFrom` - Mount environment variables from existing Secrets or ConfigMaps
+* Enables injection of sensitive credentials (SSO secrets, external DB URLs) without modifying templates
+* Placed after derived URLs so user values can override `DATABASE_URL`/`REDIS_URL` if needed
+* Schema validation catches common mistakes (missing `name`, invalid `secretKeyRef` shape)
+
 ### Changed
 
 #### **⚡ Metrics Performance Defaults** ([#1799](https://github.com/IBM/mcp-context-forge/issues/1799))
