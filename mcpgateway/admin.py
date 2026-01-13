@@ -3565,19 +3565,38 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                 root_path = request.scope.get("root_path", "")
                 return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials", status_code=303)
 
-            # Check if password change is required OR if user is using default password
-            needs_password_change = user.password_change_required
+            # Password change enforcement respects master switch and toggles
+            needs_password_change = False
 
-            # Also check if user is using the default password
-            if not needs_password_change:
-                password_service = Argon2PasswordService()
-                is_using_default_password = password_service.verify_password(settings.default_user_password.get_secret_value(), user.password_hash)  # nosec B105
-                if is_using_default_password:
+            if settings.password_change_enforcement_enabled:
+                if getattr(user, "password_change_required", False):
                     needs_password_change = True
-                    # Set the flag in database for future reference
-                    user.password_change_required = True
-                    db.commit()
-                    LOGGER.info(f"User {email} is using default password - forcing password change")
+
+                # Expiry-based enforcement
+                try:
+                    pwd_changed = getattr(user, "password_changed_at", None)
+                    if pwd_changed:
+                        # First-Party
+                        from mcpgateway.db import utc_now
+
+                        age_days = (utc_now() - pwd_changed).days
+                        if age_days >= getattr(settings, "password_max_age_days", 90):
+                            needs_password_change = True
+                except Exception:
+                    pass
+
+                # Detect default password on login if enabled
+                if getattr(settings, "detect_default_password_on_login", True):
+                    password_service = Argon2PasswordService()
+                    is_using_default_password = password_service.verify_password(settings.default_user_password.get_secret_value(), user.password_hash)  # nosec B105
+                    if is_using_default_password:
+                        if getattr(settings, "require_password_change_for_default_password", True):
+                            user.password_change_required = True
+                            try:
+                                db.commit()
+                            except Exception:
+                                pass
+                        needs_password_change = True
 
             if needs_password_change:
                 LOGGER.info(f"User {email} requires password change - redirecting to change password page")
@@ -6068,8 +6087,10 @@ async def admin_create_user(
             email=str(form.get("email", "")), password=password, full_name=str(form.get("full_name", "")), is_admin=form.get("is_admin") == "on", auth_provider="local"
         )
 
-        # If the user was created with the default password, force password change
-        if password == settings.default_user_password.get_secret_value():  # nosec B105
+        # If the user was created with the default password, optionally force password change
+        if (
+            settings.password_change_enforcement_enabled and getattr(settings, "require_password_change_for_default_password", True) and password == settings.default_user_password.get_secret_value()
+        ):  # nosec B105
             new_user.password_change_required = True
             db.commit()
 

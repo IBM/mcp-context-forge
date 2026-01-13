@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
-from mcpgateway.db import EmailUser, SessionLocal
+from mcpgateway.db import EmailUser, SessionLocal, utc_now
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import (
     AuthenticationResponse,
@@ -245,26 +245,44 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
         if not user:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
-        # Check if password change is required OR if user is using default password
-        needs_password_change = user.password_change_required
+        # Password change enforcement respects master switch and individual toggles
+        needs_password_change = False
 
-        # Also check if user is using the default password
-        if not needs_password_change:
-            # First-Party
-            from mcpgateway.services.argon2_service import Argon2PasswordService
-
-            password_service = Argon2PasswordService()
-            is_using_default_password = password_service.verify_password(settings.default_user_password.get_secret_value(), user.password_hash)  # nosec B105
-            if is_using_default_password:
+        if settings.password_change_enforcement_enabled:
+            # If flag is set on the user, honor it
+            if getattr(user, "password_change_required", False):
                 needs_password_change = True
-                # Set the flag in database for future reference
-                user.password_change_required = True
-                db.commit()
+
+            # Enforce expiry-based password change if configured
+            try:
+                pwd_changed = getattr(user, "password_changed_at", None)
+                if pwd_changed:
+                    age_days = (utc_now() - pwd_changed).days
+                    if age_days >= getattr(settings, "password_max_age_days", 90):
+                        needs_password_change = True
+            except Exception:
+                # If timestamp missing or DB doesn't have the column yet, ignore expiry
+                pass
+
+            # Detect default password on login if enabled
+            if getattr(settings, "detect_default_password_on_login", True):
+                # First-Party
+                from mcpgateway.services.argon2_service import Argon2PasswordService
+
+                password_service = Argon2PasswordService()
+                is_using_default_password = password_service.verify_password(settings.default_user_password.get_secret_value(), user.password_hash)  # nosec B105
+                if is_using_default_password:
+                    # Mark user for password change depending on configuration
+                    if getattr(settings, "require_password_change_for_default_password", True):
+                        user.password_change_required = True
+                        try:
+                            db.commit()
+                        except Exception:
+                            # best effort
+                            pass
+                    needs_password_change = True
 
         if needs_password_change:
-            # For API login, return a specific error indicating password change is required.
-            # Return a response directly to avoid any exception handling layers converting
-            # the HTTPException into a 500 in some middleware paths.
             logger.info(f"Login blocked for {login_request.email}: password change required")
             return ORJSONResponse(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -568,8 +586,12 @@ async def create_user(user_request: EmailRegistrationRequest, current_user_ctx: 
             auth_provider="local",
         )
 
-        # If the user was created with the default password, force password change
-        if user_request.password == settings.default_user_password.get_secret_value():  # nosec B105
+        # If the user was created with the default password, optionally force password change
+        if (
+            settings.password_change_enforcement_enabled
+            and getattr(settings, "require_password_change_for_default_password", True)
+            and user_request.password == settings.default_user_password.get_secret_value()
+        ):  # nosec B105
             user.password_change_required = True
             db.commit()
 
