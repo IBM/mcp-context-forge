@@ -64,11 +64,9 @@ def _create_index_safe(index_name: str, table_name: str, columns: list[str], uni
         True if index was created, False if it already existed
     """
     if _index_exists(table_name, index_name):
-        print(f"⚠️  Skipping {index_name}: Index already exists on {table_name}")
         return False
 
     op.create_index(index_name, table_name, columns, unique=unique)
-    print(f"✓ Created index {index_name} on {table_name}({', '.join(columns)})")
     return True
 
 
@@ -83,32 +81,17 @@ def _drop_index_safe(index_name: str, table_name: str) -> bool:
         True if index was dropped, False if it didn't exist
     """
     if not _index_exists(table_name, index_name):
-        print(f"⚠️  Skipping drop of {index_name}: Index does not exist on {table_name}")
         return False
 
     op.drop_index(index_name, table_name=table_name)
-    print(f"✓ Dropped index {index_name} from {table_name}")
     return True
 
 
 def upgrade() -> None:
     """Add index on email_users.full_name for search performance."""
-    print("\n" + "=" * 80)
-    print("Adding User Search Performance Index")
-    print("=" * 80)
-
-    print("\n--- Creating index on email_users.full_name ---")
     _create_index_safe("ix_email_users_full_name", "email_users", ["full_name"], unique=False)
-
-    print("\n✓ User search index migration complete")
 
 
 def downgrade() -> None:
     """Remove index on email_users.full_name."""
-    print("\n" + "=" * 80)
-    print("Removing User Search Performance Index")
-    print("=" * 80)
-
     _drop_index_safe("ix_email_users_full_name", "email_users")
-
-    print("\n✓ User search index downgrade complete")
