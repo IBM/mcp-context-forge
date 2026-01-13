@@ -22,7 +22,7 @@ pub async fn search_files(
         .with_context(|| format!("Failed to build search patterns"))?;
 
     // Build a walk builder
-    let walker = WalkBuilder::new(path).standard_filters(false).build();
+    let walker = WalkBuilder::new(path).follow_links(false).standard_filters(false).hidden(true).build();
 
     for entry in walker {
         match entry {
@@ -87,9 +87,14 @@ pub async fn list_directory(path: &str) -> Result<Vec<String>> {
     let mut results = Vec::new();
 
     while let Some(entry) = entries.next_entry().await? {
+
         let mut name = entry.file_name().to_string_lossy().to_string();
 
         let file_type = entry.file_type().await?;
+        if file_type.is_symlink() {
+            tracing::warn!("Scaping symlink {:?}", &entry.path());
+            continue;
+        }
         if file_type.is_dir() {
             name.push('/');
         }
