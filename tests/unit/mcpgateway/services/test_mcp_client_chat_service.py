@@ -287,3 +287,486 @@ async def test_service_resource_cleanup(monkeypatch):
     await service._client.disconnect()
     service._client.disconnect.assert_awaited()
     monkeypatch.setattr(service, "initialize", AsyncMock(return_value=None))
+
+
+# --------------------------------------------------------------------------- #
+# OUT-OF-ORDER TOOL EVENT HANDLING
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.asyncio
+async def test_chat_events_reconciles_out_of_order_tool_events(monkeypatch, patch_logger):
+    """Test that on_tool_end before on_tool_start is buffered and reconciled when start arrives."""
+    mcpcfg = svc.MCPClientConfig(
+        mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"),
+        llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2"))
+    )
+    service = svc.MCPChatService(mcpcfg)
+    service._initialized = True
+    service.user_id = "test-user"
+    service.history_manager = MagicMock()
+    service.history_manager.get_langchain_messages = AsyncMock(return_value=[])
+    service.history_manager.append_message = AsyncMock()
+
+    # Use output with .content attribute to match LangChain ToolMessage format
+    mock_output = MagicMock()
+    mock_output.content = "buffered tool output"
+
+    async def mock_astream_events(*args, **kwargs):
+        # True out-of-order: on_tool_end arrives BEFORE on_tool_start for SAME run_id
+        yield {"event": "on_tool_end", "run_id": "out-of-order-run", "data": {"output": mock_output}}
+        # Then the start arrives - should reconcile with buffered end
+        yield {"event": "on_tool_start", "run_id": "out-of-order-run", "name": "delayed_tool", "data": {"input": {"key": "value"}}}
+        # Also test a normal in-order tool run
+        yield {"event": "on_tool_start", "run_id": "normal-run", "name": "normal_tool", "data": {"input": {}}}
+        yield {"event": "on_tool_end", "run_id": "normal-run", "data": {"output": mock_output}}
+
+    mock_agent = MagicMock()
+    mock_agent.astream_events = mock_astream_events
+    service._agent = mock_agent
+
+    monkeypatch.setattr(svc, "HumanMessage", MagicMock(return_value=MagicMock()))
+
+    events = []
+    async for event in service.chat_events("test message"):
+        events.append(event)
+
+    # Should NOT emit any tool_error events
+    error_events = [e for e in events if e.get("type") == "tool_error"]
+    assert len(error_events) == 0, f"Should not emit error. Events: {events}"
+
+    # Should have 2 tool_start events
+    tool_starts = [e for e in events if e.get("type") == "tool_start"]
+    assert len(tool_starts) == 2, f"Expected 2 tool_start events. Events: {events}"
+
+    # Should have 2 tool_end events (one reconciled from buffer, one normal)
+    tool_ends = [e for e in events if e.get("type") == "tool_end"]
+    assert len(tool_ends) == 2, f"Expected 2 tool_end events (including reconciled). Events: {events}"
+
+    # Verify the out-of-order run was properly reconciled
+    out_of_order_start = next((e for e in tool_starts if e["id"] == "out-of-order-run"), None)
+    out_of_order_end = next((e for e in tool_ends if e["id"] == "out-of-order-run"), None)
+    assert out_of_order_start is not None, "Missing start event for out-of-order run"
+    assert out_of_order_end is not None, "Missing end event for out-of-order run (should be reconciled)"
+    assert out_of_order_end["output"] == "buffered tool output", "Buffered output should be preserved"
+
+    # Verify the tool_end for out-of-order run comes after tool_start (reconciled)
+    start_idx = events.index(out_of_order_start)
+    end_idx = events.index(out_of_order_end)
+    assert end_idx > start_idx, f"Reconciled end should come after start. Start idx: {start_idx}, End idx: {end_idx}"
+
+    # Should have logged info about reconciliation
+    patch_logger.info.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_chat_events_emits_error_for_orphan_tool_ends(monkeypatch, patch_logger):
+    """Test that orphan on_tool_end (no matching start) emits aggregated error at stream end."""
+    mcpcfg = svc.MCPClientConfig(
+        mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"),
+        llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2"))
+    )
+    service = svc.MCPChatService(mcpcfg)
+    service._initialized = True
+    service.user_id = "test-user"
+    service.history_manager = MagicMock()
+    service.history_manager.get_langchain_messages = AsyncMock(return_value=[])
+    service.history_manager.append_message = AsyncMock()
+
+    mock_output = MagicMock()
+    mock_output.content = "orphan output"
+
+    async def mock_astream_events(*args, **kwargs):
+        # Orphan on_tool_end with no matching start ever
+        yield {"event": "on_tool_end", "run_id": "orphan-run-1", "data": {"output": mock_output}}
+        yield {"event": "on_tool_end", "run_id": "orphan-run-2", "data": {"output": mock_output}}
+        # Normal tool run
+        yield {"event": "on_tool_start", "run_id": "normal-run", "name": "test_tool", "data": {"input": {}}}
+        yield {"event": "on_tool_end", "run_id": "normal-run", "data": {"output": mock_output}}
+
+    mock_agent = MagicMock()
+    mock_agent.astream_events = mock_astream_events
+    service._agent = mock_agent
+
+    monkeypatch.setattr(svc, "HumanMessage", MagicMock(return_value=MagicMock()))
+
+    events = []
+    async for event in service.chat_events("test message"):
+        events.append(event)
+
+    # Should emit aggregated tool_error for orphan ends at stream completion
+    error_events = [e for e in events if e.get("type") == "tool_error"]
+    assert len(error_events) == 1, f"Expected 1 aggregated error for orphans. Events: {events}"
+    orphan_error = error_events[0]
+    # ID should be a UUID (not a fixed string to avoid collisions)
+    assert orphan_error["id"] != "orphan-tool-ends", "ID should be a UUID, not a fixed string"
+    assert len(orphan_error["id"]) == 36, "ID should be a UUID string"
+    assert "orphan-run-1" in orphan_error["error"]
+    assert "orphan-run-2" in orphan_error["error"]
+    assert "2 tool end(s)" in orphan_error["error"]
+    assert "2 buffered" in orphan_error["error"]
+
+    # Error should come before final event
+    error_idx = events.index(orphan_error)
+    final_event = next(e for e in events if e.get("type") == "final")
+    final_idx = events.index(final_event)
+    assert error_idx < final_idx, "Orphan error should come before final event"
+
+    # Should only have tool events for the normal run
+    tool_starts = [e for e in events if e.get("type") == "tool_start"]
+    tool_ends = [e for e in events if e.get("type") == "tool_end"]
+    assert len(tool_starts) == 1
+    assert len(tool_ends) == 1
+    assert tool_starts[0]["id"] == "normal-run"
+    assert tool_ends[0]["id"] == "normal-run"
+
+    # Should have logged warning about orphans at stream end
+    patch_logger.warning.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_chat_events_tool_error_clears_buffered_end(monkeypatch, patch_logger):
+    """Test that on_tool_error clears any buffered end for that run to avoid inconsistent streams."""
+    mcpcfg = svc.MCPClientConfig(
+        mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"),
+        llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2"))
+    )
+    service = svc.MCPChatService(mcpcfg)
+    service._initialized = True
+    service.user_id = "test-user"
+    service.history_manager = MagicMock()
+    service.history_manager.get_langchain_messages = AsyncMock(return_value=[])
+    service.history_manager.append_message = AsyncMock()
+
+    mock_output = MagicMock()
+    mock_output.content = "should be cleared"
+
+    async def mock_astream_events(*args, **kwargs):
+        # on_tool_end arrives first (out of order)
+        yield {"event": "on_tool_end", "run_id": "error-run", "data": {"output": mock_output}}
+        # Then on_tool_error arrives for the same run_id - should clear the buffered end
+        yield {"event": "on_tool_error", "run_id": "error-run", "data": {"error": "Tool crashed"}}
+        # Then on_tool_start arrives - should NOT reconcile with the cleared buffered end
+        yield {"event": "on_tool_start", "run_id": "error-run", "name": "failing_tool", "data": {"input": {}}}
+
+    mock_agent = MagicMock()
+    mock_agent.astream_events = mock_astream_events
+    service._agent = mock_agent
+
+    monkeypatch.setattr(svc, "HumanMessage", MagicMock(return_value=MagicMock()))
+
+    events = []
+    async for event in service.chat_events("test message"):
+        events.append(event)
+
+    # Should have exactly one tool_error (from the on_tool_error event)
+    error_events = [e for e in events if e.get("type") == "tool_error"]
+    assert len(error_events) == 1, f"Expected exactly 1 error (no orphan error). Events: {events}"
+    assert error_events[0]["error"] == "Tool crashed"
+
+    # Should have tool_start but NO tool_end (buffered end was cleared by error)
+    tool_starts = [e for e in events if e.get("type") == "tool_start"]
+    tool_ends = [e for e in events if e.get("type") == "tool_end"]
+    assert len(tool_starts) == 1
+    assert len(tool_ends) == 0, "Buffered end should have been cleared by tool_error"
+
+    # Should have logged debug about clearing buffered end
+    patch_logger.debug.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_chat_events_buffer_full_drops_included_in_error(monkeypatch, patch_logger):
+    """Test that buffer-full drops are tracked and included in aggregated error."""
+    mcpcfg = svc.MCPClientConfig(
+        mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"),
+        llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2"))
+    )
+    service = svc.MCPChatService(mcpcfg)
+    service._initialized = True
+    service.user_id = "test-user"
+    service.history_manager = MagicMock()
+    service.history_manager.get_langchain_messages = AsyncMock(return_value=[])
+    service.history_manager.append_message = AsyncMock()
+
+    mock_output = MagicMock()
+    mock_output.content = "output"
+
+    # Generate more orphan ends than the buffer can hold (default is 100)
+    async def mock_astream_events(*args, **kwargs):
+        # First fill the buffer with 100 orphan ends
+        for i in range(100):
+            yield {"event": "on_tool_end", "run_id": f"buffered-{i}", "data": {"output": mock_output}}
+        # Then add one more that will be dropped due to buffer full
+        yield {"event": "on_tool_end", "run_id": "dropped-buffer-full", "data": {"output": mock_output}}
+
+    mock_agent = MagicMock()
+    mock_agent.astream_events = mock_astream_events
+    service._agent = mock_agent
+
+    monkeypatch.setattr(svc, "HumanMessage", MagicMock(return_value=MagicMock()))
+
+    events = []
+    async for event in service.chat_events("test message"):
+        events.append(event)
+
+    # Should emit aggregated error including the dropped one
+    error_events = [e for e in events if e.get("type") == "tool_error"]
+    assert len(error_events) == 1, f"Expected 1 aggregated error. Events: {[e for e in events if e.get('type') != 'final']}"
+    orphan_error = error_events[0]
+
+    # Error should mention both buffered and dropped (IDs truncated to first 10)
+    assert "101 tool end(s)" in orphan_error["error"]
+    assert "100 buffered" in orphan_error["error"]
+    assert "1 dropped" in orphan_error["error"]
+    # With 101 IDs, message should show truncation
+    assert "first 10 of 101" in orphan_error["error"]
+    assert "+91 more" in orphan_error["error"]
+
+    # Should have logged warning about buffer full
+    warning_calls = [str(call) for call in patch_logger.warning.call_args_list]
+    assert any("buffer full" in call for call in warning_calls), f"Should log buffer full warning. Calls: {warning_calls}"
+
+
+@pytest.mark.asyncio
+async def test_chat_events_ttl_expiry_included_in_error(monkeypatch, patch_logger):
+    """Test that TTL-expired orphans are tracked and included in aggregated error."""
+    mcpcfg = svc.MCPClientConfig(
+        mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"),
+        llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2"))
+    )
+    service = svc.MCPChatService(mcpcfg)
+    service._initialized = True
+    service.user_id = "test-user"
+    service.history_manager = MagicMock()
+    service.history_manager.get_langchain_messages = AsyncMock(return_value=[])
+    service.history_manager.append_message = AsyncMock()
+
+    mock_output = MagicMock()
+    mock_output.content = "output"
+
+    # Track time progression to simulate TTL expiry
+    time_values = [100.0]  # Start at time 100
+
+    def mock_time():
+        return time_values[0]
+
+    async def mock_astream_events(*args, **kwargs):
+        # Orphan end at time 100
+        yield {"event": "on_tool_end", "run_id": "will-expire", "data": {"output": mock_output}}
+        # Advance time past TTL (30s default)
+        time_values[0] = 135.0
+        # Another event to trigger cleanup
+        yield {"event": "on_tool_start", "run_id": "normal-run", "name": "test_tool", "data": {"input": {}}}
+        # One more orphan that won't expire
+        yield {"event": "on_tool_end", "run_id": "wont-expire", "data": {"output": mock_output}}
+        yield {"event": "on_tool_end", "run_id": "normal-run", "data": {"output": mock_output}}
+
+    mock_agent = MagicMock()
+    mock_agent.astream_events = mock_astream_events
+    service._agent = mock_agent
+
+    monkeypatch.setattr(svc, "HumanMessage", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(svc.time, "time", mock_time)
+
+    events = []
+    async for event in service.chat_events("test message"):
+        events.append(event)
+
+    # Should emit aggregated error including both expired and buffered orphans
+    error_events = [e for e in events if e.get("type") == "tool_error"]
+    assert len(error_events) == 1, f"Expected 1 aggregated error. Events: {events}"
+    orphan_error = error_events[0]
+
+    # Error should mention both buffered and dropped (expired)
+    assert "2 tool end(s)" in orphan_error["error"]
+    assert "will-expire" in orphan_error["error"]
+    assert "wont-expire" in orphan_error["error"]
+    assert "1 dropped" in orphan_error["error"] or "1 buffered" in orphan_error["error"]
+
+    # Should have logged warning about TTL expiry
+    warning_calls = [str(call) for call in patch_logger.warning.call_args_list]
+    assert any("expired" in call.lower() for call in warning_calls), f"Should log TTL expiry warning. Calls: {warning_calls}"
+
+
+@pytest.mark.asyncio
+async def test_chat_events_dropped_then_start_still_reports_orphan(monkeypatch, patch_logger):
+    """Test that a dropped end is still reported even if on_tool_start arrives later.
+
+    Once an end event is dropped (TTL expired or buffer full), that data is permanently
+    lost. Even if the start arrives later, we should report the orphan because:
+    1. The end data (tool output) is lost
+    2. A tool only ends once, so no second end will arrive
+    3. This is a data integrity issue that clients should know about
+    """
+    mcpcfg = svc.MCPClientConfig(
+        mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"),
+        llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2"))
+    )
+    service = svc.MCPChatService(mcpcfg)
+    service._initialized = True
+    service.user_id = "test-user"
+    service.history_manager = MagicMock()
+    service.history_manager.get_langchain_messages = AsyncMock(return_value=[])
+    service.history_manager.append_message = AsyncMock()
+
+    mock_output = MagicMock()
+    mock_output.content = "output"
+
+    # Simulate time to trigger TTL expiry
+    time_values = [100.0]
+
+    def mock_time():
+        return time_values[0]
+
+    async def mock_astream_events(*args, **kwargs):
+        # 1. Orphan end at time 100 (no start yet)
+        yield {"event": "on_tool_end", "run_id": "lost-run", "data": {"output": mock_output}}
+        # 2. Advance time past TTL to expire it (moves to dropped set)
+        time_values[0] = 135.0
+        # 3. Some other event to trigger cleanup
+        yield {"event": "on_chat_model_stream", "data": {"chunk": MagicMock(content="hi")}}
+        # 4. Start arrives late - but the end is already dropped (data lost)
+        yield {"event": "on_tool_start", "run_id": "lost-run", "name": "late_tool", "data": {"input": {}}}
+        # Note: No second on_tool_end - tools only end once
+
+    mock_agent = MagicMock()
+    mock_agent.astream_events = mock_astream_events
+    service._agent = mock_agent
+
+    monkeypatch.setattr(svc, "HumanMessage", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(svc.time, "time", mock_time)
+
+    events = []
+    async for event in service.chat_events("test message"):
+        events.append(event)
+
+    # SHOULD emit orphan error because the end was dropped and its data is lost
+    error_events = [e for e in events if e.get("type") == "tool_error"]
+    assert len(error_events) == 1, f"Should emit orphan error for dropped end. Events: {events}"
+    assert "lost-run" in error_events[0]["error"]
+    assert "1 dropped" in error_events[0]["error"]
+
+    # Should still have tool_start for the run
+    tool_starts = [e for e in events if e.get("type") == "tool_start"]
+    assert len(tool_starts) == 1
+    assert tool_starts[0]["id"] == "lost-run"
+
+    # Should NOT have tool_end (the original end was dropped, no second end arrives)
+    tool_ends = [e for e in events if e.get("type") == "tool_end"]
+    assert len(tool_ends) == 0
+
+
+@pytest.mark.asyncio
+async def test_chat_events_dropped_then_error_clears_from_dropped(monkeypatch, patch_logger):
+    """Test that a later on_tool_error clears run_id from dropped set to avoid false orphan."""
+    mcpcfg = svc.MCPClientConfig(
+        mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"),
+        llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2"))
+    )
+    service = svc.MCPChatService(mcpcfg)
+    service._initialized = True
+    service.user_id = "test-user"
+    service.history_manager = MagicMock()
+    service.history_manager.get_langchain_messages = AsyncMock(return_value=[])
+    service.history_manager.append_message = AsyncMock()
+
+    mock_output = MagicMock()
+    mock_output.content = "output"
+
+    # Simulate time to trigger TTL expiry
+    time_values = [100.0]
+
+    def mock_time():
+        return time_values[0]
+
+    async def mock_astream_events(*args, **kwargs):
+        # 1. Orphan end at time 100
+        yield {"event": "on_tool_end", "run_id": "error-run", "data": {"output": mock_output}}
+        # 2. Advance time past TTL to expire it (moves to dropped set)
+        time_values[0] = 135.0
+        # 3. Some other event to trigger cleanup
+        yield {"event": "on_chat_model_stream", "data": {"chunk": MagicMock(content="hi")}}
+        # 4. Now an error arrives for the same run - should clear from dropped set
+        yield {"event": "on_tool_error", "run_id": "error-run", "data": {"error": "Tool failed"}}
+
+    mock_agent = MagicMock()
+    mock_agent.astream_events = mock_astream_events
+    service._agent = mock_agent
+
+    monkeypatch.setattr(svc, "HumanMessage", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(svc.time, "time", mock_time)
+
+    events = []
+    async for event in service.chat_events("test message"):
+        events.append(event)
+
+    # Should have exactly 1 error (from on_tool_error), NOT an orphan aggregated error
+    error_events = [e for e in events if e.get("type") == "tool_error"]
+    assert len(error_events) == 1, f"Expected 1 error (no orphan error). Events: {events}"
+    assert error_events[0]["error"] == "Tool failed"
+    assert error_events[0]["id"] == "error-run"
+
+
+@pytest.mark.asyncio
+async def test_chat_events_dropped_tracking_overflow(monkeypatch, patch_logger):
+    """Test that overflow beyond dropped_max_size is tracked and reported in error.
+
+    When dropped_tool_ends reaches its capacity (200), additional dropped run_ids
+    cannot be tracked individually. The overflow count should be included in the
+    aggregated error message to inform clients of the full extent of data loss.
+    """
+    mcpcfg = svc.MCPClientConfig(
+        mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"),
+        llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2"))
+    )
+    service = svc.MCPChatService(mcpcfg)
+    service._initialized = True
+    service.user_id = "test-user"
+    service.history_manager = MagicMock()
+    service.history_manager.get_langchain_messages = AsyncMock(return_value=[])
+    service.history_manager.append_message = AsyncMock()
+
+    mock_output = MagicMock()
+    mock_output.content = "output"
+
+    async def mock_astream_events(*args, **kwargs):
+        # First fill the pending buffer with 100 orphan ends
+        for i in range(100):
+            yield {"event": "on_tool_end", "run_id": f"buffered-{i}", "data": {"output": mock_output}}
+
+        # Then add 200 more that will be dropped due to buffer full
+        # (first 200 go to dropped_tool_ends, filling it)
+        for i in range(200):
+            yield {"event": "on_tool_end", "run_id": f"dropped-{i}", "data": {"output": mock_output}}
+
+        # Finally add 5 more that exceed dropped_max_size (overflow)
+        for i in range(5):
+            yield {"event": "on_tool_end", "run_id": f"overflow-{i}", "data": {"output": mock_output}}
+
+    mock_agent = MagicMock()
+    mock_agent.astream_events = mock_astream_events
+    service._agent = mock_agent
+
+    monkeypatch.setattr(svc, "HumanMessage", MagicMock(return_value=MagicMock()))
+
+    events = []
+    async for event in service.chat_events("test message"):
+        events.append(event)
+
+    # Should emit aggregated error including the overflow count
+    error_events = [e for e in events if e.get("type") == "tool_error"]
+    assert len(error_events) == 1, f"Expected 1 aggregated error. Events: {[e for e in events if e.get('type') != 'final']}"
+    orphan_error = error_events[0]
+
+    # Error should mention buffered, dropped, AND overflow
+    assert "100 buffered" in orphan_error["error"]
+    assert "200 dropped" in orphan_error["error"]
+    assert "5 additional dropped (tracking overflow)" in orphan_error["error"]
+    # Total should be 100 + 200 + 5 = 305
+    assert "305 tool end(s)" in orphan_error["error"]
+    # With 300 tracked IDs, message should show truncation
+    assert "first 10 of 300" in orphan_error["error"]
+    assert "+290 more" in orphan_error["error"]
+
+    # Should have logged warnings about tracking overflow
+    warning_calls = [str(call) for call in patch_logger.warning.call_args_list]
+    assert any("overflow count" in call for call in warning_calls), f"Should log overflow warning. Calls: {warning_calls}"
