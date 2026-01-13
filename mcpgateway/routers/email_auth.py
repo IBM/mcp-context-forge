@@ -249,19 +249,36 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
         needs_password_change = False
 
         if settings.password_change_enforcement_enabled:
-            # If flag is set on the user, honor it
-            if getattr(user, "password_change_required", False):
-                needs_password_change = True
-
-            # Enforce expiry-based password change if configured
+            # Determine password age if available
+            pwd_changed = None
+            age_days = None
             try:
                 pwd_changed = getattr(user, "password_changed_at", None)
                 if pwd_changed:
                     age_days = (utc_now() - pwd_changed).days
-                    if age_days >= getattr(settings, "password_max_age_days", 90):
-                        needs_password_change = True
             except Exception as exc:  # Defensive: log unexpected issues computing age
                 logger.debug("Failed to evaluate password age for %s: %s", login_request.email, exc)
+
+            # If flag is set on the user, honor it unless the password was changed
+            # recently (within password_max_age_days). This avoids repeatedly
+            # prompting users who have already updated their password.
+            if getattr(user, "password_change_required", False):
+                try:
+                    max_age = getattr(settings, "password_max_age_days", 90)
+                    if age_days is None or age_days >= max_age:
+                        needs_password_change = True
+                    else:
+                        logger.debug("Ignoring password_change_required for %s: password changed %s days ago (<%s)", login_request.email, age_days, max_age)
+                except Exception as exc:
+                    logger.debug("Error evaluating password_change_required for %s: %s", login_request.email, exc)
+
+            # Enforce expiry-based password change if configured and not already required
+            if not needs_password_change and age_days is not None:
+                try:
+                    if age_days >= getattr(settings, "password_max_age_days", 90):
+                        needs_password_change = True
+                except Exception as exc:
+                    logger.debug("Failed to compare password age for %s: %s", login_request.email, exc)
 
             # Detect default password on login if enabled
             if getattr(settings, "detect_default_password_on_login", True):

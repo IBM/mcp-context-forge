@@ -3569,18 +3569,34 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             needs_password_change = False
 
             if settings.password_change_enforcement_enabled:
-                if getattr(user, "password_change_required", False):
-                    needs_password_change = True
-
-                # Expiry-based enforcement
+                # Compute password age once (best-effort)
+                pwd_changed = None
+                age_days = None
                 try:
                     pwd_changed = getattr(user, "password_changed_at", None)
                     if pwd_changed:
                         age_days = (utc_now() - pwd_changed).days
+                except Exception as exc:
+                    LOGGER.debug("Failed to evaluate password age for %s: %s", email, exc)
+
+                # Honor the explicit flag unless the password was changed recently
+                if getattr(user, "password_change_required", False):
+                    try:
+                        max_age = getattr(settings, "password_max_age_days", 90)
+                        if age_days is None or age_days >= max_age:
+                            needs_password_change = True
+                        else:
+                            LOGGER.debug("Ignoring password_change_required for %s: password changed %s days ago (<%s)", email, age_days, max_age)
+                    except Exception as exc:
+                        LOGGER.debug("Error evaluating password_change_required for %s: %s", email, exc)
+
+                # Expiry-based enforcement if not already required
+                if not needs_password_change and age_days is not None:
+                    try:
                         if age_days >= getattr(settings, "password_max_age_days", 90):
                             needs_password_change = True
-                except Exception as exc:  # Defensive: log unexpected issues computing age
-                    LOGGER.debug("Failed to evaluate password age for %s: %s", email, exc)
+                    except Exception as exc:
+                        LOGGER.debug("Failed to compare password age for %s: %s", email, exc)
 
                 # Detect default password on login if enabled
                 if getattr(settings, "detect_default_password_on_login", True):
@@ -3729,6 +3745,7 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
             "request": request,
             "root_path": root_path,
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
+                "password_policy_enabled": getattr(settings, "password_policy_enabled", True),
             "password_min_length": getattr(settings, "password_min_length", 8),
             "password_require_uppercase": getattr(settings, "password_require_uppercase", False),
             "password_require_lowercase": getattr(settings, "password_require_lowercase", False),
