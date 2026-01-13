@@ -44,10 +44,22 @@ IMAGE="${IMAGE_BASE}:${IMAGE_TAG}"
 
 BASE_IMAGE_TAG="${IMAGE_TAG}_base"
 sed -i "s/BASE_IMAGE_TAG/${BASE_IMAGE_TAG}/g" Containerfile.cyberfraud
-make REGISTRY=docker-na.artifactory.swg-devops.com/sec-isc-team-isc-icp-docker-local IMAGE_TAG="$BASE_IMAGE_TAG" CONTAINER_RUNTIME=docker CONTAINER_FILE=./Containerfile.lite  container-build-multi && \
-    make REGISTRY=docker-na.artifactory.swg-devops.com/sec-isc-team-isc-icp-docker-local IMAGE_TAG="${IMAGE_TAG}" CONTAINER_RUNTIME=docker CONTAINER_FILE=./Containerfile.cyberfraud  container-build-multi && \
-    docker tag "mcpgateway/mcpgateway:${IMAGE_TAG}" "${IMAGE}" && \
-    docker push "${IMAGE}"
+
+MULTI_ARCH_BUILD=$(get_env multi-arch-build "1")
+if [ $RUN_SMOKE_TESTS == "1" ]; then
+   echo "Building multi architecture image"
+   make REGISTRY=docker-na.artifactory.swg-devops.com/sec-isc-team-isc-icp-docker-local IMAGE_TAG="$BASE_IMAGE_TAG" CONTAINER_RUNTIME=docker CONTAINER_FILE=./Containerfile.lite  container-build-multi && \
+   make REGISTRY=docker-na.artifactory.swg-devops.com/sec-isc-team-isc-icp-docker-local IMAGE_TAG="${IMAGE_TAG}" CONTAINER_RUNTIME=docker CONTAINER_FILE=./Containerfile.cyberfraud  container-build-multi && \
+   docker tag "docker-na.artifactory.swg-devops.com/sec-isc-team-isc-icp-docker-local/mcpgateway/mcpgateway:${IMAGE_TAG}" "${IMAGE}" && \
+   docker push "${IMAGE}"
+else
+   echo "Building single architecture image"
+   make IMAGE_TAG="$BASE_IMAGE_TAG" docker-prod && \
+   make IMAGE_TAG="${IMAGE_TAG}" CONTAINER_RUNTIME=docker CONTAINER_FILE=./Containerfile.cyberfraud container-build && \
+   docker tag "mcpgateway/mcpgateway:${IMAGE_TAG}" "${IMAGE}" && \
+   docker push "${IMAGE}"
+fi
+
 
 MCP_GATEWAY_IMAGE_TAG="${IMAGE_TAG}"
 RUN_SMOKE_TESTS=$(get_env run-smoke-tests "1")
