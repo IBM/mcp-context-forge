@@ -281,11 +281,11 @@ class PluginExecutor:
         except PluginViolationError:
             raise
         except PluginError as pe:
-            logger.error("Plugin %s failed with error: %s", hook_ref.plugin_ref.name, str(pe), exc_info=True)
+            logger.error("Plugin %s failed with error: %s", hook_ref.plugin_ref.name, str(pe))
             if (self.config and self.config.plugin_settings.fail_on_plugin_error) or hook_ref.plugin_ref.plugin.mode == PluginMode.ENFORCE:
                 raise
         except Exception as e:
-            logger.error("Plugin %s failed with error: %s", hook_ref.plugin_ref.name, str(e), exc_info=True)
+            logger.error("Plugin %s failed with error: %s", hook_ref.plugin_ref.name, str(e))
             if (self.config and self.config.plugin_settings.fail_on_plugin_error) or hook_ref.plugin_ref.plugin.mode == PluginMode.ENFORCE:
                 raise PluginError(error=convert_exception_to_error(e, hook_ref.plugin_ref.name)) from e
             # In permissive or enforce_ignore_error mode, continue with next plugin
