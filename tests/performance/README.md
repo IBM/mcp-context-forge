@@ -61,6 +61,12 @@ make list-baselines       # List all baselines
 make save-baseline BASELINE=my-test RESULTS=results/medium_20241010_123456
 ```
 
+Plugins baseline management:
+```bash
+make baseline-plugins     # Save current plugin profiles directory as baseline
+make compare-plugins      # Compare current plugin profiles with baseline"
+```
+
 ### Cleanup
 ```bash
 make clean                # Clean result files

@@ -225,32 +225,26 @@ pip install flameprof
 flameprof prof/PIIFilterPlugin_tool_pre_invoke.prof > flamegraph.svg
 ```
 
-### Compare Before/After
+### Analysis Script
 
-Profile before making changes:
-
+Analyze a single profile
 ```bash
-python tests/performance/test_plugins_performance.py 2>/dev/null
-cp prof/PIIFilterPlugin_tool_pre_invoke.prof prof/baseline.prof
+python utils/analyze_profiles.py prof/PIIFilterPlugin_tool_pre_invoke.prof
 ```
 
-Make your optimization changes, then profile again:
-
+Compare two profiles
 ```bash
-python tests/performance/test_plugins_performance.py 2>/dev/null
+python utils/analyze_profiles.py prof/baseline.prof prof/current.prof --compare
 ```
 
-Compare:
+Compare all matching profiles between two directories
+```bash
+python utils/analyze_profiles.py prof_baseline prof_current --compare-all
+```
 
-```python
-import pstats
-
-baseline = pstats.Stats('prof/baseline.prof')
-current = pstats.Stats('prof/PIIFilterPlugin_tool_pre_invoke.prof')
-
-baseline.strip_dirs().sort_stats('cumulative').print_stats(10)
-print("\n" + "="*80 + "\n")
-current.strip_dirs().sort_stats('cumulative').print_stats(10)
+Generate CSV report
+```bash
+python utils/analyze_profiles.py --all --csv results.csv
 ```
 
 ## Configuration
