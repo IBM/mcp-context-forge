@@ -17,7 +17,6 @@ from __future__ import annotations
 
 # Standard
 import asyncio
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -131,13 +130,13 @@ class TestCrossUserIsolation:
         user_b_headers = {"Authorization": "Bearer user-b-token"}
 
         # Verify pool keys are different
-        key_a = pool._make_pool_key("http://test:8080", user_a_headers, TransportType.STREAMABLE_HTTP)
-        key_b = pool._make_pool_key("http://test:8080", user_b_headers, TransportType.STREAMABLE_HTTP)
+        key_a = pool._make_pool_key("http://test:8080", user_a_headers, TransportType.STREAMABLE_HTTP, user_identity="anonymous")
+        key_b = pool._make_pool_key("http://test:8080", user_b_headers, TransportType.STREAMABLE_HTTP, user_identity="anonymous")
 
         assert key_a != key_b
-        assert key_a[0] == key_b[0]  # Same URL
-        assert key_a[1] != key_b[1]  # Different identity hash
-        assert key_a[2] == key_b[2]  # Same transport
+        assert key_a[1] == key_b[1]  # Same URL
+        assert key_a[2] != key_b[2]  # Different identity hash
+        assert key_a[3] == key_b[3]  # Same transport
 
 
 class TestConcurrentAccess:
@@ -154,7 +153,7 @@ class TestConcurrentAccess:
 
         async def simulate_user_request(user_id):
             headers = {"Authorization": f"Bearer user-{user_id}-token"}
-            key = pool._make_pool_key("http://test:8080", headers, TransportType.STREAMABLE_HTTP)
+            key = pool._make_pool_key("http://test:8080", headers, TransportType.STREAMABLE_HTTP, user_identity="anonymous")
             session_assignments[user_id] = key
             return key
 
@@ -174,7 +173,7 @@ class TestConcurrentAccess:
         async def simulate_request(request_id):
             user_id = request_id % 10  # 10 different users
             headers = {"Authorization": f"Bearer user-{user_id}-token"}
-            key = pool._make_pool_key("http://test:8080", headers, TransportType.STREAMABLE_HTTP)
+            key = pool._make_pool_key("http://test:8080", headers, TransportType.STREAMABLE_HTTP, user_identity="anonymous")
             results.append((request_id, user_id, key))
             return key
 
@@ -284,24 +283,24 @@ class TestTransportIsolation:
         headers = {"Authorization": "Bearer token"}
 
         # Get pool keys for same URL, same identity, different transports
-        sse_key = pool._make_pool_key("http://test:8080", headers, TransportType.SSE)
-        http_key = pool._make_pool_key("http://test:8080", headers, TransportType.STREAMABLE_HTTP)
+        sse_key = pool._make_pool_key("http://test:8080", headers, TransportType.SSE, user_identity="anonymous")
+        http_key = pool._make_pool_key("http://test:8080", headers, TransportType.STREAMABLE_HTTP, user_identity="anonymous")
 
         assert sse_key != http_key
-        assert sse_key[0] == http_key[0]  # Same URL
-        assert sse_key[1] == http_key[1]  # Same identity
-        assert sse_key[2] != http_key[2]  # Different transport
+        assert sse_key[1] == http_key[1]  # Same URL
+        assert sse_key[2] == http_key[2]  # Same identity
+        assert sse_key[3] != http_key[3]  # Different transport
 
     @pytest.mark.asyncio
     async def test_transport_in_pool_key(self, pool):
         """Verify transport type is included in pool key."""
         headers = {}
 
-        sse_key = pool._make_pool_key("http://test:8080", headers, TransportType.SSE)
-        http_key = pool._make_pool_key("http://test:8080", headers, TransportType.STREAMABLE_HTTP)
+        sse_key = pool._make_pool_key("http://test:8080", headers, TransportType.SSE, user_identity="anonymous")
+        http_key = pool._make_pool_key("http://test:8080", headers, TransportType.STREAMABLE_HTTP, user_identity="anonymous")
 
-        assert sse_key[2] == "sse"
-        assert http_key[2] == "streamablehttp"
+        assert sse_key[3] == "sse"
+        assert http_key[3] == "streamablehttp"
 
 
 class TestPoolDisabledBehavior:

@@ -3232,11 +3232,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 pass
 
                         if use_pool and pool is not None:
+                            # Health checks are system operations, not user-driven.
+                            # Use system identity to isolate from user sessions.
                             async with pool.session(
                                 url=gateway_url,
                                 headers=headers,
                                 transport_type=TransportType.STREAMABLE_HTTP,
                                 httpx_client_factory=get_httpx_client_factory,
+                                user_identity="_system_health_check",
                             ) as pooled:
                                 # Optional explicit RPC verification (off by default for performance).
                                 # Pool's internal staleness check handles health via _validate_session.

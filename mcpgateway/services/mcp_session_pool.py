@@ -345,11 +345,11 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         identity_hash = self._compute_identity_hash(headers)
 
         # Anonymize user identity by hashing it (unless it's commonly "anonymous")
-        # We also want to maintain the requested order: user_id, url, headers, transport
+        # Use full hash for collision resistance - truncate only for display in logs/metrics
         if user_identity == "anonymous":
             user_hash = "anonymous"
         else:
-            user_hash = hashlib.sha256(user_identity.encode()).hexdigest()[:16]
+            user_hash = hashlib.sha256(user_identity.encode()).hexdigest()
 
         return (user_hash, url, identity_hash, transport_type.value)
 
@@ -521,10 +521,10 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             return
 
         # Pool key includes transport type and user identity
-        # Re-compute user hash from stored raw identity
+        # Re-compute user hash from stored raw identity (full hash for collision resistance)
         user_hash = "anonymous"
         if pooled.user_identity != "anonymous":
-            user_hash = hashlib.sha256(pooled.user_identity.encode()).hexdigest()[:16]
+            user_hash = hashlib.sha256(pooled.user_identity.encode()).hexdigest()
 
         pool_key = (user_hash, pooled.url, pooled.identity_key, pooled.transport_type.value)
         lock = await self._get_or_create_lock(pool_key)

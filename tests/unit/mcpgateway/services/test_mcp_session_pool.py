@@ -7,12 +7,12 @@ SPDX-License-Identifier: Apache-2.0
 
 # Standard
 import asyncio
+import hashlib
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
-import hashlib
 
 # First-Party
 from mcpgateway.services.mcp_session_pool import (
@@ -363,8 +363,8 @@ class TestSessionPoolIsolation:
         # Debug print keys
         print(f"Pool keys: {keys}")
         
-        assert any(hashlib.sha256(b"user_a").hexdigest()[:16] in k for k in keys), "Pool keys missing user_a hash"
-        assert any(hashlib.sha256(b"user_b").hexdigest()[:16] in k for k in keys), "Pool keys missing user_b hash"
+        assert any(hashlib.sha256(b"user_a").hexdigest() in k for k in keys), "Pool keys missing user_a hash"
+        assert any(hashlib.sha256(b"user_b").hexdigest() in k for k in keys), "Pool keys missing user_b hash"
         
         # 9. Verify Isolation: Ensure User A cannot get User B's session
         # If we request for User A again, we should get session_a (already acquired as session_a_2)
@@ -412,8 +412,9 @@ class TestSessionPoolIsolation:
         pools = metrics["pools"]
         keys = list(pools.keys())
         assert any("anonymous" in k for k in keys)
-        
+
         await pool.close_all()
+
 
 class TestIdentityExtractor:
     """Tests for custom identity extractor."""
@@ -485,20 +486,20 @@ class TestPoolKeyGeneration:
         assert key2[3] == "streamablehttp"
 
     def test_pool_key_hashes_user_identity(self, pool):
-        """Pool key should hash user identity."""
+        """Pool key should hash user identity with full SHA-256."""
         user_id = "user@example.com"
-        # Expect truncated hash (16 chars)
-        expected_hash = hashlib.sha256(user_id.encode()).hexdigest()[:16]
-        
+        # Expect full SHA-256 hash (64 hex chars) for collision resistance
+        expected_hash = hashlib.sha256(user_id.encode()).hexdigest()
+
         key = pool._make_pool_key(
-            "http://server:8080", 
-            {}, 
-            TransportType.STREAMABLE_HTTP, 
+            "http://server:8080",
+            {},
+            TransportType.STREAMABLE_HTTP,
             user_identity=user_id
         )
 
         assert key[0] == expected_hash
-        assert len(key[0]) == 16
+        assert len(key[0]) == 64  # Full SHA-256 hash
         assert key[0] != user_id
 
 
