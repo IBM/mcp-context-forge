@@ -42,7 +42,9 @@ IMAGE_TAG=${IMAGE_TAG////_}
 IMAGE_BASE="${REGISTRY_URL}/${IMAGE_NAME}"
 IMAGE="${IMAGE_BASE}:${IMAGE_TAG}"
 
-make REGISTRY=docker-na.artifactory.swg-devops.com/sec-isc-team-isc-icp-docker-local IMAGE_TAG="base" CONTAINER_RUNTIME=docker CONTAINER_FILE=./Containerfile.lite  container-build-multi && \
+BASE_IMAGE_TAG="${IMAGE_TAG}_base"
+sed -i "s/BASE_IMAGE_TAG/${BASE_IMAGE_TAG}/g" Containerfile.cyberfraud
+make REGISTRY=docker-na.artifactory.swg-devops.com/sec-isc-team-isc-icp-docker-local IMAGE_TAG="$BASE_IMAGE_TAG" CONTAINER_RUNTIME=docker CONTAINER_FILE=./Containerfile.lite  container-build-multi && \
     make REGISTRY=docker-na.artifactory.swg-devops.com/sec-isc-team-isc-icp-docker-local IMAGE_TAG="${IMAGE_TAG}" CONTAINER_RUNTIME=docker CONTAINER_FILE=./Containerfile.cyberfraud  container-build-multi && \
     docker tag "mcpgateway/mcpgateway:${IMAGE_TAG}" "${IMAGE}" && \
     docker push "${IMAGE}"
