@@ -19,7 +19,7 @@ Examples:
 
 # Standard
 from datetime import datetime, timedelta, UTC
-from typing import Optional
+from typing import List, Optional, Union
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -444,7 +444,7 @@ async def get_auth_events(limit: int = 50, offset: int = 0, current_user: EmailU
 
 
 # Admin-only endpoints
-@email_auth_router.get("/admin/users", response_model=CursorPaginatedUsersResponse)
+@email_auth_router.get("/admin/users", response_model=Union[CursorPaginatedUsersResponse, List[EmailUserResponse]])
 @require_permission("admin.user_management")
 async def list_users(
     cursor: Optional[str] = Query(None, description="Pagination cursor for fetching the next set of results"),
@@ -454,26 +454,28 @@ async def list_users(
         le=settings.pagination_max_page_size,
         description="Maximum number of users to return. 0 means all (no limit). Default uses pagination_default_page_size.",
     ),
-    offset: int = Query(0, ge=0, description="Number of users to skip (deprecated; use cursor pagination)."),
+    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
-):
+) -> Union[CursorPaginatedUsersResponse, List[EmailUserResponse]]:
     """List all users (admin only) with cursor-based pagination support.
 
     Args:
         cursor: Pagination cursor for fetching the next set of results
         limit: Maximum number of users to return. Use 0 for all users (no limit).
             If not specified, uses pagination_default_page_size (default: 50).
-        offset: Number of users to skip (deprecated; use cursor pagination)
+        include_pagination: Whether to include cursor pagination metadata in the response (default: false)
         current_user_ctx: Currently authenticated user context with permissions
 
     Returns:
-        CursorPaginatedUsersResponse: List of users with pagination metadata
+        CursorPaginatedUsersResponse with users and nextCursor if include_pagination=true, or
+        List of users if include_pagination=false
 
     Raises:
         HTTPException: If user is not admin
 
     Examples:
-        >>> # Cursor-based: GET /auth/email/admin/users?cursor=eyJlbWFpbCI6Li4ufQ
+        >>> # Cursor-based with pagination: GET /auth/email/admin/users?cursor=eyJlbWFpbCI6Li4ufQ&include_pagination=true
+        >>> # Simple list: GET /auth/email/admin/users
         >>> # Headers: Authorization: Bearer <admin_token>
     """
 
@@ -481,11 +483,13 @@ async def list_users(
     auth_service = EmailAuthService(db)
 
     try:
-        result = await auth_service.list_users(cursor=cursor, limit=limit, offset=offset)
-        return CursorPaginatedUsersResponse(
-            users=[EmailUserResponse.from_email_user(user) for user in result.data],
-            next_cursor=result.next_cursor,
-        )
+        result = await auth_service.list_users(cursor=cursor, limit=limit)
+        user_responses = [EmailUserResponse.from_email_user(user) for user in result.data]
+
+        if include_pagination:
+            return CursorPaginatedUsersResponse(users=user_responses, next_cursor=result.next_cursor)
+
+        return user_responses
 
     except Exception as e:
         logger.error(f"Error listing users: {e}")

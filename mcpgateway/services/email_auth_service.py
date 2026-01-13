@@ -693,27 +693,23 @@ class EmailAuthService:
     async def list_users(
         self,
         limit: Optional[int] = None,
-        offset: int = 0,
         cursor: Optional[str] = None,
         page: Optional[int] = None,
         per_page: Optional[int] = None,
         search: Optional[str] = None,
         exclude_emails: Optional[set[str]] = None,
     ) -> UsersListResult:
-        """List all users with cursor or offset-based pagination support and optional search.
+        """List all users with cursor or page-based pagination support and optional search.
 
         This method supports both cursor-based (for API endpoints with large datasets)
-        and offset-based (for admin UI with page numbers) pagination, with optional
+        and page-based (for admin UI with page numbers) pagination, with optional
         search filtering by email or full name.
-        If page and offset are not provided, cursor pagination is used starting at
-        the first page.
 
         Note: This method returns ORM objects and cannot be cached since callers
         depend on ORM attributes and methods (e.g., EmailUserResponse.from_email_user).
 
         Args:
-            limit: Maximum number of users to return (for legacy offset-based pagination)
-            offset: Number of users to skip (for legacy offset-based pagination)
+            limit: Maximum number of users to return (for cursor-based pagination)
             cursor: Opaque cursor token for cursor-based pagination
             page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
             per_page: Items per page for page-based pagination
@@ -757,32 +753,25 @@ class EmailAuthService:
             if exclude_emails:
                 query = query.where(~EmailUser.email.in_(exclude_emails))
 
-            # Handle legacy offset-based pagination (for backward compatibility)
-            # If offset is provided but page is not, use old-style offset/limit approach
-            if offset > 0 and page is None and cursor is None:
-                query = query.offset(offset)
-                if limit not in (None, 0):
-                    query = query.limit(min(limit, settings.pagination_max_page_size))
-                result = self.db.execute(query)
-                users = list(result.scalars().all())
-                return UsersListResult(data=users)
+            # Use unified pagination helper - handles both page and cursor pagination
+            pag_result = await unified_paginate(
+                db=self.db,
+                query=query,
+                page=page,
+                per_page=per_page,
+                cursor=cursor,
+                limit=limit,
+                base_url="/admin/users",
+                query_params={},
+            )
 
-            # Handle page-based pagination using unified helper
+            # Extract users based on pagination type
             if page is not None:
-                pag_result = await unified_paginate(
-                    db=self.db,
-                    query=query,
-                    page=page,
-                    per_page=per_page,
-                    cursor=None,
-                    limit=None,
-                    base_url="/admin/users",
-                    query_params={},
-                )
+                # Page-based: pag_result is a dict
                 return UsersListResult(data=pag_result["data"], pagination=pag_result["pagination"], links=pag_result["links"])
 
-            # Default to cursor-based pagination for first page if not explicitly page-based
-            users, next_cursor = await self._cursor_paginate_users(query, cursor, limit)
+            # Cursor-based: pag_result is a tuple
+            users, next_cursor = pag_result
             return UsersListResult(data=users, next_cursor=next_cursor)
 
         except Exception as e:

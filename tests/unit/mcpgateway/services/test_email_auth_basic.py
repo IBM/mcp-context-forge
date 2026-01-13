@@ -846,7 +846,7 @@ class TestEmailAuthServiceUserListing:
         mock_result.scalars.return_value.all.return_value = mock_users[:3]  # Return first 3
         mock_db.execute.return_value = mock_result
 
-        result = await service.list_users(limit=3, offset=0)
+        result = await service.list_users(cursor=None, limit=3)
 
         assert len(result.data) == 3
         assert result.data[0].email == "user0@example.com"
