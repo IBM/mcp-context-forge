@@ -188,8 +188,8 @@ async def bootstrap_admin_user(conn: Connection) -> None:
                 admin_user.password_change_required = True  # Force admin to change default password
             try:
                 admin_user.password_changed_at = utc_now()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Failed to set admin password_changed_at: %s", exc)
             db.commit()
 
             # Personal team is automatically created during user creation if enabled

@@ -260,9 +260,8 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
                     age_days = (utc_now() - pwd_changed).days
                     if age_days >= getattr(settings, "password_max_age_days", 90):
                         needs_password_change = True
-            except Exception:
-                # If timestamp missing or DB doesn't have the column yet, ignore expiry
-                pass
+            except Exception as exc:  # Defensive: log unexpected issues computing age
+                logger.debug("Failed to evaluate password age for %s: %s", login_request.email, exc)
 
             # Detect default password on login if enabled
             if getattr(settings, "detect_default_password_on_login", True):
@@ -277,9 +276,8 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
                         user.password_change_required = True
                         try:
                             db.commit()
-                        except Exception:
-                            # best effort
-                            pass
+                        except Exception as exc:  # log commit failures
+                            logger.warning("Failed to commit password_change_required flag for %s: %s", login_request.email, exc)
                     needs_password_change = True
 
         if needs_password_change:

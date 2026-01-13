@@ -515,9 +515,8 @@ class EmailAuthService:
             # Record the password change timestamp
             try:
                 user.password_changed_at = utc_now()
-            except Exception:
-                # Best-effort - if DB doesn't have the column yet, ignore
-                pass
+            except Exception as exc:
+                logger.debug("Failed to set password_changed_at for %s: %s", email, exc)
 
             self.db.commit()
             success = True
@@ -590,8 +589,8 @@ class EmailAuthService:
                 existing_admin.password_hash = self.password_service.hash_password(password)
                 try:
                     existing_admin.password_changed_at = utc_now()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("Failed to set password_changed_at for existing admin %s: %s", email, exc)
 
             # Ensure admin status
             existing_admin.is_admin = True
