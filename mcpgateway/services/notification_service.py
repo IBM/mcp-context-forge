@@ -16,6 +16,8 @@ Description:
     - Compatible with MCPSessionPool for pooled session notification handling
     - Supports both tools, resources, and prompts list_changed notifications
 
+Capable of handling other tasks as well like cancellation, progress notifications, etc. (to be implemented here)
+
 Usage:
     ```python
     from mcpgateway.services.notification_service import NotificationService
@@ -60,7 +62,13 @@ logger = logging_service.get_logger(__name__)
 
 
 class NotificationType(Enum):
-    """Types of MCP list_changed notifications."""
+    """Types of MCP list_changed notifications.
+
+    Attributes:
+        TOOLS_LIST_CHANGED: Notification for tool list changes.
+        RESOURCES_LIST_CHANGED: Notification for resource list changes.
+        PROMPTS_LIST_CHANGED: Notification for prompt list changes.
+    """
 
     TOOLS_LIST_CHANGED = "notifications/tools/list_changed"
     RESOURCES_LIST_CHANGED = "notifications/resources/list_changed"
@@ -69,7 +77,13 @@ class NotificationType(Enum):
 
 @dataclass
 class GatewayCapabilities:
-    """Tracks list_changed capabilities for a gateway."""
+    """Tracks list_changed capabilities for a gateway.
+
+    Attributes:
+        tools_list_changed: Whether the gateway supports tool list changes.
+        resources_list_changed: Whether the gateway supports resource list changes.
+        prompts_list_changed: Whether the gateway supports prompt list changes.
+    """
 
     tools_list_changed: bool = False
     resources_list_changed: bool = False
@@ -78,7 +92,15 @@ class GatewayCapabilities:
 
 @dataclass
 class PendingRefresh:
-    """Represents a pending refresh operation with debounce tracking."""
+    """Represents a pending refresh operation with debounce tracking.
+
+    Attributes:
+        gateway_id: The ID of the gateway to refresh.
+        enqueued_at: The timestamp when the refresh was enqueued.
+        include_resources: Whether to include resources in the refresh.
+        include_prompts: Whether to include prompts in the refresh.
+        triggered_by: The set of notification types that triggered this refresh.
+    """
 
     gateway_id: str
     enqueued_at: float = field(default_factory=time.time)
@@ -162,8 +184,11 @@ class NotificationService:
             >>> async def test():
             ...     service = NotificationService()
             ...     await service.initialize()
-            ...     return service._worker_task is not None
-            >>> # asyncio.run(test())
+            ...     is_running = service._worker_task is not None
+            ...     await service.shutdown()
+            ...     return is_running
+            >>> asyncio.run(test())
+            True
         """
         if gateway_service:
             self._gateway_service = gateway_service
@@ -177,6 +202,12 @@ class NotificationService:
 
         Args:
             gateway_service: The GatewayService instance to use for refreshes.
+
+        Example:
+            >>> from unittest.mock import Mock
+            >>> service = NotificationService()
+            >>> mock_gateway_service = Mock()
+            >>> service.set_gateway_service(mock_gateway_service)
         """
         self._gateway_service = gateway_service
 
@@ -190,7 +221,8 @@ class NotificationService:
             ...     await service.initialize()
             ...     await service.shutdown()
             ...     return service._worker_task is None or service._worker_task.done()
-            >>> # asyncio.run(test())
+            >>> asyncio.run(test())
+            True
         """
         self._shutdown_event.set()
 
@@ -224,7 +256,7 @@ class NotificationService:
             >>> service = NotificationService()
             >>> caps = {"tools": {"listChanged": True}, "resources": {"listChanged": False}}
             >>> service.register_gateway_capabilities("gw-1", caps)
-            >>> service._gateway_capabilities["gw-1"].tools_list_changed
+            >>> service.supports_list_changed("gw-1")
             True
             >>> service._gateway_capabilities["gw-1"].resources_list_changed
             False
@@ -256,10 +288,10 @@ class NotificationService:
         Example:
             >>> service = NotificationService()
             >>> service.register_gateway_capabilities("gw-1", {"tools": {"listChanged": True}})
-            >>> "gw-1" in service._gateway_capabilities
+            >>> service.supports_list_changed("gw-1")
             True
             >>> service.unregister_gateway("gw-1")
-            >>> "gw-1" in service._gateway_capabilities
+            >>> service.supports_list_changed("gw-1")
             False
         """
         self._gateway_capabilities.pop(gateway_id, None)
@@ -276,7 +308,8 @@ class NotificationService:
 
         Example:
             >>> service = NotificationService()
-            >>> service.register_gateway_capabilities("gw-1", {"tools": {"listChanged": True}})
+            >>> caps = {"tools": {"listChanged": True}}
+            >>> service.register_gateway_capabilities("gw-1", caps)
             >>> service.supports_list_changed("gw-1")
             True
             >>> service.supports_list_changed("gw-unknown")
@@ -316,7 +349,11 @@ class NotificationService:
             | mcp_types.ServerNotification
             | Exception,
         ) -> None:
-            """Handle incoming messages from MCP server."""
+            """Handle incoming messages from MCP server.
+
+            Args:
+                message: The message received from the server.
+            """
             # Only process ServerNotification objects
             if isinstance(message, mcp_types.ServerNotification):
                 await self._handle_notification(gateway_id, message, gateway_url)
@@ -428,7 +465,11 @@ class NotificationService:
             )
 
     async def _process_refresh_queue(self) -> None:
-        """Background worker that processes pending refresh operations."""
+        """Background worker that processes pending refresh operations.
+
+        Continuously runs until shutdown is triggered, picking up pending
+        refreshes from the queue and executing them.
+        """
         logger.info("NotificationService refresh worker started")
 
         while not self._shutdown_event.is_set():
@@ -545,8 +586,14 @@ def get_notification_service() -> NotificationService:
         RuntimeError: If service has not been initialized.
 
     Example:
-        >>> # After init_notification_service() is called:
-        >>> # service = get_notification_service()
+        >>> try:
+        ...     _ = init_notification_service()
+        ...     service = get_notification_service()
+        ...     result = isinstance(service, NotificationService)
+        ... except RuntimeError:
+        ...     result = False
+        >>> result
+        True
     """
     if _notification_service is None:
         raise RuntimeError("NotificationService not initialized. Call init_notification_service() first.")
@@ -567,7 +614,9 @@ def init_notification_service(
         The initialized NotificationService instance.
 
     Example:
-        >>> # service = init_notification_service(debounce_seconds=10.0)
+        >>> service = init_notification_service(debounce_seconds=10.0)
+        >>> service.debounce_seconds
+        10.0
     """
     global _notification_service  # pylint: disable=global-statement
     _notification_service = NotificationService(
@@ -579,7 +628,21 @@ def init_notification_service(
 
 
 async def close_notification_service() -> None:
-    """Close the global NotificationService."""
+    """Close the global NotificationService.
+
+    Example:
+        >>> import asyncio
+        >>> async def test():
+        ...     init_notification_service()
+        ...     await close_notification_service()
+        ...     try:
+        ...         get_notification_service()
+        ...     except RuntimeError:
+        ...         return True
+        ...     return False
+        >>> asyncio.run(test())
+        True
+    """
     global _notification_service  # pylint: disable=global-statement
     if _notification_service is not None:
         await _notification_service.shutdown()
