@@ -507,20 +507,15 @@
       <div id="{{ server.id }}-button-container">
         <button
           id="{{ server.id }}-register-btn"
-          class="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed text-left"
+          class="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
           hx-post="{{ root_path }}/admin/mcp-registry/{{ server.id }}/register"
           hx-target="#{{ server.id }}-button-container"
           hx-swap="innerHTML"
-          hx-indicator="#{{ server.id }}-spinner"
-          hx-on::after-request="if(event.detail.successful) { setTimeout(() => { const rootPath = window.ROOT_PATH || ''; if(window.htmx) { window.htmx.ajax('GET', rootPath + '/admin/mcp-registry/partial', {target: '#mcp-registry-servers', swap: 'innerHTML'}); } }, 500); } else { const btn = document.getElementById('{{ server.id }}-register-btn'); if(btn) btn.disabled = false; alert('Registration failed: ' + (event.detail.xhr.response ? JSON.parse(event.detail.xhr.response).error || 'Unknown error' : 'Network error')); }"
+          hx-disabled-elt="this"
+          hx-on::before-request="this.innerHTML = '<span class=\'inline-flex items-center\'><span class=\'inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2\'></span>Registering...</span>'"
+          hx-on::after-request="if(event.detail.successful) { setTimeout(() => { const rootPath = window.ROOT_PATH || ''; if(window.htmx) { window.htmx.ajax('GET', rootPath + '/admin/mcp-registry/partial', {target: '#mcp-registry-servers', swap: 'innerHTML'}); } }, 1500); }"
         >
-          <span class="htmx-not-indicator">Add Server</span>
-          <span id="{{ server.id }}-spinner" class="htmx-indicator inline-flex items-center">
-            <span
-              class="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"
-            ></span>
-            Registering...
-          </span>
+          Add Server
         </button>
       </div>
       {% endif %} {% endif %}

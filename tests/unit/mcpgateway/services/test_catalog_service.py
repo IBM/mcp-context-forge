@@ -292,3 +292,52 @@ async def test_register_catalog_server_tags_validation_error_handling(service):
                 assert "a" not in valid_tag_ids, "Single-char tag 'a' should be filtered out"
                 assert "x" not in valid_tag_ids, "Single-char tag 'x' should be filtered out"
                 assert "" not in valid_tag_ids, "Empty tag should be filtered out"
+
+
+@pytest.mark.asyncio
+async def test_register_catalog_server_oauth_without_credentials(service):
+    """Test that OAuth servers without credentials are registered as disabled."""
+    fake_catalog = {
+        "catalog_servers": [{
+            "id": "oauth-server",
+            "name": "OAuth Server",
+            "url": "https://oauth.example.com/mcp",
+            "description": "OAuth server",
+            "auth_type": "OAuth2.1",
+            "tags": ["oauth"]
+        }]
+    }
+
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+        db.commit = MagicMock()
+        db.add = MagicMock()
+
+        # Create a proper datetime for mocking
+        now = datetime.now(timezone.utc)
+
+        # Mock db.refresh to set the id and timestamps on the object
+        def mock_refresh(obj):
+            obj.id = "test-id"
+            obj.created_at = now
+            obj.updated_at = now
+            obj.reachable = False
+
+        db.refresh = MagicMock(side_effect=mock_refresh)
+
+        with patch("mcpgateway.services.catalog_service.select"), \
+             patch("mcpgateway.services.catalog_service.slugify", return_value="oauth-server"), \
+             patch("mcpgateway.services.catalog_service.validate_tags_field", return_value=[{"id": "oauth", "label": "oauth"}]):
+
+            result = await service.register_catalog_server("oauth-server", None, db)
+
+            # Verify OAuth server was registered successfully but requires configuration
+            assert result.success, f"Registration failed: {result.error}"
+            assert "OAuth configuration required" in result.message
+            assert result.server_id == "test-id"
+
+            # Verify database operations were called
+            db.add.assert_called_once()
+            db.commit.assert_called_once()
+            db.refresh.assert_called_once()
