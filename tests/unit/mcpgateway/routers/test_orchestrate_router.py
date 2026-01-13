@@ -1,4 +1,10 @@
 # -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/routers/test_orchestrate_router.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+"""
+
 import pytest
 from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient

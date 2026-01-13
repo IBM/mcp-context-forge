@@ -1,4 +1,11 @@
 # -*- coding: utf-8 -*-
+"""Location: ./tests/integration/test_orchestrate_cancel_integration.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+"""
+
+# Standard
 import asyncio
 from unittest.mock import AsyncMock
 

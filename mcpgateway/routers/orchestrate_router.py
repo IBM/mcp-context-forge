@@ -1,5 +1,10 @@
 # mcpgateway/routers/orchestrate_router.py
-"""Orchestrate router to support gateway-authoritative orchestration actions.
+"""Location: ./mcpgateway/routers/orchestrate_router.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Orchestrate router to support gateway-authoritative orchestration actions.
 
 Endpoints:
 - POST /orchestrate/cancel -> Request cancellation for a run/requestId
@@ -17,8 +22,8 @@ from pydantic import BaseModel, Field
 # First-Party
 import mcpgateway.main as main_module
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
-from mcpgateway.services.orchestration_service import orchestration_service
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.orchestration_service import orchestration_service
 
 # Initialize logging
 logging_service = LoggingService()

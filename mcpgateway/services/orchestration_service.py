@@ -1,5 +1,10 @@
 # mcpgateway/services/orchestration_service.py
-"""Service for tracking and cancelling active tool runs.
+"""Location: ./mcpgateway/services/orchestration_service.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Service for tracking and cancelling active tool runs.
 
 Provides a simple in-memory registry for run metadata and an optional async
 cancel callback that can be invoked when a cancellation is requested. This
@@ -73,11 +78,18 @@ class OrchestrationService:
         async with self._lock:
             entry = self._runs.get(run_id)
             if not entry:
+                logger.info("Cancellation requested for unknown run %s (queued for remote peers)", run_id)
                 return False
             if entry.get("cancelled"):
+                logger.debug("Run %s already cancelled", run_id)
                 return True
             entry["cancelled"] = True
+            entry["cancelled_at"] = time.time()
+            entry["cancel_reason"] = reason
             cancel_cb = entry.get("cancel_callback")
+
+        # Log cancellation with reason and request_id for observability
+        logger.info("Tool execution cancelled: run_id=%s, reason=%s, tool=%s", run_id, reason or "not specified", entry.get("name", "unknown"))
 
         if cancel_cb:
             try:
@@ -99,6 +111,18 @@ class OrchestrationService:
         """
         async with self._lock:
             return self._runs.get(run_id)
+
+    async def is_registered(self, run_id: str) -> bool:
+        """Check if a run is currently registered.
+
+        Args:
+            run_id: Unique identifier for the run to check.
+
+        Returns:
+            bool: True if the run is registered, False otherwise.
+        """
+        async with self._lock:
+            return run_id in self._runs
 
 
 # Module-level singleton for importers to use
