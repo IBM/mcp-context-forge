@@ -1698,6 +1698,7 @@ class ResourceService:
                                         transport_type=TransportType.SSE,
                                         httpx_client_factory=_get_httpx_client_factory,
                                         user_identity=pool_user_identity,
+                                        gateway_id=gateway_id,
                                     ) as pooled:
                                         resource_response = await pooled.session.read_resource(uri=uri)
                                         return getattr(getattr(resource_response, "contents")[0], "text")
@@ -1771,6 +1772,7 @@ class ResourceService:
                                         transport_type=TransportType.STREAMABLE_HTTP,
                                         httpx_client_factory=_get_httpx_client_factory,
                                         user_identity=pool_user_identity,
+                                        gateway_id=gateway_id,
                                     ) as pooled:
                                         resource_response = await pooled.session.read_resource(uri=uri)
                                         return getattr(getattr(resource_response, "contents")[0], "text")

@@ -666,6 +666,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await resource_service.initialize()
         await prompt_service.initialize()
         await gateway_service.initialize()
+
+        # Start notification service for event-driven refresh (after gateway_service is ready)
+        if settings.mcp_session_pool_enabled:
+            # First-Party
+            from mcpgateway.services.mcp_session_pool import start_pool_notification_service  # pylint: disable=import-outside-toplevel
+
+            await start_pool_notification_service(gateway_service)
+
         await root_service.initialize()
         await completion_service.initialize()
         await sampling_handler.initialize()

@@ -40,6 +40,8 @@ import httpx
 from mcp import ClientSession, McpError
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
+import mcp.types as mcp_types
+from mcp.shared.session import RequestResponder
 import orjson
 
 # JSON-RPC standard error code for method not found
@@ -124,6 +126,17 @@ HttpxClientFactory = Callable[
 # Extracts stable identity from headers (e.g., decode JWT to get user_id)
 IdentityExtractor = Callable[[Dict[str, str]], Optional[str]]
 
+# Type alias for message handler factory
+# Factory that creates message handlers given URL and optional gateway_id
+# The handler receives ServerNotification, ServerRequest responders, or Exceptions
+MessageHandlerFactory = Callable[
+    [str, Optional[str]],  # (url, gateway_id)
+    Callable[
+        [RequestResponder[mcp_types.ServerRequest, mcp_types.ClientResult] | mcp_types.ServerNotification | Exception],
+        Any,  # Coroutine
+    ],
+]
+
 
 class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
     """
@@ -202,6 +215,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         default_transport_timeout_seconds: float = 30.0,
         health_check_methods: Optional[list[str]] = None,
         health_check_timeout_seconds: float = 5.0,
+        message_handler_factory: Optional[MessageHandlerFactory] = None,
     ):
         """
         Initialize the session pool.
@@ -224,6 +238,9 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                                  Options: ping, list_tools, list_prompts, list_resources, skip.
                                  Default: ["ping", "skip"] (try ping, skip if unsupported).
             health_check_timeout_seconds: Timeout for each health check attempt.
+            message_handler_factory: Optional factory for creating message handlers.
+                                    Called with (url, gateway_id) to create handlers for
+                                    each new session. Enables notification handling.
         """
         # Configuration
         self._max_sessions = max_sessions_per_key
@@ -239,6 +256,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         self._default_transport_timeout = default_transport_timeout_seconds
         self._health_check_methods = health_check_methods or ["ping", "skip"]
         self._health_check_timeout = health_check_timeout_seconds
+        self._message_handler_factory = message_handler_factory
 
         # State - protected by _global_lock for creation, per-key locks for access
         self._global_lock = asyncio.Lock()
@@ -401,6 +419,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         httpx_client_factory: Optional[HttpxClientFactory] = None,
         timeout: Optional[float] = None,
         user_identity: Optional[str] = None,
+        gateway_id: Optional[str] = None,
     ) -> PooledSession:
         """
         Acquire a session for the given URL, identity, and transport type.
@@ -415,6 +434,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             httpx_client_factory: Optional factory for creating httpx clients
                                   (for custom SSL/timeout configuration).
             timeout: Optional timeout in seconds for transport connection.
+            gateway_id: Optional gateway ID for notification handler context.
 
         Returns:
             PooledSession ready for use.
@@ -488,7 +508,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         # Create new session (semaphore acquired)
         try:
             pooled = await asyncio.wait_for(
-                self._create_session(url, headers, transport_type, httpx_client_factory, effective_timeout),
+                self._create_session(url, headers, transport_type, httpx_client_factory, effective_timeout, gateway_id),
                 timeout=self._session_create_timeout,
             )
             # Store identity components for key reconstruction
@@ -739,6 +759,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         transport_type: TransportType,
         httpx_client_factory: Optional[HttpxClientFactory],
         timeout: Optional[float] = None,
+        gateway_id: Optional[str] = None,
     ) -> PooledSession:
         """
         Create a new initialized MCP session.
@@ -749,6 +770,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             transport_type: Transport type to use.
             httpx_client_factory: Optional factory for httpx clients.
             timeout: Optional timeout in seconds for transport connection.
+            gateway_id: Optional gateway ID for notification handler context.
 
         Returns:
             Initialized PooledSession.
@@ -785,8 +807,17 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 # pylint: disable=unnecessary-dunder-call,no-member
                 read_stream, write_stream, _ = await transport_ctx.__aenter__()  # Must call directly for manual lifecycle management
 
+            # Create message handler if factory is configured
+            message_handler = None
+            if self._message_handler_factory:
+                try:
+                    message_handler = self._message_handler_factory(url, gateway_id)
+                    logger.debug(f"Created message handler for session {url} (gateway={gateway_id})")
+                except Exception as e:
+                    logger.warning(f"Failed to create message handler for {url}: {e}")
+
             # Create and initialize session
-            session = ClientSession(read_stream, write_stream)
+            session = ClientSession(read_stream, write_stream, message_handler=message_handler)
             # pylint: disable=unnecessary-dunder-call
             await session.__aenter__()  # Must call directly for manual lifecycle management
             await session.initialize()
@@ -925,6 +956,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         httpx_client_factory: Optional[HttpxClientFactory] = None,
         timeout: Optional[float] = None,
         user_identity: Optional[str] = None,
+        gateway_id: Optional[str] = None,
     ) -> "AsyncIterator[PooledSession]":
         """
         Context manager for acquiring and releasing a session.
@@ -940,11 +972,12 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             httpx_client_factory: Optional factory for httpx clients.
             timeout: Optional timeout in seconds for transport connection.
             user_identity: Optional user identity for strict isolation.
+            gateway_id: Optional gateway ID for notification handler context.
 
         Yields:
             PooledSession ready for use.
         """
-        pooled = await self.acquire(url, headers, transport_type, httpx_client_factory, timeout, user_identity)
+        pooled = await self.acquire(url, headers, transport_type, httpx_client_factory, timeout, user_identity, gateway_id)
         try:
             yield pooled
         finally:
@@ -983,16 +1016,41 @@ def init_mcp_session_pool(
     default_transport_timeout_seconds: float = 30.0,
     health_check_methods: Optional[list[str]] = None,
     health_check_timeout_seconds: float = 5.0,
+    message_handler_factory: Optional[MessageHandlerFactory] = None,
+    enable_notifications: bool = True,
+    notification_debounce_seconds: float = 5.0,
 ) -> MCPSessionPool:
     """Initialize the global MCP session pool.
 
     Args:
         See MCPSessionPool.__init__ for argument descriptions.
+        enable_notifications: Enable automatic notification service for list_changed events.
+        notification_debounce_seconds: Debounce interval for notification-triggered refreshes.
 
     Returns:
         The initialized MCPSessionPool instance.
     """
     global _mcp_session_pool  # pylint: disable=global-statement
+
+    # Auto-create notification service if enabled and no custom handler provided
+    effective_handler_factory = message_handler_factory
+    if enable_notifications and message_handler_factory is None:
+        # First-Party
+        from mcpgateway.services.notification_service import (  # pylint: disable=import-outside-toplevel
+            init_notification_service,
+            get_notification_service,
+        )
+
+        # Initialize notification service (will be started during acquire with gateway context)
+        notification_svc = init_notification_service(debounce_seconds=notification_debounce_seconds)
+
+        # Create default handler factory that uses notification service
+        def default_handler_factory(url: str, gateway_id: Optional[str]):
+            return notification_svc.create_message_handler(gateway_id or url, url)
+
+        effective_handler_factory = default_handler_factory
+        logger.info("MCP notification service created (debounce=%ss)", notification_debounce_seconds)
+
     _mcp_session_pool = MCPSessionPool(
         max_sessions_per_key=max_sessions_per_key,
         session_ttl_seconds=session_ttl_seconds,
@@ -1007,15 +1065,88 @@ def init_mcp_session_pool(
         default_transport_timeout_seconds=default_transport_timeout_seconds,
         health_check_methods=health_check_methods,
         health_check_timeout_seconds=health_check_timeout_seconds,
+        message_handler_factory=effective_handler_factory,
     )
     logger.info("MCP session pool initialized")
     return _mcp_session_pool
 
 
 async def close_mcp_session_pool() -> None:
-    """Close the global MCP session pool."""
+    """Close the global MCP session pool and notification service."""
     global _mcp_session_pool  # pylint: disable=global-statement
     if _mcp_session_pool is not None:
         await _mcp_session_pool.close_all()
         _mcp_session_pool = None
         logger.info("MCP session pool closed")
+
+    # Close notification service if it was initialized
+    try:
+        # First-Party
+        from mcpgateway.services.notification_service import (  # pylint: disable=import-outside-toplevel
+            close_notification_service,
+        )
+        await close_notification_service()
+    except (ImportError, RuntimeError):
+        pass  # Notification service not initialized
+
+
+async def start_pool_notification_service(gateway_service: Any = None) -> None:
+    """Start the notification service background worker.
+
+    Call this after gateway_service is initialized to enable event-driven refresh.
+
+    Args:
+        gateway_service: Optional GatewayService instance for triggering refreshes.
+    """
+    try:
+        # First-Party
+        from mcpgateway.services.notification_service import (  # pylint: disable=import-outside-toplevel
+            get_notification_service,
+        )
+
+        notification_svc = get_notification_service()
+        await notification_svc.initialize(gateway_service)
+        logger.info("MCP notification service started")
+    except RuntimeError:
+        logger.debug("Notification service not configured, skipping start")
+
+
+def register_gateway_capabilities_for_notifications(gateway_id: str, capabilities: Dict[str, Any]) -> None:
+    """Register gateway capabilities for notification handling.
+
+    Call this after gateway initialization to enable list_changed notifications.
+
+    Args:
+        gateway_id: The gateway ID.
+        capabilities: Server capabilities from initialization response.
+    """
+    try:
+        # First-Party
+        from mcpgateway.services.notification_service import (  # pylint: disable=import-outside-toplevel
+            get_notification_service,
+        )
+
+        notification_svc = get_notification_service()
+        notification_svc.register_gateway_capabilities(gateway_id, capabilities)
+    except RuntimeError:
+        pass  # Notification service not initialized
+
+
+def unregister_gateway_from_notifications(gateway_id: str) -> None:
+    """Unregister a gateway from notification handling.
+
+    Call this when a gateway is deleted.
+
+    Args:
+        gateway_id: The gateway ID to unregister.
+    """
+    try:
+        # First-Party
+        from mcpgateway.services.notification_service import (  # pylint: disable=import-outside-toplevel
+            get_notification_service,
+        )
+
+        notification_svc = get_notification_service()
+        notification_svc.unregister_gateway(gateway_id)
+    except RuntimeError:
+        pass  # Notification service not initialized
