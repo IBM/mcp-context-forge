@@ -656,14 +656,17 @@ class TestTeamManagementService:
         """Test getting team members."""
         mock_members = [(MagicMock(spec=EmailUser), MagicMock(spec=EmailTeamMember)) for _ in range(3)]
 
-        mock_query = MagicMock()
-        mock_query.join.return_value.filter.return_value.all.return_value = mock_members
-        mock_db.query.return_value = mock_query
+        # Mock execute() to return a result with .all() method (SQLAlchemy 2.0 style)
+        mock_result = MagicMock()
+        mock_result.all.return_value = mock_members
+        mock_db.execute.return_value = mock_result
+        mock_db.commit.return_value = None
 
         result = await service.get_team_members("team123")
 
         assert result == mock_members
-        mock_db.query.assert_called_once_with(EmailUser, EmailTeamMember)
+        mock_db.execute.assert_called_once()
+        mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_get_user_role_in_team(self, service, mock_db):

@@ -17,7 +17,7 @@ from fastapi import HTTPException, status
 import pytest
 from sqlalchemy.orm import Session
 
-from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamJoinRequest, EmailTeamMember
+from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamJoinRequest, EmailTeamMember, EmailUser
 from mcpgateway.schemas import (
     EmailUserResponse,
     TeamCreateRequest,
@@ -526,17 +526,32 @@ class TestTeamsRouter:
     async def test_list_team_members_success(self, mock_current_user, mock_db, mock_team_member):
         """Test listing team members successfully."""
         team_id = str(uuid4())
-        members = [mock_team_member]
+
+        # Mock user object to pair with membership
+        mock_user = MagicMock(spec=EmailUser)
+        mock_user.email = mock_team_member.user_email
+        mock_user.full_name = "Test User"
+
+        # get_team_members returns (list_of_tuples, next_cursor)
+        members_tuples = [(mock_user, mock_team_member)]
+        next_cursor = None
 
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.get_user_role_in_team = AsyncMock(return_value="member")
-            mock_service.get_team_members = AsyncMock(return_value=members)
+            mock_service.get_team_members = AsyncMock(return_value=(members_tuples, next_cursor))
             MockService.return_value = mock_service
 
             from mcpgateway.routers.teams import list_team_members
 
-            result = await list_team_members(team_id, current_user=mock_current_user, db=mock_db)
+            result = await list_team_members(
+                team_id=team_id,
+                cursor=None,
+                limit=None,
+                include_pagination=False,
+                current_user=mock_current_user,
+                db=mock_db
+            )
 
             assert len(result) == 1
             assert result[0].user_email == mock_team_member.user_email
