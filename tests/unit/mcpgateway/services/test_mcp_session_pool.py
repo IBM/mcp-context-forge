@@ -359,10 +359,7 @@ class TestSessionPoolIsolation:
         metrics = pool.get_metrics()
         pools = metrics["pools"]
         keys = list(pools.keys())
-        
-        # Debug print keys
-        print(f"Pool keys: {keys}")
-        
+
         assert any(hashlib.sha256(b"user_a").hexdigest() in k for k in keys), "Pool keys missing user_a hash"
         assert any(hashlib.sha256(b"user_b").hexdigest() in k for k in keys), "Pool keys missing user_b hash"
         

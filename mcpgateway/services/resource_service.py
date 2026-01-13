@@ -1387,13 +1387,17 @@ class ResourceService:
         resource_info = None
         resource_info = db.execute(select(DbResource).where(DbResource.id == resource_id)).scalar_one_or_none()
 
-        # Normalize user_identity to string email for session pool isolation and OAuth
+        # Normalize user_identity to string for session pool isolation
+        # Use authenticated user for pool isolation, but keep platform_admin for OAuth token lookup
         if isinstance(user_identity, dict):
-            user_email = user_identity.get("email") or settings.platform_admin_email
+            pool_user_identity = user_identity.get("email") or "anonymous"
         elif isinstance(user_identity, str):
-            user_email = user_identity
+            pool_user_identity = user_identity
         else:
-            user_email = settings.platform_admin_email
+            pool_user_identity = "anonymous"
+
+        # OAuth token lookup uses platform admin (service account) - not changed
+        oauth_user_email = settings.platform_admin_email
 
         if resource_info:
             gateway_id = getattr(resource_info, "gateway_id", None)
@@ -1504,7 +1508,7 @@ class ResourceService:
                                     #         span.set_attribute("error.message", "User email required for OAuth token")
                                     #     await self._handle_gateway_failure(gateway)
 
-                                    access_token: str = await token_storage.get_user_token(gateway.id, user_email)
+                                    access_token: str = await token_storage.get_user_token(gateway.id, oauth_user_email)
 
                                     if access_token:
                                         headers["Authorization"] = f"Bearer {access_token}"
@@ -1610,7 +1614,7 @@ class ResourceService:
                                         headers=authentication,
                                         transport_type=TransportType.SSE,
                                         httpx_client_factory=_get_httpx_client_factory,
-                                        user_identity=user_email,
+                                        user_identity=pool_user_identity,
                                     ) as pooled:
                                         resource_response = await pooled.session.read_resource(uri=uri)
                                         return getattr(getattr(resource_response, "contents")[0], "text")
@@ -1683,7 +1687,7 @@ class ResourceService:
                                         headers=authentication,
                                         transport_type=TransportType.STREAMABLE_HTTP,
                                         httpx_client_factory=_get_httpx_client_factory,
-                                        user_identity=user_email,
+                                        user_identity=pool_user_identity,
                                     ) as pooled:
                                         resource_response = await pooled.session.read_resource(uri=uri)
                                         return getattr(getattr(resource_response, "contents")[0], "text")
