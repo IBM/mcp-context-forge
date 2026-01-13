@@ -216,10 +216,6 @@ async def get_routing_rules(
 
                 # Get config to access all plugins (including disabled)
                 # Try plugin route service first, fall back to plugin manager
-                # First-Party
-                from mcpgateway.plugins.framework import get_plugin_manager
-                from mcpgateway.services.plugin_route_service import get_plugin_route_service
-
                 config = None
                 try:
                     route_service = get_plugin_route_service()
