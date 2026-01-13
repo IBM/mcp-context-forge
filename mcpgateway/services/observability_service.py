@@ -180,7 +180,15 @@ class ObservabilityService:
     """
 
     def _safe_commit(self, db: Session, context: str) -> bool:
-        """Commit and rollback on failure without raising."""
+        """Commit and rollback on failure without raising.
+
+        Args:
+            db: SQLAlchemy session for the current operation.
+            context: Short label for the commit context (used in logs).
+
+        Returns:
+            True when commit succeeds, False when a rollback was performed.
+        """
         try:
             db.commit()
             return True

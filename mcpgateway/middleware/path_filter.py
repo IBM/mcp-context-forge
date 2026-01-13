@@ -89,7 +89,15 @@ def _matches_prefix(path: str, prefixes: Tuple[str, ...]) -> bool:
 
 
 def _matches_any_regex(path: str, patterns: Tuple[Pattern[str], ...]) -> bool:
-    """Return True if path matches any regex in patterns."""
+    """Return True if path matches any regex in patterns.
+
+    Args:
+        path: The URL path to check.
+        patterns: Tuple of compiled regex patterns to evaluate.
+
+    Returns:
+        True if any pattern matches the path.
+    """
     return any(pattern.search(path) for pattern in patterns)
 
 

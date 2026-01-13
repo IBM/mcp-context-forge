@@ -5374,6 +5374,11 @@ async def readiness_check():
     """
 
     def _check_db() -> str | None:
+        """Check database connectivity for readiness.
+
+        Returns:
+            Error string when the check fails, otherwise None.
+        """
         # Create session in this thread - all DB operations stay in the same thread.
         db = SessionLocal()
         try:
