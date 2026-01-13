@@ -127,6 +127,7 @@ from mcpgateway.services.import_service import ImportService, ImportValidationEr
 from mcpgateway.services.log_aggregator import get_log_aggregator
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics import setup_metrics
+from mcpgateway.services.orchestration_service import orchestration_service
 from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService, ResourceURIConflictError
 from mcpgateway.services.root_service import RootService
@@ -2042,7 +2043,11 @@ async def handle_notification(request: Request, user=Depends(get_current_user)) 
         await logging_service.notify("Client initialized", LogLevel.INFO)
     elif body.get("method") == "notifications/cancelled":
         request_id = body.get("params", {}).get("requestId")
-        logger.info(f"Request cancelled: {request_id}")
+        reason = body.get("params", {}).get("reason")
+        logger.info(f"Request cancelled: {request_id}, reason: {reason}")
+        # Attempt local cancellation per MCP spec
+        if request_id:
+            await orchestration_service.cancel_run(request_id, reason=reason)
         await logging_service.notify(f"Request cancelled: {request_id}", LogLevel.INFO)
     elif body.get("method") == "notifications/message":
         params = body.get("params", {})
@@ -5247,7 +5252,11 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         elif method == "notifications/cancelled":
             # MCP spec-compliant notification: request cancelled
             request_id = params.get("requestId")
-            logger.info(f"Request cancelled: {request_id}")
+            reason = params.get("reason")
+            logger.info(f"Request cancelled: {request_id}, reason: {reason}")
+            # Attempt local cancellation per MCP spec
+            if request_id:
+                await orchestration_service.cancel_run(request_id, reason=reason)
             await logging_service.notify(f"Request cancelled: {request_id}", LogLevel.INFO)
             result = {}
         elif method == "notifications/message":
