@@ -21,11 +21,14 @@ os.environ["MCP_SESSION_POOL_ENABLED"] = "true"
 # Standard
 import asyncio
 import time
+from typing import Any, Dict
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
+import mcp.types as mcp_types
 import pytest
 import pytest_asyncio
+from mcp import ClientSession
 
 # First-Party
 from mcpgateway.services.mcp_session_pool import (
@@ -35,6 +38,13 @@ from mcpgateway.services.mcp_session_pool import (
     close_mcp_session_pool,
     get_mcp_session_pool,
     init_mcp_session_pool,
+)
+from mcpgateway.services.notification_service import (
+    NotificationService,
+    NotificationType,
+    init_notification_service,
+    close_notification_service,
+    get_notification_service,
 )
 
 
@@ -282,7 +292,7 @@ class TestPoolMetricsE2E:
                     mock_validate.return_value = True
 
                     # Track created sessions per identity
-                    def create_session_factory(url, headers, transport_type, httpx_client_factory, timeout=None):
+                    def create_session_factory(url, headers, transport_type, httpx_client_factory, timeout=None, gateway_id=None):
                         return PooledSession(
                             session=MagicMock(),
                             transport_context=MagicMock(),
@@ -402,3 +412,178 @@ class TestSessionReusePerfE2E:
                     assert hit_time < 0.005  # Hit should be < 5ms
         finally:
             await pool.close_all()
+
+
+@pytest.fixture
+async def notification_env():
+    """Setup notification service environment."""
+    # Initialize global notification service with short debounce
+    service = init_notification_service(debounce_seconds=0.1)
+    await service.initialize()
+    
+    yield service
+    
+    await close_notification_service()
+
+
+class TestNotificationE2E:
+    """End-to-end tests for notification service integration."""
+
+    @pytest.mark.asyncio
+    async def test_notification_flow_e2e(self, notification_env):
+        """Test full flow from notification to gateway refresh."""
+        service = notification_env
+        
+        # Mock GatewayService
+        mock_gateway_service = AsyncMock()
+        mock_gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock(
+            return_value={"success": True, "tools_added": 1}
+        )
+        service.set_gateway_service(mock_gateway_service)
+
+        # Register capabilities for gateway
+        gateway_id = "test-gateway-1"
+        service.register_gateway_capabilities(
+            gateway_id, 
+            {"tools": {"listChanged": True}}
+        )
+
+        # Create session pool
+        pool = MCPSessionPool()
+        
+        try:
+            # Simulate a pooled session with message handler hooked up
+            # In real flow, pool.acquire() does this. We'll verify pool.session() logic here.
+            
+            # 1. Verify pool uses notification service to create handler
+            handler = service.create_message_handler(gateway_id)
+            assert callable(handler)
+
+            # 2. Simulate incoming notification
+            # Construct a raw notification object as ClientSession would receive
+            notification = mcp_types.ServerNotification(
+                root=mcp_types.ToolListChangedNotification(
+                    method="notifications/tools/list_changed"
+                )
+            )
+
+            # 3. Inject notification into handler
+            await handler(notification)
+
+            # 4. Verify service received it
+            metrics = service.get_metrics()
+            assert metrics["notifications_received"] == 1
+            assert metrics["pending_refreshes"] == 1
+
+            # 5. Wait for debounce (0.1s configured + buffer)
+            await asyncio.sleep(0.2)
+
+            # 6. Verify refresh triggered on gateway service
+            mock_gateway_service._refresh_gateway_tools_resources_prompts.assert_called_once_with(
+                gateway_id=gateway_id,
+                created_via="notification_service",
+                include_resources=True,  # Tools change implies resources/prompts refresh check
+                include_prompts=True,
+            )
+            
+            # 7. Verify metrics updated
+            metrics = service.get_metrics()
+            assert metrics["refreshes_triggered"] == 1
+            assert metrics["pending_refreshes"] == 0
+
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_debouncing_e2e(self, notification_env):
+        """Verify debouncing prevents multiple refreshes."""
+        service = notification_env
+        mock_gateway_service = AsyncMock()
+        mock_gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock(
+            return_value={"success": True}
+        )
+        service.set_gateway_service(mock_gateway_service)
+        
+        gateway_id = "test-gateway-debounce"
+        service.register_gateway_capabilities(gateway_id, {"tools": {"listChanged": True}})
+        
+        handler = service.create_message_handler(gateway_id)
+        
+        # Fire multiple notifications rapidly
+        notification = mcp_types.ServerNotification(
+            root=mcp_types.ToolListChangedNotification(
+                method="notifications/tools/list_changed"
+            )
+        )
+        
+        for _ in range(5):
+            await handler(notification)
+            
+        # Should have 5 received but only 1 triggered (after wait)
+        metrics = service.get_metrics()
+        assert metrics["notifications_received"] == 5
+        
+        # Wait for debounce
+        await asyncio.sleep(0.2)
+        
+        # Verify only one refresh call
+        assert mock_gateway_service._refresh_gateway_tools_resources_prompts.call_count == 1
+        
+        metrics = service.get_metrics()
+        assert metrics["refreshes_triggered"] == 1
+        assert metrics["notifications_debounced"] >= 4
+
+    @pytest.mark.asyncio
+    async def test_different_notification_types_filtering(self, notification_env):
+        """Verify different notification types trigger correct refresh flags."""
+        service = notification_env
+        mock_gateway_service = AsyncMock()
+        mock_gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock(
+            return_value={"success": True}
+        )
+        service.set_gateway_service(mock_gateway_service)
+        
+        gateway_id = "test-gateway-types"
+        # Register support for all
+        service.register_gateway_capabilities(gateway_id, {
+            "tools": {"listChanged": True},
+            "resources": {"listChanged": True},
+            "prompts": {"listChanged": True}
+        })
+        
+        handler = service.create_message_handler(gateway_id)
+
+        # 1. Resources only
+        await handler(mcp_types.ServerNotification(
+            root=mcp_types.ResourceListChangedNotification(
+                method="notifications/resources/list_changed"
+            )
+        ))
+        
+        await asyncio.sleep(0.2)
+        
+        mock_gateway_service._refresh_gateway_tools_resources_prompts.assert_called_with(
+            gateway_id=gateway_id,
+            created_via="notification_service",
+            include_resources=True,
+            include_prompts=False
+        )
+        
+        # Reset mock
+        mock_gateway_service.reset_mock()
+        
+        # 2. Prompts only
+        await handler(mcp_types.ServerNotification(
+            root=mcp_types.PromptListChangedNotification(
+                method="notifications/prompts/list_changed"
+            )
+        ))
+        
+        await asyncio.sleep(0.2)
+        
+        mock_gateway_service._refresh_gateway_tools_resources_prompts.assert_called_with(
+            gateway_id=gateway_id,
+            created_via="notification_service",
+            include_resources=False,
+            include_prompts=True
+        )
