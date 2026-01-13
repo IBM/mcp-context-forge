@@ -1,22 +1,17 @@
+use std::io::Write;
+
 use anyhow::{Context, Result};
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 use similar::{ChangeTag, TextDiff};
+use tempfile::NamedTempFile;
 use tokio::fs;
+use tracing_subscriber::fmt::format;
 
 pub async fn move_file(source: &str, destination: &str) -> Result<()> {
-    if !fs::try_exists(source).await? {
-        anyhow::bail!("Source file '{}' does not exist", source);
-    }
-
-    if fs::try_exists(destination).await? {
-        anyhow::bail!("Destination file '{}' already exists", destination);
-    }
-
     fs::rename(source, destination)
         .await
         .with_context(|| format!("Could not move '{}' to '{}'", source, destination))?;
-
     Ok(())
 }
 
@@ -58,22 +53,19 @@ pub struct EditResult {
 }
 
 pub async fn edit_file(path: &str, edits: Vec<Edit>, dry_run: bool) -> Result<EditResult> {
-    if !fs::try_exists(&path).await? {
-        anyhow::bail!("File '{}' does not exist", &path);
-    }
-    let file_content = fs::read_to_string(&path)
-        .await
-        .with_context(|| format!("Could not read file '{}'", path))?;
-
-    let new_content = apply_edits(file_content.clone(), edits);
-    let diffs = get_diffs(&file_content, &new_content);
-    let diff = diffs.join("");
+    let original = fs::read_to_string(path).await?;
+    let new_content = apply_edits(original.clone(), edits);
+    let diff = get_diffs(&original, &new_content).join("");
 
     if !dry_run {
         tracing::info!("Writing edits to file, '{}'", path);
-        fs::write(&path, &new_content)
-            .await
-            .with_context(|| format!("Could not write file '{}'", path))?;
+        let dir = std::path::Path::new(path)
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("Invalid path"))?;
+        let mut tmp = NamedTempFile::new_in(dir)?;
+        std::io::Write::write_all(&mut tmp, new_content.as_bytes())?;
+        tmp.flush()?;
+        tmp.persist(path)?;
     }
 
     Ok(EditResult {
