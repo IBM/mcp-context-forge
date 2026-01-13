@@ -2042,6 +2042,8 @@ Automatic management of metrics data to prevent unbounded table growth and maint
 | `METRICS_ROLLUP_LATE_DATA_HOURS`     | Hours to re-process for late-arriving data       | `1`      | 1-48        |
 | `METRICS_DELETE_RAW_AFTER_ROLLUP`    | Delete raw metrics after rollup exists           | `true`   | bool        |
 | `METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS` | Hours to retain raw when rollup exists        | `1`      | 1-8760      |
+| `USE_POSTGRESDB_PERCENTILES`         | Use PostgreSQL-native percentile_cont for p50/p95/p99 | `true` | bool     |
+| `YIELD_BATCH_SIZE`                   | Rows per batch when streaming rollup queries     | `1000`   | 100-10000   |
 
 **Key Features:**
 - 📊 **Hourly rollup**: Pre-aggregated summaries with p50/p95/p99 percentiles
