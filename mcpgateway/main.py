@@ -1589,7 +1589,7 @@ if settings.observability_enabled:
     from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware
 
     app.add_middleware(ObservabilityMiddleware, enabled=True)
-    logger.info("🔍 Observability middleware enabled - tracing all HTTP requests")
+    logger.info("🔍 Observability middleware enabled - tracing include-listed requests")
 else:
     logger.info("🔍 Observability middleware disabled")
 
@@ -5374,6 +5374,11 @@ async def readiness_check():
     """
 
     def _check_db() -> str | None:
+        """Check database connectivity for readiness.
+
+        Returns:
+            Error string when the check fails, otherwise None.
+        """
         # Create session in this thread - all DB operations stay in the same thread.
         db = SessionLocal()
         try:

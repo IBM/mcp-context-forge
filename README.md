@@ -1958,7 +1958,8 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `OBSERVABILITY_TRACE_RETENTION_DAYS` | Number of days to retain trace data                   | `7`                                                  | int (≥ 1)        |
 | `OBSERVABILITY_MAX_TRACES`           | Maximum number of traces to retain                    | `100000`                                             | int (≥ 1000)     |
 | `OBSERVABILITY_SAMPLE_RATE`          | Trace sampling rate (0.0-1.0)                        | `1.0`                                                | float (0.0-1.0)  |
-| `OBSERVABILITY_EXCLUDE_PATHS`        | Paths to exclude from tracing (regex patterns)        | `/health,/healthz,/ready,/metrics,/static/.*`        | comma-separated  |
+| `OBSERVABILITY_INCLUDE_PATHS`        | Regex patterns to include for tracing                | `["^/rpc/?$","^/sse$","^/message$","^/mcp(?:/|$)","^/servers/[^/]+/mcp/?$","^/servers/[^/]+/sse$","^/servers/[^/]+/message$","^/a2a(?:/|$)"]` | JSON array |
+| `OBSERVABILITY_EXCLUDE_PATHS`        | Regex patterns to exclude (after include patterns)   | `["/health","/healthz","/ready","/metrics","/static/.*"]` | JSON array |
 | `OBSERVABILITY_METRICS_ENABLED`      | Enable metrics collection                             | `true`                                               | bool             |
 | `OBSERVABILITY_EVENTS_ENABLED`       | Enable event logging within spans                     | `true`                                               | bool             |
 
@@ -1967,12 +1968,14 @@ The gateway includes built-in observability features for tracking HTTP requests,
 - 🔍 **Admin UI integration**: View traces, spans, and metrics in the diagnostics tab
 - 🎯 **Sampling control**: Configure sampling rate to reduce overhead in high-traffic scenarios
 - 🕐 **Automatic cleanup**: Old traces automatically purged based on retention settings
-- 🚫 **Path filtering**: Exclude health checks and static resources from tracing
+- 🚫 **Path filtering**: Only include-listed endpoints are traced by default (MCP/A2A); regex excludes apply after includes
 
 **Configuration Effects:**
 - `OBSERVABILITY_ENABLED=false`: Completely disables internal observability (no database writes, zero overhead)
 - `OBSERVABILITY_SAMPLE_RATE=0.1`: Traces 10% of requests (useful for high-volume production)
-- `OBSERVABILITY_EXCLUDE_PATHS=/health,/metrics`: Prevents noisy endpoints from creating traces
+- `OBSERVABILITY_INCLUDE_PATHS=["^/mcp(?:/|$)","^/a2a(?:/|$)"]`: Limits tracing to MCP and A2A endpoints
+- `OBSERVABILITY_INCLUDE_PATHS=[]`: Traces all endpoints (still subject to exclude patterns)
+- `OBSERVABILITY_EXCLUDE_PATHS=["/health","/metrics"]`: Prevents noisy endpoints from creating traces
 
 > 📝 **Note**: This is separate from OpenTelemetry. You can use both systems simultaneously - internal observability for Admin UI visibility and OpenTelemetry for external systems like Phoenix/Jaeger.
 >
