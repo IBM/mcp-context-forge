@@ -26,11 +26,15 @@ help:
 	@echo "  make test-all-scenarios    - Run all test scenarios"
 	@echo "  make test-percentile       - PostgreSQL percentile performance benchmark"
 	@echo ""
+	@echo "Plugin Tests:"
+	@echo "  make test-plugins          - Plugin tests with summary table output"
+	@echo "  make test-plugins-details  - Plugin tests with detailed output"
+	@echo ""
 	@echo "Baseline Management:"
 	@echo "  make baseline              - Save current as baseline"
 	@echo "  make save-baseline         - Save existing results as baseline"
 	@echo "  make compare               - Compare with baseline"
-	@echo "  make list-baselines        - List saved baselines"
+	@echo "  make list-baselines        - List saved baselines"	
 	@echo ""
 	@echo "Utilities:"
 	@echo "  make list-profiles         - List all available profiles"
@@ -133,6 +137,15 @@ test-pg16:
 
 test-pg17:
 	@./run-advanced.sh -p medium --postgres-version 17-alpine
+
+# Plugin tests
+test-plugins:
+	@echo "Running plugin performance tests..."
+	@LOG_LEVEL=ERROR python test_plugins_performance.py 2>/dev/null
+
+test-plugins-details:
+	@echo "Running plugin performance tests with detailed output..."
+	@LOG_LEVEL=ERROR python test_plugins_performance.py --details 2>/dev/null
 
 # Baseline Management
 baseline:
