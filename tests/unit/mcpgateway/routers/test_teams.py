@@ -532,14 +532,13 @@ class TestTeamsRouter:
         mock_user.email = mock_team_member.user_email
         mock_user.full_name = "Test User"
 
-        # get_team_members returns (list_of_tuples, next_cursor)
+        # When cursor=None and limit=None, get_team_members returns just a list
         members_tuples = [(mock_user, mock_team_member)]
-        next_cursor = None
 
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.get_user_role_in_team = AsyncMock(return_value="member")
-            mock_service.get_team_members = AsyncMock(return_value=(members_tuples, next_cursor))
+            mock_service.get_team_members = AsyncMock(return_value=members_tuples)
             MockService.return_value = mock_service
 
             from mcpgateway.routers.teams import list_team_members
@@ -548,16 +547,15 @@ class TestTeamsRouter:
                 team_id=team_id,
                 cursor=None,
                 limit=None,
-                include_pagination=True,
+                include_pagination=False,
                 current_user=mock_current_user,
                 db=mock_db
             )
 
-            assert hasattr(result, 'members')
-            assert len(result.members) == 1
-            assert result.members[0].user_email == mock_team_member.user_email
-            assert result.members[0].role == mock_team_member.role
-            assert result.nextCursor is None
+            assert isinstance(result, list)
+            assert len(result) == 1
+            assert result[0].user_email == mock_team_member.user_email
+            assert result[0].role == mock_team_member.role
 
     @pytest.mark.asyncio
     async def test_list_team_members_access_denied(self, mock_current_user, mock_db):
