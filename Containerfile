@@ -4,7 +4,6 @@
 # To build WITHOUT Rust (default): docker build .
 ###############################################################################
 ARG ENABLE_RUST=false
-ARG TARGETPLATFORM
 
 FROM quay.io/pypa/manylinux2014:2025.12.13-1 AS rust-builder-base
 ARG ENABLE_RUST
@@ -74,8 +73,8 @@ WORKDIR /app
 # Force Python whl to use OpenSSL.
 # NOTE: ppc64le has the same OpenSSL requirement
 # ----------------------------------------------------------------------------
-RUN if [ "$TARGETPLATFORM" = "linux/s390x" ] || [ "$TARGETPLATFORM" = "linux/ppc64le" ]; then \
-        echo "Building for $TARGETPLATFORM."; \
+RUN if [ "$(uname -m)" = "s390x" ] || [ "$(uname -m)" = "ppc64le" ]; then \
+        echo "Building for $(uname -m)."; \
         echo "export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='True'" > /etc/profile.d/use-openssl.sh; \
     else \
         echo "export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'" > /etc/profile.d/use-openssl.sh; \
