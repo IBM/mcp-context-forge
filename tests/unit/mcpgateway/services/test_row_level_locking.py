@@ -208,7 +208,13 @@ class TestServerServiceLocking:
                     except Exception:
                         pass
             
-            mock_get.assert_called_once_with(db, Server, "server-id")
+            # Allow for additional kwargs (e.g., eager-loading `options`) by
+            # checking the first three positional arguments explicitly.
+            assert mock_get.called
+            call_args = mock_get.call_args
+            assert call_args[0][0] == db
+            assert call_args[0][1] == Server
+            assert call_args[0][2] == "server-id"
 
     @pytest.mark.asyncio
     async def test_register_server_uses_for_update_conflict_check(self):

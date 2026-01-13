@@ -244,8 +244,8 @@ class TestA2AAgentService:
                 # Create update data
                 update_data = A2AAgentUpdate(description="Updated description")
 
-            # Execute
-            await service.update_agent(mock_db, sample_db_agent.id, update_data)
+                # Execute (keep mock active during call)
+                await service.update_agent(mock_db, sample_db_agent.id, update_data)
 
                 # Verify
                 mock_db.commit.assert_called_once()
@@ -479,9 +479,11 @@ class TestA2AAgentService:
         mock_metrics_buffer = MagicMock()
         mock_metrics_buffer_fn.return_value = mock_metrics_buffer
 
-        # Execute with decode_auth patched to return the expected headers
-        with patch("mcpgateway.services.a2a_service.decode_auth", return_value=basic_auth_headers):
-            result = await service.invoke_agent(mock_db, "basic-auth-agent", {"test": "data"})
+        # Ensure get_for_update returns our mocked agent so auth_value is read
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent_with_auth):
+            # Execute with decode_auth patched to return the expected headers
+            with patch("mcpgateway.services.a2a_service.decode_auth", return_value=basic_auth_headers):
+                result = await service.invoke_agent(mock_db, "basic-auth-agent", {"test": "data"})
 
         # Verify successful response
         assert result["response"] == "Auth success"
@@ -543,9 +545,11 @@ class TestA2AAgentService:
         mock_metrics_buffer = MagicMock()
         mock_metrics_buffer_fn.return_value = mock_metrics_buffer
 
-        # Execute with decode_auth patched to return the expected headers
-        with patch("mcpgateway.services.a2a_service.decode_auth", return_value=bearer_auth_headers):
-            result = await service.invoke_agent(mock_db, "bearer-auth-agent", {"test": "data"})
+        # Ensure get_for_update returns our mocked agent so auth_value is read
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent_with_auth):
+            # Execute with decode_auth patched to return the expected headers
+            with patch("mcpgateway.services.a2a_service.decode_auth", return_value=bearer_auth_headers):
+                result = await service.invoke_agent(mock_db, "bearer-auth-agent", {"test": "data"})
 
         # Verify successful response
         assert result["response"] == "Bearer auth success"
@@ -607,9 +611,11 @@ class TestA2AAgentService:
         mock_metrics_buffer = MagicMock()
         mock_metrics_buffer_fn.return_value = mock_metrics_buffer
 
-        # Execute with decode_auth patched to return the expected headers
-        with patch("mcpgateway.services.a2a_service.decode_auth", return_value=custom_auth_headers):
-            result = await service.invoke_agent(mock_db, "apikey-auth-agent", {"test": "data"})
+        # Ensure get_for_update returns our mocked agent so auth_value is read
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent_with_auth):
+            # Execute with decode_auth patched to return the expected headers
+            with patch("mcpgateway.services.a2a_service.decode_auth", return_value=custom_auth_headers):
+                result = await service.invoke_agent(mock_db, "apikey-auth-agent", {"test": "data"})
 
         # Verify successful response
         assert result["response"] == "API key auth success"

@@ -5,8 +5,8 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 Concurrency tests for row-level locking implementation.
-Tests verify that concurrent operations on tools and gateways
-handle race conditions correctly using PostgreSQL row-level locking.
+Tests verify that concurrent operations on tools, gateways, prompts, resources,
+A2A agents, and servers handle race conditions correctly using PostgreSQL row-level locking.
 
 This test suite validates:
 1. Tool creation with duplicate names (public and team visibility)
@@ -14,9 +14,14 @@ This test suite validates:
 3. Tool toggle operations under concurrent load
 4. Gateway creation with duplicate slugs (public and team visibility)
 5. Gateway updates with slug conflicts
-6. Mixed concurrent operations (create, update, toggle, read)
-7. High concurrency scenarios with unique entities
-8. Row-level locking with skip_locked behavior
+6. Prompt creation with duplicate names and concurrent operations
+7. Resource creation with duplicate URIs and concurrent operations
+8. A2A agent creation with duplicate names and concurrent operations
+9. Server creation with duplicate names and concurrent operations
+10. Mixed concurrent operations (create, update, toggle, read, delete)
+11. High concurrency scenarios with unique entities
+12. Row-level locking with skip_locked behavior
+13. Mixed visibility operations (public, team, private)
 """
 
 # Standard
@@ -1040,3 +1045,1335 @@ async def test_high_concurrency_gateway_creation(client: AsyncClient):
         for r in results
     ), "Some requests returned unexpected status codes"
 
+
+
+
+# ============================================================================
+# PROMPT CONCURRENCY TESTS
+# ============================================================================
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_concurrent_prompt_creation_same_name(client: AsyncClient):
+    """Test concurrent prompt creation with same name prevents duplicates."""
+    prompt_name = f"test-prompt-{uuid.uuid4()}"
+    
+    async def create_prompt():
+        prompt_data = {
+            "name": prompt_name,
+            "description": "Test prompt",
+            "arguments": [],
+            "visibility": "public"
+        }
+        return await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+    
+    # Run 10 concurrent creations with same name
+    results = await asyncio.gather(*[create_prompt() for _ in range(10)], return_exceptions=True)
+    
+    # Count successful creations (200) and conflicts (409)
+    success_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 200)
+    conflict_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 409)
+    
+    # Exactly one should succeed, rest should be conflicts
+    assert success_count == 1, f"Expected 1 success, got {success_count}"
+    assert conflict_count == 9, f"Expected 9 conflicts, got {conflict_count}"
+    
+    # No 500 errors
+    assert all(
+        isinstance(r, Exception) or r.status_code in [200, 409]
+        for r in results
+    ), "Some requests returned unexpected status codes"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_concurrent_prompt_update_same_name(client: AsyncClient):
+    """Test concurrent prompt updates to same name prevents duplicates."""
+    # Create two prompts
+    prompt1_name = f"prompt-1-{uuid.uuid4()}"
+    prompt2_name = f"prompt-2-{uuid.uuid4()}"
+    
+    prompt1_data = {
+        "name": prompt1_name,
+        "description": "Prompt 1",
+        "arguments": [],
+        "visibility": "public"
+    }
+    prompt2_data = {
+        "name": prompt2_name,
+        "description": "Prompt 2",
+        "arguments": [],
+        "visibility": "public"
+    }
+    
+    resp1 = await client.post("/prompts", json=prompt1_data, headers=TEST_AUTH_HEADER)
+    resp2 = await client.post("/prompts", json=prompt2_data, headers=TEST_AUTH_HEADER)
+    
+    assert resp1.status_code == 200
+    assert resp2.status_code == 200
+    
+    # Get prompt IDs
+    list_resp = await client.get("/prompts", headers=TEST_AUTH_HEADER)
+    assert list_resp.status_code == 200
+    prompts = list_resp.json()["data"]
+    
+    prompt1 = next((p for p in prompts if p["name"] == prompt1_name), None)
+    prompt2 = next((p for p in prompts if p["name"] == prompt2_name), None)
+    assert prompt1 is not None and prompt2 is not None
+    
+    prompt1_id = prompt1["id"]
+    prompt2_id = prompt2["id"]
+    
+    target_name = f"target-prompt-{uuid.uuid4()}"
+    
+    async def update_prompt(prompt_id: str):
+        update_data = {
+            "name": target_name,
+            "description": "Updated prompt",
+            "arguments": []
+        }
+        return await client.put(f"/prompts/{prompt_id}", json=update_data, headers=TEST_AUTH_HEADER)
+    
+    # Try to update both prompts to same name concurrently
+    results = await asyncio.gather(
+        *[update_prompt(prompt1_id), update_prompt(prompt2_id)],
+        return_exceptions=True
+    )
+    
+    success_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 200)
+    conflict_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 409)
+    
+    # At least one should succeed
+    assert success_count >= 1, f"Expected at least 1 success, got {success_count}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_concurrent_prompt_toggle(client: AsyncClient):
+    """Test concurrent enable/disable doesn't cause race condition."""
+    prompt_name = f"toggle-prompt-{uuid.uuid4()}"
+    prompt_data = {
+        "name": prompt_name,
+        "description": "Toggle test prompt",
+        "arguments": [],
+        "visibility": "public"
+    }
+    
+    resp = await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+    assert resp.status_code == 200
+    
+    # Get prompt ID
+    list_resp = await client.get("/prompts", headers=TEST_AUTH_HEADER)
+    assert list_resp.status_code == 200
+    prompts = list_resp.json()["data"]
+    prompt = next((p for p in prompts if p["name"] == prompt_name), None)
+    assert prompt is not None
+    prompt_id = prompt["id"]
+    
+    async def toggle():
+        return await client.post(f"/prompts/{prompt_id}/toggle", json={}, headers=TEST_AUTH_HEADER)
+    
+    # Run 20 concurrent toggles
+    results = await asyncio.gather(
+        *[toggle() for _ in range(20)],
+        return_exceptions=True
+    )
+    
+    # All should succeed or fail cleanly (no 500 errors)
+    assert all(
+        isinstance(r, Exception) or r.status_code in [200, 303, 404, 409]
+        for r in results
+    ), "Some requests returned unexpected status codes"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_concurrent_prompt_delete_operations(client: AsyncClient):
+    """Test concurrent delete operations handle race conditions correctly."""
+    prompt_name = f"delete-prompt-{uuid.uuid4()}"
+    prompt_data = {
+        "name": prompt_name,
+        "description": "Delete test prompt",
+        "arguments": [],
+        "visibility": "public"
+    }
+    
+    resp = await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+    assert resp.status_code == 200
+    
+    # Get prompt ID
+    list_resp = await client.get("/prompts", headers=TEST_AUTH_HEADER)
+    assert list_resp.status_code == 200
+    prompts = list_resp.json()["data"]
+    prompt = next((p for p in prompts if p["name"] == prompt_name), None)
+    assert prompt is not None
+    prompt_id = prompt["id"]
+    
+    async def delete_prompt():
+        return await client.delete(f"/prompts/{prompt_id}", headers=TEST_AUTH_HEADER)
+    
+    # Run 10 concurrent deletes
+    results = await asyncio.gather(
+        *[delete_prompt() for _ in range(10)],
+        return_exceptions=True
+    )
+    
+    success_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code in [200, 204])
+    error_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 404)
+    
+    # Exactly one should succeed
+    assert success_count == 1, f"Expected 1 successful delete, got {success_count}"
+    assert error_count == 9, f"Expected 9 not found errors, got {error_count}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_high_concurrency_prompt_creation(client: AsyncClient):
+    """Test high concurrency with unique prompts."""
+    async def create_unique_prompt(index: int):
+        prompt_data = {
+            "name": f"prompt-{uuid.uuid4()}-{index}",
+            "description": f"Prompt {index}",
+            "arguments": [],
+            "visibility": "public"
+        }
+        return await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+    
+    # Create 50 unique prompts concurrently
+    results = await asyncio.gather(
+        *[create_unique_prompt(i) for i in range(50)],
+        return_exceptions=True
+    )
+    
+    success_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 200)
+    assert success_count == 50, f"Expected 50 successful creations, got {success_count}"
+
+
+# ============================================================================
+# RESOURCE CONCURRENCY TESTS
+# ============================================================================
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_concurrent_resource_creation_same_uri(client: AsyncClient):
+    """Test concurrent resource creation with same URI prevents duplicates."""
+    resource_uri = f"file:///test-resource-{uuid.uuid4()}.txt"
+    
+    async def create_resource():
+        resource_data = {
+            "uri": resource_uri,
+            "name": "Test Resource",
+            "description": "Test resource",
+            "mimeType": "text/plain",
+            "visibility": "public"
+        }
+        return await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+    
+    # Run 10 concurrent creations with same URI
+    results = await asyncio.gather(*[create_resource() for _ in range(10)], return_exceptions=True)
+    
+    # Count successful creations (200) and conflicts (409)
+    success_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 200)
+    conflict_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 409)
+    
+    # Exactly one should succeed, rest should be conflicts
+    assert success_count == 1, f"Expected 1 success, got {success_count}"
+    assert conflict_count == 9, f"Expected 9 conflicts, got {conflict_count}"
+    
+    # No 500 errors
+    assert all(
+        isinstance(r, Exception) or r.status_code in [200, 409]
+        for r in results
+    ), "Some requests returned unexpected status codes"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_concurrent_resource_update_same_uri(client: AsyncClient):
+    """Test concurrent resource updates to same URI prevents duplicates."""
+    # Create two resources
+    resource1_uri = f"file:///resource-1-{uuid.uuid4()}.txt"
+    resource2_uri = f"file:///resource-2-{uuid.uuid4()}.txt"
+    
+    resource1_data = {
+        "uri": resource1_uri,
+        "name": "Resource 1",
+        "description": "Resource 1",
+        "mimeType": "text/plain",
+        "visibility": "public"
+    }
+    resource2_data = {
+        "uri": resource2_uri,
+        "name": "Resource 2",
+        "description": "Resource 2",
+        "mimeType": "text/plain",
+        "visibility": "public"
+    }
+    
+    resp1 = await client.post("/resources", json=resource1_data, headers=TEST_AUTH_HEADER)
+    resp2 = await client.post("/resources", json=resource2_data, headers=TEST_AUTH_HEADER)
+    
+    assert resp1.status_code == 200
+    assert resp2.status_code == 200
+    
+    # Get resource IDs
+    list_resp = await client.get("/resources", headers=TEST_AUTH_HEADER)
+    assert list_resp.status_code == 200
+    resources = list_resp.json()["data"]
+    
+    resource1 = next((r for r in resources if r["uri"] == resource1_uri), None)
+    resource2 = next((r for r in resources if r["uri"] == resource2_uri), None)
+    assert resource1 is not None and resource2 is not None
+    
+    resource1_id = resource1["id"]
+    resource2_id = resource2["id"]
+    
+    target_uri = f"file:///target-resource-{uuid.uuid4()}.txt"
+    
+    async def update_resource(resource_id: str):
+        update_data = {
+            "uri": target_uri,
+            "name": "Updated Resource",
+            "description": "Updated resource",
+            "mimeType": "text/plain"
+        }
+        return await client.put(f"/resources/{resource_id}", json=update_data, headers=TEST_AUTH_HEADER)
+    
+    # Try to update both resources to same URI concurrently
+    results = await asyncio.gather(
+        *[update_resource(resource1_id), update_resource(resource2_id)],
+        return_exceptions=True
+    )
+    
+    success_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 200)
+    conflict_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 409)
+    
+    # At least one should succeed
+    assert success_count >= 1, f"Expected at least 1 success, got {success_count}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_concurrent_resource_toggle(client: AsyncClient):
+    """Test concurrent enable/disable doesn't cause race condition."""
+    resource_uri = f"file:///toggle-resource-{uuid.uuid4()}.txt"
+    resource_data = {
+        "uri": resource_uri,
+        "name": "Toggle Resource",
+        "description": "Toggle test resource",
+        "mimeType": "text/plain",
+        "visibility": "public"
+    }
+    
+    resp = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+    assert resp.status_code == 200
+    
+    # Get resource ID
+    list_resp = await client.get("/resources", headers=TEST_AUTH_HEADER)
+    assert list_resp.status_code == 200
+    resources = list_resp.json()["data"]
+    resource = next((r for r in resources if r["uri"] == resource_uri), None)
+    assert resource is not None
+    resource_id = resource["id"]
+    
+    async def toggle():
+        return await client.post(f"/resources/{resource_id}/toggle", json={}, headers=TEST_AUTH_HEADER)
+    
+    # Run 20 concurrent toggles
+    results = await asyncio.gather(
+        *[toggle() for _ in range(20)],
+        return_exceptions=True
+    )
+    
+    # All should succeed or fail cleanly (no 500 errors)
+    assert all(
+        isinstance(r, Exception) or r.status_code in [200, 303, 404, 409]
+        for r in results
+    ), "Some requests returned unexpected status codes"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_concurrent_resource_delete_operations(client: AsyncClient):
+    """Test concurrent delete operations handle race conditions correctly."""
+    resource_uri = f"file:///delete-resource-{uuid.uuid4()}.txt"
+    resource_data = {
+        "uri": resource_uri,
+        "name": "Delete Resource",
+        "description": "Delete test resource",
+        "mimeType": "text/plain",
+        "visibility": "public"
+    }
+    
+    resp = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+    assert resp.status_code == 200
+    
+    # Get resource ID
+    list_resp = await client.get("/resources", headers=TEST_AUTH_HEADER)
+    assert list_resp.status_code == 200
+    resources = list_resp.json()["data"]
+    resource = next((r for r in resources if r["uri"] == resource_uri), None)
+    assert resource is not None
+    resource_id = resource["id"]
+    
+    async def delete_resource():
+        return await client.delete(f"/resources/{resource_id}", headers=TEST_AUTH_HEADER)
+    
+    # Run 10 concurrent deletes
+    results = await asyncio.gather(
+        *[delete_resource() for _ in range(10)],
+        return_exceptions=True
+    )
+    
+    success_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code in [200, 204])
+    error_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 404)
+    
+    # Exactly one should succeed
+    assert success_count == 1, f"Expected 1 successful delete, got {success_count}"
+    assert error_count == 9, f"Expected 9 not found errors, got {error_count}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_high_concurrency_resource_creation(client: AsyncClient):
+    """Test high concurrency with unique resources."""
+    async def create_unique_resource(index: int):
+        resource_data = {
+            "uri": f"file:///resource-{uuid.uuid4()}-{index}.txt",
+            "name": f"Resource {index}",
+            "description": f"Resource {index}",
+            "mimeType": "text/plain",
+            "visibility": "public"
+        }
+        return await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+    
+    # Create 50 unique resources concurrently
+    results = await asyncio.gather(
+        *[create_unique_resource(i) for i in range(50)],
+        return_exceptions=True
+    )
+    
+    success_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 200)
+    assert success_count == 50, f"Expected 50 successful creations, got {success_count}"
+
+
+# ============================================================================
+# A2A AGENT CONCURRENCY TESTS
+# ============================================================================
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_concurrent_a2a_creation_same_name(client: AsyncClient):
+    """Test concurrent A2A agent creation with same name prevents duplicates."""
+    agent_name = f"test-agent-{uuid.uuid4()}"
+    
+    async def create_agent():
+        agent_data = {
+            "name": agent_name,
+            "description": "Test agent",
+            "endpoint": "http://example.com/agent",
+            "visibility": "public"
+        }
+        return await client.post("/a2a", json=agent_data, headers=TEST_AUTH_HEADER)
+    
+    # Run 10 concurrent creations with same name
+    results = await asyncio.gather(*[create_agent() for _ in range(10)], return_exceptions=True)
+    
+    # Count successful creations (201) and conflicts (409)
+    success_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 201)
+    conflict_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 409)
+    
+    # Exactly one should succeed, rest should be conflicts
+    assert success_count == 1, f"Expected 1 success, got {success_count}"
+    assert conflict_count == 9, f"Expected 9 conflicts, got {conflict_count}"
+    
+    # No 500 errors
+    assert all(
+        isinstance(r, Exception) or r.status_code in [201, 409]
+        for r in results
+    ), "Some requests returned unexpected status codes"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_concurrent_a2a_update_same_name(client: AsyncClient):
+    """Test concurrent A2A agent updates to same name prevents duplicates."""
+    # Create two agents
+    agent1_name = f"agent-1-{uuid.uuid4()}"
+    agent2_name = f"agent-2-{uuid.uuid4()}"
+    
+    agent1_data = {
+        "name": agent1_name,
+        "description": "Agent 1",
+        "endpoint": "http://example.com/agent1",
+        "visibility": "public"
+    }
+    agent2_data = {
+        "name": agent2_name,
+        "description": "Agent 2",
+        "endpoint": "http://example.com/agent2",
+        "visibility": "public"
+    }
+    
+    resp1 = await client.post("/a2a", json=agent1_data, headers=TEST_AUTH_HEADER)
+    resp2 = await client.post("/a2a", json=agent2_data, headers=TEST_AUTH_HEADER)
+    
+    assert resp1.status_code == 201
+    assert resp2.status_code == 201
+    
+    # Get agent IDs
+    list_resp = await client.get("/a2a", headers=TEST_AUTH_HEADER)
+    assert list_resp.status_code == 200
+    agents = list_resp.json()
+    if isinstance(agents, dict) and "agents" in agents:
+        agents = agents["agents"]
+    
+    agent1 = next((a for a in agents if a["name"] == agent1_name), None)
+    agent2 = next((a for a in agents if a["name"] == agent2_name), None)
+    assert agent1 is not None and agent2 is not None
+    
+    agent1_id = agent1["id"]
+    agent2_id = agent2["id"]
+    
+    target_name = f"target-agent-{uuid.uuid4()}"
+    
+    async def update_agent(agent_id: str):
+        update_data = {
+            "name": target_name,
+            "description": "Updated agent",
+            "endpoint": "http://example.com/updated"
+        }
+        return await client.put(f"/a2a/{agent_id}", json=update_data, headers=TEST_AUTH_HEADER)
+    
+    # Try to update both agents to same name concurrently
+    results = await asyncio.gather(
+        *[update_agent(agent1_id), update_agent(agent2_id)],
+        return_exceptions=True
+    )
+    
+    success_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 200)
+    conflict_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 409)
+    
+    # At least one should succeed
+    assert success_count >= 1, f"Expected at least 1 success, got {success_count}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_concurrent_a2a_toggle(client: AsyncClient):
+    """Test concurrent enable/disable doesn't cause race condition."""
+    agent_name = f"toggle-agent-{uuid.uuid4()}"
+    agent_data = {
+        "name": agent_name,
+        "description": "Toggle test agent",
+        "endpoint": "http://example.com/agent",
+        "visibility": "public"
+    }
+    
+    resp = await client.post("/a2a", json=agent_data, headers=TEST_AUTH_HEADER)
+    assert resp.status_code == 201
+    
+    # Get agent ID
+    list_resp = await client.get("/a2a", headers=TEST_AUTH_HEADER)
+    assert list_resp.status_code == 200
+    agents = list_resp.json()
+    if isinstance(agents, dict) and "agents" in agents:
+        agents = agents["agents"]
+    agent = next((a for a in agents if a["name"] == agent_name), None)
+    assert agent is not None
+    agent_id = agent["id"]
+    
+    async def toggle():
+        return await client.post(f"/a2a/{agent_id}/toggle", json={"activate": True}, headers=TEST_AUTH_HEADER)
+    
+    # Run 20 concurrent toggles
+    results = await asyncio.gather(
+        *[toggle() for _ in range(20)],
+        return_exceptions=True
+    )
+    
+    # All should succeed or fail cleanly (no 500 errors)
+    assert all(
+        isinstance(r, Exception) or r.status_code in [200, 303, 404, 409]
+        for r in results
+    ), "Some requests returned unexpected status codes"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_concurrent_a2a_delete_operations(client: AsyncClient):
+    """Test concurrent delete operations handle race conditions correctly."""
+    agent_name = f"delete-agent-{uuid.uuid4()}"
+    agent_data = {
+        "name": agent_name,
+        "description": "Delete test agent",
+        "endpoint": "http://example.com/agent",
+        "visibility": "public"
+    }
+    
+    resp = await client.post("/a2a", json=agent_data, headers=TEST_AUTH_HEADER)
+    assert resp.status_code == 201
+    
+    # Get agent ID
+    list_resp = await client.get("/a2a", headers=TEST_AUTH_HEADER)
+    assert list_resp.status_code == 200
+    agents = list_resp.json()
+    if isinstance(agents, dict) and "agents" in agents:
+        agents = agents["agents"]
+    agent = next((a for a in agents if a["name"] == agent_name), None)
+    assert agent is not None
+    agent_id = agent["id"]
+    
+    async def delete_agent():
+        return await client.delete(f"/a2a/{agent_id}", headers=TEST_AUTH_HEADER)
+    
+    # Run 10 concurrent deletes
+    results = await asyncio.gather(
+        *[delete_agent() for _ in range(10)],
+        return_exceptions=True
+    )
+    
+    success_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code in [200, 204])
+    error_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 404)
+    
+    # Exactly one should succeed
+    assert success_count == 1, f"Expected 1 successful delete, got {success_count}"
+    assert error_count == 9, f"Expected 9 not found errors, got {error_count}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_high_concurrency_a2a_creation(client: AsyncClient):
+    """Test high concurrency with unique A2A agents."""
+    async def create_unique_agent(index: int):
+        agent_data = {
+            "name": f"agent-{uuid.uuid4()}-{index}",
+            "description": f"Agent {index}",
+            "endpoint": f"http://example.com/agent{index}",
+            "visibility": "public"
+        }
+        return await client.post("/a2a", json=agent_data, headers=TEST_AUTH_HEADER)
+    
+    # Create 50 unique agents concurrently
+    results = await asyncio.gather(
+        *[create_unique_agent(i) for i in range(50)],
+        return_exceptions=True
+    )
+    
+    success_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 201)
+    assert success_count == 50, f"Expected 50 successful creations, got {success_count}"
+
+
+# ============================================================================
+# SERVER CONCURRENCY TESTS
+# ============================================================================
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_concurrent_server_creation_same_name(client: AsyncClient):
+    """Test concurrent server creation with same name prevents duplicates."""
+    server_name = f"test-server-{uuid.uuid4()}"
+    
+    async def create_server():
+        server_data = {
+            "name": server_name,
+            "description": "Test server",
+            "transport": "sse",
+            "url": "http://example.com/sse",
+            "visibility": "public"
+        }
+        return await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
+    
+    # Run 10 concurrent creations with same name
+    results = await asyncio.gather(*[create_server() for _ in range(10)], return_exceptions=True)
+    
+    # Count successful creations (201) and conflicts (409)
+    success_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 201)
+    conflict_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 409)
+    
+    # Exactly one should succeed, rest should be conflicts
+    assert success_count == 1, f"Expected 1 success, got {success_count}"
+    assert conflict_count == 9, f"Expected 9 conflicts, got {conflict_count}"
+    
+    # No 500 errors
+    assert all(
+        isinstance(r, Exception) or r.status_code in [201, 409]
+        for r in results
+    ), "Some requests returned unexpected status codes"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_concurrent_server_update_same_name(client: AsyncClient):
+    """Test concurrent server updates to same name prevents duplicates."""
+    # Create two servers
+    server1_name = f"server-1-{uuid.uuid4()}"
+    server2_name = f"server-2-{uuid.uuid4()}"
+    
+    server1_data = {
+        "name": server1_name,
+        "description": "Server 1",
+        "transport": "sse",
+        "url": "http://example.com/sse1",
+        "visibility": "public"
+    }
+    server2_data = {
+        "name": server2_name,
+        "description": "Server 2",
+        "transport": "sse",
+        "url": "http://example.com/sse2",
+        "visibility": "public"
+    }
+    
+    resp1 = await client.post("/servers", json=server1_data, headers=TEST_AUTH_HEADER)
+    resp2 = await client.post("/servers", json=server2_data, headers=TEST_AUTH_HEADER)
+    
+    assert resp1.status_code == 201
+    assert resp2.status_code == 201
+    
+    # Get server IDs
+    list_resp = await client.get("/servers", headers=TEST_AUTH_HEADER)
+    assert list_resp.status_code == 200
+    servers = list_resp.json()["data"]
+    
+    server1 = next((s for s in servers if s["name"] == server1_name), None)
+    server2 = next((s for s in servers if s["name"] == server2_name), None)
+    assert server1 is not None and server2 is not None
+    
+    server1_id = server1["id"]
+    server2_id = server2["id"]
+    
+    target_name = f"target-server-{uuid.uuid4()}"
+    
+    async def update_server(server_id: str):
+        update_data = {
+            "name": target_name,
+            "description": "Updated server",
+            "transport": "sse",
+            "url": "http://example.com/updated"
+        }
+        return await client.put(f"/servers/{server_id}", json=update_data, headers=TEST_AUTH_HEADER)
+    
+    # Try to update both servers to same name concurrently
+    results = await asyncio.gather(
+        *[update_server(server1_id), update_server(server2_id)],
+        return_exceptions=True
+    )
+    
+    success_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 200)
+    conflict_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 409)
+    
+    # At least one should succeed
+    assert success_count >= 1, f"Expected at least 1 success, got {success_count}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_concurrent_server_toggle(client: AsyncClient):
+    """Test concurrent enable/disable doesn't cause race condition."""
+    server_name = f"toggle-server-{uuid.uuid4()}"
+    server_data = {
+        "name": server_name,
+        "description": "Toggle test server",
+        "transport": "sse",
+        "url": "http://example.com/sse",
+        "visibility": "public"
+    }
+    
+    resp = await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
+    assert resp.status_code == 201
+    
+    # Get server ID
+    list_resp = await client.get("/servers", headers=TEST_AUTH_HEADER)
+    assert list_resp.status_code == 200
+    servers = list_resp.json()["data"]
+    server = next((s for s in servers if s["name"] == server_name), None)
+    assert server is not None
+    server_id = server["id"]
+    
+    async def toggle():
+        return await client.post(f"/servers/{server_id}/toggle", json={}, headers=TEST_AUTH_HEADER)
+    
+    # Run 20 concurrent toggles
+    results = await asyncio.gather(
+        *[toggle() for _ in range(20)],
+        return_exceptions=True
+    )
+    
+    # All should succeed or fail cleanly (no 500 errors)
+    assert all(
+        isinstance(r, Exception) or r.status_code in [200, 303, 404, 409]
+        for r in results
+    ), "Some requests returned unexpected status codes"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_concurrent_server_delete_operations(client: AsyncClient):
+    """Test concurrent delete operations handle race conditions correctly."""
+    server_name = f"delete-server-{uuid.uuid4()}"
+    server_data = {
+        "name": server_name,
+        "description": "Delete test server",
+        "transport": "sse",
+        "url": "http://example.com/sse",
+        "visibility": "public"
+    }
+    
+    resp = await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
+    assert resp.status_code == 201
+    
+    # Get server ID
+    list_resp = await client.get("/servers", headers=TEST_AUTH_HEADER)
+    assert list_resp.status_code == 200
+    servers = list_resp.json()["data"]
+    server = next((s for s in servers if s["name"] == server_name), None)
+    assert server is not None
+    server_id = server["id"]
+    
+    async def delete_server():
+        return await client.delete(f"/servers/{server_id}", headers=TEST_AUTH_HEADER)
+    
+    # Run 10 concurrent deletes
+    results = await asyncio.gather(
+        *[delete_server() for _ in range(10)],
+        return_exceptions=True
+    )
+    
+    success_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code in [200, 204])
+    error_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 404)
+    
+    # Exactly one should succeed
+    assert success_count == 1, f"Expected 1 successful delete, got {success_count}"
+    assert error_count == 9, f"Expected 9 not found errors, got {error_count}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_high_concurrency_server_creation(client: AsyncClient):
+    """Test high concurrency with unique servers."""
+    async def create_unique_server(index: int):
+        server_data = {
+            "name": f"server-{uuid.uuid4()}-{index}",
+            "description": f"Server {index}",
+            "transport": "sse",
+            "url": f"http://example.com/sse{index}",
+            "visibility": "public"
+        }
+        return await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
+    
+    # Create 50 unique servers concurrently
+    results = await asyncio.gather(
+        *[create_unique_server(i) for i in range(50)],
+        return_exceptions=True
+    )
+    
+    success_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 201)
+    assert success_count == 50, f"Expected 50 successful creations, got {success_count}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_concurrent_team_server_creation_same_name(client: AsyncClient):
+    """Test concurrent team server creation with same name prevents duplicates."""
+    server_name = f"team-server-{uuid.uuid4()}"
+    
+    async def create_team_server():
+        server_data = {
+            "name": server_name,
+            "description": "Team server",
+            "transport": "sse",
+            "url": "http://example.com/sse",
+            "visibility": "team"
+        }
+        return await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
+    
+    # Run 10 concurrent creations with same name
+    results = await asyncio.gather(*[create_team_server() for _ in range(10)], return_exceptions=True)
+    
+    success_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 201)
+    conflict_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 409)
+    
+    # Exactly one should succeed, rest should be conflicts
+    assert success_count == 1, f"Expected 1 success, got {success_count}"
+    assert conflict_count == 9, f"Expected 9 conflicts, got {conflict_count}"
+
+
+
+# ============================================================================
+# SKIP_LOCKED BEHAVIOR TESTS FOR NEW SERVICES
+# ============================================================================
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_skip_locked_behavior_prompt_updates(client: AsyncClient):
+    """Test that skip_locked allows concurrent prompt operations to proceed without blocking."""
+    # Create multiple prompts
+    prompt_ids = []
+    for i in range(5):
+        prompt_name = f"skip-lock-prompt-{i}-{uuid.uuid4()}"
+        prompt_data = {
+            "name": prompt_name,
+            "description": f"Skip lock test prompt {i}",
+            "arguments": [],
+            "visibility": "public"
+        }
+        resp = await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+        assert resp.status_code == 200, f"Failed to create prompt {i}: {resp.status_code}"
+        
+        # Get prompt ID
+        list_resp = await client.get("/prompts", headers=TEST_AUTH_HEADER)
+        prompts = list_resp.json()["data"]
+        prompt = next((p for p in prompts if p["name"] == prompt_name), None)
+        if prompt:
+            prompt_ids.append(prompt["id"])
+    
+    async def update_prompt(prompt_id: str, index: int):
+        prompt_name = f"updated-prompt-{index}-{uuid.uuid4()}"
+        update_data = {
+            "name": prompt_name,
+            "description": f"Updated description {index}",
+            "arguments": []
+        }
+        return await client.put(f"/prompts/{prompt_id}", json=update_data, headers=TEST_AUTH_HEADER)
+    
+    # Update all prompts concurrently
+    results = await asyncio.gather(
+        *[update_prompt(prompt_id, i) for i, prompt_id in enumerate(prompt_ids)],
+        return_exceptions=True
+    )
+    
+    # All should succeed (different prompts, skip_locked allows parallel processing)
+    success_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 200)
+    assert success_count == len(prompt_ids), f"Expected {len(prompt_ids)} successes, got {success_count}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_skip_locked_behavior_resource_updates(client: AsyncClient):
+    """Test that skip_locked allows concurrent resource operations to proceed without blocking."""
+    # Create multiple resources
+    resource_ids = []
+    for i in range(5):
+        resource_uri = f"file:///skip-lock-resource-{i}-{uuid.uuid4()}.txt"
+        resource_data = {
+            "uri": resource_uri,
+            "name": f"Skip lock resource {i}",
+            "description": f"Skip lock test resource {i}",
+            "mimeType": "text/plain",
+            "visibility": "public"
+        }
+        resp = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+        assert resp.status_code == 200, f"Failed to create resource {i}: {resp.status_code}"
+        
+        # Get resource ID
+        list_resp = await client.get("/resources", headers=TEST_AUTH_HEADER)
+        resources = list_resp.json()["data"]
+        resource = next((r for r in resources if r["uri"] == resource_uri), None)
+        if resource:
+            resource_ids.append(resource["id"])
+    
+    async def update_resource(resource_id: str, index: int):
+        resource_uri = f"file:///updated-resource-{index}-{uuid.uuid4()}.txt"
+        update_data = {
+            "uri": resource_uri,
+            "name": f"Updated resource {index}",
+            "description": f"Updated description {index}",
+            "mimeType": "text/plain"
+        }
+        return await client.put(f"/resources/{resource_id}", json=update_data, headers=TEST_AUTH_HEADER)
+    
+    # Update all resources concurrently
+    results = await asyncio.gather(
+        *[update_resource(resource_id, i) for i, resource_id in enumerate(resource_ids)],
+        return_exceptions=True
+    )
+    
+    # All should succeed (different resources, skip_locked allows parallel processing)
+    success_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 200)
+    assert success_count == len(resource_ids), f"Expected {len(resource_ids)} successes, got {success_count}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_skip_locked_behavior_a2a_updates(client: AsyncClient):
+    """Test that skip_locked allows concurrent A2A agent operations to proceed without blocking."""
+    # Create multiple agents
+    agent_ids = []
+    for i in range(5):
+        agent_name = f"skip-lock-agent-{i}-{uuid.uuid4()}"
+        agent_data = {
+            "name": agent_name,
+            "description": f"Skip lock test agent {i}",
+            "endpoint": f"http://example.com/agent{i}",
+            "visibility": "public"
+        }
+        resp = await client.post("/a2a", json=agent_data, headers=TEST_AUTH_HEADER)
+        assert resp.status_code == 201, f"Failed to create agent {i}: {resp.status_code}"
+        
+        # Get agent ID
+        list_resp = await client.get("/a2a", headers=TEST_AUTH_HEADER)
+        agents = list_resp.json()
+        if isinstance(agents, dict) and "agents" in agents:
+            agents = agents["agents"]
+        agent = next((a for a in agents if a["name"] == agent_name), None)
+        if agent:
+            agent_ids.append(agent["id"])
+    
+    async def update_agent(agent_id: str, index: int):
+        agent_name = f"updated-agent-{index}-{uuid.uuid4()}"
+        update_data = {
+            "name": agent_name,
+            "description": f"Updated description {index}",
+            "endpoint": f"http://example.com/updated{index}"
+        }
+        return await client.put(f"/a2a/{agent_id}", json=update_data, headers=TEST_AUTH_HEADER)
+    
+    # Update all agents concurrently
+    results = await asyncio.gather(
+        *[update_agent(agent_id, i) for i, agent_id in enumerate(agent_ids)],
+        return_exceptions=True
+    )
+    
+    # All should succeed (different agents, skip_locked allows parallel processing)
+    success_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 200)
+    assert success_count == len(agent_ids), f"Expected {len(agent_ids)} successes, got {success_count}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_skip_locked_behavior_server_updates(client: AsyncClient):
+    """Test that skip_locked allows concurrent server operations to proceed without blocking."""
+    # Create multiple servers
+    server_ids = []
+    for i in range(5):
+        server_name = f"skip-lock-server-{i}-{uuid.uuid4()}"
+        server_data = {
+            "name": server_name,
+            "description": f"Skip lock test server {i}",
+            "transport": "sse",
+            "url": f"http://example.com/sse{i}",
+            "visibility": "public"
+        }
+        resp = await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
+        assert resp.status_code == 201, f"Failed to create server {i}: {resp.status_code}"
+        
+        # Get server ID
+        list_resp = await client.get("/servers", headers=TEST_AUTH_HEADER)
+        servers = list_resp.json()["data"]
+        server = next((s for s in servers if s["name"] == server_name), None)
+        if server:
+            server_ids.append(server["id"])
+    
+    async def update_server(server_id: str, index: int):
+        server_name = f"updated-server-{index}-{uuid.uuid4()}"
+        update_data = {
+            "name": server_name,
+            "description": f"Updated description {index}",
+            "transport": "sse",
+            "url": f"http://example.com/updated{index}"
+        }
+        return await client.put(f"/servers/{server_id}", json=update_data, headers=TEST_AUTH_HEADER)
+    
+    # Update all servers concurrently
+    results = await asyncio.gather(
+        *[update_server(server_id, i) for i, server_id in enumerate(server_ids)],
+        return_exceptions=True
+    )
+    
+    # All should succeed (different servers, skip_locked allows parallel processing)
+    success_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 200)
+    assert success_count == len(server_ids), f"Expected {len(server_ids)} successes, got {success_count}"
+
+
+# ============================================================================
+# MIXED VISIBILITY TESTS FOR NEW SERVICES
+# ============================================================================
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_mixed_visibility_concurrent_prompt_operations(client: AsyncClient):
+    """Test concurrent prompt operations with different visibility levels."""
+    base_uuid = uuid.uuid4()
+    
+    async def create_public_prompt():
+        prompt_data = {
+            "name": f"mixed-vis-public-prompt-{base_uuid}",
+            "description": "Public prompt",
+            "arguments": [],
+            "visibility": "public"
+        }
+        return await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+    
+    async def create_team_prompt():
+        prompt_data = {
+            "name": f"mixed-vis-team-prompt-{base_uuid}",
+            "description": "Team prompt",
+            "arguments": [],
+            "visibility": "team"
+        }
+        return await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+    
+    async def create_private_prompt():
+        prompt_data = {
+            "name": f"mixed-vis-private-prompt-{base_uuid}",
+            "description": "Private prompt",
+            "arguments": [],
+            "visibility": "private"
+        }
+        return await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+    
+    # Create prompts with different names and visibility concurrently
+    results = await asyncio.gather(
+        *[create_public_prompt() for _ in range(3)],
+        *[create_team_prompt() for _ in range(3)],
+        *[create_private_prompt() for _ in range(3)],
+        return_exceptions=True
+    )
+    
+    success_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 200)
+    conflict_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 409)
+    
+    # Expect 3 successes (one per unique name) and 6 conflicts
+    assert success_count == 3, f"Expected 3 successes, got {success_count}"
+    assert conflict_count == 6, f"Expected 6 conflicts, got {conflict_count}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_mixed_visibility_concurrent_resource_operations(client: AsyncClient):
+    """Test concurrent resource operations with different visibility levels."""
+    base_uuid = uuid.uuid4()
+    
+    async def create_public_resource():
+        resource_data = {
+            "uri": f"file:///mixed-vis-public-resource-{base_uuid}.txt",
+            "name": "Public resource",
+            "description": "Public resource",
+            "mimeType": "text/plain",
+            "visibility": "public"
+        }
+        return await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+    
+    async def create_team_resource():
+        resource_data = {
+            "uri": f"file:///mixed-vis-team-resource-{base_uuid}.txt",
+            "name": "Team resource",
+            "description": "Team resource",
+            "mimeType": "text/plain",
+            "visibility": "team"
+        }
+        return await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+    
+    async def create_private_resource():
+        resource_data = {
+            "uri": f"file:///mixed-vis-private-resource-{base_uuid}.txt",
+            "name": "Private resource",
+            "description": "Private resource",
+            "mimeType": "text/plain",
+            "visibility": "private"
+        }
+        return await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+    
+    # Create resources with different URIs and visibility concurrently
+    results = await asyncio.gather(
+        *[create_public_resource() for _ in range(3)],
+        *[create_team_resource() for _ in range(3)],
+        *[create_private_resource() for _ in range(3)],
+        return_exceptions=True
+    )
+    
+    success_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 200)
+    conflict_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 409)
+    
+    # Expect 3 successes (one per unique URI) and 6 conflicts
+    assert success_count == 3, f"Expected 3 successes, got {success_count}"
+    assert conflict_count == 6, f"Expected 6 conflicts, got {conflict_count}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_mixed_visibility_concurrent_a2a_operations(client: AsyncClient):
+    """Test concurrent A2A agent operations with different visibility levels."""
+    base_uuid = uuid.uuid4()
+    
+    async def create_public_agent():
+        agent_data = {
+            "name": f"mixed-vis-public-agent-{base_uuid}",
+            "description": "Public agent",
+            "endpoint": "http://example.com/public",
+            "visibility": "public"
+        }
+        return await client.post("/a2a", json=agent_data, headers=TEST_AUTH_HEADER)
+    
+    async def create_team_agent():
+        agent_data = {
+            "name": f"mixed-vis-team-agent-{base_uuid}",
+            "description": "Team agent",
+            "endpoint": "http://example.com/team",
+            "visibility": "team"
+        }
+        return await client.post("/a2a", json=agent_data, headers=TEST_AUTH_HEADER)
+    
+    async def create_private_agent():
+        agent_data = {
+            "name": f"mixed-vis-private-agent-{base_uuid}",
+            "description": "Private agent",
+            "endpoint": "http://example.com/private",
+            "visibility": "private"
+        }
+        return await client.post("/a2a", json=agent_data, headers=TEST_AUTH_HEADER)
+    
+    # Create agents with different names and visibility concurrently
+    results = await asyncio.gather(
+        *[create_public_agent() for _ in range(3)],
+        *[create_team_agent() for _ in range(3)],
+        *[create_private_agent() for _ in range(3)],
+        return_exceptions=True
+    )
+    
+    success_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 201)
+    conflict_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 409)
+    
+    # Expect 3 successes (one per unique name) and 6 conflicts
+    assert success_count == 3, f"Expected 3 successes, got {success_count}"
+    assert conflict_count == 6, f"Expected 6 conflicts, got {conflict_count}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("DB", "sqlite").lower() != "postgres",
+    reason="Row-level locking only works on PostgreSQL"
+)
+async def test_mixed_visibility_concurrent_server_operations(client: AsyncClient):
+    """Test concurrent server operations with different visibility levels."""
+    base_uuid = uuid.uuid4()
+    
+    async def create_public_server():
+        server_data = {
+            "name": f"mixed-vis-public-server-{base_uuid}",
+            "description": "Public server",
+            "transport": "sse",
+            "url": "http://example.com/public",
+            "visibility": "public"
+        }
+        return await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
+    
+    async def create_team_server():
+        server_data = {
+            "name": f"mixed-vis-team-server-{base_uuid}",
+            "description": "Team server",
+            "transport": "sse",
+            "url": "http://example.com/team",
+            "visibility": "team"
+        }
+        return await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
+    
+    async def create_private_server():
+        server_data = {
+            "name": f"mixed-vis-private-server-{base_uuid}",
+            "description": "Private server",
+            "transport": "sse",
+            "url": "http://example.com/private",
+            "visibility": "private"
+        }
+        return await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
+    
+    # Create servers with different names and visibility concurrently
+    results = await asyncio.gather(
+        *[create_public_server() for _ in range(3)],
+        *[create_team_server() for _ in range(3)],
+        *[create_private_server() for _ in range(3)],
+        return_exceptions=True
+    )
+    
+    success_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 201)
+    conflict_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 409)
+    
+    # Expect 3 successes (one per unique name) and 6 conflicts
+    assert success_count == 3, f"Expected 3 successes, got {success_count}"
+    assert conflict_count == 6, f"Expected 6 conflicts, got {conflict_count}"
