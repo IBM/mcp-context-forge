@@ -43,6 +43,17 @@ os.environ["MCPGATEWAY_UI_ENABLED"] = "true"
 os.environ["MCPGATEWAY_A2A_ENABLED"] = "true"
 
 
+def is_postgresql() -> bool:
+    """Check if PostgreSQL is configured via DB env var or DATABASE_URL."""
+    db_env = os.getenv("DB", "").lower()
+    database_url = os.getenv("DATABASE_URL", "").lower()
+    return db_env == "postgres" or "postgresql" in database_url
+
+
+# Skip condition for PostgreSQL-only tests
+SKIP_IF_NOT_POSTGRES = pytest.mark.skipif(not is_postgresql(), reason="Row-level locking only works on PostgreSQL")
+
+
 def create_test_jwt_token():
     """Create a proper JWT token for testing."""
     import datetime
@@ -137,7 +148,7 @@ async def client(app_with_temp_db):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_concurrent_tool_creation_same_name(client: AsyncClient):
     """Test concurrent tool creation with same name prevents duplicates."""
     tool_name = f"test-tool-{uuid.uuid4()}"
@@ -162,7 +173,7 @@ async def test_concurrent_tool_creation_same_name(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_concurrent_tool_update_same_name(client: AsyncClient):
     """Test concurrent tool updates to same name prevents duplicates."""
     # Create two tools
@@ -219,7 +230,7 @@ async def test_concurrent_tool_update_same_name(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_concurrent_tool_toggle(client: AsyncClient):
     """Test concurrent enable/disable doesn't cause race condition."""
     # Create a tool
@@ -260,7 +271,7 @@ async def test_concurrent_tool_toggle(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_concurrent_gateway_creation_same_slug(client: AsyncClient):
     """Test concurrent gateway creation with same slug prevents duplicates."""
     gateway_name = f"Test Gateway {uuid.uuid4()}"
@@ -293,7 +304,7 @@ async def test_concurrent_gateway_creation_same_slug(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_concurrent_gateway_update_same_slug(client: AsyncClient):
     """Test concurrent gateway updates to same slug prevents duplicates."""
     # Create two gateways
@@ -349,7 +360,7 @@ async def test_concurrent_gateway_update_same_slug(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_concurrent_mixed_operations(client: AsyncClient):
     """Test mixed concurrent operations (create, update, toggle) work correctly."""
     # Create initial tool
@@ -400,7 +411,7 @@ async def test_concurrent_mixed_operations(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_high_concurrency_tool_creation(client: AsyncClient):
     """Test high concurrency with many unique tool creations."""
 
@@ -437,7 +448,7 @@ async def test_high_concurrency_tool_creation(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_concurrent_team_tool_creation_same_name(client: AsyncClient):
     """Test concurrent team tool creation with same name prevents duplicates within team."""
     tool_name = f"team-tool-{uuid.uuid4()}"
@@ -462,7 +473,7 @@ async def test_concurrent_team_tool_creation_same_name(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_concurrent_tool_update_same_tool(client: AsyncClient):
     """Test concurrent tool updates on the same tool are serialized by row locking."""
     # Create a tool with public visibility to ensure permissions work
@@ -510,7 +521,7 @@ async def test_concurrent_tool_update_same_tool(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_concurrent_tool_delete_operations(client: AsyncClient):
     """Test concurrent delete operations with atomic DELETE ... RETURNING.
 
@@ -570,7 +581,7 @@ async def test_concurrent_tool_delete_operations(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_concurrent_gateway_toggle(client: AsyncClient):
     """Test concurrent gateway enable/disable doesn't cause race condition."""
     # Create a gateway with unique URL to avoid conflicts
@@ -604,7 +615,7 @@ async def test_concurrent_gateway_toggle(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_concurrent_team_gateway_creation_same_slug(client: AsyncClient):
     """Test concurrent team gateway creation with same slug prevents duplicates within team."""
     gateway_name = f"Team Gateway {uuid.uuid4()}"
@@ -628,7 +639,7 @@ async def test_concurrent_team_gateway_creation_same_slug(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_concurrent_gateway_delete_operations(client: AsyncClient):
     """Test concurrent delete operations with atomic DELETE ... RETURNING.
 
@@ -692,7 +703,7 @@ async def test_concurrent_gateway_delete_operations(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_skip_locked_behavior_tool_updates(client: AsyncClient):
     """Test that skip_locked allows concurrent operations to proceed without blocking."""
     # Create multiple tools
@@ -749,7 +760,7 @@ async def test_skip_locked_behavior_tool_updates(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_mixed_visibility_concurrent_operations(client: AsyncClient):
     """Test concurrent operations with same name - DB constraint enforces uniqueness by team_id+owner_email+name."""
     base_uuid = uuid.uuid4()
@@ -808,7 +819,7 @@ async def test_mixed_visibility_concurrent_operations(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_high_concurrency_gateway_creation(client: AsyncClient):
     """Test high concurrency with many unique gateway creations."""
 
@@ -844,7 +855,7 @@ async def test_high_concurrency_gateway_creation(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_concurrent_prompt_creation_same_name(client: AsyncClient):
     """Test concurrent prompt creation with same name prevents duplicates."""
     prompt_name = f"test-prompt-{uuid.uuid4()}"
@@ -869,7 +880,7 @@ async def test_concurrent_prompt_creation_same_name(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_concurrent_prompt_update_same_name(client: AsyncClient):
     """Test concurrent prompt updates to same name prevents duplicates."""
     # Create two prompts
@@ -914,7 +925,7 @@ async def test_concurrent_prompt_update_same_name(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_concurrent_prompt_toggle(client: AsyncClient):
     """Test concurrent enable/disable doesn't cause race condition."""
     prompt_name = f"toggle-prompt-{uuid.uuid4()}"
@@ -942,7 +953,7 @@ async def test_concurrent_prompt_toggle(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_concurrent_prompt_delete_operations(client: AsyncClient):
     """Test concurrent delete operations handle race conditions correctly."""
     prompt_name = f"delete-prompt-{uuid.uuid4()}"
@@ -975,7 +986,7 @@ async def test_concurrent_prompt_delete_operations(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_high_concurrency_prompt_creation(client: AsyncClient):
     """Test high concurrency with unique prompts."""
 
@@ -1000,7 +1011,7 @@ async def test_high_concurrency_prompt_creation(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_concurrent_resource_update_same_uri(client: AsyncClient):
     """Test concurrent resource updates to same URI prevents duplicates."""
     # Create two resources
@@ -1055,7 +1066,7 @@ async def test_concurrent_resource_update_same_uri(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_concurrent_resource_toggle(client: AsyncClient):
     """Test concurrent enable/disable doesn't cause race condition."""
     resource_uri = f"file:///toggle-resource-{uuid.uuid4()}.txt"
@@ -1096,7 +1107,7 @@ async def test_concurrent_resource_toggle(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_skip_locked_behavior_resource_updates(client: AsyncClient):
     """Test that skip_locked allows concurrent resource operations to proceed without blocking."""
     # Create multiple resources
@@ -1137,7 +1148,7 @@ async def test_skip_locked_behavior_resource_updates(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_concurrent_a2a_creation_same_name(client: AsyncClient):
     """Test concurrent A2A agent creation with same name prevents duplicates."""
     agent_name = f"test-agent-{uuid.uuid4()}"
@@ -1175,7 +1186,7 @@ async def test_concurrent_a2a_creation_same_name(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_concurrent_a2a_update_same_name(client: AsyncClient):
     """Test concurrent A2A agent updates to same name prevents duplicates."""
     # Create two agents
@@ -1222,7 +1233,7 @@ async def test_concurrent_a2a_update_same_name(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_concurrent_a2a_toggle(client: AsyncClient):
     """Test concurrent enable/disable doesn't cause race condition."""
     agent_name = f"toggle-agent-{uuid.uuid4()}"
@@ -1252,7 +1263,7 @@ async def test_concurrent_a2a_toggle(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_concurrent_a2a_delete_operations(client: AsyncClient):
     """Test concurrent delete operations handle race conditions correctly."""
     agent_name = f"delete-agent-{uuid.uuid4()}"
@@ -1286,7 +1297,7 @@ async def test_concurrent_a2a_delete_operations(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_high_concurrency_a2a_creation(client: AsyncClient):
     """Test high concurrency with unique A2A agents."""
 
@@ -1323,7 +1334,7 @@ async def test_high_concurrency_a2a_creation(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_concurrent_server_creation_same_name(client: AsyncClient):
     """Test concurrent server creation with same name prevents duplicates."""
     server_name = f"test-server-{uuid.uuid4()}"
@@ -1361,7 +1372,7 @@ async def test_concurrent_server_creation_same_name(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_concurrent_server_update_same_name(client: AsyncClient):
     """Test concurrent server updates to same name prevents duplicates."""
     # Create two servers
@@ -1407,7 +1418,7 @@ async def test_concurrent_server_update_same_name(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_concurrent_server_toggle(client: AsyncClient):
     """Test concurrent enable/disable doesn't cause race condition."""
     server_name = f"toggle-server-{uuid.uuid4()}"
@@ -1435,7 +1446,7 @@ async def test_concurrent_server_toggle(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_concurrent_server_delete_operations(client: AsyncClient):
     """Test concurrent delete operations handle race conditions correctly."""
     server_name = f"delete-server-{uuid.uuid4()}"
@@ -1476,7 +1487,7 @@ async def test_concurrent_server_delete_operations(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_high_concurrency_server_creation(client: AsyncClient):
     """Test high concurrency with unique servers."""
 
@@ -1496,7 +1507,7 @@ async def test_high_concurrency_server_creation(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_concurrent_team_server_creation_same_name(client: AsyncClient):
     """Test concurrent team server creation with same name prevents duplicates."""
     server_name = f"team-server-{uuid.uuid4()}"
@@ -1522,7 +1533,7 @@ async def test_concurrent_team_server_creation_same_name(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_skip_locked_behavior_prompt_updates(client: AsyncClient):
     """Test that skip_locked allows concurrent prompt operations to proceed without blocking."""
     # Create multiple prompts
@@ -1554,7 +1565,7 @@ async def test_skip_locked_behavior_prompt_updates(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_skip_locked_behavior_a2a_updates(client: AsyncClient):
     """Test that skip_locked allows concurrent A2A agent operations to proceed without blocking."""
     # Create multiple agents
@@ -1588,7 +1599,7 @@ async def test_skip_locked_behavior_a2a_updates(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_skip_locked_behavior_server_updates(client: AsyncClient):
     """Test that skip_locked allows concurrent server operations to proceed without blocking."""
     # Create multiple servers
@@ -1623,7 +1634,7 @@ async def test_skip_locked_behavior_server_updates(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_mixed_visibility_concurrent_prompt_operations(client: AsyncClient):
     """Test concurrent prompt operations with different visibility levels."""
     base_uuid = uuid.uuid4()
@@ -1665,7 +1676,7 @@ async def test_mixed_visibility_concurrent_prompt_operations(client: AsyncClient
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_mixed_visibility_concurrent_a2a_operations(client: AsyncClient):
     """Test concurrent A2A agent operations with different visibility levels."""
     base_uuid = uuid.uuid4()
@@ -1699,7 +1710,7 @@ async def test_mixed_visibility_concurrent_a2a_operations(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(os.getenv("DB", "sqlite").lower() != "postgres", reason="Row-level locking only works on PostgreSQL")
+@SKIP_IF_NOT_POSTGRES
 async def test_mixed_visibility_concurrent_server_operations(client: AsyncClient):
     """Test concurrent server operations with different visibility levels."""
     base_uuid = uuid.uuid4()
