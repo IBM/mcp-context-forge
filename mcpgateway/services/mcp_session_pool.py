@@ -31,6 +31,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 import hashlib
+import json
 import logging
 import time
 from typing import Any, Callable, Dict, Optional, Set, Tuple, TYPE_CHECKING
@@ -69,9 +70,10 @@ class PooledSession:
     session: ClientSession
     transport_context: Any  # The transport context manager (kept open)
     url: str
-    identity_key: str
     transport_type: TransportType
     headers: Dict[str, str]  # Original headers (for reconnection)
+    identity_key: str  # Identity hash component for headers
+    user_identity: str = "anonymous"  # for user isolation
     created_at: float = field(default_factory=time.time)
     last_used: float = field(default_factory=time.time)
     use_count: int = 0
@@ -111,7 +113,7 @@ class PooledSession:
 
 # Type aliases
 # Pool key includes transport type to prevent returning wrong transport for same URL
-PoolKey = Tuple[str, str, str]  # (url, identity_hash, transport_type)
+PoolKey = Tuple[str, str, str, str]  # (user_identity_hash, url, identity_hash, transport_type)
 HttpxClientFactory = Callable[
     [Optional[Dict[str, str]], Optional[httpx.Timeout], Optional[httpx.Auth]],
     httpx.AsyncClient,
@@ -125,7 +127,7 @@ IdentityExtractor = Callable[[Dict[str, str]], Optional[str]]
 
 class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
     """
-    Pool of MCP ClientSessions keyed by (server URL, identity hash, transport type).
+    Pool of MCP ClientSessions keyed by (user_identity, server URL, identity hash, transport type).
 
     Thread-Safety:
         This pool is designed for asyncio concurrency. It uses asyncio.Lock
@@ -333,14 +335,23 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             )
             return "anonymous"
 
-        # Create stable hash (full SHA-256 for collision resistance)
-        identity_string = "|".join(identity_parts)
-        return hashlib.sha256(identity_string.encode()).hexdigest()
+        # Create a stable, deterministic hash using JSON serialization
+        # Prevents delimiter-collision or injection issues present in string joining
+        serialized_identity = json.dumps(identity_parts)
+        return hashlib.sha256(serialized_identity.encode()).hexdigest()
 
-    def _make_pool_key(self, url: str, headers: Optional[Dict[str, str]], transport_type: TransportType) -> PoolKey:
-        """Create composite pool key from URL, identity, and transport type."""
+    def _make_pool_key(self, url: str, headers: Optional[Dict[str, str]], transport_type: TransportType, user_identity: str) -> PoolKey:
+        """Create composite pool key from URL, identity, transport type, and user identity."""
         identity_hash = self._compute_identity_hash(headers)
-        return (url, identity_hash, transport_type.value)
+
+        # Anonymize user identity by hashing it (unless it's commonly "anonymous")
+        # Use full hash for collision resistance - truncate only for display in logs/metrics
+        if user_identity == "anonymous":
+            user_hash = "anonymous"
+        else:
+            user_hash = hashlib.sha256(user_identity.encode()).hexdigest()
+
+        return (user_hash, url, identity_hash, transport_type.value)
 
     async def _get_or_create_lock(self, pool_key: PoolKey) -> asyncio.Lock:
         """Get or create a lock for the given pool key (thread-safe)."""
@@ -389,6 +400,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         transport_type: TransportType = TransportType.STREAMABLE_HTTP,
         httpx_client_factory: Optional[HttpxClientFactory] = None,
         timeout: Optional[float] = None,
+        user_identity: Optional[str] = None,
     ) -> PooledSession:
         """
         Acquire a session for the given URL, identity, and transport type.
@@ -421,7 +433,8 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         # Use default timeout if not provided
         effective_timeout = timeout if timeout is not None else self._default_transport_timeout
 
-        pool_key = self._make_pool_key(url, headers, transport_type)
+        user_id = user_identity or "anonymous"
+        pool_key = self._make_pool_key(url, headers, transport_type, user_id)
         pool = await self._get_or_create_pool(pool_key)
 
         # Update pool key last used time IMMEDIATELY after getting pool
@@ -455,7 +468,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 self._hits += 1
                 async with lock:
                     self._active[pool_key].add(pooled)
-                logger.debug(f"Pool hit for {url} (identity={pool_key[1][:8]}, transport={transport_type.value})")
+                logger.debug(f"Pool hit for {url} (identity={pool_key[2][:8]}, transport={transport_type.value})")
                 return pooled
 
             # Session invalid, close it
@@ -478,6 +491,10 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 self._create_session(url, headers, transport_type, httpx_client_factory, effective_timeout),
                 timeout=self._session_create_timeout,
             )
+            # Store identity components for key reconstruction
+            pooled.identity_key = pool_key[2]
+            pooled.user_identity = user_id
+
             self._misses += 1
             self._record_success(url)
             async with lock:
@@ -503,8 +520,13 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             logger.warning("Attempted to release already-closed session")
             return
 
-        # Pool key includes transport type
-        pool_key = (pooled.url, pooled.identity_key, pooled.transport_type.value)
+        # Pool key includes transport type and user identity
+        # Re-compute user hash from stored raw identity (full hash for collision resistance)
+        user_hash = "anonymous"
+        if pooled.user_identity != "anonymous":
+            user_hash = hashlib.sha256(pooled.user_identity.encode()).hexdigest()
+
+        pool_key = (user_hash, pooled.url, pooled.identity_key, pooled.transport_type.value)
         lock = await self._get_or_create_lock(pool_key)
         pool = await self._get_or_create_pool(pool_key)
 
@@ -614,7 +636,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 self._semaphores.pop(pool_key, None)
                 self._pool_last_used.pop(pool_key, None)
                 self._pool_keys_evicted += 1
-                logger.debug(f"Evicted idle pool key: {pool_key[0]}|{pool_key[1][:8]}|{pool_key[2]}")
+                logger.debug(f"Evicted idle pool key: {pool_key[0][:8]}|{pool_key[1]}|{pool_key[2][:8]}")
 
         # Close sessions outside the lock (I/O operations)
         for session in sessions_to_close:
@@ -878,12 +900,12 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             "hit_rate": self._hits / total_requests if total_requests > 0 else 0.0,
             "pool_key_count": len(self._pools),
             "pools": {
-                f"{url}|{identity[:8]}|{transport}": {
+                f"{url}|{identity[:8]}|{transport}|{user}": {
                     "available": pool.qsize(),
-                    "active": len(self._active.get((url, identity, transport), set())),
+                    "active": len(self._active.get((user, url, identity, transport), set())),
                     "max": self._max_sessions,
                 }
-                for (url, identity, transport), pool in self._pools.items()
+                for (user, url, identity, transport), pool in self._pools.items()
             },
             "circuit_breakers": {
                 url: {
@@ -902,6 +924,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         transport_type: TransportType = TransportType.STREAMABLE_HTTP,
         httpx_client_factory: Optional[HttpxClientFactory] = None,
         timeout: Optional[float] = None,
+        user_identity: Optional[str] = None,
     ) -> "AsyncIterator[PooledSession]":
         """
         Context manager for acquiring and releasing a session.
@@ -916,11 +939,12 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             transport_type: Transport type to use.
             httpx_client_factory: Optional factory for httpx clients.
             timeout: Optional timeout in seconds for transport connection.
+            user_identity: Optional user identity for strict isolation.
 
         Yields:
             PooledSession ready for use.
         """
-        pooled = await self.acquire(url, headers, transport_type, httpx_client_factory, timeout)
+        pooled = await self.acquire(url, headers, transport_type, httpx_client_factory, timeout, user_identity)
         try:
             yield pooled
         finally:
