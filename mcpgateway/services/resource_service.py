@@ -2128,7 +2128,6 @@ class ResourceService:
             'resource_read'
         """
         try:
-            # resource = db.get(DbResource, resource_id)
             resource = get_for_update(db, DbResource, resource_id)
             if not resource:
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")
@@ -2360,7 +2359,6 @@ class ResourceService:
         """
         try:
             logger.info(f"Updating resource: {resource_id}")
-            # resource = db.get(DbResource, resource_id)
             resource = get_for_update(db, DbResource, resource_id)
             if not resource:
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")

@@ -3167,7 +3167,6 @@ class ToolService:
             'tool_read'
         """
         try:
-            # tool = db.get(DbTool, tool_id)
             tool = get_for_update(db, DbTool, tool_id)
 
             if not tool:
