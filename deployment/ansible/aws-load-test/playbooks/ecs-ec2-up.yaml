@@ -168,8 +168,6 @@
             maximum_scaling_step_size: 10
           managed_termination_protection: DISABLED
           managed_draining: ENABLED
-        wait: true
-        wait_timeout: 300
       register: capacity_provider_r
 
     # =========================================================================

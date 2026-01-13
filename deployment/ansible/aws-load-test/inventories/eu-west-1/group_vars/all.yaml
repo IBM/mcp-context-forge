@@ -42,7 +42,7 @@ owner_v: Jonathan Springer
 # instance_type_v: The EC2 instance type for the bastion host.
 #                  Recommend t4g.micro (ARM) or t3.micro (x86) for cost savings.
 #                  See: https://aws.amazon.com/ec2/instance-types/
-instance_type_v: t4g.micro
+instance_type_v: t3.micro
 
 # -----------------------------------------------------------------------------
 # ECS EC2 Instance Configuration

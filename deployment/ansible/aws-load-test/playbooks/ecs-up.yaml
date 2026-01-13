@@ -36,6 +36,15 @@
         cluster_id: "{{ prefix_v }}-mcf-postgres"
       register: rds_cluster_info_r
 
+    - name: Get AWS account ID
+      ansible.builtin.command: aws sts get-caller-identity --query Account --output text --region {{ region_v }}
+      register: aws_account_r
+      changed_when: false
+
+    - name: Set ECR registry URL
+      ansible.builtin.set_fact:
+        ecr_registry: "{{ aws_account_r.stdout }}.dkr.ecr.{{ region_v }}.amazonaws.com"
+
     - name: Set facts based on everything we've retrieved
       ansible.builtin.set_fact:
         alb_sg_group_id_f: >-
@@ -273,7 +282,7 @@
         containers:
           - name: nginx
             image: >-
-              ghcr.io/ibm/mcp-context-forge-nginx:{{ nginx_image_tag_v | default('latest') }}
+              {{ ecr_registry }}/{{ prefix_v }}/mcp-context-forge-nginx:{{ nginx_image_tag_v | default('latest') }}
             logConfiguration:
               logDriver: awslogs
               options:

@@ -296,6 +296,10 @@ def main():
         module.fail_json_aws(e, msg=f"Failed to describe capacity provider '{name}'")
 
     if state == "present":
+        # Treat INACTIVE capacity providers as non-existent (they were deleted)
+        if existing and existing.get("status") == "INACTIVE":
+            existing = None
+
         if existing:
             # Capacity provider already exists
             if existing.get("status") == "ACTIVE":

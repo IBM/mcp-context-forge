@@ -39,6 +39,10 @@
             from_port: 22
             to_port: 22
             cidr_ip: "{{ ip_response.content }}/32"
+          - proto: tcp
+            from_port: 8089
+            to_port: 8089
+            cidr_ip: "{{ ip_response.content }}/32"
       register: bastion_sg_r
 
     # ALB SECURITY GROUP (no dependencies - create before ECS SG)

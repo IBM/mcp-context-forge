@@ -72,6 +72,22 @@
         state: present
         managed_policies: []
         purge_policies: true
+        assume_role_policy_document: |
+            {
+              "Version":"2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "",
+                  "Effect": "Allow",
+                  "Principal": {
+                    "Service": "ecs-tasks.amazonaws.com"
+                  },
+                  "Action": [
+                    "sts:AssumeRole"
+                  ]
+                }
+              ]
+            }
       register: detach_task_role
       retries: 5
       delay: 10
@@ -99,6 +115,20 @@
         state: present
         managed_policies: []
         purge_policies: true
+        assume_role_policy_document: |
+            {
+              "Version":"2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "",
+                  "Effect": "Allow",
+                  "Principal": {
+                    "Service": "ecs-tasks.amazonaws.com"
+                  },
+                  "Action": "sts:AssumeRole"
+                }
+              ]
+            }
       retries: 5
       delay: 10
 

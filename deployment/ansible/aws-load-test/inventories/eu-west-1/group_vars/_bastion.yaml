@@ -58,7 +58,7 @@ mcf_domain: "mcf.stochastic-parrot.ie"
 #                     Must be a valid certificate in the deployment region that
 #                     covers the target domain (e.g., *.mcf.example.com).
 #                     Create via: aws acm request-certificate
-ca_certificate_arn: "arn:aws:acm:eu-west-1:179757322917:certificate/0012604b-1316-4543-91c8-10ecfd18b55f"
+ca_certificate_arn: "arn:aws:acm:eu-west-1:179757322917:certificate/86f41364-84e5-4816-9caa-a4a6eb998243"
 
 # -----------------------------------------------------------------------------
 # Container Image Tags
