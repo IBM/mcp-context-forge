@@ -68,8 +68,11 @@ OBSERVABILITY_MAX_TRACES=100000
 # Trace sampling (1.0 = 100%, 0.1 = 10%)
 OBSERVABILITY_SAMPLE_RATE=1.0
 
-# Exclude paths (regex patterns)
-OBSERVABILITY_EXCLUDE_PATHS=/health,/healthz,/ready,/metrics,/static/.*
+# Include paths (JSON array of regex patterns)
+OBSERVABILITY_INCLUDE_PATHS=["^/rpc/?$","^/sse$","^/message$","^/mcp(?:/|$)","^/servers/[^/]+/mcp/?$","^/servers/[^/]+/sse$","^/servers/[^/]+/message$","^/a2a(?:/|$)"]
+
+# Exclude paths (JSON array of regex patterns, applied after include patterns)
+OBSERVABILITY_EXCLUDE_PATHS=["/health","/healthz","/ready","/metrics","/static/.*"]
 
 # Enable metrics and events
 OBSERVABILITY_METRICS_ENABLED=true
@@ -116,7 +119,8 @@ http://localhost:4444/admin/observability
 | Variable | Description | Default | Range |
 |----------|-------------|---------|-------|
 | `OBSERVABILITY_SAMPLE_RATE` | Trace sampling rate | `1.0` | 0.0-1.0 |
-| `OBSERVABILITY_EXCLUDE_PATHS` | Regex patterns to exclude | `/health,/healthz,/ready,/metrics,/static/.*` | Comma-separated |
+| `OBSERVABILITY_INCLUDE_PATHS` | Regex patterns to include for tracing | `["^/rpc/?$","^/sse$","^/message$","^/mcp(?:/|$)","^/servers/[^/]+/mcp/?$","^/servers/[^/]+/sse$","^/servers/[^/]+/message$","^/a2a(?:/|$)"]` | JSON array |
+| `OBSERVABILITY_EXCLUDE_PATHS` | Regex patterns to exclude (after include patterns) | `["/health","/healthz","/ready","/metrics","/static/.*"]` | JSON array |
 
 ### Feature Flags
 
@@ -381,14 +385,20 @@ OBSERVABILITY_SAMPLE_RATE=0.01
 
 ### Path Exclusion
 
-Exclude noisy or irrelevant paths:
+Tune which paths are traced:
 
 ```bash
-# Default exclusions
-OBSERVABILITY_EXCLUDE_PATHS=/health,/healthz,/ready,/metrics,/static/.*
+# Limit tracing to MCP/A2A endpoints (default include list)
+OBSERVABILITY_INCLUDE_PATHS=["^/rpc/?$","^/sse$","^/message$","^/mcp(?:/|$)","^/servers/[^/]+/mcp/?$","^/servers/[^/]+/sse$","^/servers/[^/]+/message$","^/a2a(?:/|$)"]
 
-# Custom exclusions (regex patterns)
-OBSERVABILITY_EXCLUDE_PATHS=/health.*,/metrics.*,/static/.*,/admin/assets/.*
+# Trace all endpoints (leave include list empty)
+OBSERVABILITY_INCLUDE_PATHS=[]
+
+# Default exclusions
+OBSERVABILITY_EXCLUDE_PATHS=["/health","/healthz","/ready","/metrics","/static/.*"]
+
+# Custom exclusions (regex patterns applied after includes)
+OBSERVABILITY_EXCLUDE_PATHS=["/health.*","/metrics.*","/static/.*","/admin/assets/.*"]
 ```
 
 ## Database Schema
@@ -601,7 +611,7 @@ OBSERVABILITY_SAMPLE_RATE=0.1  # 10% sampling
 OBSERVABILITY_TRACE_RETENTION_DAYS=3
 
 # Exclude high-frequency paths
-OBSERVABILITY_EXCLUDE_PATHS=/health.*,/metrics.*,/static/.*
+OBSERVABILITY_EXCLUDE_PATHS=["/health.*","/metrics.*","/static/.*"]
 
 # Disable HTTP request tracing (manual traces only)
 OBSERVABILITY_TRACE_HTTP_REQUESTS=false
@@ -680,21 +690,28 @@ WHERE start_time < NOW() - INTERVAL '7 days';
    echo $OBSERVABILITY_SAMPLE_RATE  # Should be > 0.0
    ```
 
-3. **Review excluded paths**:
+3. **Review included paths**:
+
+   ```bash
+   echo $OBSERVABILITY_INCLUDE_PATHS
+   # Ensure your test path is included
+   ```
+
+4. **Review excluded paths**:
 
    ```bash
    echo $OBSERVABILITY_EXCLUDE_PATHS
    # Ensure your test path is not excluded
    ```
 
-4. **Check database connection**:
+5. **Check database connection**:
 
    ```bash
    # Verify database is accessible
    mcpgateway db-check
    ```
 
-5. **Enable debug logging**:
+6. **Enable debug logging**:
 
    ```bash
    export LOG_LEVEL=DEBUG
@@ -804,7 +821,7 @@ OBSERVABILITY_ENABLED=true
 OBSERVABILITY_SAMPLE_RATE=0.1
 OBSERVABILITY_TRACE_RETENTION_DAYS=14
 OBSERVABILITY_MAX_TRACES=1000000
-OBSERVABILITY_EXCLUDE_PATHS=/health.*,/metrics.*
+OBSERVABILITY_EXCLUDE_PATHS=["/health.*","/metrics.*"]
 ```
 
 ## Next Steps

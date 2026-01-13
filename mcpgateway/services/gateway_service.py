@@ -657,6 +657,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         team_id: Optional[str] = None,
         owner_email: Optional[str] = None,
         visibility: Optional[str] = None,
+        initialize_timeout: Optional[float] = None,
     ) -> GatewayRead:
         """Register a new gateway.
 
@@ -670,6 +671,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             team_id (Optional[str]): Team ID to assign the gateway to.
             owner_email (Optional[str]): Email of the user who owns this gateway.
             visibility (Optional[str]): Gateway visibility level (private, team, public).
+            initialize_timeout (Optional[float]): Timeout in seconds for gateway initialization.
 
         Returns:
             Created gateway information
@@ -774,7 +776,16 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             oauth_config = getattr(gateway, "oauth_config", None)
             ca_certificate = getattr(gateway, "ca_certificate", None)
-            capabilities, tools, resources, prompts = await self._initialize_gateway(normalized_url, authentication_headers, gateway.transport, auth_type, oauth_config, ca_certificate)
+            if initialize_timeout is not None:
+                try:
+                    capabilities, tools, resources, prompts = await asyncio.wait_for(
+                        self._initialize_gateway(normalized_url, authentication_headers, gateway.transport, auth_type, oauth_config, ca_certificate),
+                        timeout=initialize_timeout,
+                    )
+                except asyncio.TimeoutError as exc:
+                    raise GatewayConnectionError(f"Gateway initialization timed out after {initialize_timeout}s") from exc
+            else:
+                capabilities, tools, resources, prompts = await self._initialize_gateway(normalized_url, authentication_headers, gateway.transport, auth_type, oauth_config, ca_certificate)
 
             if gateway.one_time_auth:
                 # For one-time auth, clear auth_type and auth_value after initialization

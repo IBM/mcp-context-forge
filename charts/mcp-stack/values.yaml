@@ -487,7 +487,8 @@ mcpContextForge:
     OBSERVABILITY_TRACE_RETENTION_DAYS: "7"      # number of days to retain trace data
     OBSERVABILITY_MAX_TRACES: "100000"           # maximum number of traces to retain
     OBSERVABILITY_SAMPLE_RATE: "1.0"             # trace sampling rate (0.0-1.0, 1.0 = trace everything)
-    OBSERVABILITY_EXCLUDE_PATHS: '["/health", "/healthz", "/ready", "/metrics", "/static/.*"]' # paths to exclude from tracing
+    OBSERVABILITY_INCLUDE_PATHS: '["^/rpc/?$", "^/sse$", "^/message$", "^/mcp(?:/|$)", "^/servers/[^/]+/mcp/?$", "^/servers/[^/]+/sse$", "^/servers/[^/]+/message$", "^/a2a(?:/|$)"]' # paths to include for tracing
+    OBSERVABILITY_EXCLUDE_PATHS: '["/health", "/healthz", "/ready", "/metrics", "/static/.*"]' # paths to exclude from tracing after include patterns
     OBSERVABILITY_METRICS_ENABLED: "true"        # enable metrics collection
     OBSERVABILITY_EVENTS_ENABLED: "true"         # enable event logging within spans
 

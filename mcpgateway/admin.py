@@ -9747,6 +9747,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             visibility=visibility,
             team_id=team_id_cast,
             owner_email=user_email,
+            initialize_timeout=settings.httpx_admin_read_timeout,
         )
 
         # Provide specific guidance for OAuth Authorization Code flow
