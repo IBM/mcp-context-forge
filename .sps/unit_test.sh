@@ -19,7 +19,7 @@ echo "############# Running Install dependencies ################"
     python3 -m uv pip install 'psycopg2' && \
     python3 -m uv pip install 'openpyxl' && \
     python3 -m uv pip install 'copier' && \
-    . $HOME/.venv/mcpgateway/bin/deactivate
+    deactivate
 echo "############# Running Install DB ################"
 make install-db
 echo "############# Running Tests and Coverage ##################"
