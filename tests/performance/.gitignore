@@ -22,3 +22,7 @@ baselines/*.json
 
 # Keep directory structure
 !results/.gitkeep
+
+# Ignore performance profiles
+plugins/prof
+plugins/prof_baseline
