@@ -126,6 +126,15 @@ document.addEventListener("DOMContentLoaded", function () {
     // Initialize search functionality for all entity types
     initializeSearchInputs();
     initializePasswordValidation();
+
+    // Initialize checkbox states from URL parameter for inactive toggles
+    const urlParams = new URLSearchParams(window.location.search);
+    const includeInactive = urlParams.get("include_inactive") === "true";
+    const serversCheckbox = document.getElementById("show-inactive-servers");
+    const gatewaysCheckbox = document.getElementById("show-inactive-gateways");
+    if (serversCheckbox) serversCheckbox.checked = includeInactive;
+    if (gatewaysCheckbox) gatewaysCheckbox.checked = includeInactive;
+
     initializeAddMembersForms();
 
     // Event delegation for team member search - server-side search for unified view
@@ -10159,32 +10168,18 @@ function toggleInactiveItems(type) {
         // ignore (shouldn't happen)
     }
 
-    // For servers (catalog), use loadServers function if available, otherwise reload page
-    if (type === "servers") {
-        if (typeof window.loadServers === "function") {
-            window.loadServers();
-            return;
-        }
-        // Fallback to page reload
-        const fallbackUrl = new URL(window.location);
-        if (checkbox.checked) {
-            fallbackUrl.searchParams.set("include_inactive", "true");
-        } else {
-            fallbackUrl.searchParams.delete("include_inactive");
-        }
-        window.location = fallbackUrl;
-        return;
-    }
-
     // Try to find the HTMX container that loads this entity's partial
     // Prefer an element with hx-get containing the admin partial endpoint
     const selector = `[hx-get*="/admin/${type}/partial"]`;
     let container = document.querySelector(selector);
 
     // Fallback to conventional id naming used in templates
+    // tools, servers, and gateways use "-table" suffix; others use "-list-container"
     if (!container) {
-        const fallbackId =
-            type === "tools" ? "tools-table" : `${type}-list-container`;
+        const tableTypes = ["tools", "servers", "gateways"];
+        const fallbackId = tableTypes.includes(type)
+            ? `${type}-table`
+            : `${type}-list-container`;
         container = document.getElementById(fallbackId);
     }
 
@@ -10218,12 +10213,28 @@ function toggleInactiveItems(type) {
                 reqUrl.searchParams.delete("include_inactive");
             }
         } else {
-            // construct from known pattern
+            // construct from known pattern, preserving URL params like team_id
             const root = window.ROOT_PATH || "";
+            const currentUrl = new URL(window.location);
+            // Read per_page from pagination select (Alpine.js state), fall back to URL, then default
+            const paginationControls = document.getElementById(
+                `${type}-pagination-controls`,
+            );
+            const paginationSelect = paginationControls?.querySelector(
+                'select[x-model="perPage"]',
+            );
+            const perPage =
+                paginationSelect?.value ||
+                currentUrl.searchParams.get("per_page") ||
+                "20";
+            const teamId = currentUrl.searchParams.get("team_id");
             reqUrl = new URL(
-                `${root}/admin/${type}/partial?page=1&per_page=50`,
+                `${root}/admin/${type}/partial?page=1&per_page=${perPage}`,
                 window.location.origin,
             );
+            if (teamId) {
+                reqUrl.searchParams.set("team_id", teamId);
+            }
             if (checkbox.checked) {
                 reqUrl.searchParams.set("include_inactive", "true");
             }
@@ -16093,10 +16104,21 @@ function filterServerTable(searchText) {
                 }
             });
 
-            const isMatch =
+            const matchesSearch =
                 search === "" || textContent.toLowerCase().includes(search);
-            if (isMatch) {
-                row.style.display = "";
+
+            // Check if row should be visible based on inactive filter
+            const checkbox = document.getElementById("show-inactive-servers");
+            const showInactive = checkbox ? checkbox.checked : true;
+            const isEnabled = row.getAttribute("data-enabled") === "true";
+            const matchesFilter = showInactive || isEnabled;
+
+            // Only show row if it matches BOTH search AND filter
+            const shouldShow = matchesSearch && matchesFilter;
+
+            if (shouldShow) {
+                row.style.removeProperty("display");
+                row.style.removeProperty("visibility");
             } else {
                 row.style.display = "none";
             }
@@ -16369,19 +16391,28 @@ function filterGatewaysTable(searchText) {
             }
 
             const fullText = searchContent.trim().toLowerCase();
-            const shouldShow = search === "" || fullText.includes(search);
+            const matchesSearch = search === "" || fullText.includes(search);
+
+            // Check if row should be visible based on inactive filter
+            const checkbox = document.getElementById("show-inactive-gateways");
+            const showInactive = checkbox ? checkbox.checked : true;
+            const isEnabled = row.getAttribute("data-enabled") === "true";
+            const matchesFilter = showInactive || isEnabled;
+
+            // Only show row if it matches BOTH search AND filter
+            const shouldShow = matchesSearch && matchesFilter;
 
             // Debug first few rows
             if (index < 3) {
                 console.log(
-                    `Row ${index + 1}: "${fullText.substring(0, 50)}..." -> Match: ${shouldShow}`,
+                    `Row ${index + 1}: "${fullText.substring(0, 50)}..." -> Search: ${matchesSearch}, Filter: ${matchesFilter}, Show: ${shouldShow}`,
                 );
             }
 
             // Show/hide the row
             if (shouldShow) {
-                row.style.display = "";
-                row.style.visibility = "visible";
+                row.style.removeProperty("display");
+                row.style.removeProperty("visibility");
                 visibleCount++;
             } else {
                 row.style.display = "none";
@@ -16587,6 +16618,11 @@ function initializeSearchInputs() {
             filterServerTable(this.value);
         });
         console.log("✅ Virtual Servers search initialized");
+        // Reapply current search term if any (preserves search after HTMX swap)
+        const currentSearch = catalogSearchInput.value || "";
+        if (currentSearch) {
+            filterServerTable(currentSearch);
+        }
     }
 
     // MCP Servers (Gateways) search
@@ -16617,8 +16653,11 @@ function initializeSearchInputs() {
 
         console.log("✅ MCP Servers search events attached");
 
-        // Test the function works
-        filterGatewaysTable("");
+        // Reapply current search term if any (preserves search after HTMX swap)
+        const currentSearch = gatewaysSearchInput.value || "";
+        if (currentSearch) {
+            filterGatewaysTable(currentSearch);
+        }
     } else {
         console.error("❌ MCP Servers search input not found!");
 
