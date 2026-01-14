@@ -30340,8 +30340,8 @@ async function serverSideUserSearch(teamId, searchTerm) {
     // If search is empty, reload both sections with full data
     if (!searchTerm || searchTerm.trim() === "") {
         try {
-            // Reload members
-            const membersResponse = await fetch(
+            // Reload members - use fetchWithAuth for bearer token support
+            const membersResponse = await fetchWithAuth(
                 `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=20`,
             );
             if (membersResponse.ok) {
@@ -30349,7 +30349,7 @@ async function serverSideUserSearch(teamId, searchTerm) {
             }
 
             // Reload non-members
-            const nonMembersResponse = await fetch(
+            const nonMembersResponse = await fetchWithAuth(
                 `${window.ROOT_PATH}/admin/teams/${teamId}/non-members/partial?page=1&per_page=20`,
             );
             if (nonMembersResponse.ok) {
@@ -30362,9 +30362,48 @@ async function serverSideUserSearch(teamId, searchTerm) {
     }
 
     try {
-        // Search all users
+        // First, collect member data from DOM including roles (before search replaces content)
+        const memberDataFromDom = {};
+        const existingMemberItems = document.querySelectorAll(
+            `#team-members-container-${teamId} .user-item`,
+        );
+        existingMemberItems.forEach((item) => {
+            const email = item.dataset.userEmail;
+            if (email) {
+                const roleSelect = item.querySelector(".role-select");
+                memberDataFromDom[email] = {
+                    role: roleSelect ? roleSelect.value : "member",
+                };
+            }
+        });
+
+        // If no members found in DOM yet, fetch from server to get membership data with roles
+        if (Object.keys(memberDataFromDom).length === 0) {
+            try {
+                const membersResp = await fetchWithAuth(
+                    `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=100`,
+                );
+                if (membersResp.ok) {
+                    const tempDiv = document.createElement("div");
+                    tempDiv.innerHTML = await membersResp.text();
+                    tempDiv.querySelectorAll(".user-item").forEach((item) => {
+                        const email = item.dataset.userEmail;
+                        if (email) {
+                            const roleSelect = item.querySelector(".role-select");
+                            memberDataFromDom[email] = {
+                                role: roleSelect ? roleSelect.value : "member",
+                            };
+                        }
+                    });
+                }
+            } catch (e) {
+                console.error("Error fetching member data:", e);
+            }
+        }
+
+        // Search all users - use fetchWithAuth for bearer token support
         const searchUrl = `${window.ROOT_PATH}/admin/users/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
-        const response = await fetch(searchUrl);
+        const response = await fetchWithAuth(searchUrl);
 
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -30373,44 +30412,16 @@ async function serverSideUserSearch(teamId, searchTerm) {
         const data = await response.json();
 
         if (data.users && data.users.length > 0) {
-            // Get current member emails from original DOM data to determine membership
-            const currentMemberEmails = new Set();
-            const existingMembers = document.querySelectorAll(
-                `#team-members-container-${teamId} .user-item`,
-            );
-            existingMembers.forEach((item) => {
-                const email = item.dataset.userEmail;
-                if (email) currentMemberEmails.add(email);
-            });
-
-            // If no members found in DOM yet, fetch from server to get membership data
-            if (currentMemberEmails.size === 0) {
-                try {
-                    const membersResp = await fetch(
-                        `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=100`,
-                    );
-                    if (membersResp.ok) {
-                        const tempDiv = document.createElement("div");
-                        tempDiv.innerHTML = await membersResp.text();
-                        tempDiv
-                            .querySelectorAll(".user-item")
-                            .forEach((item) => {
-                                const email = item.dataset.userEmail;
-                                if (email) currentMemberEmails.add(email);
-                            });
-                    }
-                } catch (e) {
-                    console.error("Error fetching member emails:", e);
-                }
-            }
-
-            // Split users into members and non-members
+            // Split users into members and non-members based on collected data
             const members = [];
             const nonMembers = [];
 
             data.users.forEach((user) => {
-                if (currentMemberEmails.has(user.email)) {
-                    members.push(user);
+                if (memberDataFromDom[user.email]) {
+                    members.push({
+                        ...user,
+                        role: memberDataFromDom[user.email].role,
+                    });
                 } else {
                     nonMembers.push(user);
                 }
@@ -30423,11 +30434,13 @@ async function serverSideUserSearch(teamId, searchTerm) {
                 return div.innerHTML;
             }
 
-            // Render members
+            // Render members with preserved roles and loadedMembers hidden input
             let membersHtml = "";
             members.forEach((user) => {
                 const fullName = escapeHtml(user.full_name || user.email);
                 const email = escapeHtml(user.email);
+                const role = user.role || "member";
+                const isOwner = role === "owner";
                 membersHtml += `
                     <div class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-3 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item border border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-900/20" data-user-email="${email}">
                         <div class="flex-shrink-0">
@@ -30435,16 +30448,18 @@ async function serverSideUserSearch(teamId, searchTerm) {
                                 <span class="text-sm font-medium text-gray-700 dark:text-gray-300">${user.email[0].toUpperCase()}</span>
                             </div>
                         </div>
+                        <input type="hidden" name="loadedMembers" value="${email}" />
                         <input type="checkbox" name="associatedUsers" value="${email}" data-user-name="${fullName}" class="user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0" checked data-auto-check="true" />
                         <div class="flex-grow min-w-0">
                             <div class="flex items-center gap-2 flex-wrap">
                                 <span class="select-none font-medium text-gray-900 dark:text-white truncate">${fullName}</span>
+                                ${isOwner ? '<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-800 rounded-full dark:bg-purple-900 dark:text-purple-200">Owner</span>' : ""}
                             </div>
                             <div class="text-sm text-gray-500 dark:text-gray-400 truncate">${email}</div>
                         </div>
                         <select name="role_${encodeURIComponent(user.email)}" class="role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0">
-                            <option value="member">Member</option>
-                            <option value="owner">Owner</option>
+                            <option value="member" ${!isOwner ? "selected" : ""}>Member</option>
+                            <option value="owner" ${isOwner ? "selected" : ""}>Owner</option>
                         </select>
                     </div>
                 `;

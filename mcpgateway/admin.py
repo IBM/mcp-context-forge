@@ -4771,6 +4771,10 @@ async def admin_add_team_members(
 
         form = await request.form()
 
+        # Get loaded members - these are members that were visible in the form (for safe removal with pagination)
+        loaded_members_list = form.getlist("loadedMembers")
+        loaded_members = {email.strip() for email in loaded_members_list if isinstance(email, str) and email.strip()}
+
         # Check if this is single user or multiple users
         single_user_email = form.get("user_email")
         multiple_user_emails = form.getlist("associatedUsers")
@@ -4860,28 +4864,34 @@ async def admin_add_team_members(
                 LOGGER.error(f"Error processing {user_email} for team {team_id}: {member_error}")
                 errors.append(f"{user_email} ({str(member_error)})")
 
-        # 2. Handle removals - members who were NOT in the submitted list (unchecked)
+        # 2. Handle removals - only remove members who were LOADED in the form AND unchecked
+        # This prevents accidentally removing members from pages that weren't loaded yet (infinite scroll safety)
         for existing_email in existing_member_emails:
-            if existing_email not in submitted_user_emails:
-                member_info = existing_member_roles.get(existing_email, {})
+            # Only consider removal if the member was visible in the form (in loadedMembers)
+            if existing_email not in loaded_members:
+                continue  # Member wasn't loaded in form, skip (safe for pagination)
+            if existing_email in submitted_user_emails:
+                continue  # Member is checked, don't remove
 
-                # Validate removal is allowed - server-side protection
-                # Current user cannot be removed
-                if existing_email == user_email_from_jwt:
-                    errors.append(f"{existing_email} (cannot remove yourself)")
-                    continue
-                # Last owner cannot be removed
-                if member_info.get("is_last_owner", False):
-                    errors.append(f"{existing_email} (cannot remove last owner)")
-                    continue
+            member_info = existing_member_roles.get(existing_email, {})
 
-                # This member was unchecked and removal is allowed - remove them
-                try:
-                    await team_service.remove_member_from_team(team_id=team_id, user_email=existing_email, removed_by=user_email_from_jwt)
-                    removed.append(existing_email)
-                except Exception as removal_error:
-                    LOGGER.error(f"Error removing {existing_email} from team {team_id}: {removal_error}")
-                    errors.append(f"{existing_email} (removal failed: {str(removal_error)})")
+            # Validate removal is allowed - server-side protection
+            # Current user cannot be removed
+            if existing_email == user_email_from_jwt:
+                errors.append(f"{existing_email} (cannot remove yourself)")
+                continue
+            # Last owner cannot be removed
+            if member_info.get("is_last_owner", False):
+                errors.append(f"{existing_email} (cannot remove last owner)")
+                continue
+
+            # This member was unchecked and removal is allowed - remove them
+            try:
+                await team_service.remove_member_from_team(team_id=team_id, user_email=existing_email, removed_by=user_email_from_jwt)
+                removed.append(existing_email)
+            except Exception as removal_error:
+                LOGGER.error(f"Error removing {existing_email} from team {team_id}: {removal_error}")
+                errors.append(f"{existing_email} (removal failed: {str(removal_error)})")
 
         # Build result message
         result_parts = []
@@ -5857,8 +5867,8 @@ async def admin_team_members_partial_html(
         members = paginated_result["data"]
         pagination = paginated_result["pagination"]
 
-        # Count owners for is_last_owner check
-        owner_count = sum(1 for _, membership in members if membership.role == "owner")
+        # Count owners for is_last_owner check - must count ALL owners, not just current page
+        owner_count = team_service.count_team_owners(team_id)
 
         # End the read-only transaction early
         db.commit()

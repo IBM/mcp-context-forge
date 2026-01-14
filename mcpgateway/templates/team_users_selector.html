@@ -30,6 +30,11 @@
     </div>
   </div>
 
+  <!-- Hidden input to track loaded members (for safe removal with pagination) -->
+  {% if is_member %}
+  <input type="hidden" name="loadedMembers" value="{{ user.email }}" />
+  {% endif %}
+
   <!-- Checkbox -->
   <input
     type="checkbox"
