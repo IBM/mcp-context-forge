@@ -16074,12 +16074,12 @@ function filterServerTable(searchText) {
         rows.forEach((row) => {
             let textContent = "";
 
-            // Get text from all searchable cells (exclude only Actions column)
-            // Table columns: Icon(0), S.No.(1), UUID(2), Name(3), Description(4), Tools(5), Resources(6), Prompts(7), Tags(8), Owner(9), Team(10), Visibility(11), Actions(12)
+            // Get text from all searchable cells (exclude Actions, Icon, and S.No. columns)
+            // Table columns: Actions(0), Icon(1), S.No.(2), UUID(3), Name(4), Description(5), Tools(6), Resources(7), Prompts(8), Tags(9), Owner(10), Team(11), Visibility(12)
             const cells = row.querySelectorAll("td");
-            // Search all columns except Icon and Actions columns
+            // Search all columns except Actions(0), Icon(1), and S.No.(2) columns
             const searchableColumnIndices = [];
-            for (let i = 1; i < cells.length - 1; i++) {
+            for (let i = 3; i < cells.length; i++) {
                 searchableColumnIndices.push(i);
             }
 
@@ -16126,10 +16126,10 @@ function filterToolsTable(searchText) {
         rows.forEach((row) => {
             let textContent = "";
 
-            // Get text from searchable cells (exclude S.No. and Actions columns)
-            // Tools columns: S.No.(0), Gateway Name(1), Name(2), URL(3), Type(4), Request Type(5), Description(6), Annotations(7), Tags(8), Owner(9), Team(10), Visibility(11), Status(12), Actions(13)
+            // Get text from searchable cells (exclude Actions and S.No. columns)
+            // Tools columns: Actions(0), S.No.(1), Source(2), Name(3), RequestType(4), Description(5), Annotations(6), Tags(7), Owner(8), Team(9), Status(10)
             const cells = row.querySelectorAll("td");
-            const searchableColumns = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]; // Exclude S.No. and Actions
+            const searchableColumns = [2, 3, 4, 5, 6, 7, 8, 9, 10]; // Exclude Actions(0) and S.No.(1)
 
             searchableColumns.forEach((index) => {
                 if (cells[index]) {
@@ -16172,9 +16172,9 @@ function filterResourcesTable(searchText) {
             let textContent = "";
 
             // Get text from searchable cells (exclude Actions column)
-            // Resources columns: ID(0), URI(1), Name(2), Description(3), MIME Type(4), Tags(5), Owner(6), Team(7), Visibility(8), Status(9), Actions(10)
+            // Resources columns: Actions(0), Source(1), Name(2), Description(3), Tags(4), Owner(5), Team(6), Status(7)
             const cells = row.querySelectorAll("td");
-            const searchableColumns = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]; // All except Actions
+            const searchableColumns = [1, 2, 3, 4, 5, 6, 7]; // All except Actions(0)
 
             searchableColumns.forEach((index) => {
                 if (cells[index]) {
@@ -16210,10 +16210,10 @@ function filterPromptsTable(searchText) {
         rows.forEach((row) => {
             let textContent = "";
 
-            // Get text from searchable cells (exclude Actions column)
-            // Prompts columns: S.No.(0), Name(1), Description(2), Tags(3), Owner(4), Team(5), Visibility(6), Status(7), Actions(8)
+            // Get text from searchable cells (exclude Actions and S.No. columns)
+            // Prompts columns: Actions(0), S.No.(1), GatewayName(2), Name(3), Description(4), Tags(5), Owner(6), Team(7), Status(8)
             const cells = row.querySelectorAll("td");
-            const searchableColumns = [0, 1, 2, 3, 4, 5, 6, 7]; // All except Actions
+            const searchableColumns = [2, 3, 4, 5, 6, 7, 8]; // All except Actions(0) and S.No.(1)
 
             searchableColumns.forEach((index) => {
                 if (cells[index]) {
@@ -16256,10 +16256,10 @@ function filterA2AAgentsTable(searchText) {
         rows.forEach((row) => {
             let textContent = "";
 
-            // Get text from searchable cells (exclude ID and Actions columns)
-            // A2A Agents columns: ID(0), Name(1), Description(2), Endpoint(3), Tags(4), Type(5), Status(6), Reachability(7), Owner(8), Team(9), Visibility(10), Actions(11)
+            // Get text from searchable cells (exclude Actions and ID columns)
+            // A2A Agents columns: Actions(0), ID(1), Name(2), Description(3), Endpoint(4), Tags(5), Type(6), Status(7), Reachability(8), Owner(9), Team(10), Visibility(11)
             const cells = row.querySelectorAll("td");
-            const searchableColumns = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]; // Exclude ID and Actions
+            const searchableColumns = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]; // Exclude Actions(0) and ID(1)
 
             searchableColumns.forEach((index) => {
                 if (cells[index]) {
@@ -16358,9 +16358,10 @@ function filterGatewaysTable(searchText) {
                 return;
             }
 
-            // Combine text from all cells except the last one (Actions column)
+            // Combine text from all cells except Actions(0) and S.No.(1) columns
+            // Gateways columns: Actions(0), S.No.(1), Name(2), URL(3), Tags(4), Status(5), LastSeen(6), Owner(7), Team(8), Visibility(9)
             let searchContent = "";
-            for (let i = 0; i < cells.length - 1; i++) {
+            for (let i = 2; i < cells.length; i++) {
                 if (cells[i]) {
                     const cellText = cells[i].textContent.trim();
                     searchContent += " " + cellText;
@@ -16456,8 +16457,8 @@ window.simpleGatewaySearch = function (searchTerm) {
                     const cells = row.querySelectorAll("td");
                     let rowText = "";
 
-                    // Get text from all cells except last (Actions)
-                    for (let i = 0; i < cells.length - 1; i++) {
+                    // Get text from all cells except Actions(0) and S.No.(1)
+                    for (let i = 2; i < cells.length; i++) {
                         rowText += " " + cells[i].textContent.trim();
                     }
 
