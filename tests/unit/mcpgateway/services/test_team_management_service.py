@@ -8,14 +8,17 @@ Comprehensive tests for Team Management Service functionality.
 """
 
 # Standard
+import base64
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 # Third-Party
+import orjson
 import pytest
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import EmailTeam, EmailTeamMember, EmailUser
+from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailUser
 from mcpgateway.services.team_management_service import TeamManagementService
 
 
@@ -656,14 +659,81 @@ class TestTeamManagementService:
         """Test getting team members."""
         mock_members = [(MagicMock(spec=EmailUser), MagicMock(spec=EmailTeamMember)) for _ in range(3)]
 
-        mock_query = MagicMock()
-        mock_query.join.return_value.filter.return_value.all.return_value = mock_members
-        mock_db.query.return_value = mock_query
+        # Mock execute() to return a result with .all() method (SQLAlchemy 2.0 style)
+        mock_result = MagicMock()
+        mock_result.all.return_value = mock_members
+        mock_db.execute.return_value = mock_result
+        mock_db.commit.return_value = None
 
         result = await service.get_team_members("team123")
 
         assert result == mock_members
-        mock_db.query.assert_called_once_with(EmailUser, EmailTeamMember)
+        mock_db.execute.assert_called_once()
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_team_members_with_cursor_pagination(self, service, mock_db):
+        """Test getting team members with cursor-based pagination."""
+        # Create mock EmailTeamMember objects with user relationship
+        mock_memberships = []
+        for i in range(3):
+            mock_member = MagicMock(spec=EmailTeamMember)
+            mock_member.id = f"member-{i}"
+            mock_member.joined_at = datetime(2024, 1, 15, 10, 0, i, tzinfo=timezone.utc)
+            mock_member.user = MagicMock(spec=EmailUser)
+            mock_member.user.email = f"user{i}@example.com"
+            mock_memberships.append(mock_member)
+
+        # Return 4 items to trigger has_more (limit=3 + 1)
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = mock_memberships + [MagicMock(spec=EmailTeamMember)]
+        mock_db.execute.return_value = mock_result
+        mock_db.commit.return_value = None
+
+        # Call with limit (triggers cursor-based pagination)
+        result = await service.get_team_members("team123", cursor=None, limit=3)
+
+        # Result should be a tuple (members, next_cursor)
+        assert isinstance(result, tuple)
+        members, next_cursor = result
+        assert len(members) == 3
+        assert next_cursor is not None
+
+        # Verify cursor uses (joined_at, id)
+        cursor_json = base64.urlsafe_b64decode(next_cursor.encode()).decode()
+        cursor_data = orjson.loads(cursor_json)
+        assert "joined_at" in cursor_data
+        assert "id" in cursor_data
+
+    @pytest.mark.asyncio
+    async def test_get_team_members_with_cursor_advances(self, service, mock_db):
+        """Test that cursor-based pagination advances correctly."""
+        # Create a cursor from a previous page
+        cursor_data = {
+            "joined_at": "2024-01-15T10:00:02+00:00",
+            "id": "member-2",
+        }
+        cursor = base64.urlsafe_b64encode(orjson.dumps(cursor_data)).decode()
+
+        # Mock remaining members
+        mock_memberships = []
+        for i in range(2):
+            mock_member = MagicMock(spec=EmailTeamMember)
+            mock_member.id = f"member-{i+3}"
+            mock_member.joined_at = datetime(2024, 1, 15, 9, 0, i, tzinfo=timezone.utc)
+            mock_member.user = MagicMock(spec=EmailUser)
+            mock_memberships.append(mock_member)
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = mock_memberships
+        mock_db.execute.return_value = mock_result
+        mock_db.commit.return_value = None
+
+        result = await service.get_team_members("team123", cursor=cursor, limit=10)
+
+        members, next_cursor = result
+        assert len(members) == 2
+        assert next_cursor is None  # No more results
 
     @pytest.mark.asyncio
     async def test_get_user_role_in_team(self, service, mock_db):
@@ -915,9 +985,6 @@ class TestTeamManagementService:
 
     def test_get_pending_join_requests_batch_with_requests(self, service, mock_db):
         """Test get_pending_join_requests_batch with pending requests."""
-        # First-Party
-        from mcpgateway.db import EmailTeamJoinRequest
-
         mock_request = MagicMock(spec=EmailTeamJoinRequest)
         mock_request.team_id = "team-1"
 

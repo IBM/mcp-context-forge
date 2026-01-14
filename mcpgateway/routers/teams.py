@@ -20,7 +20,7 @@ Examples:
 """
 
 # Standard
-from typing import Any, cast, List
+from typing import Any, cast, List, Optional, Union
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -28,10 +28,12 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
+from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import (
     EmailUserResponse,
+    PaginatedTeamMembersResponse,
     SuccessResponse,
     TeamCreateRequest,
     TeamDiscoveryResponse,
@@ -323,18 +325,29 @@ async def delete_team(team_id: str, current_user: EmailUserResponse = Depends(ge
 # ---------------------------------------------------------------------------
 
 
-@teams_router.get("/{team_id}/members", response_model=List[TeamMemberResponse])
+@teams_router.get("/{team_id}/members", response_model=Union[PaginatedTeamMembersResponse, List[TeamMemberResponse]])
 @require_permission("teams.read")
-async def list_team_members(team_id: str, current_user: EmailUserResponse = Depends(get_current_user), db: Session = Depends(get_db)) -> List[TeamMemberResponse]:
-    """List team members.
+async def list_team_members(
+    team_id: str,
+    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    limit: Optional[int] = Query(None, ge=1, le=settings.pagination_max_page_size, description="Maximum number of members to return (default: 50)"),
+    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
+    current_user: EmailUserResponse = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Union[PaginatedTeamMembersResponse, List[TeamMemberResponse]]:
+    """List team members with cursor-based pagination.
 
     Args:
         team_id: Team UUID
+        cursor: Pagination cursor for fetching the next set of results
+        limit: Maximum number of members to return (default: 50)
+        include_pagination: Whether to include cursor pagination metadata in the response (default: false)
         current_user: Currently authenticated user
         db: Database session
 
     Returns:
-        List[TeamMemberResponse]: List of team members
+        PaginatedTeamMembersResponse with members and nextCursor if include_pagination=true, or
+        List of team members if include_pagination=false
 
     Raises:
         HTTPException: If team not found or access denied
@@ -347,12 +360,38 @@ async def list_team_members(team_id: str, current_user: EmailUserResponse = Depe
         if not user_role:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to team")
 
-        members = await service.get_team_members(team_id)
+        # Get members - service returns different types based on parameters:
+        # - cursor=None, limit=None: List[Tuple] (backward compat)
+        # - cursor or limit provided: Tuple[List[Tuple], next_cursor]
+        result = await service.get_team_members(team_id, cursor=cursor, limit=limit)
 
+        # Handle different return types from service
+        if cursor is not None or limit is not None:
+            # Cursor pagination was used - result is a tuple
+            members, next_cursor = result
+        else:
+            # No pagination - result is a plain list
+            members = result
+            next_cursor = None
+
+        # Convert to response objects
         member_responses = []
-        for member in members:
-            m = cast(Any, member)
-            member_responses.append(TeamMemberResponse(id=m.id, team_id=m.team_id, user_email=m.user_email, role=m.role, joined_at=m.joined_at, invited_by=m.invited_by, is_active=m.is_active))
+        for user, membership in members:
+            member_responses.append(
+                TeamMemberResponse(
+                    id=membership.id,
+                    team_id=membership.team_id,
+                    user_email=membership.user_email,
+                    role=membership.role,
+                    joined_at=membership.joined_at,
+                    invited_by=membership.invited_by,
+                    is_active=membership.is_active,
+                )
+            )
+
+        # Return with pagination metadata if requested
+        if include_pagination:
+            return PaginatedTeamMembersResponse(members=member_responses, nextCursor=next_cursor)
 
         return member_responses
     except HTTPException:
