@@ -72,7 +72,7 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import utc_now
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_any_permission, require_permission
 from mcpgateway.routers.email_auth import create_access_token
 from mcpgateway.schemas import (
     A2AAgentCreate,
@@ -4255,7 +4255,11 @@ async def admin_view_team_members(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
-    """View team members via admin UI.
+    """View and manage team members via admin UI (unified view).
+
+    This replaces the old separate "view members" and "add members" screens with a unified
+    interface that shows all users with checkboxes. Members are pre-checked and can be
+    unchecked to remove them. Non-members can be checked to add them.
 
     Args:
         team_id: ID of the team to view members for
@@ -4266,7 +4270,7 @@ async def admin_view_team_members(
         user: Current authenticated user context
 
     Returns:
-        HTMLResponse: Rendered team members view
+        HTMLResponse: Rendered unified team members management view
     """
     if not settings.email_auth_enabled:
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
@@ -4277,195 +4281,113 @@ async def admin_view_team_members(
 
         # Get current user context for logging and authorization
         user_email = get_user_email(user)
-        LOGGER.info(f"User {user_email} viewing members for team {team_id}")
+        LOGGER.info(f"User {user_email} viewing/managing members for team {team_id}")
 
         # First-Party
         team_service = TeamManagementService(db)
+        EmailAuthService(db)
 
         # Get team details
         team = await team_service.get_team_by_id(team_id)
         if not team:
             return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
 
-        base_url = f"{root_path}/admin/teams/{team_id}/members"
-        paginated_result = await team_service.list_team_members_paginated(
-            team_id=team_id,
-            page=page,
-            per_page=per_page,
-            base_url=base_url,
-        )
-        members = paginated_result.get("data", [])
-        pagination = paginated_result.get("pagination")
-        links = paginated_result.get("links")
-
-        # Count owners to determine if this is the last owner
-        owner_count = team_service.count_team_owners(team_id)
-
         # Check if current user is team owner
         current_user_role = await team_service.get_user_role_in_team(user_email, team_id)
         is_team_owner = current_user_role == "owner"
 
-        # Build member table with inline role editing for team owners
-        members_html = """
-        <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
-            <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
-                <h4 class="text-sm font-semibold text-gray-900 dark:text-white">Team Members</h4>
-            </div>
-            <div class="divide-y divide-gray-200 dark:divide-gray-700">
-        """
-
-        for membership in members:
-            member_user = membership.user
-            member_email = member_user.email if member_user else membership.user_email
-            member_name = (member_user.full_name if member_user else None) or member_email or "Unknown"
-            member_initial = (member_email or "?")[0].upper()
-            role_display = membership.role.replace("_", " ").title() if membership.role else "Member"
-            is_last_owner = membership.role == "owner" and owner_count == 1
-            is_current_user = member_email == user_email
-
-            # Role selection - only show for team owners and not for last owner
-            if is_team_owner and not is_last_owner:
-                role_selector = f"""
-                    <select
-                        name="role"
-                        class="text-xs px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        hx-post="{root_path}/admin/teams/{team_id}/update-member-role"
-                        hx-vals='{{"user_email": "{member_email}"}}'
-                        hx-target="#team-edit-modal-content"
-                        hx-swap="innerHTML"
-                        hx-trigger="change">
-                        <option value="member" {"selected" if membership.role == "member" else ""}>Member</option>
-                        <option value="owner" {"selected" if membership.role == "owner" else ""}>Owner</option>
-                    </select>
-                """
-            else:
-                # Show static role badge
-                role_color = "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200" if membership.role == "owner" else "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
-                role_selector = f'<span class="px-2 py-1 text-xs font-medium {role_color} rounded-full">{role_display}</span>'
-
-            # Remove button - hide for current user and last owner
-            if is_team_owner and not is_current_user and not is_last_owner:
-                remove_button = f"""
-                    <button
-                        class="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 focus:outline-none"
-                        hx-post="{root_path}/admin/teams/{team_id}/remove-member"
-                        hx-vals='{{"user_email": "{member_email}"}}'
-                        hx-confirm="Remove {member_email} from this team?"
-                        hx-target="#team-edit-modal-content"
-                        hx-swap="innerHTML"
-                        title="Remove member">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-                        </svg>
-                    </button>
-                """
-            else:
-                remove_button = ""
-
-            # Special indicators
-            indicators = []
-            if is_current_user:
-                indicators.append('<span class="inline-flex items-center px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded-full dark:bg-blue-900 dark:text-blue-200">You</span>')
-            if is_last_owner:
-                indicators.append(
-                    '<span class="inline-flex items-center px-2 py-1 text-xs font-medium bg-yellow-100 text-yellow-800 rounded-full dark:bg-yellow-900 dark:text-yellow-200">Last Owner</span>'
-                )
-
-            members_html += f"""
-                <div class="px-6 py-4 flex items-center justify-between">
-                    <div class="flex items-center space-x-4 flex-1">
-                        <div class="flex-shrink-0">
-                            <div class="w-8 h-8 bg-gray-300 dark:bg-gray-600 rounded-full flex items-center justify-center">
-                                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{member_initial}</span>
-                            </div>
-                        </div>
-                        <div class="min-w-0 flex-1">
-                            <div class="flex items-center space-x-2">
-                                <p class="text-sm font-medium text-gray-900 dark:text-white truncate">{member_name}</p>
-                                {" ".join(indicators)}
-                            </div>
-                            <p class="text-sm text-gray-500 dark:text-gray-400 truncate">{member_email or ""}</p>
-                            <p class="text-xs text-gray-400 dark:text-gray-500">Joined: {membership.joined_at.strftime("%b %d, %Y") if membership.joined_at else "Unknown"}</p>
-                        </div>
-                    </div>
-                    <div class="flex items-center space-x-3">
-                        {role_selector}
-                        {remove_button}
-                    </div>
-                </div>
-            """
-
-        members_html += """
-            </div>
-        </div>
-        """
-
-        if not members:
-            members_html = '<div class="text-center py-8 text-gray-500 dark:text-gray-400">No members found</div>'
-
-        pagination_html = ""
-        if pagination and pagination.total_pages > 1:
-            prev_attrs = f'hx-get="{links.prev}" hx-target="#team-edit-modal-content" hx-swap="innerHTML"' if links and links.prev else ""
-            next_attrs = f'hx-get="{links.next}" hx-target="#team-edit-modal-content" hx-swap="innerHTML"' if links and links.next else ""
-            prev_disabled = "disabled" if not (links and links.prev) else ""
-            next_disabled = "disabled" if not (links and links.next) else ""
-
-            pagination_html = f"""
-            <div class="flex items-center justify-between border-t border-gray-200 dark:border-gray-700 pt-3 text-xs text-gray-600 dark:text-gray-300">
-                <button
-                    class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 disabled:opacity-50"
-                    {prev_attrs}
-                    {prev_disabled}
-                >
-                    Prev
-                </button>
-                <div>
-                    Page {pagination.page} of {pagination.total_pages} • {pagination.total_items} members
-                </div>
-                <button
-                    class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 disabled:opacity-50"
-                    {next_attrs}
-                    {next_disabled}
-                >
-                    Next
-                </button>
-            </div>
-            """
-
-        # Add member management interface
-        add_members_button = (
-            f"<button onclick=\"loadAddMembersView('{team.id}')\" "
-            'class="px-3 py-1 text-sm font-medium text-white bg-blue-600 '
-            "hover:bg-blue-700 rounded-md focus:outline-none focus:ring-2 "
-            'focus:ring-offset-2 focus:ring-blue-500">+ Add Members</button>'
-            if is_team_owner
-            else ""
-        )
-
         # Escape team name to prevent XSS
-        safe_team_name_header = html.escape(team.name)
+        safe_team_name = html.escape(team.name)
 
-        management_html = f"""
+        # Build the two-section management interface with form
+        interface_html = f"""
         <div class="mb-4">
             <div class="flex justify-between items-center mb-4">
                 <h3 class="text-lg font-medium text-gray-900 dark:text-white">
-                    Team Members: {safe_team_name_header}
+                    Team Members: {safe_team_name}
                 </h3>
-                <div class="flex items-center space-x-2">
-                    {add_members_button}
-                    <button onclick="document.getElementById('team-edit-modal').classList.add('hidden')"
-                            class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round"
-                                stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                    </button>
+                <button onclick="document.getElementById('team-edit-modal').classList.add('hidden')"
+                        class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round"
+                            stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+
+            <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+                <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
+                    <h4 class="text-sm font-semibold text-gray-900 dark:text-white">
+                        Manage Team Members • Change roles • Add or remove members
+                    </h4>
                 </div>
+
+                <form id="team-members-form-{team.id}" data-team-id="{team.id}"
+                      hx-post="{root_path}/admin/teams/{team.id}/add-member"
+                      hx-target="#team-edit-modal-content"
+                      hx-swap="innerHTML"
+                      class="px-6 py-4">
+
+                    <!-- Search box -->
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Search Users</label>
+                        <input
+                            type="text"
+                            id="user-search-{team.id}"
+                            data-team-id="{team.id}"
+                            placeholder="Search by name or email..."
+                            class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white"
+                            oninput="debouncedServerSideUserSearch('{team.id}', this.value)"
+                        />
+                    </div>
+
+                    <!-- Current Members Section -->
+                    <div class="mb-6">
+                        <h5 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Current Members</h5>
+                        <div
+                            id="team-members-container-{team.id}"
+                            class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-32 overflow-y-auto dark:bg-gray-700"
+                            data-per-page="{per_page}"
+                            hx-get="{root_path}/admin/teams/{team.id}/members/partial?page={page}&per_page={per_page}"
+                            hx-trigger="load delay:100ms"
+                            hx-target="this"
+                            hx-swap="innerHTML"
+                        >
+                            <!-- Current members will be loaded here via HTMX -->
+                        </div>
+                    </div>
+
+                    <!-- Users to Add Section -->
+                    <div class="mb-4">
+                        <h5 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Users to Add</h5>
+                        <div
+                            id="team-non-members-container-{team.id}"
+                            class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-32 overflow-y-auto dark:bg-gray-700"
+                            data-per-page="{per_page}"
+                            hx-get="{root_path}/admin/teams/{team.id}/non-members/partial?page=1&per_page={per_page}"
+                            hx-trigger="load delay:200ms"
+                            hx-target="this"
+                            hx-swap="innerHTML"
+                        >
+                            <!-- Non-members will be loaded here via HTMX -->
+                        </div>
+                    </div>
+
+                    <!-- Submit button (only for team owners) -->
+                    {"" if not is_team_owner else '''
+                    <div class="flex justify-end space-x-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+                        <button type="submit"
+                                class="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                            Save Changes
+                        </button>
+                    </div>
+                    '''}
+                </form>
             </div>
         </div>
-        """
+        """  # nosec B608 - HTML template f-string, not SQL (uses SQLAlchemy ORM for DB)
 
-        return HTMLResponse(content=f'{management_html}<div class="space-y-2">{members_html}{pagination_html}</div>')
+        return HTMLResponse(content=interface_html)
 
     except Exception as e:
         LOGGER.error(f"Error viewing team members {team_id}: {e}")
@@ -4555,7 +4477,7 @@ async def admin_add_team_members_view(
                                 type="text"
                                 id="user-search-{team.id}"
                                 data-team-id="{team.id}"
-                                data-search-url="{root_path}/admin/teams/{team.id}/users/search"
+                                data-search-url="{root_path}/admin/users/search"
                                 data-search-limit="10"
                                 placeholder="Search by name or email..."
                                 class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 text-gray-900 dark:text-white"
@@ -4570,8 +4492,8 @@ async def admin_add_team_members_view(
                             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Available Users</label>
                             <div
                                 id="user-selector-container-{team.id}"
-                                class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-64 overflow-y-auto dark:bg-gray-700"
-                                hx-get="{root_path}/admin/teams/{team.id}/users/partial?page=1&per_page=20&render=selector"
+                                class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-32 overflow-y-auto dark:bg-gray-700"
+                                hx-get="{root_path}/admin/users/partial?page=1&per_page=20&render=selector&team_id={team.id}"
                                 hx-trigger="load"
                                 hx-swap="innerHTML"
                                 hx-target="#user-selector-container-{team.id}"
@@ -4851,6 +4773,10 @@ async def admin_add_team_members(
 
         form = await request.form()
 
+        # Get loaded members - these are members that were visible in the form (for safe removal with pagination)
+        loaded_members_list = form.getlist("loadedMembers")
+        loaded_members = {email.strip() for email in loaded_members_list if isinstance(email, str) and email.strip()}
+
         # Check if this is single user or multiple users
         single_user_email = form.get("user_email")
         multiple_user_emails = form.getlist("associatedUsers")
@@ -4877,27 +4803,34 @@ async def admin_add_team_members(
         else:
             return HTMLResponse(content='<div class="text-red-500">No users selected</div>', status_code=400)
 
-        # Get current team members to avoid duplicates
+        # Get current team members
         team_members = await team_service.get_team_members(team_id)
         existing_member_emails = {team_user.email for team_user, membership in team_members}
 
+        # Build a map of existing member roles
+        existing_member_roles = {}
+        owner_count = team_service.count_team_owners(team_id)
+        for team_user, membership in team_members:
+            email = team_user.email
+            is_last_owner = membership.role == "owner" and owner_count == 1
+            existing_member_roles[email] = {"role": membership.role, "is_last_owner": is_last_owner}
+
         # Track results
         added = []
-        skipped = []
+        updated = []
+        removed = []
         errors = []
 
-        # Add each user
+        # Process submitted users (checked boxes)
+        submitted_user_emails = set(user_emails)
+
+        # 1. Handle additions and updates for checked users
         for user_email in user_emails:
             if not isinstance(user_email, str):
                 continue
 
             user_email = user_email.strip()
             if not user_email:
-                continue
-
-            # Skip if already a member
-            if user_email in existing_member_emails:
-                skipped.append(user_email)
                 continue
 
             try:
@@ -4908,53 +4841,103 @@ async def admin_add_team_members(
                     continue
 
                 # Get per-user role from form (format: role_<url-encoded-email>)
-                # Template uses urlencode filter, so we need to URL-encode the email to match
                 encoded_email = urllib.parse.quote(user_email, safe="")
                 user_role_key = f"role_{encoded_email}"
                 user_role_val = form.get(user_role_key, default_role)
                 user_role = user_role_val if isinstance(user_role_val, str) else default_role
 
-                # Add member to team with their specific role
-                await team_service.add_member_to_team(team_id=team_id, user_email=user_email, role=user_role, invited_by=user_email_from_jwt)
-                added.append(user_email)
+                if user_email in existing_member_emails:
+                    # User is already a member - check if role changed
+                    current_role = existing_member_roles[user_email]["role"]
+                    if current_role != user_role:
+                        # Don't allow changing role of last owner
+                        if existing_member_roles[user_email]["is_last_owner"]:
+                            errors.append(f"{user_email} (cannot change role of last owner)")
+                            continue
+                        # Update role
+                        await team_service.update_member_role(team_id=team_id, user_email=user_email, new_role=user_role, updated_by=user_email_from_jwt)
+                        updated.append(f"{user_email} (role: {user_role})")
+                else:
+                    # New member - add them
+                    await team_service.add_member_to_team(team_id=team_id, user_email=user_email, role=user_role, invited_by=user_email_from_jwt)
+                    added.append(user_email)
 
             except Exception as member_error:
-                LOGGER.error(f"Error adding {user_email} to team {team_id}: {member_error}")
+                LOGGER.error(f"Error processing {user_email} for team {team_id}: {member_error}")
                 errors.append(f"{user_email} ({str(member_error)})")
 
-        # Build result message
-        if len(user_emails) == 1 and len(added) == 1:
-            # Single user success - simple message
-            result_html = f'<p class="text-green-600 dark:text-green-400">Member {added[0]} added successfully</p>'
-        else:
-            # Multiple users or errors - detailed message
-            result_parts = []
-            if added:
-                result_parts.append(f'<p class="text-green-600 dark:text-green-400">✓ Added {len(added)} member(s)</p>')
-            if skipped:
-                result_parts.append(f'<p class="text-yellow-600 dark:text-yellow-400">⊘ Skipped {len(skipped)} (already members)</p>')
-            if errors:
-                result_parts.append(f'<p class="text-red-600 dark:text-red-400">✗ Failed to add {len(errors)} user(s)</p>')
-                for error in errors[:5]:  # Show first 5 errors
-                    result_parts.append(f'<p class="text-xs text-red-500 dark:text-red-400 ml-4">• {error}</p>')
-                if len(errors) > 5:
-                    result_parts.append(f'<p class="text-xs text-red-500 dark:text-red-400 ml-4">... and {len(errors) - 5} more</p>')
-            result_html = "\n".join(result_parts)
+        # 2. Handle removals - only remove members who were LOADED in the form AND unchecked
+        # This prevents accidentally removing members from pages that weren't loaded yet (infinite scroll safety)
+        for existing_email in existing_member_emails:
+            # Only consider removal if the member was visible in the form (in loadedMembers)
+            if existing_email not in loaded_members:
+                continue  # Member wasn't loaded in form, skip (safe for pagination)
+            if existing_email in submitted_user_emails:
+                continue  # Member is checked, don't remove
 
-        # Return success message with script to refresh modal
+            member_info = existing_member_roles.get(existing_email, {})
+
+            # Validate removal is allowed - server-side protection
+            # Current user cannot be removed
+            if existing_email == user_email_from_jwt:
+                errors.append(f"{existing_email} (cannot remove yourself)")
+                continue
+            # Last owner cannot be removed
+            if member_info.get("is_last_owner", False):
+                errors.append(f"{existing_email} (cannot remove last owner)")
+                continue
+
+            # This member was unchecked and removal is allowed - remove them
+            try:
+                await team_service.remove_member_from_team(team_id=team_id, user_email=existing_email, removed_by=user_email_from_jwt)
+                removed.append(existing_email)
+            except Exception as removal_error:
+                LOGGER.error(f"Error removing {existing_email} from team {team_id}: {removal_error}")
+                errors.append(f"{existing_email} (removal failed: {str(removal_error)})")
+
+        # Build result message
+        result_parts = []
+        if added:
+            result_parts.append(f'<p class="text-green-600 dark:text-green-400">✓ Added {len(added)} member(s)</p>')
+        if updated:
+            result_parts.append(f'<p class="text-blue-600 dark:text-blue-400">↻ Updated {len(updated)} member(s)</p>')
+        if removed:
+            result_parts.append(f'<p class="text-orange-600 dark:text-orange-400">− Removed {len(removed)} member(s)</p>')
+        if errors:
+            result_parts.append(f'<p class="text-red-600 dark:text-red-400">✗ {len(errors)} error(s)</p>')
+            for error in errors[:5]:  # Show first 5 errors
+                result_parts.append(f'<p class="text-xs text-red-500 dark:text-red-400 ml-4">• {error}</p>')
+            if len(errors) > 5:
+                result_parts.append(f'<p class="text-xs text-red-500 dark:text-red-400 ml-4">... and {len(errors) - 5} more</p>')
+
+        if not result_parts:
+            result_parts.append('<p class="text-gray-600 dark:text-gray-400">No changes made</p>')
+
+        result_html = "\n".join(result_parts)
+
+        # Return success message and close modal
         success_html = f"""
         <div class="text-center p-4">
             {result_html}
         </div>
+        <script>
+            // Close modal after showing success message briefly
+            setTimeout(() => {{
+                const modal = document.getElementById('team-edit-modal');
+                if (modal) {{
+                    modal.classList.add('hidden');
+                }}
+            }}, 1000);
+        </script>
         """
         response = HTMLResponse(content=success_html)
+
+        # Trigger refresh of teams list (but don't reopen modal)
         response.headers["HX-Trigger"] = orjson.dumps(
             {
                 "adminTeamAction": {
                     "teamId": team_id,
-                    "refreshTeamMembers": True,
                     "refreshUnifiedTeamsList": True,
-                    "delayMs": 1000 if len(user_emails) == 1 else 2000,
                 }
             }
         ).decode()
@@ -5757,11 +5740,29 @@ async def admin_users_partial_html(
 
         # Get team members if team_id is provided (for pre-selection in team member addition)
         team_member_emails = set()
+        team_member_data = {}
+        current_user_is_team_owner = False
+
         if team_id and render == "selector":
             team_service = TeamManagementService(db)
             try:
                 team_members = await team_service.get_team_members(team_id)
                 team_member_emails = {team_user.email for team_user, membership in team_members}
+
+                # Build enhanced member data from the same query result (no extra DB calls!)
+                # Count owners in-memory
+                owner_count = sum(1 for _, membership in team_members if membership.role == "owner")
+
+                # Build member data dict and find current user's role
+                for team_user, membership in team_members:
+                    email = team_user.email
+                    is_last_owner = membership.role == "owner" and owner_count == 1
+                    team_member_data[email] = type("MemberData", (), {"role": membership.role, "joined_at": membership.joined_at, "is_last_owner": is_last_owner})()
+
+                    # Check if current user is owner (in-memory check)
+                    if email == current_user_email and membership.role == "owner":
+                        current_user_is_team_owner = True
+
             except Exception as e:
                 LOGGER.warning(f"Could not fetch team members for team {team_id}: {e}")
 
@@ -5770,13 +5771,16 @@ async def admin_users_partial_html(
 
         if render == "selector":
             return request.app.state.templates.TemplateResponse(
-                "users_selector_items.html",
+                "team_members_selector.html",
                 {
                     "request": request,
                     "data": users_data,
                     "pagination": pagination.model_dump(),
                     "root_path": request.scope.get("root_path", ""),
                     "team_member_emails": team_member_emails,
+                    "team_member_data": team_member_data,
+                    "current_user_email": current_user_email,
+                    "current_user_is_team_owner": current_user_is_team_owner,
                     "team_id": team_id,
                 },
             )
@@ -5814,9 +5818,9 @@ async def admin_users_partial_html(
         return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading users: {html.escape(str(e))}</p></div>', status_code=200)
 
 
-@admin_router.get("/teams/{team_id}/users/partial", response_class=HTMLResponse)
+@admin_router.get("/teams/{team_id}/members/partial", response_class=HTMLResponse)
 @require_permission("teams.manage_members")
-async def admin_team_users_partial_html(
+async def admin_team_members_partial_html(
     team_id: str,
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
@@ -5824,10 +5828,10 @@ async def admin_team_users_partial_html(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Response:
-    """Return paginated users selector items for team member selection.
+    """Return paginated team members for two-section layout (top section).
 
     Args:
-        team_id: Team identifier to scope membership checks.
+        team_id: Team identifier.
         request: FastAPI request object.
         page: Page number (1-indexed). Default: 1.
         per_page: Items per page. Default: 50.
@@ -5835,18 +5839,18 @@ async def admin_team_users_partial_html(
         user: Current authenticated user context.
 
     Returns:
-        Response: HTML response with selector items and pagination data.
+        Response: HTML response with team members and pagination data.
     """
     try:
         if not settings.email_auth_enabled:
             return HTMLResponse(
-                content='<div class="text-center py-8"><p class="text-gray-500">Email authentication is disabled. User management requires email auth.</p></div>',
+                content='<div class="text-center py-8"><p class="text-gray-500">Email authentication is disabled.</p></div>',
                 status_code=200,
             )
 
-        auth_service = EmailAuthService(db)
         team_service = TeamManagementService(db)
         current_user_email = get_user_email(user)
+
         try:
             team_id = _normalize_team_id(team_id)
         except ValueError:
@@ -5858,49 +5862,124 @@ async def admin_team_users_partial_html(
 
         current_user_role = await team_service.get_user_role_in_team(current_user_email, team_id)
         if current_user_role != "owner":
-            return HTMLResponse(content='<div class="text-red-500">Only team owners can add members</div>', status_code=403)
+            return HTMLResponse(content='<div class="text-red-500">Only team owners can manage members</div>', status_code=403)
 
-        paginated_result = await auth_service.list_users(page=page, per_page=per_page)
-        users_db = paginated_result.data
-        pagination = typing_cast(PaginationMeta, paginated_result.pagination)
+        # Get paginated team members
+        paginated_result = await team_service.get_team_members(team_id, page=page, per_page=per_page)
+        members = paginated_result["data"]
+        pagination = paginated_result["pagination"]
 
-        users_data = [
-            {
-                "email": user_obj.email,
-                "full_name": user_obj.full_name,
-                "is_active": user_obj.is_active,
-                "is_admin": user_obj.is_admin,
-            }
-            for user_obj in users_db
-        ]
+        # Count owners for is_last_owner check - must count ALL owners, not just current page
+        owner_count = team_service.count_team_owners(team_id)
 
-        team_members = await team_service.get_team_members(team_id)
-        team_member_emails = {team_user.email for team_user, membership in team_members}
-
-        # End the read-only transaction early to avoid idle-in-transaction under load
+        # End the read-only transaction early
         db.commit()
 
         root_path = request.scope.get("root_path", "")
+        next_page_url = f"{root_path}/admin/teams/{team_id}/members/partial?page={pagination.page + 1}&per_page={pagination.per_page}"
         return request.app.state.templates.TemplateResponse(
-            "users_selector_items.html",
+            "team_users_selector.html",
             {
                 "request": request,
-                "data": users_data,
+                "data": members,  # List of (user, membership) tuples
                 "pagination": pagination.model_dump(),
                 "root_path": root_path,
-                "team_member_emails": team_member_emails,
+                "current_user_email": current_user_email,
+                "current_user_is_team_owner": True,  # Already verified above
+                "owner_count": owner_count,
                 "team_id": team_id,
-                "selector_base_url": f"{root_path}/admin/teams/{team_id}/users/partial",
+                "is_members_list": True,
+                "scroll_trigger_id": "members-scroll-trigger",
+                "next_page_url": next_page_url,
             },
         )
 
     except Exception as e:
-        LOGGER.error(f"Error loading team users selector for team {team_id}: {e}")
-        return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading users: {html.escape(str(e))}</p></div>', status_code=200)
+        LOGGER.error(f"Error loading team members partial for team {team_id}: {e}")
+        return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading members: {html.escape(str(e))}</p></div>', status_code=200)
+
+
+@admin_router.get("/teams/{team_id}/non-members/partial", response_class=HTMLResponse)
+@require_permission("teams.manage_members")
+async def admin_team_non_members_partial_html(
+    team_id: str,
+    request: Request,
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Response:
+    """Return paginated non-members for two-section layout (bottom section).
+
+    Args:
+        team_id: Team identifier.
+        request: FastAPI request object.
+        page: Page number (1-indexed). Default: 1.
+        per_page: Items per page. Default: 50.
+        db: Database session.
+        user: Current authenticated user context.
+
+    Returns:
+        Response: HTML response with non-members and pagination data.
+    """
+    try:
+        if not settings.email_auth_enabled:
+            return HTMLResponse(
+                content='<div class="text-center py-8"><p class="text-gray-500">Email authentication is disabled.</p></div>',
+                status_code=200,
+            )
+
+        auth_service = EmailAuthService(db)
+        team_service = TeamManagementService(db)
+        current_user_email = get_user_email(user)
+
+        try:
+            team_id = _normalize_team_id(team_id)
+        except ValueError:
+            return HTMLResponse(content='<div class="text-red-500">Invalid team ID</div>', status_code=400)
+
+        team = await team_service.get_team_by_id(team_id)
+        if not team:
+            return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
+
+        current_user_role = await team_service.get_user_role_in_team(current_user_email, team_id)
+        if current_user_role != "owner":
+            return HTMLResponse(content='<div class="text-red-500">Only team owners can manage members</div>', status_code=403)
+
+        # Get paginated non-members
+        paginated_result = await auth_service.list_users_not_in_team(team_id, page=page, per_page=per_page)
+        users = paginated_result.data
+        pagination = typing_cast(PaginationMeta, paginated_result.pagination)
+
+        # End the read-only transaction early
+        db.commit()
+
+        root_path = request.scope.get("root_path", "")
+        next_page_url = f"{root_path}/admin/teams/{team_id}/non-members/partial?page={pagination.page + 1}&per_page={pagination.per_page}"
+        return request.app.state.templates.TemplateResponse(
+            "team_users_selector.html",
+            {
+                "request": request,
+                "data": users,  # List of user objects
+                "pagination": pagination.model_dump(),
+                "root_path": root_path,
+                "current_user_email": current_user_email,
+                "current_user_is_team_owner": True,  # Already verified above
+                "owner_count": 0,  # Not relevant for non-members
+                "team_id": team_id,
+                "is_members_list": False,
+                "scroll_trigger_id": "non-members-scroll-trigger",
+                "next_page_url": next_page_url,
+            },
+        )
+
+    except Exception as e:
+        LOGGER.error(f"Error loading team non-members partial for team {team_id}: {e}")
+        return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading non-members: {html.escape(str(e))}</p></div>', status_code=200)
 
 
 @admin_router.get("/users/search", response_class=JSONResponse)
-@require_permission("admin.user_management")
+@require_any_permission(["admin.user_management", "teams.manage_members"])
 async def admin_search_users(
     q: str = Query("", description="Search query"),
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Maximum number of results to return"),
@@ -5940,72 +6019,6 @@ async def admin_search_users(
     users_list = users_result.data
 
     # Format results for JSON response
-    results = [
-        {
-            "email": user_obj.email,
-            "full_name": user_obj.full_name or "",
-            "is_active": user_obj.is_active,
-            "is_admin": user_obj.is_admin,
-        }
-        for user_obj in users_list
-    ]
-
-    return {"users": results, "count": len(results)}
-
-
-@admin_router.get("/teams/{team_id}/users/search", response_class=JSONResponse)
-@require_permission("teams.manage_members")
-async def admin_search_team_users(
-    team_id: str,
-    q: str = Query("", description="Search query"),
-    limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Maximum number of results to return"),
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-):
-    """Search users by email or full name for a team selector.
-
-    Args:
-        team_id: Team identifier to scope membership checks.
-        q: Search query string to match against email or full name.
-        limit: Maximum number of results to return.
-        db: Database session dependency.
-        user: Current authenticated user context.
-
-    Returns:
-        JSONResponse: Dictionary containing list of matching users and count.
-    """
-    if not settings.email_auth_enabled:
-        return {"users": [], "count": 0}
-
-    team_service = TeamManagementService(db)
-    current_user_email = get_user_email(user)
-    try:
-        team_id = _normalize_team_id(team_id)
-    except ValueError:
-        return JSONResponse(content={"users": [], "count": 0}, status_code=400)
-
-    team = await team_service.get_team_by_id(team_id)
-    if not team:
-        return JSONResponse(content={"users": [], "count": 0}, status_code=404)
-
-    current_user_role = await team_service.get_user_role_in_team(current_user_email, team_id)
-    if current_user_role != "owner":
-        return JSONResponse(content={"users": [], "count": 0}, status_code=403)
-
-    search_query = q.strip().lower()
-    if not search_query:
-        return {"users": [], "count": 0}
-
-    LOGGER.debug(f"User {current_user_email} searching users with query: {search_query} (team {team_id})")
-
-    auth_service = EmailAuthService(db)
-
-    team_members = await team_service.get_team_members(team_id)
-    exclude_emails = {team_user.email for team_user, membership in team_members}
-
-    users_result = await auth_service.list_users(search=search_query, limit=limit, exclude_emails=exclude_emails)
-    users_list = users_result.data
-
     results = [
         {
             "email": user_obj.email,

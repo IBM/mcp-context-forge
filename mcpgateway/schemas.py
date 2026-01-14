@@ -5469,6 +5469,42 @@ class TeamMemberResponse(BaseModel):
     is_active: bool = Field(..., description="Whether the membership is active")
 
 
+class PaginatedTeamMembersResponse(BaseModel):
+    """Schema for paginated team member list response.
+
+    Attributes:
+        members: List of team members
+        next_cursor: Optional cursor for next page of results
+
+    Examples:
+        >>> member1 = TeamMemberResponse(
+        ...     id="member-1",
+        ...     team_id="team-123",
+        ...     user_email="user1@example.com",
+        ...     role="member",
+        ...     joined_at=datetime.now(timezone.utc),
+        ...     is_active=True
+        ... )
+        >>> member2 = TeamMemberResponse(
+        ...     id="member-2",
+        ...     team_id="team-123",
+        ...     user_email="user2@example.com",
+        ...     role="member",
+        ...     joined_at=datetime.now(timezone.utc),
+        ...     is_active=True
+        ... )
+        >>> response = PaginatedTeamMembersResponse(
+        ...     members=[member1, member2],
+        ...     nextCursor="cursor-token-123"
+        ... )
+        >>> len(response.members)
+        2
+    """
+
+    members: List[TeamMemberResponse] = Field(..., description="List of team members")
+    next_cursor: Optional[str] = Field(None, alias="nextCursor", description="Cursor for next page of results")
+
+
 class TeamInviteRequest(BaseModel):
     """Schema for inviting users to a team.
 

@@ -128,6 +128,66 @@ document.addEventListener("DOMContentLoaded", function () {
     initializePasswordValidation();
     initializeAddMembersForms();
 
+    // Event delegation for team member search - server-side search for unified view
+    // This handler is initialized here for early binding, but the actual search logic
+    // is in performUserSearch() which is attached when the form is initialized
+    const teamSearchTimeouts = {};
+    const teamMemberDataCache = {};
+
+    document.body.addEventListener("input", async function (event) {
+        const target = event.target;
+        if (target.id && target.id.startsWith("user-search-")) {
+            const teamId = target.id.replace("user-search-", "");
+            const listContainer = document.getElementById(
+                `team-members-list-${teamId}`,
+            );
+
+            if (!listContainer) return;
+
+            const query = target.value.trim();
+
+            // Clear previous timeout for this team
+            if (teamSearchTimeouts[teamId]) {
+                clearTimeout(teamSearchTimeouts[teamId]);
+            }
+
+            // Get team member data from cache or script tag
+            if (!teamMemberDataCache[teamId]) {
+                const teamMemberDataScript = document.getElementById(
+                    `team-member-data-${teamId}`,
+                );
+                if (teamMemberDataScript) {
+                    try {
+                        teamMemberDataCache[teamId] = JSON.parse(
+                            teamMemberDataScript.textContent || "{}",
+                        );
+                        console.log(
+                            `[Team ${teamId}] Loaded team member data for ${Object.keys(teamMemberDataCache[teamId]).length} members`,
+                        );
+                    } catch (e) {
+                        console.error(
+                            `[Team ${teamId}] Failed to parse team member data:`,
+                            e,
+                        );
+                        teamMemberDataCache[teamId] = {};
+                    }
+                } else {
+                    teamMemberDataCache[teamId] = {};
+                }
+            }
+
+            // Debounce server call
+            teamSearchTimeouts[teamId] = setTimeout(async () => {
+                await performUserSearch(
+                    teamId,
+                    query,
+                    listContainer,
+                    teamMemberDataCache[teamId],
+                );
+            }, 300);
+        }
+    });
+
     // Re-initialize search inputs when HTMX content loads
     document.body.addEventListener("htmx:afterSwap", function (event) {
         setTimeout(() => {
@@ -20564,17 +20624,236 @@ function dedupeSelectorItems(container) {
     });
 }
 
+// Perform server-side user search and build HTML from JSON (like tools search)
+async function performUserSearch(teamId, query, container, teamMemberData) {
+    console.log(`[Team ${teamId}] Performing user search: "${query}"`);
+
+    // Step 1: Capture current selections before replacing HTML
+    const selections = {};
+    const roleSelections = {};
+    try {
+        const userItems = container.querySelectorAll(".user-item");
+        userItems.forEach((item) => {
+            const email = item.dataset.userEmail || "";
+            const checkbox = item.querySelector(
+                'input[name="associatedUsers"]',
+            );
+            const roleSelect = item.querySelector(".role-select");
+            if (checkbox && email) {
+                selections[email] = checkbox.checked;
+            }
+            if (roleSelect && email) {
+                roleSelections[email] = roleSelect.value;
+            }
+        });
+        console.log(
+            `[Team ${teamId}] Captured ${Object.keys(selections).length} selections and ${Object.keys(roleSelections).length} role selections`,
+        );
+    } catch (e) {
+        console.error(`[Team ${teamId}] Error capturing selections:`, e);
+    }
+
+    // Step 2: Show loading state
+    container.innerHTML = `
+        <div class="text-center py-4">
+            <svg class="animate-spin h-5 w-5 text-indigo-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="mt-2 text-sm text-gray-500">Searching users...</p>
+        </div>
+    `;
+
+    // Step 3: If query is empty, reload default list from /admin/users/partial
+    if (query === "") {
+        try {
+            const usersUrl = `${window.ROOT_PATH}/admin/users/partial?page=1&per_page=50&render=selector&team_id=${encodeURIComponent(teamId)}`;
+            console.log(
+                `[Team ${teamId}] Loading default users with URL: ${usersUrl}`,
+            );
+
+            const response = await fetchWithAuth(usersUrl);
+            if (response.ok) {
+                const html = await response.text();
+                container.innerHTML = html;
+
+                // Restore selections
+                restoreUserSelections(container, selections, roleSelections);
+            } else {
+                console.error(
+                    `[Team ${teamId}] Failed to load users: ${response.status}`,
+                );
+                container.innerHTML =
+                    '<div class="text-center py-4 text-red-600">Failed to load users</div>';
+            }
+        } catch (error) {
+            console.error(`[Team ${teamId}] Error loading users:`, error);
+            container.innerHTML =
+                '<div class="text-center py-4 text-red-600">Error loading users</div>';
+        }
+        return;
+    }
+
+    // Step 4: Call /admin/users/search API
+    try {
+        const searchUrl = `${window.ROOT_PATH}/admin/users/search?q=${encodeURIComponent(query)}&limit=50`;
+        console.log(`[Team ${teamId}] Searching users with URL: ${searchUrl}`);
+
+        const response = await fetchWithAuth(searchUrl);
+        if (!response.ok) {
+            console.error(
+                `[Team ${teamId}] Search failed: ${response.status} ${response.statusText}`,
+            );
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+
+        if (data.users && data.users.length > 0) {
+            // Step 5: Build HTML manually from JSON
+            let searchResultsHtml = "";
+            data.users.forEach((user) => {
+                const memberData = teamMemberData[user.email] || {};
+                const isMember = Object.keys(memberData).length > 0;
+                const memberRole = memberData.role || "member";
+                const joinedAt = memberData.joined_at;
+                const isCurrentUser = memberData.is_current_user || false;
+                const isLastOwner = memberData.is_last_owner || false;
+                const isChecked =
+                    selections[user.email] !== undefined
+                        ? selections[user.email]
+                        : isMember;
+                const selectedRole = roleSelections[user.email] || memberRole;
+
+                const borderClass = isMember
+                    ? "border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-900/20"
+                    : "border-transparent";
+
+                searchResultsHtml += `
+                    <div class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-3 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item border ${borderClass}" data-user-email="${escapeHtml(user.email)}">
+                        <!-- Avatar Circle -->
+                        <div class="flex-shrink-0">
+                            <div class="w-8 h-8 bg-gray-300 dark:bg-gray-600 rounded-full flex items-center justify-center">
+                                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">${escapeHtml(user.email[0].toUpperCase())}</span>
+                            </div>
+                        </div>
+
+                        <!-- Checkbox -->
+                        <input
+                            type="checkbox"
+                            name="associatedUsers"
+                            value="${escapeHtml(user.email)}"
+                            data-user-name="${escapeHtml(user.full_name || user.email)}"
+                            class="user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0"
+                            data-auto-check="true"
+                            ${isChecked ? "checked" : ""}
+                        />
+
+                        <!-- User Info with Badges -->
+                        <div class="flex-grow min-w-0">
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <span class="select-none font-medium text-gray-900 dark:text-white truncate">${escapeHtml(user.full_name || user.email)}</span>
+                                ${isCurrentUser ? '<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-800 rounded-full dark:bg-blue-900 dark:text-blue-200">You</span>' : ""}
+                                ${isLastOwner ? '<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-yellow-100 text-yellow-800 rounded-full dark:bg-yellow-900 dark:text-yellow-200">Last Owner</span>' : ""}
+                                ${isMember && memberRole === "owner" && !isLastOwner ? '<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-800 rounded-full dark:bg-purple-900 dark:text-purple-200">Owner</span>' : ""}
+                            </div>
+                            <div class="text-sm text-gray-500 dark:text-gray-400 truncate">${escapeHtml(user.email)}</div>
+                            ${isMember && joinedAt ? `<div class="text-xs text-gray-400 dark:text-gray-500">Joined: ${formatDate(joinedAt)}</div>` : ""}
+                        </div>
+
+                        <!-- Role Selector -->
+                        <select
+                            name="role_${encodeURIComponent(user.email)}"
+                            class="role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0"
+                        >
+                            <option value="member" ${selectedRole === "member" ? "selected" : ""}>Member</option>
+                            <option value="owner" ${selectedRole === "owner" ? "selected" : ""}>Owner</option>
+                        </select>
+                    </div>
+                `;
+            });
+
+            // Step 6: Replace container innerHTML
+            container.innerHTML = searchResultsHtml;
+
+            // Step 7: No need to restore selections - they're already built into the HTML
+            console.log(
+                `[Team ${teamId}] Rendered ${data.users.length} users from search`,
+            );
+        } else {
+            container.innerHTML =
+                '<div class="text-center py-4 text-gray-500">No users found</div>';
+        }
+    } catch (error) {
+        console.error(`[Team ${teamId}] Error searching users:`, error);
+        container.innerHTML =
+            '<div class="text-center py-4 text-red-600">Error searching users</div>';
+    }
+}
+
+// Restore user selections after loading default list
+function restoreUserSelections(container, selections, roleSelections) {
+    try {
+        const checkboxes = container.querySelectorAll(
+            'input[name="associatedUsers"]',
+        );
+        checkboxes.forEach((cb) => {
+            if (selections[cb.value] !== undefined) {
+                cb.checked = selections[cb.value];
+            }
+        });
+
+        const roleSelects = container.querySelectorAll(".role-select");
+        roleSelects.forEach((select) => {
+            const email = select.name.replace("role_", "");
+            const decodedEmail = decodeURIComponent(email);
+            if (roleSelections[decodedEmail]) {
+                select.value = roleSelections[decodedEmail];
+            }
+        });
+
+        console.log(`Restored ${Object.keys(selections).length} selections`);
+    } catch (e) {
+        console.error("Error restoring selections:", e);
+    }
+}
+
+// Helper to format date (similar to Python strftime "%b %d, %Y")
+function formatDate(dateString) {
+    try {
+        const date = new Date(dateString);
+        return date.toLocaleDateString("en-US", {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+        });
+    } catch (e) {
+        return dateString;
+    }
+}
+
 function initializeAddMembersForm(form) {
     if (!form || form.dataset.initialized === "true") {
         return;
     }
     form.dataset.initialized = "true";
 
+    // Support both old add-members-form pattern and new team-members-form pattern
     const teamId =
         form.dataset.teamId ||
         extractTeamId("add-members-form-", form.id) ||
+        extractTeamId("team-members-form-", form.id) ||
         "";
+
+    console.log(
+        `[initializeAddMembersForm] Form ID: ${form.id}, Team ID: ${teamId}`,
+    );
+
     if (!teamId) {
+        console.warn(
+            `[initializeAddMembersForm] No team ID found for form:`,
+            form,
+        );
         return;
     }
 
@@ -20584,6 +20863,15 @@ function initializeAddMembersForm(form) {
     );
     const searchLoading = document.getElementById(
         `user-search-loading-${teamId}`,
+    );
+
+    // For unified view, find the list container for client-side filtering
+    const userListContainer = document.getElementById(
+        `team-members-list-${teamId}`,
+    );
+
+    console.log(
+        `[Team ${teamId}] Form initialization - searchInput: ${!!searchInput}, userListContainer: ${!!userListContainer}, searchResults: ${!!searchResults}`,
     );
 
     const memberEmails = [];
@@ -20602,17 +20890,56 @@ function initializeAddMembersForm(form) {
     form.addEventListener("change", function (event) {
         if (event.target?.name === "associatedUsers") {
             updateAddMembersCount(teamId);
-            const userItem = event.target.closest(".user-item");
-            if (userItem) {
-                const roleSelect = userItem.querySelector(".role-select");
-                if (roleSelect) {
-                    roleSelect.disabled = !event.target.checked;
-                }
-            }
+            // Role dropdown state is not managed client-side - all logic is server-side
         }
     });
 
     updateAddMembersCount(teamId);
+
+    // If we have searchInput and userListContainer, use server-side search like tools (unified view)
+    if (searchInput && userListContainer) {
+        console.log(
+            `[Team ${teamId}] Initializing server-side search for unified view`,
+        );
+
+        // Get team member data from the initial page load (embedded in the form)
+        const teamMemberDataScript = document.getElementById(
+            `team-member-data-${teamId}`,
+        );
+        let teamMemberData = {};
+        if (teamMemberDataScript) {
+            try {
+                teamMemberData = JSON.parse(
+                    teamMemberDataScript.textContent || "{}",
+                );
+                console.log(
+                    `[Team ${teamId}] Loaded team member data for ${Object.keys(teamMemberData).length} members`,
+                );
+            } catch (e) {
+                console.error(
+                    `[Team ${teamId}] Failed to parse team member data:`,
+                    e,
+                );
+            }
+        }
+
+        let searchTimeout;
+        searchInput.addEventListener("input", function () {
+            clearTimeout(searchTimeout);
+            const query = this.value.trim();
+
+            searchTimeout = setTimeout(async () => {
+                await performUserSearch(
+                    teamId,
+                    query,
+                    userListContainer,
+                    teamMemberData,
+                );
+            }, 300);
+        });
+
+        return;
+    }
 
     if (!searchInput || !searchResults) {
         return;
@@ -20789,8 +21116,13 @@ function initializeAddMembersForm(form) {
 }
 
 function initializeAddMembersForms(root = document) {
-    const forms = root?.querySelectorAll?.('[id^="add-members-form-"]') || [];
-    forms.forEach((form) => initializeAddMembersForm(form));
+    // Support both old add-members-form pattern and new unified team-members-form pattern
+    const addMembersForms =
+        root?.querySelectorAll?.('[id^="add-members-form-"]') || [];
+    const teamMembersForms =
+        root?.querySelectorAll?.('[id^="team-members-form-"]') || [];
+    const allForms = [...addMembersForms, ...teamMembersForms];
+    allForms.forEach((form) => initializeAddMembersForm(form));
 }
 
 function handleAdminTeamAction(event) {
@@ -29990,3 +30322,271 @@ window.toggleLLMModel = toggleLLMModel;
 window.refreshLLMModels = refreshLLMModels;
 window.filterModelsByProvider = filterModelsByProvider;
 window.llmApiInfoApp = llmApiInfoApp;
+
+// Debounce helper for search
+const searchDebounceTimers = {};
+function debouncedServerSideUserSearch(teamId, searchTerm, delay = 300) {
+    if (searchDebounceTimers[teamId]) {
+        clearTimeout(searchDebounceTimers[teamId]);
+    }
+    searchDebounceTimers[teamId] = setTimeout(() => {
+        serverSideUserSearch(teamId, searchTerm);
+    }, delay);
+}
+window.debouncedServerSideUserSearch = debouncedServerSideUserSearch;
+
+// Team user search function - searches all users and splits into members/non-members
+async function serverSideUserSearch(teamId, searchTerm) {
+    const membersContainer = document.getElementById(
+        `team-members-container-${teamId}`,
+    );
+    const nonMembersContainer = document.getElementById(
+        `team-non-members-container-${teamId}`,
+    );
+
+    if (!membersContainer || !nonMembersContainer) {
+        console.error("Team containers not found");
+        return;
+    }
+
+    // Read per_page from data attributes (set server-side), fallback to 20
+    const membersPerPage =
+        membersContainer.dataset.perPage ||
+        membersContainer.getAttribute("data-per-page") ||
+        20;
+    const nonMembersPerPage =
+        nonMembersContainer.dataset.perPage ||
+        nonMembersContainer.getAttribute("data-per-page") ||
+        20;
+
+    // If search is empty, reload both sections with full data
+    if (!searchTerm || searchTerm.trim() === "") {
+        try {
+            // Reload members - use fetchWithAuth for bearer token support
+            const membersResponse = await fetchWithAuth(
+                `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=${membersPerPage}`,
+            );
+            if (membersResponse.ok) {
+                membersContainer.innerHTML = await membersResponse.text();
+                // Re-initialize HTMX on new content for infinite scroll triggers
+                if (typeof htmx !== "undefined") {
+                    htmx.process(membersContainer);
+                }
+            }
+
+            // Reload non-members
+            const nonMembersResponse = await fetchWithAuth(
+                `${window.ROOT_PATH}/admin/teams/${teamId}/non-members/partial?page=1&per_page=${nonMembersPerPage}`,
+            );
+            if (nonMembersResponse.ok) {
+                nonMembersContainer.innerHTML = await nonMembersResponse.text();
+                // Re-initialize HTMX on new content for infinite scroll triggers
+                if (typeof htmx !== "undefined") {
+                    htmx.process(nonMembersContainer);
+                }
+            }
+        } catch (error) {
+            console.error("Error reloading user lists:", error);
+        }
+        return;
+    }
+
+    try {
+        // First, collect member data AND checkbox states from DOM (before search replaces content)
+        const memberDataFromDom = {};
+        const checkboxStates = {}; // Track checkbox states for all visible users
+        const existingMemberItems = document.querySelectorAll(
+            `#team-members-container-${teamId} .user-item`,
+        );
+        existingMemberItems.forEach((item) => {
+            const email = item.dataset.userEmail;
+            if (email) {
+                const roleSelect = item.querySelector(".role-select");
+                const checkbox = item.querySelector(".user-checkbox");
+                memberDataFromDom[email] = {
+                    role: roleSelect ? roleSelect.value : "member",
+                };
+                if (checkbox) {
+                    checkboxStates[email] = checkbox.checked;
+                }
+            }
+        });
+
+        // Also collect checkbox states from non-members section
+        const existingNonMemberItems = document.querySelectorAll(
+            `#team-non-members-container-${teamId} .user-item`,
+        );
+        existingNonMemberItems.forEach((item) => {
+            const email = item.dataset.userEmail;
+            if (email) {
+                const checkbox = item.querySelector(".user-checkbox");
+                const roleSelect = item.querySelector(".role-select");
+                if (checkbox) {
+                    checkboxStates[email] = checkbox.checked;
+                    // Also preserve role selection for users being added
+                    if (checkbox.checked && roleSelect) {
+                        memberDataFromDom[email] = {
+                            role: roleSelect.value,
+                            pendingAdd: true, // Flag that this is a pending addition
+                        };
+                    }
+                }
+            }
+        });
+
+        // If no members found in DOM yet, fetch from server to get membership data with roles
+        if (Object.keys(memberDataFromDom).length === 0) {
+            try {
+                const membersResp = await fetchWithAuth(
+                    `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=100`,
+                );
+                if (membersResp.ok) {
+                    const tempDiv = document.createElement("div");
+                    tempDiv.innerHTML = await membersResp.text();
+                    tempDiv.querySelectorAll(".user-item").forEach((item) => {
+                        const email = item.dataset.userEmail;
+                        if (email) {
+                            const roleSelect =
+                                item.querySelector(".role-select");
+                            memberDataFromDom[email] = {
+                                role: roleSelect ? roleSelect.value : "member",
+                            };
+                        }
+                    });
+                }
+            } catch (e) {
+                console.error("Error fetching member data:", e);
+            }
+        }
+
+        // Search all users - use fetchWithAuth for bearer token support
+        const searchUrl = `${window.ROOT_PATH}/admin/users/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
+        const response = await fetchWithAuth(searchUrl);
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+
+        if (data.users && data.users.length > 0) {
+            // Split users into members and non-members based on collected data
+            const members = [];
+            const nonMembers = [];
+
+            data.users.forEach((user) => {
+                if (memberDataFromDom[user.email]) {
+                    members.push({
+                        ...user,
+                        role: memberDataFromDom[user.email].role,
+                    });
+                } else {
+                    nonMembers.push(user);
+                }
+            });
+
+            // Helper to escape HTML
+            function escapeHtml(text) {
+                const div = document.createElement("div");
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
+            // Render members with preserved roles, checkbox states, and loadedMembers hidden input
+            let membersHtml = "";
+            members.forEach((user) => {
+                const fullName = escapeHtml(user.full_name || user.email);
+                const email = escapeHtml(user.email);
+                const role = user.role || "member";
+                const isOwner = role === "owner";
+                // Preserve checkbox state if available, otherwise default to checked for existing members
+                const isChecked =
+                    checkboxStates[user.email] !== undefined
+                        ? checkboxStates[user.email]
+                        : true;
+                membersHtml += `
+                    <div class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-3 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item border border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-900/20" data-user-email="${email}">
+                        <div class="flex-shrink-0">
+                            <div class="w-8 h-8 bg-gray-300 dark:bg-gray-600 rounded-full flex items-center justify-center">
+                                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">${user.email[0].toUpperCase()}</span>
+                            </div>
+                        </div>
+                        <input type="hidden" name="loadedMembers" value="${email}" />
+                        <input type="checkbox" name="associatedUsers" value="${email}" data-user-name="${fullName}" class="user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0" ${isChecked ? "checked" : ""} data-auto-check="true" />
+                        <div class="flex-grow min-w-0">
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <span class="select-none font-medium text-gray-900 dark:text-white truncate">${fullName}</span>
+                                ${isOwner ? '<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-800 rounded-full dark:bg-purple-900 dark:text-purple-200">Owner</span>' : ""}
+                            </div>
+                            <div class="text-sm text-gray-500 dark:text-gray-400 truncate">${email}</div>
+                        </div>
+                        <select name="role_${encodeURIComponent(user.email)}" class="role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0">
+                            <option value="member" ${!isOwner ? "selected" : ""}>Member</option>
+                            <option value="owner" ${isOwner ? "selected" : ""}>Owner</option>
+                        </select>
+                    </div>
+                `;
+            });
+
+            // Render non-members with preserved checkbox states and roles
+            let nonMembersHtml = "";
+            nonMembers.forEach((user) => {
+                const fullName = escapeHtml(user.full_name || user.email);
+                const email = escapeHtml(user.email);
+                // Preserve checkbox state if available, otherwise default to unchecked for non-members
+                const isChecked =
+                    checkboxStates[user.email] !== undefined
+                        ? checkboxStates[user.email]
+                        : false;
+                // Preserve role selection for users being added
+                const pendingData = memberDataFromDom[user.email];
+                const role =
+                    pendingData && pendingData.pendingAdd
+                        ? pendingData.role
+                        : "member";
+                const isOwner = role === "owner";
+                nonMembersHtml += `
+                    <div class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-3 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item border border-transparent" data-user-email="${email}" data-is-member="false">
+                        <div class="flex-shrink-0">
+                            <div class="w-8 h-8 bg-gray-300 dark:bg-gray-600 rounded-full flex items-center justify-center">
+                                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">${user.email[0].toUpperCase()}</span>
+                            </div>
+                        </div>
+                        <input type="checkbox" name="associatedUsers" value="${email}" data-user-name="${fullName}" class="user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0" ${isChecked ? "checked" : ""} />
+                        <div class="flex-grow min-w-0">
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <span class="select-none font-medium text-gray-900 dark:text-white truncate">${fullName}</span>
+                            </div>
+                            <div class="text-sm text-gray-500 dark:text-gray-400 truncate">${email}</div>
+                        </div>
+                        <select name="role_${encodeURIComponent(user.email)}" class="role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0">
+                            <option value="member" ${!isOwner ? "selected" : ""}>Member</option>
+                            <option value="owner" ${isOwner ? "selected" : ""}>Owner</option>
+                        </select>
+                    </div>
+                `;
+            });
+
+            membersContainer.innerHTML =
+                membersHtml ||
+                '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching members</div>';
+            nonMembersContainer.innerHTML =
+                nonMembersHtml ||
+                '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching users</div>';
+        } else {
+            // No results
+            membersContainer.innerHTML =
+                '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching members</div>';
+            nonMembersContainer.innerHTML =
+                '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching users</div>';
+        }
+    } catch (error) {
+        console.error("Error searching users:", error);
+        membersContainer.innerHTML =
+            '<div class="text-center py-4 text-red-600">Error searching users</div>';
+        nonMembersContainer.innerHTML =
+            '<div class="text-center py-4 text-red-600">Error searching users</div>';
+    }
+}
+
+window.serverSideUserSearch = serverSideUserSearch;
