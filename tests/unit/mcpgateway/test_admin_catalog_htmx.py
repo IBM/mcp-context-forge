@@ -5,303 +5,260 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 Tests for HTMX functionality in catalog server registration endpoint.
+Uses TestClient with proper auth mocking via module-level fixture.
 """
 
 # Standard
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
-from fastapi import Request
-from fastapi.responses import HTMLResponse
 import pytest
+from fastapi.testclient import TestClient
 
 # First-Party
-from mcpgateway.admin import register_catalog_server
-from mcpgateway.schemas import (
-    CatalogServerRegisterRequest,
-    CatalogServerRegisterResponse,
-)
-
-# Get the unwrapped function to bypass the RBAC decorator
-_register_catalog_server = register_catalog_server.__wrapped__
+from mcpgateway.schemas import CatalogServerRegisterResponse
 
 
-@pytest.fixture
-def mock_request():
-    """Create a mock FastAPI Request object."""
-    request = MagicMock(spec=Request)
-    request.headers = {}
-    return request
+@pytest.fixture(scope="module")
+def client():
+    """Create a TestClient with mocked authentication (module-scoped to avoid lifecycle issues)."""
+    # Import here to avoid module-level import issues
+    from mcpgateway.main import app
+    from mcpgateway.auth import get_current_user
+    from mcpgateway.middleware.rbac import get_current_user_with_permissions
+    from mcpgateway.services.permission_service import PermissionService
+    from mcpgateway.db import EmailUser
+
+    # Mock user object
+    mock_user = EmailUser(
+        email="test_user@example.com",
+        full_name="Test User",
+        is_admin=True,
+        is_active=True,
+        auth_provider="test",
+    )
+
+    # Mock security_logger
+    mock_sec_logger = MagicMock()
+    mock_sec_logger.log_authentication_attempt = MagicMock(return_value=None)
+    mock_sec_logger.log_security_event = MagicMock(return_value=None)
+    sec_patcher = patch("mcpgateway.middleware.auth_middleware.security_logger", mock_sec_logger)
+    sec_patcher.start()
+
+    # Override auth dependencies
+    app.dependency_overrides[get_current_user] = lambda credentials=None, db=None: mock_user
+
+    def mock_get_current_user_with_permissions(request=None, credentials=None, jwt_token=None, db=None):
+        return {"email": "test_user@example.com", "full_name": "Test User", "is_admin": True, "ip_address": "127.0.0.1", "user_agent": "test", "db": db}
+
+    app.dependency_overrides[get_current_user_with_permissions] = mock_get_current_user_with_permissions
+
+    # Mock permission service
+    if not hasattr(PermissionService, "_original_check_permission"):
+        PermissionService._original_check_permission = PermissionService.check_permission
+
+    async def mock_check_permission(self, user_email: str, permission: str, resource_type=None, resource_id=None, team_id=None, ip_address=None, user_agent=None) -> bool:
+        return True
+
+    PermissionService.check_permission = mock_check_permission
+
+    with TestClient(app) as test_client:
+        yield test_client
+
+    # Cleanup
+    app.dependency_overrides.pop(get_current_user, None)
+    app.dependency_overrides.pop(get_current_user_with_permissions, None)
+    sec_patcher.stop()
+    if hasattr(PermissionService, "_original_check_permission"):
+        PermissionService.check_permission = PermissionService._original_check_permission
 
 
-@pytest.fixture
-def mock_db():
-    """Create a mock database session."""
-    return MagicMock()
-
-
-@pytest.fixture
-def mock_user():
-    """Create a mock authenticated user."""
-    return MagicMock()
-
-
-@pytest.fixture
-def mock_catalog_service():
-    """Create a mock catalog service."""
-    with patch("mcpgateway.admin.catalog_service") as mock:
-        yield mock
-
-
-@pytest.mark.asyncio
-async def test_register_catalog_server_htmx_success(mock_request, mock_db, mock_user, mock_catalog_service):
+def test_register_catalog_server_htmx_success(client):
     """Test HTMX request returns HTML for successful registration."""
-    # Setup HTMX request
-    mock_request.headers = {"HX-Request": "true"}
-
-    # Mock successful registration
     mock_result = CatalogServerRegisterResponse(
         success=True,
         server_id="test-id",
         message="Successfully registered Test Server with 5 tools discovered",
         error=None,
+        oauth_required=False,
     )
-    mock_catalog_service.register_catalog_server = AsyncMock(return_value=mock_result)
 
-    # Call endpoint (using unwrapped function to bypass RBAC decorator)
-    with patch("mcpgateway.admin.settings") as mock_settings:
+    with patch("mcpgateway.admin.catalog_service.register_catalog_server", new_callable=AsyncMock, return_value=mock_result), \
+         patch("mcpgateway.admin.settings") as mock_settings:
         mock_settings.mcpgateway_catalog_enabled = True
         mock_settings.app_root_path = ""
 
-        response = await _register_catalog_server(
-            server_id="test-server",
-            http_request=mock_request,
-            request=None,
-            db=mock_db,
-            _user=mock_user,
+        response = client.post(
+            "/admin/mcp-registry/test-server/register",
+            headers={"HX-Request": "true"},
         )
 
-    # Verify HTML response
-    assert isinstance(response, HTMLResponse)
-    assert "Registered Successfully" in response.body.decode()
-    assert "bg-green-600" in response.body.decode()
-    assert "disabled" in response.body.decode()
+    assert response.status_code == 200
+    assert "Registered Successfully" in response.text
+    assert "bg-green-600" in response.text
+    assert "disabled" in response.text
+    assert "HX-Trigger-After-Swap" in response.headers
+    assert "catalogRegistrationSuccess" in response.headers["HX-Trigger-After-Swap"]
 
 
-@pytest.mark.asyncio
-async def test_register_catalog_server_htmx_oauth(mock_request, mock_db, mock_user, mock_catalog_service):
+def test_register_catalog_server_htmx_oauth(client):
     """Test HTMX request returns HTML for OAuth server requiring configuration."""
-    # Setup HTMX request
-    mock_request.headers = {"HX-Request": "true"}
-
-    # Mock OAuth server registration
     mock_result = CatalogServerRegisterResponse(
         success=True,
         server_id="oauth-id",
         message="Successfully registered OAuth Server - OAuth configuration required before activation",
         error=None,
+        oauth_required=True,
     )
-    mock_catalog_service.register_catalog_server = AsyncMock(return_value=mock_result)
 
-    # Call endpoint (using unwrapped function to bypass RBAC decorator)
-    with patch("mcpgateway.admin.settings") as mock_settings:
+    with patch("mcpgateway.admin.catalog_service.register_catalog_server", new_callable=AsyncMock, return_value=mock_result), \
+         patch("mcpgateway.admin.settings") as mock_settings:
         mock_settings.mcpgateway_catalog_enabled = True
         mock_settings.app_root_path = ""
 
-        response = await _register_catalog_server(
-            server_id="oauth-server",
-            http_request=mock_request,
-            request=None,
-            db=mock_db,
-            _user=mock_user,
+        response = client.post(
+            "/admin/mcp-registry/oauth-server/register",
+            headers={"HX-Request": "true"},
         )
 
-    # Verify HTML response for OAuth
-    assert isinstance(response, HTMLResponse)
-    assert "OAuth Config Required" in response.body.decode()
-    assert "bg-yellow-600" in response.body.decode()
-    assert "disabled" in response.body.decode()
+    assert response.status_code == 200
+    assert "OAuth Config Required" in response.text
+    assert "bg-yellow-600" in response.text
+    assert "disabled" in response.text
+    assert "HX-Trigger-After-Swap" in response.headers
+    assert "catalogRegistrationSuccess" in response.headers["HX-Trigger-After-Swap"]
 
 
-@pytest.mark.asyncio
-async def test_register_catalog_server_htmx_error(mock_request, mock_db, mock_user, mock_catalog_service):
+def test_register_catalog_server_htmx_error(client):
     """Test HTMX request returns HTML for failed registration with retry button."""
-    # Setup HTMX request
-    mock_request.headers = {"HX-Request": "true"}
-
-    # Mock failed registration
     mock_result = CatalogServerRegisterResponse(
         success=False,
         server_id="",
         message="Registration failed",
         error="Server is offline or unreachable",
+        oauth_required=False,
     )
-    mock_catalog_service.register_catalog_server = AsyncMock(return_value=mock_result)
 
-    # Call endpoint (using unwrapped function to bypass RBAC decorator)
-    with patch("mcpgateway.admin.settings") as mock_settings:
+    with patch("mcpgateway.admin.catalog_service.register_catalog_server", new_callable=AsyncMock, return_value=mock_result), \
+         patch("mcpgateway.admin.settings") as mock_settings:
         mock_settings.mcpgateway_catalog_enabled = True
         mock_settings.app_root_path = ""
 
-        response = await _register_catalog_server(
-            server_id="failed-server",
-            http_request=mock_request,
-            request=None,
-            db=mock_db,
-            _user=mock_user,
+        response = client.post(
+            "/admin/mcp-registry/failed-server/register",
+            headers={"HX-Request": "true"},
         )
 
-    # Verify HTML response for error
-    assert isinstance(response, HTMLResponse)
-    assert "Failed - Click to Retry" in response.body.decode()
-    assert "bg-red-600" in response.body.decode()
-    assert "hx-post" in response.body.decode()
-    assert "Server is offline or unreachable" in response.body.decode()
+    assert response.status_code == 200
+    assert "Failed - Click to Retry" in response.text
+    assert "bg-red-600" in response.text
+    assert "hx-post" in response.text
+    assert "Server is offline or unreachable" in response.text
+    assert "HX-Trigger-After-Swap" not in response.headers
 
 
-@pytest.mark.asyncio
-async def test_register_catalog_server_json_response(mock_request, mock_db, mock_user, mock_catalog_service):
+def test_register_catalog_server_json_response(client):
     """Test non-HTMX request returns JSON response."""
-    # Setup non-HTMX request (no HX-Request header)
-    mock_request.headers = {}
-
-    # Mock successful registration
     mock_result = CatalogServerRegisterResponse(
         success=True,
         server_id="test-id",
         message="Successfully registered Test Server",
         error=None,
+        oauth_required=False,
     )
-    mock_catalog_service.register_catalog_server = AsyncMock(return_value=mock_result)
 
-    # Call endpoint (using unwrapped function to bypass RBAC decorator)
-    with patch("mcpgateway.admin.settings") as mock_settings:
+    with patch("mcpgateway.admin.catalog_service.register_catalog_server", new_callable=AsyncMock, return_value=mock_result), \
+         patch("mcpgateway.admin.settings") as mock_settings:
         mock_settings.mcpgateway_catalog_enabled = True
 
-        response = await _register_catalog_server(
-            server_id="test-server",
-            http_request=mock_request,
-            request=None,
-            db=mock_db,
-            _user=mock_user,
-        )
+        response = client.post("/admin/mcp-registry/test-server/register")
 
-    # Verify JSON response
-    assert isinstance(response, CatalogServerRegisterResponse)
-    assert response.success is True
-    assert response.server_id == "test-id"
-    assert "Successfully registered" in response.message
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["server_id"] == "test-id"
+    assert "Successfully registered" in data["message"]
 
 
-@pytest.mark.asyncio
-async def test_register_catalog_server_htmx_with_api_key(mock_request, mock_db, mock_user, mock_catalog_service):
+def test_register_catalog_server_htmx_with_api_key(client):
     """Test HTMX request with API key registration."""
-    # Setup HTMX request
-    mock_request.headers = {"HX-Request": "true"}
-
-    # Create registration request with API key
-    register_request = CatalogServerRegisterRequest(
-        server_id="api-server",
-        name="API Server",
-        api_key="secret-key",
-    )
-
-    # Mock successful registration
     mock_result = CatalogServerRegisterResponse(
         success=True,
         server_id="api-id",
         message="Successfully registered API Server with 3 tools discovered",
         error=None,
+        oauth_required=False,
     )
-    mock_catalog_service.register_catalog_server = AsyncMock(return_value=mock_result)
 
-    # Call endpoint (using unwrapped function to bypass RBAC decorator)
-    with patch("mcpgateway.admin.settings") as mock_settings:
+    with patch("mcpgateway.admin.catalog_service.register_catalog_server", new_callable=AsyncMock, return_value=mock_result), \
+         patch("mcpgateway.admin.settings") as mock_settings:
         mock_settings.mcpgateway_catalog_enabled = True
         mock_settings.app_root_path = ""
 
-        response = await _register_catalog_server(
-            server_id="api-server",
-            http_request=mock_request,
-            request=register_request,
-            db=mock_db,
-            _user=mock_user,
+        response = client.post(
+            "/admin/mcp-registry/api-server/register",
+            headers={"HX-Request": "true"},
+            json={"server_id": "api-server", "name": "API Server", "api_key": "secret-key"},
         )
 
-    # Verify HTML response
-    assert isinstance(response, HTMLResponse)
-    assert "Registered Successfully" in response.body.decode()
-    assert "bg-green-600" in response.body.decode()
+    assert response.status_code == 200
+    assert "Registered Successfully" in response.text
+    assert "bg-green-600" in response.text
+    assert "HX-Trigger-After-Swap" in response.headers
 
 
-@pytest.mark.asyncio
-async def test_register_catalog_server_htmx_error_escaping(mock_request, mock_db, mock_user, mock_catalog_service):
+def test_register_catalog_server_htmx_error_escaping(client):
     """Test that error messages with quotes are properly escaped in HTML."""
-    # Setup HTMX request
-    mock_request.headers = {"HX-Request": "true"}
-
-    # Mock failed registration with quotes in error message
     mock_result = CatalogServerRegisterResponse(
         success=False,
         server_id="",
         message="Registration failed",
         error='Server returned "Invalid credentials" error',
+        oauth_required=False,
     )
-    mock_catalog_service.register_catalog_server = AsyncMock(return_value=mock_result)
 
-    # Call endpoint (using unwrapped function to bypass RBAC decorator)
-    with patch("mcpgateway.admin.settings") as mock_settings:
+    with patch("mcpgateway.admin.catalog_service.register_catalog_server", new_callable=AsyncMock, return_value=mock_result), \
+         patch("mcpgateway.admin.settings") as mock_settings:
         mock_settings.mcpgateway_catalog_enabled = True
         mock_settings.app_root_path = ""
 
-        response = await _register_catalog_server(
-            server_id="failed-server",
-            http_request=mock_request,
-            request=None,
-            db=mock_db,
-            _user=mock_user,
+        response = client.post(
+            "/admin/mcp-registry/failed-server/register",
+            headers={"HX-Request": "true"},
         )
 
-    # Verify HTML response has escaped quotes
-    html_content = response.body.decode()
-    assert "Failed - Click to Retry" in html_content
-    assert "&quot;" in html_content  # Quotes should be escaped
-    assert "Server returned &quot;Invalid credentials&quot; error" in html_content
+    assert response.status_code == 200
+    assert "Failed - Click to Retry" in response.text
+    assert "&quot;" in response.text
+    assert "Server returned &quot;Invalid credentials&quot; error" in response.text
 
 
-@pytest.mark.asyncio
-async def test_register_catalog_server_htmx_retry_button_attributes(mock_request, mock_db, mock_user, mock_catalog_service):
+def test_register_catalog_server_htmx_retry_button_attributes(client):
     """Test that retry button has correct HTMX attributes."""
-    # Setup HTMX request
-    mock_request.headers = {"HX-Request": "true"}
-
-    # Mock failed registration
     mock_result = CatalogServerRegisterResponse(
         success=False,
         server_id="",
         message="Registration failed",
         error="Connection timeout",
+        oauth_required=False,
     )
-    mock_catalog_service.register_catalog_server = AsyncMock(return_value=mock_result)
 
-    # Call endpoint (using unwrapped function to bypass RBAC decorator)
-    with patch("mcpgateway.admin.settings") as mock_settings:
+    with patch("mcpgateway.admin.catalog_service.register_catalog_server", new_callable=AsyncMock, return_value=mock_result), \
+         patch("mcpgateway.admin.settings") as mock_settings:
         mock_settings.mcpgateway_catalog_enabled = True
         mock_settings.app_root_path = "/api"
 
-        response = await _register_catalog_server(
-            server_id="timeout-server",
-            http_request=mock_request,
-            request=None,
-            db=mock_db,
-            _user=mock_user,
+        response = client.post(
+            "/admin/mcp-registry/timeout-server/register",
+            headers={"HX-Request": "true"},
         )
 
-    # Verify retry button has correct HTMX attributes
-    html_content = response.body.decode()
+    assert response.status_code == 200
+    html_content = response.text
     assert 'hx-post="/api/admin/mcp-registry/timeout-server/register"' in html_content
     assert 'hx-target="#timeout-server-button-container"' in html_content
     assert 'hx-swap="innerHTML"' in html_content
     assert 'hx-disabled-elt="this"' in html_content
     assert "hx-on::before-request" in html_content
-    assert "hx-on::after-request" in html_content
+    assert "hx-on::response-error" in html_content
+    assert "HX-Trigger-After-Swap" not in response.headers

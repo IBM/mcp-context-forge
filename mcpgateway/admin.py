@@ -15048,8 +15048,8 @@ async def register_catalog_server(
         safe_message = html.escape(result.message, quote=True)
 
         if result.success:
-            # Check if this is an OAuth server requiring configuration
-            if "OAuth" in result.message and "required" in result.message.lower():
+            # Check if this is an OAuth server requiring configuration (use explicit flag, not string matching)
+            if result.oauth_required:
                 button_fragment = f"""
                 <button
                     class="w-full px-4 py-2 bg-yellow-600 text-white rounded-md cursor-default"
@@ -15076,8 +15076,12 @@ async def register_catalog_server(
                     Registered Successfully
                 </button>
                 """
+            # Success cases trigger a delayed table refresh via HX-Trigger header
+            response = HTMLResponse(content=button_fragment)
+            response.headers["HX-Trigger-After-Swap"] = orjson.dumps({"catalogRegistrationSuccess": {"delayMs": 1500}}).decode()
+            return response
         else:
-            # Error: Show error state with retry button
+            # Error: Show error state with retry button (no auto-refresh so retry persists)
             error_msg = html.escape(result.error or result.message, quote=True)
             button_fragment = f"""
             <button
@@ -15088,7 +15092,7 @@ async def register_catalog_server(
                 hx-swap="innerHTML"
                 hx-disabled-elt="this"
                 hx-on::before-request="this.innerHTML = '<span class=\\'inline-flex items-center\\'><span class=\\'inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2\\'></span>Retrying...</span>'"
-                hx-on::after-request="if(event.detail.successful) {{ setTimeout(() => {{ const rootPath = window.ROOT_PATH || ''; if(window.htmx) {{ window.htmx.ajax('GET', rootPath + '/admin/mcp-registry/partial', {{target: '#mcp-registry-servers', swap: 'innerHTML'}}); }} }}, 1500); }}"
+                hx-on::response-error="this.innerHTML = '<span class=\\'inline-flex items-center\\'><svg class=\\'inline-block h-4 w-4 mr-2\\' fill=\\'none\\' stroke=\\'currentColor\\' viewBox=\\'0 0 24 24\\'><path stroke-linecap=\\'round\\' stroke-linejoin=\\'round\\' stroke-width=\\'2\\' d=\\'M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z\\'></path></svg>Network Error - Click to Retry</span>'"
                 title="{error_msg}"
             >
                 <svg class="inline-block h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -15097,8 +15101,8 @@ async def register_catalog_server(
                 Failed - Click to Retry
             </button>
             """
-
-        return HTMLResponse(content=button_fragment)
+            # No HX-Trigger for errors - let the retry button persist
+            return HTMLResponse(content=button_fragment)
 
     # Return JSON for non-HTMX requests (API clients)
     return result

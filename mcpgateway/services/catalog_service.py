@@ -375,6 +375,7 @@ class CatalogService:
                     server_id=str(gateway_read.id),
                     message=f"Successfully registered {gateway_read.name} - OAuth configuration required before activation",
                     error=None,
+                    oauth_required=True,
                 )
 
             gateway_create = GatewayCreate(**gateway_data)

@@ -6602,6 +6602,7 @@ class CatalogServerRegisterResponse(BaseModel):
     server_id: str = Field(..., description="ID of the registered server in the system")
     message: str = Field(..., description="Status message")
     error: Optional[str] = Field(None, description="Error message if registration failed")
+    oauth_required: bool = Field(False, description="Whether OAuth configuration is required before activation")
 
 
 class CatalogServerStatusRequest(BaseModel):

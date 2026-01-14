@@ -513,7 +513,7 @@
           hx-swap="innerHTML"
           hx-disabled-elt="this"
           hx-on::before-request="this.innerHTML = '<span class=\'inline-flex items-center\'><span class=\'inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2\'></span>Registering...</span>'"
-          hx-on::after-request="if(event.detail.successful) { setTimeout(() => { const rootPath = window.ROOT_PATH || ''; if(window.htmx) { window.htmx.ajax('GET', rootPath + '/admin/mcp-registry/partial', {target: '#mcp-registry-servers', swap: 'innerHTML'}); } }, 1500); }"
+          hx-on::response-error="this.innerHTML = 'Add Server'; this.disabled = false;"
         >
           Add Server
         </button>
@@ -704,4 +704,11 @@ function refreshCatalog() {
     location.reload();
   }
 }
+
+// Listen for successful catalog registration to trigger delayed refresh
+// This is triggered by the HX-Trigger-After-Swap header from the server
+document.body.addEventListener('catalogRegistrationSuccess', function(evt) {
+  const delayMs = evt.detail && evt.detail.delayMs ? evt.detail.delayMs : 1500;
+  setTimeout(refreshCatalog, delayMs);
+});
 </script>
