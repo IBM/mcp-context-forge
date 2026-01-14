@@ -33,6 +33,13 @@
         name: "{{ prefix_v }}-aurora-postgresql-sg"
         state: absent
 
+    # ElastiCache SG (referenced by ecs-tasks)
+    - name: Delete ElastiCache security group
+      amazon.aws.ec2_security_group:
+        region: "{{ region_v }}"
+        name: "{{ prefix_v }}-elasticache-sg"
+        state: absent
+
     # ECS Tasks SG
     - name: Delete ECS tasks security group
       amazon.aws.ec2_security_group:

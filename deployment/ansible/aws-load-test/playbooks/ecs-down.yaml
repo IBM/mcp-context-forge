@@ -24,7 +24,6 @@
       loop:
         - nginx
         - gateway
-        - redis
       register: services_delete_result
 
     # Wait for services to drain before deleting ALB
@@ -155,7 +154,6 @@
       loop:
         - "{{ prefix_v }}-gateway-td"
         - "{{ prefix_v }}-nginx-td"
-        - "{{ prefix_v }}-redis-td"
       retries: 5
       delay: 10
 

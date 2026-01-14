@@ -3,6 +3,7 @@
     state: absent
   gather_timeout: 30
 - import_playbook: playbooks/ecs-down.yaml
+- import_playbook: playbooks/elasticache-down.yaml
 - import_playbook: playbooks/postgres-down.yaml
 - import_playbook: playbooks/bastion-down.yaml
 - import_playbook: playbooks/security-down.yaml

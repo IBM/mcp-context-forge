@@ -1,0 +1,139 @@
+---
+- name: Create ElastiCache Serverless Redis
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: ../.venv/bin/python
+  tasks:
+    - name: Get private subnets
+      amazon.aws.ec2_vpc_subnet_info:
+        region: "{{ region_v }}"
+        filters:
+          "tag:Project": "{{ prefix_v }}"
+          "map-public-ip-on-launch": false
+      register: private_subnets_r
+
+    - name: Get ElastiCache security group
+      amazon.aws.ec2_security_group_info:
+        region: "{{ region_v }}"
+        filters:
+          group-name: "{{ prefix_v }}-elasticache-sg"
+      register: elasticache_sg_r
+
+    - name: Generate AUTH token
+      ansible.builtin.set_fact:
+        redis_auth_token: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+
+    - name: Store AUTH token in Secrets Manager
+      community.aws.secretsmanager_secret:
+        name: "{{ prefix_v }}-redis-auth-token"
+        state: present
+        secret: "{{ redis_auth_token }}"
+        region: "{{ region_v }}"
+        tags:
+          Project: "{{ prefix_v }}"
+      register: auth_token_secret_r
+
+    - name: Check if ElastiCache user exists
+      ansible.builtin.command: >
+        aws elasticache describe-users
+        --user-id {{ prefix_v }}-user
+        --region {{ region_v }}
+      register: elasticache_user_check_r
+      failed_when: false
+      changed_when: false
+
+    - name: Create ElastiCache user
+      ansible.builtin.command: >
+        aws elasticache create-user
+        --user-id {{ prefix_v }}-user
+        --user-name mcfuser
+        --engine redis
+        --access-string "on ~* +@all"
+        --authentication-mode Type=password,Passwords={{ redis_auth_token }}
+        --region {{ region_v }}
+      when: elasticache_user_check_r.rc != 0
+      register: elasticache_user_r
+
+    - name: Check if ElastiCache user group exists
+      ansible.builtin.command: >
+        aws elasticache describe-user-groups
+        --user-group-id {{ prefix_v }}-usergroup
+        --region {{ region_v }}
+      register: elasticache_usergroup_check_r
+      failed_when: false
+      changed_when: false
+
+    - name: Create ElastiCache user group
+      ansible.builtin.command: >
+        aws elasticache create-user-group
+        --user-group-id {{ prefix_v }}-usergroup
+        --engine redis
+        --user-ids default {{ prefix_v }}-user
+        --region {{ region_v }}
+      when: elasticache_usergroup_check_r.rc != 0
+      register: elasticache_usergroup_r
+
+    - name: Wait for user group to be active
+      ansible.builtin.command: >
+        aws elasticache describe-user-groups
+        --user-group-id {{ prefix_v }}-usergroup
+        --region {{ region_v }}
+        --query 'UserGroups[0].Status'
+        --output text
+      register: usergroup_status_r
+      until: usergroup_status_r.stdout == 'active'
+      retries: 20
+      delay: 10
+      changed_when: false
+
+    - name: Check if ElastiCache Serverless cache exists
+      ansible.builtin.command: >
+        aws elasticache describe-serverless-caches
+        --serverless-cache-name {{ prefix_v }}-redis
+        --region {{ region_v }}
+      register: elasticache_check_r
+      failed_when: false
+      changed_when: false
+
+    - name: Create ElastiCache Serverless cache
+      ansible.builtin.command: >
+        aws elasticache create-serverless-cache
+        --serverless-cache-name {{ prefix_v }}-redis
+        --engine redis
+        --major-engine-version 7
+        --security-group-ids {{ elasticache_sg_r.security_groups[0].group_id }}
+        --subnet-ids {{ private_subnets_r.subnets | map(attribute='id') | join(' ') }}
+        --user-group-id {{ prefix_v }}-usergroup
+        --tags Key=Name,Value={{ prefix_v }}-redis Key=Project,Value={{ prefix_v }}
+        --region {{ region_v }}
+      when: elasticache_check_r.rc != 0
+      register: elasticache_create_r
+
+    - name: Wait for ElastiCache Serverless cache to be available
+      ansible.builtin.command: >
+        aws elasticache describe-serverless-caches
+        --serverless-cache-name {{ prefix_v }}-redis
+        --region {{ region_v }}
+        --query 'ServerlessCaches[0].Status'
+        --output text
+      register: elasticache_status_r
+      until: elasticache_status_r.stdout == 'available'
+      retries: 30
+      delay: 30
+      changed_when: false
+
+    - name: Get ElastiCache endpoint
+      ansible.builtin.command: >
+        aws elasticache describe-serverless-caches
+        --serverless-cache-name {{ prefix_v }}-redis
+        --region {{ region_v }}
+        --query 'ServerlessCaches[0].Endpoint.Address'
+        --output text
+      register: elasticache_endpoint_r
+      changed_when: false
+
+    - name: Display ElastiCache endpoint
+      ansible.builtin.debug:
+        msg: "ElastiCache endpoint: {{ elasticache_endpoint_r.stdout }}"

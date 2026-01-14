@@ -1,0 +1,109 @@
+---
+- name: Build and push container images to ECR
+  hosts: "_bastion"
+  become: false
+  vars:
+    github_repo: "https://github.com/ibm/mcp-context-forge.git"
+    github_branch: "{{ github_branch_v | default('main') }}"
+    # List of images to build - can be overridden in inventory
+    images_to_build:
+      - name: mcp-context-forge-nginx
+        context: infra/nginx
+        dockerfile: Dockerfile
+      - name: fast-test-server
+        context: mcp-servers/rust/fast-test-server
+        dockerfile: Containerfile
+      - name: benchmark-server
+        context: mcp-servers/go/benchmark-server
+        dockerfile: Dockerfile
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ access_key_v }}"
+    AWS_SECRET_ACCESS_KEY: "{{ secret_key_v }}"
+    AWS_REGION: "{{ region_v }}"
+  tasks:
+    # =========================================================================
+    # Determine Target Architecture (once for all builds)
+    # =========================================================================
+
+    - name: Get ECS instance type info
+      ec2_describe_instance_types:
+        filters:
+          - name: instance-type
+            values:
+              - "{{ ecs_instance_type_v | default('c6i.12xlarge') }}"
+      register: instance_type_r
+
+    - name: Set target platform based on instance architecture
+      ansible.builtin.set_fact:
+        target_platform: "linux/{{ 'amd64' if instance_type_r.instance_types[0].processor_info.supported_architectures[0] == 'x86_64' else 'arm64' }}"
+
+    # =========================================================================
+    # Get Git commit hash for tagging (once for all builds)
+    # =========================================================================
+
+    - name: Get latest commit hash from GitHub
+      ansible.builtin.command: git ls-remote {{ github_repo }} {{ github_branch }}
+      register: git_ls_remote_r
+      changed_when: false
+
+    - name: Set image tag from commit
+      ansible.builtin.set_fact:
+        image_tag: "{{ git_ls_remote_r.stdout.split()[0][:7] }}"
+
+    # =========================================================================
+    # ECR Setup (once for all builds)
+    # =========================================================================
+
+    - name: Get AWS account ID
+      ansible.builtin.command: aws sts get-caller-identity --query Account --output text
+      register: aws_account_r
+      changed_when: false
+
+    - name: Set ECR registry URL
+      ansible.builtin.set_fact:
+        ecr_registry: "{{ aws_account_r.stdout }}.dkr.ecr.{{ region_v }}.amazonaws.com"
+
+    - name: Login to ECR
+      ansible.builtin.shell: |
+        aws ecr get-login-password --region {{ region_v }} | \
+        docker login --username AWS --password-stdin {{ ecr_registry }}
+      changed_when: true
+
+    # =========================================================================
+    # Build and Push Images (loop over all images)
+    # =========================================================================
+
+    - name: Create ECR repositories
+      ansible.builtin.command: >
+        aws ecr create-repository
+          --repository-name {{ prefix_v }}/{{ item.name }}
+          --region {{ region_v }}
+      loop: "{{ images_to_build }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: ecr_create_r
+      failed_when: ecr_create_r.rc != 0 and 'RepositoryAlreadyExistsException' not in ecr_create_r.stderr
+      changed_when: ecr_create_r.rc == 0
+
+    - name: Build and push images with buildx from GitHub
+      ansible.builtin.command: >
+        docker buildx build
+          --platform {{ target_platform }}
+          --file {{ item.dockerfile | default('Dockerfile') }}
+          --tag {{ ecr_registry }}/{{ prefix_v }}/{{ item.name }}:{{ image_tag }}
+          --tag {{ ecr_registry }}/{{ prefix_v }}/{{ item.name }}:latest
+          --push
+          {{ github_repo }}#{{ github_branch }}:{{ item.context }}
+      loop: "{{ images_to_build }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: docker_build_r
+
+    - name: Display build results
+      ansible.builtin.debug:
+        msg: |
+          Images built and pushed successfully:
+          {% for image in images_to_build %}
+            - {{ ecr_registry }}/{{ prefix_v }}/{{ image.name }}:{{ image_tag }}
+          {% endfor %}
+          Platform: {{ target_platform }}

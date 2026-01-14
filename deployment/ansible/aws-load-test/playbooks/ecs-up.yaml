@@ -36,6 +36,21 @@
         cluster_id: "{{ prefix_v }}-mcf-postgres"
       register: rds_cluster_info_r
 
+    - name: Get ElastiCache endpoint
+      ansible.builtin.command: >
+        aws elasticache describe-serverless-caches
+        --serverless-cache-name {{ prefix_v }}-redis
+        --region {{ region_v }}
+        --query 'ServerlessCaches[0].Endpoint.Address'
+        --output text
+      register: elasticache_endpoint_r
+      changed_when: false
+
+    - name: Set ElastiCache facts
+      ansible.builtin.set_fact:
+        redis_auth_token: "{{ lookup('amazon.aws.secretsmanager_secret', prefix_v + '-redis-auth-token') }}"
+        elasticache_endpoint: "{{ elasticache_endpoint_r.stdout }}"
+
     - name: Get AWS account ID
       ansible.builtin.command: aws sts get-caller-identity --query Account --output text --region {{ region_v }}
       register: aws_account_r
@@ -258,7 +273,7 @@
                 value: "postgresql+psycopg://postgres:{{ lookup('amazon.aws.secretsmanager_secret',
                   prefix_v + '-postgres-master-user-password') }}@{{ rds_cluster_info_r.clusters[0].endpoint }}:5432/mcp"
               - name: REDIS_URL
-                value: "redis://redis.{{ prefix_v }}.local:6379/0"
+                value: "rediss://mcfuser:{{ redis_auth_token }}@{{ elasticache_endpoint }}:6379/0"
               - name: CACHE_TYPE
                 value: "redis"
               - name: AUTH_REQUIRED
@@ -313,74 +328,9 @@
                 protocol: tcp
       register: nginx_td_r
 
-    - name: ECS Task Definition for redis
-      community.aws.ecs_taskdefinition:
-        family: "{{ prefix_v }}-redis-td"
-        state: "present"
-        launch_type: FARGATE
-        memory: "2048"
-        cpu: "2048"
-        network_mode: awsvpc
-        execution_role_arn: "{{ execution_role_r.iam_role.arn }}"
-        task_role_arn: "{{ task_role_r.iam_role.arn }}"
-        force_create: true
-        containers:
-          - name: redis
-            image: "redis:latest"
-            command:
-              - "redis-server"
-              - "--maxmemory"
-              - "1gb"
-              - "--maxmemory-policy"
-              - "allkeys-lru"
-              - "--tcp-backlog"
-              - "2048"
-              - "--maxclients"
-              - "10000"
-            logConfiguration:
-              logDriver: awslogs
-              options:
-                awslogs-group: /ecs/mcf
-                awslogs-region: "{{ region_v }}"
-                awslogs-stream-prefix: redis
-            portMappings:
-              - name: redis
-                containerPort: 6379
-                protocol: tcp
-      register: redis_td_r
-
     # ==========================================================================
     # ECS Services
     # ==========================================================================
-
-    - name: Redis service
-      ecs_service:
-        state: present
-        name: "{{ prefix_v }}-redis-svc"
-        cluster: "{{ prefix_v }}-ecs-cluster"
-        launch_type: FARGATE
-        desired_count: 1
-        task_definition: "{{ redis_td_r.taskdefinition.taskDefinitionArn }}"
-        network_configuration:
-          assign_public_ip: false
-          subnets: "{{ vpc_private_subnets_r.subnets | map(attribute='id') }}"
-          security_groups:
-            - "{{ ecs_ec2_sg_group_id_f }}"
-        enable_execute_command: "{{ debug_container_p }}"
-        service_connect_configuration:
-          enabled: true
-          namespace: "{{ prefix_v }}.local"
-          logConfiguration:
-            logDriver: awslogs
-            options:
-              awslogs-group: /ecs/mcf
-              awslogs-region: "{{ region_v }}"
-              awslogs-stream-prefix: redis-service-connect
-          services:
-            - port_name: redis
-              client_aliases:
-                - port: 6379
-                  dns_name: redis
 
     - name: Gateway service
       ecs_service:
@@ -464,7 +414,6 @@
       loop:
         - gateway
         - nginx
-        - redis
 
     - name: ALB DNS Name is
       ansible.builtin.debug:

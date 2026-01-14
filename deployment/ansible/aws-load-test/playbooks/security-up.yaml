@@ -126,3 +126,19 @@
             to_port: 5432
             group_id: "{{ ecs_ec2_sg_r.group_id }}"
       register: aurora_sg_r
+
+    # ELASTICACHE SECURITY GROUP
+    - name: Create Security Group for ElastiCache
+      amazon.aws.ec2_security_group:
+        name: "{{ prefix_v }}-elasticache-sg"
+        description: Allow port 6379 from ECS Fargate tasks
+        region: "{{ region_v }}"
+        vpc_id: "{{ vpc_id_f }}"
+        tags:
+          "Name": "{{ prefix_v }}-elasticache-sg"
+        rules:
+          - proto: tcp
+            from_port: 6379
+            to_port: 6379
+            group_id: "{{ ecs_ec2_sg_r.group_id }}"
+      register: elasticache_sg_r

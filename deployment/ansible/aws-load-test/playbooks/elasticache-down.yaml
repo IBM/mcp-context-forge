@@ -1,0 +1,105 @@
+---
+- name: Delete ElastiCache Serverless Redis
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: ../.venv/bin/python
+  tasks:
+    - name: Check if ElastiCache Serverless cache exists
+      ansible.builtin.command: >
+        aws elasticache describe-serverless-caches
+        --serverless-cache-name {{ prefix_v }}-redis
+        --region {{ region_v }}
+      register: elasticache_check_r
+      failed_when: false
+      changed_when: false
+
+    - name: Delete ElastiCache Serverless cache
+      ansible.builtin.command: >
+        aws elasticache delete-serverless-cache
+        --serverless-cache-name {{ prefix_v }}-redis
+        --no-final-snapshot
+        --region {{ region_v }}
+      when: elasticache_check_r.rc == 0
+      register: elasticache_delete_r
+
+    - name: Wait for ElastiCache Serverless cache to be deleted
+      ansible.builtin.command: >
+        aws elasticache describe-serverless-caches
+        --serverless-cache-name {{ prefix_v }}-redis
+        --region {{ region_v }}
+      register: elasticache_status_r
+      until: elasticache_status_r.rc != 0
+      retries: 30
+      delay: 30
+      failed_when: false
+      changed_when: false
+      when: elasticache_check_r.rc == 0
+
+    - name: Check if ElastiCache user group exists
+      ansible.builtin.command: >
+        aws elasticache describe-user-groups
+        --user-group-id {{ prefix_v }}-usergroup
+        --region {{ region_v }}
+      register: usergroup_check_r
+      failed_when: false
+      changed_when: false
+
+    - name: Delete ElastiCache user group
+      ansible.builtin.command: >
+        aws elasticache delete-user-group
+        --user-group-id {{ prefix_v }}-usergroup
+        --region {{ region_v }}
+      when: usergroup_check_r.rc == 0
+      register: usergroup_delete_r
+
+    - name: Wait for user group to be deleted
+      ansible.builtin.command: >
+        aws elasticache describe-user-groups
+        --user-group-id {{ prefix_v }}-usergroup
+        --region {{ region_v }}
+      register: usergroup_status_r
+      until: usergroup_status_r.rc != 0
+      retries: 20
+      delay: 15
+      failed_when: false
+      changed_when: false
+      when: usergroup_check_r.rc == 0
+
+    - name: Check if ElastiCache user exists
+      ansible.builtin.command: >
+        aws elasticache describe-users
+        --user-id {{ prefix_v }}-user
+        --region {{ region_v }}
+      register: user_check_r
+      failed_when: false
+      changed_when: false
+
+    - name: Delete ElastiCache user
+      ansible.builtin.command: >
+        aws elasticache delete-user
+        --user-id {{ prefix_v }}-user
+        --region {{ region_v }}
+      when: user_check_r.rc == 0
+      register: user_delete_r
+
+    - name: Wait for user to be deleted
+      ansible.builtin.command: >
+        aws elasticache describe-users
+        --user-id {{ prefix_v }}-user
+        --region {{ region_v }}
+      register: user_status_r
+      until: user_status_r.rc != 0
+      retries: 20
+      delay: 10
+      failed_when: false
+      changed_when: false
+      when: user_check_r.rc == 0
+
+    - name: Delete AUTH token from Secrets Manager
+      community.aws.secretsmanager_secret:
+        name: "{{ prefix_v }}-redis-auth-token"
+        state: absent
+        recovery_window: 0
+        region: "{{ region_v }}"
