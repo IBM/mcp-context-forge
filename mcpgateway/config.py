@@ -334,6 +334,14 @@ class Settings(BaseSettings):
     password_require_numbers: bool = Field(default=False, description="Require numbers in passwords")
     password_require_special: bool = Field(default=True, description="Require special characters in passwords")
 
+    # Password change enforcement and policy toggles
+    password_change_enforcement_enabled: bool = Field(default=True, description="Master switch for password change enforcement checks")
+    admin_require_password_change_on_bootstrap: bool = Field(default=True, description="Force admin to change password after bootstrap")
+    detect_default_password_on_login: bool = Field(default=True, description="Detect default password during login and mark user for change")
+    require_password_change_for_default_password: bool = Field(default=True, description="Require password change when user is created with the default password")
+    password_policy_enabled: bool = Field(default=True, description="Enable password complexity validation for new/changed passwords")
+    password_prevent_reuse: bool = Field(default=True, description="Prevent reusing the current password when changing")
+    password_max_age_days: int = Field(default=90, description="Password maximum age in days before expiry forces a change")
     # Account Security Configuration
     max_failed_login_attempts: int = Field(default=5, description="Maximum failed login attempts before account lockout")
     account_lockout_duration_minutes: int = Field(default=30, description="Account lockout duration in minutes")

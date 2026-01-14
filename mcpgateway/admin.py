@@ -784,6 +784,7 @@ def validate_password_strength(password: str) -> tuple[bool, str]:
     """Validate password meets strength requirements.
 
     Uses configurable settings from config.py for password policy.
+    Respects password_policy_enabled toggle - if disabled, all passwords pass.
 
     Args:
         password: Password to validate
@@ -791,6 +792,10 @@ def validate_password_strength(password: str) -> tuple[bool, str]:
     Returns:
         tuple: (is_valid, error_message)
     """
+    # If password policy is disabled, skip all validation
+    if not getattr(settings, "password_policy_enabled", True):
+        return True, ""
+
     min_length = getattr(settings, "password_min_length", 8)
     require_uppercase = getattr(settings, "password_require_uppercase", False)
     require_lowercase = getattr(settings, "password_require_lowercase", False)
@@ -3565,19 +3570,42 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                 root_path = request.scope.get("root_path", "")
                 return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials", status_code=303)
 
-            # Check if password change is required OR if user is using default password
-            needs_password_change = user.password_change_required
+            # Password change enforcement respects master switch and toggles
+            needs_password_change = False
 
-            # Also check if user is using the default password
-            if not needs_password_change:
-                password_service = Argon2PasswordService()
-                is_using_default_password = password_service.verify_password(settings.default_user_password.get_secret_value(), user.password_hash)  # nosec B105
-                if is_using_default_password:
+            if settings.password_change_enforcement_enabled:
+                # If flag is set on the user, always honor it (flag is cleared when password is changed)
+                if getattr(user, "password_change_required", False):
                     needs_password_change = True
-                    # Set the flag in database for future reference
-                    user.password_change_required = True
-                    db.commit()
-                    LOGGER.info(f"User {email} is using default password - forcing password change")
+                    LOGGER.debug("User %s has password_change_required flag set", email)
+
+                # Enforce expiry-based password change if configured and not already required
+                if not needs_password_change:
+                    try:
+                        pwd_changed = getattr(user, "password_changed_at", None)
+                        if pwd_changed:
+                            age_days = (utc_now() - pwd_changed).days
+                            max_age = getattr(settings, "password_max_age_days", 90)
+                            if age_days >= max_age:
+                                needs_password_change = True
+                                LOGGER.debug("User %s password expired (%s days >= %s)", email, age_days, max_age)
+                    except Exception as exc:
+                        LOGGER.debug("Failed to evaluate password age for %s: %s", email, exc)
+
+                # Detect default password on login if enabled
+                if getattr(settings, "detect_default_password_on_login", True):
+                    password_service = Argon2PasswordService()
+                    is_using_default_password = password_service.verify_password(settings.default_user_password.get_secret_value(), user.password_hash)  # nosec B105
+                    if is_using_default_password:
+                        if getattr(settings, "require_password_change_for_default_password", True):
+                            user.password_change_required = True
+                            needs_password_change = True
+                            try:
+                                db.commit()
+                            except Exception as exc:  # log commit failures
+                                LOGGER.warning("Failed to commit password_change_required flag for %s: %s", email, exc)
+                        else:
+                            LOGGER.info("User %s is using default password but enforcement is disabled", email)
 
             if needs_password_change:
                 LOGGER.info(f"User {email} requires password change - redirecting to change password page")
@@ -3713,6 +3741,7 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
             "request": request,
             "root_path": root_path,
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
+            "password_policy_enabled": getattr(settings, "password_policy_enabled", True),
             "password_min_length": getattr(settings, "password_min_length", 8),
             "password_require_uppercase": getattr(settings, "password_require_uppercase", False),
             "password_require_lowercase": getattr(settings, "password_require_lowercase", False),
@@ -6068,8 +6097,10 @@ async def admin_create_user(
             email=str(form.get("email", "")), password=password, full_name=str(form.get("full_name", "")), is_admin=form.get("is_admin") == "on", auth_provider="local"
         )
 
-        # If the user was created with the default password, force password change
-        if password == settings.default_user_password.get_secret_value():  # nosec B105
+        # If the user was created with the default password, optionally force password change
+        if (
+            settings.password_change_enforcement_enabled and getattr(settings, "require_password_change_for_default_password", True) and password == settings.default_user_password.get_secret_value()
+        ):  # nosec B105
             new_user.password_change_required = True
             db.commit()
 
