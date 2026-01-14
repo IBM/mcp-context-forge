@@ -28,10 +28,10 @@ import glob
 import os
 import pstats
 import sys
-from typing import Dict
+from typing import Any, Dict
 
 
-def analyze_profile(profile_path: str, limit: int = 20) -> Dict[str, any]:
+def analyze_profile(profile_path: str, limit: int = 20) -> Dict[str, Any]:
     """Analyze a single profile file.
 
     Args:
@@ -96,7 +96,7 @@ def compare_profiles(baseline_path: str, current_path: str) -> None:
     print("=" * 80)
     print(f"\nBaseline: {os.path.basename(baseline_path)}")
     print(f"Current:  {os.path.basename(current_path)}")
-    print(f"\nTotal Time:")
+    print("\nTotal Time:")
     print(f"  Baseline: {baseline_total:.6f}s")
     print(f"  Current:  {current_total:.6f}s")
 
@@ -214,7 +214,7 @@ def compare_all_profiles(baseline_dir: str, current_dir: str) -> None:
     elif overall_pct < 0:
         print(f"\n✓ Overall Performance: {abs(overall_pct):.1f}% FASTER")
     else:
-        print(f"\n= Overall Performance: No change")
+        print("\n= Overall Performance: No change")
 
     print(f"\nFiles compared: {compared}")
     print(f"Files missing:  {missing}")
