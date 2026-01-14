@@ -1580,6 +1580,19 @@ class EmailTeamMember(Base):
     # Unique constraint to prevent duplicate memberships
     __table_args__ = (UniqueConstraint("team_id", "user_email", name="uq_team_member"),)
 
+    @property
+    def created_at(self) -> datetime:
+        """Alias for joined_at to support unified_paginate cursor pagination.
+
+        unified_paginate uses (created_at, id) for cursor keyset pagination.
+        EmailTeamMember uses joined_at instead, so this property provides
+        the expected interface.
+
+        Returns:
+            datetime: The joined_at timestamp.
+        """
+        return self.joined_at
+
     def __repr__(self) -> str:
         """String representation of the team member.
 

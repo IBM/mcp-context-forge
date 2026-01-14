@@ -30385,8 +30385,9 @@ async function serverSideUserSearch(teamId, searchTerm) {
     }
 
     try {
-        // First, collect member data from DOM including roles (before search replaces content)
+        // First, collect member data AND checkbox states from DOM (before search replaces content)
         const memberDataFromDom = {};
+        const checkboxStates = {}; // Track checkbox states for all visible users
         const existingMemberItems = document.querySelectorAll(
             `#team-members-container-${teamId} .user-item`,
         );
@@ -30394,9 +30395,35 @@ async function serverSideUserSearch(teamId, searchTerm) {
             const email = item.dataset.userEmail;
             if (email) {
                 const roleSelect = item.querySelector(".role-select");
+                const checkbox = item.querySelector(".user-checkbox");
                 memberDataFromDom[email] = {
                     role: roleSelect ? roleSelect.value : "member",
                 };
+                if (checkbox) {
+                    checkboxStates[email] = checkbox.checked;
+                }
+            }
+        });
+
+        // Also collect checkbox states from non-members section
+        const existingNonMemberItems = document.querySelectorAll(
+            `#team-non-members-container-${teamId} .user-item`,
+        );
+        existingNonMemberItems.forEach((item) => {
+            const email = item.dataset.userEmail;
+            if (email) {
+                const checkbox = item.querySelector(".user-checkbox");
+                const roleSelect = item.querySelector(".role-select");
+                if (checkbox) {
+                    checkboxStates[email] = checkbox.checked;
+                    // Also preserve role selection for users being added
+                    if (checkbox.checked && roleSelect) {
+                        memberDataFromDom[email] = {
+                            role: roleSelect.value,
+                            pendingAdd: true, // Flag that this is a pending addition
+                        };
+                    }
+                }
             }
         });
 
@@ -30457,13 +30484,18 @@ async function serverSideUserSearch(teamId, searchTerm) {
                 return div.innerHTML;
             }
 
-            // Render members with preserved roles and loadedMembers hidden input
+            // Render members with preserved roles, checkbox states, and loadedMembers hidden input
             let membersHtml = "";
             members.forEach((user) => {
                 const fullName = escapeHtml(user.full_name || user.email);
                 const email = escapeHtml(user.email);
                 const role = user.role || "member";
                 const isOwner = role === "owner";
+                // Preserve checkbox state if available, otherwise default to checked for existing members
+                const isChecked =
+                    checkboxStates[user.email] !== undefined
+                        ? checkboxStates[user.email]
+                        : true;
                 membersHtml += `
                     <div class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-3 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item border border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-900/20" data-user-email="${email}">
                         <div class="flex-shrink-0">
@@ -30472,7 +30504,7 @@ async function serverSideUserSearch(teamId, searchTerm) {
                             </div>
                         </div>
                         <input type="hidden" name="loadedMembers" value="${email}" />
-                        <input type="checkbox" name="associatedUsers" value="${email}" data-user-name="${fullName}" class="user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0" checked data-auto-check="true" />
+                        <input type="checkbox" name="associatedUsers" value="${email}" data-user-name="${fullName}" class="user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0" ${isChecked ? "checked" : ""} data-auto-check="true" />
                         <div class="flex-grow min-w-0">
                             <div class="flex items-center gap-2 flex-wrap">
                                 <span class="select-none font-medium text-gray-900 dark:text-white truncate">${fullName}</span>
@@ -30488,11 +30520,23 @@ async function serverSideUserSearch(teamId, searchTerm) {
                 `;
             });
 
-            // Render non-members
+            // Render non-members with preserved checkbox states and roles
             let nonMembersHtml = "";
             nonMembers.forEach((user) => {
                 const fullName = escapeHtml(user.full_name || user.email);
                 const email = escapeHtml(user.email);
+                // Preserve checkbox state if available, otherwise default to unchecked for non-members
+                const isChecked =
+                    checkboxStates[user.email] !== undefined
+                        ? checkboxStates[user.email]
+                        : false;
+                // Preserve role selection for users being added
+                const pendingData = memberDataFromDom[user.email];
+                const role =
+                    pendingData && pendingData.pendingAdd
+                        ? pendingData.role
+                        : "member";
+                const isOwner = role === "owner";
                 nonMembersHtml += `
                     <div class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-3 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item border border-transparent" data-user-email="${email}" data-is-member="false">
                         <div class="flex-shrink-0">
@@ -30500,7 +30544,7 @@ async function serverSideUserSearch(teamId, searchTerm) {
                                 <span class="text-sm font-medium text-gray-700 dark:text-gray-300">${user.email[0].toUpperCase()}</span>
                             </div>
                         </div>
-                        <input type="checkbox" name="associatedUsers" value="${email}" data-user-name="${fullName}" class="user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0" />
+                        <input type="checkbox" name="associatedUsers" value="${email}" data-user-name="${fullName}" class="user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0" ${isChecked ? "checked" : ""} />
                         <div class="flex-grow min-w-0">
                             <div class="flex items-center gap-2 flex-wrap">
                                 <span class="select-none font-medium text-gray-900 dark:text-white truncate">${fullName}</span>
@@ -30508,8 +30552,8 @@ async function serverSideUserSearch(teamId, searchTerm) {
                             <div class="text-sm text-gray-500 dark:text-gray-400 truncate">${email}</div>
                         </div>
                         <select name="role_${encodeURIComponent(user.email)}" class="role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0">
-                            <option value="member" selected>Member</option>
-                            <option value="owner">Owner</option>
+                            <option value="member" ${!isOwner ? "selected" : ""}>Member</option>
+                            <option value="owner" ${isOwner ? "selected" : ""}>Owner</option>
                         </select>
                     </div>
                 `;

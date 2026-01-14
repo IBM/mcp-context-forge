@@ -23,7 +23,7 @@ from datetime import timedelta
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 # Third-Party
-from sqlalchemy import func, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import selectinload, Session
 
 # First-Party
@@ -819,8 +819,17 @@ class TeamManagementService:
                 .options(selectinload(EmailTeamMember.user))
                 .where(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True))
                 .join(EmailUser, EmailUser.email == EmailTeamMember.user_email)
-                .order_by(EmailUser.full_name, EmailUser.email)
             )
+
+            # Use different ordering based on pagination mode:
+            # - Cursor-based (API): joined_at DESC, id DESC for keyset pagination
+            # - Page-based (Admin UI): alphabetical by name for user-friendly display
+            if cursor is not None or page is None:
+                # Cursor-based or default: order by joined_at DESC, id DESC
+                query = query.order_by(desc(EmailTeamMember.joined_at), desc(EmailTeamMember.id))
+            else:
+                # Page-based: alphabetical ordering
+                query = query.order_by(EmailUser.full_name, EmailUser.email)
 
             # Use unified_paginate for both cursor and page-based pagination
             pag_result = await unified_paginate(
