@@ -471,7 +471,7 @@ When using a MCP Client such as Claude with stdio:
 ## Quick Start - Containers
 
 Use the official OCI image from GHCR with **Docker** *or* **Podman**.
-Please note: Currently, arm64 is not supported. If you are e.g. running on MacOS, install via PyPi.
+Please note: Currently, arm64 is not supported on production. If you are e.g. running on MacOS with Apple Silicon chips (M1, M2, etc), you can run the containers using Rosetta or install via PyPi instead.
 
 ### 🚀 Quick Start - Docker Compose
 
@@ -1958,7 +1958,8 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `OBSERVABILITY_TRACE_RETENTION_DAYS` | Number of days to retain trace data                   | `7`                                                  | int (≥ 1)        |
 | `OBSERVABILITY_MAX_TRACES`           | Maximum number of traces to retain                    | `100000`                                             | int (≥ 1000)     |
 | `OBSERVABILITY_SAMPLE_RATE`          | Trace sampling rate (0.0-1.0)                        | `1.0`                                                | float (0.0-1.0)  |
-| `OBSERVABILITY_EXCLUDE_PATHS`        | Paths to exclude from tracing (regex patterns)        | `/health,/healthz,/ready,/metrics,/static/.*`        | comma-separated  |
+| `OBSERVABILITY_INCLUDE_PATHS`        | Regex patterns to include for tracing                | `["^/rpc/?$","^/sse$","^/message$","^/mcp(?:/|$)","^/servers/[^/]+/mcp/?$","^/servers/[^/]+/sse$","^/servers/[^/]+/message$","^/a2a(?:/|$)"]` | JSON array |
+| `OBSERVABILITY_EXCLUDE_PATHS`        | Regex patterns to exclude (after include patterns)   | `["/health","/healthz","/ready","/metrics","/static/.*"]` | JSON array |
 | `OBSERVABILITY_METRICS_ENABLED`      | Enable metrics collection                             | `true`                                               | bool             |
 | `OBSERVABILITY_EVENTS_ENABLED`       | Enable event logging within spans                     | `true`                                               | bool             |
 
@@ -1967,12 +1968,14 @@ The gateway includes built-in observability features for tracking HTTP requests,
 - 🔍 **Admin UI integration**: View traces, spans, and metrics in the diagnostics tab
 - 🎯 **Sampling control**: Configure sampling rate to reduce overhead in high-traffic scenarios
 - 🕐 **Automatic cleanup**: Old traces automatically purged based on retention settings
-- 🚫 **Path filtering**: Exclude health checks and static resources from tracing
+- 🚫 **Path filtering**: Only include-listed endpoints are traced by default (MCP/A2A); regex excludes apply after includes
 
 **Configuration Effects:**
 - `OBSERVABILITY_ENABLED=false`: Completely disables internal observability (no database writes, zero overhead)
 - `OBSERVABILITY_SAMPLE_RATE=0.1`: Traces 10% of requests (useful for high-volume production)
-- `OBSERVABILITY_EXCLUDE_PATHS=/health,/metrics`: Prevents noisy endpoints from creating traces
+- `OBSERVABILITY_INCLUDE_PATHS=["^/mcp(?:/|$)","^/a2a(?:/|$)"]`: Limits tracing to MCP and A2A endpoints
+- `OBSERVABILITY_INCLUDE_PATHS=[]`: Traces all endpoints (still subject to exclude patterns)
+- `OBSERVABILITY_EXCLUDE_PATHS=["/health","/metrics"]`: Prevents noisy endpoints from creating traces
 
 > 📝 **Note**: This is separate from OpenTelemetry. You can use both systems simultaneously - internal observability for Admin UI visibility and OpenTelemetry for external systems like Phoenix/Jaeger.
 >
@@ -2039,6 +2042,8 @@ Automatic management of metrics data to prevent unbounded table growth and maint
 | `METRICS_ROLLUP_LATE_DATA_HOURS`     | Hours to re-process for late-arriving data       | `1`      | 1-48        |
 | `METRICS_DELETE_RAW_AFTER_ROLLUP`    | Delete raw metrics after rollup exists           | `true`   | bool        |
 | `METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS` | Hours to retain raw when rollup exists        | `1`      | 1-8760      |
+| `USE_POSTGRESDB_PERCENTILES`         | Use PostgreSQL-native percentile_cont for p50/p95/p99 | `true` | bool     |
+| `YIELD_BATCH_SIZE`                   | Rows per batch when streaming rollup queries     | `1000`   | 100-10000   |
 
 **Key Features:**
 - 📊 **Hourly rollup**: Pre-aggregated summaries with p50/p95/p99 percentiles
@@ -2111,6 +2116,7 @@ Automatic management of metrics data to prevent unbounded table growth and maint
 |                         | Set to -1 if deactivation is not needed.  |         |         |
 | `GATEWAY_VALIDATION_TIMEOUT` | Gateway URL validation timeout (secs) | `5`     | int > 0 |
 | `MAX_CONCURRENT_HEALTH_CHECKS` | Max Concurrent health checks        | `20`     | int > 0 |
+| `AUTO_REFRESH_SERVERS` | Auto Refresh tools/prompts/resources        | `false`     | bool |
 | `FILELOCK_NAME`         | File lock for leader election             | `gateway_service_leader.lock` | string |
 | `DEFAULT_ROOTS`         | Default root paths for resources          | `[]`    | JSON array |
 
@@ -2122,8 +2128,8 @@ Automatic management of metrics data to prevent unbounded table growth and maint
 | `DB_MAX_OVERFLOW`.      | Extra connections beyond pool   | `10`    | int ≥ 0 |
 | `DB_POOL_TIMEOUT`.      | Wait for connection (secs)      | `30`    | int > 0 |
 | `DB_POOL_RECYCLE`.      | Recycle connections (secs)      | `3600`  | int > 0 |
-| `DB_MAX_RETRIES` .      | Max Retry Attempts              | `3`     | int > 0 |
-| `DB_RETRY_INTERVAL_MS`  | Retry Interval (ms)             | `2000`  | int > 0 |
+| `DB_MAX_RETRIES` .      | Max retry attempts at startup (exponential backoff) | `30`    | int > 0 |
+| `DB_RETRY_INTERVAL_MS`  | Base retry interval (ms), doubles each attempt up to 30s | `2000`  | int > 0 |
 
 ### Cache Backend
 
@@ -2134,8 +2140,8 @@ Automatic management of metrics data to prevent unbounded table growth and maint
 | `CACHE_PREFIX`            | Key prefix                 | `mcpgw:` | string                   |
 | `SESSION_TTL`             | Session validity (secs)    | `3600`   | int > 0                  |
 | `MESSAGE_TTL`             | Message retention (secs)   | `600`    | int > 0                  |
-| `REDIS_MAX_RETRIES`       | Max Retry Attempts         | `3`      | int > 0                  |
-| `REDIS_RETRY_INTERVAL_MS` | Retry Interval (ms)        | `2000`   | int > 0                  |
+| `REDIS_MAX_RETRIES`       | Max retry attempts at startup (exponential backoff) | `30`     | int > 0                  |
+| `REDIS_RETRY_INTERVAL_MS` | Base retry interval (ms), doubles each attempt up to 30s | `2000`   | int > 0                  |
 | `REDIS_MAX_CONNECTIONS`   | Connection pool size       | `50`     | int > 0                  |
 | `REDIS_SOCKET_TIMEOUT`    | Socket timeout (secs)      | `2.0`    | float > 0                |
 | `REDIS_SOCKET_CONNECT_TIMEOUT` | Connect timeout (secs) | `2.0`   | float > 0                |

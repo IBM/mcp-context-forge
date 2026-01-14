@@ -247,6 +247,23 @@
     | already exists errors | Use *Show inactive* toggle in UI       |
     | SSE drops every 30 s  | Raise `SSE_RETRY_TIMEOUT`              |
 
+???+ example "🔄 What happens if the database or Redis is temporarily unavailable?"
+    The gateway uses **exponential backoff with jitter** for connection retries at startup:
+
+    - **Retry pattern**: 2s → 4s → 8s → 16s → 30s (capped), with ±25% random jitter
+    - **Default**: 30 retries ≈ 5 minutes total wait before worker exits
+    - **Benefit**: Prevents CPU-intensive crash-respawn loops during dependency outages
+
+    Configuration:
+    ```bash
+    DB_MAX_RETRIES=30              # Database retry attempts (default: 30)
+    DB_RETRY_INTERVAL_MS=2000      # Base interval, doubles each attempt
+    REDIS_MAX_RETRIES=30           # Redis retry attempts (default: 30)
+    REDIS_RETRY_INTERVAL_MS=2000   # Base interval, doubles each attempt
+    ```
+
+    See [Performance Architecture › Startup Resilience](../architecture/performance-architecture.md#startup-resilience) for details.
+
 ---
 
 ## 💻 Integration Recipes

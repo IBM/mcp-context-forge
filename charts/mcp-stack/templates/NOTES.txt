@@ -72,7 +72,9 @@
   {{- if .Values.mcpFastTimeServer.enabled }}
   - Fast Time Srv  : {{ .Values.mcpFastTimeServer.replicaCount }} replica(s) - {{ .Values.mcpFastTimeServer.image.repository }}:{{ .Values.mcpFastTimeServer.image.tag }}
   {{- end }}
-  {{- if .Values.postgres.enabled }}
+  {{- if .Values.postgres.external.enabled }}
+  - PostgreSQL     : External ({{ .Values.postgres.external.host | default "via secret" }})
+  {{- else if .Values.postgres.enabled }}
   - PostgreSQL     : {{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}
     {{- if .Values.postgres.persistence.enabled }} ({{ .Values.postgres.persistence.size }} storage){{ end }}
   {{- end }}
@@ -166,7 +168,20 @@
 {{- end }}
 
 {{- /* ════════════  Datastores  ════════════ */}}
-{{- if .Values.postgres.enabled }}
+{{- if .Values.postgres.external.enabled }}
+💾 **PostgreSQL Database (External)**
+  {{- if .Values.postgres.external.existingSecret }}
+  - Secret       : {{ .Values.postgres.external.existingSecret }}
+  {{- else }}
+  - Host         : {{ .Values.postgres.external.host }}
+  - Port         : {{ .Values.postgres.external.port | default 5432 }}
+  - Database     : {{ .Values.postgres.external.database }}
+  - Username     : {{ .Values.postgres.external.user }}
+  - Secret       : {{ $pgSecret }}
+  {{- end }}
+  - Password     : <from secret>
+      (kubectl  = `kubectl -n {{ $ns }} get secret {{ $pgSecret }} -o jsonpath="{.data.{{ .Values.postgres.external.passwordKey | default "password" }}}" | base64 -d`)
+{{- else if .Values.postgres.enabled }}
 💾 **PostgreSQL Database**
   - Host / Port  : {{ $postgresSvc }}.{{ $ns }}.svc.cluster.local:{{ $pgPort }}
   - Database     : {{ .Values.postgres.credentials.database }}
@@ -244,7 +259,7 @@ kubectl logs -n {{ $ns }} -l app={{ $gatewaySvc }} --tail=50
 
 # === Database Connectivity ===
 kubectl exec -n {{ $ns }} deployment/{{ $gatewaySvc }} -- python3 /app/mcpgateway/utils/db_isready.py
-{{- if .Values.postgres.enabled }}
+{{- if and .Values.postgres.enabled (not .Values.postgres.external.enabled) }}
 kubectl exec -n {{ $ns }} deployment/{{ $postgresSvc }} -- pg_isready -U {{ .Values.postgres.credentials.user }}
 {{- end }}
 
@@ -258,7 +273,7 @@ kubectl -n {{ $ns }} port-forward svc/{{ $gatewaySvc }} 4444:{{ $gwPort }}
 {{- if .Values.pgadmin.enabled }}
 kubectl -n {{ $ns }} port-forward svc/{{ $pgadminSvc }} 8080:{{ $pgAdminPort }}
 {{- end }}
-{{- if .Values.postgres.enabled }}
+{{- if and .Values.postgres.enabled (not .Values.postgres.external.enabled) }}
 kubectl -n {{ $ns }} port-forward svc/{{ $postgresSvc }} 5432:{{ $pgPort }}
 {{- end }}
 ```

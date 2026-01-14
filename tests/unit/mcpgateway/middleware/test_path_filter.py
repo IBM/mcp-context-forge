@@ -9,6 +9,7 @@ Tests centralized path filtering for middleware chain optimization.
 
 import pytest
 
+from mcpgateway.config import settings
 from mcpgateway.middleware.path_filter import (
     OBSERVABILITY_SKIP_EXACT,
     clear_all_caches,
@@ -34,22 +35,34 @@ class TestObservabilitySkip:
             ("/static/css/app.css", True),
             ("/static/js/bundle.js", True),
             ("/static/", True),
-            # /static without trailing slash is NOT skipped (exact vs prefix)
-            ("/static", False),
-            # Exact vs prefix behavior - /health/security should NOT be skipped
-            ("/health/security", False),
-            ("/healthz/check", False),
-            # Should NOT skip
-            ("/tools", False),
-            ("/admin", False),
-            ("/api/v1/tools", False),
-            ("/", False),
-            ("/docs", False),
-            ("/openapi.json", False),
+            # /static without trailing slash is skipped via allowlist
+            ("/static", True),
+            # Exact vs prefix behavior - allowlist skips non-MCP endpoints
+            ("/health/security", True),
+            ("/healthz/check", True),
+            ("/tools", True),
+            ("/admin", True),
+            ("/api/v1/tools", True),
+            ("/", True),
+            ("/docs", True),
+            ("/openapi.json", True),
+            # MCP/A2A allowlist paths should NOT skip
+            ("/rpc", False),
+            ("/rpc/", False),
+            ("/sse", False),
+            ("/message", False),
+            ("/mcp", False),
+            ("/mcp/", False),
+            ("/servers/123/mcp", False),
+            ("/servers/123/mcp/", False),
+            ("/servers/123/sse", False),
+            ("/servers/123/message", False),
+            ("/a2a", False),
+            ("/a2a/agents", False),
         ],
     )
     def test_should_skip_observability(self, path: str, expected: bool):
-        """Test observability skip includes exact health/metrics and /static/ prefix."""
+        """Test observability skip includes health/static/excludes and allowlist behavior."""
         assert should_skip_observability(path) == expected
 
 
@@ -59,7 +72,7 @@ class TestAuthContextSkip:
     @pytest.mark.parametrize(
         "path,expected",
         [
-            # Same as observability
+            # Health/static only (no allowlist here)
             ("/health", True),
             ("/healthz", True),
             ("/ready", True),
@@ -80,7 +93,7 @@ class TestAuthContextSkip:
         ],
     )
     def test_should_skip_auth_context(self, path: str, expected: bool):
-        """Test auth context skip matches observability semantics."""
+        """Test auth context skip matches health/static semantics."""
         assert should_skip_auth_context(path) == expected
 
 
@@ -190,19 +203,17 @@ class TestCacheEffectiveness:
         assert should_skip_request_logging.cache_info().misses == 0
         assert should_skip_db_query_logging.cache_info().misses == 0
 
-    def test_auth_context_delegates_to_observability(self):
-        """Verify auth_context uses observability's cache via delegation."""
+    def test_auth_context_cache_independent(self):
+        """Verify auth_context cache is independent from observability."""
         clear_all_caches()
 
         # Call auth_context first
         should_skip_auth_context("/health")
 
-        # auth_context delegates to observability, so observability cache should have the hit
         obs_info = should_skip_observability.cache_info()
         auth_info = should_skip_auth_context.cache_info()
 
-        # Both should have 1 miss (auth_context cached the result of calling observability)
-        assert obs_info.misses == 1
+        assert obs_info.misses == 0
         assert auth_info.misses == 1
 
 
@@ -234,18 +245,13 @@ class TestEdgeCases:
         ],
     )
     def test_case_sensitivity_and_whitespace(self, path: str):
-        """Test that path matching is case-sensitive and whitespace-sensitive."""
-        # All these should NOT match the skip paths (exact match is case-sensitive)
-        if path in ("", "/"):
-            assert should_skip_observability(path) is False
-        elif path.strip().lower() == "/health":
-            # Only exact match "/health" should skip
-            assert should_skip_observability(path) == (path == "/health")
+        """Test that non-allowlisted variants are skipped."""
+        assert should_skip_observability(path) is True
 
     def test_unicode_paths(self):
         """Test handling of unicode paths."""
-        assert should_skip_observability("/health\u200b") is False  # zero-width space
-        assert should_skip_observability("/healthé") is False  # accented character
+        assert should_skip_observability("/health\u200b") is True  # zero-width space
+        assert should_skip_observability("/healthé") is True  # accented character
 
     def test_very_long_paths(self):
         """Test handling of very long paths."""
@@ -256,5 +262,41 @@ class TestEdgeCases:
         """Test that paths are matched as-is (query strings should be stripped before calling)."""
         # Note: In practice, request.url.path doesn't include query strings
         # but if it did, these would not match
-        assert should_skip_observability("/health?check=true") is False
+        assert should_skip_observability("/health?check=true") is True
         assert should_skip_request_logging("/health?check=true") is True  # Prefix match
+
+
+class TestObservabilityIncludeExclude:
+    """Test observability include/exclude pattern behavior."""
+
+    def test_custom_include_overrides_default(self, monkeypatch: pytest.MonkeyPatch):
+        """Custom include list should allow only matching paths."""
+        monkeypatch.setattr(settings, "observability_include_paths", [r"^/admin$"], raising=False)
+        monkeypatch.setattr(settings, "observability_exclude_paths", [], raising=False)
+        clear_all_caches()
+
+        assert should_skip_observability("/admin") is False
+        assert should_skip_observability("/rpc") is True
+
+        clear_all_caches()
+
+    def test_empty_include_allows_all(self, monkeypatch: pytest.MonkeyPatch):
+        """Empty include list allows all paths except explicit skips/excludes."""
+        monkeypatch.setattr(settings, "observability_include_paths", [], raising=False)
+        monkeypatch.setattr(settings, "observability_exclude_paths", [], raising=False)
+        clear_all_caches()
+
+        assert should_skip_observability("/tools") is False
+        assert should_skip_observability("/health") is True
+
+        clear_all_caches()
+
+    def test_exclude_overrides_include(self, monkeypatch: pytest.MonkeyPatch):
+        """Exclude patterns should override includes."""
+        monkeypatch.setattr(settings, "observability_include_paths", [r"^/rpc$"], raising=False)
+        monkeypatch.setattr(settings, "observability_exclude_paths", [r"^/rpc$"], raising=False)
+        clear_all_caches()
+
+        assert should_skip_observability("/rpc") is True
+
+        clear_all_caches()

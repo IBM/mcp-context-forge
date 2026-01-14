@@ -16,6 +16,7 @@ import re
 from typing import Any, Dict, List, Pattern, Tuple
 
 # Third-Party
+import orjson
 from pydantic import BaseModel, Field
 
 # First-Party
@@ -758,16 +759,13 @@ class PIIFilterPlugin(Plugin):
 
             # Try to parse as JSON and process nested content
             try:
-                # Standard
-                import json
-
-                parsed_json = json.loads(data)
+                parsed_json = orjson.loads(data)
                 json_modified, json_detections = self._process_nested_data_for_pii(parsed_json, f"{path}(json)", all_detections)
                 has_detections = has_detections or json_detections
                 # Note: JSON modification will be handled by the caller using the detections
                 if json_modified:
                     modified = True
-            except (json.JSONDecodeError, TypeError):
+            except (orjson.JSONDecodeError, TypeError):
                 # Not valid JSON, that's fine
                 pass
 
@@ -788,16 +786,13 @@ class PIIFilterPlugin(Plugin):
                     json_path = f"{current_path}(json)"
                     if any(path.startswith(json_path) for path in all_detections.keys()):
                         try:
-                            # Standard
-                            import json
-
-                            parsed_json = json.loads(value)
+                            parsed_json = orjson.loads(value)
                             # Apply masking to the parsed JSON
                             self._apply_pii_masking_to_parsed_json(parsed_json, json_path, all_detections)
                             # Re-serialize with masked data
-                            data[key] = json.dumps(parsed_json, ensure_ascii=False, separators=(",", ":"))
+                            data[key] = orjson.dumps(parsed_json).decode()
                             modified = True
-                        except (json.JSONDecodeError, TypeError):
+                        except (orjson.JSONDecodeError, TypeError):
                             pass
                 elif value_modified:
                     modified = True
@@ -821,16 +816,13 @@ class PIIFilterPlugin(Plugin):
                     json_path = f"{current_path}(json)"
                     if any(path.startswith(json_path) for path in all_detections.keys()):
                         try:
-                            # Standard
-                            import json
-
-                            parsed_json = json.loads(item)
+                            parsed_json = orjson.loads(item)
                             # Apply masking to the parsed JSON
                             self._apply_pii_masking_to_parsed_json(parsed_json, json_path, all_detections)
                             # Re-serialize with masked data
-                            data[i] = json.dumps(parsed_json, ensure_ascii=False, separators=(",", ":"))
+                            data[i] = orjson.dumps(parsed_json).decode()
                             modified = True
-                        except (json.JSONDecodeError, TypeError):
+                        except (orjson.JSONDecodeError, TypeError):
                             pass
                 elif item_modified:
                     modified = True

@@ -9,7 +9,6 @@ Synthetic data generation utilities used by the FastMCP server.
 
 from __future__ import annotations
 
-import json
 import math
 import random
 from collections import Counter, OrderedDict
@@ -18,6 +17,7 @@ from io import StringIO
 from typing import Any, Callable, Dict, Optional, Sequence
 from uuid import UUID, uuid4
 
+import orjson
 from faker import Faker
 
 from . import schemas
@@ -338,7 +338,7 @@ class SyntheticDataGenerator:
     def rows_to_jsonl(self, rows: Sequence[dict[str, Any]]) -> str:
         buffer = StringIO()
         for row in rows:
-            buffer.write(json.dumps(row, default=str))
+            buffer.write(orjson.dumps(row, default=str).decode())
             buffer.write("\n")
         return buffer.getvalue().rstrip("\n")
 

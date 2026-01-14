@@ -37,6 +37,7 @@ import uuid
 
 # Third-Party
 from sqlalchemy import desc
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import joinedload, Session
 
 # First-Party
@@ -178,6 +179,27 @@ class ObservabilityService:
         >>> service.end_trace(db, trace_id, status="ok")  # doctest: +SKIP
     """
 
+    def _safe_commit(self, db: Session, context: str) -> bool:
+        """Commit and rollback on failure without raising.
+
+        Args:
+            db: SQLAlchemy session for the current operation.
+            context: Short label for the commit context (used in logs).
+
+        Returns:
+            True when commit succeeds, False when a rollback was performed.
+        """
+        try:
+            db.commit()
+            return True
+        except SQLAlchemyError as exc:
+            logger.warning(f"Observability commit failed ({context}): {exc}")
+            try:
+                db.rollback()
+            except SQLAlchemyError as rollback_exc:
+                logger.debug(f"Observability rollback failed ({context}): {rollback_exc}")
+            return False
+
     # ==============================
     # Trace Management
     # ==============================
@@ -247,7 +269,7 @@ class ObservabilityService:
             created_at=utc_now(),
         )
         db.add(trace)
-        db.commit()
+        self._safe_commit(db, "start_trace")
         logger.debug(f"Started trace {trace_id}: {name}")
         return trace_id
 
@@ -295,7 +317,7 @@ class ObservabilityService:
         if attributes:
             trace.attributes = {**(trace.attributes or {}), **attributes}
 
-        db.commit()
+        self._safe_commit(db, "end_trace")
         logger.debug(f"Ended trace {trace_id}: {status} ({duration_ms:.2f}ms)")
 
     def get_trace(self, db: Session, trace_id: str, include_spans: bool = False) -> Optional[ObservabilityTrace]:
@@ -334,6 +356,7 @@ class ObservabilityService:
         resource_type: Optional[str] = None,
         resource_id: Optional[str] = None,
         attributes: Optional[Dict[str, Any]] = None,
+        commit: bool = True,
     ) -> str:
         """Start a new span within a trace.
 
@@ -347,6 +370,8 @@ class ObservabilityService:
             resource_type: Resource type (tool, resource, prompt, etc.)
             resource_id: Resource ID
             attributes: Additional span attributes
+            commit: Whether to commit the transaction (default True).
+                Set to False when using fresh_db_session() which handles commits.
 
         Returns:
             Span ID (UUID string)
@@ -376,7 +401,8 @@ class ObservabilityService:
             created_at=utc_now(),
         )
         db.add(span)
-        db.commit()
+        if commit:
+            self._safe_commit(db, "start_span")
         logger.debug(f"Started span {span_id}: {name} (trace={trace_id})")
         return span_id
 
@@ -387,6 +413,7 @@ class ObservabilityService:
         status: str = "ok",
         status_message: Optional[str] = None,
         attributes: Optional[Dict[str, Any]] = None,
+        commit: bool = True,
     ) -> None:
         """End a span.
 
@@ -396,6 +423,8 @@ class ObservabilityService:
             status: Span status (ok, error)
             status_message: Optional status message
             attributes: Additional attributes to merge
+            commit: Whether to commit the transaction (default True).
+                Set to False when using fresh_db_session() which handles commits.
 
         Examples:
             >>> service.end_span(db, span_id, status="ok")  # doctest: +SKIP
@@ -415,7 +444,8 @@ class ObservabilityService:
         if attributes:
             span.attributes = {**(span.attributes or {}), **attributes}
 
-        db.commit()
+        if commit:
+            self._safe_commit(db, "end_span")
         logger.debug(f"Ended span {span_id}: {status} ({duration_ms:.2f}ms)")
 
     @contextmanager
@@ -599,7 +629,8 @@ class ObservabilityService:
             created_at=utc_now(),
         )
         db.add(event)
-        db.commit()
+        if not self._safe_commit(db, "add_event"):
+            return 0
         db.refresh(event)
         logger.debug(f"Added event to span {span_id}: {name}")
         return event.id
@@ -673,7 +704,7 @@ class ObservabilityService:
                     }
                 )
                 span.attributes = attrs
-                db.commit()
+                self._safe_commit(db, "record_token_usage")
 
         # Also record as metrics for aggregation
         if input_tokens > 0:
@@ -1010,7 +1041,8 @@ class ObservabilityService:
             created_at=utc_now(),
         )
         db.add(metric)
-        db.commit()
+        if not self._safe_commit(db, "record_metric"):
+            return 0
         db.refresh(metric)
         logger.debug(f"Recorded metric: {name} = {value} {unit or ''}")
         return metric.id
@@ -1395,6 +1427,7 @@ class ObservabilityService:
             >>> print(f"Deleted {deleted} old traces")  # doctest: +SKIP
         """
         deleted = db.query(ObservabilityTrace).filter(ObservabilityTrace.start_time < before_time).delete()
-        db.commit()
+        if not self._safe_commit(db, "delete_old_traces"):
+            return 0
         logger.info(f"Deleted {deleted} traces older than {before_time}")
         return deleted

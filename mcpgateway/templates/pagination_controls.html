@@ -18,6 +18,7 @@
   hasNext: {{ 'true' if pagination.has_next else 'false' }},
   hasPrev: {{ 'true' if pagination.has_prev else 'false' }},
   targetSelector: '{{ hx_target|default("#tools-table") }}',
+  swapStyle: '{{ hx_swap|default("innerHTML") }}',
 
   // Navigate to specific page
   goToPage(page) {
@@ -77,7 +78,7 @@
     // The OOB swap will handle the pagination controls separately
     htmx.ajax('GET', url.toString(), {
       target: this.targetSelector,
-      swap: 'innerHTML',
+      swap: this.swapStyle,
       indicator: '{{ hx_indicator|default("#loading") }}'
     });
   }

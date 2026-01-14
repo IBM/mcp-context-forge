@@ -31,15 +31,19 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 import hashlib
+import json
 import logging
 import time
 from typing import Any, Callable, Dict, Optional, Set, Tuple, TYPE_CHECKING
 
 # Third-Party
 import httpx
-from mcp import ClientSession
+from mcp import ClientSession, McpError
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
+
+# JSON-RPC standard error code for method not found
+METHOD_NOT_FOUND = -32601
 
 if TYPE_CHECKING:
     # Standard
@@ -66,9 +70,10 @@ class PooledSession:
     session: ClientSession
     transport_context: Any  # The transport context manager (kept open)
     url: str
-    identity_key: str
     transport_type: TransportType
     headers: Dict[str, str]  # Original headers (for reconnection)
+    identity_key: str  # Identity hash component for headers
+    user_identity: str = "anonymous"  # for user isolation
     created_at: float = field(default_factory=time.time)
     last_used: float = field(default_factory=time.time)
     use_count: int = 0
@@ -108,7 +113,7 @@ class PooledSession:
 
 # Type aliases
 # Pool key includes transport type to prevent returning wrong transport for same URL
-PoolKey = Tuple[str, str, str]  # (url, identity_hash, transport_type)
+PoolKey = Tuple[str, str, str, str]  # (user_identity_hash, url, identity_hash, transport_type)
 HttpxClientFactory = Callable[
     [Optional[Dict[str, str]], Optional[httpx.Timeout], Optional[httpx.Auth]],
     httpx.AsyncClient,
@@ -120,9 +125,9 @@ HttpxClientFactory = Callable[
 IdentityExtractor = Callable[[Dict[str, str]], Optional[str]]
 
 
-class MCPSessionPool:
+class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
     """
-    Pool of MCP ClientSessions keyed by (server URL, identity hash, transport type).
+    Pool of MCP ClientSessions keyed by (user_identity, server URL, identity hash, transport type).
 
     Thread-Safety:
         This pool is designed for asyncio concurrency. It uses asyncio.Lock
@@ -195,6 +200,8 @@ class MCPSessionPool:
         identity_extractor: Optional[IdentityExtractor] = None,
         idle_pool_eviction_seconds: float = 600.0,
         default_transport_timeout_seconds: float = 30.0,
+        health_check_methods: Optional[list[str]] = None,
+        health_check_timeout_seconds: float = 5.0,
     ):
         """
         Initialize the session pool.
@@ -213,6 +220,10 @@ class MCPSessionPool:
                                Should return a stable user/tenant ID string.
             idle_pool_eviction_seconds: Evict empty pool keys after this many seconds of no use.
             default_transport_timeout_seconds: Default timeout for transport connections.
+            health_check_methods: Ordered list of health check methods to try.
+                                 Options: ping, list_tools, list_prompts, list_resources, skip.
+                                 Default: ["ping", "skip"] (try ping, skip if unsupported).
+            health_check_timeout_seconds: Timeout for each health check attempt.
         """
         # Configuration
         self._max_sessions = max_sessions_per_key
@@ -226,6 +237,8 @@ class MCPSessionPool:
         self._identity_extractor = identity_extractor
         self._idle_pool_eviction = idle_pool_eviction_seconds
         self._default_transport_timeout = default_transport_timeout_seconds
+        self._health_check_methods = health_check_methods or ["ping", "skip"]
+        self._health_check_timeout = health_check_timeout_seconds
 
         # State - protected by _global_lock for creation, per-key locks for access
         self._global_lock = asyncio.Lock()
@@ -322,14 +335,23 @@ class MCPSessionPool:
             )
             return "anonymous"
 
-        # Create stable hash (full SHA-256 for collision resistance)
-        identity_string = "|".join(identity_parts)
-        return hashlib.sha256(identity_string.encode()).hexdigest()
+        # Create a stable, deterministic hash using JSON serialization
+        # Prevents delimiter-collision or injection issues present in string joining
+        serialized_identity = json.dumps(identity_parts)
+        return hashlib.sha256(serialized_identity.encode()).hexdigest()
 
-    def _make_pool_key(self, url: str, headers: Optional[Dict[str, str]], transport_type: TransportType) -> PoolKey:
-        """Create composite pool key from URL, identity, and transport type."""
+    def _make_pool_key(self, url: str, headers: Optional[Dict[str, str]], transport_type: TransportType, user_identity: str) -> PoolKey:
+        """Create composite pool key from URL, identity, transport type, and user identity."""
         identity_hash = self._compute_identity_hash(headers)
-        return (url, identity_hash, transport_type.value)
+
+        # Anonymize user identity by hashing it (unless it's commonly "anonymous")
+        # Use full hash for collision resistance - truncate only for display in logs/metrics
+        if user_identity == "anonymous":
+            user_hash = "anonymous"
+        else:
+            user_hash = hashlib.sha256(user_identity.encode()).hexdigest()
+
+        return (user_hash, url, identity_hash, transport_type.value)
 
     async def _get_or_create_lock(self, pool_key: PoolKey) -> asyncio.Lock:
         """Get or create a lock for the given pool key (thread-safe)."""
@@ -378,6 +400,7 @@ class MCPSessionPool:
         transport_type: TransportType = TransportType.STREAMABLE_HTTP,
         httpx_client_factory: Optional[HttpxClientFactory] = None,
         timeout: Optional[float] = None,
+        user_identity: Optional[str] = None,
     ) -> PooledSession:
         """
         Acquire a session for the given URL, identity, and transport type.
@@ -410,7 +433,8 @@ class MCPSessionPool:
         # Use default timeout if not provided
         effective_timeout = timeout if timeout is not None else self._default_transport_timeout
 
-        pool_key = self._make_pool_key(url, headers, transport_type)
+        user_id = user_identity or "anonymous"
+        pool_key = self._make_pool_key(url, headers, transport_type, user_id)
         pool = await self._get_or_create_pool(pool_key)
 
         # Update pool key last used time IMMEDIATELY after getting pool
@@ -444,7 +468,7 @@ class MCPSessionPool:
                 self._hits += 1
                 async with lock:
                     self._active[pool_key].add(pooled)
-                logger.debug(f"Pool hit for {url} (identity={pool_key[1][:8]}, transport={transport_type.value})")
+                logger.debug(f"Pool hit for {url} (identity={pool_key[2][:8]}, transport={transport_type.value})")
                 return pooled
 
             # Session invalid, close it
@@ -467,6 +491,10 @@ class MCPSessionPool:
                 self._create_session(url, headers, transport_type, httpx_client_factory, effective_timeout),
                 timeout=self._session_create_timeout,
             )
+            # Store identity components for key reconstruction
+            pooled.identity_key = pool_key[2]
+            pooled.user_identity = user_id
+
             self._misses += 1
             self._record_success(url)
             async with lock:
@@ -492,8 +520,13 @@ class MCPSessionPool:
             logger.warning("Attempted to release already-closed session")
             return
 
-        # Pool key includes transport type
-        pool_key = (pooled.url, pooled.identity_key, pooled.transport_type.value)
+        # Pool key includes transport type and user identity
+        # Re-compute user hash from stored raw identity (full hash for collision resistance)
+        user_hash = "anonymous"
+        if pooled.user_identity != "anonymous":
+            user_hash = hashlib.sha256(pooled.user_identity.encode()).hexdigest()
+
+        pool_key = (user_hash, pooled.url, pooled.identity_key, pooled.transport_type.value)
         lock = await self._get_or_create_lock(pool_key)
         pool = await self._get_or_create_pool(pool_key)
 
@@ -603,7 +636,7 @@ class MCPSessionPool:
                 self._semaphores.pop(pool_key, None)
                 self._pool_last_used.pop(pool_key, None)
                 self._pool_keys_evicted += 1
-                logger.debug(f"Evicted idle pool key: {pool_key[0]}|{pool_key[1][:8]}|{pool_key[2]}")
+                logger.debug(f"Evicted idle pool key: {pool_key[0][:8]}|{pool_key[1]}|{pool_key[2][:8]}")
 
         # Close sessions outside the lock (I/O operations)
         for session in sessions_to_close:
@@ -633,16 +666,71 @@ class MCPSessionPool:
 
         # Health check if stale
         if pooled.idle_seconds > self._health_check_interval:
+            return await self._run_health_check_chain(pooled)
+
+        return True
+
+    async def _run_health_check_chain(self, pooled: PooledSession) -> bool:
+        """
+        Run health check methods in configured order until one succeeds.
+
+        The health check chain allows configuring which methods to try and in what order.
+        This supports both modern servers (with ping support) and legacy servers
+        (that may only support list_tools or no health check at all).
+
+        Args:
+            pooled: The session to health check.
+
+        Returns:
+            True if any health check method succeeds, False if all fail.
+        """
+        for method in self._health_check_methods:
             try:
-                # Use list_tools as a lightweight health check
-                await asyncio.wait_for(pooled.session.list_tools(), timeout=self._default_transport_timeout)
-                return True
-            except Exception as e:
-                logger.debug(f"Health check failed: {e}")
+                if method == "ping":
+                    await asyncio.wait_for(pooled.session.send_ping(), timeout=self._health_check_timeout)
+                    logger.debug(f"Health check passed: ping (url={pooled.url})")
+                    return True
+                if method == "list_tools":
+                    await asyncio.wait_for(pooled.session.list_tools(), timeout=self._health_check_timeout)
+                    logger.debug(f"Health check passed: list_tools (url={pooled.url})")
+                    return True
+                if method == "list_prompts":
+                    await asyncio.wait_for(pooled.session.list_prompts(), timeout=self._health_check_timeout)
+                    logger.debug(f"Health check passed: list_prompts (url={pooled.url})")
+                    return True
+                if method == "list_resources":
+                    await asyncio.wait_for(pooled.session.list_resources(), timeout=self._health_check_timeout)
+                    logger.debug(f"Health check passed: list_resources (url={pooled.url})")
+                    return True
+                if method == "skip":
+                    logger.debug(f"Health check skipped per configuration (url={pooled.url})")
+                    return True
+                logger.warning(f"Unknown health check method '{method}', skipping")
+                continue
+
+            except McpError as e:
+                # METHOD_NOT_FOUND (-32601) means the method isn't supported - try next
+                if e.error.code == METHOD_NOT_FOUND:
+                    logger.debug(f"Health check method '{method}' not supported by server, trying next")
+                    continue
+                # Other MCP errors are real failures
+                logger.debug(f"Health check '{method}' failed with MCP error: {e}")
                 self._health_check_failures += 1
                 return False
 
-        return True
+            except asyncio.TimeoutError:
+                logger.debug(f"Health check '{method}' timed out after {self._health_check_timeout}s, trying next")
+                continue
+
+            except Exception as e:
+                logger.debug(f"Health check '{method}' failed: {e}")
+                self._health_check_failures += 1
+                return False
+
+        # All methods failed or were unsupported
+        logger.warning(f"All health check methods failed or unsupported (methods={self._health_check_methods})")
+        self._health_check_failures += 1
+        return False
 
     async def _create_session(
         self,
@@ -812,12 +900,12 @@ class MCPSessionPool:
             "hit_rate": self._hits / total_requests if total_requests > 0 else 0.0,
             "pool_key_count": len(self._pools),
             "pools": {
-                f"{url}|{identity[:8]}|{transport}": {
+                f"{url}|{identity[:8]}|{transport}|{user}": {
                     "available": pool.qsize(),
-                    "active": len(self._active.get((url, identity, transport), set())),
+                    "active": len(self._active.get((user, url, identity, transport), set())),
                     "max": self._max_sessions,
                 }
-                for (url, identity, transport), pool in self._pools.items()
+                for (user, url, identity, transport), pool in self._pools.items()
             },
             "circuit_breakers": {
                 url: {
@@ -836,6 +924,7 @@ class MCPSessionPool:
         transport_type: TransportType = TransportType.STREAMABLE_HTTP,
         httpx_client_factory: Optional[HttpxClientFactory] = None,
         timeout: Optional[float] = None,
+        user_identity: Optional[str] = None,
     ) -> "AsyncIterator[PooledSession]":
         """
         Context manager for acquiring and releasing a session.
@@ -850,11 +939,12 @@ class MCPSessionPool:
             transport_type: Transport type to use.
             httpx_client_factory: Optional factory for httpx clients.
             timeout: Optional timeout in seconds for transport connection.
+            user_identity: Optional user identity for strict isolation.
 
         Yields:
             PooledSession ready for use.
         """
-        pooled = await self.acquire(url, headers, transport_type, httpx_client_factory, timeout)
+        pooled = await self.acquire(url, headers, transport_type, httpx_client_factory, timeout, user_identity)
         try:
             yield pooled
         finally:
@@ -891,6 +981,8 @@ def init_mcp_session_pool(
     identity_extractor: Optional[IdentityExtractor] = None,
     idle_pool_eviction_seconds: float = 600.0,
     default_transport_timeout_seconds: float = 30.0,
+    health_check_methods: Optional[list[str]] = None,
+    health_check_timeout_seconds: float = 5.0,
 ) -> MCPSessionPool:
     """Initialize the global MCP session pool.
 
@@ -913,6 +1005,8 @@ def init_mcp_session_pool(
         identity_extractor=identity_extractor,
         idle_pool_eviction_seconds=idle_pool_eviction_seconds,
         default_transport_timeout_seconds=default_transport_timeout_seconds,
+        health_check_methods=health_check_methods,
+        health_check_timeout_seconds=health_check_timeout_seconds,
     )
     logger.info("MCP session pool initialized")
     return _mcp_session_pool

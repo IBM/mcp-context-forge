@@ -18,7 +18,7 @@ import logging
 from typing import Any, Dict, List
 
 # Third-Party
-import aiohttp
+import httpx
 import orjson
 from sqlalchemy.orm import Session
 
@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import get_settings
 from mcpgateway.db import RegisteredOAuthClient
 from mcpgateway.services.encryption_service import get_encryption_service
+from mcpgateway.services.http_client_service import get_http_client
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,22 @@ class DcrService:
     def __init__(self):
         """Initialize DCR service."""
         self.settings = get_settings()
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Get the shared singleton HTTP client.
+
+        Returns:
+            Shared httpx.AsyncClient instance with connection pooling
+        """
+        return await get_http_client()
+
+    def _get_timeout(self) -> float:
+        """Get the OAuth request timeout from settings.
+
+        Returns:
+            Timeout in seconds for OAuth/DCR requests
+        """
+        return float(self.settings.oauth_request_timeout)
 
     async def discover_as_metadata(self, issuer: str) -> Dict[str, Any]:
         """Discover AS metadata via RFC 8414.
@@ -71,44 +88,44 @@ class DcrService:
         rfc8414_url = f"{issuer}/.well-known/oauth-authorization-server"
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(rfc8414_url, timeout=aiohttp.ClientTimeout(total=self.settings.oauth_request_timeout)) as response:
-                    if response.status == 200:
-                        metadata = await response.json()
+            client = await self._get_client()
+            response = await client.get(rfc8414_url, timeout=self._get_timeout())
+            if response.status_code == 200:
+                metadata = response.json()
 
-                        # Validate issuer matches
-                        if metadata.get("issuer") != issuer:
-                            raise DcrError(f"AS metadata issuer mismatch: expected {issuer}, got {metadata.get('issuer')}")
+                # Validate issuer matches
+                if metadata.get("issuer") != issuer:
+                    raise DcrError(f"AS metadata issuer mismatch: expected {issuer}, got {metadata.get('issuer')}")
 
-                        # Cache the metadata
-                        _metadata_cache[issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
+                # Cache the metadata
+                _metadata_cache[issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
 
-                        logger.info(f"Discovered AS metadata for {issuer} via RFC 8414")
-                        return metadata
-        except aiohttp.ClientError as e:
+                logger.info(f"Discovered AS metadata for {issuer} via RFC 8414")
+                return metadata
+        except httpx.HTTPError as e:
             logger.debug(f"RFC 8414 discovery failed for {issuer}: {e}, trying OIDC fallback")
 
         # Try OIDC discovery fallback
         oidc_url = f"{issuer}/.well-known/openid-configuration"
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(oidc_url, timeout=aiohttp.ClientTimeout(total=self.settings.oauth_request_timeout)) as response:
-                    if response.status == 200:
-                        metadata = await response.json()
+            client = await self._get_client()
+            response = await client.get(oidc_url, timeout=self._get_timeout())
+            if response.status_code == 200:
+                metadata = response.json()
 
-                        # Validate issuer matches
-                        if metadata.get("issuer") != issuer:
-                            raise DcrError(f"AS metadata issuer mismatch: expected {issuer}, got {metadata.get('issuer')}")
+                # Validate issuer matches
+                if metadata.get("issuer") != issuer:
+                    raise DcrError(f"AS metadata issuer mismatch: expected {issuer}, got {metadata.get('issuer')}")
 
-                        # Cache the metadata
-                        _metadata_cache[issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
+                # Cache the metadata
+                _metadata_cache[issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
 
-                        logger.info(f"Discovered AS metadata for {issuer} via OIDC discovery")
-                        return metadata
+                logger.info(f"Discovered AS metadata for {issuer} via OIDC discovery")
+                return metadata
 
-                    raise DcrError(f"AS metadata not found for {issuer} (status: {response.status})")
-        except aiohttp.ClientError as e:
+            raise DcrError(f"AS metadata not found for {issuer} (status: {response.status_code})")
+        except httpx.HTTPError as e:
             raise DcrError(f"Failed to discover AS metadata for {issuer}: {e}")
 
     async def register_client(self, gateway_id: str, gateway_name: str, issuer: str, redirect_uri: str, scopes: List[str], db: Session) -> RegisteredOAuthClient:
@@ -154,17 +171,17 @@ class DcrService:
 
         # Send registration request
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(registration_endpoint, json=registration_request, timeout=aiohttp.ClientTimeout(total=self.settings.oauth_request_timeout)) as response:
-                    # Accept both 200 OK and 201 Created (some servers don't follow RFC 7591 strictly)
-                    if response.status in (200, 201):
-                        registration_response = await response.json()
-                    else:
-                        error_data = await response.json()
-                        error_msg = error_data.get("error", "unknown_error")
-                        error_desc = error_data.get("error_description", str(error_data))
-                        raise DcrError(f"Client registration failed: {error_msg} - {error_desc}")
-        except aiohttp.ClientError as e:
+            client = await self._get_client()
+            response = await client.post(registration_endpoint, json=registration_request, timeout=self._get_timeout())
+            # Accept both 200 OK and 201 Created (some servers don't follow RFC 7591 strictly)
+            if response.status_code in (200, 201):
+                registration_response = response.json()
+            else:
+                error_data = response.json()
+                error_msg = error_data.get("error", "unknown_error")
+                error_desc = error_data.get("error_description", str(error_data))
+                raise DcrError(f"Client registration failed: {error_msg} - {error_desc}")
+        except httpx.HTTPError as e:
             raise DcrError(f"Failed to register client with {issuer}: {e}")
 
         # Encrypt secrets
@@ -268,27 +285,25 @@ class DcrService:
 
         # Send update request
         try:
-            async with aiohttp.ClientSession() as session:
-                headers = {"Authorization": f"Bearer {registration_access_token}"}
-                async with session.put(
-                    client_record.registration_client_uri, json=update_request, headers=headers, timeout=aiohttp.ClientTimeout(total=self.settings.oauth_request_timeout)
-                ) as response:
-                    if response.status == 200:
-                        updated_response = await response.json()
+            client = await self._get_client()
+            headers = {"Authorization": f"Bearer {registration_access_token}"}
+            response = await client.put(client_record.registration_client_uri, json=update_request, headers=headers, timeout=self._get_timeout())
+            if response.status_code == 200:
+                updated_response = response.json()
 
-                        # Update encrypted secret if changed
-                        if "client_secret" in updated_response:
-                            client_record.client_secret_encrypted = encryption.encrypt_secret(updated_response["client_secret"])
+                # Update encrypted secret if changed
+                if "client_secret" in updated_response:
+                    client_record.client_secret_encrypted = encryption.encrypt_secret(updated_response["client_secret"])
 
-                        db.commit()
-                        db.refresh(client_record)
+                db.commit()
+                db.refresh(client_record)
 
-                        logger.info(f"Successfully updated client registration for {client_record.client_id}")
-                        return client_record
+                logger.info(f"Successfully updated client registration for {client_record.client_id}")
+                return client_record
 
-                    error_data = await response.json()
-                    raise DcrError(f"Failed to update client: {error_data}")
-        except aiohttp.ClientError as e:
+            error_data = response.json()
+            raise DcrError(f"Failed to update client: {error_data}")
+        except httpx.HTTPError as e:
             raise DcrError(f"Failed to update client registration: {e}")
 
     async def delete_client_registration(self, client_record: RegisteredOAuthClient, db: Session) -> bool:  # pylint: disable=unused-argument
@@ -318,16 +333,16 @@ class DcrService:
 
         # Send delete request
         try:
-            async with aiohttp.ClientSession() as session:
-                headers = {"Authorization": f"Bearer {registration_access_token}"}
-                async with session.delete(client_record.registration_client_uri, headers=headers, timeout=aiohttp.ClientTimeout(total=self.settings.oauth_request_timeout)) as response:
-                    if response.status in [204, 404]:  # 204 = deleted, 404 = already gone
-                        logger.info(f"Successfully deleted client registration for {client_record.client_id}")
-                        return True
+            client = await self._get_client()
+            headers = {"Authorization": f"Bearer {registration_access_token}"}
+            response = await client.delete(client_record.registration_client_uri, headers=headers, timeout=self._get_timeout())
+            if response.status_code in [204, 404]:  # 204 = deleted, 404 = already gone
+                logger.info(f"Successfully deleted client registration for {client_record.client_id}")
+                return True
 
-                    logger.warning(f"Unexpected status when deleting client: {response.status}")
-                    return True  # Consider it best-effort
-        except aiohttp.ClientError as e:
+            logger.warning(f"Unexpected status when deleting client: {response.status_code}")
+            return True  # Consider it best-effort
+        except httpx.HTTPError as e:
             logger.warning(f"Failed to delete client at AS: {e}")
             return True  # Best-effort, don't fail if AS is unreachable
 

@@ -85,10 +85,12 @@ jobs:
 
       # -------------------------------------------------------------
       # 5️⃣  Comprehensive Testing & Verification
+      #      REMOVED `test` and `doctest` as they are verified identical
+      #      to other github workflows
       # -------------------------------------------------------------
       - name: 🧪  Comprehensive testing & verification
         run: |
-          make doctest test lint-web flake8 bandit interrogate pylint verify
+          make lint-web flake8 bandit interrogate pylint verify
 
       # -------------------------------------------------------------
       # 6️⃣  Smoke Tests
@@ -99,10 +101,11 @@ jobs:
 
       # -------------------------------------------------------------
       # 7️⃣  Production Docker Build
+      #     REMOVED as identical to another github workflow
       # -------------------------------------------------------------
-      - name: 🐳  Production Docker build
-        run: |
-          make docker-prod
+      # - name: 🐳  Production Docker build
+      #   run: |
+      #     make docker-prod
 
       # -------------------------------------------------------------
       # 8️⃣  Summary
@@ -117,6 +120,6 @@ jobs:
           echo "- Code quality & formatting" >> "$GITHUB_STEP_SUMMARY"
           echo "- Comprehensive testing & verification" >> "$GITHUB_STEP_SUMMARY"
           echo "- End-to-end smoke tests" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Production Docker build" >> "$GITHUB_STEP_SUMMARY"
+          # echo "- Production Docker build" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "The complete build pipeline is verified and production-ready." >> "$GITHUB_STEP_SUMMARY"

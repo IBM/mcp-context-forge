@@ -10,7 +10,7 @@ the winner of the Password Hashing Competition and recommended by OWASP.
 
 Examples:
     >>> from mcpgateway.services.argon2_service import Argon2PasswordService
-    >>> service = Argon2PasswordService()
+    >>> service = Argon2PasswordService(time_cost=1, memory_cost=1024)  # Light params for testing
     >>> hash = service.hash_password("test123")
     >>> service.verify_password("test123", hash)
     True
@@ -45,7 +45,7 @@ class Argon2PasswordService:
         hasher (PasswordHasher): Configured Argon2 password hasher
 
     Examples:
-        >>> service = Argon2PasswordService()
+        >>> service = Argon2PasswordService(time_cost=1, memory_cost=1024)  # Light params for testing
         >>> password = "secure_password_123"
         >>> hash_value = service.hash_password(password)
         >>> service.verify_password(password, hash_value)
@@ -65,10 +65,10 @@ class Argon2PasswordService:
             salt_len: Length of the salt in bytes
 
         Examples:
-            >>> service = Argon2PasswordService()
+            >>> service = Argon2PasswordService(time_cost=1, memory_cost=1024)  # Light params for testing
             >>> isinstance(service.hasher, PasswordHasher)
             True
-            >>> custom_service = Argon2PasswordService(time_cost=2, memory_cost=32768)
+            >>> custom_service = Argon2PasswordService(time_cost=1, memory_cost=2048)
             >>> isinstance(custom_service.hasher, PasswordHasher)
             True
         """
@@ -96,7 +96,7 @@ class Argon2PasswordService:
             HashingError: If hashing fails
 
         Examples:
-            >>> service = Argon2PasswordService()
+            >>> service = Argon2PasswordService(time_cost=1, memory_cost=1024)  # Light params for testing
             >>> hash_value = service.hash_password("test123")
             >>> hash_value.startswith("$argon2id$")
             True
@@ -127,7 +127,7 @@ class Argon2PasswordService:
             bool: True if password matches hash, False otherwise
 
         Examples:
-            >>> service = Argon2PasswordService()
+            >>> service = Argon2PasswordService(time_cost=1, memory_cost=1024)  # Light params for testing
             >>> hash_val = service.hash_password("correct_password")
             >>> service.verify_password("correct_password", hash_val)
             True
@@ -167,11 +167,11 @@ class Argon2PasswordService:
             bool: True if hash should be updated, False otherwise
 
         Examples:
-            >>> service = Argon2PasswordService()
+            >>> service = Argon2PasswordService(time_cost=1, memory_cost=1024)  # Light params for testing
             >>> hash_val = service.hash_password("test")
             >>> service.needs_rehash(hash_val)
             False
-            >>> service_new = Argon2PasswordService(time_cost=5)
+            >>> service_new = Argon2PasswordService(time_cost=2, memory_cost=1024)
             >>> service_new.needs_rehash(hash_val)
             True
         """
@@ -197,7 +197,7 @@ class Argon2PasswordService:
             dict: Hash parameters or None if invalid
 
         Examples:
-            >>> service = Argon2PasswordService()
+            >>> service = Argon2PasswordService(time_cost=1, memory_cost=1024)  # Light params for testing
             >>> hash_val = service.hash_password("test")
             >>> info = service.get_hash_info(hash_val)
             >>> info is not None
@@ -263,7 +263,8 @@ def hash_password(password: str) -> str:
         str: The hashed password
 
     Examples:
-        >>> hash_val = hash_password("test123")
+        >>> service = Argon2PasswordService(time_cost=1, memory_cost=1024)  # Light params for testing
+        >>> hash_val = service.hash_password("test123")
         >>> hash_val.startswith("$argon2id$")
         True
     """
@@ -283,10 +284,11 @@ def verify_password(password: str, hash_value: str) -> bool:
         bool: True if password matches
 
     Examples:
-        >>> hash_val = hash_password("test123")
-        >>> verify_password("test123", hash_val)
+        >>> service = Argon2PasswordService(time_cost=1, memory_cost=1024)  # Light params for testing
+        >>> hash_val = service.hash_password("test123")
+        >>> service.verify_password("test123", hash_val)
         True
-        >>> verify_password("wrong", hash_val)
+        >>> service.verify_password("wrong", hash_val)
         False
     """
     return password_service.verify_password(password, hash_value)

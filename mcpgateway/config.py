@@ -47,7 +47,6 @@ Examples:
 # Standard
 from functools import lru_cache
 from importlib.resources import files
-import json  # Used only for indent=2 pretty-printing in print_schema()
 import logging
 import os
 from pathlib import Path
@@ -912,8 +911,26 @@ class Settings(BaseSettings):
     # Sample rate (0.0 to 1.0) - 1.0 means trace everything
     observability_sample_rate: float = Field(default=1.0, ge=0.0, le=1.0, description="Trace sampling rate (0.0-1.0)")
 
+    # Include paths for tracing (regex patterns)
+    observability_include_paths: List[str] = Field(
+        default_factory=lambda: [
+            r"^/rpc/?$",
+            r"^/sse$",
+            r"^/message$",
+            r"^/mcp(?:/|$)",
+            r"^/servers/[^/]+/mcp/?$",
+            r"^/servers/[^/]+/sse$",
+            r"^/servers/[^/]+/message$",
+            r"^/a2a(?:/|$)",
+        ],
+        description="Regex patterns to include for tracing (when empty, all paths are eligible before excludes)",
+    )
+
     # Exclude paths from tracing (regex patterns)
-    observability_exclude_paths: List[str] = Field(default_factory=lambda: ["/health", "/healthz", "/ready", "/metrics", "/static/.*"], description="Paths to exclude from tracing (regex)")
+    observability_exclude_paths: List[str] = Field(
+        default_factory=lambda: ["/health", "/healthz", "/ready", "/metrics", "/static/.*"],
+        description="Regex patterns to exclude from tracing (applies after include patterns)",
+    )
 
     # Enable performance metrics
     observability_metrics_enabled: bool = Field(default=True, description="Enable metrics collection")
@@ -981,6 +998,15 @@ class Settings(BaseSettings):
     metrics_aggregation_backfill_hours: int = Field(default=6, ge=0, le=168, description="Hours of structured logs to backfill into performance metrics on startup")
     metrics_aggregation_window_minutes: int = Field(default=5, description="Time window for metrics aggregation (minutes)")
     metrics_aggregation_auto_start: bool = Field(default=False, description="Automatically run the log aggregation loop on application startup")
+    yield_batch_size: int = Field(
+        default=1000,
+        ge=100,
+        le=100000,
+        description="Number of rows fetched per batch when streaming hourly metric data from the database. "
+        "Used to limit memory usage during aggregation and percentile calculations. "
+        "Smaller values reduce memory footprint but increase DB round-trips; larger values improve throughput "
+        "at the cost of higher memory usage.",
+    )
 
     # Execution Metrics Recording
     # Controls whether tool/resource/prompt/server/A2A execution metrics are written to the database.
@@ -1190,6 +1216,12 @@ class Settings(BaseSettings):
     # Off by default: pool's internal staleness check (idle > health_check_interval) handles this.
     # Enable for stricter health verification at the cost of ~5ms latency per check.
     mcp_session_pool_explicit_health_rpc: bool = False
+    # Configurable health check chain - ordered list of methods to try.
+    # Options: ping, list_tools, list_prompts, list_resources, skip
+    # Default: ping,skip - try lightweight ping, skip if unsupported (for legacy servers)
+    mcp_session_pool_health_check_methods: List[str] = ["ping", "skip"]
+    # Timeout in seconds for each health check attempt
+    mcp_session_pool_health_check_timeout: float = 5.0
     mcp_session_pool_identity_headers: List[str] = [
         "authorization",
         "x-tenant-id",
@@ -1216,6 +1248,14 @@ class Settings(BaseSettings):
     # Max concurrent health checks per worker
     max_concurrent_health_checks: int = 10
 
+    # Auto-refresh tools/resources/prompts from gateways during health checks
+    # When enabled, tools/resources/prompts are fetched and synced with DB during health checks
+    auto_refresh_servers: bool = Field(default=False, description="Enable automatic tool/resource/prompt refresh during gateway health checks")
+
+    # Per-gateway refresh configuration (used when auto_refresh_servers is True)
+    # Gateways can override this with their own refresh_interval_seconds
+    gateway_auto_refresh_interval: int = Field(default=300, ge=60, description="Default refresh interval in seconds for gateway tools/resources/prompts sync (minimum 60 seconds)")
+
     # Validation Gateway URL
     gateway_validation_timeout: int = 5  # seconds
     gateway_max_redirects: int = 5
@@ -1231,8 +1271,18 @@ class Settings(BaseSettings):
     db_max_overflow: int = 10
     db_pool_timeout: int = 30
     db_pool_recycle: int = 3600
-    db_max_retries: int = 3
-    db_retry_interval_ms: int = 2000
+    db_max_retries: int = 30  # Max attempts with exponential backoff (≈5 min total)
+    db_retry_interval_ms: int = 2000  # Base interval; doubles each attempt, ±25% jitter
+    db_max_backoff_seconds: int = 30  # Cap for exponential backoff (jitter applied after cap)
+
+    # Database Performance Optimization
+    use_postgresdb_percentiles: bool = Field(
+        default=True,
+        description="Use database-native percentile functions (percentile_cont) for performance metrics. "
+        "When enabled, PostgreSQL uses native SQL percentile calculations (5-10x faster). "
+        "When disabled or using SQLite, falls back to Python-based percentile calculations. "
+        "Recommended: true for PostgreSQL, auto-detected for SQLite.",
+    )
 
     # psycopg3-specific: Number of times a query must be executed before it's
     # prepared server-side. Set to 0 to disable, 1 to prepare immediately.
@@ -1263,8 +1313,9 @@ class Settings(BaseSettings):
     cache_prefix: str = "mcpgw:"
     session_ttl: int = 3600
     message_ttl: int = 600
-    redis_max_retries: int = 3
-    redis_retry_interval_ms: int = 2000
+    redis_max_retries: int = 30  # Max attempts with exponential backoff (≈5 min total)
+    redis_retry_interval_ms: int = 2000  # Base interval; doubles each attempt, ±25% jitter
+    redis_max_backoff_seconds: int = 30  # Cap for exponential backoff (jitter applied after cap)
 
     # GlobalConfig In-Memory Cache (Issue #1715)
     # Caches GlobalConfig (passthrough headers) to eliminate redundant DB queries
@@ -1727,6 +1778,15 @@ Disallow: /
     # Passthrough headers configuration
     default_passthrough_headers: List[str] = Field(default_factory=list)
 
+    # Passthrough headers source priority
+    # - "env": Environment variable always wins (ideal for Kubernetes/containerized deployments)
+    # - "db": Database take precedence if configured, env as fallback (default)
+    # - "merge": Union of both sources - env provides base, other configuration in DB can add more headers
+    passthrough_headers_source: Literal["env", "db", "merge"] = Field(
+        default="db",
+        description="Source priority for passthrough headers: env (environment always wins), db (database wins, default), merge (combine both)",
+    )
+
     # ===================================
     # Pagination Configuration
     # ===================================
@@ -1969,6 +2029,6 @@ settings = LazySettingsWrapper()
 if __name__ == "__main__":
     if "--schema" in sys.argv:
         schema = generate_settings_schema()
-        print(json.dumps(schema, indent=2))
+        print(orjson.dumps(schema, option=orjson.OPT_INDENT_2).decode())
         sys.exit(0)
     settings.log_summary()

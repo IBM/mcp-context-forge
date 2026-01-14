@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, UTC
 from typing import Optional
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -31,10 +31,20 @@ from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, SessionLocal
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
-from mcpgateway.schemas import AuthenticationResponse, AuthEventResponse, ChangePasswordRequest, EmailLoginRequest, EmailRegistrationRequest, EmailUserResponse, SuccessResponse, UserListResponse
+from mcpgateway.schemas import (
+    AuthenticationResponse,
+    AuthEventResponse,
+    ChangePasswordRequest,
+    CursorPaginatedUsersResponse,
+    EmailLoginRequest,
+    EmailRegistrationRequest,
+    EmailUserResponse,
+    SuccessResponse,
+)
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, EmailValidationError, PasswordValidationError, UserExistsError
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_jwt_token import create_jwt_token
+from mcpgateway.utils.orjson_response import ORJSONResponse
 
 # Initialize logging
 logging_service = LoggingService()
@@ -145,16 +155,19 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
             "is_admin": user.is_admin,
             "auth_provider": user.auth_provider,
         },
-        # Team memberships for authorization
-        "teams": [
-            {"id": team.id, "name": team.name, "slug": team.slug, "is_personal": team.is_personal, "role": next((m.role for m in user.team_memberships if m.team_id == team.id), "member")}
-            for team in teams
-        ],
         # Namespace access (backwards compatible)
         "namespaces": [f"user:{user.email}", *[f"team:{team.slug}" for team in teams], "public"],
         # Token scoping (if provided)
         "scopes": token_scopes or {"server_id": None, "permissions": ["*"], "ip_restrictions": [], "time_restrictions": {}},  # Full access for regular user tokens
     }
+
+    # For admin users: omit "teams" key entirely to enable unrestricted access bypass
+    # For regular users: include teams for proper team-based scoping
+    if not user.is_admin:
+        payload["teams"] = [
+            {"id": team.id, "name": team.name, "slug": team.slug, "is_personal": team.is_personal, "role": next((m.role for m in user.team_memberships if m.team_id == team.id), "member")}
+            for team in teams
+        ]
 
     # Generate token using centralized token creation
     token = await create_jwt_token(payload)
@@ -249,9 +262,14 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
                 db.commit()
 
         if needs_password_change:
-            # For API login, return a specific error indicating password change is required
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN, detail="Password change required. Please change your password before continuing.", headers={"X-Password-Change-Required": "true"}
+            # For API login, return a specific error indicating password change is required.
+            # Return a response directly to avoid any exception handling layers converting
+            # the HTTPException into a 500 in some middleware paths.
+            logger.info(f"Login blocked for {login_request.email}: password change required")
+            return ORJSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={"detail": "Password change required. Please change your password before continuing."},
+                headers={"X-Password-Change-Required": "true"},
             )
 
         # Create access token
@@ -426,24 +444,36 @@ async def get_auth_events(limit: int = 50, offset: int = 0, current_user: EmailU
 
 
 # Admin-only endpoints
-@email_auth_router.get("/admin/users", response_model=UserListResponse)
+@email_auth_router.get("/admin/users", response_model=CursorPaginatedUsersResponse)
 @require_permission("admin.user_management")
-async def list_users(limit: int = 100, offset: int = 0, current_user_ctx: dict = Depends(get_current_user_with_permissions)):
-    """List all users (admin only).
+async def list_users(
+    cursor: Optional[str] = Query(None, description="Pagination cursor for fetching the next set of results"),
+    limit: Optional[int] = Query(
+        None,
+        ge=0,
+        le=settings.pagination_max_page_size,
+        description="Maximum number of users to return. 0 means all (no limit). Default uses pagination_default_page_size.",
+    ),
+    offset: int = Query(0, ge=0, description="Number of users to skip (deprecated; use cursor pagination)."),
+    current_user_ctx: dict = Depends(get_current_user_with_permissions),
+):
+    """List all users (admin only) with cursor-based pagination support.
 
     Args:
-        limit: Maximum number of users to return
-        offset: Number of users to skip
+        cursor: Pagination cursor for fetching the next set of results
+        limit: Maximum number of users to return. Use 0 for all users (no limit).
+            If not specified, uses pagination_default_page_size (default: 50).
+        offset: Number of users to skip (deprecated; use cursor pagination)
         current_user_ctx: Currently authenticated user context with permissions
 
     Returns:
-        UserListResponse: List of users with pagination
+        CursorPaginatedUsersResponse: List of users with pagination metadata
 
     Raises:
         HTTPException: If user is not admin
 
     Examples:
-        >>> # GET /auth/email/admin/users?limit=10&offset=0
+        >>> # Cursor-based: GET /auth/email/admin/users?cursor=eyJlbWFpbCI6Li4ufQ
         >>> # Headers: Authorization: Bearer <admin_token>
     """
 
@@ -451,10 +481,11 @@ async def list_users(limit: int = 100, offset: int = 0, current_user_ctx: dict =
     auth_service = EmailAuthService(db)
 
     try:
-        users = await auth_service.list_users(limit=limit, offset=offset)
-        total_count = await auth_service.count_users()
-
-        return UserListResponse(users=[EmailUserResponse.from_email_user(user) for user in users], total_count=total_count, limit=limit, offset=offset)
+        result = await auth_service.list_users(cursor=cursor, limit=limit, offset=offset)
+        return CursorPaginatedUsersResponse(
+            users=[EmailUserResponse.from_email_user(user) for user in result.data],
+            next_cursor=result.next_cursor,
+        )
 
     except Exception as e:
         logger.error(f"Error listing users: {e}")

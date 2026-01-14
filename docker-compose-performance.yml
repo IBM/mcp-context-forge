@@ -1,6 +1,16 @@
 #version: "3.9"          # Supported by both podman-compose and Docker Compose v2+
 
 ###############################################################################
+#  HOST SYSTEM TUNING FOR LOAD TESTING (run before docker compose up)
+#  See docs/docs/testing/performance.md for full details
+#
+#  One-liner (TCP + VM + I/O tuning):
+#  sudo sysctl -w net.core.somaxconn=65535 net.core.netdev_max_backlog=65535 net.ipv4.tcp_max_syn_backlog=65535 net.ipv4.tcp_tw_reuse=1 net.ipv4.tcp_fin_timeout=15 net.ipv4.ip_local_port_range="1024 65535" vm.swappiness=10 fs.aio-max-nr=1048576
+#
+#  Make persistent: sudo tee /etc/sysctl.d/99-mcp-loadtest.conf (see docs)
+###############################################################################
+
+###############################################################################
 #  NETWORKS + VOLUMES - declared first so they can be referenced later
 ###############################################################################
 networks:
@@ -43,8 +53,8 @@ services:
         condition: service_healthy
     volumes:
       - nginx_cache:/var/cache/nginx    # Persistent cache storage
-      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro  # Mount config as read-only
-    # TCP kernel tuning for 3000 concurrent connections
+      - ./infra/nginx/nginx-performance.conf:/etc/nginx/nginx.conf:ro  # Mount config as read-only
+    # TCP kernel tuning for 10,000 concurrent connections
     # Note: net.core.* sysctls are host-level and cannot be set per-container
     # Only net.ipv4.* sysctls that are network-namespace aware work here
     sysctls:
@@ -52,8 +62,8 @@ services:
       - net.ipv4.ip_local_port_range=1024 65535  # More ephemeral ports for upstream
     ulimits:
       nofile:
-        soft: 65535
-        hard: 65535
+        soft: 131072
+        hard: 131072
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/health"]
       interval: 30s
@@ -63,11 +73,11 @@ services:
     deploy:
       resources:
         limits:
+          cpus: '8'
+          memory: 2G
+        reservations:
           cpus: '4'
           memory: 1G
-        reservations:
-          cpus: '2'
-          memory: 512M
 
   # ──────────────────────────────────────────────────────────────────────
   # MCP Gateway - the main API server for the MCP stack
@@ -111,6 +121,9 @@ services:
       - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@pgbouncer:6432/mcp
       # Direct PostgreSQL connection (bypass PgBouncer - increase DB_POOL_SIZE if using):
       # - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
+      # SQLAlchemy query logging (useful for N+1 detection; noisy under load)
+      # NOTE: SQLALCHEMY_ECHO logs at INFO; set LOG_LEVEL=INFO/DEBUG to see output.
+      - SQLALCHEMY_ECHO=false
       # - DATABASE_URL=mysql+pymysql://mysql:${MYSQL_PASSWORD:-changeme}@mariadb:3306/mcp
       # - DATABASE_URL=mysql+pymysql://admin:${MARIADB_PASSWORD:-changeme}@mariadb:3306/mcp
       # - DATABASE_URL=mongodb://admin:${MONGO_PASSWORD:-changeme}@mongodb:27017/mcp
@@ -118,26 +131,26 @@ services:
       - REDIS_URL=redis://redis:6379/0
       # Redis parser: hiredis (C extension ~83x faster for large responses)
       - REDIS_PARSER=hiredis
-      # Redis connection pool tuning for load testing (32 workers × 150 = 4800 < 5000 maxclients)
-      - REDIS_MAX_CONNECTIONS=150
+      # Redis connection pool tuning for 10,000 users (32 workers × 6 replicas × 100 = 19200 < 20000 maxclients)
+      - REDIS_MAX_CONNECTIONS=100
       - REDIS_SOCKET_TIMEOUT=5.0
       - REDIS_SOCKET_CONNECT_TIMEOUT=5.0
       - REDIS_HEALTH_CHECK_INTERVAL=30
       # Auth Cache Configuration (reduces DB queries per auth request from 3-4 to 0-1)
       - AUTH_CACHE_ENABLED=true
-      - AUTH_CACHE_USER_TTL=60
+      - AUTH_CACHE_USER_TTL=300
       - AUTH_CACHE_REVOCATION_TTL=30
-      - AUTH_CACHE_TEAM_TTL=60
-      - AUTH_CACHE_ROLE_TTL=60
+      - AUTH_CACHE_TEAM_TTL=300
+      - AUTH_CACHE_ROLE_TTL=300
       - AUTH_CACHE_BATCH_QUERIES=true
       # Registry Cache Configuration (reduces DB queries for list endpoints)
       - REGISTRY_CACHE_ENABLED=true
-      - REGISTRY_CACHE_TOOLS_TTL=20
-      - REGISTRY_CACHE_PROMPTS_TTL=15
-      - REGISTRY_CACHE_RESOURCES_TTL=15
-      - REGISTRY_CACHE_AGENTS_TTL=20
-      - REGISTRY_CACHE_SERVERS_TTL=20
-      - REGISTRY_CACHE_GATEWAYS_TTL=20
+      - REGISTRY_CACHE_TOOLS_TTL=60
+      - REGISTRY_CACHE_PROMPTS_TTL=60
+      - REGISTRY_CACHE_RESOURCES_TTL=60
+      - REGISTRY_CACHE_AGENTS_TTL=60
+      - REGISTRY_CACHE_SERVERS_TTL=60
+      - REGISTRY_CACHE_GATEWAYS_TTL=60
       - REGISTRY_CACHE_CATALOG_TTL=300
       # Admin Stats Cache Configuration (reduces aggregate queries for dashboard)
       - ADMIN_STATS_CACHE_ENABLED=true
@@ -149,6 +162,9 @@ services:
       # Team member count cache (reduces N+1 queries)
       - TEAM_MEMBER_COUNT_CACHE_ENABLED=true
       - TEAM_MEMBER_COUNT_CACHE_TTL=300
+      # Metrics aggregation cache (reduces full table scans, see #1906)
+      - METRICS_CACHE_ENABLED=true
+      - METRICS_CACHE_TTL_SECONDS=120
       # MCP Server Health Check
       # Interval in seconds between health checks (default: 300)
       - HEALTH_CHECK_INTERVAL=300
@@ -196,8 +212,11 @@ services:
       - MCP_CLIENT_AUTH_ENABLED=true
       - TRUST_PROXY_AUTH=false
       # Logging configuration
-      - LOG_LEVEL=ERROR  # Default to ERROR for production performance
+      # NOTE: LOG_LEVEL=INFO/DEBUG is required for SQLALCHEMY_ECHO output.
+      - LOG_LEVEL=ERROR  # Required for SQLALCHEMY_ECHO output during load testing
       - DISABLE_ACCESS_LOG=true  # Disable uvicorn access logs for performance (massive I/O overhead)
+      # Template auto-reload disabled for performance (prevents re-parsing templates on each request)
+      - TEMPLATES_AUTO_RELOAD=false
       - STRUCTURED_LOGGING_DATABASE_ENABLED=false  # Disable DB logging for performance (use true only for debugging)
       # Audit trail logging - disabled by default for performance
       # WARNING: Causes a DB write on EVERY API request - can generate millions of rows during load testing!
@@ -214,37 +233,56 @@ services:
       - VALIDATION_MIDDLEWARE_ENABLED=true
       - CORRELATION_ID_ENABLED=false
       - OBSERVABILITY_ENABLED=false
-      # Database pool tuning for 3000 sustained users
-      # With PgBouncer (default): smaller pools since PgBouncer handles connection multiplexing
-      # Direct PostgreSQL: larger pools needed, formula: (replicas × workers) × (pool + overflow) < max_connections
+      # ═══════════════════════════════════════════════════════════════════════════
+      # Database Connection Pool Configuration
+      # ═══════════════════════════════════════════════════════════════════════════
+      # Pool class options:
+      #   - "null": NullPool - no application pooling, PgBouncer handles all pooling (recommended)
+      #   - "queue": QueuePool - application-side pooling (use with direct PostgreSQL)
+      #   - "auto": Automatic - NullPool if PgBouncer detected in URL, else QueuePool
       #
-      # WITH PgBouncer (default):
-      - DB_POOL_SIZE=15
-      - DB_MAX_OVERFLOW=5              # Low overflow minimizes pool churn under pressure
-      # DIRECT PostgreSQL connection (uncomment if bypassing PgBouncer):
-      # - DB_POOL_SIZE=50
-      # - DB_MAX_OVERFLOW=100
-      - DB_POOL_TIMEOUT=45             # Time to wait for connection before failing
-      - DB_POOL_RECYCLE=300
-      - DB_POOL_PRE_PING=false
+      # WITH PgBouncer (default in docker-compose):
+      # Option A: NullPool - safest, eliminates stale connection errors, ~10% slower
+      - DB_POOL_CLASS=queue
+      # Option B: QueuePool + pre_ping - better performance, validates before use
+      # - DB_POOL_CLASS=queue
+      - DB_POOL_PRE_PING=false          # Validate connections before use (SELECT 1)
+      - DB_POOL_SIZE=20                # Pool size per worker
+      - DB_MAX_OVERFLOW=10             # Extra connections under load
+      - DB_POOL_TIMEOUT=30             # Time to wait for connection before failing
+      - DB_POOL_RECYCLE=60             # Recycle before PgBouncer CLIENT_IDLE_TIMEOUT (half of 120s)
       # Tool configuration for high-concurrency load testing
       - TOOL_TIMEOUT=60               # Seconds before tool invocation times out
       - MAX_TOOL_RETRIES=3            # Retry attempts for failed tool invocations
-      - TOOL_RATE_LIMIT=3000          # Max tool invocations per minute
-      - TOOL_CONCURRENT_LIMIT=100     # Max concurrent tool invocations
+      - TOOL_RATE_LIMIT=60000         # Max tool invocations per minute
+      - TOOL_CONCURRENT_LIMIT=1000    # Max concurrent tool invocations
       - FEDERATION_TIMEOUT=30
-      # Worker and server tuning for high-concurrency load testing
-      - GUNICORN_WORKERS=16
+      # ═══════════════════════════════════════════════════════════════════════════
+      # HTTPX Client Connection Pool Configuration
+      # ═══════════════════════════════════════════════════════════════════════════
+      # Shared HTTP client for all outbound requests (federation, health checks,
+      # A2A, SSO, catalog). Provides ~20x better performance than per-request clients.
+      - HTTPX_MAX_CONNECTIONS=200           # Total connections in pool (default: 200)
+      - HTTPX_MAX_KEEPALIVE_CONNECTIONS=100 # Keepalive connections (default: 100)
+      - HTTPX_KEEPALIVE_EXPIRY=30.0         # Idle connection expiry (seconds)
+      - HTTPX_CONNECT_TIMEOUT=5.0           # TCP connection timeout (seconds)
+      - HTTPX_READ_TIMEOUT=120.0            # Response read timeout (seconds, high for slow tools)
+      - HTTPX_WRITE_TIMEOUT=30.0            # Request write timeout (seconds)
+      - HTTPX_POOL_TIMEOUT=10.0             # Wait for available connection (seconds)
+      - HTTPX_HTTP2_ENABLED=false           # HTTP/2 support (requires server support)
+      - HTTPX_ADMIN_READ_TIMEOUT=30.0       # Admin UI/health check timeout (seconds)
+      # Worker and server tuning for 10,000 users on 64 vCPU system
+      - GUNICORN_WORKERS=32
       # ═══════════════════════════════════════════════════════════════════════════
       # Granian Backpressure Configuration (used when HTTP_SERVER=granian)
       # ═══════════════════════════════════════════════════════════════════════════
       # Backpressure provides overload protection by rejecting excess requests with
       # immediate 503 responses instead of queuing them (which can cause OOM/timeouts).
-      # Total capacity = GRANIAN_WORKERS × GRANIAN_BACKPRESSURE = 16 × 64 = 1024 concurrent
+      # Total capacity = GRANIAN_WORKERS × GRANIAN_BACKPRESSURE × replicas = 32 × 256 × 6 = 49152 concurrent
       # Requests beyond this limit receive immediate 503 (no queuing, no OOM)
-      - GRANIAN_WORKERS=16
-      - GRANIAN_BACKLOG=4096
-      - GRANIAN_BACKPRESSURE=64
+      - GRANIAN_WORKERS=32
+      - GRANIAN_BACKLOG=8192
+      - GRANIAN_BACKPRESSURE=256
       - GRANIAN_HTTP1_BUFFER_SIZE=524288
       - GRANIAN_RESPAWN_FAILED=true
       # HTTP/2: Granian supports native HTTP/2 multiplexing, but not useful here because:
@@ -255,13 +293,31 @@ services:
       # - GRANIAN_HTTP=2
 
       # ═══════════════════════════════════════════════════════════════════════════
+      # MCP Session Pool Configuration
+      # ═══════════════════════════════════════════════════════════════════════════
+      # Session pooling for MCP ClientSessions reduces per-request overhead from
+      # ~20ms to ~1-2ms (10-20x improvement). Sessions are isolated per user/tenant
+      # via identity hashing to prevent cross-user session sharing.
+      - MCP_SESSION_POOL_ENABLED=true              # Enable session pooling (default: false, enabled for docker-compose)
+      - MCP_SESSION_POOL_MAX_PER_KEY=200            # Max sessions per (URL, identity, transport)
+      - MCP_SESSION_POOL_TTL=300.0                 # Session TTL in seconds (default: 300)
+      - MCP_SESSION_POOL_HEALTH_CHECK_INTERVAL=60.0  # Idle time before health check (default: 60)
+      - MCP_SESSION_POOL_ACQUIRE_TIMEOUT=60.0     # Timeout waiting for session slot (default: 30)
+      - MCP_SESSION_POOL_CREATE_TIMEOUT=30.0       # Timeout creating new session (default: 30)
+      - MCP_SESSION_POOL_CIRCUIT_BREAKER_THRESHOLD=5  # Failures before circuit opens
+      - MCP_SESSION_POOL_CIRCUIT_BREAKER_RESET=60.0   # Seconds before circuit resets
+      - MCP_SESSION_POOL_IDLE_EVICTION=600.0      # Evict idle pool keys after (default: 600)
+      - MCP_SESSION_POOL_TRANSPORT_TIMEOUT=30.0   # Timeout for all HTTP operations (default: 30)
+      - MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC=false  # Force RPC on health checks (default: false)
+
+      # ═══════════════════════════════════════════════════════════════════════════
       # Execution Metrics Recording
       # ═══════════════════════════════════════════════════════════════════════════
       # Controls tool/resource/prompt/server/A2A execution metrics (one DB row per operation).
       # Disable when using external observability to improve performance.
       # Set to true if you need per-operation metrics in the database.
       # Note: Does NOT affect log aggregation (METRICS_AGGREGATION_ENABLED) or Prometheus.
-      - DB_METRICS_RECORDING_ENABLED=true
+      - DB_METRICS_RECORDING_ENABLED=false
 
       # ═══════════════════════════════════════════════════════════════════════════
       # Metrics Configuration
@@ -288,6 +344,16 @@ services:
       # - OTEL_TRACES_EXPORTER=${OTEL_TRACES_EXPORTER:-otlp}
       # - OTEL_METRICS_EXPORTER=${OTEL_METRICS_EXPORTER:-otlp}
       # - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=docker,service.namespace=mcp}
+
+    # TCP kernel tuning for 10,000 concurrent users
+    # Each tool call creates a new connection → many TIME_WAIT sockets
+    sysctls:
+      - net.ipv4.tcp_fin_timeout=15          # Faster cleanup of FIN_WAIT2 sockets (default: 60)
+      - net.ipv4.ip_local_port_range=1024 65535  # More ephemeral ports (default: 32768-60999)
+    ulimits:
+      nofile:
+        soft: 131072
+        hard: 131072
 
     depends_on:          # Default stack: PgBouncer + Redis (PgBouncer depends on Postgres)
       pgbouncer:
@@ -324,14 +390,14 @@ services:
 
     deploy:
       mode: replicated
-      replicas: 5
+      replicas: 7
       resources:
         limits:
           cpus: '8'
-          memory: 8G
+          memory: 12G
         reservations:
           cpus: '4'
-          memory: 4G
+          memory: 6G
 
     # ──────────────────────────────────────────────────────────────────────
     # Volume Mounts
@@ -360,15 +426,19 @@ services:
 
   postgres:
     image: postgres:18
+    ulimits:
+      nofile:
+        soft: 8192
+        hard: 8192
     ports:
       - "5433:5432"      # Expose for baseline load testing (5433 to avoid conflict with local postgres)
-    # Performance tuning for high-load testing (3000 sustained users)
-    # WITH PgBouncer (default): 700 connections provides headroom for 550 pool + system overhead
-    # DIRECT connection mode: increase to 4000 for (3 replicas × 16 workers × 80 pool)
+    # Performance tuning for 10,000 sustained users on 64 vCPU system
+    # WITH PgBouncer (default): 2000 connections provides headroom for 1500 pool + system overhead
+    # DIRECT connection mode: increase to 12000 for (6 replicas × 32 workers × 60 pool)
     command:
       - "postgres"
       - "-c"
-      - "max_connections=700"     # Must exceed PgBouncer MAX_DB_CONNECTIONS (550) + overhead
+      - "max_connections=2000"    # Must exceed PgBouncer MAX_DB_CONNECTIONS (1500) + overhead
       - "-c"
       - "shared_buffers=512MB"
       - "-c"
@@ -386,26 +456,19 @@ services:
       - "-c"
       - "effective_io_concurrency=200"
       - "-c"
-      - "max_worker_processes=8"           # Total background workers (must be >= max_parallel_workers)
+      - "max_worker_processes=16"          # Total background workers (must be >= max_parallel_workers)
       - "-c"
-      - "max_parallel_workers_per_gather=4" # Max workers per query's parallel operation
+      - "max_parallel_workers_per_gather=8" # Max workers per query's parallel operation
       - "-c"
-      - "max_parallel_workers=8"            # Total parallel workers available system-wide
-      # Parallel query cost thresholds - lower values make planner consider parallelism for smaller queries
-      # Default parallel_tuple_cost=0.1, parallel_setup_cost=1000 - too conservative for fast SSDs
-      # These lower thresholds encourage parallelism but may not help OLTP workloads (small queries)
-      - "-c"
-      - "parallel_tuple_cost=0.01"          # Cost per tuple transferred to parallel worker (default: 0.1)
-      - "-c"
-      - "parallel_setup_cost=100"           # Fixed cost to start parallel worker (default: 1000)
-      # === HIGH-CONCURRENCY TUNING (3000 users) ===
+      - "max_parallel_workers=16"           # Total parallel workers available system-wide
+      # === HIGH-CONCURRENCY TUNING (10,000 users) ===
       # CRITICAL: idle_in_transaction_session_timeout prevents connection starvation
       # Application code now properly closes transactions via get_db() commit-on-success pattern
       # This timeout is a safety net for any edge cases
       - "-c"
-      - "idle_in_transaction_session_timeout=60s"  # Kill stuck transactions after 60s
+      - "idle_in_transaction_session_timeout=300s"  # Kill stuck transactions after 300s (aligned with PgBouncer)
       - "-c"
-      - "statement_timeout=60s"            # Kill runaway queries after 60s
+      - "statement_timeout=120s"           # Kill runaway queries after 120s
       - "-c"
       - "synchronous_commit=off"           # Async WAL writes (2-10x faster commits)
       - "-c"
@@ -433,21 +496,20 @@ services:
       # - "autovacuum_vacuum_scale_factor=0.05" # Vacuum at 5% dead tuples (default: 0.2)
       # - "-c"
       # - "autovacuum_vacuum_cost_limit=1000"   # More vacuum work per cycle (default: 200)
-      # === PG_STAT_STATEMENTS - Query performance tracking ===
-      # Uncomment to enable query statistics (slight overhead, ~2-5%)
+      # === PG_STAT_STATEMENTS + AUTO_EXPLAIN ===
+      # Query performance tracking and slow query plan logging
+      # NOTE: Both extensions must be in the SAME shared_preload_libraries line!
       # After enabling, run in psql:
       #   CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
       #   SELECT * FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 10;
       # - "-c"
       # - "shared_preload_libraries=pg_stat_statements"
+      # - "shared_preload_libraries=pg_stat_statements,auto_explain"  # Use this line to enable both
       # - "-c"
       # - "pg_stat_statements.track=all"
       # - "-c"
-      # - "pg_stat_statements.max=10000"
-      # === AUTO_EXPLAIN - Slow query plan logging ===
-      # Uncomment to auto-log execution plans for slow queries
-      # - "-c"
-      # - "shared_preload_libraries=auto_explain"
+      #- "pg_stat_statements.max=10000"
+      # AUTO_EXPLAIN settings (uncomment if using combined shared_preload_libraries above)
       # - "-c"
       # - "auto_explain.log_min_duration=1000"
       # - "-c"
@@ -483,7 +545,6 @@ services:
       # - pgdata:/var/lib/postgresql/data
       - pgdata:/var/lib/postgresql  # Enable for postgres 18+
       # Init script to enable replication connections (required for postgres-replica)
-      # Note: Not using :ro to preserve execute permissions
       - ./infra/postgres/init-replication.sh:/docker-entrypoint-initdb.d/init-replication.sh
     networks: [mcpnet]
     healthcheck:
@@ -495,12 +556,16 @@ services:
     deploy:
       resources:
         limits:
+          cpus: '8'
+          memory: 16G
+        reservations:
           cpus: '4'
           memory: 8G
-        reservations:
-          cpus: '2'
-          memory: 2G
 
+  # ──────────────────────────────────────────────────────────────────────
+  # PgBouncer - Connection Pooler for PostgreSQL
+  # Reduces connection overhead, improves throughput under high concurrency.
+  # Enable by switching gateway DATABASE_URL to use pgbouncer:6432 instead of postgres:5432
   # ──────────────────────────────────────────────────────────────────────
   # PostgreSQL Read Replica - Streaming replication for read scaling
   # ──────────────────────────────────────────────────────────────────────
@@ -513,6 +578,10 @@ services:
     profiles: ["replica"]    # Only starts with --profile replica
     restart: unless-stopped
     networks: [mcpnet]
+    ulimits:
+      nofile:
+        soft: 8192
+        hard: 8192
     # No port exposed - accessed via PgBouncer only
     environment:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-mysecretpassword}
@@ -533,10 +602,10 @@ services:
           echo "Primary not ready, waiting..."
           /usr/bin/sleep 2
         done
-        echo "Primary is ready!"
+        echo "Primary is ready\!"
 
         # Check if data directory has valid standby.signal (indicates successful replica setup)
-        if [ ! -f "$$PGDATA/standby.signal" ]; then
+        if [ \! -f "$$PGDATA/standby.signal" ]; then
           echo "Initializing replica from primary using pg_basebackup..."
           rm -rf "$$PGDATA"
           mkdir -p "$$PGDATA"
@@ -557,7 +626,7 @@ services:
             /usr/bin/sleep 5
           done
 
-          echo "Base backup complete!"
+          echo "Base backup complete\!"
         else
           echo "Replica data directory exists, ensuring permissions..."
           chown -R postgres:postgres "$$PGDATA"
@@ -568,7 +637,8 @@ services:
         # Start PostgreSQL in standby mode (as postgres user)
         exec /usr/local/bin/gosu postgres postgres \
           -D "$$PGDATA" \
-          -c max_connections=700 \
+          -c max_connections=2000 \
+          -c max_worker_processes=16 \
           -c shared_buffers=512MB \
           -c work_mem=16MB \
           -c effective_cache_size=1536MB \
@@ -592,32 +662,25 @@ services:
     deploy:
       resources:
         limits:
+          cpus: '8'
+          memory: 16G
+        reservations:
           cpus: '4'
           memory: 8G
-        reservations:
-          cpus: '2'
-          memory: 2G
 
-  # ──────────────────────────────────────────────────────────────────────
-  # PgBouncer - Connection Pooler for PostgreSQL
-  # Reduces connection overhead, improves throughput under high concurrency.
-  # Enable by switching gateway DATABASE_URL to use pgbouncer:6432 instead of postgres:5432
   # ──────────────────────────────────────────────────────────────────────
   pgbouncer:
     image: edoburu/pgbouncer:latest
     restart: unless-stopped
     networks: [mcpnet]
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     ports:
       - "6432:6432"    # PgBouncer port (optional external access)
     environment:
-      # ═══════════════════════════════════════════════════════════════════════════
-      # PostgreSQL Connection Configuration (Load Balanced)
-      # ═══════════════════════════════════════════════════════════════════════════
-      # Connects to both primary and replica for read distribution.
-      # When replica is not running (default), all traffic goes to primary.
-      # Enable replica with: docker compose --profile replica up -d
-      # Note: Writes hitting replica will fail - for production, implement
-      # application-level read/write splitting (see mcpgateway/db.py).
+      # Connection to upstream PostgreSQL
       - DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres,postgres-replica:5432/mcp
       # PgBouncer listen port (default would be 5432, using 6432 to distinguish from PostgreSQL)
       - LISTEN_PORT=6432
@@ -625,29 +688,31 @@ services:
       # transaction: connection returned after each transaction (best for web apps)
       - POOL_MODE=transaction
       # ═══════════════════════════════════════════════════════════════════════════
-      # Connection Pool Tuning for 3000 Sustained Users
+      # Connection Pool Tuning for 10,000 Sustained Users on 64 vCPU system
       # PgBouncer handles connection multiplexing - many app connections share fewer DB connections
       # ═══════════════════════════════════════════════════════════════════════════
       # Client-side limits (from gateway workers via SQLAlchemy)
-      - MAX_CLIENT_CONN=5000           # Max app connections; must exceed (replicas × workers × pool)
-      - DEFAULT_POOL_SIZE=450          # Shared DB connections; sized for ~70 concurrent tx × 6x headroom
-      - MIN_POOL_SIZE=50               # Pre-warmed connections for instant response to load spikes
-      - RESERVE_POOL_SIZE=100          # Emergency pool for burst traffic beyond DEFAULT_POOL_SIZE
+      - MAX_CLIENT_CONN=15000          # Max app connections; must exceed (6 replicas × 32 workers × 60 pool)
+      - DEFAULT_POOL_SIZE=1200         # Shared DB connections; sized for high concurrency
+      - MIN_POOL_SIZE=200              # Pre-warmed connections for instant response to load spikes
+      - RESERVE_POOL_SIZE=300          # Emergency pool for burst traffic beyond DEFAULT_POOL_SIZE
       - RESERVE_POOL_TIMEOUT=2         # Seconds before tapping reserve pool
       # Server-side limits (to PostgreSQL)
-      - MAX_DB_CONNECTIONS=550         # Max connections to PostgreSQL; must be < PG max_connections
-      - MAX_USER_CONNECTIONS=550       # Per-user limit; typically equals MAX_DB_CONNECTIONS
+      - MAX_DB_CONNECTIONS=1500        # Max connections to PostgreSQL; must be < PG max_connections (2000)
+      - MAX_USER_CONNECTIONS=1500      # Per-user limit; typically equals MAX_DB_CONNECTIONS
       # Connection lifecycle
-      - SERVER_LIFETIME=3600           # Recycle server connections after 1 hour (prevents stale state)
-      - SERVER_IDLE_TIMEOUT=300        # Close unused server connections after 5 min
+      - SERVER_LIFETIME=1800           # Recycle server connections after 1 hour (prevents stale state)
+      - SERVER_IDLE_TIMEOUT=600        # Close unused server connections after 10 min
       # Timeout settings
-      - QUERY_WAIT_TIMEOUT=45          # Max wait for available connection before failing request
-      - CLIENT_IDLE_TIMEOUT=60         # Close idle client connections to free resources quickly
+      - QUERY_WAIT_TIMEOUT=60          # Max wait for available connection before failing request
+      - CLIENT_IDLE_TIMEOUT=300        # Close idle client connections (aligned with pool_recycle)
       - SERVER_CONNECT_TIMEOUT=5       # Timeout for new connections to PostgreSQL
       # Transaction cleanup - critical for avoiding idle-in-transaction buildup
+      # NOTE: In transaction pooling, session-level advisory locks (used by migrations)
+      # can stick unless the reset query clears them; DISCARD ALL is safest.
       - SERVER_RESET_QUERY=DISCARD ALL # Reset connection state when returned to pool
       - SERVER_RESET_QUERY_ALWAYS=1    # Always run reset query even after clean transactions
-      - IDLE_TRANSACTION_TIMEOUT=30    # Kill transactions idle > 30s (prevents connection starvation)
+      - IDLE_TRANSACTION_TIMEOUT=60   # Kill transactions idle > 300s (allows slow admin page rendering)
       # Authentication
       - AUTH_TYPE=scram-sha-256        # Match PostgreSQL auth method
     depends_on:
@@ -662,11 +727,11 @@ services:
     deploy:
       resources:
         limits:
+          cpus: '2'
+          memory: 512M
+        reservations:
           cpus: '1'
           memory: 256M
-        reservations:
-          cpus: '0.5'
-          memory: 128M
 
   # mariadb:
   #   image: mariadb:10.6
@@ -743,32 +808,36 @@ services:
 ###############################################################################
   redis:
     image: redis:latest
-    # Performance tuning for 1000+ RPS high-concurrency load testing
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    # Performance tuning for 10,000+ users high-concurrency load testing
     command:
       - "redis-server"
       - "--maxmemory"
-      - "1gb"
+      - "2gb"
       - "--maxmemory-policy"
       - "allkeys-lru"
       - "--tcp-backlog"
-      - "2048"
+      - "8192"
       - "--timeout"
       - "0"
       - "--tcp-keepalive"
       - "300"
       - "--maxclients"
-      - "10000"
+      - "20000"
     ports:
       - "6379:6379"      # expose only if you want host access
     networks: [mcpnet]
     deploy:
       resources:
         limits:
+          cpus: '4'
+          memory: 4G
+        reservations:
           cpus: '2'
           memory: 2G
-        reservations:
-          cpus: '1'
-          memory: 1G
 
 ###############################################################################
 #  MONITORING STACK (enabled with --profile monitoring)
@@ -778,8 +847,8 @@ services:
 ###############################################################################
 
   # ──────────────────────────────────────────────────────────────────────
-  # Prometheus PostgreSQL Exporter - Primary Database metrics
-  # Metrics: connections, query duration, locks, cache hit ratio, replication
+  # Prometheus PostgreSQL Exporter - Database metrics
+  # Metrics: connections, query duration, locks, cache hit ratio
   # ──────────────────────────────────────────────────────────────────────
   postgres_exporter:
     image: quay.io/prometheuscommunity/postgres-exporter:latest
@@ -797,7 +866,7 @@ services:
 
   # ──────────────────────────────────────────────────────────────────────
   # Prometheus PostgreSQL Exporter - Replica Database metrics
-  # Only starts when replica profile is enabled (with monitoring-up)
+  # Only starts when replica profile is enabled
   # ──────────────────────────────────────────────────────────────────────
   postgres_exporter_replica:
     image: quay.io/prometheuscommunity/postgres-exporter:latest
@@ -811,7 +880,7 @@ services:
     depends_on:
       postgres-replica:
         condition: service_healthy
-    profiles: ["monitoring", "replica"]
+    profiles: ["replica", "monitoring"]
 
   # ──────────────────────────────────────────────────────────────────────
   # Prometheus Redis Exporter - Cache metrics
@@ -896,7 +965,7 @@ services:
     ports:
       - "9090:9090"    # http://localhost:9090
     volumes:
-      - ./infra/monitoring/prometheus-performance.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheusdata:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -1335,6 +1404,231 @@ services:
         echo "Token written to /tmp/gateway-token.txt"
 
         echo "✅ Setup complete!"
+
+  ###############################################################################
+  # Fast Test Server - Ultra-fast Rust MCP server for performance testing
+  # Provides: echo, get_system_time, get_stats tools via MCP Streamable HTTP
+  # Also exposes REST API endpoints for baseline comparison
+  # Usage: docker compose --profile testing up -d
+  ###############################################################################
+  fast_test_server:
+    build:
+      context: ./mcp-servers/rust/fast-test-server
+      dockerfile: Containerfile
+    image: mcpgateway/fast-test-server:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "8880:8880"    # Port 8880 (avoids conflict with benchmark servers on 9000+)
+    environment:
+      - BIND_ADDRESS=0.0.0.0:8880
+      - RUST_LOG=info
+    # TCP kernel tuning for high-concurrency load testing
+    sysctls:
+      - net.ipv4.tcp_fin_timeout=15          # Faster cleanup of FIN_WAIT2 sockets
+      - net.ipv4.ip_local_port_range=1024 65535  # More ephemeral ports
+      - net.core.somaxconn=65535             # Max listen backlog
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8880/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 128M
+    profiles: ["testing", "monitoring"]
+
+  ###############################################################################
+  # Auto-registration service - registers fast_test_server with gateway
+  ###############################################################################
+  register_fast_test:
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    networks: [mcpnet]
+    depends_on:
+      gateway:
+        condition: service_healthy
+      fast_test_server:
+        condition: service_healthy
+    environment:
+      - JWT_SECRET_KEY=my-test-key
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Registering fast_test_server with gateway..."
+
+        # Generate JWT token
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+
+        # Register using Python
+        python3 -c "
+        import urllib.request
+        import json
+        import os
+        import time
+
+        token = os.environ.get('MCPGATEWAY_BEARER_TOKEN', '')
+
+        def api_request(method, path, data=None):
+            url = f'http://gateway:4444{path}'
+            req = urllib.request.Request(url, method=method)
+            req.add_header('Authorization', f'Bearer {token}')
+            req.add_header('Content-Type', 'application/json')
+            if data:
+                req.data = json.dumps(data).encode('utf-8')
+            with urllib.request.urlopen(req) as response:
+                return json.loads(response.read().decode('utf-8'))
+
+        # Delete existing gateway if present
+        try:
+            gateways = api_request('GET', '/gateways')
+            for gw in gateways:
+                if gw.get('name') == 'fast_test':
+                    print(f'Deleting existing gateway {gw[\"id\"]}...')
+                    api_request('DELETE', f'/gateways/{gw[\"id\"]}')
+        except Exception as e:
+            print(f'Note: {e}')
+
+        # Register the gateway
+        try:
+            result = api_request('POST', '/gateways', {
+                'name': 'fast_test',
+                'url': 'http://fast_test_server:8880/mcp',
+                'transport': 'STREAMABLEHTTP'
+            })
+            print(f'✅ Registered fast_test_server: {result.get(\"id\", \"unknown\")}')
+        except Exception as e:
+            print(f'❌ Registration failed: {e}')
+            exit(1)
+        "
+        echo "✅ Registration complete!"
+    profiles: ["testing", "monitoring"]
+
+  ###############################################################################
+  # Benchmark Server - Multi-server MCP benchmark tool
+  # Spawns multiple lightweight MCP servers for load testing
+  # Usage: make benchmark-up (or: docker compose --profile benchmark up -d)
+  #
+  # Environment variables:
+  #   BENCHMARK_SERVER_COUNT - Number of servers to spawn (default: 10)
+  #   BENCHMARK_START_PORT   - Starting port number (default: 9000)
+  ###############################################################################
+  benchmark_server:
+    build:
+      context: ./mcp-servers/go/benchmark-server
+      dockerfile: Dockerfile
+    image: mcpgateway/benchmark-server:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    command:
+      - "-transport=http"
+      - "-server-count=${BENCHMARK_SERVER_COUNT:-10}"
+      - "-start-port=${BENCHMARK_START_PORT:-9000}"
+      - "-tools=50"
+      - "-resources=20"
+      - "-prompts=10"
+    ports:
+      # Port range supports up to 100 servers (9000-9099)
+      # Actual servers spawned controlled by BENCHMARK_SERVER_COUNT
+      - "9000-9099:9000-9099"
+    # Note: No healthcheck - scratch-based Go image has no shell
+    # Verify health via: curl http://localhost:9000/health
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    profiles: ["benchmark"]
+
+  ###############################################################################
+  # Auto-registration service - registers benchmark servers with gateway
+  # Uses BENCHMARK_SERVER_COUNT and BENCHMARK_START_PORT environment variables
+  ###############################################################################
+  register_benchmark:
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    networks: [mcpnet]
+    depends_on:
+      gateway:
+        condition: service_healthy
+      benchmark_server:
+        condition: service_started
+    environment:
+      - JWT_SECRET_KEY=my-test-key
+      - BENCHMARK_SERVER_COUNT=${BENCHMARK_SERVER_COUNT:-10}
+      - BENCHMARK_START_PORT=${BENCHMARK_START_PORT:-9000}
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Registering benchmark servers with gateway..."
+
+        # Wait for benchmark servers to start (no healthcheck available)
+        echo "Waiting for benchmark servers to start..."
+        sleep 5
+
+        # Generate JWT token
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+
+        # Register benchmark servers using environment variables
+        python3 -c "
+        import urllib.request
+        import json
+        import os
+
+        token = os.environ.get('MCPGATEWAY_BEARER_TOKEN', '')
+        server_count = int(os.environ.get('BENCHMARK_SERVER_COUNT', '10'))
+        start_port = int(os.environ.get('BENCHMARK_START_PORT', '9000'))
+
+        headers = {
+            'Authorization': f'Bearer {token}',
+            'Content-Type': 'application/json'
+        }
+
+        def api_request(method, path, data=None):
+            url = f'http://gateway:4444{path}'
+            body = json.dumps(data).encode() if data else None
+            req = urllib.request.Request(url, data=body, headers=headers, method=method)
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read().decode())
+
+        # Register benchmark servers
+        print(f'Registering {server_count} benchmark servers (ports {start_port}-{start_port + server_count - 1})...')
+        registered = 0
+        for port in range(start_port, start_port + server_count):
+            name = f'benchmark-{port}'
+            try:
+                result = api_request('POST', '/gateways', {
+                    'name': name,
+                    'url': f'http://benchmark_server:{port}/mcp',
+                    'transport': 'STREAMABLEHTTP'
+                })
+                print(f'✅ Registered {name}: {result.get(\"id\", \"unknown\")}')
+                registered += 1
+            except urllib.error.HTTPError as e:
+                if e.code == 409:
+                    print(f'⏭️  {name} already registered')
+                    registered += 1
+                else:
+                    print(f'❌ Failed to register {name}: HTTP {e.code}')
+            except Exception as e:
+                print(f'❌ Failed to register {name}: {e}')
+
+        print(f'✅ Registration complete: {registered}/{server_count} benchmark servers')
+        "
+    profiles: ["benchmark"]
 
   ###############################################################################
   # Hashicorp Terraform MCP Server

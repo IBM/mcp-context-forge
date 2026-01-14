@@ -9,10 +9,10 @@ AWS Bedrock judge implementation for LLM-as-a-judge evaluation.
 
 # Standard
 import asyncio
-import json
 import os
 from typing import Any, Dict, List, Optional
 
+import orjson
 try:
     # Third-Party
     import boto3
@@ -115,7 +115,7 @@ class BedrockJudge(BaseJudge):
             def make_request():
                 return self.client.invoke_model(
                     modelId=self.model_id,
-                    body=json.dumps(body),
+                    body=orjson.dumps(body),
                     contentType="application/json",
                     accept="application/json",
                 )
@@ -124,7 +124,7 @@ class BedrockJudge(BaseJudge):
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 response = await loop.run_in_executor(executor, make_request)
 
-            response_body = json.loads(response["body"].read())
+            response_body = orjson.loads(response["body"].read())
             return response_body.get("content", [{}])[0].get("text", "")
 
         except ClientError as e:

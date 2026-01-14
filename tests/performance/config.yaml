@@ -263,6 +263,12 @@ infrastructure_profiles:
     postgres_effective_cache_size: 512MB
     postgres_max_connections: 50
     redis_enabled: false
+    benchmark_server_enabled: true
+    benchmark_server_count: 10
+    benchmark_start_port: 9000
+    benchmark_tools_per_server: 10
+    benchmark_resources_per_server: 5
+    benchmark_prompts_per_server: 3
   staging:
     description: Staging environment - moderate resources
     gateway_instances: 2
@@ -273,6 +279,12 @@ infrastructure_profiles:
     postgres_work_mem: 8MB
     redis_enabled: true
     redis_maxmemory: 256mb
+    benchmark_server_enabled: true
+    benchmark_server_count: 100
+    benchmark_start_port: 9000
+    benchmark_tools_per_server: 50
+    benchmark_resources_per_server: 20
+    benchmark_prompts_per_server: 10
   production:
     description: Production environment - optimized resources
     gateway_instances: 4
@@ -287,6 +299,12 @@ infrastructure_profiles:
     redis_enabled: true
     redis_maxmemory: 1gb
     redis_maxmemory_policy: allkeys-lru
+    benchmark_server_enabled: true
+    benchmark_server_count: 1000
+    benchmark_start_port: 9000
+    benchmark_tools_per_server: 100
+    benchmark_resources_per_server: 50
+    benchmark_prompts_per_server: 25
   production_ha:
     description: Production HA - high availability configuration
     gateway_instances: 6
@@ -301,6 +319,12 @@ infrastructure_profiles:
     redis_enabled: true
     redis_maxmemory: 2gb
     redis_maxmemory_policy: allkeys-lru
+    benchmark_server_enabled: true
+    benchmark_server_count: 10000
+    benchmark_start_port: 9000
+    benchmark_tools_per_server: 200
+    benchmark_resources_per_server: 100
+    benchmark_prompts_per_server: 50
 database_comparison:
   enabled: false
   versions:

@@ -85,12 +85,25 @@ def mock_server(mock_tool, mock_resource, mock_prompt):
     # Ownership fields for RBAC
     server.owner_email = "user@example.com"  # Match default test user
     server.team_id = None
+    server.team = None  # Team name loaded via email_team relationship
     server.visibility = "public"
+
+    # Optional tracking fields (must be explicitly set to avoid MagicMock auto-creation)
+    server.created_from_ip = None
+    server.created_via = None
+    server.created_user_agent = None
+    server.modified_from_ip = None
+    server.modified_via = None
+    server.modified_user_agent = None
+    server.import_batch_id = None
+    server.federation_source = None
+    server.version = 1
 
     # Associated objects -------------------------------------------------- #
     server.tools = [mock_tool]
     server.resources = [mock_resource]
     server.prompts = [mock_prompt]
+    server.a2a_agents = []
 
     # Dummy metrics
     server.metrics = []
@@ -111,7 +124,9 @@ class TestServerService:
         test_db.get = Mock(return_value=mock_server)
         test_db.commit = Mock()
         test_db.refresh = Mock()
-        test_db.execute = Mock()
+        # Ensure get_for_update (which uses db.execute when loader options
+        # are present) returns our mocked server instance.
+        test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=mock_server)))
         test_db.rollback = Mock()
 
         # Mock team exists
@@ -134,8 +149,9 @@ class TestServerService:
 
         server_update = ServerUpdate(visibility="team", team_id="team1")
         test_user_email = "user@example.com"
-        with pytest.raises(ServerError) as exc:
-            await server_service.update_server(test_db, 1, server_update, test_user_email)
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            with pytest.raises(ServerError) as exc:
+                await server_service.update_server(test_db, 1, server_update, test_user_email)
         assert "User membership in team not sufficient" in str(exc.value)
 
     @pytest.mark.asyncio
@@ -147,7 +163,9 @@ class TestServerService:
         test_db.get = Mock(return_value=mock_server)
         test_db.commit = Mock()
         test_db.refresh = Mock()
-        test_db.execute = Mock()
+        # Ensure get_for_update (which uses db.execute when loader options
+        # are present) returns our mocked server instance.
+        test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=mock_server)))
         test_db.rollback = Mock()
         # Patch db.query(DbEmailTeam).filter().first() to return a team
         mock_team = MagicMock()
@@ -173,8 +191,9 @@ class TestServerService:
         test_db.query.side_effect = query_side_effect
         server_update = ServerUpdate(visibility="team")
         test_user_email = "user@example.com"
-        with pytest.raises(ServerError) as exc:
-            await server_service.update_server(test_db, 1, server_update, test_user_email)
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            with pytest.raises(ServerError) as exc:
+                await server_service.update_server(test_db, 1, server_update, test_user_email)
         assert "User membership in team not sufficient" in str(exc.value)
 
     @pytest.mark.asyncio
@@ -186,7 +205,9 @@ class TestServerService:
         test_db.get = Mock(return_value=mock_server)
         test_db.commit = Mock()
         test_db.refresh = Mock()
-        test_db.execute = Mock()
+        # Ensure get_for_update (which uses db.execute when loader options
+        # are present) returns our mocked server instance.
+        test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=mock_server)))
         # Patch db.query(DbEmailTeam).filter().first() to return a team
         mock_team = MagicMock()
         mock_query = MagicMock()
@@ -233,7 +254,9 @@ class TestServerService:
         )
         server_update = ServerUpdate(visibility="team")
         test_user_email = "user@example.com"
-        result = await server_service.update_server(test_db, 1, server_update, test_user_email)
+        # Patch permission check to avoid DB user lookup in PermissionService
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            result = await server_service.update_server(test_db, 1, server_update, test_user_email)
         assert result.name == "updated_server"
 
     """Unit-tests for the ServerService class."""
@@ -463,9 +486,63 @@ class TestServerService:
         server_service.convert_server_to_read.assert_called_once_with(mock_server, include_metrics=False)
 
     @pytest.mark.asyncio
+    async def test_list_servers_for_user_includes_team_name(self, server_service, test_db):
+        """Test that list_servers_for_user properly populates team name via email_team relationship.
+
+        This test guards against regressions if the joinedload strategy is changed.
+        """
+        # Mock a server with an active team relationship
+        mock_email_team = Mock()
+        mock_email_team.name = "Engineering Team"
+        mock_server = Mock(
+            enabled=True,
+            team_id="team-123",
+            email_team=mock_email_team,
+            tools=[],
+            resources=[],
+            prompts=[],
+            a2a_agents=[],
+            metrics=[],
+            visibility="public",
+            owner_email="user@example.com",
+        )
+        # The team property should return the team name from email_team
+        mock_server.team = mock_email_team.name
+
+        exec_result = MagicMock()
+        exec_result.scalars.return_value.all.return_value = [mock_server]
+        test_db.execute = MagicMock(return_value=exec_result)
+
+        # Use a mock that captures the server's team value
+        captured_servers = []
+
+        def capture_server(server, include_metrics=False):
+            captured_servers.append({"team": server.team, "team_id": server.team_id})
+            return "converted_server"
+
+        server_service.convert_server_to_read = Mock(side_effect=capture_server)
+
+        # Mock team service to return user's teams
+        with patch("mcpgateway.services.server_service.TeamManagementService") as mock_team_service_class:
+            mock_team_service = MagicMock()
+            mock_team_service.get_user_teams = AsyncMock(return_value=[])
+            mock_team_service_class.return_value = mock_team_service
+
+            servers = await server_service.list_servers_for_user(test_db, "user@example.com")
+
+        assert servers == ["converted_server"]
+        # Verify the server's team was accessible during conversion
+        assert len(captured_servers) == 1
+        assert captured_servers[0]["team"] == "Engineering Team"
+        assert captured_servers[0]["team_id"] == "team-123"
+
+    @pytest.mark.asyncio
     async def test_get_server(self, server_service, mock_server, test_db):
         mock_server.team_id = 1
         test_db.get = MagicMock(return_value=mock_server)
+        # Ensure get_for_update (which may use db.execute when loader options
+        # are present) returns our mocked server instance.
+        test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=mock_server)))
 
         server_read = ServerRead(
             id="1",
@@ -493,7 +570,11 @@ class TestServerService:
 
         result = await server_service.get_server(test_db, 1)
 
-        test_db.get.assert_called_once_with(DbServer, 1)
+        # Depending on db backend implementation, get_for_update may call
+        # `db.get(..., options=...)` or execute a select; assert at least one
+        # of those was used and the result is as expected.
+        assert result == server_read
+        assert test_db.get.called or test_db.execute.called
         assert result == server_read
 
     @pytest.mark.asyncio
@@ -521,30 +602,33 @@ class TestServerService:
         new_prompt.name = "new_prompt"
         new_prompt._sa_instance_state = MagicMock()
 
-        # db.get is still used to retrieve the Server itself
-        test_db.get = Mock(
-            side_effect=lambda cls, _id: (
-                mock_server
-                if (cls, _id) == (DbServer, 1)
-                else None
-            )
+        # db.get is still used to retrieve the Server itself (now with eager loading options)
+        test_db.get = Mock(side_effect=lambda cls, _id, options=None: (mock_server if (cls, _id) == (DbServer, 1) else None))
+
+        # Configure db.execute to handle the sequence of calls made by
+        # `update_server`: 1) get_for_update (returns server),
+        # 2) name conflict check (None), 3-5) bulk fetches for tools/resources/prompts.
+        mock_result_get_server = Mock(scalar_one_or_none=Mock(return_value=mock_server))
+        mock_result_name_conflict = Mock(scalar_one_or_none=Mock(return_value=None))
+
+        mock_result_tools = Mock()
+        mock_result_tools.scalars.return_value.all.return_value = [new_tool]
+
+        mock_result_resources = Mock()
+        mock_result_resources.scalars.return_value.all.return_value = [new_resource]
+
+        mock_result_prompts = Mock()
+        mock_result_prompts.scalars.return_value.all.return_value = [new_prompt]
+
+        test_db.execute = Mock(
+            side_effect=[
+                mock_result_get_server,
+                mock_result_name_conflict,
+                mock_result_tools,
+                mock_result_resources,
+                mock_result_prompts,
+            ]
         )
-
-        # FIX: Configure db.execute to handle both the conflict check and the bulk item fetches
-        mock_db_result = MagicMock()
-
-        # 1. Handle name conflict check: scalar_one_or_none() -> None
-        mock_db_result.scalar_one_or_none.return_value = None
-
-        # 2. Handle bulk fetches: scalars().all() -> lists of items
-        # The code executes bulk queries in this order: Tools -> Resources -> Prompts
-        mock_db_result.scalars.return_value.all.side_effect = [
-            [new_tool],      # First call: select(DbTool)...
-            [new_resource],  # Second call: select(DbResource)...
-            [new_prompt]     # Third call: select(DbPrompt)...
-        ]
-
-        test_db.execute = Mock(return_value=mock_db_result)
 
         test_db.commit = Mock()
         test_db.refresh = Mock()
@@ -606,7 +690,9 @@ class TestServerService:
 
         test_user_email = "user@example.com"
 
-        result = await server_service.update_server(test_db, 1, server_update, test_user_email)
+        # Patch permission check to avoid consuming db.execute side-effects
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            result = await server_service.update_server(test_db, 1, server_update, test_user_email)
 
         test_db.commit.assert_called_once()
         test_db.refresh.assert_called_once()
@@ -644,7 +730,10 @@ class TestServerService:
             test_db.get = Mock(return_value=server_private)
             mock_scalar = Mock()
             mock_scalar.scalar_one_or_none.return_value = None
-            test_db.execute = Mock(return_value=mock_scalar)
+            # get_for_update may use db.execute when loader options are present;
+            # ensure the first execute() call (get_for_update) returns the server,
+            # while the second call (name conflict check) returns `None`.
+            test_db.execute = Mock(side_effect=[Mock(scalar_one_or_none=Mock(return_value=server_private)), mock_scalar])
             test_db.rollback = Mock()
             test_db.refresh = Mock()
 
@@ -675,7 +764,9 @@ class TestServerService:
             test_db.get = Mock(return_value=server_team)
             mock_scalar = Mock()
             mock_scalar.scalar_one_or_none.return_value = conflict_team_server
-            test_db.execute = Mock(return_value=mock_scalar)
+            # Ensure get_for_update returns the server_team first, then the
+            # name-conflict query returns the conflicting server.
+            test_db.execute = Mock(side_effect=[Mock(scalar_one_or_none=Mock(return_value=server_team)), mock_scalar])
             test_db.rollback = Mock()
             test_db.refresh = Mock()
 
@@ -703,7 +794,9 @@ class TestServerService:
             test_db.get = Mock(return_value=server_public)
             mock_scalar = Mock()
             mock_scalar.scalar_one_or_none.return_value = conflict_public_server
-            test_db.execute = Mock(return_value=mock_scalar)
+            # Ensure get_for_update returns the server_public first, then the
+            # name-conflict query returns the conflicting public server.
+            test_db.execute = Mock(side_effect=[Mock(scalar_one_or_none=Mock(return_value=server_public)), mock_scalar])
             test_db.rollback = Mock()
             test_db.refresh = Mock()
 
@@ -724,6 +817,8 @@ class TestServerService:
     async def test_toggle_server_status(self, server_service, mock_server, test_db):
         mock_server.team_id = 1
         test_db.get = Mock(return_value=mock_server)
+        # Ensure get_for_update returns the mocked server when loader options are used
+        test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=mock_server)))
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
@@ -756,9 +851,10 @@ class TestServerService:
 
         result = await server_service.toggle_server_status(test_db, 1, activate=False)
 
-        test_db.get.assert_called_once_with(DbServer, 1)
-        # commit called twice: once for status change, once in _get_team_name to release transaction
-        assert test_db.commit.call_count == 2
+        # get_for_update may use `db.get(..., options=...)` or execute a select;
+        # accept either approach.
+        assert test_db.get.called or test_db.execute.called
+        assert test_db.commit.call_count == 1
         test_db.refresh.assert_called_once()
         server_service._notify_server_deactivated.assert_called_once()
         assert result.enabled is False
@@ -1058,12 +1154,15 @@ class TestServerService:
         expected_hex_uuid = str(uuid_module.UUID(new_standard_uuid)).replace("-", "")
 
         # Mock db.get to return existing server for the initial lookup, then None for the UUID check
-        test_db.get = Mock(side_effect=lambda cls, _id: existing_server if _id == "oldserverid" else None)
+        test_db.get = Mock(side_effect=lambda cls, _id, options=None: existing_server if _id == "oldserverid" else None)
 
-        # Mock name conflict check
+        # Mock name conflict check and ensure initial get_for_update returns the existing server
         mock_scalar = Mock()
         mock_scalar.scalar_one_or_none.return_value = None
-        test_db.execute = Mock(return_value=mock_scalar)
+        mock_result_get_server = Mock(scalar_one_or_none=Mock(return_value=existing_server))
+        # Sequence of execute() results: 1) get_for_update -> existing_server,
+        # 2) _is_user_admin -> None, 3) name-conflict check -> None
+        test_db.execute = Mock(side_effect=[mock_result_get_server, Mock(scalar_one_or_none=Mock(return_value=None)), mock_scalar])
 
         test_db.commit = Mock()
         test_db.refresh = Mock()

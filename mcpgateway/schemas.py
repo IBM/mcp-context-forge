@@ -2522,6 +2522,9 @@ class GatewayCreate(BaseModel):
     ca_certificate_sig: Optional[str] = Field(None, description="Signature of the custom CA certificate for integrity verification")
     signing_algorithm: Optional[str] = Field("ed25519", description="Algorithm used for signing the CA certificate")
 
+    # Per-gateway refresh configuration
+    refresh_interval_seconds: Optional[int] = Field(None, ge=60, description="Per-gateway refresh interval in seconds (minimum 60); uses global default if not set")
+
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
@@ -2786,6 +2789,9 @@ class GatewayUpdate(BaseModelWithConfigDict):
     team_id: Optional[str] = Field(None, description="Team ID this gateway belongs to")
     owner_email: Optional[str] = Field(None, description="Email of the gateway owner")
     visibility: Optional[str] = Field(None, description="Gateway visibility: private, team, or public")
+
+    # Per-gateway refresh configuration
+    refresh_interval_seconds: Optional[int] = Field(None, ge=60, description="Per-gateway refresh interval in seconds (minimum 60); uses global default if not set")
 
     @field_validator("tags")
     @classmethod
@@ -3068,6 +3074,10 @@ class GatewayRead(BaseModelWithConfigDict):
 
     slug: Optional[str] = Field(None, description="Slug for gateway endpoint URL")
 
+    # Per-gateway refresh configuration
+    refresh_interval_seconds: Optional[int] = Field(None, description="Per-gateway refresh interval in seconds")
+    last_refresh_at: Optional[datetime] = Field(None, description="Timestamp of last successful refresh")
+
     # This will be the main method to automatically populate fields
     @model_validator(mode="after")
     def _populate_auth(self) -> Self:
@@ -3227,6 +3237,30 @@ class GatewayRead(BaseModelWithConfigDict):
         masked_data["auth_header_value_unmasked"] = self.auth_header_value_unmasked
         masked_data["auth_headers_unmasked"] = [header.copy() for header in self.auth_headers_unmasked] if self.auth_headers_unmasked else None
         return GatewayRead.model_validate(masked_data)
+
+
+class GatewayRefreshResponse(BaseModelWithConfigDict):
+    """Response schema for manual gateway refresh API.
+
+    Contains counts of added, updated, and removed items for tools, resources, and prompts,
+    along with any validation errors encountered during the refresh operation.
+    """
+
+    gateway_id: str = Field(..., description="ID of the refreshed gateway")
+    success: bool = Field(default=True, description="Whether the refresh operation was successful")
+    error: Optional[str] = Field(None, description="Error message if the refresh failed")
+    tools_added: int = Field(default=0, description="Number of tools added")
+    tools_updated: int = Field(default=0, description="Number of tools updated")
+    tools_removed: int = Field(default=0, description="Number of tools removed")
+    resources_added: int = Field(default=0, description="Number of resources added")
+    resources_updated: int = Field(default=0, description="Number of resources updated")
+    resources_removed: int = Field(default=0, description="Number of resources removed")
+    prompts_added: int = Field(default=0, description="Number of prompts added")
+    prompts_updated: int = Field(default=0, description="Number of prompts updated")
+    prompts_removed: int = Field(default=0, description="Number of prompts removed")
+    validation_errors: List[str] = Field(default_factory=list, description="List of validation errors encountered")
+    duration_ms: float = Field(..., description="Duration of the refresh operation in milliseconds")
+    refreshed_at: datetime = Field(..., description="Timestamp when the refresh completed")
 
 
 class FederatedTool(BaseModelWithConfigDict):
@@ -5619,6 +5653,91 @@ class TokenScopeRequest(BaseModel):
     time_restrictions: Dict[str, Any] = Field(default_factory=dict, description="Time-based restrictions")
     usage_limits: Dict[str, Any] = Field(default_factory=dict, description="Usage limits and quotas")
 
+    @field_validator("ip_restrictions")
+    @classmethod
+    def validate_ip_restrictions(cls, v: List[str]) -> List[str]:
+        """Validate IP addresses and CIDR notation.
+
+        Args:
+            v: List of IP address or CIDR strings to validate.
+
+        Returns:
+            List of validated IP/CIDR strings with whitespace stripped.
+
+        Raises:
+            ValueError: If any IP address or CIDR notation is invalid.
+
+        Examples:
+            >>> TokenScopeRequest.validate_ip_restrictions(["192.168.1.0/24"])
+            ['192.168.1.0/24']
+            >>> TokenScopeRequest.validate_ip_restrictions(["10.0.0.1"])
+            ['10.0.0.1']
+        """
+        # Standard
+        import ipaddress  # pylint: disable=import-outside-toplevel
+
+        if not v:
+            return v
+
+        validated = []
+        for ip_str in v:
+            ip_str = ip_str.strip()
+            if not ip_str:
+                continue
+            try:
+                # Try parsing as network (CIDR notation)
+                if "/" in ip_str:
+                    ipaddress.ip_network(ip_str, strict=False)
+                else:
+                    # Try parsing as single IP address
+                    ipaddress.ip_address(ip_str)
+                validated.append(ip_str)
+            except ValueError as e:
+                raise ValueError(f"Invalid IP address or CIDR notation '{ip_str}': {e}") from e
+        return validated
+
+    @field_validator("permissions")
+    @classmethod
+    def validate_permissions(cls, v: List[str]) -> List[str]:
+        """Validate permission scope format.
+
+        Permissions must be in format 'resource.action' or wildcard '*'.
+
+        Args:
+            v: List of permission strings to validate.
+
+        Returns:
+            List of validated permission strings with whitespace stripped.
+
+        Raises:
+            ValueError: If any permission does not match 'resource.action' format or '*'.
+
+        Examples:
+            >>> TokenScopeRequest.validate_permissions(["tools.read", "resources.write"])
+            ['tools.read', 'resources.write']
+            >>> TokenScopeRequest.validate_permissions(["*"])
+            ['*']
+        """
+        if not v:
+            return v
+
+        # Permission pattern: resource.action (alphanumeric with underscores)
+        permission_pattern = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]*\.[a-zA-Z][a-zA-Z0-9_]*$")
+
+        validated = []
+        for perm in v:
+            perm = perm.strip()
+            if not perm:
+                continue
+            # Allow wildcard
+            if perm == "*":
+                validated.append(perm)
+                continue
+            if not permission_pattern.match(perm):
+                raise ValueError(f"Invalid permission format '{perm}'. Use 'resource.action' format (e.g., 'tools.read') or '*' for full access")
+            validated.append(perm)
+        return validated
+
 
 class TokenCreateRequest(BaseModel):
     """Schema for creating a new API token.
@@ -6678,6 +6797,13 @@ class CursorPaginatedA2AAgentsResponse(BaseModel):
     """Cursor-paginated response for A2A agents list endpoint."""
 
     agents: List["A2AAgentRead"] = Field(..., description="List of A2A agents for this page")
+    next_cursor: Optional[str] = Field(None, alias="nextCursor", description="Cursor for the next page, null if no more pages")
+
+
+class CursorPaginatedUsersResponse(BaseModel):
+    """Cursor-paginated response for users list endpoint."""
+
+    users: List["EmailUserResponse"] = Field(..., description="List of users for this page")
     next_cursor: Optional[str] = Field(None, alias="nextCursor", description="Cursor for the next page, null if no more pages")
 
 

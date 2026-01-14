@@ -8,8 +8,10 @@ This plugin exports comprehensive tool invocation telemetry to OpenTelemetry.
 """
 
 # Standard
-import json
 from typing import Dict
+
+# Third-Party
+import orjson
 
 # First-Party
 from mcpgateway.common.models import Gateway, Tool
@@ -134,7 +136,7 @@ class ToolsTelemetryExporterPlugin(Plugin):
             "tool.name": context_attributes["tool"]["name"],
             "tool.target_tool_name": context_attributes["tool"]["target_tool_name"],
             "tool.description": context_attributes["tool"]["description"],
-            "tool.invocation.args": json.dumps(payload.args),
+            "tool.invocation.args": orjson.dumps(payload.args, default=str).decode(),
             "headers": payload.headers.model_dump_json() if payload.headers else "{}",
         }
 
@@ -167,7 +169,7 @@ class ToolsTelemetryExporterPlugin(Plugin):
             max_payload_bytes_size = self.telemetry_config.get("max_payload_bytes_size", 10000)
             result_content = result.get("content")
             if result_content:
-                result_content_str = json.dumps(result_content, default=str)
+                result_content_str = orjson.dumps(result_content, default=str).decode()
                 if len(result_content_str) <= max_payload_bytes_size:
                     export_attributes["tool.invocation.result"] = result_content_str
                 else:
