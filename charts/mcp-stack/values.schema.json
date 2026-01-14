@@ -217,6 +217,14 @@
               "minimum": 1,
               "maximum": 65535,
               "default": 80
+            },
+            "annotations": {
+              "type": "object",
+              "description": "Service annotations (e.g., for AWS NLB, GCP load balancer configuration)",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {}
             }
           },
           "additionalProperties": false
@@ -498,7 +506,7 @@
             "CACHE_TYPE": {
               "type": "string",
               "description": "Cache backend type",
-              "enum": ["redis", "memory", "database"],
+              "enum": ["redis", "memory", "none", "database"],
               "default": "redis"
             },
             "CACHE_PREFIX": {
