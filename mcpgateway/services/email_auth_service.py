@@ -671,25 +671,77 @@ class EmailAuthService:
                     )
                 )
 
-            # Use unified pagination helper - handles both page and cursor pagination
-            pag_result = await unified_paginate(
-                db=self.db,
-                query=query,
-                page=page,
-                per_page=per_page,
-                cursor=cursor,
-                limit=limit,
-                base_url="/admin/users",
-                query_params={},
-            )
-
-            # Extract users based on pagination type
+            # Page-based pagination: use unified_paginate
             if page is not None:
-                # Page-based: pag_result is a dict
+                pag_result = await unified_paginate(
+                    db=self.db,
+                    query=query,
+                    page=page,
+                    per_page=per_page,
+                    cursor=None,
+                    limit=None,
+                    base_url="/admin/users",
+                    query_params={},
+                )
                 return UsersListResult(data=pag_result["data"], pagination=pag_result["pagination"], links=pag_result["links"])
 
-            # Cursor-based: pag_result is a tuple
-            users, next_cursor = pag_result
+            # Cursor-based pagination: custom implementation for EmailUser
+            # EmailUser uses email as PK (not id), so we need custom cursor using (created_at, email)
+            page_size = limit if limit and limit > 0 else settings.pagination_default_page_size
+            if limit == 0:
+                page_size = None  # No limit
+
+            # Decode cursor and apply keyset filter if provided
+            if cursor:
+                try:
+                    import base64
+                    import orjson
+
+                    cursor_json = base64.urlsafe_b64decode(cursor.encode()).decode()
+                    cursor_data = orjson.loads(cursor_json)
+                    last_email = cursor_data.get("email")
+                    created_str = cursor_data.get("created_at")
+                    if last_email and created_str:
+                        from sqlalchemy import and_
+
+                        last_created = datetime.fromisoformat(created_str)
+                        # Apply keyset filter (assumes DESC order on created_at, email)
+                        query = query.where(
+                            or_(
+                                EmailUser.created_at < last_created,
+                                and_(EmailUser.created_at == last_created, EmailUser.email < last_email),
+                            )
+                        )
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Invalid cursor for user pagination, ignoring: {e}")
+
+            # Fetch page_size + 1 to determine if there are more results
+            if page_size is not None:
+                query = query.limit(page_size + 1)
+            result = self.db.execute(query)
+            users = list(result.scalars().all())
+
+            if page_size is None:
+                return UsersListResult(data=users, next_cursor=None)
+
+            # Check if there are more results
+            has_more = len(users) > page_size
+            if has_more:
+                users = users[:page_size]
+
+            # Generate next cursor using (created_at, email) for EmailUser
+            next_cursor = None
+            if has_more and users:
+                import base64
+                import orjson
+
+                last_user = users[-1]
+                cursor_data = {
+                    "created_at": last_user.created_at.isoformat() if last_user.created_at else None,
+                    "email": last_user.email,
+                }
+                next_cursor = base64.urlsafe_b64encode(orjson.dumps(cursor_data)).decode()
+
             return UsersListResult(data=users, next_cursor=next_cursor)
 
         except Exception as e:
