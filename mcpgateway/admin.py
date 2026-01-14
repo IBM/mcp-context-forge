@@ -4337,7 +4337,7 @@ async def admin_view_team_members(
                             data-team-id="{team.id}"
                             placeholder="Search by name or email..."
                             class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white"
-                            oninput="serverSideUserSearch('{team.id}', this.value)"
+                            oninput="debouncedServerSideUserSearch('{team.id}', this.value)"
                         />
                     </div>
 

@@ -30323,6 +30323,18 @@ window.refreshLLMModels = refreshLLMModels;
 window.filterModelsByProvider = filterModelsByProvider;
 window.llmApiInfoApp = llmApiInfoApp;
 
+// Debounce helper for search
+const searchDebounceTimers = {};
+function debouncedServerSideUserSearch(teamId, searchTerm, delay = 300) {
+    if (searchDebounceTimers[teamId]) {
+        clearTimeout(searchDebounceTimers[teamId]);
+    }
+    searchDebounceTimers[teamId] = setTimeout(() => {
+        serverSideUserSearch(teamId, searchTerm);
+    }, delay);
+}
+window.debouncedServerSideUserSearch = debouncedServerSideUserSearch;
+
 // Team user search function - searches all users and splits into members/non-members
 async function serverSideUserSearch(teamId, searchTerm) {
     const membersContainer = document.getElementById(
@@ -30337,23 +30349,34 @@ async function serverSideUserSearch(teamId, searchTerm) {
         return;
     }
 
+    // Default per_page for reloading (matches typical UI defaults)
+    const defaultPerPage = 20;
+
     // If search is empty, reload both sections with full data
     if (!searchTerm || searchTerm.trim() === "") {
         try {
             // Reload members - use fetchWithAuth for bearer token support
             const membersResponse = await fetchWithAuth(
-                `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=20`,
+                `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=${defaultPerPage}`,
             );
             if (membersResponse.ok) {
                 membersContainer.innerHTML = await membersResponse.text();
+                // Re-initialize HTMX on new content for infinite scroll triggers
+                if (typeof htmx !== "undefined") {
+                    htmx.process(membersContainer);
+                }
             }
 
             // Reload non-members
             const nonMembersResponse = await fetchWithAuth(
-                `${window.ROOT_PATH}/admin/teams/${teamId}/non-members/partial?page=1&per_page=20`,
+                `${window.ROOT_PATH}/admin/teams/${teamId}/non-members/partial?page=1&per_page=${defaultPerPage}`,
             );
             if (nonMembersResponse.ok) {
                 nonMembersContainer.innerHTML = await nonMembersResponse.text();
+                // Re-initialize HTMX on new content for infinite scroll triggers
+                if (typeof htmx !== "undefined") {
+                    htmx.process(nonMembersContainer);
+                }
             }
         } catch (error) {
             console.error("Error reloading user lists:", error);
