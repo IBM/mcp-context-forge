@@ -21,6 +21,7 @@ Examples:
 """
 
 # Standard
+import base64
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import re
@@ -28,7 +29,8 @@ from typing import Optional
 import warnings
 
 # Third-Party
-from sqlalchemy import delete, desc, func, or_, select
+import orjson
+from sqlalchemy import and_, delete, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -694,16 +696,11 @@ class EmailAuthService:
             # Decode cursor and apply keyset filter if provided
             if cursor:
                 try:
-                    import base64
-                    import orjson
-
                     cursor_json = base64.urlsafe_b64decode(cursor.encode()).decode()
                     cursor_data = orjson.loads(cursor_json)
                     last_email = cursor_data.get("email")
                     created_str = cursor_data.get("created_at")
                     if last_email and created_str:
-                        from sqlalchemy import and_
-
                         last_created = datetime.fromisoformat(created_str)
                         # Apply keyset filter (assumes DESC order on created_at, email)
                         query = query.where(
@@ -732,9 +729,6 @@ class EmailAuthService:
             # Generate next cursor using (created_at, email) for EmailUser
             next_cursor = None
             if has_more and users:
-                import base64
-                import orjson
-
                 last_user = users[-1]
                 cursor_data = {
                     "created_at": last_user.created_at.isoformat() if last_user.created_at else None,
