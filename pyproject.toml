@@ -47,11 +47,11 @@ maintainers = [
 # ----------------------------------------------------------------
 dependencies = [
     "aiohttp>=3.13.3",
-    "alembic>=1.17.2",
+    "alembic>=1.18.1",
     "argon2-cffi>=25.1.0",
     "cryptography>=46.0.3",
     "fastapi>=0.128.0",
-    "filelock>=3.20.2",
+    "filelock>=3.20.3",
     "gunicorn>=23.0.0",
     "httpx>=0.28.1",
     "httpx[http2]>=0.28.1",
@@ -64,7 +64,7 @@ dependencies = [
     "orjson>=3.11.5",
     "parse>=1.20.2",
     "prometheus-fastapi-instrumentator>=7.1.0",
-    "prometheus_client>=0.23.1",
+    "prometheus_client>=0.24.1",
     "psutil>=7.2.1",
     "pydantic>=2.12.5",
     "pydantic[email]>=2.12.5",
@@ -192,19 +192,19 @@ mariadb = [
 ]
 
 llmchat = [
-    "langchain-core>=1.2.6",
+    "langchain-core>=1.2.7",
     "langchain-mcp-adapters>=0.2.1",
     "langchain-ollama>=1.0.1",
     "langchain-openai>=1.1.7",
-    "langgraph>=1.0.5",
+    "langgraph>=1.0.6",
 ]
 
 # Fuzzing and property-based testing
 fuzz = [
-    "hypothesis>=6.150.0",
+    "hypothesis>=6.150.2",
     "pytest-benchmark>=5.2.3",
     "pytest-xdist>=3.8.0",
-    "schemathesis>=4.8.0",
+    "schemathesis>=4.9.0",
 ]
 
 # Coverage-guided fuzzing (requires clang/libfuzzer)
@@ -213,7 +213,7 @@ fuzz-atheris = [
 ]
 
 alembic = [
-    "alembic>=1.17.2",
+    "alembic>=1.18.1",
 ]
 
 # Observability dependencies (optional)
@@ -241,7 +241,7 @@ asyncpg = [
 
 # Plugin templating tools (optional) - copier pulls jinja2-ansible-filters which is GPL licensed
 templating = [
-    "copier>=9.11.0",
+    "copier>=9.11.1",
 ]
 
 # Agent Lifecycle Toolkit(optional)
@@ -252,11 +252,11 @@ altk = [
 # Agent Lifecycle Toolkit(optional)
 toolops = [
     "agent-lifecycle-toolkit>=0.10.0",
-    "langchain-core>=1.2.6",
+    "langchain-core>=1.2.7",
     "langchain-mcp-adapters>=0.2.1",
     "langchain-ollama>=1.0.1",
     "langchain-openai>=1.1.7",
-    "langgraph>=1.0.5",
+    "langgraph>=1.0.6",
 ]
 
 # gRPC Support (EXPERIMENTAL - optional, disabled by default)
@@ -265,7 +265,7 @@ grpc = [
     "grpcio>=1.76.0",
     "grpcio-reflection>=1.76.0",
     "grpcio-tools>=1.76.0",
-    "protobuf>=6.33.2",
+    "protobuf>=6.33.4",
 ]
 
 # UI Testing
