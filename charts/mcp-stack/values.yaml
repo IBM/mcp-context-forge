@@ -62,6 +62,7 @@ mcpContextForge:
   service:
     type: ClusterIP
     port: 80                    # external port → containerPort below
+    annotations: {}             # Service annotations (e.g., for AWS NLB configuration)
 
   containerPort: 4444           # port the app listens on inside the pod
 
