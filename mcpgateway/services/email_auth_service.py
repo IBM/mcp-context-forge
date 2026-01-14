@@ -21,7 +21,6 @@ Examples:
 """
 
 # Standard
-import base64
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import re
@@ -29,8 +28,7 @@ from typing import Optional
 import warnings
 
 # Third-Party
-import orjson
-from sqlalchemy import and_, delete, desc, func, or_, Select, select
+from sqlalchemy import delete, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -603,80 +601,6 @@ class EmailAuthService:
         if user:
             user.reset_failed_attempts()  # This also updates last_login
             self.db.commit()
-
-    async def _cursor_paginate_users(
-        self,
-        query: Select,
-        cursor: Optional[str],
-        limit: Optional[int],
-    ) -> tuple[list[EmailUser], Optional[str]]:
-        """Internal helper for cursor-based pagination of users.
-
-        EmailUser uses email as primary key (not id), so we need custom cursor logic
-        that uses (created_at, email) instead of (created_at, id).
-
-        Args:
-            query: Base SQLAlchemy select query (should already be ordered by created_at DESC, email DESC)
-            cursor: Opaque cursor token (base64-encoded JSON with created_at and email)
-            limit: Maximum number of results to return
-
-        Returns:
-            Tuple of (list of users, next_cursor or None)
-        """
-        # Handle limit: None means use default, 0 means no limit (return all)
-        # Cap non-zero limits at settings.pagination_max_page_size
-        max_page_size = settings.pagination_max_page_size
-        if limit is None:
-            page_size = settings.pagination_default_page_size
-        elif limit == 0:
-            page_size = None
-        else:
-            page_size = min(limit, max_page_size)
-
-        # Decode cursor if provided
-        if cursor:
-            try:
-                cursor_json = base64.urlsafe_b64decode(cursor.encode()).decode()
-                cursor_data = orjson.loads(cursor_json)
-                last_email = cursor_data.get("email")
-                created_str = cursor_data.get("created_at")
-                if last_email and created_str:
-                    last_created = datetime.fromisoformat(created_str)
-                    # Apply keyset pagination filter (assumes DESC order)
-                    query = query.where(
-                        or_(
-                            EmailUser.created_at < last_created,
-                            and_(EmailUser.created_at == last_created, EmailUser.email < last_email),
-                        )
-                    )
-            except (ValueError, TypeError, orjson.JSONDecodeError) as e:
-                logger.warning(f"Invalid cursor for user pagination, ignoring: {e}")
-
-        # Fetch page_size + 1 to determine if there are more results
-        if page_size is not None:
-            query = query.limit(page_size + 1)
-        result = self.db.execute(query)
-        users = list(result.scalars().all())
-
-        if page_size is None:
-            return (users, None)
-
-        # Check if there are more results
-        has_more = len(users) > page_size
-        if has_more:
-            users = users[:page_size]
-
-        # Generate next cursor if there are more results
-        next_cursor = None
-        if has_more and users:
-            last_user = users[-1]
-            cursor_data = {
-                "created_at": last_user.created_at.isoformat() if last_user.created_at else None,
-                "email": last_user.email,
-            }
-            next_cursor = base64.urlsafe_b64encode(orjson.dumps(cursor_data)).decode()
-
-        return (users, next_cursor)
 
     @staticmethod
     def _escape_like(value: str) -> str:
