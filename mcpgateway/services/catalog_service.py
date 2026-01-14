@@ -141,28 +141,30 @@ class CatalogService:
                 from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
 
                 # Query all gateways (enabled and disabled) to properly track registration status
-                stmt = select(DbGateway.url, DbGateway.enabled)
+                # Also get auth_type to distinguish OAuth servers from manually disabled ones
+                stmt = select(DbGateway.url, DbGateway.enabled, DbGateway.auth_type)
                 result = db.execute(stmt)
                 registered_urls = set()
-                disabled_urls = set()
+                oauth_disabled_urls = set()
                 for row in result:
-                    url, enabled = row
+                    url, enabled, auth_type = row
                     registered_urls.add(url)
-                    if not enabled:
-                        disabled_urls.add(url)
+                    # Only mark as requiring OAuth config if disabled AND using OAuth auth
+                    if not enabled and auth_type == "oauth":
+                        oauth_disabled_urls.add(url)
             except Exception as e:
                 logger.warning(f"Failed to check registered servers: {e}")
                 # Continue without marking registered servers
                 registered_urls = set()
-                disabled_urls = set()
+                oauth_disabled_urls = set()
 
         # Convert to CatalogServer objects and mark registered ones
         catalog_servers = []
         for server_data in servers:
             server = CatalogServer(**server_data)
             server.is_registered = server.url in registered_urls
-            # Mark servers that are registered but disabled (need OAuth configuration)
-            server.requires_oauth_config = server.url in disabled_urls
+            # Mark servers that are registered but disabled due to OAuth config needed
+            server.requires_oauth_config = server.url in oauth_disabled_urls
             # Set availability based on registration status (registered servers are assumed available)
             # Individual health checks can be done via the /status endpoint
             server.is_available = server.is_registered or server_data.get("is_available", True)
