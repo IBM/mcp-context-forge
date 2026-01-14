@@ -84,6 +84,69 @@ async def test_get_catalog_servers_filters(service):
 
 
 @pytest.mark.asyncio
+async def test_get_catalog_servers_requires_oauth_config_unconfigured(service):
+    """Test that disabled OAuth server with no oauth_config is marked as requires_oauth_config."""
+    fake_catalog = {
+        "catalog_servers": [
+            {"id": "1", "name": "oauth-srv", "url": "http://oauth.example.com", "category": "cat", "auth_type": "OAuth2.1", "provider": "prov", "tags": [], "description": "OAuth server"},
+        ]
+    }
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), \
+         patch.object(service, "_get_registry_cache", return_value=None):
+        db = MagicMock()
+        # Disabled OAuth server with no oauth_config - needs configuration
+        db.execute.return_value = [("http://oauth.example.com", False, "oauth", None)]
+        req = CatalogListRequest(offset=0, limit=10)
+        result = await service.get_catalog_servers(req, db)
+        assert result.total == 1
+        server = result.servers[0]
+        assert server.is_registered is True
+        assert server.requires_oauth_config is True
+
+
+@pytest.mark.asyncio
+async def test_get_catalog_servers_requires_oauth_config_configured(service):
+    """Test that disabled OAuth server with oauth_config is NOT marked as requires_oauth_config."""
+    fake_catalog = {
+        "catalog_servers": [
+            {"id": "2", "name": "oauth-configured", "url": "http://oauth-configured.example.com", "category": "cat", "auth_type": "OAuth2.1", "provider": "prov", "tags": [], "description": "Configured OAuth server"},
+        ]
+    }
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), \
+         patch.object(service, "_get_registry_cache", return_value=None):
+        db = MagicMock()
+        # Disabled OAuth server WITH oauth_config - manually disabled, not needing setup
+        db.execute.return_value = [("http://oauth-configured.example.com", False, "oauth", {"client_id": "abc", "client_secret": "xyz"})]
+        req = CatalogListRequest(offset=0, limit=10)
+        result = await service.get_catalog_servers(req, db)
+        assert result.total == 1
+        server = result.servers[0]
+        assert server.is_registered is True
+        assert server.requires_oauth_config is False
+
+
+@pytest.mark.asyncio
+async def test_get_catalog_servers_requires_oauth_config_enabled(service):
+    """Test that enabled OAuth server is NOT marked as requires_oauth_config."""
+    fake_catalog = {
+        "catalog_servers": [
+            {"id": "3", "name": "oauth-enabled", "url": "http://oauth-enabled.example.com", "category": "cat", "auth_type": "OAuth2.1", "provider": "prov", "tags": [], "description": "Enabled OAuth server"},
+        ]
+    }
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), \
+         patch.object(service, "_get_registry_cache", return_value=None):
+        db = MagicMock()
+        # Enabled OAuth server - fully configured and active
+        db.execute.return_value = [("http://oauth-enabled.example.com", True, "oauth", {"client_id": "abc"})]
+        req = CatalogListRequest(offset=0, limit=10)
+        result = await service.get_catalog_servers(req, db)
+        assert result.total == 1
+        server = result.servers[0]
+        assert server.is_registered is True
+        assert server.requires_oauth_config is False
+
+
+@pytest.mark.asyncio
 async def test_register_catalog_server_not_found(service):
     with patch.object(service, "load_catalog", AsyncMock(return_value={"catalog_servers": []})):
         db = MagicMock()
