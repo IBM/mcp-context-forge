@@ -13,8 +13,10 @@ It is conservative: only applies transformations when confidently fixable.
 from __future__ import annotations
 
 # Standard
-import json
 import re
+
+# Third-Party
+import orjson
 
 # First-Party
 from mcpgateway.plugins.framework import (
@@ -36,7 +38,7 @@ def _try_parse(s: str) -> bool:
         True if string is valid JSON.
     """
     try:
-        json.loads(s)
+        orjson.loads(s)
         return True
     except Exception:
         return False

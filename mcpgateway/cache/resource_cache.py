@@ -13,14 +13,26 @@ resource content in the MCP Gateway. Features:
 
 Examples:
     >>> from mcpgateway.cache.resource_cache import ResourceCache
+    >>> from unittest.mock import patch
     >>> cache = ResourceCache(max_size=2, ttl=1)
     >>> cache.set('a', 1)
     >>> cache.get('a')
     1
-    >>> import time
-    >>> time.sleep(1.1)  # Wait for TTL expiration
-    >>> cache.get('a') is None  # doctest: +SKIP
+
+    Test TTL expiration using mocked time (no actual sleep):
+
+    >>> with patch("time.time") as mock_time:
+    ...     mock_time.return_value = 1000
+    ...     cache2 = ResourceCache(max_size=2, ttl=1)
+    ...     cache2.set('x', 100)
+    ...     cache2.get('x')  # Before expiration
+    ...     mock_time.return_value = 1002  # Advance past TTL
+    ...     cache2.get('x') is None  # After expiration
+    100
     True
+
+    Test LRU eviction:
+
     >>> cache.set('a', 1)
     >>> cache.set('b', 2)
     >>> cache.set('c', 3)  # LRU eviction
@@ -38,6 +50,8 @@ Examples:
 import asyncio
 from collections import OrderedDict
 from dataclasses import dataclass
+import heapq
+import threading
 import time
 from typing import Any, Optional
 
@@ -65,18 +79,30 @@ class ResourceCache:
         max_size: Maximum number of entries
         ttl: Time-to-live in seconds
         _cache: Cache storage
-        _lock: Async lock for thread safety
+        _lock: Threading lock for thread safety
 
     Examples:
         >>> from mcpgateway.cache.resource_cache import ResourceCache
+        >>> from unittest.mock import patch
         >>> cache = ResourceCache(max_size=2, ttl=1)
         >>> cache.set('a', 1)
         >>> cache.get('a')
         1
-        >>> import time
-        >>> time.sleep(1.5)  # Use 1.5s to ensure expiration
-        >>> cache.get('a') is None  # doctest: +SKIP
+
+        Test TTL expiration using mocked time (no actual sleep):
+
+        >>> with patch("time.time") as mock_time:
+        ...     mock_time.return_value = 1000
+        ...     cache2 = ResourceCache(max_size=2, ttl=1)
+        ...     cache2.set('x', 100)
+        ...     cache2.get('x')  # Before expiration
+        ...     mock_time.return_value = 1002  # Advance past TTL
+        ...     cache2.get('x') is None  # After expiration
+        100
         True
+
+        Test LRU eviction:
+
         >>> cache.set('a', 1)
         >>> cache.set('b', 2)
         >>> cache.set('c', 3)  # LRU eviction
@@ -100,7 +126,11 @@ class ResourceCache:
         self.max_size = max_size
         self.ttl = ttl
         self._cache: OrderedDict[str, CacheEntry] = OrderedDict()
-        self._lock = asyncio.Lock()
+        # Use a threading lock for thread-safe operations across sync methods
+        # and the background cleanup thread.
+        self._lock = threading.Lock()
+        # Min-heap of (expires_at, key) for efficient expiration cleanup
+        self._expiry_heap: list[tuple[float, str]] = []
 
     async def initialize(self) -> None:
         """Initialize cache service."""
@@ -145,20 +175,21 @@ class ResourceCache:
             2
             True
         """
-        if key not in self._cache:
-            return None
+        with self._lock:
+            if key not in self._cache:
+                return None
 
-        entry = self._cache[key]
-        now = time.time()
+            entry = self._cache[key]
+            now = time.time()
 
-        # Check expiration
-        if now > entry.expires_at:
-            del self._cache[key]
-            return None
+            # Check expiration
+            if now > entry.expires_at:
+                del self._cache[key]
+                return None
 
-        self._cache.move_to_end(key)
+            self._cache.move_to_end(key)
 
-        return entry.value
+            return entry.value
 
     def set(self, key: str, value: Any) -> None:
         """
@@ -175,13 +206,18 @@ class ResourceCache:
             >>> cache.get('a')
             1
         """
-        if key in self._cache:
-            self._cache.move_to_end(key)
-        elif len(self._cache) >= self.max_size:
-            self._cache.popitem(last=False)
+        expires_at = time.time() + self.ttl
+        with self._lock:
+            if key in self._cache:
+                self._cache.move_to_end(key)
+            elif len(self._cache) >= self.max_size:
+                # Evict LRU
+                self._cache.popitem(last=False)
 
-        # Add new entry
-        self._cache[key] = CacheEntry(value=value, expires_at=time.time() + self.ttl)
+            # Add / update entry
+            self._cache[key] = CacheEntry(value=value, expires_at=expires_at)
+            # Push expiry into heap; stale heap entries are ignored later
+            heapq.heappush(self._expiry_heap, (expires_at, key))
 
     def delete(self, key: str) -> None:
         """
@@ -198,7 +234,10 @@ class ResourceCache:
             >>> cache.get('a') is None
             True
         """
-        self._cache.pop(key, None)
+        with self._lock:
+            self._cache.pop(key, None)
+            # We don't remove entries from the heap here; they'll be ignored
+            # by the cleanup when popped if missing or timestamp differs.
 
     def clear(self) -> None:
         """
@@ -212,25 +251,87 @@ class ResourceCache:
             >>> cache.get('a') is None
             True
         """
-        self._cache.clear()
+        with self._lock:
+            self._cache.clear()
+            self._expiry_heap.clear()
 
     async def _cleanup_loop(self) -> None:
-        """Background task to clean expired entries."""
-        while True:
+        """Background task to clean expired entries efficiently.
+
+        Uses a min-heap of expiration timestamps to avoid scanning the
+        entire cache on each run. The actual cleanup work runs under the
+        same threading lock as sync methods by delegating to a thread via
+        `asyncio.to_thread` so we don't block the event loop.
+        """
+
+        async def _run_once() -> None:
+            """Execute a single cleanup pass, catching and logging any errors."""
             try:
-                async with self._lock:
-                    now = time.time()
-                    expired = [key for key, entry in self._cache.items() if now > entry.expires_at]
-                    for key in expired:
-                        del self._cache[key]
-
-                    if expired:
-                        logger.debug(f"Cleaned {len(expired)} expired cache entries")
-
+                await asyncio.to_thread(self._cleanup_once)
             except Exception as e:
                 logger.error(f"Cache cleanup error: {e}")
 
+        while True:
+            await _run_once()
             await asyncio.sleep(60)  # Run every minute
+
+    def _cleanup_once(self) -> None:
+        """Synchronous cleanup routine executed in a thread.
+
+        Pops entries from the expiry heap until the next non-expired
+        timestamp is reached. Each popped entry is validated against
+        the current cache entry to avoid removing updated entries.
+        Also compacts the heap if it grows too large relative to cache size.
+        """
+        now = time.time()
+        removed = 0
+        needs_compaction = False
+
+        with self._lock:
+            while self._expiry_heap and self._expiry_heap[0][0] <= now:
+                expires_at, key = heapq.heappop(self._expiry_heap)
+                entry = self._cache.get(key)
+                # If entry is present and timestamps match, remove it
+                if entry is not None and entry.expires_at == expires_at:
+                    del self._cache[key]
+                    removed += 1
+
+            # Check if heap needs compaction (done outside lock)
+            needs_compaction = len(self._expiry_heap) > 2 * self.max_size
+
+        if removed:
+            logger.debug(f"Cleaned {removed} expired cache entries")
+
+        # Compact heap outside the main lock to minimize contention
+        if needs_compaction:
+            self._compact_heap()
+
+    def _compact_heap(self) -> None:
+        """Rebuild the expiry heap with only valid (current) entries.
+
+        Called when heap grows too large due to stale entries from
+        key updates or deletions. Minimizes lock contention by doing
+        the O(n) heapify outside the lock.
+        """
+        # Snapshot current entries under lock (fast dict iteration)
+        with self._lock:
+            entries = [(entry.expires_at, key) for key, entry in self._cache.items()]
+            old_size = len(self._expiry_heap)
+            # Track max expiry in snapshot to identify entries added during compaction
+            max_snapshot_expiry = max((e[0] for e in entries), default=0.0)
+
+        # Build heap outside lock - O(n) work doesn't block get/set
+        heapq.heapify(entries)
+
+        # Swap back under lock, preserving entries added during compaction
+        with self._lock:
+            # Keep heap entries with expiry > max_snapshot_expiry (added via set() during compaction)
+            new_entries = [(exp, k) for exp, k in self._expiry_heap if exp > max_snapshot_expiry]
+            self._expiry_heap = entries
+            for entry in new_entries:
+                heapq.heappush(self._expiry_heap, entry)
+
+        logger.debug(f"Compacted expiry heap: {old_size} -> {len(self._expiry_heap)} entries")
 
     def __len__(self) -> int:
         """
@@ -249,4 +350,5 @@ class ResourceCache:
             >>> len(cache)
             1
         """
-        return len(self._cache)
+        with self._lock:
+            return len(self._cache)

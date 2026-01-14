@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 # Standard
 import asyncio
-import json
 import logging
 from collections.abc import AsyncGenerator
 from typing import Any, Callable, Dict
@@ -12,6 +11,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.tools import BaseTool
+import orjson
 
 # LLM Provider imports
 from langchain_openai import AzureChatOpenAI, ChatOpenAI
@@ -165,7 +165,7 @@ class MCPTool(BaseTool):
         """Synchronous tool execution"""
         try:
             result = self.mcp_client.invoke_tool(self.tool_id, kwargs)
-            return json.dumps(result, indent=2)
+            return orjson.dumps(result, option=orjson.OPT_INDENT_2).decode()
         except Exception as e:
             logger.error(f"Tool {self.tool_id} execution failed: {e}")
             return f"Error executing tool: {str(e)}"

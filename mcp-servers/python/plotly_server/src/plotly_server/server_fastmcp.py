@@ -12,11 +12,11 @@ Supports multiple chart types, data formats, and export options.
 Powered by FastMCP for enhanced type safety and automatic validation.
 """
 
-import json
 import logging
 import sys
 from typing import Any
 
+import orjson
 from fastmcp import FastMCP
 from pydantic import Field
 
@@ -269,7 +269,7 @@ class PlotlyVisualizer:
                     "chart_type": chart_name,
                     "output_format": output_format,
                     "output_file": output_file,
-                    "chart_json": json.loads(chart_json),
+                    "chart_json": orjson.loads(chart_json),
                 }
 
             else:

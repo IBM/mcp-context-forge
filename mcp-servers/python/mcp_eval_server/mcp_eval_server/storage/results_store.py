@@ -8,11 +8,11 @@ Results storage system for MCP Eval Server.
 """
 
 # Standard
-import json
 from pathlib import Path
 import sqlite3
 from typing import Any, Dict, List, Optional
 
+import orjson
 
 class ResultsStore:
     """SQLite-based storage for evaluation results."""
@@ -127,9 +127,9 @@ class ResultsStore:
                     result.get("overall_score"),
                     result.get("pass_fail_status", {}).get("passed"),
                     result.get("execution_info", {}).get("duration_seconds"),
-                    json.dumps(result.get("test_data_summary", {})),
-                    json.dumps(result),
-                    json.dumps(result.get("metadata", {})),
+                    orjson.dumps(result.get("test_data_summary", {})).decode(),
+                    orjson.dumps(result).decode(),
+                    orjson.dumps(result.get("metadata", {})).decode(),
                 ),
             )
 
@@ -148,7 +148,7 @@ class ResultsStore:
                         step_result.get("success"),
                         self._extract_score(step_result.get("result", {})),
                         step_result.get("execution_time"),
-                        json.dumps(step_result.get("result", {})),
+                        orjson.dumps(step_result.get("result", {})).decode(),
                         step_result.get("error"),
                     ),
                 )
@@ -199,9 +199,9 @@ class ResultsStore:
                 return None
 
             result = dict(row)
-            result["detailed_results"] = json.loads(result["detailed_results"])
-            result["test_data_summary"] = json.loads(result["test_data_summary"])
-            result["metadata"] = json.loads(result["metadata"])
+            result["detailed_results"] = orjson.loads(result["detailed_results"])
+            result["test_data_summary"] = orjson.loads(result["test_data_summary"])
+            result["metadata"] = orjson.loads(result["metadata"])
 
             return result
 
@@ -269,8 +269,8 @@ class ResultsStore:
                     criteria_hash,
                     evaluation.get("overall_score"),
                     evaluation.get("confidence"),
-                    json.dumps(evaluation.get("reasoning", {})),
-                    json.dumps(evaluation.get("scores", {})),
+                    orjson.dumps(evaluation.get("reasoning", {})).decode(),
+                    orjson.dumps(evaluation.get("scores", {})).decode(),
                     execution_time,
                 ),
             )

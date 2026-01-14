@@ -256,17 +256,18 @@ class TokenCatalogService:
             payload["exp"] = int(expires_at.timestamp())
 
         # Add scoping information if available
+        # Empty permissions = defer to RBAC at runtime (not wildcard access)
         if scope:
             payload["scopes"] = {
                 "server_id": scope.server_id,
-                "permissions": scope.permissions or ["*"],
+                "permissions": scope.permissions if scope.permissions is not None else [],
                 "ip_restrictions": scope.ip_restrictions or [],
                 "time_restrictions": scope.time_restrictions or {},
             }
         else:
             payload["scopes"] = {
                 "server_id": None,
-                "permissions": ["*"],
+                "permissions": [],  # Empty = inherit from RBAC at runtime
                 "ip_restrictions": [],
                 "time_restrictions": {},
             }
@@ -292,6 +293,53 @@ class TokenCatalogService:
         """
         return hashlib.sha256(token.encode()).hexdigest()
 
+    def _validate_scope_containment(
+        self,
+        requested_permissions: Optional[List[str]],
+        caller_permissions: Optional[List[str]],
+    ) -> None:
+        """Validate that requested permissions don't exceed caller's permissions.
+
+        SECURITY: This is fail-secure. If caller_permissions is empty/None,
+        custom scopes are DENIED. Users without explicit permissions can only
+        create tokens with empty scope (inherit at runtime).
+
+        Args:
+            requested_permissions: Permissions requested for new/updated token
+            caller_permissions: Caller's effective permissions (RBAC + current token scopes)
+
+        Raises:
+            ValueError: If requested permissions exceed caller's permissions
+        """
+        # No requested permissions = empty scope, always allowed
+        if not requested_permissions:
+            return
+
+        # FAIL-SECURE: If caller has no permissions, deny any custom scope
+        if not caller_permissions:
+            raise ValueError("Cannot specify custom token permissions. " + "You have no explicit permissions to delegate. " + "Create a token without scope to inherit permissions at runtime.")
+
+        # Wildcard caller can grant anything
+        if "*" in caller_permissions:
+            return
+
+        # Wildcard request requires wildcard caller
+        if "*" in requested_permissions:
+            raise ValueError("Cannot create token with wildcard permissions. " + "Your effective permissions do not include wildcard access.")
+
+        # Check each requested permission
+        for req_perm in requested_permissions:
+            if req_perm in caller_permissions:
+                continue
+
+            # Check for category wildcard (e.g., "tools.*" allows "tools.read")
+            if "." in req_perm:
+                category = req_perm.split(".")[0]
+                if f"{category}.*" in caller_permissions:
+                    continue
+
+            raise ValueError(f"Cannot grant permission '{req_perm}' - not in your effective permissions.")
+
     async def create_token(
         self,
         user_email: str,
@@ -301,6 +349,7 @@ class TokenCatalogService:
         expires_in_days: Optional[int] = None,
         tags: Optional[List[str]] = None,
         team_id: Optional[str] = None,
+        caller_permissions: Optional[List[str]] = None,
     ) -> tuple[EmailApiToken, str]:
         """
         Create a new API token with team-level scoping and additional configurations.
@@ -325,6 +374,8 @@ class TokenCatalogService:
             expires_in_days (Optional[int]): The expiration time in days for the token (None means no expiration).
             tags (Optional[List[str]]): A list of organizational tags for the token (default is an empty list).
             team_id (Optional[str]): The team ID to which the token should be scoped. This is required for team-level scoping.
+            caller_permissions (Optional[List[str]]): The permissions of the caller creating the token. Used for
+                scope containment validation to ensure the new token cannot have broader permissions than the caller.
 
         Returns:
             tuple[EmailApiToken, str]: A tuple where the first element is the `EmailApiToken` database record and
@@ -353,6 +404,10 @@ class TokenCatalogService:
 
         if not user:
             raise ValueError(f"User not found: {user_email}")
+
+        # Validate scope containment (fail-secure if no caller_permissions)
+        if scope and scope.permissions:
+            self._validate_scope_containment(scope.permissions, caller_permissions)
 
         # Validate team exists and user is active member
         if team_id:
@@ -518,9 +573,16 @@ class TokenCatalogService:
         return result.scalar_one_or_none()
 
     async def update_token(
-        self, token_id: str, user_email: str, name: Optional[str] = None, description: Optional[str] = None, scope: Optional[TokenScope] = None, tags: Optional[List[str]] = None
+        self,
+        token_id: str,
+        user_email: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        scope: Optional[TokenScope] = None,
+        tags: Optional[List[str]] = None,
+        caller_permissions: Optional[List[str]] = None,
     ) -> Optional[EmailApiToken]:
-        """Update an existing token.
+        """Update an existing token with scope containment validation.
 
         Args:
             token_id: Token ID to update
@@ -529,6 +591,7 @@ class TokenCatalogService:
             description: New description
             scope: New scoping configuration
             tags: New tags
+            caller_permissions: Caller's effective permissions for scope containment
 
         Returns:
             Optional[EmailApiToken]: Updated token if found
@@ -543,6 +606,10 @@ class TokenCatalogService:
         token = await self.get_token(token_id, user_email)
         if not token:
             raise ValueError("Token not found or not authorized")
+
+        # Validate scope containment for scope changes
+        if scope and scope.permissions:
+            self._validate_scope_containment(scope.permissions, caller_permissions)
 
         # Check for duplicate name if changing
         if name and name != token.name:
@@ -575,22 +642,24 @@ class TokenCatalogService:
 
         return token
 
-    async def revoke_token(self, token_id: str, revoked_by: str, reason: Optional[str] = None) -> bool:
-        """Revoke a token immediately.
+    async def revoke_token(self, token_id: str, user_email: str, revoked_by: str, reason: Optional[str] = None) -> bool:
+        """Revoke a token owned by the specified user.
 
         Args:
             token_id: Token ID to revoke
-            revoked_by: Email of user revoking the token
+            user_email: Owner's email - token must belong to this user (ownership check)
+            revoked_by: Email of user performing revocation (for audit)
             reason: Optional reason for revocation
 
         Returns:
-            bool: True if token was revoked
+            bool: True if token was revoked, False if not found or not authorized
 
         Examples:
             >>> service = TokenCatalogService(None)  # Would use real DB session
             >>> # Returns bool: True if token was revoked successfully
         """
-        token = await self.get_token(token_id)
+        # SECURITY FIX: Filter by owner to prevent cross-user revocation
+        token = await self.get_token(token_id, user_email)
         if not token:
             return False
 
@@ -617,6 +686,48 @@ class TokenCatalogService:
 
         logger.info(f"Revoked token '{token.name}' (JTI: {token.jti}) by {revoked_by}")
 
+        return True
+
+    async def admin_revoke_token(self, token_id: str, revoked_by: str, reason: Optional[str] = None) -> bool:
+        """Admin-only: Revoke any token without ownership check.
+
+        WARNING: This method bypasses ownership verification.
+        Only call from admin-authenticated endpoints.
+
+        Args:
+            token_id: Token ID to revoke
+            revoked_by: Admin email for audit
+            reason: Revocation reason
+
+        Returns:
+            bool: True if token was revoked, False if not found
+
+        Examples:
+            >>> service = TokenCatalogService(None)  # Would use real DB session
+            >>> # Returns bool: True if token was revoked successfully
+        """
+        # No user filter - admin can revoke any token
+        token = await self.get_token(token_id)
+        if not token:
+            return False
+
+        token.is_active = False
+        revocation = TokenRevocation(jti=token.jti, revoked_by=revoked_by, reason=reason)
+        self.db.add(revocation)
+        self.db.commit()
+
+        try:
+            # Standard
+            import asyncio  # pylint: disable=import-outside-toplevel
+
+            # First-Party
+            from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+            asyncio.create_task(auth_cache.invalidate_revocation(token.jti))
+        except Exception as cache_error:
+            logger.debug(f"Failed to invalidate auth cache: {cache_error}")
+
+        logger.info(f"Admin revoked token '{token.name}' (JTI: {token.jti}) by {revoked_by}")
         return True
 
     async def is_token_revoked(self, jti: str) -> bool:

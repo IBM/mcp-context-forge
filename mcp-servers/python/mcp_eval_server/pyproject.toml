@@ -30,6 +30,7 @@ dependencies = [
     "httpx>=0.28.1",
     "mcp>=1.24.0",
     "numpy>=2.3.5",
+    "orjson>=3.11.5",
     "openai>=2.11.0",
     "pydantic>=2.12.5",
     "pydantic-settings>=2.12.0",

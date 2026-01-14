@@ -5,10 +5,10 @@ SPDX-License-Identifier: Apache-2.0
 
 Authentication Data Cache.
 
-This module implements a thread-safe cache for authentication data with
-Redis as the primary store and in-memory fallback. It caches user data,
-team memberships, and token revocation status to reduce database queries
-during authentication.
+This module implements a thread-safe two-tier cache for authentication data.
+L1 (in-memory) is checked first for lowest latency, with L2 (Redis) as a
+shared distributed cache. It caches user data, team memberships, and token
+revocation status to reduce database queries during authentication.
 
 Performance Impact:
     - Before: 3-4 DB queries per authenticated request
@@ -94,15 +94,16 @@ class CacheEntry:
 
 
 class AuthCache:
-    """Thread-safe authentication cache with Redis and in-memory tiers.
+    """Thread-safe two-tier authentication cache (L1 in-memory + L2 Redis).
 
     This cache reduces database load during authentication by caching:
     - User data (email, is_admin, is_active, etc.)
     - Personal team ID for the user
     - Token revocation status
 
-    The cache uses Redis as the primary store for distributed deployments
-    and falls back to in-memory caching when Redis is unavailable.
+    Cache lookup checks L1 (in-memory) first for lowest latency, then L2
+    (Redis) for distributed consistency. Redis hits are written through
+    to L1 for subsequent requests.
 
     Attributes:
         user_ttl: TTL in seconds for user data cache (default: 60)
@@ -267,7 +268,13 @@ class AuthCache:
 
         cache_key = f"{email}:{jti or 'no-jti'}"
 
-        # Try Redis first
+        # Check L1 in-memory cache first (no network I/O)
+        entry = self._context_cache.get(cache_key)
+        if entry and not entry.is_expired():
+            self._hit_count += 1
+            return entry.value
+
+        # Check L2 Redis cache
         redis = await self._get_redis_client()
         if redis:
             try:
@@ -278,23 +285,26 @@ class AuthCache:
                     import orjson  # pylint: disable=import-outside-toplevel
 
                     cached = orjson.loads(data)
-                    self._hit_count += 1
-                    self._redis_hit_count += 1
-                    return CachedAuthContext(
+                    result = CachedAuthContext(
                         user=cached.get("user"),
                         personal_team_id=cached.get("personal_team_id"),
                         is_token_revoked=cached.get("is_token_revoked", False),
                     )
+                    self._hit_count += 1
+                    self._redis_hit_count += 1
+
+                    # Write-through: populate L1 from Redis hit
+                    ttl = min(self._user_ttl, self._revocation_ttl, self._team_ttl)
+                    with self._lock:
+                        self._context_cache[cache_key] = CacheEntry(
+                            value=result,
+                            expiry=time.time() + ttl,
+                        )
+
+                    return result
                 self._redis_miss_count += 1
             except Exception as e:
                 logger.warning(f"AuthCache Redis get failed: {e}")
-
-        # Fall back to in-memory cache
-        time.time()
-        entry = self._context_cache.get(cache_key)
-        if entry and not entry.is_expired():
-            self._hit_count += 1
-            return entry.value
 
         self._miss_count += 1
         return None
@@ -520,7 +530,14 @@ class AuthCache:
 
         cache_key = f"{email}:{team_id}"
 
-        # Try Redis first
+        # Check L1 in-memory cache first (no network I/O)
+        entry = self._role_cache.get(cache_key)
+        if entry and not entry.is_expired():
+            self._hit_count += 1
+            # Return empty string for None (not a member) to distinguish from cache miss
+            return "" if entry.value is None else entry.value
+
+        # Check L2 Redis cache
         redis = await self._get_redis_client()
         if redis:
             try:
@@ -532,18 +549,20 @@ class AuthCache:
                     # Role is stored as plain string, decode it
                     decoded = data.decode() if isinstance(data, bytes) else data
                     # Convert sentinel to empty string (user is not a member)
-                    # This distinguishes from None (cache miss)
-                    return "" if decoded == _NOT_A_MEMBER_SENTINEL else decoded
+                    role_value = "" if decoded == _NOT_A_MEMBER_SENTINEL else decoded
+
+                    # Write-through: populate L1 from Redis hit
+                    # Store as None for not-a-member to match existing L1 storage format
+                    with self._lock:
+                        self._role_cache[cache_key] = CacheEntry(
+                            value=None if role_value == "" else role_value,
+                            expiry=time.time() + self._role_ttl,
+                        )
+
+                    return role_value
                 self._redis_miss_count += 1
             except Exception as e:
                 logger.warning(f"AuthCache Redis get_user_role failed: {e}")
-
-        # Fall back to in-memory cache
-        entry = self._role_cache.get(cache_key)
-        if entry and not entry.is_expired():
-            self._hit_count += 1
-            # Return empty string for None (not a member) to distinguish from cache miss
-            return "" if entry.value is None else entry.value
 
         self._miss_count += 1
         return None
@@ -674,7 +693,13 @@ class AuthCache:
         if not self._enabled or not self._teams_list_enabled:
             return None
 
-        # Try Redis first
+        # Check L1 in-memory cache first (no network I/O)
+        entry = self._teams_list_cache.get(cache_key)
+        if entry and not entry.is_expired():
+            self._hit_count += 1
+            return entry.value
+
+        # Check L2 Redis cache
         redis = await self._get_redis_client()
         if redis:
             try:
@@ -686,16 +711,19 @@ class AuthCache:
                     # Third-Party
                     import orjson  # pylint: disable=import-outside-toplevel
 
-                    return orjson.loads(data)
+                    team_ids = orjson.loads(data)
+
+                    # Write-through: populate L1 from Redis hit
+                    with self._lock:
+                        self._teams_list_cache[cache_key] = CacheEntry(
+                            value=team_ids,
+                            expiry=time.time() + self._teams_list_ttl,
+                        )
+
+                    return team_ids
                 self._redis_miss_count += 1
             except Exception as e:
                 logger.warning(f"AuthCache Redis get_user_teams failed: {e}")
-
-        # Fall back to in-memory cache
-        entry = self._teams_list_cache.get(cache_key)
-        if entry and not entry.is_expired():
-            self._hit_count += 1
-            return entry.value
 
         self._miss_count += 1
         return None
@@ -870,7 +898,13 @@ class AuthCache:
         sorted_teams = ":".join(sorted(team_ids))
         cache_key = f"{user_email}:{sorted_teams}"
 
-        # Try Redis first
+        # Check L1 in-memory cache first (no network I/O)
+        entry = self._team_cache.get(cache_key)
+        if entry and not entry.is_expired():
+            self._hit_count += 1
+            return entry.value
+
+        # Check L2 Redis cache
         redis = await self._get_redis_client()
         if redis:
             try:
@@ -881,16 +915,19 @@ class AuthCache:
                     self._redis_hit_count += 1
                     # Stored as "1" for True, "0" for False
                     decoded = data.decode() if isinstance(data, bytes) else data
-                    return decoded == "1"
+                    result = decoded == "1"
+
+                    # Write-through: populate L1 from Redis hit
+                    with self._lock:
+                        self._team_cache[cache_key] = CacheEntry(
+                            value=result,
+                            expiry=time.time() + self._team_ttl,
+                        )
+
+                    return result
                 self._redis_miss_count += 1
             except Exception as e:
                 logger.warning(f"AuthCache Redis get_team_membership_valid failed: {e}")
-
-        # Fall back to in-memory cache
-        entry = self._team_cache.get(cache_key)
-        if entry and not entry.is_expired():
-            self._hit_count += 1
-            return entry.value
 
         self._miss_count += 1
         return None
@@ -992,7 +1029,12 @@ class AuthCache:
         if jti in self._revoked_jtis:
             return True
 
-        # Check Redis
+        # Check L1 in-memory revocation cache
+        entry = self._revocation_cache.get(jti)
+        if entry and not entry.is_expired():
+            return entry.value
+
+        # Check L2 Redis
         redis = await self._get_redis_client()
         if redis:
             try:
@@ -1001,20 +1043,25 @@ class AuthCache:
                     # Add to local set for faster future lookups
                     with self._lock:
                         self._revoked_jtis.add(jti)
+                        # Write-through: populate L1 revocation cache
+                        self._revocation_cache[jti] = CacheEntry(
+                            value=True,
+                            expiry=time.time() + self._revocation_ttl,
+                        )
                     return True
 
                 # Check individual revocation key
                 if await redis.exists(self._get_redis_key("revoke", jti)):
                     with self._lock:
                         self._revoked_jtis.add(jti)
+                        # Write-through: populate L1 revocation cache
+                        self._revocation_cache[jti] = CacheEntry(
+                            value=True,
+                            expiry=time.time() + self._revocation_ttl,
+                        )
                     return True
             except Exception as e:
                 logger.warning(f"AuthCache Redis is_token_revoked failed: {e}")
-
-        # Check in-memory cache
-        entry = self._revocation_cache.get(jti)
-        if entry and not entry.is_expired():
-            return entry.value
 
         return None
 

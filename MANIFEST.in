@@ -169,6 +169,7 @@ exclude .coverage.*
 # Additional development config files not needed in package
 exclude .travis.yml
 exclude .eslintrc.json
+exclude eslint.config.js
 exclude .stylelintrc.json
 exclude .markdownlint-cli2.yaml
 exclude .spellcheck-en.txt

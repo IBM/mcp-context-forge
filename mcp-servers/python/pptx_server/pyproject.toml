@@ -12,6 +12,7 @@ dependencies = [
     "aiofiles>=25.1.0",
     "fastapi>=0.124.4",
     "fastmcp>=2.14.1",
+    "orjson>=3.11.5",
     "pathvalidate>=3.3.1",
     "Pillow>=12.0.0",
     "pydantic>=2.12.5",

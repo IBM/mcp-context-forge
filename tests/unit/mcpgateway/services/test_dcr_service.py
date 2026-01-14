@@ -27,12 +27,14 @@ class TestDiscoverASMetadata:
             "grant_types_supported": ["authorization_code", "refresh_token"],
         }
 
-        with patch("aiohttp.ClientSession.get") as mock_get:
-            mock_response = AsyncMock()
-            mock_response.status = 200
-            mock_response.json = AsyncMock(return_value=mock_metadata)
-            mock_get.return_value.__aenter__.return_value = mock_response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value=mock_metadata)
 
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
             result = await dcr_service.discover_as_metadata("https://as.example.com")
 
             assert result["issuer"] == "https://as.example.com"
@@ -49,29 +51,18 @@ class TestDiscoverASMetadata:
 
         dcr_service = DcrService()
 
-        with patch("aiohttp.ClientSession") as mock_session_class:
-            # Create mock response
-            mock_response = AsyncMock()
-            mock_response.status = 200
-            mock_response.json = AsyncMock(return_value={"issuer": "https://as.example.com"})
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"issuer": "https://as.example.com"})
 
-            # Create mock get that returns the response
-            mock_get = MagicMock(return_value=mock_response)
-            mock_get.return_value.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_get.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
 
-            # Create mock session
-            mock_session = MagicMock()
-            mock_session.get = mock_get
-            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session.__aexit__ = AsyncMock(return_value=None)
-
-            mock_session_class.return_value = mock_session
-
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
             await dcr_service.discover_as_metadata("https://as.example.com")
 
             # First call should be RFC 8414 path
-            first_call_url = mock_get.call_args_list[0][0][0]
+            first_call_url = mock_client.get.call_args_list[0][0][0]
             assert "/.well-known/oauth-authorization-server" in first_call_url
 
     @pytest.mark.asyncio
@@ -84,43 +75,33 @@ class TestDiscoverASMetadata:
 
         dcr_service = DcrService()
 
-        with patch("aiohttp.ClientSession") as mock_session_class:
-            # First call (RFC 8414) fails
-            mock_response_404 = AsyncMock()
-            mock_response_404.status = 404
+        # First call (RFC 8414) fails
+        mock_response_404 = MagicMock()
+        mock_response_404.status_code = 404
 
-            # Second call (OIDC) succeeds
-            mock_response_200 = AsyncMock()
-            mock_response_200.status = 200
-            mock_response_200.json = AsyncMock(return_value={"issuer": "https://as.example.com"})
+        # Second call (OIDC) succeeds
+        mock_response_200 = MagicMock()
+        mock_response_200.status_code = 200
+        mock_response_200.json = MagicMock(return_value={"issuer": "https://as.example.com"})
 
-            # Mock get to return different responses
-            call_count = [0]
+        # Mock get to return different responses
+        call_count = [0]
 
-            def get_side_effect(*args, **kwargs):
-                call_count[0] += 1
-                if call_count[0] == 1:
-                    result = MagicMock()
-                    result.__aenter__ = AsyncMock(return_value=mock_response_404)
-                    result.__aexit__ = AsyncMock(return_value=None)
-                    return result
-                else:
-                    result = MagicMock()
-                    result.__aenter__ = AsyncMock(return_value=mock_response_200)
-                    result.__aexit__ = AsyncMock(return_value=None)
-                    return result
+        async def get_side_effect(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return mock_response_404
+            else:
+                return mock_response_200
 
-            mock_session = MagicMock()
-            mock_session.get = MagicMock(side_effect=get_side_effect)
-            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session.__aexit__ = AsyncMock(return_value=None)
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=get_side_effect)
 
-            mock_session_class.return_value = mock_session
-
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
             result = await dcr_service.discover_as_metadata("https://as.example.com")
 
             # Should have tried both paths
-            assert mock_session.get.call_count == 2
+            assert mock_client.get.call_count == 2
 
     @pytest.mark.asyncio
     async def test_discover_as_metadata_not_found(self):
@@ -132,22 +113,14 @@ class TestDiscoverASMetadata:
 
         dcr_service = DcrService()
 
-        with patch("aiohttp.ClientSession") as mock_session_class:
-            # Both RFC 8414 and OIDC return 404
-            mock_response_404 = AsyncMock()
-            mock_response_404.status = 404
+        # Both RFC 8414 and OIDC return 404
+        mock_response_404 = MagicMock()
+        mock_response_404.status_code = 404
 
-            mock_get = MagicMock()
-            mock_get.return_value.__aenter__ = AsyncMock(return_value=mock_response_404)
-            mock_get.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response_404)
 
-            mock_session = MagicMock()
-            mock_session.get = mock_get
-            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session.__aexit__ = AsyncMock(return_value=None)
-
-            mock_session_class.return_value = mock_session
-
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
             with pytest.raises(DcrError, match="not found|Failed to discover"):
                 await dcr_service.discover_as_metadata("https://as.example.com")
 
@@ -163,12 +136,14 @@ class TestDiscoverASMetadata:
 
         mock_metadata = {"issuer": "https://as.example.com"}
 
-        with patch("aiohttp.ClientSession.get") as mock_get:
-            mock_response = AsyncMock()
-            mock_response.status = 200
-            mock_response.json = AsyncMock(return_value=mock_metadata)
-            mock_get.return_value.__aenter__.return_value = mock_response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value=mock_metadata)
 
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
             # First call
             result1 = await dcr_service.discover_as_metadata("https://as.example.com")
 
@@ -176,7 +151,7 @@ class TestDiscoverASMetadata:
             result2 = await dcr_service.discover_as_metadata("https://as.example.com")
 
             # Should only have called API once
-            assert mock_get.call_count == 1
+            assert mock_client.get.call_count == 1
             assert result1 == result2
 
     @pytest.mark.asyncio
@@ -194,22 +169,14 @@ class TestDiscoverASMetadata:
             "authorization_endpoint": "https://as.example.com/authorize",
         }
 
-        with patch("aiohttp.ClientSession") as mock_session_class:
-            mock_response = AsyncMock()
-            mock_response.status = 200
-            mock_response.json = AsyncMock(return_value=mock_metadata)
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value=mock_metadata)
 
-            mock_get = MagicMock()
-            mock_get.return_value.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_get.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
 
-            mock_session = MagicMock()
-            mock_session.get = mock_get
-            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session.__aexit__ = AsyncMock(return_value=None)
-
-            mock_session_class.return_value = mock_session
-
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
             with pytest.raises(DcrError, match="issuer mismatch"):
                 await dcr_service.discover_as_metadata("https://as.example.com")
 
@@ -235,13 +202,15 @@ class TestRegisterClient:
             "registration_access_token": "registration-token-abc",
         }
 
-        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch("aiohttp.ClientSession.post") as mock_post:
-            mock_discover.return_value = mock_metadata
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json = MagicMock(return_value=mock_registration_response)
 
-            mock_response = AsyncMock()
-            mock_response.status = 201
-            mock_response.json = AsyncMock(return_value=mock_registration_response)
-            mock_post.return_value.__aenter__.return_value = mock_response
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+            mock_discover.return_value = mock_metadata
 
             result = await dcr_service.register_client(
                 gateway_id="test-gw-123",
@@ -267,20 +236,22 @@ class TestRegisterClient:
 
         mock_metadata = {"registration_endpoint": "https://as.example.com/register"}
 
-        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch("aiohttp.ClientSession.post") as mock_post:
-            mock_discover.return_value = mock_metadata
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json = MagicMock(return_value={"client_id": "test", "redirect_uris": []})
 
-            mock_response = AsyncMock()
-            mock_response.status = 201
-            mock_response.json = AsyncMock(return_value={"client_id": "test", "redirect_uris": []})
-            mock_post.return_value.__aenter__.return_value = mock_response
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+            mock_discover.return_value = mock_metadata
 
             await dcr_service.register_client(
                 gateway_id="test-gw", gateway_name="Test Gateway", issuer="https://as.example.com", redirect_uri="http://localhost:4444/callback", scopes=["mcp:read"], db=test_db
             )
 
             # Verify request payload
-            call_kwargs = mock_post.call_args[1]
+            call_kwargs = mock_client.post.call_args[1]
             request_json = call_kwargs["json"]
 
             assert request_json["client_name"] == "MCP Gateway (Test Gateway)"
@@ -314,13 +285,15 @@ class TestRegisterClient:
 
         mock_metadata = {"registration_endpoint": "https://as.example.com/register"}
 
-        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch("aiohttp.ClientSession.post") as mock_post:
-            mock_discover.return_value = mock_metadata
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        mock_response.json = MagicMock(return_value={"error": "invalid_redirect_uri", "error_description": "Redirect URI not allowed"})
 
-            mock_response = AsyncMock()
-            mock_response.status = 400
-            mock_response.json = AsyncMock(return_value={"error": "invalid_redirect_uri", "error_description": "Redirect URI not allowed"})
-            mock_post.return_value.__aenter__.return_value = mock_response
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+            mock_discover.return_value = mock_metadata
 
             with pytest.raises(DcrError, match="invalid_redirect_uri"):
                 await dcr_service.register_client(gateway_id="test-gw", gateway_name="Test", issuer="https://as.example.com", redirect_uri="http://invalid", scopes=["mcp:read"], db=test_db)
@@ -333,12 +306,15 @@ class TestRegisterClient:
         mock_metadata = {"registration_endpoint": "https://as.example.com/register"}
         mock_registration = {"client_id": "test-client-encrypt", "client_secret": "plaintext-secret", "redirect_uris": ["http://localhost:4444/callback"]}
 
-        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch("aiohttp.ClientSession.post") as mock_post:
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json = MagicMock(return_value=mock_registration)
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
             mock_discover.return_value = mock_metadata
-            mock_response = AsyncMock()
-            mock_response.status = 201
-            mock_response.json = AsyncMock(return_value=mock_registration)
-            mock_post.return_value.__aenter__.return_value = mock_response
 
             result = await dcr_service.register_client(
                 gateway_id="test-gw-encrypt",  # Unique gateway ID
@@ -461,12 +437,14 @@ class TestUpdateClientRegistration:
 
         mock_response = {"client_id": "test-client-update", "client_secret": "updated-secret", "redirect_uris": ["http://localhost:4444/callback", "http://localhost:4444/callback2"]}
 
-        with patch("aiohttp.ClientSession.put") as mock_put:
-            mock_response_obj = AsyncMock()
-            mock_response_obj.status = 200
-            mock_response_obj.json = AsyncMock(return_value=mock_response)
-            mock_put.return_value.__aenter__.return_value = mock_response_obj
+        mock_response_obj = MagicMock()
+        mock_response_obj.status_code = 200
+        mock_response_obj.json = MagicMock(return_value=mock_response)
 
+        mock_client = AsyncMock()
+        mock_client.put = AsyncMock(return_value=mock_response_obj)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
             result = await dcr_service.update_client_registration(client_record, test_db)
 
             assert result.client_id == "test-client-update"
@@ -504,16 +482,18 @@ class TestUpdateClientRegistration:
         test_db.add(client_record)
         test_db.commit()
 
-        with patch("aiohttp.ClientSession.put") as mock_put:
-            mock_response = AsyncMock()
-            mock_response.status = 200
-            mock_response.json = AsyncMock(return_value={"client_id": "test-client-auth"})
-            mock_put.return_value.__aenter__.return_value = mock_response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"client_id": "test-client-auth"})
 
+        mock_client = AsyncMock()
+        mock_client.put = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
             await dcr_service.update_client_registration(client_record, test_db)
 
             # Verify Bearer token was used
-            call_kwargs = mock_put.call_args[1]
+            call_kwargs = mock_client.put.call_args[1]
             assert "Authorization" in call_kwargs["headers"]
             assert call_kwargs["headers"]["Authorization"].startswith("Bearer ")
 
@@ -540,11 +520,13 @@ class TestDeleteClientRegistration:
             grant_types="[]",
         )
 
-        with patch("aiohttp.ClientSession.delete") as mock_delete:
-            mock_response = AsyncMock()
-            mock_response.status = 204
-            mock_delete.return_value.__aenter__.return_value = mock_response
+        mock_response = MagicMock()
+        mock_response.status_code = 204
 
+        mock_client = AsyncMock()
+        mock_client.delete = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
             result = await dcr_service.delete_client_registration(client_record, test_db)
 
             assert result is True
@@ -568,11 +550,13 @@ class TestDeleteClientRegistration:
             grant_types="[]",
         )
 
-        with patch("aiohttp.ClientSession.delete") as mock_delete:
-            mock_response = AsyncMock()
-            mock_response.status = 404
-            mock_delete.return_value.__aenter__.return_value = mock_response
+        mock_response = MagicMock()
+        mock_response.status_code = 404
 
+        mock_client = AsyncMock()
+        mock_client.delete = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
             # Should still return True (client is gone)
             result = await dcr_service.delete_client_registration(client_record, test_db)
 
@@ -627,16 +611,19 @@ class TestIssuerValidation:
         with (
             patch.object(dcr_service.settings, "dcr_allowed_issuers", ["https://as-issuer-auth.example.com"]),
             patch.object(dcr_service, "discover_as_metadata") as mock_discover,
-            patch("aiohttp.ClientSession.post") as mock_post,
         ):
             mock_discover.return_value = {"registration_endpoint": "https://as-issuer-auth.example.com/register"}
-            mock_response = AsyncMock()
-            mock_response.status = 201
-            mock_response.json = AsyncMock(return_value={"client_id": "test-issuer-auth", "redirect_uris": []})
-            mock_post.return_value.__aenter__.return_value = mock_response
 
-            # Should not raise error
-            result = await dcr_service.register_client(
+            mock_response = MagicMock()
+            mock_response.status_code = 201
+            mock_response.json = MagicMock(return_value={"client_id": "test-issuer-auth", "redirect_uris": []})
+
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=mock_response)
+
+            with patch.object(dcr_service, "_get_client", return_value=mock_client):
+                # Should not raise error
+                result = await dcr_service.register_client(
                 gateway_id="test-gw-issuer-auth",
                 gateway_name="Test",
                 issuer="https://as-issuer-auth.example.com",  # In allowlist

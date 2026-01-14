@@ -36,7 +36,7 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 import orjson
-from sqlalchemy import and_, delete, desc, not_, or_, select
+from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload, selectinload, Session
 
@@ -48,9 +48,9 @@ from mcpgateway.common.models import Tool as PydanticTool
 from mcpgateway.common.models import ToolResult
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import EmailTeam, fresh_db_session
+from mcpgateway.db import fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import server_tool_association
+from mcpgateway.db import get_for_update, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_span
@@ -66,7 +66,7 @@ from mcpgateway.plugins.framework import (
     ToolPreInvokePayload,
 )
 from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
-from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
+from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
@@ -74,6 +74,7 @@ from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, Transport
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.metrics_query_service import get_top_performers_combined
 from mcpgateway.services.oauth_manager import OAuthManager
+from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
@@ -466,22 +467,6 @@ class ToolService:
             metrics_cache.set(cache_key, top_performers)
 
         return top_performers
-
-    def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
-        """Retrieve the team name given a team ID.
-
-        Args:
-            db (Session): Database session for querying teams.
-            team_id (Optional[str]): The ID of the team.
-
-        Returns:
-            Optional[str]: The name of the team if found, otherwise None.
-        """
-        if not team_id:
-            return None
-        team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
-        db.commit()  # Release transaction to avoid idle-in-transaction
-        return team.name if team else None
 
     def _build_tool_cache_payload(self, tool: DbTool, gateway: Optional[DbGateway]) -> Dict[str, Any]:
         """Build cache payload for tool lookup by name.
@@ -1588,6 +1573,7 @@ class ToolService:
         user_email: Optional[str] = None,
         team_id: Optional[str] = None,
         visibility: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
         _request_headers: Optional[Dict[str, str]] = None,
     ) -> Union[tuple[List[ToolRead], Optional[str]], Dict[str, Any]]:
         """
@@ -1608,6 +1594,8 @@ class ToolService:
             user_email (Optional[str]): User email for team-based access control. If None, no access control is applied.
             team_id (Optional[str]): Filter by specific team ID. Requires user_email for access validation.
             visibility (Optional[str]): Filter by visibility (private, team, public).
+            token_teams (Optional[List[str]]): Override DB team lookup with token's teams. Used for MCP/API token access
+                where the token scope should be respected instead of the user's full team memberships.
             _request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
                 Currently unused but kept for API consistency. Defaults to None.
 
@@ -1640,17 +1628,25 @@ class ToolService:
                 cached_tools = [ToolRead.model_validate(t) for t in cached["tools"]]
                 return (cached_tools, cached.get("next_cursor"))
 
-        # Build base query with ordering and eager load gateway to avoid N+1
-        query = select(DbTool).options(joinedload(DbTool.gateway)).order_by(desc(DbTool.created_at), desc(DbTool.id))
+        # Build base query with ordering and eager load gateway + email_team to avoid N+1
+        query = select(DbTool).options(joinedload(DbTool.gateway), joinedload(DbTool.email_team)).order_by(desc(DbTool.created_at), desc(DbTool.id))
 
         # Apply active/inactive filter
         if not include_inactive:
             query = query.where(DbTool.enabled)
         # Apply team-based access control if user_email is provided
         if user_email:
-            team_service = TeamManagementService(db)
-            user_teams = await team_service.get_user_teams(user_email)
-            team_ids = [team.id for team in user_teams]
+            # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
+            if token_teams is not None:
+                team_ids = token_teams
+            else:
+                team_service = TeamManagementService(db)
+                user_teams = await team_service.get_user_teams(user_email)
+                team_ids = [team.id for team in user_teams]
+
+            # Check if this is a public-only token (empty teams array)
+            # Public-only tokens can ONLY see public resources - no owner access
+            is_public_only_token = token_teams is not None and len(token_teams) == 0
 
             if team_id:
                 # User requesting specific team - verify access
@@ -1658,15 +1654,19 @@ class ToolService:
                     return ([], None)
                 access_conditions = [
                     and_(DbTool.team_id == team_id, DbTool.visibility.in_(["team", "public"])),
-                    and_(DbTool.team_id == team_id, DbTool.owner_email == user_email),
                 ]
+                # Only include owner access for non-public-only tokens
+                if not is_public_only_token:
+                    access_conditions.append(and_(DbTool.team_id == team_id, DbTool.owner_email == user_email))
                 query = query.where(or_(*access_conditions))
             else:
-                # General access: user's tools + public tools + team tools
+                # General access: public tools + team tools (+ owner tools if not public-only token)
                 access_conditions = [
-                    DbTool.owner_email == user_email,
                     DbTool.visibility == "public",
                 ]
+                # Only include owner access for non-public-only tokens
+                if not is_public_only_token:
+                    access_conditions.append(DbTool.owner_email == user_email)
                 if team_ids:
                     access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
                 query = query.where(or_(*access_conditions))
@@ -1706,19 +1706,12 @@ class ToolService:
             # Cursor-based: pag_result is a tuple
             tools_db, next_cursor = pag_result
 
-        # Fetch team names for the tools (common for both pagination types)
-        team_ids_set = {s.team_id for s in tools_db if s.team_id}
-        team_map = {}
-        if team_ids_set:
-            teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids_set), EmailTeam.is_active.is_(True))).all()
-            team_map = {team.id: team.name for team in teams}
-
         db.commit()  # Release transaction to avoid idle-in-transaction
 
         # Convert to ToolRead (common for both pagination types)
+        # Team names are loaded via joinedload(DbTool.email_team)
         result = []
         for s in tools_db:
-            s.team = team_map.get(s.team_id) if s.team_id else None
             result.append(self.convert_tool_to_read(s, include_metrics=False, include_auth=False))
 
         # Return appropriate format based on pagination type
@@ -1743,7 +1736,15 @@ class ToolService:
         return (result, next_cursor)
 
     async def list_server_tools(
-        self, db: Session, server_id: str, include_inactive: bool = False, include_metrics: bool = False, cursor: Optional[str] = None, _request_headers: Optional[Dict[str, str]] = None
+        self,
+        db: Session,
+        server_id: str,
+        include_inactive: bool = False,
+        include_metrics: bool = False,
+        cursor: Optional[str] = None,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+        _request_headers: Optional[Dict[str, str]] = None,
     ) -> List[ToolRead]:
         """
         Retrieve a list of registered tools from the database.
@@ -1757,6 +1758,9 @@ class ToolService:
                 Defaults to False.
             cursor (Optional[str], optional): An opaque cursor token for pagination. Currently,
                 this parameter is ignored. Defaults to None.
+            user_email (Optional[str]): User email for visibility filtering. If None, no filtering applied.
+            token_teams (Optional[List[str]]): Override DB team lookup with token's teams. Used for MCP/API
+                token access where the token scope should be respected.
             _request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
                 Currently unused but kept for API consistency. Defaults to None.
 
@@ -1780,14 +1784,17 @@ class ToolService:
         if include_metrics:
             query = (
                 select(DbTool)
-                .options(joinedload(DbTool.gateway))
+                .options(joinedload(DbTool.gateway), joinedload(DbTool.email_team))
                 .options(selectinload(DbTool.metrics))
                 .join(server_tool_association, DbTool.id == server_tool_association.c.tool_id)
                 .where(server_tool_association.c.server_id == server_id)
             )
         else:
             query = (
-                select(DbTool).options(joinedload(DbTool.gateway)).join(server_tool_association, DbTool.id == server_tool_association.c.tool_id).where(server_tool_association.c.server_id == server_id)
+                select(DbTool)
+                .options(joinedload(DbTool.gateway), joinedload(DbTool.email_team))
+                .join(server_tool_association, DbTool.id == server_tool_association.c.tool_id)
+                .where(server_tool_association.c.server_id == server_id)
             )
 
         cursor = None  # Placeholder for pagination; ignore for now
@@ -1796,19 +1803,37 @@ class ToolService:
         if not include_inactive:
             query = query.where(DbTool.enabled)
 
-        # Execute the query with LEFT JOIN for team names in single query
-        query_with_join = query.outerjoin(EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True))).add_columns(EmailTeam.name.label("team_name"))
+        # Add visibility filtering if user context provided
+        if user_email:
+            # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
+            if token_teams is not None:
+                team_ids = token_teams
+            else:
+                team_service = TeamManagementService(db)
+                user_teams = await team_service.get_user_teams(user_email)
+                team_ids = [team.id for team in user_teams]
 
-        rows = db.execute(query_with_join).all()
+            # Check if this is a public-only token (empty teams array)
+            # Public-only tokens can ONLY see public resources - no owner access
+            is_public_only_token = token_teams is not None and len(token_teams) == 0
+
+            access_conditions = [
+                DbTool.visibility == "public",
+            ]
+            # Only include owner access for non-public-only tokens
+            if not is_public_only_token:
+                access_conditions.append(DbTool.owner_email == user_email)
+            if team_ids:
+                access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
+            query = query.where(or_(*access_conditions))
+
+        # Execute the query - team names are loaded via joinedload(DbTool.email_team)
+        tools = db.execute(query).scalars().all()
 
         db.commit()  # Release transaction to avoid idle-in-transaction
 
-        # Add team names to tools based on join result
         result = []
-        for row in rows:
-            tool = row[0]
-            team_name = row.team_name
-            tool.team = team_name
+        for tool in tools:
             result.append(self.convert_tool_to_read(tool, include_metrics=include_metrics, include_auth=False))
 
         return result
@@ -1877,8 +1902,8 @@ class ToolService:
         user_teams = await team_service.get_user_teams(user_email)
         team_ids = [team.id for team in user_teams]
 
-        # Eager load gateway to avoid N+1 when accessing gateway_slug
-        query = select(DbTool).options(joinedload(DbTool.gateway))
+        # Eager load gateway and email_team to avoid N+1 when accessing gateway_slug and team name
+        query = select(DbTool).options(joinedload(DbTool.gateway), joinedload(DbTool.email_team))
 
         # Apply active/inactive filter
         if not include_inactive:
@@ -1920,29 +1945,22 @@ class ToolService:
         if last_id:
             query = query.where(DbTool.id > last_id)
 
-        # Execute query with LEFT JOIN for team names in single query
-        query_with_join = query.outerjoin(EmailTeam, and_(DbTool.team_id == EmailTeam.id, EmailTeam.is_active.is_(True))).add_columns(EmailTeam.name.label("team_name"))
-
+        # Execute query - team names are loaded via joinedload(DbTool.email_team)
         if page_size is not None:
-            rows = db.execute(query_with_join.limit(page_size + 1)).all()
+            tools = db.execute(query.limit(page_size + 1)).scalars().all()
         else:
-            rows = db.execute(query_with_join).all()
+            tools = db.execute(query).scalars().all()
 
         db.commit()  # Release transaction to avoid idle-in-transaction
 
         # Check if there are more results (only when paginating)
-        has_more = page_size is not None and len(rows) > page_size
+        has_more = page_size is not None and len(tools) > page_size
         if has_more:
-            rows = rows[:page_size]
+            tools = tools[:page_size]
 
-        # Convert to ToolRead objects with team names from join result
+        # Convert to ToolRead objects
         result = []
-        tools = []
-        for row in rows:
-            tool = row[0]
-            team_name = row.team_name
-            tool.team = team_name
-            tools.append(tool)
+        for tool in tools:
             result.append(self.convert_tool_to_read(tool, include_metrics=False, include_auth=False))
 
         next_cursor = None
@@ -1982,7 +2000,6 @@ class ToolService:
         tool = db.get(DbTool, tool_id)
         if not tool:
             raise ToolNotFoundError(f"Tool not found: {tool_id}")
-        tool.team = self._get_team_name(db, getattr(tool, "team_id", None))
 
         tool_read = self.convert_tool_to_read(tool)
 
@@ -2054,7 +2071,14 @@ class ToolService:
                     delete_metrics_in_batches(db, ToolMetric, ToolMetric.tool_id, tool_id)
                     delete_metrics_in_batches(db, ToolMetricsHourly, ToolMetricsHourly.tool_id, tool_id)
 
-            db.delete(tool)
+            # Use DELETE with rowcount check for database-agnostic atomic delete
+            # (RETURNING is not supported on MySQL/MariaDB)
+            stmt = delete(DbTool).where(DbTool.id == tool_id)
+            result = db.execute(stmt)
+            if result.rowcount == 0:
+                # Tool was already deleted by another concurrent request
+                raise ToolNotFoundError(f"Tool not found: {tool_id}")
+
             db.commit()
             await self._notify_tool_deleted(tool_info)
             logger.info(f"Permanently deleted tool: {tool_info['name']}")
@@ -2179,7 +2203,7 @@ class ToolService:
             'tool_read'
         """
         try:
-            tool = db.get(DbTool, tool_id)
+            tool = get_for_update(db, DbTool, tool_id)
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
 
@@ -2328,19 +2352,10 @@ class ToolService:
             PluginError: If encounters issue with plugin
 
         Examples:
-            >>> from mcpgateway.services.tool_service import ToolService
-            >>> from unittest.mock import MagicMock, patch
-            >>> service = ToolService()
-            >>> db = MagicMock()
-            >>> tool = MagicMock()
-            >>> db.execute.return_value.scalar_one_or_none.side_effect = [tool, None]
-            >>> tool.reachable = True
-            >>> import asyncio
-            >>> # Mock structured_logger to prevent database writes during doctest
-            >>> with patch('mcpgateway.services.tool_service.structured_logger'):
-            ...     result = asyncio.run(service.invoke_tool(db, 'tool_name', {}))
-            ...     isinstance(result, object)
-            True
+            >>> # Note: This method requires extensive mocking of SQLAlchemy models,
+            >>> # database relationships, and caching infrastructure, which is not
+            >>> # suitable for doctests. See tests/unit/mcpgateway/services/test_tool_service.py
+            >>> pass  # doctest: +SKIP
         """
         # pylint: disable=comparison-with-callable
         logger.info(f"Invoking tool: {name} with arguments: {arguments.keys() if arguments else None} and headers: {request_headers.keys() if request_headers else None}")
@@ -2368,14 +2383,12 @@ class ToolService:
 
         if not tool_payload:
             # Eager load tool WITH gateway in single query to prevent lazy load N+1
-            tool = db.execute(select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.name == name).where(DbTool.enabled)).scalar_one_or_none()
+            # Use a single query to avoid a race between separate enabled/inactive lookups.
+            tool = db.execute(select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.name == name)).scalar_one_or_none()
             if not tool:
-                inactive_tool = db.execute(select(DbTool).where(DbTool.name == name).where(not_(DbTool.enabled))).scalar_one_or_none()
-                if inactive_tool:
-                    await tool_lookup_cache.set_negative(name, "inactive")
-                    raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
-                await tool_lookup_cache.set_negative(name, "missing")
                 raise ToolNotFoundError(f"Tool not found: {name}")
+            if not tool.enabled:
+                raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
 
             if not tool.reachable:
                 await tool_lookup_cache.set_negative(name, "offline")
@@ -2488,7 +2501,42 @@ class ToolService:
         success = False
         error_message = None
 
-        # Create a trace span for the tool invocation (using local variables)
+        # Get trace_id from context for database span creation
+        trace_id = current_trace_id.get()
+        db_span_id = None
+        db_span_ended = False
+        observability_service = ObservabilityService() if trace_id else None
+
+        # Create database span for observability_spans table
+        if trace_id and observability_service:
+            try:
+                # Re-open database session for span creation (original was closed at line 2285)
+                # Use commit=False since fresh_db_session() handles commits on exit
+                with fresh_db_session() as span_db:
+                    db_span_id = observability_service.start_span(
+                        db=span_db,
+                        trace_id=trace_id,
+                        name="tool.invoke",
+                        kind="client",
+                        resource_type="tool",
+                        resource_name=name,
+                        resource_id=tool_id,
+                        attributes={
+                            "tool.name": name,
+                            "tool.id": tool_id,
+                            "tool.integration_type": tool_integration_type,
+                            "tool.gateway_id": tool_gateway_id,
+                            "arguments_count": len(arguments) if arguments else 0,
+                            "has_headers": bool(request_headers),
+                        },
+                        commit=False,
+                    )
+                    logger.debug(f"✓ Created tool.invoke span: {db_span_id} for tool: {name}")
+            except Exception as e:
+                logger.warning(f"Failed to start observability span for tool invocation: {e}")
+                db_span_id = None
+
+        # Create a trace span for OpenTelemetry export (Jaeger, Zipkin, etc.)
         with create_span(
             "tool.invoke",
             {
@@ -2521,7 +2569,11 @@ class ToolService:
                     # Use cached passthrough headers (no DB query needed)
                     if request_headers:
                         headers = compute_passthrough_headers_cached(
-                            request_headers, headers, passthrough_allowed, gateway_auth_type=None, gateway_passthrough_headers=None  # REST tools don't use gateway auth here
+                            request_headers,
+                            headers,
+                            passthrough_allowed,
+                            gateway_auth_type=None,
+                            gateway_passthrough_headers=None,  # REST tools don't use gateway auth here
                         )
 
                     if self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE):
@@ -2762,6 +2814,7 @@ class ToolService:
                                     headers=headers,
                                     transport_type=TransportType.SSE,
                                     httpx_client_factory=get_httpx_client_factory,
+                                    user_identity=app_user_email,
                                 ) as pooled:
                                     tool_call_result = await pooled.session.call_tool(tool_name_original, arguments)
                             else:
@@ -2857,6 +2910,7 @@ class ToolService:
                                     headers=headers,
                                     transport_type=TransportType.STREAMABLE_HTTP,
                                     httpx_client_factory=get_httpx_client_factory,
+                                    user_identity=app_user_email,
                                 ) as pooled:
                                     tool_call_result = await pooled.session.call_tool(tool_name_original, arguments)
                             else:
@@ -2988,7 +3042,28 @@ class ToolService:
                 # Calculate duration
                 duration_ms = (time.monotonic() - start_time) * 1000
 
-                # Add final span attributes
+                # End database span for observability_spans table
+                # Use commit=False since fresh_db_session() handles commits on exit
+                if db_span_id and observability_service and not db_span_ended:
+                    try:
+                        with fresh_db_session() as span_db:
+                            observability_service.end_span(
+                                db=span_db,
+                                span_id=db_span_id,
+                                status="ok" if success else "error",
+                                status_message=error_message if error_message else None,
+                                attributes={
+                                    "success": success,
+                                    "duration_ms": duration_ms,
+                                },
+                                commit=False,
+                            )
+                            db_span_ended = True
+                            logger.debug(f"✓ Ended tool.invoke span: {db_span_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to end observability span for tool invocation: {e}")
+
+                # Add final span attributes for OpenTelemetry
                 if span:
                     span.set_attribute("success", success)
                     span.set_attribute("duration.ms", duration_ms)
@@ -3090,7 +3165,8 @@ class ToolService:
             'tool_read'
         """
         try:
-            tool = db.get(DbTool, tool_id)
+            tool = get_for_update(db, DbTool, tool_id)
+
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
 
@@ -3110,15 +3186,30 @@ class ToolService:
             if tool_update.name and tool_update.name != tool.name:
                 # Check for existing tool with the same name and visibility
                 if tool_update.visibility.lower() == "public":
-                    # Check for existing public tool with the same name
-                    existing_tool = db.execute(select(DbTool).where(DbTool.custom_name == tool_update.custom_name, DbTool.visibility == "public")).scalar_one_or_none()
+                    # Check for existing public tool with the same name (row-locked)
+                    existing_tool = get_for_update(
+                        db,
+                        DbTool,
+                        where=and_(
+                            DbTool.custom_name == tool_update.custom_name,
+                            DbTool.visibility == "public",
+                            DbTool.id != tool.id,
+                        ),
+                    )
                     if existing_tool:
                         raise ToolNameConflictError(existing_tool.custom_name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
                 elif tool_update.visibility.lower() == "team" and tool_update.team_id:
                     # Check for existing team tool with the same name
-                    existing_tool = db.execute(
-                        select(DbTool).where(DbTool.custom_name == tool_update.custom_name, DbTool.visibility == "team", DbTool.team_id == tool_update.team_id)
-                    ).scalar_one_or_none()
+                    existing_tool = get_for_update(
+                        db,
+                        DbTool,
+                        where=and_(
+                            DbTool.custom_name == tool_update.custom_name,
+                            DbTool.visibility == "team",
+                            DbTool.team_id == tool_update.team_id,
+                            DbTool.id != tool.id,
+                        ),
+                    )
                     if existing_tool:
                         raise ToolNameConflictError(existing_tool.custom_name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
                 if tool_update.custom_name is None and tool.name == tool.custom_name:
@@ -3592,7 +3683,7 @@ class ToolService:
         created_from_ip: Optional[str] = None,
         created_via: Optional[str] = None,
         created_user_agent: Optional[str] = None,
-    ) -> ToolRead:
+    ) -> DbTool:
         """Create a tool entry from an A2A agent for virtual server integration.
 
         Args:
@@ -3604,7 +3695,7 @@ class ToolService:
             created_user_agent: User agent of creation request.
 
         Returns:
-            The created tool.
+            The created tool database object.
 
         Raises:
             ToolNameConflictError: If a tool with the same name already exists.
@@ -3616,7 +3707,7 @@ class ToolService:
 
         if existing_tool:
             # Tool already exists, return it
-            return self.convert_tool_to_read(existing_tool)
+            return existing_tool
 
         # Create tool entry for the A2A agent
         logger.debug(f"agent.tags: {agent.tags} for agent: {agent.name} (ID: {agent.id})")
@@ -3661,14 +3752,125 @@ class ToolService:
             tags=normalized_tags,
         )
 
-        return await self.register_tool(
+        # Default to "public" visibility if agent visibility is not set
+        # This ensures A2A tools are visible in the Global Tools Tab
+        tool_visibility = agent.visibility or "public"
+
+        tool_read = await self.register_tool(
             db,
             tool_data,
             created_by=created_by,
             created_from_ip=created_from_ip,
             created_via=created_via or "a2a_integration",
             created_user_agent=created_user_agent,
+            team_id=agent.team_id,
+            owner_email=agent.owner_email,
+            visibility=tool_visibility,
         )
+
+        # Return the DbTool object for relationship assignment
+        tool_db = db.get(DbTool, tool_read.id)
+        return tool_db
+
+    async def update_tool_from_a2a_agent(
+        self,
+        db: Session,
+        agent: DbA2AAgent,
+        modified_by: Optional[str] = None,
+        modified_from_ip: Optional[str] = None,
+        modified_via: Optional[str] = None,
+        modified_user_agent: Optional[str] = None,
+    ) -> Optional[ToolRead]:
+        """Update the tool associated with an A2A agent when the agent is updated.
+
+        Args:
+            db: Database session.
+            agent: Updated A2A agent.
+            modified_by: Username who modified this tool.
+            modified_from_ip: IP address of modifier.
+            modified_via: Modification method.
+            modified_user_agent: User agent of modification request.
+
+        Returns:
+            The updated tool, or None if no associated tool exists.
+        """
+        # Use the tool_id from the agent for efficient lookup
+        if not agent.tool_id:
+            logger.debug(f"No tool_id found for A2A agent {agent.id}, skipping tool update")
+            return None
+
+        tool = db.get(DbTool, agent.tool_id)
+        if not tool:
+            logger.warning(f"Tool {agent.tool_id} not found for A2A agent {agent.id}, resetting tool_id")
+            agent.tool_id = None
+            db.commit()
+            return None
+
+        # Normalize tags: if agent.tags contains dicts like {'id':..,'label':..},
+        # extract the human-friendly label. If tags are already strings, keep them.
+        normalized_tags: list[str] = []
+        for t in agent.tags or []:
+            if isinstance(t, dict):
+                # Prefer 'label', fall back to 'id' or stringified dict
+                normalized_tags.append(t.get("label") or t.get("id") or str(t))
+            elif hasattr(t, "label"):
+                normalized_tags.append(getattr(t, "label"))
+            else:
+                normalized_tags.append(str(t))
+
+        # Ensure we include identifying A2A tags
+        normalized_tags = normalized_tags + ["a2a", "agent"]
+
+        # Prepare update data matching the agent's current state
+        # IMPORTANT: Preserve the existing tool's visibility to avoid unintentionally
+        # making private/team tools public (ToolUpdate defaults to "public")
+        # Note: team_id is not a field on ToolUpdate schema, so team assignment is preserved
+        # implicitly by not changing visibility (team tools stay team-scoped)
+        new_tool_name = f"a2a_{agent.slug}"
+        tool_update = ToolUpdate(
+            name=new_tool_name,
+            custom_name=new_tool_name,  # Also set custom_name to ensure name update works
+            displayName=generate_display_name(agent.name),
+            url=agent.endpoint_url,
+            description=f"A2A Agent: {agent.description or agent.name}",
+            auth=AuthenticationValues(auth_type=agent.auth_type, auth_value=agent.auth_value) if agent.auth_type else None,
+            tags=normalized_tags,
+            visibility=tool.visibility,  # Preserve existing visibility
+        )
+
+        # Update the tool
+        return await self.update_tool(
+            db=db,
+            tool_id=tool.id,
+            tool_update=tool_update,
+            modified_by=modified_by,
+            modified_from_ip=modified_from_ip,
+            modified_via=modified_via or "a2a_sync",
+            modified_user_agent=modified_user_agent,
+        )
+
+    async def delete_tool_from_a2a_agent(self, db: Session, agent: DbA2AAgent, user_email: Optional[str] = None, purge_metrics: bool = False) -> None:
+        """Delete the tool associated with an A2A agent when the agent is deleted.
+
+        Args:
+            db: Database session.
+            agent: The A2A agent being deleted.
+            user_email: Email of user performing delete (for ownership check).
+            purge_metrics: If True, delete raw + rollup metrics for this tool.
+        """
+        # Use the tool_id from the agent for efficient lookup
+        if not agent.tool_id:
+            logger.debug(f"No tool_id found for A2A agent {agent.id}, skipping tool deletion")
+            return
+
+        tool = db.get(DbTool, agent.tool_id)
+        if not tool:
+            logger.warning(f"Tool {agent.tool_id} not found for A2A agent {agent.id}")
+            return
+
+        # Delete the tool
+        await self.delete_tool(db=db, tool_id=tool.id, user_email=user_email, purge_metrics=purge_metrics)
+        logger.info(f"Deleted tool {tool.id} associated with A2A agent {agent.id}")
 
     async def _invoke_a2a_tool(self, db: Session, tool: DbTool, arguments: Dict[str, Any]) -> ToolResult:
         """Invoke an A2A agent through its corresponding tool.
@@ -3735,20 +3937,21 @@ class ToolService:
             Exception: If the call fails.
         """
         logger.info(f"Calling A2A agent '{agent.name}' at {agent.endpoint_url} with arguments: {parameters}")
-        # Patch: Build correct JSON-RPC params structure from flat UI input
-        params = None
-        # If UI sends flat fields, convert to nested message structure
-        if isinstance(parameters, dict) and "query" in parameters and isinstance(parameters["query"], str):
-            # Build the nested message object
-            message_id = f"admin-test-{int(time.time())}"
-            params = {"message": {"messageId": message_id, "role": "user", "parts": [{"type": "text", "text": parameters["query"]}]}}
-            method = parameters.get("method", "message/send")
-        else:
-            # Already in correct format or unknown, pass through
-            params = parameters.get("params", parameters)
-            method = parameters.get("method", "message/send")
 
+        # Build request data based on agent type
         if agent.agent_type in ["generic", "jsonrpc"] or agent.endpoint_url.endswith("/"):
+            # JSONRPC agents: Convert flat query to nested message structure
+            params = None
+            if isinstance(parameters, dict) and "query" in parameters and isinstance(parameters["query"], str):
+                # Build the nested message object for JSONRPC protocol
+                message_id = f"admin-test-{int(time.time())}"
+                params = {"message": {"messageId": message_id, "role": "user", "parts": [{"type": "text", "text": parameters["query"]}]}}
+                method = parameters.get("method", "message/send")
+            else:
+                # Already in correct format or unknown, pass through
+                params = parameters.get("params", parameters)
+                method = parameters.get("method", "message/send")
+
             try:
                 request_data = {"jsonrpc": "2.0", "method": method, "params": params, "id": 1}
                 logger.info(f"invoke tool JSONRPC request_data prepared: {request_data}")
@@ -3756,8 +3959,11 @@ class ToolService:
                 logger.error(f"Error preparing JSONRPC request data: {e}")
                 raise
         else:
-            logger.info(f"invoke tool Using custom A2A format for A2A agent '{parameters}'")
-            request_data = {"interaction_type": parameters.get("interaction_type", "query"), "parameters": params, "protocol_version": agent.protocol_version}
+            # Custom agents: Pass parameters directly without JSONRPC message conversion
+            # Custom agents expect flat fields like {"query": "...", "message": "..."}
+            params = parameters if isinstance(parameters, dict) else {}
+            logger.info(f"invoke tool Using custom A2A format for A2A agent '{params}'")
+            request_data = {"interaction_type": params.get("interaction_type", "query"), "parameters": params, "protocol_version": agent.protocol_version}
         logger.info(f"invoke tool request_data prepared: {request_data}")
         # Make HTTP request to the agent endpoint using shared HTTP client
         # First-Party

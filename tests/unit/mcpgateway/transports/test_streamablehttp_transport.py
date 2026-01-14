@@ -1333,3 +1333,224 @@ async def test_stream_buffer_len():
     assert len(buffer) == 0
     buffer.count = 2
     assert len(buffer) == 2
+
+
+# ---------------------------------------------------------------------------
+# Token Teams Context Tests (Issue #1915)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_sets_user_context_with_teams(monkeypatch):
+    """Auth sets user context with email, teams, and is_admin from JWT payload."""
+
+    async def fake_verify(token):
+        return {
+            "sub": "user@example.com",
+            "teams": ["team_a", "team_b"],
+            "user": {"is_admin": True},
+        }
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer good-token")])
+    messages = []
+
+    async def send(msg):
+        messages.append(msg)
+
+    result = await streamable_http_auth(scope, None, send)
+
+    assert result is True
+    assert len(messages) == 0  # Should not send 401
+
+    # Verify user context was set correctly
+    user_ctx = tr.user_context_var.get()
+    assert user_ctx.get("email") == "user@example.com"
+    assert user_ctx.get("teams") == ["team_a", "team_b"]
+    assert user_ctx.get("is_admin") is True
+    assert user_ctx.get("is_authenticated") is True
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_normalizes_dict_teams(monkeypatch):
+    """Auth normalizes team dicts to string IDs."""
+
+    async def fake_verify(token):
+        return {
+            "sub": "user@example.com",
+            "teams": [{"id": "t1", "name": "Team 1"}, {"id": "t2", "name": "Team 2"}],
+            "user": {"is_admin": False},
+        }
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer good-token")])
+
+    async def send(msg):
+        pass
+
+    result = await streamable_http_auth(scope, None, send)
+
+    assert result is True
+
+    # Verify teams were normalized to IDs
+    user_ctx = tr.user_context_var.get()
+    assert user_ctx.get("teams") == ["t1", "t2"]
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_handles_empty_teams(monkeypatch):
+    """Auth handles empty teams list correctly."""
+
+    async def fake_verify(token):
+        return {
+            "sub": "user@example.com",
+            "teams": [],
+            "user": {},
+        }
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer good-token")])
+
+    async def send(msg):
+        pass
+
+    result = await streamable_http_auth(scope, None, send)
+
+    assert result is True
+
+    user_ctx = tr.user_context_var.get()
+    assert user_ctx.get("email") == "user@example.com"
+    assert user_ctx.get("teams") == []
+    assert user_ctx.get("is_admin") is False
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_uses_email_field_fallback(monkeypatch):
+    """Auth uses email field when sub is not present."""
+
+    async def fake_verify(token):
+        return {
+            "email": "email_user@example.com",  # Only email, no sub
+            "teams": ["team_x"],
+        }
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer good-token")])
+
+    async def send(msg):
+        pass
+
+    result = await streamable_http_auth(scope, None, send)
+
+    assert result is True
+
+    user_ctx = tr.user_context_var.get()
+    assert user_ctx.get("email") == "email_user@example.com"
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_handles_missing_teams_key(monkeypatch):
+    """Auth handles JWT payload without teams key - returns None for unrestricted access."""
+
+    async def fake_verify(token):
+        return {
+            "sub": "user@example.com",
+            # No teams key - legacy token without team scoping
+        }
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer good-token")])
+
+    async def send(msg):
+        pass
+
+    result = await streamable_http_auth(scope, None, send)
+
+    assert result is True
+
+    user_ctx = tr.user_context_var.get()
+    assert user_ctx.get("teams") is None  # None = unrestricted (legacy token without teams key)
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_handles_null_teams(monkeypatch):
+    """Auth handles JWT payload with teams: null - same as missing teams key."""
+
+    async def fake_verify(token):
+        return {
+            "sub": "user@example.com",
+            "teams": None,  # Explicit null - treated same as missing
+        }
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer good-token")])
+
+    async def send(msg):
+        pass
+
+    result = await streamable_http_auth(scope, None, send)
+
+    assert result is True
+
+    user_ctx = tr.user_context_var.get()
+    assert user_ctx.get("teams") is None  # None = teams: null treated same as missing
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_top_level_is_admin(monkeypatch):
+    """Auth handles top-level is_admin (legacy token format)."""
+
+    async def fake_verify(token):
+        return {
+            "sub": "admin@example.com",
+            "teams": [],
+            "is_admin": True,  # Top-level is_admin (legacy format)
+        }
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer good-token")])
+
+    async def send(msg):
+        pass
+
+    result = await streamable_http_auth(scope, None, send)
+
+    assert result is True
+
+    user_ctx = tr.user_context_var.get()
+    assert user_ctx.get("is_admin") is True  # Should recognize top-level is_admin
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_nested_is_admin_takes_precedence(monkeypatch):
+    """Auth checks both top-level and nested is_admin."""
+
+    async def fake_verify(token):
+        return {
+            "sub": "admin@example.com",
+            "teams": [],
+            "is_admin": False,  # Top-level says not admin
+            "user": {"is_admin": True},  # Nested says admin
+        }
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer good-token")])
+
+    async def send(msg):
+        pass
+
+    result = await streamable_http_auth(scope, None, send)
+
+    assert result is True
+
+    user_ctx = tr.user_context_var.get()
+    # Either top-level OR nested is_admin should grant admin access
+    assert user_ctx.get("is_admin") is True

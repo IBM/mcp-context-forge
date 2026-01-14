@@ -8,12 +8,14 @@ HTTP file serving for PowerPoint MCP Server downloads.
 """
 
 # Standard
-import json
 import os
 from datetime import datetime
 from typing import Any
 
 import uvicorn
+
+# Third-Party
+import orjson
 
 # Third-Party
 from fastapi import FastAPI, HTTPException
@@ -54,8 +56,8 @@ def _load_token_info(token: str) -> dict[str, Any] | None:
         return None
 
     try:
-        with open(token_file) as f:
-            token_info = json.load(f)
+        with open(token_file, "rb") as f:
+            token_info = orjson.loads(f.read())
 
         # Check if token has expired
         expires = datetime.fromisoformat(token_info["expires"])

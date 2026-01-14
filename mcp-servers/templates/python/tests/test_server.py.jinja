@@ -1,5 +1,5 @@
 import asyncio
-import json
+import orjson
 import types
 
 
@@ -14,9 +14,8 @@ def test_echo_tool_logic_snapshot():
 
     async def run():
         result = await call_tool('echo', {'text': 'hello'})
-        payload = json.loads(result[0].text)
+        payload = orjson.loads(result[0].text)
         assert payload['ok'] is True
         assert payload['echo'] == 'hello'
 
     asyncio.get_event_loop().run_until_complete(run())
-

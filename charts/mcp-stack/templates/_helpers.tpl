@@ -24,13 +24,29 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
 {{- /* --------------------------------------------------------------------
+     Helper: mcp-stack.serviceAccountName
+     Returns the ServiceAccount name to use.
+     If serviceAccount.create is true and name is empty, uses fullname.
+     If serviceAccount.create is false, uses the provided name or "default".
+     -------------------------------------------------------------------- */}}
+{{- define "mcp-stack.serviceAccountName" -}}
+{{- if .Values.serviceAccount.create }}
+{{- default (include "mcp-stack.fullname" .) .Values.serviceAccount.name }}
+{{- else }}
+{{- default "default" .Values.serviceAccount.name }}
+{{- end }}
+{{- end }}
+
+{{- /* --------------------------------------------------------------------
      Helper: mcp-stack.postgresSecretName
      Returns the Secret name that the Postgres deployment should mount.
      If users set `postgres.existingSecret`, that name is used.
      Otherwise the chart-managed default "postgres-secret" is returned.
      -------------------------------------------------------------------- */}}
 {{- define "mcp-stack.postgresSecretName" -}}
-{{- if .Values.postgres.existingSecret }}
+{{- if .Values.postgres.external.enabled }}
+{{- .Values.postgres.external.existingSecret | default (printf "%s-postgres-external" (include "mcp-stack.fullname" .)) }}
+{{- else if .Values.postgres.existingSecret }}
 {{- .Values.postgres.existingSecret }}
 {{- else }}
 postgres-secret
