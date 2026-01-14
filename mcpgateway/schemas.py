@@ -6584,6 +6584,7 @@ class CatalogServer(BaseModel):
     documentation_url: Optional[str] = Field(None, description="URL to server documentation")
     is_registered: bool = Field(default=False, description="Whether server is already registered")
     is_available: bool = Field(default=True, description="Whether server is currently available")
+    requires_oauth_config: bool = Field(default=False, description="Whether server is registered but needs OAuth configuration")
 
 
 class CatalogServerRegisterRequest(BaseModel):
