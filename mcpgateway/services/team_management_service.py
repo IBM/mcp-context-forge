@@ -19,11 +19,13 @@ Examples:
 
 # Standard
 import asyncio
-from datetime import timedelta
+import base64
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 # Third-Party
-from sqlalchemy import desc, func, select
+import orjson
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.orm import selectinload, Session
 
 # First-Party
@@ -799,8 +801,8 @@ class TeamManagementService:
         try:
             # Build base query - for pagination, select EmailTeamMember and eager-load user
             # For backward compat (no pagination), select both entities as tuple
-            if cursor is None and page is None:
-                # Backward compatibility: return tuples
+            if cursor is None and page is None and limit is None:
+                # Backward compatibility: return tuples (no pagination requested)
                 query = (
                     select(EmailUser, EmailTeamMember)
                     .join(EmailTeamMember, EmailUser.email == EmailTeamMember.user_email)
@@ -813,7 +815,6 @@ class TeamManagementService:
                 return members
 
             # For pagination: select EmailTeamMember and eager-load user to avoid N+1
-            # This returns EmailTeamMember objects (not tuples), compatible with unified_paginate
             query = (
                 select(EmailTeamMember)
                 .options(selectinload(EmailTeamMember.user))
@@ -821,33 +822,21 @@ class TeamManagementService:
                 .join(EmailUser, EmailUser.email == EmailTeamMember.user_email)
             )
 
-            # Use different ordering based on pagination mode:
-            # - Cursor-based (API): joined_at DESC, id DESC for keyset pagination
-            # - Page-based (Admin UI): alphabetical by name for user-friendly display
-            if cursor is not None or page is None:
-                # Cursor-based or default: order by joined_at DESC, id DESC
-                query = query.order_by(desc(EmailTeamMember.joined_at), desc(EmailTeamMember.id))
-            else:
-                # Page-based: alphabetical ordering
-                query = query.order_by(EmailUser.full_name, EmailUser.email)
-
-            # Use unified_paginate for both cursor and page-based pagination
-            pag_result = await unified_paginate(
-                db=self.db,
-                query=query,
-                page=page,
-                per_page=per_page or 30,
-                cursor=cursor,
-                limit=limit or 50,
-                base_url=f"/admin/teams/{team_id}/members",
-                query_params={},
-            )
-
-            self.db.commit()
-
-            # Convert EmailTeamMember objects to (user, membership) tuples for consistency
+            # PAGE-BASED PAGINATION (Admin UI) - use unified_paginate
             if page is not None:
-                # Page-based format: dict
+                # Alphabetical ordering for user-friendly display
+                query = query.order_by(EmailUser.full_name, EmailUser.email)
+                pag_result = await unified_paginate(
+                    db=self.db,
+                    query=query,
+                    page=page,
+                    per_page=per_page or 30,
+                    cursor=None,
+                    limit=None,
+                    base_url=f"/admin/teams/{team_id}/members",
+                    query_params={},
+                )
+                self.db.commit()
                 memberships = pag_result["data"]
                 tuples = [(m.user, m) for m in memberships]
                 return {
@@ -856,8 +845,52 @@ class TeamManagementService:
                     "links": pag_result["links"],
                 }
 
-            # Cursor-based format: tuple
-            memberships, next_cursor = pag_result
+            # CURSOR-BASED PAGINATION (API) - custom implementation using (joined_at, id)
+            # unified_paginate uses created_at which doesn't exist on EmailTeamMember
+
+            # Order by joined_at DESC, id DESC for keyset pagination
+            query = query.order_by(desc(EmailTeamMember.joined_at), desc(EmailTeamMember.id))
+
+            # Decode cursor and apply keyset filter
+            if cursor:
+                try:
+                    cursor_json = base64.urlsafe_b64decode(cursor.encode()).decode()
+                    cursor_data = orjson.loads(cursor_json)
+                    last_id = cursor_data.get("id")
+                    joined_str = cursor_data.get("joined_at")
+                    if last_id and joined_str:
+                        last_joined = datetime.fromisoformat(joined_str)
+                        # Keyset filter: (joined_at < last) OR (joined_at = last AND id < last_id)
+                        query = query.where(
+                            or_(
+                                EmailTeamMember.joined_at < last_joined,
+                                and_(EmailTeamMember.joined_at == last_joined, EmailTeamMember.id < last_id),
+                            )
+                        )
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Invalid cursor for team members, ignoring: {e}")
+
+            # Fetch limit + 1 to check for more results
+            page_size = limit or 50
+            query = query.limit(page_size + 1)
+            memberships = list(self.db.execute(query).scalars().all())
+
+            # Check if there are more results
+            has_more = len(memberships) > page_size
+            if has_more:
+                memberships = memberships[:page_size]
+
+            # Generate next cursor using (joined_at, id)
+            next_cursor = None
+            if has_more and memberships:
+                last_member = memberships[-1]
+                cursor_data = {
+                    "joined_at": last_member.joined_at.isoformat() if last_member.joined_at else None,
+                    "id": last_member.id,
+                }
+                next_cursor = base64.urlsafe_b64encode(orjson.dumps(cursor_data)).decode()
+
+            self.db.commit()
             tuples = [(m.user, m) for m in memberships]
             return (tuples, next_cursor)
 

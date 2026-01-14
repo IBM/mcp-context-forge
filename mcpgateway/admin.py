@@ -72,7 +72,7 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import utc_now
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_any_permission, require_permission
 from mcpgateway.routers.email_auth import create_access_token
 from mcpgateway.schemas import (
     A2AAgentCreate,
@@ -4491,7 +4491,7 @@ async def admin_add_team_members_view(
                             <div
                                 id="user-selector-container-{team.id}"
                                 class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-32 overflow-y-auto dark:bg-gray-700"
-                                hx-get="{root_path}/admin/teams/{team.id}/users/partial?page=1&per_page=10&render=selector"
+                                hx-get="{root_path}/admin/users/partial?page=1&per_page=20&render=selector&team_id={team.id}"
                                 hx-trigger="load"
                                 hx-swap="innerHTML"
                                 hx-target="#user-selector-container-{team.id}"
@@ -5977,7 +5977,7 @@ async def admin_team_non_members_partial_html(
 
 
 @admin_router.get("/users/search", response_class=JSONResponse)
-@require_permission("admin.user_management")
+@require_any_permission(["admin.user_management", "teams.manage_members"])
 async def admin_search_users(
     q: str = Query("", description="Search query"),
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Maximum number of results to return"),
