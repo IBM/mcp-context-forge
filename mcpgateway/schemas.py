@@ -6838,6 +6838,13 @@ class CursorPaginatedA2AAgentsResponse(BaseModel):
     next_cursor: Optional[str] = Field(None, alias="nextCursor", description="Cursor for the next page, null if no more pages")
 
 
+class CursorPaginatedTeamsResponse(BaseModel):
+    """Cursor-paginated response for teams list endpoint."""
+
+    teams: List["TeamResponse"] = Field(..., description="List of teams for this page")
+    next_cursor: Optional[str] = Field(None, alias="nextCursor", description="Cursor for the next page, null if no more pages")
+
+
 class CursorPaginatedUsersResponse(BaseModel):
     """Cursor-paginated response for users list endpoint."""
 
