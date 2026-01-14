@@ -1443,6 +1443,9 @@ class EmailTeam(Base):
     api_tokens: Mapped[List["EmailApiToken"]] = relationship("EmailApiToken", back_populates="team", cascade="all, delete-orphan")
     creator: Mapped["EmailUser"] = relationship("EmailUser", foreign_keys=[created_by])
 
+    # Index for search and pagination performance
+    __table_args__ = (Index("ix_email_teams_name_id", "name", "id"),)
+
     def __repr__(self) -> str:
         """String representation of the team.
 

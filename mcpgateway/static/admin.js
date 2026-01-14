@@ -21197,14 +21197,30 @@ function handleAdminTeamAction(event) {
         if (detail.refreshUnifiedTeamsList && window.htmx) {
             const unifiedList = document.getElementById("unified-teams-list");
             if (unifiedList) {
-                window.htmx.ajax(
-                    "GET",
-                    `${window.ROOT_PATH || ""}/admin/teams?unified=true`,
-                    {
-                        target: "#unified-teams-list",
-                        swap: "innerHTML",
-                    },
-                );
+                // Preserve current pagination/filter state on refresh
+                const params = new URLSearchParams();
+                params.set("page", "1"); // Reset to first page on action
+                if (typeof getTeamsPerPage === "function") {
+                    params.set("per_page", getTeamsPerPage().toString());
+                }
+                // Preserve search query from input field
+                const searchInput = document.getElementById("team-search");
+                if (searchInput && searchInput.value.trim()) {
+                    params.set("q", searchInput.value.trim());
+                }
+                // Preserve relationship filter
+                if (
+                    typeof currentTeamRelationshipFilter !== "undefined" &&
+                    currentTeamRelationshipFilter &&
+                    currentTeamRelationshipFilter !== "all"
+                ) {
+                    params.set("relationship", currentTeamRelationshipFilter);
+                }
+                const url = `${window.ROOT_PATH || ""}/admin/teams/partial?${params.toString()}`;
+                window.htmx.ajax("GET", url, {
+                    target: "#unified-teams-list",
+                    swap: "innerHTML",
+                });
             }
         }
         if (detail.refreshTeamMembers && detail.teamId) {
@@ -30630,3 +30646,289 @@ async function serverSideUserSearch(teamId, searchTerm) {
 }
 
 window.serverSideUserSearch = serverSideUserSearch;
+
+// ============================================================================ //
+//                         TEAM SEARCH AND FILTER FUNCTIONS                      //
+// ============================================================================ //
+
+/**
+ * Debounce timer for team search
+ */
+let teamSearchDebounceTimer = null;
+
+/**
+ * Current relationship filter state
+ */
+let currentTeamRelationshipFilter = "all";
+
+/**
+ * Perform server-side search for teams and update the teams list
+ * @param {string} searchTerm - The search query
+ */
+function serverSideTeamSearch(searchTerm) {
+    // Debounce the search to avoid excessive API calls
+    if (teamSearchDebounceTimer) {
+        clearTimeout(teamSearchDebounceTimer);
+    }
+
+    teamSearchDebounceTimer = setTimeout(() => {
+        performTeamSearch(searchTerm);
+    }, 300);
+}
+
+/**
+ * Default per_page for teams list
+ */
+const DEFAULT_TEAMS_PER_PAGE = 10;
+
+/**
+ * Get current per_page value from pagination controls or use default
+ */
+function getTeamsPerPage() {
+    // Try to get from pagination controls select element
+    const paginationControls = document.getElementById(
+        "teams-pagination-controls",
+    );
+    if (paginationControls) {
+        const select = paginationControls.querySelector("select");
+        if (select && select.value) {
+            return parseInt(select.value, 10) || DEFAULT_TEAMS_PER_PAGE;
+        }
+    }
+    return DEFAULT_TEAMS_PER_PAGE;
+}
+
+/**
+ * Actually perform the team search after debounce
+ * @param {string} searchTerm - The search query
+ */
+async function performTeamSearch(searchTerm) {
+    const container = document.getElementById("unified-teams-list");
+    const loadingIndicator = document.getElementById("teams-loading");
+
+    if (!container) {
+        console.error("unified-teams-list container not found");
+        return;
+    }
+
+    // Show loading state
+    if (loadingIndicator) {
+        loadingIndicator.style.display = "block";
+    }
+
+    // Build URL with search query and current relationship filter
+    const params = new URLSearchParams();
+    params.set("page", "1");
+    params.set("per_page", getTeamsPerPage().toString());
+
+    if (searchTerm && searchTerm.trim() !== "") {
+        params.set("q", searchTerm.trim());
+    }
+
+    if (
+        currentTeamRelationshipFilter &&
+        currentTeamRelationshipFilter !== "all"
+    ) {
+        params.set("relationship", currentTeamRelationshipFilter);
+    }
+
+    const url = `${window.ROOT_PATH || ""}/admin/teams/partial?${params.toString()}`;
+
+    console.log(`[Team Search] Searching teams with URL: ${url}`);
+
+    try {
+        // Use HTMX to load the results
+        if (window.htmx) {
+            // HTMX handles the indicator automatically via the indicator option
+            // Don't manually hide it - HTMX will hide it when request completes
+            window.htmx.ajax("GET", url, {
+                target: "#unified-teams-list",
+                swap: "innerHTML",
+                indicator: "#teams-loading",
+            });
+        } else {
+            // Fallback to fetch if HTMX is not available
+            const response = await fetch(url);
+            if (response.ok) {
+                const html = await response.text();
+                container.innerHTML = html;
+            } else {
+                container.innerHTML =
+                    '<div class="text-center py-4 text-red-600">Failed to load teams</div>';
+            }
+            // Only hide indicator in fetch fallback path (HTMX handles its own)
+            if (loadingIndicator) {
+                loadingIndicator.style.display = "none";
+            }
+        }
+    } catch (error) {
+        console.error("Error searching teams:", error);
+        container.innerHTML =
+            '<div class="text-center py-4 text-red-600">Error searching teams</div>';
+        // Hide indicator on error in fallback path
+        if (loadingIndicator) {
+            loadingIndicator.style.display = "none";
+        }
+    }
+}
+
+/**
+ * Filter teams by relationship (owner, member, public, all)
+ * @param {string} filter - The relationship filter value
+ */
+function filterByRelationship(filter) {
+    // Update button states
+    const filterButtons = document.querySelectorAll(".filter-btn");
+    filterButtons.forEach((btn) => {
+        if (btn.getAttribute("data-filter") === filter) {
+            btn.classList.add(
+                "active",
+                "bg-indigo-100",
+                "dark:bg-indigo-900",
+                "text-indigo-700",
+                "dark:text-indigo-300",
+                "border-indigo-300",
+                "dark:border-indigo-600",
+            );
+            btn.classList.remove(
+                "bg-white",
+                "dark:bg-gray-700",
+                "text-gray-700",
+                "dark:text-gray-300",
+            );
+        } else {
+            btn.classList.remove(
+                "active",
+                "bg-indigo-100",
+                "dark:bg-indigo-900",
+                "text-indigo-700",
+                "dark:text-indigo-300",
+                "border-indigo-300",
+                "dark:border-indigo-600",
+            );
+            btn.classList.add(
+                "bg-white",
+                "dark:bg-gray-700",
+                "text-gray-700",
+                "dark:text-gray-300",
+            );
+        }
+    });
+
+    // Update current filter state
+    currentTeamRelationshipFilter = filter;
+
+    // Get current search query
+    const searchInput = document.getElementById("team-search");
+    const searchQuery = searchInput ? searchInput.value.trim() : "";
+
+    // Perform search with new filter
+    performTeamSearch(searchQuery);
+}
+
+/**
+ * Legacy filterTeams function - redirects to serverSideTeamSearch
+ * @param {string} searchValue - The search query
+ */
+function filterTeams(searchValue) {
+    serverSideTeamSearch(searchValue);
+}
+
+// ============================================================================ //
+//                    TEAM SELECTOR DROPDOWN FUNCTIONS                           //
+// ============================================================================ //
+
+/**
+ * Debounce timer for team selector search
+ */
+let teamSelectorSearchDebounceTimer = null;
+
+/**
+ * Search teams in the team selector dropdown
+ * @param {string} searchTerm - The search query
+ */
+function searchTeamSelector(searchTerm) {
+    // Debounce the search
+    if (teamSelectorSearchDebounceTimer) {
+        clearTimeout(teamSelectorSearchDebounceTimer);
+    }
+
+    teamSelectorSearchDebounceTimer = setTimeout(() => {
+        performTeamSelectorSearch(searchTerm);
+    }, 300);
+}
+
+/**
+ * Perform the team selector search
+ * @param {string} searchTerm - The search query
+ */
+function performTeamSelectorSearch(searchTerm) {
+    const container = document.getElementById("team-selector-items");
+    if (!container) {
+        console.error("team-selector-items container not found");
+        return;
+    }
+
+    // Build URL
+    const params = new URLSearchParams();
+    params.set("page", "1");
+    params.set("per_page", "20");
+    params.set("render", "selector");
+
+    if (searchTerm && searchTerm.trim() !== "") {
+        params.set("q", searchTerm.trim());
+    }
+
+    const url = `${window.ROOT_PATH || ""}/admin/teams/partial?${params.toString()}`;
+
+    // Use HTMX to load results
+    if (window.htmx) {
+        window.htmx.ajax("GET", url, {
+            target: "#team-selector-items",
+            swap: "innerHTML",
+        });
+    }
+}
+
+/**
+ * Select a team from the team selector dropdown
+ * @param {HTMLElement} button - The button element that was clicked
+ */
+function selectTeamFromSelector(button) {
+    const teamId = button.dataset.teamId;
+    const teamName = button.dataset.teamName;
+    const isPersonal = button.dataset.teamIsPersonal === "true";
+
+    // Update the Alpine.js component state
+    const selectorContainer = button.closest("[x-data]");
+    if (selectorContainer && selectorContainer.__x) {
+        const alpineData = selectorContainer.__x.$data;
+        alpineData.selectedTeam = teamId;
+        alpineData.selectedTeamName = (isPersonal ? "👤 " : "🏢 ") + teamName;
+        alpineData.open = false;
+    }
+
+    // Clear the search input
+    const searchInput = document.getElementById("team-selector-search");
+    if (searchInput) {
+        searchInput.value = "";
+    }
+
+    // Reset the loaded flag so next open reloads the list
+    const itemsContainer = document.getElementById("team-selector-items");
+    if (itemsContainer) {
+        delete itemsContainer.dataset.loaded;
+    }
+
+    // Call the existing updateTeamContext function (defined in admin.html)
+    if (typeof window.updateTeamContext === "function") {
+        window.updateTeamContext(teamId);
+    }
+}
+
+// Make team functions globally available
+window.serverSideTeamSearch = serverSideTeamSearch;
+window.filterByRelationship = filterByRelationship;
+window.filterTeams = filterTeams;
+window.searchTeamSelector = searchTeamSelector;
+window.selectTeamFromSelector = selectTeamFromSelector;

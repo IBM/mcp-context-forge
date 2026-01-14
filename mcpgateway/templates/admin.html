@@ -525,7 +525,7 @@
 
             <!-- Right side: team selector, user, logout -->
             <div class="flex items-center space-x-4">
-              <!-- Team Selector -->
+              <!-- Team Selector with Search and Infinite Scroll -->
               {% if email_auth_enabled %}
               <div
                 class="relative inline-block text-left"
@@ -533,21 +533,35 @@
                   open: false,
                   selectedTeam: '',
                   selectedTeamName: 'All Teams',
-                  teams: [],
                   init() {
-                    this.teams = window.USER_TEAMS_DATA || [];
                     const urlParams = new URLSearchParams(window.location.search);
                     this.selectedTeam = urlParams.get('team_id') || '';
                     if (this.selectedTeam) {
-                      const team = this.teams.find(t => t.id === this.selectedTeam);
+                      // Try to find team name from USER_TEAMS_DATA
+                      const teams = window.USER_TEAMS_DATA || [];
+                      const team = teams.find(t => t.id === this.selectedTeam);
                       this.selectedTeamName = team ? (team.is_personal ? '👤 ' + team.name : '🏢 ' + team.name) : 'All Teams';
+                    }
+                  },
+                  loadTeams() {
+                    // Load teams via HTMX when dropdown opens
+                    if (this.open) {
+                      const container = document.getElementById('team-selector-items');
+                      if (container && !container.dataset.loaded) {
+                        htmx.ajax('GET', '{{ root_path }}/admin/teams/partial?page=1&per_page=10&render=selector', {
+                          target: '#team-selector-items',
+                          swap: 'innerHTML'
+                        });
+                        container.dataset.loaded = 'true';
+                      }
                     }
                   }
                 }"
+                @click.away="open = false"
               >
                 <button
                   type="button"
-                  @click="open = !open"
+                  @click="open = !open; $nextTick(() => loadTeams())"
                   id="team-selector-button"
                   aria-expanded="false"
                   aria-haspopup="true"
@@ -561,39 +575,51 @@
 
                 <div
                   x-show="open"
-                  @click.away="open = false"
                   x-transition:enter="transition ease-out duration-100"
                   x-transition:enter-start="transform opacity-0 scale-95"
                   x-transition:enter-end="transform opacity-100 scale-100"
                   x-transition:leave="transition ease-in duration-75"
                   x-transition:leave-start="transform opacity-100 scale-100"
                   x-transition:leave-end="transform opacity-0 scale-95"
-                  class="origin-top-right absolute right-0 mt-2 w-64 max-h-60 overflow-y-auto rounded-md shadow-lg bg-white dark:bg-gray-800 ring-1 ring-black ring-opacity-5 divide-y divide-gray-100 dark:divide-gray-700 z-50"
+                  class="origin-top-right absolute right-0 mt-2 w-72 rounded-md shadow-lg bg-white dark:bg-gray-800 ring-1 ring-black ring-opacity-5 z-50"
                   role="menu"
                   aria-orientation="vertical"
                   aria-labelledby="team-selector-button"
                   style="display: none"
                 >
-                  <div class="py-1" role="none">
+                  <!-- Search Input -->
+                  <div class="p-2 border-b border-gray-200 dark:border-gray-700">
+                    <input
+                      type="text"
+                      id="team-selector-search"
+                      placeholder="Search teams..."
+                      class="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      oninput="searchTeamSelector(this.value)"
+                      @click.stop
+                    />
+                  </div>
+
+                  <!-- All Teams Option -->
+                  <div class="border-b border-gray-200 dark:border-gray-700">
                     <button
+                      type="button"
                       @click="selectedTeam = ''; selectedTeamName = 'All Teams'; open = false; updateTeamContext('')"
                       class="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
                       role="menuitem"
                     >
                       🌐 All Teams
                     </button>
+                  </div>
 
-                    <template x-for="team in teams" :key="team.id">
-                      <button
-                        @click="selectedTeam = team.id; selectedTeamName = (team.is_personal ? '👤 ' : '🏢 ') + team.name; open = false; updateTeamContext(team.id)"
-                        class="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
-                        role="menuitem"
-                        x-bind:class="selectedTeam === team.id ? 'bg-blue-50 dark:bg-blue-900' : ''"
-                      >
-                        <span x-text="(team.is_personal ? '👤 ' : '🏢 ') + team.name"></span>
-                        <span class="text-xs text-gray-500 dark:text-gray-400 ml-2" x-text="team.member_count + ' members'"></span>
-                      </button>
-                    </template>
+                  <!-- Teams List with Infinite Scroll -->
+                  <div
+                    id="team-selector-items"
+                    class="max-h-48 overflow-y-auto"
+                    role="none"
+                  >
+                    <div class="text-center py-4 text-sm text-gray-500 dark:text-gray-400">
+                      Loading teams...
+                    </div>
                   </div>
                 </div>
               </div>
@@ -5512,7 +5538,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   id="team-search"
                   placeholder="Find teams..."
                   class="block w-full px-1.5 border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                  oninput="filterTeams(this.value)"
+                  oninput="serverSideTeamSearch(this.value)"
                 />
               </div>
               <div class="flex gap-2">
@@ -5548,7 +5574,16 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             </div>
           </div>
 
-          <!-- Teams List -->
+          <!-- Loading indicator -->
+          <div id="teams-loading" class="htmx-indicator text-center py-4 hidden">
+            <svg class="animate-spin h-5 w-5 text-indigo-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="mt-2 text-sm text-gray-500">Loading teams...</p>
+          </div>
+
+          <!-- Teams List - loaded via initializeTeamManagement() when tab is shown -->
           <div id="unified-teams-list" class="space-y-4">
             <div class="text-center py-8">
               <div class="animate-pulse text-gray-500 dark:text-gray-400">
@@ -5559,6 +5594,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               </div>
             </div>
           </div>
+
+          <!-- Pagination controls placeholder (will be swapped OOB) -->
+          <div id="teams-pagination-controls" class="mt-4"></div>
       </div>
       {% endif %}
 
@@ -13982,64 +14020,8 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         document.getElementById('create-team-form').reset();
       }
 
-      // Filter functions for team list
-      let currentTeamFilter = 'all';
-      let currentSearchFilter = '';
-
-      function filterTeams(searchTerm) {
-        currentSearchFilter = searchTerm.toLowerCase();
-        applyTeamFilters();
-      }
-
-      function filterByRelationship(relationship) {
-        currentTeamFilter = relationship;
-
-        // Update active filter button
-        document.querySelectorAll('.filter-btn').forEach(btn => {
-          btn.classList.remove('active', 'bg-indigo-600', 'text-white');
-          btn.classList.add('bg-white', 'dark:bg-gray-700', 'text-gray-700', 'dark:text-gray-300');
-        });
-
-        const activeBtn = document.querySelector(`[data-filter="${relationship}"]`);
-        if (activeBtn) {
-          activeBtn.classList.add('active', 'bg-indigo-600', 'text-white');
-          activeBtn.classList.remove('bg-white', 'dark:bg-gray-700', 'text-gray-700', 'dark:text-gray-300');
-        }
-
-        applyTeamFilters();
-      }
-
-      function applyTeamFilters() {
-        const teamCards = document.querySelectorAll('.team-card');
-
-        teamCards.forEach(card => {
-          const teamName = card.querySelector('.team-name')?.textContent.toLowerCase() || '';
-          const teamDescription = card.querySelector('.team-description')?.textContent.toLowerCase() || '';
-          const relationshipBadge = card.querySelector('.relationship-badge')?.textContent.toLowerCase() || '';
-
-          // Check search filter
-          const matchesSearch = currentSearchFilter === '' ||
-                              teamName.includes(currentSearchFilter) ||
-                              teamDescription.includes(currentSearchFilter);
-
-          // Check relationship filter
-          let matchesRelationship = true;
-          if (currentTeamFilter === 'owner') {
-            matchesRelationship = relationshipBadge.includes('owner');
-          } else if (currentTeamFilter === 'member') {
-            matchesRelationship = relationshipBadge.includes('member') && !relationshipBadge.includes('owner');
-          } else if (currentTeamFilter === 'public') {
-            matchesRelationship = relationshipBadge.includes('join');
-          }
-          // 'all' filter shows everything
-
-          if (matchesSearch && matchesRelationship) {
-            card.style.display = 'block';
-          } else {
-            card.style.display = 'none';
-          }
-        });
-      }
+      // Filter functions for team list are defined in admin.js (filterTeams, filterByRelationship)
+      // to enable server-side search and pagination
 
       // Safe team action functions using data attributes
       function requestToJoinTeamSafe(button) {
@@ -14158,10 +14140,25 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
       // Initialize team management when teams tab is shown
       function initializeTeamManagement() {
-        // Load unified teams list
-        htmx.ajax('GET', window.ROOT_PATH + '/admin/teams?unified=true', {
+        // Load teams list using /teams/partial endpoint
+        // Get current search and filter state
+        const searchInput = document.getElementById('team-search');
+        const searchQuery = searchInput ? searchInput.value.trim() : '';
+        const activeFilterBtn = document.querySelector('.filter-btn.active');
+        const relationship = activeFilterBtn ? activeFilterBtn.getAttribute('data-filter') : 'all';
+
+        let url = window.ROOT_PATH + '/admin/teams/partial?page=1&per_page=10';
+        if (searchQuery) {
+          url += '&q=' + encodeURIComponent(searchQuery);
+        }
+        if (relationship && relationship !== 'all') {
+          url += '&relationship=' + encodeURIComponent(relationship);
+        }
+
+        htmx.ajax('GET', url, {
           target: '#unified-teams-list',
-          swap: 'innerHTML'
+          swap: 'innerHTML',
+          indicator: '#teams-loading'
         });
       }
 
@@ -14170,6 +14167,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         const teamsTab = document.getElementById('tab-teams');
         if (teamsTab) {
           teamsTab.addEventListener('click', function() {
+            // Always refresh teams when tab is clicked
             setTimeout(initializeTeamManagement, 100);
           });
         }

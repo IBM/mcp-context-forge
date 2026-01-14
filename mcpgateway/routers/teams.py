@@ -32,6 +32,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import (
+    CursorPaginatedTeamsResponse,
     EmailUserResponse,
     PaginatedTeamMembersResponse,
     SuccessResponse,
@@ -111,13 +112,15 @@ async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depen
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create team")
 
 
-@teams_router.get("/", response_model=TeamListResponse)
+@teams_router.get("/", response_model=Union[TeamListResponse, CursorPaginatedTeamsResponse])
 @require_permission("teams.read")
 async def list_teams(
     skip: int = Query(0, ge=0, description="Number of teams to skip"),
     limit: int = Query(50, ge=1, le=100, description="Number of teams to return"),
+    cursor: Optional[str] = Query(None, description="Pagination cursor"),
+    include_pagination: bool = Query(False, description="Include pagination metadata (cursor)"),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
-) -> TeamListResponse:
+) -> Union[TeamListResponse, CursorPaginatedTeamsResponse]:
     """List teams visible to the caller.
 
     - Administrators see all non-personal teams (paginated)
@@ -126,33 +129,47 @@ async def list_teams(
     Args:
         skip: Number of teams to skip for pagination
         limit: Maximum number of teams to return
+        cursor: Pagination cursor
+        include_pagination: Include pagination metadata
         current_user_ctx: Current user context with permissions and database session
 
     Returns:
-        TeamListResponse: List of teams and total count
+        Union[TeamListResponse, CursorPaginatedTeamsResponse]: List of teams
 
     Raises:
         HTTPException: If there's an error listing teams
-
-    Examples:
-        >>> import asyncio
-        >>> asyncio.iscoroutinefunction(list_teams)
-        True
     """
     try:
         db = current_user_ctx["db"]
         service = TeamManagementService(db)
 
+        teams_data = []
+        next_cursor = None
+        total = 0
+
         if current_user_ctx.get("is_admin"):
-            teams, total = await service.list_teams(limit=limit, offset=skip)
+            # Use updated list_teams logic
+            # If current request uses offset (skip), mapped to offset.
+            # If cursor, mapped to cursor.
+            # page is None, so returns Tuple
+            result = await service.list_teams(
+                limit=limit,
+                offset=skip,
+                cursor=cursor,
+            )
+            # Result is tuple (list, next_cursor)
+            teams_data, next_cursor = result
+
+            # Get accurate total count for API consumers
+            total = await service.get_teams_count()
         else:
             # Fallback to user teams and apply pagination locally
             user_teams = await service.get_user_teams(current_user_ctx["email"], include_personal=True)
             total = len(user_teams)
-            teams = user_teams[skip : skip + limit]
+            teams_data = user_teams[skip : skip + limit]
 
         # Batch fetch member counts with caching (N+1 elimination)
-        team_ids = [str(team.id) for team in teams]
+        team_ids = [str(team.id) for team in teams_data]
         member_counts = await service.get_member_counts_batch_cached(team_ids)
 
         team_responses = [
@@ -170,8 +187,11 @@ async def list_teams(
                 updated_at=team.updated_at,
                 is_active=team.is_active,
             )
-            for team in teams
+            for team in teams_data
         ]
+
+        if include_pagination:
+            return CursorPaginatedTeamsResponse(teams=team_responses, nextCursor=next_cursor)
 
         return TeamListResponse(teams=team_responses, total=total)
     except Exception as e:
