@@ -65,48 +65,38 @@
             cidr_ip: "{{ ip_response.content }}/32"
       register: alb_sg_r
 
-    # ECS EC2 INSTANCE SECURITY GROUP
-    # This is for the EC2 instance running ECS tasks
-    - name: Create Security Group for ECS EC2 instance
+    # ECS FARGATE TASKS SECURITY GROUP
+    # This is for Fargate tasks running in the cluster
+    - name: Create Security Group for ECS Fargate tasks
       amazon.aws.ec2_security_group:
-        name: "{{ prefix_v }}-ecs-ec2-sg"
+        name: "{{ prefix_v }}-ecs-tasks-sg"
         description: >-
-          Security group for ECS EC2 instance - allows ECS agent communication
-          and container traffic
+          Security group for ECS Fargate tasks - allows ALB and inter-service traffic
         region: "{{ region_v }}"
         vpc_id: "{{ vpc_id_f }}"
         tags:
-          "Name": "{{ prefix_v }}-ecs-ec2-sg"
+          "Name": "{{ prefix_v }}-ecs-tasks-sg"
         rules:
-          # Allow all traffic from ALB to nginx (port 80)
+          # Allow traffic from ALB to nginx (port 80)
           - proto: tcp
             from_port: 80
             to_port: 80
             group_id: "{{ alb_sg_r.group_id }}"
-          # Allow bastion SSH for debugging
-          - proto: tcp
-            from_port: 22
-            to_port: 22
-            group_id: "{{ bastion_sg_r.group_id }}"
-          # Allow all internal container traffic within the instance
-          # (nginx -> gateway, gateway -> pgbouncer, gateway -> redis)
+          # Allow inter-service traffic via Service Connect
+          # (nginx -> gateway, gateway -> redis)
           - proto: tcp
             from_port: 80
             to_port: 80
-            group_name: "{{ prefix_v }}-ecs-ec2-sg"
+            group_name: "{{ prefix_v }}-ecs-tasks-sg"
           - proto: tcp
             from_port: 4444
             to_port: 4444
-            group_name: "{{ prefix_v }}-ecs-ec2-sg"
+            group_name: "{{ prefix_v }}-ecs-tasks-sg"
           - proto: tcp
             from_port: 6379
             to_port: 6379
-            group_name: "{{ prefix_v }}-ecs-ec2-sg"
-          - proto: tcp
-            from_port: 6432
-            to_port: 6432
-            group_name: "{{ prefix_v }}-ecs-ec2-sg"
-          # Allow bastion to access containers for debugging
+            group_name: "{{ prefix_v }}-ecs-tasks-sg"
+          # Allow bastion to access containers for debugging via ECS Exec
           - proto: tcp
             from_port: 80
             to_port: 80
@@ -121,7 +111,7 @@
     - name: Create Security Group for Aurora PostgreSQL
       amazon.aws.ec2_security_group:
         name: "{{ prefix_v }}-aurora-postgresql-sg"
-        description: Allow port 5432 from the bastion server and ECS EC2 instance
+        description: Allow port 5432 from the bastion server and ECS Fargate tasks
         region: "{{ region_v }}"
         vpc_id: "{{ vpc_id_f }}"
         tags:

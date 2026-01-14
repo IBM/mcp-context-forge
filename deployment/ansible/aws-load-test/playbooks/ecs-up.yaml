@@ -28,7 +28,7 @@
         filters:
           group-name:
             - "{{ prefix_v }}-alb-sg"
-            - "{{ prefix_v }}-ecs-ec2-sg"
+            - "{{ prefix_v }}-ecs-tasks-sg"
       register: sg_r
 
     - name: Retrieve information about the RDS cluster
@@ -54,7 +54,7 @@
           }}
         ecs_ec2_sg_group_id_f: >-
           {{ (sg_r.security_groups |
-            selectattr('group_name', 'eq', prefix_v + '-ecs-ec2-sg') |
+            selectattr('group_name', 'eq', prefix_v + '-ecs-tasks-sg') |
             first).group_id
           }}
 
@@ -63,6 +63,19 @@
         log_group_name: /ecs/mcf
         state: present
         retention: 7
+
+    - name: Create ECS cluster for Fargate
+      community.aws.ecs_cluster:
+        name: "{{ prefix_v }}-ecs-cluster"
+        state: present
+        capacity_providers:
+          - FARGATE
+          - FARGATE_SPOT
+        capacity_provider_strategy:
+          - capacity_provider: FARGATE
+            weight: 1
+            base: 1
+      register: ecs_cluster_r
 
     - name: Create an execution role for the containers
       amazon.aws.iam_role:
@@ -217,7 +230,7 @@
       community.aws.ecs_taskdefinition:
         family: "{{ prefix_v }}-gateway-td"
         state: "present"
-        launch_type: EC2
+        launch_type: FARGATE
         memory: "6144"
         cpu: "4096"
         network_mode: awsvpc
@@ -272,7 +285,7 @@
       community.aws.ecs_taskdefinition:
         family: "{{ prefix_v }}-nginx-td"
         state: "present"
-        launch_type: EC2
+        launch_type: FARGATE
         memory: "1024"
         cpu: "4096"
         network_mode: awsvpc
@@ -304,7 +317,7 @@
       community.aws.ecs_taskdefinition:
         family: "{{ prefix_v }}-redis-td"
         state: "present"
-        launch_type: EC2
+        launch_type: FARGATE
         memory: "2048"
         cpu: "2048"
         network_mode: awsvpc
@@ -345,6 +358,7 @@
         state: present
         name: "{{ prefix_v }}-redis-svc"
         cluster: "{{ prefix_v }}-ecs-cluster"
+        launch_type: FARGATE
         desired_count: 1
         task_definition: "{{ redis_td_r.taskdefinition.taskDefinitionArn }}"
         network_configuration:
@@ -373,6 +387,7 @@
         state: present
         name: "{{ prefix_v }}-gateway-svc"
         cluster: "{{ prefix_v }}-ecs-cluster"
+        launch_type: FARGATE
         desired_count: "{{ gateway_replicas | default(3) }}"
         task_definition: "{{ gateway_td_r.taskdefinition.taskDefinitionArn }}"
         network_configuration:
@@ -401,6 +416,7 @@
         state: present
         name: "{{ prefix_v }}-nginx-svc"
         cluster: "{{ prefix_v }}-ecs-cluster"
+        launch_type: FARGATE
         desired_count: 1
         task_definition: "{{ nginx_td_r.taskdefinition.taskDefinitionArn }}"
         load_balancers:

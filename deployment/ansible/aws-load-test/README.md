@@ -154,17 +154,17 @@ The playbooks deploy the following AWS infrastructure:
          |                          |                                            |
          v                          |  +-----------------+  +-----------------+  |
     +-----------------------------+ |  | Private Subnet  |  | Private Subnet  |  |
-    | ECS Cluster (EC2)           | |  | (AZ-a)          |  | (AZ-b)          |  |
-    | c6i.12xlarge                | |  |                 |  |                 |  |
+    | ECS Cluster (Fargate)       | |  | (AZ-a)          |  | (AZ-b)          |  |
+    |                             | |  |                 |  |                 |  |
     | +-------+ +-------+         | |  |                 |  |                 |  |
     | |gateway| |gateway|         |<+--| ECS Tasks       |  |                 |  |
     | +-------+ +-------+         | |  |                 |  |                 |  |
     | +-------+ +-------+         | |  |                 |  |                 |  |
     | |gateway| | nginx |         | |  |                 |  |                 |  |
     | +-------+ +-------+         | |  |                 |  |                 |  |
-    | +-------+ +-------+         | |  +-----------------+  +-----------------+  |
-    | |pgbounce| | redis|         | |           |                    |           |
-    | +-------+ +-------+         | |           v                    v           |
+    | +-------+                   | |  +-----------------+  +-----------------+  |
+    | | redis |                   | |           |                    |           |
+    | +-------+                   | |           v                    v           |
     +-----------------------------+ |  +-------------------------------------+   |
                                     |  |         Aurora PostgreSQL           |   |
                                     |  +-------------------------------------+   |
@@ -176,7 +176,7 @@ The playbooks deploy the following AWS infrastructure:
 - **VPC**: Isolated network with public and private subnets across multiple AZs
 - **Bastion Host**: SSH jump server with Locust for load testing
 - **Application Load Balancer (ALB)**: HTTPS termination and traffic distribution
-- **ECS Cluster (EC2)**: Single c6i.12xlarge node running all containers
+- **ECS Cluster (Fargate)**: Serverless container orchestration
 - **Aurora PostgreSQL**: Managed database (standard PostgreSQL, no PostGIS)
 - **Route 53**: DNS management for the application domain
 

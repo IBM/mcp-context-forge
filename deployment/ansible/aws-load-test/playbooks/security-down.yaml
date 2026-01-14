@@ -26,18 +26,18 @@
         vpc_id: "{{ vpc_info.vpcs[0].id }}"
 
     # Delete security groups in reverse order of dependencies
-    # Aurora SG (referenced by bastion, ecs-ec2)
+    # Aurora SG (referenced by bastion, ecs-tasks)
     - name: Delete Aurora PostgreSQL security group
       amazon.aws.ec2_security_group:
         region: "{{ region_v }}"
         name: "{{ prefix_v }}-aurora-postgresql-sg"
         state: absent
 
-    # ECS EC2 SG
-    - name: Delete ECS EC2 security group
+    # ECS Tasks SG
+    - name: Delete ECS tasks security group
       amazon.aws.ec2_security_group:
         region: "{{ region_v }}"
-        name: "{{ prefix_v }}-ecs-ec2-sg"
+        name: "{{ prefix_v }}-ecs-tasks-sg"
         state: absent
 
     # ALB SG (no dependents)
@@ -47,7 +47,7 @@
         name: "{{ prefix_v }}-alb-sg"
         state: absent
 
-    # Bastion SG (referenced by aurora and ecs-ec2)
+    # Bastion SG (referenced by aurora and ecs-tasks)
     - name: Delete Bastion security group
       amazon.aws.ec2_security_group:
         region: "{{ region_v }}"
