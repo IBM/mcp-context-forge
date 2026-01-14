@@ -30446,7 +30446,8 @@ async function serverSideUserSearch(teamId, searchTerm) {
                     tempDiv.querySelectorAll(".user-item").forEach((item) => {
                         const email = item.dataset.userEmail;
                         if (email) {
-                            const roleSelect = item.querySelector(".role-select");
+                            const roleSelect =
+                                item.querySelector(".role-select");
                             memberDataFromDom[email] = {
                                 role: roleSelect ? roleSelect.value : "member",
                             };
