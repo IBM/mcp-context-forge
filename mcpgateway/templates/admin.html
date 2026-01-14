@@ -2070,7 +2070,7 @@
           <div class="overflow-x-auto">
             <!-- Table will be loaded via HTMX -->
             <div id="servers-table"
-                 hx-get="{{ root_path }}/admin/servers/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+                 hx-get="{{ root_path }}/admin/servers/partial?page=1&per_page=20&include_inactive=true{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#servers-loading">
@@ -4448,7 +4448,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <div class="overflow-x-auto">
             <!-- Table will be loaded via HTMX -->
             <div id="gateways-table"
-                 hx-get="{{ root_path }}/admin/gateways/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+                 hx-get="{{ root_path }}/admin/gateways/partial?page=1&per_page=20&include_inactive=true{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#gateways-loading">

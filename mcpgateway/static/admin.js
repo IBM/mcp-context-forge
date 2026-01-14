@@ -126,6 +126,35 @@ document.addEventListener("DOMContentLoaded", function () {
     // Initialize search functionality for all entity types
     initializeSearchInputs();
     initializePasswordValidation();
+
+    // Initialize server checkbox state from URL parameter
+    const serversCheckbox = document.getElementById("show-inactive-servers");
+    if (serversCheckbox) {
+        // Check URL for include_inactive parameter
+        const urlParams = new URLSearchParams(window.location.search);
+        const includeInactive = urlParams.get("include_inactive") === "true";
+        serversCheckbox.checked = includeInactive;
+        
+        // Wait for HTMX to load the table, then apply filter
+        setTimeout(() => {
+            applyServerFilter(serversCheckbox.checked);
+        }, 500);
+    }
+
+    // Initialize gateway checkbox state from URL parameter
+    const gatewaysCheckbox = document.getElementById("show-inactive-gateways");
+    if (gatewaysCheckbox) {
+        // Check URL for include_inactive parameter
+        const urlParams = new URLSearchParams(window.location.search);
+        const includeInactive = urlParams.get("include_inactive") === "true";
+        gatewaysCheckbox.checked = includeInactive;
+        
+        // Wait for HTMX to load the table, then apply filter
+        setTimeout(() => {
+            applyGatewayFilter(gatewaysCheckbox.checked);
+        }, 500);
+    }
+
     initializeAddMembersForms();
 
     // Event delegation for team member search - server-side search for unified view
@@ -190,6 +219,22 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // Re-initialize search inputs when HTMX content loads
     document.body.addEventListener("htmx:afterSwap", function (event) {
+        // Apply server filter on initial load and after HTMX swaps
+        if (event.detail.target.id === "servers-table") {
+            const checkbox = document.getElementById("show-inactive-servers");
+            if (checkbox) {
+                applyServerFilter(checkbox.checked);
+            }
+        }
+
+        // Apply gateway filter on initial load and after HTMX swaps
+        if (event.detail.target.id === "gateways-table") {
+            const checkbox = document.getElementById("show-inactive-gateways");
+            if (checkbox) {
+                applyGatewayFilter(checkbox.checked);
+            }
+        }
+
         setTimeout(() => {
             initializeSearchInputs();
         }, 200);
@@ -10139,6 +10184,80 @@ document.addEventListener("DOMContentLoaded", function () {
 // INACTIVE ITEMS HANDLING
 // ===================================================================
 
+
+/**
+ * Apply client-side filtering to server table rows based on active/inactive state
+ * @param {boolean} showInactive - Whether to show inactive servers
+ */
+function applyServerFilter(showInactive) {
+    const tableBody = document.getElementById("servers-table-body");
+    if (!tableBody) {
+        console.warn("applyServerFilter: servers-table-body not found");
+        return;
+    }
+    
+    const rows = tableBody.querySelectorAll("tr[data-enabled]");
+    console.log(`applyServerFilter: showInactive=${showInactive}, found ${rows.length} rows`);
+    
+    let hiddenCount = 0;
+    rows.forEach(row => {
+        const isEnabled = row.getAttribute("data-enabled") === "true";
+        if (showInactive) {
+            // Show all rows (active and inactive)
+            row.style.removeProperty("display");
+            row.style.removeProperty("visibility");
+        } else {
+            // Show only active rows
+            if (isEnabled) {
+                row.style.removeProperty("display");
+                row.style.removeProperty("visibility");
+            } else {
+                row.style.display = "none";
+                hiddenCount++;
+            }
+        }
+    });
+    
+    console.log(`applyServerFilter: ${hiddenCount} rows hidden`);
+}
+
+/**
+ * Apply client-side filtering to gateway table rows based on active/inactive state
+ * @param {boolean} showInactive - Whether to show inactive gateways
+ */
+function applyGatewayFilter(showInactive) {
+    const tableBody = document.getElementById("gateways-table-body");
+    if (!tableBody) {
+        console.warn("applyGatewayFilter: gateways-table-body not found");
+        return;
+    }
+    
+    const rows = tableBody.querySelectorAll("tr[data-enabled]");
+    console.log(`applyGatewayFilter: showInactive=${showInactive}, found ${rows.length} rows`);
+    
+    let hiddenCount = 0;
+    rows.forEach(row => {
+        const isEnabled = row.getAttribute("data-enabled") === "true";
+        if (showInactive) {
+            // Show all rows (active and inactive)
+            row.style.removeProperty("display");
+            row.style.removeProperty("visibility");
+        } else {
+            // Show only active rows
+            if (isEnabled) {
+                row.style.removeProperty("display");
+                row.style.removeProperty("visibility");
+            } else {
+                row.style.display = "none";
+                hiddenCount++;
+            }
+        }
+    });
+    
+    console.log(`applyGatewayFilter: ${hiddenCount} rows hidden`);
+}
+
+
 function toggleInactiveItems(type) {
     const checkbox = safeGetElement(`show-inactive-${type}`);
     if (!checkbox) {
@@ -10159,20 +10278,17 @@ function toggleInactiveItems(type) {
         // ignore (shouldn't happen)
     }
 
-    // For servers (catalog), use loadServers function if available, otherwise reload page
+    // For servers, use client-side filtering instead of HTMX refresh
     if (type === "servers") {
-        if (typeof window.loadServers === "function") {
-            window.loadServers();
-            return;
-        }
-        // Fallback to page reload
-        const fallbackUrl = new URL(window.location);
-        if (checkbox.checked) {
-            fallbackUrl.searchParams.set("include_inactive", "true");
-        } else {
-            fallbackUrl.searchParams.delete("include_inactive");
-        }
-        window.location = fallbackUrl;
+        console.log(`toggleInactiveItems: servers checkbox toggled to ${checkbox.checked}`);
+        applyServerFilter(checkbox.checked);
+        return;
+    }
+
+    // For gateways, use client-side filtering instead of HTMX refresh
+    if (type === "gateways") {
+        console.log(`toggleInactiveItems: gateways checkbox toggled to ${checkbox.checked}`);
+        applyGatewayFilter(checkbox.checked);
         return;
     }
 
@@ -16093,10 +16209,21 @@ function filterServerTable(searchText) {
                 }
             });
 
-            const isMatch =
+            const matchesSearch =
                 search === "" || textContent.toLowerCase().includes(search);
-            if (isMatch) {
-                row.style.display = "";
+            
+            // Check if row should be visible based on inactive filter
+            const checkbox = document.getElementById("show-inactive-servers");
+            const showInactive = checkbox ? checkbox.checked : true;
+            const isEnabled = row.getAttribute("data-enabled") === "true";
+            const matchesFilter = showInactive || isEnabled;
+
+            // Only show row if it matches BOTH search AND filter
+            const shouldShow = matchesSearch && matchesFilter;
+            
+            if (shouldShow) {
+                row.style.removeProperty("display");
+                row.style.removeProperty("visibility");
             } else {
                 row.style.display = "none";
             }
@@ -16369,19 +16496,28 @@ function filterGatewaysTable(searchText) {
             }
 
             const fullText = searchContent.trim().toLowerCase();
-            const shouldShow = search === "" || fullText.includes(search);
+            const matchesSearch = search === "" || fullText.includes(search);
+
+            // Check if row should be visible based on inactive filter
+            const checkbox = document.getElementById("show-inactive-gateways");
+            const showInactive = checkbox ? checkbox.checked : true;
+            const isEnabled = row.getAttribute("data-enabled") === "true";
+            const matchesFilter = showInactive || isEnabled;
+
+            // Only show row if it matches BOTH search AND filter
+            const shouldShow = matchesSearch && matchesFilter;
 
             // Debug first few rows
             if (index < 3) {
                 console.log(
-                    `Row ${index + 1}: "${fullText.substring(0, 50)}..." -> Match: ${shouldShow}`,
+                    `Row ${index + 1}: "${fullText.substring(0, 50)}..." -> Search: ${matchesSearch}, Filter: ${matchesFilter}, Show: ${shouldShow}`,
                 );
             }
 
             // Show/hide the row
             if (shouldShow) {
-                row.style.display = "";
-                row.style.visibility = "visible";
+                row.style.removeProperty("display");
+                row.style.removeProperty("visibility");
                 visibleCount++;
             } else {
                 row.style.display = "none";
