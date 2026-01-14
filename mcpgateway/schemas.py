@@ -2729,7 +2729,7 @@ class GatewayCreate(BaseModel):
 
                 # Warn about duplicate keys (optional - could log this instead)
                 if duplicate_keys:
-                    logging.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
+                    logger.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
 
                 # Check for excessive headers (prevent abuse)
                 if len(header_dict) > 100:
@@ -2971,7 +2971,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
                 # Warn about duplicate keys (optional - could log this instead)
                 if duplicate_keys:
-                    logging.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
+                    logger.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
 
                 # Check for excessive headers (prevent abuse)
                 if len(header_dict) > 100:
@@ -4270,7 +4270,7 @@ class A2AAgentCreate(BaseModel):
 
                 # Warn about duplicate keys (optional - could log this instead)
                 if duplicate_keys:
-                    logging.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
+                    logger.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
 
                 # Check for excessive headers (prevent abuse)
                 if len(header_dict) > 100:
@@ -4558,7 +4558,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
 
                 # Warn about duplicate keys (optional - could log this instead)
                 if duplicate_keys:
-                    logging.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
+                    logger.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
 
                 # Check for excessive headers (prevent abuse)
                 if len(header_dict) > 100:
@@ -6584,6 +6584,7 @@ class CatalogServer(BaseModel):
     documentation_url: Optional[str] = Field(None, description="URL to server documentation")
     is_registered: bool = Field(default=False, description="Whether server is already registered")
     is_available: bool = Field(default=True, description="Whether server is currently available")
+    requires_oauth_config: bool = Field(default=False, description="Whether server is registered but needs OAuth configuration")
 
 
 class CatalogServerRegisterRequest(BaseModel):
@@ -6602,6 +6603,7 @@ class CatalogServerRegisterResponse(BaseModel):
     server_id: str = Field(..., description="ID of the registered server in the system")
     message: str = Field(..., description="Status message")
     error: Optional[str] = Field(None, description="Error message if registration failed")
+    oauth_required: bool = Field(False, description="Whether OAuth configuration is required before activation")
 
 
 class CatalogServerStatusRequest(BaseModel):

@@ -489,12 +489,25 @@
 
       <!-- Action Button -->
       {% if server.is_registered %}
+      {% if server.requires_oauth_config %}
+      <button
+        class="w-full px-4 py-2 bg-yellow-600 text-white rounded-md cursor-default"
+        disabled
+        title="Server is registered but OAuth configuration is required before activation"
+      >
+        <svg class="inline-block h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+        </svg>
+        OAuth Config Required
+      </button>
+      {% else %}
       <button
         class="w-full px-4 py-2 bg-gray-300 text-gray-600 rounded-md cursor-not-allowed"
         disabled
       >
         Already Registered
       </button>
+      {% endif %}
       {% else %} {% if server.requires_api_key or server.auth_type in ["API
       Key", "OAuth2.1 & API Key"] %}
       <button
@@ -507,20 +520,15 @@
       <div id="{{ server.id }}-button-container">
         <button
           id="{{ server.id }}-register-btn"
-          class="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed text-left"
+          class="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
           hx-post="{{ root_path }}/admin/mcp-registry/{{ server.id }}/register"
           hx-target="#{{ server.id }}-button-container"
           hx-swap="innerHTML"
-          hx-indicator="#{{ server.id }}-spinner"
-          hx-on::after-request="if(event.detail.successful) { setTimeout(() => { const rootPath = window.ROOT_PATH || ''; if(window.htmx) { window.htmx.ajax('GET', rootPath + '/admin/mcp-registry/partial', {target: '#mcp-registry-servers', swap: 'innerHTML'}); } }, 500); } else { const btn = document.getElementById('{{ server.id }}-register-btn'); if(btn) btn.disabled = false; alert('Registration failed: ' + (event.detail.xhr.response ? JSON.parse(event.detail.xhr.response).error || 'Unknown error' : 'Network error')); }"
+          hx-disabled-elt="this"
+          hx-on::before-request="this.innerHTML = '<span class=\'inline-flex items-center\'><span class=\'inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2\'></span>Registering...</span>'"
+          hx-on::response-error="this.className = 'w-full px-4 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 transition-colors'; this.innerHTML = '<svg class=\'inline-block h-4 w-4 mr-2\' fill=\'none\' stroke=\'currentColor\' viewBox=\'0 0 24 24\'><path stroke-linecap=\'round\' stroke-linejoin=\'round\' stroke-width=\'2\' d=\'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z\'></path></svg>Request Failed - Click to Retry'; this.disabled = false;"
         >
-          <span class="htmx-not-indicator">Add Server</span>
-          <span id="{{ server.id }}-spinner" class="htmx-indicator inline-flex items-center">
-            <span
-              class="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"
-            ></span>
-            Registering...
-          </span>
+          Add Server
         </button>
       </div>
       {% endif %} {% endif %}
@@ -708,5 +716,25 @@ function refreshCatalog() {
   } else {
     location.reload();
   }
+}
+
+// Listen for successful catalog registration to trigger delayed refresh
+// This is triggered by the HX-Trigger-After-Swap header from the server
+// Use a guard to prevent re-attaching on partial refresh
+if (!window._catalogRegistrationListenerAttached) {
+  window._catalogRegistrationListenerAttached = true;
+  // Store timeout ID for debouncing - prevents multiple refreshes when registering multiple servers
+  window._catalogRefreshTimeout = null;
+  document.body.addEventListener('catalogRegistrationSuccess', function(evt) {
+    const delayMs = evt.detail && evt.detail.delayMs ? evt.detail.delayMs : 1500;
+    // Clear any pending refresh to debounce rapid registrations
+    if (window._catalogRefreshTimeout) {
+      clearTimeout(window._catalogRefreshTimeout);
+    }
+    window._catalogRefreshTimeout = setTimeout(function() {
+      window._catalogRefreshTimeout = null;
+      refreshCatalog();
+    }, delayMs);
+  });
 }
 </script>
