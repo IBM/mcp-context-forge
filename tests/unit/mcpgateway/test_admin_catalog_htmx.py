@@ -7,16 +7,23 @@ Authors: Mihai Criveti
 Tests for HTMX functionality in catalog server registration endpoint.
 """
 
-import pytest
+# Standard
 from unittest.mock import AsyncMock, MagicMock, patch
+
+# Third-Party
 from fastapi import Request
 from fastapi.responses import HTMLResponse
+import pytest
 
+# First-Party
 from mcpgateway.admin import register_catalog_server
 from mcpgateway.schemas import (
     CatalogServerRegisterRequest,
     CatalogServerRegisterResponse,
 )
+
+# Get the unwrapped function to bypass the RBAC decorator
+_register_catalog_server = register_catalog_server.__wrapped__
 
 
 @pytest.fixture
@@ -47,9 +54,7 @@ def mock_catalog_service():
 
 
 @pytest.mark.asyncio
-async def test_register_catalog_server_htmx_success(
-    mock_request, mock_db, mock_user, mock_catalog_service
-):
+async def test_register_catalog_server_htmx_success(mock_request, mock_db, mock_user, mock_catalog_service):
     """Test HTMX request returns HTML for successful registration."""
     # Setup HTMX request
     mock_request.headers = {"HX-Request": "true"}
@@ -63,12 +68,12 @@ async def test_register_catalog_server_htmx_success(
     )
     mock_catalog_service.register_catalog_server = AsyncMock(return_value=mock_result)
 
-    # Call endpoint
+    # Call endpoint (using unwrapped function to bypass RBAC decorator)
     with patch("mcpgateway.admin.settings") as mock_settings:
         mock_settings.mcpgateway_catalog_enabled = True
         mock_settings.app_root_path = ""
 
-        response = await register_catalog_server(
+        response = await _register_catalog_server(
             server_id="test-server",
             http_request=mock_request,
             request=None,
@@ -84,9 +89,7 @@ async def test_register_catalog_server_htmx_success(
 
 
 @pytest.mark.asyncio
-async def test_register_catalog_server_htmx_oauth(
-    mock_request, mock_db, mock_user, mock_catalog_service
-):
+async def test_register_catalog_server_htmx_oauth(mock_request, mock_db, mock_user, mock_catalog_service):
     """Test HTMX request returns HTML for OAuth server requiring configuration."""
     # Setup HTMX request
     mock_request.headers = {"HX-Request": "true"}
@@ -100,12 +103,12 @@ async def test_register_catalog_server_htmx_oauth(
     )
     mock_catalog_service.register_catalog_server = AsyncMock(return_value=mock_result)
 
-    # Call endpoint
+    # Call endpoint (using unwrapped function to bypass RBAC decorator)
     with patch("mcpgateway.admin.settings") as mock_settings:
         mock_settings.mcpgateway_catalog_enabled = True
         mock_settings.app_root_path = ""
 
-        response = await register_catalog_server(
+        response = await _register_catalog_server(
             server_id="oauth-server",
             http_request=mock_request,
             request=None,
@@ -121,9 +124,7 @@ async def test_register_catalog_server_htmx_oauth(
 
 
 @pytest.mark.asyncio
-async def test_register_catalog_server_htmx_error(
-    mock_request, mock_db, mock_user, mock_catalog_service
-):
+async def test_register_catalog_server_htmx_error(mock_request, mock_db, mock_user, mock_catalog_service):
     """Test HTMX request returns HTML for failed registration with retry button."""
     # Setup HTMX request
     mock_request.headers = {"HX-Request": "true"}
@@ -137,12 +138,12 @@ async def test_register_catalog_server_htmx_error(
     )
     mock_catalog_service.register_catalog_server = AsyncMock(return_value=mock_result)
 
-    # Call endpoint
+    # Call endpoint (using unwrapped function to bypass RBAC decorator)
     with patch("mcpgateway.admin.settings") as mock_settings:
         mock_settings.mcpgateway_catalog_enabled = True
         mock_settings.app_root_path = ""
 
-        response = await register_catalog_server(
+        response = await _register_catalog_server(
             server_id="failed-server",
             http_request=mock_request,
             request=None,
@@ -159,9 +160,7 @@ async def test_register_catalog_server_htmx_error(
 
 
 @pytest.mark.asyncio
-async def test_register_catalog_server_json_response(
-    mock_request, mock_db, mock_user, mock_catalog_service
-):
+async def test_register_catalog_server_json_response(mock_request, mock_db, mock_user, mock_catalog_service):
     """Test non-HTMX request returns JSON response."""
     # Setup non-HTMX request (no HX-Request header)
     mock_request.headers = {}
@@ -175,11 +174,11 @@ async def test_register_catalog_server_json_response(
     )
     mock_catalog_service.register_catalog_server = AsyncMock(return_value=mock_result)
 
-    # Call endpoint
+    # Call endpoint (using unwrapped function to bypass RBAC decorator)
     with patch("mcpgateway.admin.settings") as mock_settings:
         mock_settings.mcpgateway_catalog_enabled = True
 
-        response = await register_catalog_server(
+        response = await _register_catalog_server(
             server_id="test-server",
             http_request=mock_request,
             request=None,
@@ -195,9 +194,7 @@ async def test_register_catalog_server_json_response(
 
 
 @pytest.mark.asyncio
-async def test_register_catalog_server_htmx_with_api_key(
-    mock_request, mock_db, mock_user, mock_catalog_service
-):
+async def test_register_catalog_server_htmx_with_api_key(mock_request, mock_db, mock_user, mock_catalog_service):
     """Test HTMX request with API key registration."""
     # Setup HTMX request
     mock_request.headers = {"HX-Request": "true"}
@@ -218,12 +215,12 @@ async def test_register_catalog_server_htmx_with_api_key(
     )
     mock_catalog_service.register_catalog_server = AsyncMock(return_value=mock_result)
 
-    # Call endpoint
+    # Call endpoint (using unwrapped function to bypass RBAC decorator)
     with patch("mcpgateway.admin.settings") as mock_settings:
         mock_settings.mcpgateway_catalog_enabled = True
         mock_settings.app_root_path = ""
 
-        response = await register_catalog_server(
+        response = await _register_catalog_server(
             server_id="api-server",
             http_request=mock_request,
             request=register_request,
@@ -238,9 +235,7 @@ async def test_register_catalog_server_htmx_with_api_key(
 
 
 @pytest.mark.asyncio
-async def test_register_catalog_server_htmx_error_escaping(
-    mock_request, mock_db, mock_user, mock_catalog_service
-):
+async def test_register_catalog_server_htmx_error_escaping(mock_request, mock_db, mock_user, mock_catalog_service):
     """Test that error messages with quotes are properly escaped in HTML."""
     # Setup HTMX request
     mock_request.headers = {"HX-Request": "true"}
@@ -254,12 +249,12 @@ async def test_register_catalog_server_htmx_error_escaping(
     )
     mock_catalog_service.register_catalog_server = AsyncMock(return_value=mock_result)
 
-    # Call endpoint
+    # Call endpoint (using unwrapped function to bypass RBAC decorator)
     with patch("mcpgateway.admin.settings") as mock_settings:
         mock_settings.mcpgateway_catalog_enabled = True
         mock_settings.app_root_path = ""
 
-        response = await register_catalog_server(
+        response = await _register_catalog_server(
             server_id="failed-server",
             http_request=mock_request,
             request=None,
@@ -271,13 +266,11 @@ async def test_register_catalog_server_htmx_error_escaping(
     html_content = response.body.decode()
     assert "Failed - Click to Retry" in html_content
     assert "&quot;" in html_content  # Quotes should be escaped
-    assert 'Server returned &quot;Invalid credentials&quot; error' in html_content
+    assert "Server returned &quot;Invalid credentials&quot; error" in html_content
 
 
 @pytest.mark.asyncio
-async def test_register_catalog_server_htmx_retry_button_attributes(
-    mock_request, mock_db, mock_user, mock_catalog_service
-):
+async def test_register_catalog_server_htmx_retry_button_attributes(mock_request, mock_db, mock_user, mock_catalog_service):
     """Test that retry button has correct HTMX attributes."""
     # Setup HTMX request
     mock_request.headers = {"HX-Request": "true"}
@@ -291,12 +284,12 @@ async def test_register_catalog_server_htmx_retry_button_attributes(
     )
     mock_catalog_service.register_catalog_server = AsyncMock(return_value=mock_result)
 
-    # Call endpoint
+    # Call endpoint (using unwrapped function to bypass RBAC decorator)
     with patch("mcpgateway.admin.settings") as mock_settings:
         mock_settings.mcpgateway_catalog_enabled = True
         mock_settings.app_root_path = "/api"
 
-        response = await register_catalog_server(
+        response = await _register_catalog_server(
             server_id="timeout-server",
             http_request=mock_request,
             request=None,
@@ -310,5 +303,5 @@ async def test_register_catalog_server_htmx_retry_button_attributes(
     assert 'hx-target="#timeout-server-button-container"' in html_content
     assert 'hx-swap="innerHTML"' in html_content
     assert 'hx-disabled-elt="this"' in html_content
-    assert 'hx-on::before-request' in html_content
-    assert 'hx-on::after-request' in html_content
+    assert "hx-on::before-request" in html_content
+    assert "hx-on::after-request" in html_content

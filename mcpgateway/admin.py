@@ -15043,7 +15043,10 @@ async def register_catalog_server(
     is_htmx = http_request.headers.get("HX-Request") == "true"
 
     if is_htmx:
-        # Return HTML fragment for HTMX
+        # Return HTML fragment for HTMX - properly escape all dynamic values
+        safe_server_id = html.escape(server_id, quote=True)
+        safe_message = html.escape(result.message, quote=True)
+
         if result.success:
             # Check if this is an OAuth server requiring configuration
             if "OAuth" in result.message and "required" in result.message.lower():
@@ -15051,7 +15054,7 @@ async def register_catalog_server(
                 <button
                     class="w-full px-4 py-2 bg-yellow-600 text-white rounded-md cursor-default"
                     disabled
-                    title="{result.message}"
+                    title="{safe_message}"
                 >
                     <svg class="inline-block h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
@@ -15065,7 +15068,7 @@ async def register_catalog_server(
                 <button
                     class="w-full px-4 py-2 bg-green-600 text-white rounded-md cursor-default"
                     disabled
-                    title="{result.message}"
+                    title="{safe_message}"
                 >
                     <svg class="inline-block h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
@@ -15075,13 +15078,13 @@ async def register_catalog_server(
                 """
         else:
             # Error: Show error state with retry button
-            error_msg = (result.error or result.message).replace('"', '&quot;')
+            error_msg = html.escape(result.error or result.message, quote=True)
             button_fragment = f"""
             <button
-                id="{server_id}-register-btn"
+                id="{safe_server_id}-register-btn"
                 class="w-full px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
-                hx-post="{settings.app_root_path}/admin/mcp-registry/{server_id}/register"
-                hx-target="#{server_id}-button-container"
+                hx-post="{settings.app_root_path}/admin/mcp-registry/{safe_server_id}/register"
+                hx-target="#{safe_server_id}-button-container"
                 hx-swap="innerHTML"
                 hx-disabled-elt="this"
                 hx-on::before-request="this.innerHTML = '<span class=\\'inline-flex items-center\\'><span class=\\'inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2\\'></span>Retrying...</span>'"
