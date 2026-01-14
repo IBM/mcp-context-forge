@@ -4347,6 +4347,7 @@ async def admin_view_team_members(
                         <div
                             id="team-members-container-{team.id}"
                             class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-32 overflow-y-auto dark:bg-gray-700"
+                            data-per-page="{per_page}"
                             hx-get="{root_path}/admin/teams/{team.id}/members/partial?page={page}&per_page={per_page}"
                             hx-trigger="load delay:100ms"
                             hx-target="this"
@@ -4362,6 +4363,7 @@ async def admin_view_team_members(
                         <div
                             id="team-non-members-container-{team.id}"
                             class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-32 overflow-y-auto dark:bg-gray-700"
+                            data-per-page="{per_page}"
                             hx-get="{root_path}/admin/teams/{team.id}/non-members/partial?page=1&per_page={per_page}"
                             hx-trigger="load delay:200ms"
                             hx-target="this"
@@ -4475,7 +4477,7 @@ async def admin_add_team_members_view(
                                 type="text"
                                 id="user-search-{team.id}"
                                 data-team-id="{team.id}"
-                                data-search-url="{root_path}/admin/teams/{team.id}/users/search"
+                                data-search-url="{root_path}/admin/users/search"
                                 data-search-limit="10"
                                 placeholder="Search by name or email..."
                                 class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 text-gray-900 dark:text-white"

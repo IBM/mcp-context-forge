@@ -870,8 +870,8 @@ class TeamManagementService:
                 except (ValueError, TypeError) as e:
                     logger.warning(f"Invalid cursor for team members, ignoring: {e}")
 
-            # Fetch limit + 1 to check for more results
-            page_size = limit or 50
+            # Fetch limit + 1 to check for more results (cap at max_page_size)
+            page_size = min(limit or 50, settings.pagination_max_page_size)
             query = query.limit(page_size + 1)
             memberships = list(self.db.execute(query).scalars().all())
 

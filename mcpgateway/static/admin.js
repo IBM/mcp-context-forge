@@ -30349,15 +30349,22 @@ async function serverSideUserSearch(teamId, searchTerm) {
         return;
     }
 
-    // Default per_page for reloading (matches typical UI defaults)
-    const defaultPerPage = 20;
+    // Read per_page from data attributes (set server-side), fallback to 20
+    const membersPerPage =
+        membersContainer.dataset.perPage ||
+        membersContainer.getAttribute("data-per-page") ||
+        20;
+    const nonMembersPerPage =
+        nonMembersContainer.dataset.perPage ||
+        nonMembersContainer.getAttribute("data-per-page") ||
+        20;
 
     // If search is empty, reload both sections with full data
     if (!searchTerm || searchTerm.trim() === "") {
         try {
             // Reload members - use fetchWithAuth for bearer token support
             const membersResponse = await fetchWithAuth(
-                `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=${defaultPerPage}`,
+                `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=${membersPerPage}`,
             );
             if (membersResponse.ok) {
                 membersContainer.innerHTML = await membersResponse.text();
@@ -30369,7 +30376,7 @@ async function serverSideUserSearch(teamId, searchTerm) {
 
             // Reload non-members
             const nonMembersResponse = await fetchWithAuth(
-                `${window.ROOT_PATH}/admin/teams/${teamId}/non-members/partial?page=1&per_page=${defaultPerPage}`,
+                `${window.ROOT_PATH}/admin/teams/${teamId}/non-members/partial?page=1&per_page=${nonMembersPerPage}`,
             );
             if (nonMembersResponse.ok) {
                 nonMembersContainer.innerHTML = await nonMembersResponse.text();

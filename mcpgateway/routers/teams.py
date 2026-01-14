@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
+from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import (
@@ -329,7 +330,7 @@ async def delete_team(team_id: str, current_user: EmailUserResponse = Depends(ge
 async def list_team_members(
     team_id: str,
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
-    limit: Optional[int] = Query(None, ge=0, description="Maximum number of members to return (default: 50)"),
+    limit: Optional[int] = Query(None, ge=1, le=settings.pagination_max_page_size, description="Maximum number of members to return (default: 50)"),
     include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     current_user: EmailUserResponse = Depends(get_current_user),
     db: Session = Depends(get_db),
