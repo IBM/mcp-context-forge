@@ -4362,7 +4362,7 @@ async def admin_view_team_members(
                         <div
                             id="team-non-members-container-{team.id}"
                             class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-32 overflow-y-auto dark:bg-gray-700"
-                            hx-get="{root_path}/admin/teams/{team.id}/non-members/partial?page=1&per_page=20"
+                            hx-get="{root_path}/admin/teams/{team.id}/non-members/partial?page=1&per_page={per_page}"
                             hx-trigger="load delay:200ms"
                             hx-target="this"
                             hx-swap="innerHTML"
