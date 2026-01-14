@@ -36,7 +36,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailAuthEvent, EmailTeam, EmailTeamMember, EmailUser
+from mcpgateway.db import EmailAuthEvent, EmailTeam, EmailTeamMember, EmailUser, utc_now
 from mcpgateway.schemas import PaginationLinks, PaginationMeta
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.logging_service import LoggingService
@@ -247,6 +247,10 @@ class EmailAuthService:
         if not password:
             raise PasswordValidationError("Password is required")
 
+        # Respect global toggle for password policy
+        if not getattr(settings, "password_policy_enabled", True):
+            return True
+
         # Get password policy settings
         min_length = getattr(settings, "password_min_length", 8)
         require_uppercase = getattr(settings, "password_require_uppercase", False)
@@ -338,8 +342,8 @@ class EmailAuthService:
         # Hash the password
         password_hash = self.password_service.hash_password(password)
 
-        # Create new user
-        user = EmailUser(email=email, password_hash=password_hash, full_name=full_name, is_admin=is_admin, auth_provider=auth_provider)
+        # Create new user (record password change timestamp)
+        user = EmailUser(email=email, password_hash=password_hash, full_name=full_name, is_admin=is_admin, auth_provider=auth_provider, password_changed_at=utc_now())
 
         try:
             self.db.add(user)
@@ -498,7 +502,7 @@ class EmailAuthService:
         self.validate_password(new_password)
 
         # Check if new password is same as old (optional policy)
-        if self.password_service.verify_password(new_password, user.password_hash):
+        if getattr(settings, "password_prevent_reuse", True) and self.password_service.verify_password(new_password, user.password_hash):
             raise PasswordValidationError("New password must be different from current password")
 
         success = False
@@ -508,6 +512,11 @@ class EmailAuthService:
             user.password_hash = new_password_hash
             # Clear the flag that requires the user to change password
             user.password_change_required = False
+            # Record the password change timestamp
+            try:
+                user.password_changed_at = utc_now()
+            except Exception as exc:
+                logger.debug("Failed to set password_changed_at for %s: %s", email, exc)
 
             self.db.commit()
             success = True
@@ -578,6 +587,10 @@ class EmailAuthService:
             # Check if password needs update (verify current password first)
             if not self.password_service.verify_password(password, existing_admin.password_hash):
                 existing_admin.password_hash = self.password_service.hash_password(password)
+                try:
+                    existing_admin.password_changed_at = utc_now()
+                except Exception as exc:
+                    logger.debug("Failed to set password_changed_at for existing admin %s: %s", email, exc)
 
             # Ensure admin status
             existing_admin.is_admin = True
@@ -1002,6 +1015,8 @@ class EmailAuthService:
                 if not self.validate_password(password):
                     raise ValueError("Password does not meet security requirements")
                 user.password_hash = self.password_service.hash_password(password)
+                user.password_change_required = False  # Clear password change requirement
+                user.password_changed_at = utc_now()  # Update password change timestamp
 
             user.updated_at = datetime.now(timezone.utc)
 
