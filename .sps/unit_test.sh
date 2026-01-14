@@ -11,7 +11,7 @@ dnf install -y  postgresql-devel
 
 echo "############# Running Install ################"
  make venv install install-dev
- echo "############# Running Linting ##################"
+echo "############# Running Linting ##################"
 make ruff autoflake isort black
 echo "############# Running Install dependencies ################"
 . $HOME/.venv/mcpgateway/bin/activate && \
@@ -22,11 +22,10 @@ echo "############# Running Install dependencies ################"
 echo "############# Running Install DB ################"
 make install-db
 echo "############# Running Tests and Coverage ##################"
-export PATH=/root/.local/bin/:$PATH
 source $HOME/.venv/mcpgateway/bin/activate && \
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		uv run --active pytest -p pytest_cov -n auto --maxfail=0 -v --ignore=tests/fuzz --cov=mcpgateway
+		$HOME/.local/bin/uv run --active pytest -p pytest_cov -n auto --maxfail=0 -v --ignore=tests/fuzz --cov=mcpgateway
 coverage xml
 coverage report
 
