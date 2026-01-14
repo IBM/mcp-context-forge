@@ -245,6 +245,33 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
         if not user:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
+        # Early evaluation: if the user is marked as requiring a password change,
+        # short-circuit before performing heavier work (token creation, password
+        # verification, etc.). Respect `password_max_age_days` so recent changes
+        # are not repeatedly prompted.
+        if settings.password_change_enforcement_enabled and getattr(user, "password_change_required", False):
+            try:
+                _pwd_changed = getattr(user, "password_changed_at", None)
+                _age_days = None
+                if _pwd_changed:
+                    _age_days = (utc_now() - _pwd_changed).days
+            except Exception as exc:
+                logger.debug("Failed to evaluate password age for %s (early check): %s", login_request.email, exc)
+
+            try:
+                _max_age = getattr(settings, "password_max_age_days", 90)
+                if _age_days is None or _age_days >= _max_age:
+                    logger.info(f"Login blocked for {login_request.email}: password change required (early)")
+                    return ORJSONResponse(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        content={"detail": "Password change required. Please change your password before continuing."},
+                        headers={"X-Password-Change-Required": "true"},
+                    )
+                else:
+                    logger.debug("Ignoring password_change_required (early) for %s: password changed %s days ago (<%s)", login_request.email, _age_days, _max_age)
+            except Exception as exc:
+                logger.debug("Error evaluating early password_change_required for %s: %s", login_request.email, exc)
+
         # Password change enforcement respects master switch and individual toggles
         needs_password_change = False
 
