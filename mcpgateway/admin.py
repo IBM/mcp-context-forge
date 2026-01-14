@@ -784,6 +784,7 @@ def validate_password_strength(password: str) -> tuple[bool, str]:
     """Validate password meets strength requirements.
 
     Uses configurable settings from config.py for password policy.
+    Respects password_policy_enabled toggle - if disabled, all passwords pass.
 
     Args:
         password: Password to validate
@@ -791,6 +792,10 @@ def validate_password_strength(password: str) -> tuple[bool, str]:
     Returns:
         tuple: (is_valid, error_message)
     """
+    # If password policy is disabled, skip all validation
+    if not getattr(settings, "password_policy_enabled", True):
+        return True, ""
+
     min_length = getattr(settings, "password_min_length", 8)
     require_uppercase = getattr(settings, "password_require_uppercase", False)
     require_lowercase = getattr(settings, "password_require_lowercase", False)
@@ -3569,34 +3574,23 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             needs_password_change = False
 
             if settings.password_change_enforcement_enabled:
-                # Compute password age once (best-effort)
-                pwd_changed = None
-                age_days = None
-                try:
-                    pwd_changed = getattr(user, "password_changed_at", None)
-                    if pwd_changed:
-                        age_days = (utc_now() - pwd_changed).days
-                except Exception as exc:
-                    LOGGER.debug("Failed to evaluate password age for %s: %s", email, exc)
-
-                # Honor the explicit flag unless the password was changed recently
+                # If flag is set on the user, always honor it (flag is cleared when password is changed)
                 if getattr(user, "password_change_required", False):
-                    try:
-                        max_age = getattr(settings, "password_max_age_days", 90)
-                        if age_days is None or age_days >= max_age:
-                            needs_password_change = True
-                        else:
-                            LOGGER.debug("Ignoring password_change_required for %s: password changed %s days ago (<%s)", email, age_days, max_age)
-                    except Exception as exc:
-                        LOGGER.debug("Error evaluating password_change_required for %s: %s", email, exc)
+                    needs_password_change = True
+                    LOGGER.debug("User %s has password_change_required flag set", email)
 
-                # Expiry-based enforcement if not already required
-                if not needs_password_change and age_days is not None:
+                # Enforce expiry-based password change if configured and not already required
+                if not needs_password_change:
                     try:
-                        if age_days >= getattr(settings, "password_max_age_days", 90):
-                            needs_password_change = True
+                        pwd_changed = getattr(user, "password_changed_at", None)
+                        if pwd_changed:
+                            age_days = (utc_now() - pwd_changed).days
+                            max_age = getattr(settings, "password_max_age_days", 90)
+                            if age_days >= max_age:
+                                needs_password_change = True
+                                LOGGER.debug("User %s password expired (%s days >= %s)", email, age_days, max_age)
                     except Exception as exc:
-                        LOGGER.debug("Failed to compare password age for %s: %s", email, exc)
+                        LOGGER.debug("Failed to evaluate password age for %s: %s", email, exc)
 
                 # Detect default password on login if enabled
                 if getattr(settings, "detect_default_password_on_login", True):
@@ -3605,11 +3599,13 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                     if is_using_default_password:
                         if getattr(settings, "require_password_change_for_default_password", True):
                             user.password_change_required = True
+                            needs_password_change = True
                             try:
                                 db.commit()
                             except Exception as exc:  # log commit failures
                                 LOGGER.warning("Failed to commit password_change_required flag for %s: %s", email, exc)
-                        needs_password_change = True
+                        else:
+                            LOGGER.info("User %s is using default password but enforcement is disabled", email)
 
             if needs_password_change:
                 LOGGER.info(f"User {email} requires password change - redirecting to change password page")

@@ -1015,6 +1015,8 @@ class EmailAuthService:
                 if not self.validate_password(password):
                     raise ValueError("Password does not meet security requirements")
                 user.password_hash = self.password_service.hash_password(password)
+                user.password_change_required = False  # Clear password change requirement
+                user.password_changed_at = utc_now()  # Update password change timestamp
 
             user.updated_at = datetime.now(timezone.utc)
 

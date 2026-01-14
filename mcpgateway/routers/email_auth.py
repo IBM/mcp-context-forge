@@ -265,70 +265,27 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
         if not user:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
-        # Early evaluation: if the user is marked as requiring a password change,
-        # short-circuit before performing heavier work (token creation, password
-        # verification, etc.). Respect `password_max_age_days` so recent changes
-        # are not repeatedly prompted.
-        if settings.password_change_enforcement_enabled and getattr(user, "password_change_required", False):
-            try:
-                _pwd_changed = getattr(user, "password_changed_at", None)
-                _age_days = None
-                # Only compute age when we have a real datetime to avoid
-                # issues with MagicMock objects in unit tests
-                if isinstance(_pwd_changed, datetime):
-                    _age_days = (utc_now() - _pwd_changed).days
-            except Exception as exc:
-                logger.debug("Failed to evaluate password age for %s (early check): %s", login_request.email, exc)
-
-            try:
-                _max_age = getattr(settings, "password_max_age_days", 90)
-                if _age_days is None or _age_days >= _max_age:
-                    logger.info(f"Login blocked for {login_request.email}: password change required (early)")
-                    return ORJSONResponse(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        content={"detail": "Password change required. Please change your password before continuing."},
-                        headers={"X-Password-Change-Required": "true"},
-                    )
-                else:
-                    logger.debug("Ignoring password_change_required (early) for %s: password changed %s days ago (<%s)", login_request.email, _age_days, _max_age)
-            except Exception as exc:
-                logger.debug("Error evaluating early password_change_required for %s: %s", login_request.email, exc)
-
         # Password change enforcement respects master switch and individual toggles
         needs_password_change = False
 
         if settings.password_change_enforcement_enabled:
-            # Determine password age if available
-            pwd_changed = None
-            age_days = None
-            try:
-                pwd_changed = getattr(user, "password_changed_at", None)
-                # Only compute age when it's a real datetime
-                if isinstance(pwd_changed, datetime):
-                    age_days = (utc_now() - pwd_changed).days
-            except Exception as exc:  # Defensive: log unexpected issues computing age
-                logger.debug("Failed to evaluate password age for %s: %s", login_request.email, exc)
-
-            # If flag is set on the user, honor it unless the password was changed
-            # recently (within password_max_age_days). This avoids repeatedly
-            # prompting users who have already updated their password.
+            # If flag is set on the user, always honor it (flag is cleared when password is changed)
             if getattr(user, "password_change_required", False):
-                try:
-                    max_age = getattr(settings, "password_max_age_days", 90)
-                    if age_days is None or age_days >= max_age:
-                        needs_password_change = True
-                    else:
-                        logger.debug("Ignoring password_change_required for %s: password changed %s days ago (<%s)", login_request.email, age_days, max_age)
-                except Exception as exc:
-                    logger.debug("Error evaluating password_change_required for %s: %s", login_request.email, exc)
+                needs_password_change = True
+                logger.debug("User %s has password_change_required flag set", login_request.email)
 
             # Enforce expiry-based password change if configured and not already required
-            if not needs_password_change and age_days is not None:
+            if not needs_password_change:
                 try:
-                    if age_days >= getattr(settings, "password_max_age_days", 90):
-                        needs_password_change = True
+                    pwd_changed = getattr(user, "password_changed_at", None)
+                    if isinstance(pwd_changed, datetime):
+                        age_days = (utc_now() - pwd_changed).days
+                        max_age = getattr(settings, "password_max_age_days", 90)
+                        if age_days >= max_age:
+                            needs_password_change = True
+                            logger.debug("User %s password expired (%s days >= %s)", login_request.email, age_days, max_age)
                 except Exception as exc:
-                    logger.debug("Failed to compare password age for %s: %s", login_request.email, exc)
+                    logger.debug("Failed to evaluate password age for %s: %s", login_request.email, exc)
 
             # Detect default password on login if enabled
             if getattr(settings, "detect_default_password_on_login", True):
@@ -341,11 +298,13 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
                     # Mark user for password change depending on configuration
                     if getattr(settings, "require_password_change_for_default_password", True):
                         user.password_change_required = True
+                        needs_password_change = True
                         try:
                             db.commit()
                         except Exception as exc:  # log commit failures
                             logger.warning("Failed to commit password_change_required flag for %s: %s", login_request.email, exc)
-                    needs_password_change = True
+                    else:
+                        logger.info("User %s is using default password but enforcement is disabled", login_request.email)
 
         if needs_password_change:
             logger.info(f"Login blocked for {login_request.email}: password change required")
@@ -751,6 +710,7 @@ async def update_user(user_email: str, user_request: EmailRegistrationRequest, c
             # Update password hash directly
             user.password_hash = password_service.hash_password(user_request.password)
             user.password_change_required = False  # Clear password change requirement
+            user.password_changed_at = utc_now()  # Update password change timestamp
 
         db.commit()
         db.refresh(user)

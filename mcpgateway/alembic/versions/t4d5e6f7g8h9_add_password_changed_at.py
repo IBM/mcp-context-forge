@@ -45,12 +45,19 @@ def _column_exists(table_name: str, column_name: str) -> bool:
 
 
 def upgrade() -> None:
-    """Add password_changed_at field to email_users table."""
+    """Add password_changed_at field to email_users table and backfill existing users."""
     if not _column_exists("email_users", "password_changed_at"):
         op.add_column(
             "email_users",
             sa.Column("password_changed_at", sa.DateTime(timezone=True), nullable=True),
         )
+
+    # Backfill existing users: set password_changed_at = created_at for rows where it's NULL
+    # This ensures existing users are subject to password expiry enforcement
+    conn = op.get_bind()
+    conn.execute(
+        sa.text("UPDATE email_users SET password_changed_at = created_at WHERE password_changed_at IS NULL")
+    )
 
 
 def downgrade() -> None:
