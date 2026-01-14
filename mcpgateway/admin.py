@@ -15038,16 +15038,16 @@ async def register_catalog_server(
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
 
     result = await catalog_service.register_catalog_server(catalog_id=server_id, request=request, db=db)
-    
+
     # Check if this is an HTMX request
     is_htmx = http_request.headers.get("HX-Request") == "true"
-    
+
     if is_htmx:
         # Return HTML fragment for HTMX
         if result.success:
             # Check if this is an OAuth server requiring configuration
             if "OAuth" in result.message and "required" in result.message.lower():
-                html = f"""
+                button_fragment = f"""
                 <button
                     class="w-full px-4 py-2 bg-yellow-600 text-white rounded-md cursor-default"
                     disabled
@@ -15061,7 +15061,7 @@ async def register_catalog_server(
                 """
             else:
                 # Success: Show success button state
-                html = f"""
+                button_fragment = f"""
                 <button
                     class="w-full px-4 py-2 bg-green-600 text-white rounded-md cursor-default"
                     disabled
@@ -15076,7 +15076,7 @@ async def register_catalog_server(
         else:
             # Error: Show error state with retry button
             error_msg = (result.error or result.message).replace('"', '&quot;')
-            html = f"""
+            button_fragment = f"""
             <button
                 id="{server_id}-register-btn"
                 class="w-full px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
@@ -15094,9 +15094,9 @@ async def register_catalog_server(
                 Failed - Click to Retry
             </button>
             """
-        
-        return HTMLResponse(content=html)
-    
+
+        return HTMLResponse(content=button_fragment)
+
     # Return JSON for non-HTMX requests (API clients)
     return result
 

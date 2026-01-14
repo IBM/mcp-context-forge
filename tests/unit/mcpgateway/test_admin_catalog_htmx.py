@@ -53,7 +53,7 @@ async def test_register_catalog_server_htmx_success(
     """Test HTMX request returns HTML for successful registration."""
     # Setup HTMX request
     mock_request.headers = {"HX-Request": "true"}
-    
+
     # Mock successful registration
     mock_result = CatalogServerRegisterResponse(
         success=True,
@@ -62,12 +62,12 @@ async def test_register_catalog_server_htmx_success(
         error=None,
     )
     mock_catalog_service.register_catalog_server = AsyncMock(return_value=mock_result)
-    
+
     # Call endpoint
     with patch("mcpgateway.admin.settings") as mock_settings:
         mock_settings.mcpgateway_catalog_enabled = True
         mock_settings.app_root_path = ""
-        
+
         response = await register_catalog_server(
             server_id="test-server",
             http_request=mock_request,
@@ -75,7 +75,7 @@ async def test_register_catalog_server_htmx_success(
             db=mock_db,
             _user=mock_user,
         )
-    
+
     # Verify HTML response
     assert isinstance(response, HTMLResponse)
     assert "Registered Successfully" in response.body.decode()
@@ -90,7 +90,7 @@ async def test_register_catalog_server_htmx_oauth(
     """Test HTMX request returns HTML for OAuth server requiring configuration."""
     # Setup HTMX request
     mock_request.headers = {"HX-Request": "true"}
-    
+
     # Mock OAuth server registration
     mock_result = CatalogServerRegisterResponse(
         success=True,
@@ -99,12 +99,12 @@ async def test_register_catalog_server_htmx_oauth(
         error=None,
     )
     mock_catalog_service.register_catalog_server = AsyncMock(return_value=mock_result)
-    
+
     # Call endpoint
     with patch("mcpgateway.admin.settings") as mock_settings:
         mock_settings.mcpgateway_catalog_enabled = True
         mock_settings.app_root_path = ""
-        
+
         response = await register_catalog_server(
             server_id="oauth-server",
             http_request=mock_request,
@@ -112,7 +112,7 @@ async def test_register_catalog_server_htmx_oauth(
             db=mock_db,
             _user=mock_user,
         )
-    
+
     # Verify HTML response for OAuth
     assert isinstance(response, HTMLResponse)
     assert "OAuth Config Required" in response.body.decode()
@@ -127,7 +127,7 @@ async def test_register_catalog_server_htmx_error(
     """Test HTMX request returns HTML for failed registration with retry button."""
     # Setup HTMX request
     mock_request.headers = {"HX-Request": "true"}
-    
+
     # Mock failed registration
     mock_result = CatalogServerRegisterResponse(
         success=False,
@@ -136,12 +136,12 @@ async def test_register_catalog_server_htmx_error(
         error="Server is offline or unreachable",
     )
     mock_catalog_service.register_catalog_server = AsyncMock(return_value=mock_result)
-    
+
     # Call endpoint
     with patch("mcpgateway.admin.settings") as mock_settings:
         mock_settings.mcpgateway_catalog_enabled = True
         mock_settings.app_root_path = ""
-        
+
         response = await register_catalog_server(
             server_id="failed-server",
             http_request=mock_request,
@@ -149,7 +149,7 @@ async def test_register_catalog_server_htmx_error(
             db=mock_db,
             _user=mock_user,
         )
-    
+
     # Verify HTML response for error
     assert isinstance(response, HTMLResponse)
     assert "Failed - Click to Retry" in response.body.decode()
@@ -165,7 +165,7 @@ async def test_register_catalog_server_json_response(
     """Test non-HTMX request returns JSON response."""
     # Setup non-HTMX request (no HX-Request header)
     mock_request.headers = {}
-    
+
     # Mock successful registration
     mock_result = CatalogServerRegisterResponse(
         success=True,
@@ -174,11 +174,11 @@ async def test_register_catalog_server_json_response(
         error=None,
     )
     mock_catalog_service.register_catalog_server = AsyncMock(return_value=mock_result)
-    
+
     # Call endpoint
     with patch("mcpgateway.admin.settings") as mock_settings:
         mock_settings.mcpgateway_catalog_enabled = True
-        
+
         response = await register_catalog_server(
             server_id="test-server",
             http_request=mock_request,
@@ -186,7 +186,7 @@ async def test_register_catalog_server_json_response(
             db=mock_db,
             _user=mock_user,
         )
-    
+
     # Verify JSON response
     assert isinstance(response, CatalogServerRegisterResponse)
     assert response.success is True
@@ -201,14 +201,14 @@ async def test_register_catalog_server_htmx_with_api_key(
     """Test HTMX request with API key registration."""
     # Setup HTMX request
     mock_request.headers = {"HX-Request": "true"}
-    
+
     # Create registration request with API key
     register_request = CatalogServerRegisterRequest(
         server_id="api-server",
         name="API Server",
         api_key="secret-key",
     )
-    
+
     # Mock successful registration
     mock_result = CatalogServerRegisterResponse(
         success=True,
@@ -217,12 +217,12 @@ async def test_register_catalog_server_htmx_with_api_key(
         error=None,
     )
     mock_catalog_service.register_catalog_server = AsyncMock(return_value=mock_result)
-    
+
     # Call endpoint
     with patch("mcpgateway.admin.settings") as mock_settings:
         mock_settings.mcpgateway_catalog_enabled = True
         mock_settings.app_root_path = ""
-        
+
         response = await register_catalog_server(
             server_id="api-server",
             http_request=mock_request,
@@ -230,7 +230,7 @@ async def test_register_catalog_server_htmx_with_api_key(
             db=mock_db,
             _user=mock_user,
         )
-    
+
     # Verify HTML response
     assert isinstance(response, HTMLResponse)
     assert "Registered Successfully" in response.body.decode()
@@ -244,7 +244,7 @@ async def test_register_catalog_server_htmx_error_escaping(
     """Test that error messages with quotes are properly escaped in HTML."""
     # Setup HTMX request
     mock_request.headers = {"HX-Request": "true"}
-    
+
     # Mock failed registration with quotes in error message
     mock_result = CatalogServerRegisterResponse(
         success=False,
@@ -253,12 +253,12 @@ async def test_register_catalog_server_htmx_error_escaping(
         error='Server returned "Invalid credentials" error',
     )
     mock_catalog_service.register_catalog_server = AsyncMock(return_value=mock_result)
-    
+
     # Call endpoint
     with patch("mcpgateway.admin.settings") as mock_settings:
         mock_settings.mcpgateway_catalog_enabled = True
         mock_settings.app_root_path = ""
-        
+
         response = await register_catalog_server(
             server_id="failed-server",
             http_request=mock_request,
@@ -266,7 +266,7 @@ async def test_register_catalog_server_htmx_error_escaping(
             db=mock_db,
             _user=mock_user,
         )
-    
+
     # Verify HTML response has escaped quotes
     html_content = response.body.decode()
     assert "Failed - Click to Retry" in html_content
@@ -281,7 +281,7 @@ async def test_register_catalog_server_htmx_retry_button_attributes(
     """Test that retry button has correct HTMX attributes."""
     # Setup HTMX request
     mock_request.headers = {"HX-Request": "true"}
-    
+
     # Mock failed registration
     mock_result = CatalogServerRegisterResponse(
         success=False,
@@ -290,12 +290,12 @@ async def test_register_catalog_server_htmx_retry_button_attributes(
         error="Connection timeout",
     )
     mock_catalog_service.register_catalog_server = AsyncMock(return_value=mock_result)
-    
+
     # Call endpoint
     with patch("mcpgateway.admin.settings") as mock_settings:
         mock_settings.mcpgateway_catalog_enabled = True
         mock_settings.app_root_path = "/api"
-        
+
         response = await register_catalog_server(
             server_id="timeout-server",
             http_request=mock_request,
@@ -303,7 +303,7 @@ async def test_register_catalog_server_htmx_retry_button_attributes(
             db=mock_db,
             _user=mock_user,
         )
-    
+
     # Verify retry button has correct HTMX attributes
     html_content = response.body.decode()
     assert 'hx-post="/api/admin/mcp-registry/timeout-server/register"' in html_content
