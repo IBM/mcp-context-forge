@@ -127,6 +127,40 @@ def setup_metrics(app):
         url_scheme = database_url.split("://", maxsplit=1)[0] if "://" in database_url else "unknown"
         db_info_gauge.labels(engine=db_engine, url_scheme=url_scheme).set(1)
 
+        # Add HTTP connection pool metrics
+        http_pool_max_connections = Gauge(
+            "http_pool_max_connections",
+            "Maximum allowed HTTP connections in the pool",
+            registry=REGISTRY,
+        )
+        http_pool_max_keepalive = Gauge(
+            "http_pool_max_keepalive_connections",
+            "Maximum idle keepalive connections to retain",
+            registry=REGISTRY,
+        )
+
+        # Register a callback to update HTTP pool metrics
+        def update_http_pool_metrics():
+            try:
+                # First-Party
+                from mcpgateway.services.http_client_service import SharedHttpClient  # pylint: disable=import-outside-toplevel
+
+                # Only update if client is initialized
+                if SharedHttpClient._instance and SharedHttpClient._instance._initialized:  # pylint: disable=protected-access
+                    stats = SharedHttpClient._instance.get_pool_stats()  # pylint: disable=protected-access
+                    http_pool_max_connections.set(stats.get("max_connections", 0))
+                    http_pool_max_keepalive.set(stats.get("max_keepalive", 0))
+                    # Note: httpx doesn't expose current connection count, only limits
+            except Exception:
+                pass  # Silently skip if client not initialized or error occurs
+
+        # Update metrics on each scrape
+        REGISTRY.register(Gauge(
+            "http_pool_scrape_trigger",
+            "Trigger HTTP pool metrics update on scrape",
+            registry=None,  # Don't double-register
+        ).set_function(lambda: update_http_pool_metrics() or 1))
+
         # Create instrumentator instance
         instrumentator = Instrumentator(
             should_group_status_codes=False,

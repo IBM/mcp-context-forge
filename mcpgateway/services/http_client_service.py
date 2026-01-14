@@ -76,6 +76,7 @@ class SharedHttpClient:
         """Initialize the SharedHttpClient wrapper (not the actual client)."""
         self._client: Optional[httpx.AsyncClient] = None
         self._initialized: bool = False
+        self._limits: Optional[httpx.Limits] = None
 
     @classmethod
     async def get_instance(cls) -> "SharedHttpClient":
@@ -105,7 +106,7 @@ class SharedHttpClient:
         # First-Party
         from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
 
-        limits = httpx.Limits(
+        self._limits = httpx.Limits(
             max_connections=settings.httpx_max_connections,
             max_keepalive_connections=settings.httpx_max_keepalive_connections,
             keepalive_expiry=settings.httpx_keepalive_expiry,
@@ -119,7 +120,7 @@ class SharedHttpClient:
         )
 
         self._client = httpx.AsyncClient(
-            limits=limits,
+            limits=self._limits,
             timeout=timeout,
             http2=settings.httpx_http2_enabled,
             follow_redirects=True,
@@ -148,6 +149,35 @@ class SharedHttpClient:
         if self._client is None:
             raise RuntimeError("SharedHttpClient not initialized. Call get_instance() first.")
         return self._client
+
+    def get_pool_stats(self) -> dict[str, int]:
+        """
+        Get current connection pool statistics.
+
+        Returns:
+            dict: Connection pool metrics including:
+                - total_connections: Current number of active connections
+                - idle_connections: Number of idle keepalive connections
+                - max_connections: Maximum allowed connections
+                - max_keepalive: Maximum idle connections to retain
+
+        Note:
+            Returns empty dict if client is not initialized.
+        """
+        if self._client is None:
+            return {}
+
+        # Return pool configuration limits (actual connection counts not exposed by httpx)
+        if self._limits is not None:
+            return {
+                "max_connections": self._limits.max_connections,
+                "max_keepalive": self._limits.max_keepalive_connections,
+            }
+
+        return {
+            "max_connections": self._client._limits.max_connections,  # pylint: disable=protected-access
+            "max_keepalive": self._client._limits.max_keepalive_connections,  # pylint: disable=protected-access
+        }
 
     async def close(self) -> None:
         """Close the shared HTTP client and release all connections."""
