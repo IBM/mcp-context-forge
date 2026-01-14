@@ -127,7 +127,8 @@ def setup_metrics(app):
         url_scheme = database_url.split("://", maxsplit=1)[0] if "://" in database_url else "unknown"
         db_info_gauge.labels(engine=db_engine, url_scheme=url_scheme).set(1)
 
-        # Add HTTP connection pool metrics
+        # Add HTTP connection pool metrics with lazy initialization
+        # These gauges are updated from app lifespan after SharedHttpClient is ready
         http_pool_max_connections = Gauge(
             "http_pool_max_connections",
             "Maximum allowed HTTP connections in the pool",
@@ -139,7 +140,8 @@ def setup_metrics(app):
             registry=REGISTRY,
         )
 
-        # Register a callback to update HTTP pool metrics
+        # Store update function as a module-level attribute so it can be called
+        # from the application lifespan after SharedHttpClient is initialized
         def update_http_pool_metrics():
             try:
                 # First-Party
@@ -154,12 +156,8 @@ def setup_metrics(app):
             except Exception:
                 pass  # Silently skip if client not initialized or error occurs
 
-        # Update metrics on each scrape
-        REGISTRY.register(Gauge(
-            "http_pool_scrape_trigger",
-            "Trigger HTTP pool metrics update on scrape",
-            registry=None,  # Don't double-register
-        ).set_function(lambda: update_http_pool_metrics() or 1))
+        # Make the update function available at module level for lifespan calls
+        app.state.update_http_pool_metrics = update_http_pool_metrics
 
         # Create instrumentator instance
         instrumentator = Instrumentator(

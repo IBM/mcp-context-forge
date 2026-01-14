@@ -605,6 +605,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     await SharedHttpClient.get_instance()
 
+    # Update HTTP pool metrics after SharedHttpClient is initialized
+    if hasattr(app.state, "update_http_pool_metrics"):
+        app.state.update_http_pool_metrics()
+
     # Initialize MCP session pool (for session reuse across tool invocations)
     if settings.mcp_session_pool_enabled:
         # First-Party

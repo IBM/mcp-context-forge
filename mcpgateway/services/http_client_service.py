@@ -174,10 +174,8 @@ class SharedHttpClient:
                 "max_keepalive": self._limits.max_keepalive_connections,
             }
 
-        return {
-            "max_connections": self._client._limits.max_connections,  # pylint: disable=protected-access
-            "max_keepalive": self._client._limits.max_keepalive_connections,  # pylint: disable=protected-access
-        }
+        # Fallback if _limits somehow not set (should never happen)
+        return {}
 
     async def close(self) -> None:
         """Close the shared HTTP client and release all connections."""
@@ -185,6 +183,7 @@ class SharedHttpClient:
             await self._client.aclose()
             self._client = None
             self._initialized = False
+            self._limits = None
             logger.info("Shared HTTP client closed")
 
     @classmethod
