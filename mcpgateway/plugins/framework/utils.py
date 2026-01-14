@@ -11,7 +11,9 @@ plugins.
 
 # Standard
 from functools import cache
+import hashlib
 import importlib
+import json
 from types import ModuleType
 from typing import Any, Optional
 
@@ -215,3 +217,286 @@ def payload_matches(
 
     # No conditions matched
     return False
+
+
+# def pre_prompt_matches(payload: PromptPrehookPayload, conditions: list[PluginCondition], context: GlobalContext) -> bool:
+#     """Check for a match on pre-prompt hooks.
+
+#     Args:
+#         payload: the prompt prehook payload.
+#         conditions: the conditions on the plugin that are required for execution.
+#         context: the global context.
+
+#     Returns:
+#         True if the plugin matches criteria.
+
+#     Examples:
+#         >>> from mcpgateway.plugins.framework import PluginCondition, GlobalContext
+#         >>> from mcpgateway.plugins.mcp.entities import PromptPrehookPayload
+#         >>> payload = PromptPrehookPayload(name="greeting", args={})
+#         >>> cond = PluginCondition(prompts={"greeting"})
+#         >>> ctx = GlobalContext(request_id="req1")
+#         >>> pre_prompt_matches(payload, [cond], ctx)
+#         True
+#         >>> payload2 = PromptPrehookPayload(name="other", args={})
+#         >>> pre_prompt_matches(payload2, [cond], ctx)
+#         False
+#     """
+#     current_result = True
+#     for index, condition in enumerate(conditions):
+#         if not matches(condition, context):
+#             current_result = False
+
+#         if condition.prompts and payload.name not in condition.prompts:
+#             current_result = False
+#         if current_result:
+#             return True
+#         if index < len(conditions) - 1:
+#             current_result = True
+#     return current_result
+
+
+# def post_prompt_matches(payload: PromptPosthookPayload, conditions: list[PluginCondition], context: GlobalContext) -> bool:
+#     """Check for a match on pre-prompt hooks.
+
+#     Args:
+#         payload: the prompt posthook payload.
+#         conditions: the conditions on the plugin that are required for execution.
+#         context: the global context.
+
+#     Returns:
+#         True if the plugin matches criteria.
+#     """
+#     current_result = True
+#     for index, condition in enumerate(conditions):
+#         if not matches(condition, context):
+#             current_result = False
+
+#         if condition.prompts and payload.name not in condition.prompts:
+#             current_result = False
+#         if current_result:
+#             return True
+#         if index < len(conditions) - 1:
+#             current_result = True
+#     return current_result
+
+
+# def pre_tool_matches(payload: ToolPreInvokePayload, conditions: list[PluginCondition], context: GlobalContext) -> bool:
+#     """Check for a match on pre-tool hooks.
+
+#     Args:
+#         payload: the tool pre-invoke payload.
+#         conditions: the conditions on the plugin that are required for execution.
+#         context: the global context.
+
+#     Returns:
+#         True if the plugin matches criteria.
+
+#     Examples:
+#         >>> from mcpgateway.plugins.framework import PluginCondition, GlobalContext
+#         >>> from mcpgateway.plugins.mcp.entities import ToolPreInvokePayload
+#         >>> payload = ToolPreInvokePayload(name="calculator", args={})
+#         >>> cond = PluginCondition(tools={"calculator"})
+#         >>> ctx = GlobalContext(request_id="req1")
+#         >>> pre_tool_matches(payload, [cond], ctx)
+#         True
+#         >>> payload2 = ToolPreInvokePayload(name="other", args={})
+#         >>> pre_tool_matches(payload2, [cond], ctx)
+#         False
+#     """
+#     current_result = True
+#     for index, condition in enumerate(conditions):
+#         if not matches(condition, context):
+#             current_result = False
+
+#         if condition.tools and payload.name not in condition.tools:
+#             current_result = False
+#         if current_result:
+#             return True
+#         if index < len(conditions) - 1:
+#             current_result = True
+#     return current_result
+
+
+# def post_tool_matches(payload: ToolPostInvokePayload, conditions: list[PluginCondition], context: GlobalContext) -> bool:
+#     """Check for a match on post-tool hooks.
+
+#     Args:
+#         payload: the tool post-invoke payload.
+#         conditions: the conditions on the plugin that are required for execution.
+#         context: the global context.
+
+#     Returns:
+#         True if the plugin matches criteria.
+
+#     Examples:
+#         >>> from mcpgateway.plugins.framework import PluginCondition, GlobalContext
+#         >>> from mcpgateway.plugins.mcp.entities import ToolPostInvokePayload
+#         >>> payload = ToolPostInvokePayload(name="calculator", result={"result": 8})
+#         >>> cond = PluginCondition(tools={"calculator"})
+#         >>> ctx = GlobalContext(request_id="req1")
+#         >>> post_tool_matches(payload, [cond], ctx)
+#         True
+#         >>> payload2 = ToolPostInvokePayload(name="other", result={"result": 8})
+#         >>> post_tool_matches(payload2, [cond], ctx)
+#         False
+#     """
+#     current_result = True
+#     for index, condition in enumerate(conditions):
+#         if not matches(condition, context):
+#             current_result = False
+
+#         if condition.tools and payload.name not in condition.tools:
+#             current_result = False
+#         if current_result:
+#             return True
+#         if index < len(conditions) - 1:
+#             current_result = True
+#     return current_result
+
+
+# def pre_resource_matches(payload: ResourcePreFetchPayload, conditions: list[PluginCondition], context: GlobalContext) -> bool:
+#     """Check for a match on pre-resource hooks.
+
+#     Args:
+#         payload: the resource pre-fetch payload.
+#         conditions: the conditions on the plugin that are required for execution.
+#         context: the global context.
+
+#     Returns:
+#         True if the plugin matches criteria.
+
+#     Examples:
+#         >>> from mcpgateway.plugins.framework import PluginCondition, GlobalContext
+#         >>> from mcpgateway.plugins.mcp.entities import ResourcePreFetchPayload
+#         >>> payload = ResourcePreFetchPayload(uri="file:///data.txt")
+#         >>> cond = PluginCondition(resources={"file:///data.txt"})
+#         >>> ctx = GlobalContext(request_id="req1")
+#         >>> pre_resource_matches(payload, [cond], ctx)
+#         True
+#         >>> payload2 = ResourcePreFetchPayload(uri="http://api/other")
+#         >>> pre_resource_matches(payload2, [cond], ctx)
+#         False
+#     """
+#     current_result = True
+#     for index, condition in enumerate(conditions):
+#         if not matches(condition, context):
+#             current_result = False
+
+#         if condition.resources and payload.uri not in condition.resources:
+#             current_result = False
+#         if current_result:
+#             return True
+#         if index < len(conditions) - 1:
+#             current_result = True
+#     return current_result
+
+
+# def post_resource_matches(payload: ResourcePostFetchPayload, conditions: list[PluginCondition], context: GlobalContext) -> bool:
+#     """Check for a match on post-resource hooks.
+
+#     Args:
+#         payload: the resource post-fetch payload.
+#         conditions: the conditions on the plugin that are required for execution.
+#         context: the global context.
+
+#     Returns:
+#         True if the plugin matches criteria.
+
+#     Examples:
+#         >>> from mcpgateway.plugins.framework import PluginCondition, GlobalContext
+#         >>> from mcpgateway.plugins.mcp.entities import ResourcePostFetchPayload, ResourceContent
+#         >>> content = ResourceContent(type="resource", uri="file:///data.txt", text="Test")
+#         >>> payload = ResourcePostFetchPayload(uri="file:///data.txt", content=content)
+#         >>> cond = PluginCondition(resources={"file:///data.txt"})
+#         >>> ctx = GlobalContext(request_id="req1")
+#         >>> post_resource_matches(payload, [cond], ctx)
+#         True
+#         >>> payload2 = ResourcePostFetchPayload(uri="http://api/other", content=content)
+#         >>> post_resource_matches(payload2, [cond], ctx)
+#         False
+#     """
+#     current_result = True
+#     for index, condition in enumerate(conditions):
+#         if not matches(condition, context):
+#             current_result = False
+
+#         if condition.resources and payload.uri not in condition.resources:
+#             current_result = False
+#         if current_result:
+#             return True
+#         if index < len(conditions) - 1:
+#             current_result = True
+#     return current_result
+
+
+def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Deep merge two dictionaries, with override values taking precedence.
+
+    Recursively merges nested dictionaries. Lists and other types are replaced entirely.
+
+    Args:
+        base: Base configuration dictionary.
+        override: Override configuration dictionary (takes precedence).
+
+    Returns:
+        New dictionary with deep-merged values.
+
+    Examples:
+        >>> base = {"a": 1, "b": {"x": 10, "y": 20}, "c": [1, 2]}
+        >>> override = {"b": {"y": 30, "z": 40}, "d": 4}
+        >>> result = deep_merge(base, override)
+        >>> result == {"a": 1, "b": {"x": 10, "y": 30, "z": 40}, "c": [1, 2], "d": 4}
+        True
+        >>> # Base values preserved when not overridden
+        >>> deep_merge({"timeout": 30, "retry": 3}, {"timeout": 60})
+        {'timeout': 60, 'retry': 3}
+        >>> # Nested merge
+        >>> deep_merge({"db": {"host": "localhost", "port": 5432}}, {"db": {"port": 3306}})
+        {'db': {'host': 'localhost', 'port': 3306}}
+    """
+    # Standard
+    import copy
+
+    result = copy.deepcopy(base)
+
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            # Recursively merge nested dicts
+            result[key] = deep_merge(result[key], value)
+        else:
+            # Override (or add new key)
+            result[key] = copy.deepcopy(value)
+
+    return result
+
+
+def hash_config(config: dict[str, Any]) -> str:
+    """Create a stable hash of a configuration dictionary.
+
+    Uses JSON serialization with sorted keys to ensure deterministic hashing.
+    This hash is used for cache keys and instance identification, NOT for security.
+
+    Args:
+        config: Configuration dictionary to hash.
+
+    Returns:
+        SHA1 hash of the config as hex string.
+
+    Examples:
+        >>> config1 = {"timeout": 30, "retry": 3}
+        >>> config2 = {"retry": 3, "timeout": 30}  # Different order
+        >>> hash_config(config1) == hash_config(config2)
+        True
+        >>> config3 = {"timeout": 60, "retry": 3}
+        >>> hash_config(config1) == hash_config(config3)
+        False
+        >>> # Empty config
+        >>> hash_config({})
+        'bf21a9e8fbc5a3846fb05b4fa0859e0917b2202f'
+    """
+    # Serialize with sorted keys for stability
+    config_json = json.dumps(config, sort_keys=True, default=str)
+    # Use SHA1 for shorter hashes (collision risk is acceptable for cache keys)
+    # nosec B324 - SHA1 is acceptable here as this is used for cache key generation, not security
+    return hashlib.sha1(config_json.encode()).hexdigest()  # nosec

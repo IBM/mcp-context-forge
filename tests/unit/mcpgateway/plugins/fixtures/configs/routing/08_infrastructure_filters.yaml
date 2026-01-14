@@ -1,0 +1,60 @@
+# Config demonstrating infrastructure filters (server_name, server_id, gateway_id)
+plugin_settings:
+  enable_plugin_routing: true
+plugins:
+  - name: prod_tracker
+    description: Production environment tracker
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [tool_pre_invoke]
+    tags: []
+
+  - name: api_server_tracker
+    description: API server tracker
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [tool_pre_invoke]
+    tags: []
+
+  - name: gateway_tracker
+    description: Gateway-specific tracker
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [tool_pre_invoke]
+    tags: []
+
+routes:
+  # Match by server name
+  - entities: [tool]
+    server_name: api-server
+    plugins:
+      - name: api_server_tracker
+        priority: 10
+
+  # Match by server ID (list)
+  - entities: [tool]
+    server_id: [prod-001, prod-002]
+    plugins:
+      - name: prod_tracker
+        priority: 10
+
+  # Match by gateway ID
+  - entities: [tool]
+    gateway_id: gateway-123
+    plugins:
+      - name: gateway_tracker
+        priority: 10
+
+  # Combine multiple filters
+  - entities: [tool]
+    name: critical_tool
+    server_name: api-server
+    gateway_id: gateway-123
+    plugins:
+      - name: prod_tracker
+        priority: 5
+      - name: api_server_tracker
+        priority: 10

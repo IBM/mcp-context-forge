@@ -1378,6 +1378,15 @@ class PromptService:
                 has_pre_fetch = self._plugin_manager and self._plugin_manager.has_hooks_for(PromptHookType.PROMPT_PRE_FETCH)
                 has_post_fetch = self._plugin_manager and self._plugin_manager.has_hooks_for(PromptHookType.PROMPT_POST_FETCH)
 
+                # Try to fetch prompt early for entity context
+                # This allows plugins to have access to entity metadata
+                prompt_db = None
+                if has_pre_fetch or has_post_fetch:
+                    search_key = str(prompt_id)
+                    prompt_db = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id).where(DbPrompt.enabled)).scalar_one_or_none()
+                    if not prompt_db:
+                        prompt_db = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_id).where(DbPrompt.enabled)).scalar_one_or_none()
+
                 # Initialize plugin context variables only if hooks are registered
                 context_table = None
                 global_context = None
@@ -1392,11 +1401,24 @@ class PromptService:
                             global_context.server_id = server_id
                         if tenant_id:
                             global_context.tenant_id = tenant_id
+                        # Set entity-related fields for plugin routing
+                        global_context.entity_type = "prompt"
+                        if prompt_db:
+                            global_context.entity_id = str(prompt_db.id)
+                            global_context.entity_name = str(prompt_db.name) if hasattr(prompt_db, "name") and prompt_db.name else None
                     else:
                         # Create new context (fallback when middleware didn't run)
                         if not request_id:
                             request_id = uuid.uuid4().hex
-                        global_context = GlobalContext(request_id=request_id, user=user, server_id=server_id, tenant_id=tenant_id)
+                        global_context = GlobalContext(
+                            request_id=request_id,
+                            user=user,
+                            server_id=server_id,
+                            tenant_id=tenant_id,
+                            entity_type="prompt",
+                            entity_id=str(prompt_db.id) if prompt_db and hasattr(prompt_db, "id") else None,
+                            entity_name=str(prompt_db.name) if prompt_db and hasattr(prompt_db, "name") and prompt_db.name else None,
+                        )
 
                 if has_pre_fetch:
                     pre_result, context_table = await self._plugin_manager.invoke_hook(

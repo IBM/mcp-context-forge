@@ -76,17 +76,49 @@
     {% endif %}
     <!-- Alpine.js -->
     {% if ui_airgapped %}
+    <script defer src="{{ root_path }}/static/vendor/alpinejs/collapse.min.js"></script>
     <script
       src="{{ root_path }}/static/vendor/alpinejs/alpine.min.js"
       defer
     ></script>
     {% else %}
+    <script defer src="https://cdn.jsdelivr.net/npm/@alpinejs/collapse@3.x.x/dist/cdn.min.js"></script>
     <script
       src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"
       defer
     ></script>
     {% endif %}
     {% if is_admin %}
+    <!-- Alpine.js Stores for Bulk Plugin Modals -->
+    <script>
+      document.addEventListener('alpine:init', () => {
+        // Generic entity panel store factory
+        function createEntityPanelStore(entityType, tableName) {
+          const selectedKey = `selected${entityType.charAt(0).toUpperCase() + entityType.slice(1)}s`;
+          const selectAllKey = `selectAll${entityType.charAt(0).toUpperCase() + entityType.slice(1)}s`;
+          const toggleAllKey = `toggleAll${entityType.charAt(0).toUpperCase() + entityType.slice(1)}s`;
+
+          return {
+            [selectedKey]: [],
+            [selectAllKey]: false,
+            showBulkPluginModal: false,
+            bulkPluginTab: 'add',
+            [toggleAllKey]() {
+              if (this[selectAllKey]) {
+                const checkboxes = document.querySelectorAll(`#${tableName} tbody input[type=checkbox]`);
+                this[selectedKey] = Array.from(checkboxes).map(cb => cb.value);
+              } else {
+                this[selectedKey] = [];
+              }
+            }
+          };
+        }
+
+        Alpine.store('toolsPanel', createEntityPanelStore('tool', 'tools-table'));
+        Alpine.store('promptsPanel', createEntityPanelStore('prompt', 'prompts-table'));
+        Alpine.store('resourcesPanel', createEntityPanelStore('resource', 'resources-table'));
+      });
+    </script>
     <!-- Chart.js -->
     {% if ui_airgapped %}
     <script src="{{ root_path }}/static/vendor/chartjs/chart.umd.min.js"></script>
@@ -162,6 +194,11 @@
 
       .relationship-badge {
         font-weight: 600;
+      }
+
+      /* Hide Alpine.js elements before Alpine loads (prevents FOUC) */
+      [x-cloak] {
+        display: none !important;
       }
     </style>
   </head>
@@ -2895,6 +2932,25 @@
             </div>
           </div>
           <div class="flex items-center space-x-4">
+            <!-- Configure Plugins Button (shown when tools are selected) -->
+            <button
+              x-show="$store.toolsPanel.selectedTools.length > 0"
+              x-cloak
+              @click="$store.toolsPanel.showBulkPluginModal = true; $dispatch('plugin-modal-opened-tool')"
+              class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 transition-colors flex items-center space-x-2"
+              x-transition:enter="transition ease-out duration-200"
+              x-transition:enter-start="opacity-0 scale-95"
+              x-transition:enter-end="opacity-100 scale-100"
+              x-transition:leave="transition ease-in duration-150"
+              x-transition:leave-start="opacity-100 scale-100"
+              x-transition:leave-end="opacity-0 scale-95"
+            >
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/>
+              </svg>
+              <span>Configure Plugins (<span x-text="$store.toolsPanel.selectedTools.length"></span>)</span>
+            </button>
+
             <input
               type="checkbox"
               id="show-inactive-tools"
@@ -3898,7 +3954,26 @@
             or media. You can also add custom resources that Tools and Prompts
             can reference by URI.
           </p>
-          <div class="flex items-center">
+          <div class="flex items-center space-x-4">
+            <!-- Configure Plugins Button (shown when resources are selected) -->
+            <button
+              x-show="$store.resourcesPanel.selectedResources.length > 0"
+              x-cloak
+              @click="$store.resourcesPanel.showBulkPluginModal = true; $dispatch('plugin-modal-opened-resource')"
+              class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 transition-colors flex items-center space-x-2"
+              x-transition:enter="transition ease-out duration-200"
+              x-transition:enter-start="opacity-0 scale-95"
+              x-transition:enter-end="opacity-100 scale-100"
+              x-transition:leave="transition ease-in duration-150"
+              x-transition:leave-start="opacity-100 scale-100"
+              x-transition:leave-end="opacity-0 scale-95"
+            >
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/>
+              </svg>
+              <span>Configure Plugins (<span x-text="$store.resourcesPanel.selectedResources.length"></span>)</span>
+            </button>
+
             <input
               type="checkbox"
               id="show-inactive-resources"
@@ -4121,7 +4196,26 @@
             servers. You can also add custom prompts, useful for driving LLM
             interactions or Tool input.
           </p>
-          <div class="flex items-center">
+          <div class="flex items-center space-x-4">
+            <!-- Configure Plugins Button (shown when prompts are selected) -->
+            <button
+              x-show="$store.promptsPanel.selectedPrompts.length > 0"
+              x-cloak
+              @click="$store.promptsPanel.showBulkPluginModal = true; $dispatch('plugin-modal-opened-prompt')"
+              class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 transition-colors flex items-center space-x-2"
+              x-transition:enter="transition ease-out duration-200"
+              x-transition:enter-start="opacity-0 scale-95"
+              x-transition:enter-end="opacity-100 scale-100"
+              x-transition:leave="transition ease-in duration-150"
+              x-transition:leave-start="opacity-100 scale-100"
+              x-transition:leave-end="opacity-0 scale-95"
+            >
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/>
+              </svg>
+              <span>Configure Plugins (<span x-text="$store.promptsPanel.selectedPrompts.length"></span>)</span>
+            </button>
+
             <input
               type="checkbox"
               id="show-inactive-prompts"
@@ -14291,5 +14385,19 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         </main>
       </div>
     </div>
+
+    <!-- Bulk Plugin Configuration Modals -->
+    {% with entity_type='tool', store_name='toolsPanel', entity_plural='Tools', entity_singular_cap='Tool', pre_hook='tool_pre_invoke', post_hook='tool_post_invoke' %}
+      {% include 'bulk_plugin_modal_generic.html' %}
+    {% endwith %}
+
+    {% with entity_type='prompt', store_name='promptsPanel', entity_plural='Prompts', entity_singular_cap='Prompt', pre_hook='prompt_pre_fetch', post_hook='prompt_post_fetch' %}
+      {% include 'bulk_plugin_modal_generic.html' %}
+    {% endwith %}
+
+    {% with entity_type='resource', store_name='resourcesPanel', entity_plural='Resources', entity_singular_cap='Resource', pre_hook='resource_pre_fetch', post_hook='resource_post_fetch' %}
+      {% include 'bulk_plugin_modal_generic.html' %}
+    {% endwith %}
+
   </body>
 </html>

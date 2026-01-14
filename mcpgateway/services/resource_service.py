@@ -1897,6 +1897,14 @@ class ResourceService:
                 has_pre_fetch = plugin_eligible and self._plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_PRE_FETCH)
                 has_post_fetch = plugin_eligible and self._plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_POST_FETCH)
 
+                # Try to fetch resource early for entity context
+                # This allows plugins to have access to entity metadata
+                if not resource_db and resource_uri:
+                    query = select(DbResource).where(DbResource.uri == str(uri)).where(DbResource.enabled)
+                    if include_inactive:
+                        query = select(DbResource).where(DbResource.uri == str(uri))
+                    resource_db = db.execute(query).scalar_one_or_none()
+
                 # Initialize plugin context variables only if hooks are registered
                 global_context = None
                 if has_pre_fetch or has_post_fetch:
@@ -1920,9 +1928,21 @@ class ResourceService:
                             global_context.user = user_id
                         if server_id:
                             global_context.server_id = server_id
+                        # Set entity-related fields for plugin routing
+                        global_context.entity_type = "resource"
+                        if resource_db:
+                            global_context.entity_id = str(resource_db.id)
+                            global_context.entity_name = str(resource_db.name) if hasattr(resource_db, "name") and resource_db.name else None
                     else:
                         # Create new context (fallback when middleware didn't run)
-                        global_context = GlobalContext(request_id=request_id, user=user_id, server_id=server_id)
+                        global_context = GlobalContext(
+                            request_id=request_id,
+                            user=user_id,
+                            server_id=server_id,
+                            entity_type="resource",
+                            entity_id=str(resource_db.id) if resource_db else None,
+                            entity_name=str(resource_db.name) if resource_db and hasattr(resource_db, "name") and resource_db.name else None,
+                        )
 
                 # Call pre-fetch hooks if registered
                 if has_pre_fetch:

@@ -7131,7 +7131,8 @@ function showTab(tabName) {
 
                 if (tabName === "plugins") {
                     const pluginsPanel = safeGetElement("plugins-panel");
-                    if (pluginsPanel && pluginsPanel.innerHTML.trim() === "") {
+                    if (pluginsPanel) {
+                        // Always refresh plugins panel to show latest routing rules
                         const rootPath = window.ROOT_PATH || "";
                         fetchWithTimeout(
                             `${rootPath}/admin/plugins/partial`,

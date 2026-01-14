@@ -1,0 +1,39 @@
+# Config demonstrating reverse_order_on_post for symmetric wrapping
+plugin_settings:
+  enable_plugin_routing: true
+plugins:
+  - name: tracker_outer
+    description: Outer wrapper plugin
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [tool_pre_invoke, tool_post_invoke]
+    tags: []
+
+  - name: tracker_middle
+    description: Middle wrapper plugin
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [tool_pre_invoke, tool_post_invoke]
+    tags: []
+
+  - name: tracker_inner
+    description: Inner wrapper plugin
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [tool_pre_invoke, tool_post_invoke]
+    tags: []
+
+routes:
+  - entities: [tool]
+    name: wrapped_tool
+    reverse_order_on_post: true  # POST hooks reverse order for symmetric wrapping
+    plugins:
+      - name: tracker_outer
+        priority: 10  # PRE: first, POST: last (outermost wrapper)
+      - name: tracker_middle
+        priority: 20  # PRE: second, POST: second
+      - name: tracker_inner
+        priority: 30  # PRE: third, POST: first (innermost wrapper)

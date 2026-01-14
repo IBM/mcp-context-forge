@@ -1,0 +1,365 @@
+<!-- htmlhint doctype-first:false -->
+<!-- Generic plugin management expandable row for any entity type (tool, resource, prompt) -->
+<tr id="plugins-{{ entity_type }}-{{ entity_id }}" class="bg-gray-50 dark:bg-gray-800">
+  <td colspan="100" class="px-4 py-6">
+    <div class="max-w-6xl mx-auto">
+      <!-- Header with collapse button -->
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">
+          🔌 Plugin Configuration for: <span class="text-indigo-600 dark:text-indigo-400">{{ entity_name }}</span>
+        </h3>
+        <button
+          onclick="this.closest('tr').classList.add('hidden')"
+          class="px-3 py-1 text-sm text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
+        >
+          ✕ Close
+        </button>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <!-- Pre-invoke Hooks -->
+        <div class="bg-white dark:bg-gray-900 rounded-lg shadow p-4">
+          <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3 flex items-center">
+            <svg class="w-4 h-4 mr-2 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-8.707l-3-3a1 1 0 00-1.414 0l-3 3a1 1 0 001.414 1.414L9 9.414V13a1 1 0 102 0V9.414l1.293 1.293a1 1 0 001.414-1.414z" clip-rule="evenodd"/>
+            </svg>
+            Pre-invoke Hooks
+            <span class="ml-2 text-xs text-gray-500">(Execution order)</span>
+          </h4>
+
+          {% if pre_hooks %}
+          <ul class="space-y-2">
+            {% for plugin in pre_hooks %}
+            {% set has_mode_override = plugin.mode and plugin.mode != '' %}
+            {% set is_disabled_by_override = has_mode_override and plugin.mode == 'disabled' %}
+            {% set plugin_config = available_plugins | selectattr('name', 'equalto', plugin.name) | first %}
+            {% set is_disabled_globally = plugin_config and not plugin_config.enabled %}
+            {% set is_disabled = is_disabled_by_override or (not has_mode_override and is_disabled_globally) %}
+            <li class="flex items-center justify-between p-2 rounded border {% if is_disabled %}bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800{% else %}bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700{% endif %}">
+              <div class="flex items-center space-x-2">
+                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ loop.index }}.</span>
+                <span class="text-sm {% if is_disabled %}text-red-700 dark:text-red-300{% else %}text-gray-900 dark:text-gray-100{% endif %}">{{ plugin.name }}</span>
+                {% if is_disabled %}
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
+                  Disabled
+                </span>
+                {% endif %}
+                <div class="flex items-center space-x-1">
+                  <label class="text-xs text-gray-500 dark:text-gray-400">p:</label>
+                  <input type="number"
+                         name="priority"
+                         value="{{ plugin.priority }}"
+                         hx-post="{{ root_path }}/admin/{{ entity_type }}s/{{ entity_id }}/plugins/{{ plugin.name }}/set-priority?hook={{ pre_hook_name }}"
+                         hx-trigger="blur changed"
+                         hx-target="#plugins-{{ entity_type }}-{{ entity_id }}"
+                         hx-swap="outerHTML"
+                         min="0"
+                         max="1000"
+                         class="w-16 px-2 py-0.5 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-1 focus:ring-indigo-500">
+                </div>
+              </div>
+              <div class="flex items-center space-x-1">
+                <!-- Up/Down buttons -->
+                <button
+                  hx-post="{{ root_path }}/admin/{{ entity_type }}s/{{ entity_id }}/plugins/{{ plugin.name }}/priority?hook={{ pre_hook_name }}&direction=up"
+                  hx-target="#plugins-{{ entity_type }}-{{ entity_id }}"
+                  hx-swap="outerHTML"
+                  class="px-1.5 py-0.5 text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-200 dark:text-gray-400 dark:hover:bg-gray-700 rounded transition-colors {% if loop.first %}opacity-30 cursor-not-allowed{% endif %}"
+                  title="Move up (run earlier)"
+                  {% if loop.first %}disabled{% endif %}
+                >
+                  ▲
+                </button>
+                <button
+                  hx-post="{{ root_path }}/admin/{{ entity_type }}s/{{ entity_id }}/plugins/{{ plugin.name }}/priority?hook={{ pre_hook_name }}&direction=down"
+                  hx-target="#plugins-{{ entity_type }}-{{ entity_id }}"
+                  hx-swap="outerHTML"
+                  class="px-1.5 py-0.5 text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-200 dark:text-gray-400 dark:hover:bg-gray-700 rounded transition-colors {% if loop.last %}opacity-30 cursor-not-allowed{% endif %}"
+                  title="Move down (run later)"
+                  {% if loop.last %}disabled{% endif %}
+                >
+                  ▼
+                </button>
+                <!-- Delete button -->
+                <button
+                  hx-delete="{{ root_path }}/admin/{{ entity_type }}s/{{ entity_id }}/plugins/{{ plugin.name }}?hook={{ pre_hook_name }}"
+                  hx-confirm="Remove plugin '{{ plugin.name }}' from pre-invoke hook?"
+                  hx-target="#plugins-{{ entity_type }}-{{ entity_id }}"
+                  hx-swap="outerHTML"
+                  class="px-2 py-1 text-xs text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 rounded transition-colors"
+                  title="Remove from pre-invoke"
+                >
+                  ✕
+                </button>
+              </div>
+            </li>
+            {% endfor %}
+          </ul>
+          {% else %}
+          <p class="text-sm text-gray-500 dark:text-gray-400 italic">No pre-invoke plugins configured</p>
+          {% endif %}
+        </div>
+
+        <!-- Post-invoke Hooks -->
+        <div class="bg-white dark:bg-gray-900 rounded-lg shadow p-4">
+          <div class="flex items-center justify-between mb-3">
+            <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center">
+              <svg class="w-4 h-4 mr-2 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v3.586L7.707 9.293a1 1 0 00-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 10.586V7z" clip-rule="evenodd"/>
+              </svg>
+              Post-invoke Hooks
+              <span class="ml-2 text-xs text-gray-500">(Execution order)</span>
+            </h4>
+            <!-- Reverse Order Toggle -->
+            <button
+              hx-post="{{ root_path }}/admin/{{ entity_type }}s/{{ entity_id }}/plugins/reverse-post-hooks"
+              hx-target="#plugins-{{ entity_type }}-{{ entity_id }}"
+              hx-swap="outerHTML"
+              class="flex items-center space-x-1 px-2 py-1 text-xs rounded-md transition-colors
+                     {% if reverse_post_hooks %}
+                     bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300
+                     {% else %}
+                     bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-gray-600
+                     {% endif %}"
+              title="{% if reverse_post_hooks %}Post-hooks run in reverse order (LIFO). Click to disable.{% else %}Click to reverse post-hook order (LIFO - last added runs first){% endif %}"
+            >
+              <svg class="w-3 h-3 {% if reverse_post_hooks %}transform rotate-180{% endif %}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/>
+              </svg>
+              <span>{% if reverse_post_hooks %}Reversed{% else %}Reverse{% endif %}</span>
+            </button>
+          </div>
+
+          {% if post_hooks %}
+          <ul class="space-y-2">
+            {% for plugin in post_hooks %}
+            {% set has_mode_override = plugin.mode and plugin.mode != '' %}
+            {% set is_disabled_by_override = has_mode_override and plugin.mode == 'disabled' %}
+            {% set plugin_config = available_plugins | selectattr('name', 'equalto', plugin.name) | first %}
+            {% set is_disabled_globally = plugin_config and not plugin_config.enabled %}
+            {% set is_disabled = is_disabled_by_override or (not has_mode_override and is_disabled_globally) %}
+            <li class="flex items-center justify-between p-2 rounded border {% if is_disabled %}bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800{% else %}bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700{% endif %}">
+              <div class="flex items-center space-x-2">
+                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ loop.index }}.</span>
+                <span class="text-sm {% if is_disabled %}text-red-700 dark:text-red-300{% else %}text-gray-900 dark:text-gray-100{% endif %}">{{ plugin.name }}</span>
+                {% if is_disabled %}
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
+                  Disabled
+                </span>
+                {% endif %}
+                <div class="flex items-center space-x-1">
+                  <label class="text-xs text-gray-500 dark:text-gray-400">p:</label>
+                  <input type="number"
+                         name="priority"
+                         value="{{ plugin.priority }}"
+                         hx-post="{{ root_path }}/admin/{{ entity_type }}s/{{ entity_id }}/plugins/{{ plugin.name }}/set-priority?hook={{ post_hook_name }}"
+                         hx-trigger="blur changed"
+                         hx-target="#plugins-{{ entity_type }}-{{ entity_id }}"
+                         hx-swap="outerHTML"
+                         min="0"
+                         max="1000"
+                         class="w-16 px-2 py-0.5 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-1 focus:ring-indigo-500">
+                </div>
+              </div>
+              <div class="flex items-center space-x-1">
+                <!-- Up/Down buttons -->
+                <button
+                  hx-post="{{ root_path }}/admin/{{ entity_type }}s/{{ entity_id }}/plugins/{{ plugin.name }}/priority?hook={{ post_hook_name }}&direction=up"
+                  hx-target="#plugins-{{ entity_type }}-{{ entity_id }}"
+                  hx-swap="outerHTML"
+                  class="px-1.5 py-0.5 text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-200 dark:text-gray-400 dark:hover:bg-gray-700 rounded transition-colors {% if loop.first %}opacity-30 cursor-not-allowed{% endif %}"
+                  title="Move up (run earlier)"
+                  {% if loop.first %}disabled{% endif %}
+                >
+                  ▲
+                </button>
+                <button
+                  hx-post="{{ root_path }}/admin/{{ entity_type }}s/{{ entity_id }}/plugins/{{ plugin.name }}/priority?hook={{ post_hook_name }}&direction=down"
+                  hx-target="#plugins-{{ entity_type }}-{{ entity_id }}"
+                  hx-swap="outerHTML"
+                  class="px-1.5 py-0.5 text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-200 dark:text-gray-400 dark:hover:bg-gray-700 rounded transition-colors {% if loop.last %}opacity-30 cursor-not-allowed{% endif %}"
+                  title="Move down (run later)"
+                  {% if loop.last %}disabled{% endif %}
+                >
+                  ▼
+                </button>
+                <!-- Delete button -->
+                <button
+                  hx-delete="{{ root_path }}/admin/{{ entity_type }}s/{{ entity_id }}/plugins/{{ plugin.name }}?hook={{ post_hook_name }}"
+                  hx-confirm="Remove plugin '{{ plugin.name }}' from post-invoke hook?"
+                  hx-target="#plugins-{{ entity_type }}-{{ entity_id }}"
+                  hx-swap="outerHTML"
+                  class="px-2 py-1 text-xs text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 rounded transition-colors"
+                  title="Remove from post-invoke"
+                >
+                  ✕
+                </button>
+              </div>
+            </li>
+            {% endfor %}
+          </ul>
+          {% else %}
+          <p class="text-sm text-gray-500 dark:text-gray-400 italic">No post-invoke plugins configured</p>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Available plugins data (hidden script tag for JSON) -->
+      <script type="application/json" id="available-plugins-data-{{ entity_type }}-{{ entity_id }}">
+{{ available_plugins|tojson if available_plugins else '[]' }}
+      </script>
+
+      <!-- Add Plugin Form -->
+      <div class="mt-6 bg-white dark:bg-gray-900 rounded-lg shadow p-4"
+           x-data="{
+             availablePlugins: [],
+             selectedPluginDisabled: false,
+             selectedPluginMode: '',
+             init() {
+               try {
+                 const dataEl = document.getElementById('available-plugins-data-{{ entity_type }}-{{ entity_id }}');
+                 if (dataEl) {
+                   this.availablePlugins = JSON.parse(dataEl.textContent);
+                   console.log('Loaded available plugins for {{ entity_type }} {{ entity_id }}:', this.availablePlugins.length);
+                 } else {
+                   console.warn('Available plugins data element not found');
+                   this.availablePlugins = [];
+                 }
+               } catch (e) {
+                 console.error('Failed to parse available plugins:', e);
+                 this.availablePlugins = [];
+               }
+             },
+             onPluginSelect(event) {
+               const selectEl = event.target;
+               const selectedOption = selectEl.options[selectEl.selectedIndex];
+               const pluginName = selectedOption.value;
+
+               if (!pluginName) {
+                 this.selectedPluginDisabled = false;
+                 this.selectedPluginMode = '';
+                 return;
+               }
+
+               const plugin = this.availablePlugins.find(p => p.name === pluginName);
+               if (plugin) {
+                 this.selectedPluginDisabled = !plugin.enabled;
+                 this.selectedPluginMode = plugin.mode || '';
+
+                 const form = selectEl.closest('form');
+                 const modeField = form.querySelector('[name=mode]');
+                 if (modeField && plugin.mode) {
+                   modeField.value = plugin.mode;
+                   if (!plugin.enabled) {
+                     modeField.classList.add('border-red-500', 'dark:border-red-500', 'bg-red-50', 'dark:bg-red-900/20');
+                   } else {
+                     modeField.classList.remove('border-red-500', 'dark:border-red-500', 'bg-red-50', 'dark:bg-red-900/20');
+                   }
+                 }
+               }
+             }
+           }">
+        <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">➕ Add Plugin</h4>
+        <form hx-post="{{ root_path }}/admin/{{ entity_type }}s/{{ entity_id }}/plugins"
+              hx-target="#plugins-{{ entity_type }}-{{ entity_id }}"
+              hx-swap="outerHTML"
+              class="flex flex-wrap items-end gap-3">
+
+          <div class="flex-1 min-w-[200px]">
+            <label class="block text-xs text-gray-600 dark:text-gray-400 mb-1">Plugin</label>
+            <select name="plugin_name" required
+                    @change="onPluginSelect($event)"
+                    class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500">
+              <option value="">Select a plugin...</option>
+              {% for plugin in available_plugins %}
+              <option value="{{ plugin.name }}" data-mode="{{ plugin.mode }}" data-enabled="{{ plugin.enabled|lower }}">
+                {{ plugin.name }}{% if not plugin.enabled %} (disabled){% endif %}{% if plugin.description %} - {{ plugin.description }}{% endif %}
+              </option>
+              {% endfor %}
+            </select>
+            <!-- Disabled warning -->
+            <div x-show="selectedPluginDisabled && (!selectedPluginMode || selectedPluginMode === 'disabled')" class="mt-2">
+              <div class="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
+                <svg class="h-3 w-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                  <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+                </svg>
+                This plugin is disabled in config - set mode below to enable it
+              </div>
+            </div>
+          </div>
+
+          <div class="w-32">
+            <label class="block text-xs text-gray-600 dark:text-gray-400 mb-1">Priority</label>
+            <input type="number" name="priority" value="{{ next_priority }}" min="1" max="1000"
+                   class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500">
+          </div>
+
+          <div class="flex-1 min-w-[200px]">
+            <label class="block text-xs text-gray-600 dark:text-gray-400 mb-1">Hooks (optional)</label>
+            <select name="hooks" multiple
+                    class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500"
+                    title="Hold Ctrl/Cmd to select multiple">
+              <option value="{{ pre_hook_name }}">{{ pre_hook_name }}</option>
+              <option value="{{ post_hook_name }}">{{ post_hook_name }}</option>
+            </select>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Leave empty to apply to all hooks</p>
+          </div>
+
+          <!-- Advanced Configuration (expandable) -->
+          <div class="w-full" x-data="{ showAdvanced: false }">
+            <button type="button" @click="showAdvanced = !showAdvanced"
+                    class="text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 flex items-center gap-1">
+              <svg class="w-3 h-3 transition-transform" :class="{ 'rotate-90': showAdvanced }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+              </svg>
+              <span x-text="showAdvanced ? 'Hide Advanced Options' : 'Show Advanced Options'"></span>
+            </button>
+
+            <div x-show="showAdvanced" x-collapse class="mt-3 space-y-3 p-3 bg-gray-50 dark:bg-gray-800 rounded-md border border-gray-200 dark:border-gray-700">
+              <!-- Config JSON -->
+              <div>
+                <label class="block text-xs text-gray-600 dark:text-gray-400 mb-1">
+                  Config (JSON)
+                </label>
+                <textarea name="config" rows="2" placeholder='{"key": "value"}'
+                          class="w-full px-3 py-2 text-xs font-mono border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500"></textarea>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Optional plugin-specific configuration</p>
+              </div>
+
+              <div class="grid grid-cols-2 gap-3">
+                <!-- Override -->
+                <div class="flex items-center space-x-2">
+                  <input type="checkbox" name="override" id="{{ entity_type }}_override_{{ entity_id }}" value="true"
+                         class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 dark:border-gray-600 dark:bg-gray-700">
+                  <label for="{{ entity_type }}_override_{{ entity_id }}" class="text-xs text-gray-600 dark:text-gray-400">
+                    Override
+                    <span class="block text-gray-500">Replace existing config</span>
+                  </label>
+                </div>
+
+                <!-- Mode -->
+                <div>
+                  <label class="block text-xs text-gray-600 dark:text-gray-400 mb-1">Mode</label>
+                  <select name="mode"
+                          @change="selectedPluginMode = $event.target.value; if ($event.target.value && $event.target.value !== 'disabled') { $event.target.classList.remove('border-red-500', 'dark:border-red-500', 'bg-red-50', 'dark:bg-red-900/20'); }"
+                          class="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500">
+                    <option value="">Default</option>
+                    <option value="enforce">Enforce (block on error)</option>
+                    <option value="enforce_ignore_error">Enforce (continue on error)</option>
+                    <option value="permissive">Permissive (audit only)</option>
+                    <option value="disabled">Disabled</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <button type="submit"
+                  class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors focus:ring-2 focus:ring-indigo-500">
+            Add Plugin
+          </button>
+        </form>
+      </div>
+    </div>
+  </td>
+</tr>

@@ -3365,6 +3365,29 @@ async def admin_ui(
     # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
     db.commit()
 
+    # Get list of available plugins for bulk plugin modals and routing rules
+    # First-Party
+    from mcpgateway.plugins.framework import get_plugin_manager
+
+    plugin_manager = get_plugin_manager()
+    available_plugins = []
+    if plugin_manager:
+        try:
+            # Get all plugins from config (including disabled ones)
+            if plugin_manager.config and plugin_manager.config.plugins:
+                available_plugins = [
+                    {
+                        "name": str(p.name) if p.name else "",
+                        "description": str(p.description) if p.description else "",
+                        "mode": str(p.mode) if p.mode else "",
+                        "enabled": p.mode != "disabled" if p.mode else True,
+                    }
+                    for p in plugin_manager.config.plugins
+                ]
+        except Exception as e:
+            LOGGER.warning(f"Failed to get available plugins: {e}")
+            available_plugins = []
+
     response = request.app.state.templates.TemplateResponse(
         request,
         "admin.html",
@@ -3403,6 +3426,8 @@ async def admin_ui(
             "password_require_lowercase": getattr(settings, "password_require_lowercase", False),
             "password_require_numbers": getattr(settings, "password_require_numbers", False),
             "password_require_special": getattr(settings, "password_require_special", False),
+            "plugin_manager": plugin_manager,
+            "available_plugins": available_plugins,
         },
     )
 
@@ -14708,8 +14733,34 @@ async def get_plugins_partial(request: Request, db: Session = Depends(get_db), u
         plugins = plugin_service.get_all_plugins()
         stats = await plugin_service.get_plugin_statistics()
 
+        # Get list of available plugins from plugin manager for routing rules form
+        available_plugins = []
+        if plugin_manager:
+            try:
+                # Get all plugins from config (including disabled ones)
+                if plugin_manager.config and plugin_manager.config.plugins:
+                    available_plugins = [
+                        {
+                            "name": p.name,
+                            "description": p.description,
+                            "mode": p.mode,
+                            "enabled": p.mode != "disabled",
+                        }
+                        for p in plugin_manager.config.plugins
+                    ]
+            except Exception as e:
+                LOGGER.warning(f"Failed to get available plugins: {e}")
+
         # Prepare context for template
-        context = {"request": request, "plugins": plugins, "stats": stats, "plugins_enabled": plugin_manager is not None, "root_path": request.scope.get("root_path", "")}
+        context = {
+            "request": request,
+            "plugins": plugins,
+            "stats": stats,
+            "plugins_enabled": plugin_manager is not None,
+            "available_plugins": available_plugins,
+            "plugin_manager": plugin_manager,
+            "root_path": request.scope.get("root_path", ""),
+        }
 
         # Render the partial template
         return request.app.state.templates.TemplateResponse("plugins_partial.html", context)

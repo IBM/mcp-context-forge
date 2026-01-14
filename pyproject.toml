@@ -73,6 +73,7 @@ dependencies = [
     "python-json-logger>=4.0.0",
     "PyYAML>=6.0.3",
     "requests-oauthlib>=2.0.0",
+    "simpleeval>=1.0.2",
     "sqlalchemy>=2.0.45",
     "sse-starlette>=3.1.2",
     "starlette>=0.50.0",

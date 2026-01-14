@@ -38,3 +38,12 @@ GET_PLUGIN_CONFIGS = "get_plugin_configs"
 GET_PLUGIN_CONFIG = "get_plugin_config"
 HOOK_TYPE = "hook_type"
 INVOKE_HOOK = "invoke_hook"
+
+# Rule Specificity Scoring Constants
+# Used by rule resolver and UI to calculate how specific a routing rule is
+# Higher scores indicate more specific rules (evaluated first)
+SPECIFICITY_SCORE_NAME_MATCH = 1000  # Exact entity name match (most specific)
+SPECIFICITY_SCORE_TAG_MATCH = 100  # Tag-based matching
+SPECIFICITY_SCORE_HOOK_FILTER = 50  # Hook type filter
+SPECIFICITY_SCORE_WHEN_EXPRESSION = 10  # Conditional when clause
+SPECIFICITY_SCORE_ENTITY_TYPE = 0  # Entity type only (least specific, global-like)

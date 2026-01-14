@@ -31,6 +31,7 @@ from contextlib import asynccontextmanager, suppress
 from datetime import datetime
 from functools import lru_cache
 import os as _os  # local alias to avoid collisions
+from pathlib import Path
 import sys
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 from urllib.parse import urlparse, urlunparse
@@ -81,6 +82,7 @@ from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 from mcpgateway.observability import init_telemetry
 from mcpgateway.plugins.framework import PluginError, PluginManager, PluginViolationError
+from mcpgateway.routers.plugin_admin import plugin_admin_router
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
     A2AAgentCreate,
@@ -125,6 +127,7 @@ from mcpgateway.services.import_service import ImportService, ImportValidationEr
 from mcpgateway.services.log_aggregator import get_log_aggregator
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics import setup_metrics
+from mcpgateway.services.plugin_route_service import init_plugin_route_service
 from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService, ResourceURIConflictError
 from mcpgateway.services.root_service import RootService
@@ -178,6 +181,10 @@ else:
 _config_file = _os.getenv("PLUGIN_CONFIG_FILE", settings.plugin_config_file)
 plugin_manager: PluginManager | None = PluginManager(_config_file) if _PLUGINS_ENABLED else None
 
+
+# Initialize plugin route service if plugins are enabled
+if _PLUGINS_ENABLED:
+    init_plugin_route_service(Path(_config_file))
 
 # Initialize services
 tool_service = ToolService()
@@ -6007,6 +6014,7 @@ logger.info(f"Admin API enabled: {ADMIN_API_ENABLED}")
 if ADMIN_API_ENABLED:
     logger.info("Including admin_router - Admin API enabled")
     app.include_router(admin_router)  # Admin routes imported from admin.py
+    app.include_router(plugin_admin_router)  # Plugin administration routes
 else:
     logger.warning("Admin API routes not mounted - Admin API disabled via MCPGATEWAY_ADMIN_API_ENABLED=False")
 

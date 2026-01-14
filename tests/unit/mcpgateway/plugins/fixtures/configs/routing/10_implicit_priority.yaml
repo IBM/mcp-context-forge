@@ -1,0 +1,71 @@
+# Config demonstrating implicit priority through order
+plugin_settings:
+  enable_plugin_routing: true
+plugins:
+  - name: tracker_first
+    description: First tracker (implicit priority)
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [tool_pre_invoke, tool_post_invoke]
+    tags: []
+
+  - name: tracker_second
+    description: Second tracker (implicit priority)
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [tool_pre_invoke, tool_post_invoke]
+    tags: []
+
+  - name: tracker_third
+    description: Third tracker (implicit priority)
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [tool_pre_invoke, tool_post_invoke]
+    tags: []
+
+routes:
+  # No explicit priority - plugins execute in order listed
+  - entities: [tool]
+    name: implicit_order_tool
+    plugins:
+      - name: tracker_first
+        # No priority field - uses order (first = priority 0)
+      - name: tracker_second
+        # No priority field - uses order (second = priority 1)
+      - name: tracker_third
+        # No priority field - uses order (third = priority 2)
+
+  # Mixed: some explicit, some implicit
+  # When mixing explicit and implicit priority, all are sorted by priority value
+  # Implicit priorities are auto-assigned based on list position (0, 1, 2, ...)
+  - entities: [tool]
+    name: mixed_priority_tool
+    plugins:
+      - name: tracker_first
+        priority: 100  # Explicit: runs third (priority 100)
+      - name: tracker_second
+        # Implicit: auto-assigned priority 1 (second in list) - runs first
+      - name: tracker_third
+        priority: 50  # Explicit: runs second (priority 50)
+
+  # Multiple rules with implicit priority
+  - entities: [tool]
+    name: multi_rule_tool
+    # First rule (implicit rule priority = 0)
+    plugins:
+      - name: tracker_first
+
+  - entities: [tool]
+    name: multi_rule_tool
+    # Second rule (implicit rule priority = 1)
+    plugins:
+      - name: tracker_second
+
+  - entities: [tool]
+    name: multi_rule_tool
+    # Third rule (implicit rule priority = 2)
+    plugins:
+      - name: tracker_third

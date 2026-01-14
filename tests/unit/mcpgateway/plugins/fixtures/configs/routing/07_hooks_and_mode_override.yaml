@@ -1,0 +1,42 @@
+# Config demonstrating hooks and mode override
+plugin_settings:
+  enable_plugin_routing: true
+plugins:
+  - name: multi_hook_plugin
+    description: Plugin with multiple hooks
+    author: test
+    kind: tracker_plugin.TrackerPlugin
+    version: "1.0"
+    hooks: [tool_pre_invoke, tool_post_invoke, prompt_pre_fetch, resource_pre_fetch]
+    tags: []
+
+routes:
+  # Override hooks: restrict plugin to only specific hooks for this entity
+  - entities: [tool]
+    name: pre_only_tool
+    plugins:
+      - name: multi_hook_plugin
+        priority: 10
+        hooks: [tool_pre_invoke]  # Only use pre-invoke hook, ignore post-invoke
+
+  - entities: [tool]
+    name: post_only_tool
+    plugins:
+      - name: multi_hook_plugin
+        priority: 10
+        hooks: [tool_post_invoke]  # Only use post-invoke hook, ignore pre-invoke
+
+  # Use plugin on different entity types with different hook subsets
+  - entities: [prompt]
+    name: prompt_entity
+    plugins:
+      - name: multi_hook_plugin
+        priority: 10
+        hooks: [prompt_pre_fetch]  # Use only prompt hook
+
+  - entities: [resource]
+    name: resource_entity
+    plugins:
+      - name: multi_hook_plugin
+        priority: 10
+        hooks: [resource_pre_fetch]  # Use only resource hook
