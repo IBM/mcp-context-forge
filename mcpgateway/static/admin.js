@@ -134,7 +134,7 @@ document.addEventListener("DOMContentLoaded", function () {
         const urlParams = new URLSearchParams(window.location.search);
         const includeInactive = urlParams.get("include_inactive") === "true";
         serversCheckbox.checked = includeInactive;
-        
+
         // Wait for HTMX to load the table, then apply filter
         setTimeout(() => {
             applyServerFilter(serversCheckbox.checked);
@@ -148,7 +148,7 @@ document.addEventListener("DOMContentLoaded", function () {
         const urlParams = new URLSearchParams(window.location.search);
         const includeInactive = urlParams.get("include_inactive") === "true";
         gatewaysCheckbox.checked = includeInactive;
-        
+
         // Wait for HTMX to load the table, then apply filter
         setTimeout(() => {
             applyGatewayFilter(gatewaysCheckbox.checked);
@@ -10184,7 +10184,6 @@ document.addEventListener("DOMContentLoaded", function () {
 // INACTIVE ITEMS HANDLING
 // ===================================================================
 
-
 /**
  * Apply client-side filtering to server table rows based on active/inactive state
  * @param {boolean} showInactive - Whether to show inactive servers
@@ -10195,12 +10194,14 @@ function applyServerFilter(showInactive) {
         console.warn("applyServerFilter: servers-table-body not found");
         return;
     }
-    
+
     const rows = tableBody.querySelectorAll("tr[data-enabled]");
-    console.log(`applyServerFilter: showInactive=${showInactive}, found ${rows.length} rows`);
-    
+    console.log(
+        `applyServerFilter: showInactive=${showInactive}, found ${rows.length} rows`,
+    );
+
     let hiddenCount = 0;
-    rows.forEach(row => {
+    rows.forEach((row) => {
         const isEnabled = row.getAttribute("data-enabled") === "true";
         if (showInactive) {
             // Show all rows (active and inactive)
@@ -10217,7 +10218,7 @@ function applyServerFilter(showInactive) {
             }
         }
     });
-    
+
     console.log(`applyServerFilter: ${hiddenCount} rows hidden`);
 }
 
@@ -10231,12 +10232,14 @@ function applyGatewayFilter(showInactive) {
         console.warn("applyGatewayFilter: gateways-table-body not found");
         return;
     }
-    
+
     const rows = tableBody.querySelectorAll("tr[data-enabled]");
-    console.log(`applyGatewayFilter: showInactive=${showInactive}, found ${rows.length} rows`);
-    
+    console.log(
+        `applyGatewayFilter: showInactive=${showInactive}, found ${rows.length} rows`,
+    );
+
     let hiddenCount = 0;
-    rows.forEach(row => {
+    rows.forEach((row) => {
         const isEnabled = row.getAttribute("data-enabled") === "true";
         if (showInactive) {
             // Show all rows (active and inactive)
@@ -10253,10 +10256,9 @@ function applyGatewayFilter(showInactive) {
             }
         }
     });
-    
+
     console.log(`applyGatewayFilter: ${hiddenCount} rows hidden`);
 }
-
 
 function toggleInactiveItems(type) {
     const checkbox = safeGetElement(`show-inactive-${type}`);
@@ -10280,14 +10282,18 @@ function toggleInactiveItems(type) {
 
     // For servers, use client-side filtering instead of HTMX refresh
     if (type === "servers") {
-        console.log(`toggleInactiveItems: servers checkbox toggled to ${checkbox.checked}`);
+        console.log(
+            `toggleInactiveItems: servers checkbox toggled to ${checkbox.checked}`,
+        );
         applyServerFilter(checkbox.checked);
         return;
     }
 
     // For gateways, use client-side filtering instead of HTMX refresh
     if (type === "gateways") {
-        console.log(`toggleInactiveItems: gateways checkbox toggled to ${checkbox.checked}`);
+        console.log(
+            `toggleInactiveItems: gateways checkbox toggled to ${checkbox.checked}`,
+        );
         applyGatewayFilter(checkbox.checked);
         return;
     }
@@ -16211,7 +16217,7 @@ function filterServerTable(searchText) {
 
             const matchesSearch =
                 search === "" || textContent.toLowerCase().includes(search);
-            
+
             // Check if row should be visible based on inactive filter
             const checkbox = document.getElementById("show-inactive-servers");
             const showInactive = checkbox ? checkbox.checked : true;
@@ -16220,7 +16226,7 @@ function filterServerTable(searchText) {
 
             // Only show row if it matches BOTH search AND filter
             const shouldShow = matchesSearch && matchesFilter;
-            
+
             if (shouldShow) {
                 row.style.removeProperty("display");
                 row.style.removeProperty("visibility");
