@@ -43,6 +43,14 @@ make test-scaling         # Test with 4 instances
 make compare-postgres     # Compare PostgreSQL 15 vs 17
 ```
 
+### Plugins
+```bash
+make test-plugins         # 1000 calls per hook type, overall performance table
+make test-plugins-details # 1000 calls per hook type, overall performance table, top-20 results
+```
+
+See [plugins profiling guide](PLUGIN_PROFILING.md) for detailed information.
+
 ### Baseline Management
 ```bash
 make baseline             # Save current as baseline
@@ -51,6 +59,12 @@ make list-baselines       # List all baselines
 
 # Save specific results
 make save-baseline BASELINE=my-test RESULTS=results/medium_20241010_123456
+```
+
+Plugins baseline management:
+```bash
+make baseline-plugins     # Save current plugin profiles directory as baseline
+make compare-plugins      # Compare current plugin profiles with baseline"
 ```
 
 ### Cleanup
