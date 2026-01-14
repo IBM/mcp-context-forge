@@ -247,6 +247,30 @@ class TestTeamsRouter:
             mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None)
 
     @pytest.mark.asyncio
+    async def test_list_teams_admin_with_cursor_pagination(self, mock_admin_context, mock_team):
+        """Test listing teams as admin with include_pagination=True returns cursor format."""
+        teams = [mock_team]
+        next_cursor = "eyJjcmVhdGVkX2F0IjogIjIwMjYtMDEtMTQiLCAiaWQiOiAiMTIzIn0="  # Base64 encoded cursor
+
+        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            # Service returns (teams, next_cursor) tuple for cursor pagination
+            mock_service.list_teams = AsyncMock(return_value=(teams, next_cursor))
+            mock_service.get_teams_count = AsyncMock(return_value=100)
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={str(mock_team.id): 1})
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import list_teams
+
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=True, current_user_ctx=mock_admin_context)
+
+            # With include_pagination=True, should return CursorPaginatedTeamsResponse
+            assert hasattr(result, "teams")
+            assert hasattr(result, "next_cursor")
+            assert len(result.teams) == 1
+            assert result.next_cursor == next_cursor
+
+    @pytest.mark.asyncio
     async def test_list_teams_regular_user(self, mock_user_context, mock_team):
         """Test listing teams as regular user (sees only their teams)."""
         user_teams = [mock_team]

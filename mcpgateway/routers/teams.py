@@ -160,9 +160,8 @@ async def list_teams(
             # Result is tuple (list, next_cursor)
             teams_data, next_cursor = result
 
-            # Note: total count is not available in cursor pagination
-            # Use length as placeholder or 0
-            total = len(teams_data)
+            # Get accurate total count for API consumers
+            total = await service.get_teams_count()
         else:
             # Fallback to user teams and apply pagination locally
             user_teams = await service.get_user_teams(current_user_ctx["email"], include_personal=True)

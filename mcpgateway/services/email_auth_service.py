@@ -755,11 +755,14 @@ class EmailAuthService:
             logger.error(f"Error listing users: {e}")
             # Return appropriate empty response based on pagination mode
             if page is not None:
+                fallback_per_page = per_page or 50
                 return UsersListResult(
                     data=[],
-                    pagination=PaginationMeta(page=page, per_page=per_page or 50, total_items=0, total_pages=0, has_next=False, has_prev=False),
+                    pagination=PaginationMeta(page=page, per_page=fallback_per_page, total_items=0, total_pages=0, has_next=False, has_prev=False),
                     links=PaginationLinks(  # pylint: disable=kwarg-superseded-by-positional-arg
-                        self="/admin/users?page=1&per_page=10", first="/admin/users?page=1&per_page=50", last="/admin/users?page=1&per_page=50"
+                        self=f"/admin/users?page=1&per_page={fallback_per_page}",
+                        first=f"/admin/users?page=1&per_page={fallback_per_page}",
+                        last=f"/admin/users?page=1&per_page={fallback_per_page}",
                     ),
                 )
 

@@ -764,18 +764,18 @@ class TestTeamManagementService:
     async def test_list_teams(self, service, mock_db):
         """Test listing teams with pagination."""
         mock_teams = [MagicMock(spec=EmailTeam) for _ in range(5)]
-        
+
         # Mock unified_paginate return value (tuple of list, cursor)
         with patch("mcpgateway.services.team_management_service.unified_paginate") as mock_paginate:
             mock_paginate.return_value = (mock_teams, None)
-            
+
             result = await service.list_teams(limit=5, offset=0)
-            
+
             # Should return tuple (teams, cursor) now
             teams, cursor = result
             assert teams == mock_teams
             assert cursor is None
-            
+
             # Verify unified_paginate was called
             mock_paginate.assert_called_once()
             # Verify offset was applied to query manually if offset > 0
@@ -790,9 +790,9 @@ class TestTeamManagementService:
 
         with patch("mcpgateway.services.team_management_service.unified_paginate") as mock_paginate:
             mock_paginate.return_value = (mock_teams, "next_cursor")
-            
+
             result = await service.list_teams(visibility_filter="public")
-            
+
             teams, cursor = result
             assert teams == mock_teams
             assert cursor == "next_cursor"
@@ -804,7 +804,7 @@ class TestTeamManagementService:
 
         with patch("mcpgateway.services.team_management_service.unified_paginate") as mock_paginate:
             mock_paginate.return_value = (mock_teams, None)
-            
+
             # Test default (include_personal=False)
             await service.list_teams()
             # method called with kwargs
@@ -814,7 +814,7 @@ class TestTeamManagementService:
             # Let's inspect the query string compilation or check filtering
             # Since we can't easily compile SqlAlchemy query mocks, we trust the implementation change
             # But we can verify include_personal=True doesn't explode
-            
+
             await service.list_teams(include_personal=True)
             mock_paginate.assert_called()
 

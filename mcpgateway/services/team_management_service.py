@@ -1040,12 +1040,17 @@ class TeamManagementService:
                 or_(
                     EmailTeam.name.ilike(search_term),
                     EmailTeam.slug.ilike(search_term),
-                    # EmailTeam.description.ilike(search_term) # Optional: include description
+                    EmailTeam.description.ilike(search_term),
                 )
             )
 
-        # Ensure deterministic ordering for cursor pagination
-        query = query.order_by(EmailTeam.name, EmailTeam.id)
+        # Choose ordering based on pagination mode:
+        # - Page-based (UI): alphabetical by name for user-friendly display
+        # - Cursor-based (API): created_at DESC, id DESC to match unified_paginate expectations
+        if page is not None:
+            query = query.order_by(EmailTeam.name, EmailTeam.id)
+        else:
+            query = query.order_by(desc(EmailTeam.created_at), desc(EmailTeam.id))
 
         # Base URL for pagination links (default to admin partial if not provided)
         if not base_url:
@@ -1106,13 +1111,54 @@ class TeamManagementService:
         result = self.db.execute(query)
         return [row[0] for row in result.all()]
 
-    async def discover_public_teams(self, user_email: str, skip: int = 0, limit: int = 50) -> List[EmailTeam]:
+    async def get_teams_count(
+        self,
+        include_inactive: bool = False,
+        visibility_filter: Optional[str] = None,
+        include_personal: bool = False,
+        search_query: Optional[str] = None,
+    ) -> int:
+        """Get total count of teams matching criteria.
+
+        Args:
+            include_inactive: Whether to include inactive teams
+            visibility_filter: Filter by visibility (private, team, public)
+            include_personal: Whether to include personal teams
+            search_query: Search term for name/slug
+
+        Returns:
+            int: Total count of matching teams
+        """
+        query = select(func.count(EmailTeam.id))  # pylint: disable=not-callable
+
+        if not include_personal:
+            query = query.where(EmailTeam.is_personal.is_(False))
+
+        if not include_inactive:
+            query = query.where(EmailTeam.is_active.is_(True))
+
+        if visibility_filter:
+            query = query.where(EmailTeam.visibility == visibility_filter)
+
+        if search_query:
+            search_term = f"%{search_query}%"
+            query = query.where(
+                or_(
+                    EmailTeam.name.ilike(search_term),
+                    EmailTeam.slug.ilike(search_term),
+                )
+            )
+
+        result = self.db.execute(query)
+        return result.scalar() or 0
+
+    async def discover_public_teams(self, user_email: str, skip: int = 0, limit: Optional[int] = None) -> List[EmailTeam]:
         """Discover public teams that user can join.
 
         Args:
             user_email: Email of the user discovering teams
             skip: Number of teams to skip for pagination
-            limit: Maximum number of teams to return
+            limit: Maximum number of teams to return (None for unlimited)
 
         Returns:
             List[EmailTeam]: List of public teams user can join
@@ -1126,7 +1172,10 @@ class TeamManagementService:
 
             query = self.db.query(EmailTeam).filter(EmailTeam.visibility == "public", EmailTeam.is_active.is_(True), EmailTeam.is_personal.is_(False), ~EmailTeam.id.in_(user_team_subquery))
 
-            teams = query.offset(skip).limit(limit).all()
+            query = query.offset(skip)
+            if limit is not None:
+                query = query.limit(limit)
+            teams = query.all()
             self.db.commit()  # Release transaction to avoid idle-in-transaction
             return teams
 

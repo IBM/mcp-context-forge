@@ -4258,9 +4258,9 @@ async def admin_teams_partial_html(
     base_url = f"{root_path}/admin/teams/partial"
     query_parts = []
     if q:
-        query_parts.append(f"q={q}")
+        query_parts.append(f"q={urllib.parse.quote(q, safe='')}")
     if relationship:
-        query_parts.append(f"relationship={relationship}")
+        query_parts.append(f"relationship={urllib.parse.quote(relationship, safe='')}")
     if query_parts:
         base_url += "?" + "&".join(query_parts)
 
@@ -4279,8 +4279,14 @@ async def admin_teams_partial_html(
     user_roles = team_service.get_user_roles_batch(user_email, list(user_team_ids))
 
     # Get public teams the user can join (not already a member)
-    public_teams = await team_service.discover_public_teams(user_email)
+    # NOTE: Limited to 500 for memory safety. Non-admin users with "public" filter
+    # will only see up to 500 joinable teams. For deployments with >500 public teams,
+    # consider implementing SQL-level pagination for non-admin users.
+    public_teams_limit = 500
+    public_teams = await team_service.discover_public_teams(user_email, limit=public_teams_limit)
     public_team_ids = {str(t.id) for t in public_teams}
+    if len(public_teams) >= public_teams_limit:
+        LOGGER.warning(f"Public teams discovery hit limit of {public_teams_limit} for user {user_email}. Some teams may not be visible.")
 
     # Get pending join requests for public teams
     pending_requests = team_service.get_pending_join_requests_batch(user_email, list(public_team_ids))
@@ -4387,6 +4393,10 @@ async def admin_teams_partial_html(
             role = user_roles.get(team_id)
             t.relationship = "owner" if role == "owner" else "member"
             t.pending_request = None
+        elif current_user.is_admin:
+            # Admins get admin controls for teams they're not members of
+            t.relationship = "none"  # Falls through to admin controls in template
+            t.pending_request = None
         elif team_id in public_team_ids:
             t.relationship = "public"
             t.pending_request = pending_requests.get(team_id)
@@ -4477,7 +4487,7 @@ async def admin_list_teams(
             # Default first page
             base_url = f"{root_path}/admin/teams/partial"
             if q:
-                base_url += f"?q={q}"
+                base_url += f"?q={urllib.parse.quote(q, safe='')}"
 
             paginated_result = await team_service.list_teams(page=page, per_page=per_page, base_url=base_url, include_personal=True, search_query=q)
             data = paginated_result["data"]
@@ -4487,8 +4497,10 @@ async def admin_list_teams(
             all_teams = await team_service.get_user_teams(current_user.email, include_personal=True)
             # Basic pagination for user view
             total = len(all_teams)
-            data = all_teams[:per_page]
-            pagination = PaginationMeta(page=page, per_page=per_page, total_items=total, total_pages=math.ceil(total / per_page) if per_page else 1, has_next=total > per_page, has_prev=False)
+            start = (page - 1) * per_page
+            end = start + per_page
+            data = all_teams[start:end]
+            pagination = PaginationMeta(page=page, per_page=per_page, total_items=total, total_pages=math.ceil(total / per_page) if per_page else 1, has_next=end < total, has_prev=page > 1)
             links = None
 
         # Batch counts

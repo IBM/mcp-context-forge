@@ -21197,14 +21197,30 @@ function handleAdminTeamAction(event) {
         if (detail.refreshUnifiedTeamsList && window.htmx) {
             const unifiedList = document.getElementById("unified-teams-list");
             if (unifiedList) {
-                window.htmx.ajax(
-                    "GET",
-                    `${window.ROOT_PATH || ""}/admin/teams?unified=true`,
-                    {
-                        target: "#unified-teams-list",
-                        swap: "innerHTML",
-                    },
-                );
+                // Preserve current pagination/filter state on refresh
+                const params = new URLSearchParams();
+                params.set("page", "1"); // Reset to first page on action
+                if (typeof getTeamsPerPage === "function") {
+                    params.set("per_page", getTeamsPerPage().toString());
+                }
+                // Preserve search query from input field
+                const searchInput = document.getElementById("team-search");
+                if (searchInput && searchInput.value.trim()) {
+                    params.set("q", searchInput.value.trim());
+                }
+                // Preserve relationship filter
+                if (
+                    typeof currentTeamRelationshipFilter !== "undefined" &&
+                    currentTeamRelationshipFilter &&
+                    currentTeamRelationshipFilter !== "all"
+                ) {
+                    params.set("relationship", currentTeamRelationshipFilter);
+                }
+                const url = `${window.ROOT_PATH || ""}/admin/teams/partial?${params.toString()}`;
+                window.htmx.ajax("GET", url, {
+                    target: "#unified-teams-list",
+                    swap: "innerHTML",
+                });
             }
         }
         if (detail.refreshTeamMembers && detail.teamId) {
@@ -30723,6 +30739,8 @@ async function performTeamSearch(searchTerm) {
     try {
         // Use HTMX to load the results
         if (window.htmx) {
+            // HTMX handles the indicator automatically via the indicator option
+            // Don't manually hide it - HTMX will hide it when request completes
             window.htmx.ajax("GET", url, {
                 target: "#unified-teams-list",
                 swap: "innerHTML",
@@ -30738,12 +30756,16 @@ async function performTeamSearch(searchTerm) {
                 container.innerHTML =
                     '<div class="text-center py-4 text-red-600">Failed to load teams</div>';
             }
+            // Only hide indicator in fetch fallback path (HTMX handles its own)
+            if (loadingIndicator) {
+                loadingIndicator.style.display = "none";
+            }
         }
     } catch (error) {
         console.error("Error searching teams:", error);
         container.innerHTML =
             '<div class="text-center py-4 text-red-600">Error searching teams</div>';
-    } finally {
+        // Hide indicator on error in fallback path
         if (loadingIndicator) {
             loadingIndicator.style.display = "none";
         }
