@@ -179,7 +179,7 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
             "auth_provider": str(getattr(user, "auth_provider", "local")),
         },
         # Namespace access (backwards compatible)
-        "namespaces": [f"user:{getattr(user, 'email', '')}", *[f"team:{t.get('slug','')}" for t in safe_teams], "public"],
+        "namespaces": [f"user:{getattr(user, 'email', '')}", *[f"team:{t.get('slug', '')}" for t in safe_teams], "public"],
         # Token scoping (if provided)
         "scopes": token_scopes or {"server_id": None, "permissions": ["*"], "ip_restrictions": [], "time_restrictions": {}},
     }
