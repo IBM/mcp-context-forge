@@ -4084,10 +4084,359 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
     return HTMLResponse(content=teams_html)
 
 
+@admin_router.get("/teams/ids", response_class=JSONResponse)
+@require_permission("teams.read")
+async def admin_get_all_team_ids(
+    include_inactive: bool = False,
+    visibility: Optional[str] = Query(None, description="Filter by visibility"),
+    q: Optional[str] = Query(None, description="Search query"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Return all team IDs accessible to the current user.
+
+    Args:
+        include_inactive (bool): Whether to include inactive teams.
+        visibility (Optional[str]): Filter by team visibility.
+        q (Optional[str]): Search query string.
+        db (Session): Database session dependency.
+        user: Current authenticated user.
+
+    Returns:
+        JSONResponse: Dictionary with list of team IDs and count.
+    """
+    team_service = TeamManagementService(db)
+    user_email = get_user_email(user)
+
+    auth_service = EmailAuthService(db)
+    current_user = await auth_service.get_user_by_email(user_email)
+
+    if not current_user:
+        return {"team_ids": [], "count": 0}
+
+    # If admin, get all teams (filtered)
+    # If regular user, get user teams + accessible public teams?
+    # For now, admin only per usage pattern?
+    # But tools/ids handles team_id scoping. Here we filter by teams user can see.
+    # get_all_team_ids supports search/visibility.
+
+    # Check admin
+    if current_user.is_admin:
+        team_ids = await team_service.get_all_team_ids(include_inactive=include_inactive, visibility_filter=visibility, include_personal=True, search_query=q)
+    else:
+        # For non-admins, get user's teams + public teams logic?
+        # get_user_teams gets all teams user is in.
+        # discover_public_teams gets public teams.
+        # unified search across them?
+        # Simpler: just reuse list_teams logic but with huge limit?
+        # Or, just return user's teams IDs filtering in memory (since user won't have millions of teams)
+        all_teams = await team_service.get_user_teams(user_email, include_personal=True)
+        # Apply filters
+        # Note: get_user_teams includes visibility/inactive implicitly? No, it returns what they are member of.
+        # But we might need public teams too?
+        # Let's align with list_teams logic.
+
+        filtered = []
+        for t in all_teams:
+            if not include_inactive and not t.is_active:
+                continue
+            if visibility and t.visibility != visibility:
+                continue
+            if q:
+                if q.lower() not in t.name.lower() and q.lower() not in t.slug.lower():
+                    continue
+            filtered.append(t.id)
+        team_ids = filtered
+
+    return {"team_ids": team_ids, "count": len(team_ids)}
+
+
+@admin_router.get("/teams/search", response_class=JSONResponse)
+@require_permission("teams.read")
+async def admin_search_teams(
+    q: str = Query("", description="Search query"),
+    include_inactive: bool = False,
+    limit: int = Query(settings.pagination_default_page_size, ge=1, le=100, description="Max results"),
+    visibility: Optional[str] = Query(None, description="Filter by visibility"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Search teams by name/slug.
+
+    Args:
+        q (str): Search query string.
+        include_inactive (bool): Whether to include inactive teams.
+        limit (int): Maximum number of results to return.
+        visibility (Optional[str]): Filter by team visibility.
+        db (Session): Database session dependency.
+        user: Current authenticated user.
+
+    Returns:
+        JSONResponse: List of matching teams with basic info.
+    """
+    team_service = TeamManagementService(db)
+    user_email = get_user_email(user)
+
+    auth_service = EmailAuthService(db)
+    current_user = await auth_service.get_user_by_email(user_email)
+
+    if not current_user:
+        return []
+
+    # Use list_teams logic
+    # For admin: search globally
+    # For user: search user teams (and maybe public?)
+    # existing list_teams handles this via include_personal/logic?
+    # list_teams handles admin vs user distinction?
+    # Wait, list_teams in service doesn't know about user per se. It lists ALL teams based on query.
+    # The CALLER (admin.py) distinguishes.
+
+    if current_user.is_admin:
+        result = await team_service.list_teams(page=1, per_page=limit, include_inactive=include_inactive, visibility_filter=visibility, include_personal=True, search_query=q)
+        # Result is dict {data, pagination...} (since page provided)
+        teams = result["data"]
+    else:
+        # Non-admin search
+        # Reuse user team fetching
+        all_teams = await team_service.get_user_teams(user_email, include_personal=True)
+        # Filter in memory
+        filtered = []
+        for t in all_teams:
+            if not include_inactive and not t.is_active:
+                continue
+            if visibility and t.visibility != visibility:
+                continue
+            if q:
+                if q.lower() not in t.name.lower() and q.lower() not in t.slug.lower():
+                    continue
+            filtered.append(t)
+
+        # Paginate manually
+        teams = filtered[:limit]
+
+    # Serialize
+    return [{"id": t.id, "name": t.name, "slug": t.slug, "description": t.description, "visibility": t.visibility, "is_active": t.is_active} for t in teams]
+
+
+@admin_router.get("/teams/partial")
+@require_permission("teams.read")
+async def admin_teams_partial_html(
+    request: Request,
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=100, description="Items per page"),
+    include_inactive: bool = Query(False, description="Include inactive teams"),
+    visibility: Optional[str] = Query(None, description="Filter by visibility"),
+    render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
+    q: Optional[str] = Query(None, description="Search query"),
+    relationship: Optional[str] = Query(None, description="Filter by relationship: owner, member, public"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
+    """Return HTML partial for paginated teams list (HTMX).
+
+    Args:
+        request (Request): FastAPI request object.
+        page (int): Page number for pagination.
+        per_page (int): Number of items per page.
+        include_inactive (bool): Whether to include inactive teams.
+        visibility (Optional[str]): Filter by team visibility.
+        render (Optional[str]): Render mode, e.g., 'controls' for pagination controls only.
+        q (Optional[str]): Search query string.
+        relationship (Optional[str]): Filter by relationship: owner, member, public.
+        db (Session): Database session dependency.
+        user: Current authenticated user.
+
+    Returns:
+        HTMLResponse: Rendered HTML partial for teams list or pagination controls.
+
+    """
+    team_service = TeamManagementService(db)
+    user_email = get_user_email(user)
+    root_path = request.scope.get("root_path", "")
+
+    # Base URL for pagination links - preserve search query and relationship filter
+    base_url = f"{root_path}/admin/teams/partial"
+    query_parts = []
+    if q:
+        query_parts.append(f"q={urllib.parse.quote(q, safe='')}")
+    if relationship:
+        query_parts.append(f"relationship={urllib.parse.quote(relationship, safe='')}")
+    if query_parts:
+        base_url += "?" + "&".join(query_parts)
+
+    # Check permissions and get current user
+    auth_service = EmailAuthService(db)
+    current_user = await auth_service.get_user_by_email(user_email)
+
+    if not current_user:
+        return HTMLResponse(content='<div class="text-center py-8"><p class="text-red-500">User not found</p></div>', status_code=404)
+
+    # Get user's teams and public teams for relationship info
+    user_teams = await team_service.get_user_teams(user_email, include_personal=True)
+    user_team_ids = {str(t.id) for t in user_teams}
+
+    # Get user roles for owned/member distinction
+    user_roles = team_service.get_user_roles_batch(user_email, list(user_team_ids))
+
+    # Get public teams the user can join (not already a member)
+    # NOTE: Limited to 500 for memory safety. Non-admin users with "public" filter
+    # will only see up to 500 joinable teams. For deployments with >500 public teams,
+    # consider implementing SQL-level pagination for non-admin users.
+    public_teams_limit = 500
+    public_teams = await team_service.discover_public_teams(user_email, limit=public_teams_limit)
+    public_team_ids = {str(t.id) for t in public_teams}
+    if len(public_teams) >= public_teams_limit:
+        LOGGER.warning(f"Public teams discovery hit limit of {public_teams_limit} for user {user_email}. Some teams may not be visible.")
+
+    # Get pending join requests for public teams
+    pending_requests = team_service.get_pending_join_requests_batch(user_email, list(public_team_ids))
+
+    if current_user.is_admin and not relationship:
+        # Admin sees all teams when no relationship filter
+        paginated_result = await team_service.list_teams(
+            page=page, per_page=per_page, include_inactive=include_inactive, visibility_filter=visibility, base_url=base_url, include_personal=True, search_query=q
+        )
+        data = paginated_result["data"]
+        pagination = paginated_result["pagination"]
+        links = paginated_result["links"]
+    else:
+        # Filter by relationship or regular user view
+        all_teams = []
+
+        if relationship == "owner":
+            # Only teams user owns
+            all_teams = [t for t in user_teams if user_roles.get(str(t.id)) == "owner"]
+        elif relationship == "member":
+            # Only teams user is a member of (not owner)
+            all_teams = [t for t in user_teams if user_roles.get(str(t.id)) == "member"]
+        elif relationship == "public":
+            # Only public teams user can join
+            all_teams = list(public_teams)
+        else:
+            # All teams: user's teams + public teams they can join
+            all_teams = list(user_teams) + list(public_teams)
+
+        # Apply search filter
+        if q:
+            q_lower = q.lower()
+            all_teams = [t for t in all_teams if q_lower in t.name.lower() or q_lower in (t.slug or "").lower() or q_lower in (t.description or "").lower()]
+
+        # Apply visibility filter
+        if visibility:
+            all_teams = [t for t in all_teams if t.visibility == visibility]
+
+        if not include_inactive:
+            all_teams = [t for t in all_teams if t.is_active]
+
+        total = len(all_teams)
+        start = (page - 1) * per_page
+        end = start + per_page
+        data = all_teams[start:end]
+
+        pagination = PaginationMeta(page=page, per_page=per_page, total_items=total, total_pages=math.ceil(total / per_page) if per_page else 1, has_next=end < total, has_prev=page > 1)
+        links = None
+
+    if render == "controls":
+        # Return only pagination controls
+        return request.app.state.templates.TemplateResponse(
+            "pagination_controls.html",
+            {
+                "request": request,
+                "pagination": pagination if isinstance(pagination, dict) else pagination.model_dump(),
+                "links": links.model_dump() if links and not isinstance(links, dict) else links,
+                "root_path": root_path,
+                "hx_target": "#unified-teams-list",
+                "hx_indicator": "#teams-loading",
+                "query_params": {"include_inactive": include_inactive, "visibility": visibility, "q": q, "relationship": relationship},
+                "base_url": base_url,
+            },
+        )
+
+    if render == "selector":
+        # Return team selector items for infinite scroll dropdown
+        # Add member counts for display
+        team_ids = [str(t.id) for t in data]
+        counts = await team_service.get_member_counts_batch_cached(team_ids)
+        for t in data:
+            t.member_count = counts.get(str(t.id), 0)
+
+        query_params_dict = {}
+        if q:
+            query_params_dict["q"] = q
+
+        return request.app.state.templates.TemplateResponse(
+            "teams_selector_items.html",
+            {
+                "request": request,
+                "data": data,
+                "pagination": pagination if isinstance(pagination, dict) else pagination.model_dump(),
+                "root_path": root_path,
+                "query_params": query_params_dict,
+            },
+        )
+
+    # Batch count members
+    team_ids = [str(t.id) for t in data]
+    counts = await team_service.get_member_counts_batch_cached(team_ids)
+
+    # Build enriched data with relationship info
+    enriched_data = []
+    for t in data:
+        team_id = str(t.id)
+        t.member_count = counts.get(team_id, 0)
+
+        # Determine relationship
+        if t.is_personal:
+            t.relationship = "personal"
+            t.pending_request = None
+        elif team_id in user_team_ids:
+            role = user_roles.get(team_id)
+            t.relationship = "owner" if role == "owner" else "member"
+            t.pending_request = None
+        elif current_user.is_admin:
+            # Admins get admin controls for teams they're not members of
+            t.relationship = "none"  # Falls through to admin controls in template
+            t.pending_request = None
+        elif team_id in public_team_ids:
+            t.relationship = "public"
+            t.pending_request = pending_requests.get(team_id)
+        else:
+            t.relationship = "none"
+            t.pending_request = None
+
+        enriched_data.append(t)
+
+    # Build query params dict for pagination controls
+    query_params_dict = {}
+    if q:
+        query_params_dict["q"] = q
+    if relationship:
+        query_params_dict["relationship"] = relationship
+    if include_inactive:
+        query_params_dict["include_inactive"] = "true"
+    if visibility:
+        query_params_dict["visibility"] = visibility
+
+    return request.app.state.templates.TemplateResponse(
+        "teams_partial.html",
+        {
+            "request": request,
+            "data": enriched_data,
+            "pagination": pagination if isinstance(pagination, dict) else pagination.model_dump(),
+            "links": links.model_dump() if links and not isinstance(links, dict) else links,
+            "root_path": root_path,
+            "query_params": query_params_dict,
+        },
+    )
+
+
 @admin_router.get("/teams")
 @require_permission("teams.read")
 async def admin_list_teams(
     request: Request,
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=100, description="Items per page"),
+    q: Optional[str] = Query(None, description="Search query"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
     unified: bool = False,
@@ -4096,6 +4445,9 @@ async def admin_list_teams(
 
     Args:
         request: FastAPI request object
+        page: Page number
+        per_page: Items per page
+        q: Search query
         db: Database session
         user: Authenticated admin user
         unified: If True, return unified team view with relationship badges
@@ -4125,57 +4477,49 @@ async def admin_list_teams(
             # Generate unified team view
             return await _generate_unified_teams_view(team_service, current_user, root_path)
 
-        # Generate traditional admin view
+        # Traditional admin view refactored to use partial logic
+        # We can reuse the logic by calling the service directly or redirecting?
+        # Redirection requires a round trip. Calling logic allows server-side render.
+        # We'll re-use the logic by calling default params.
+
+        # Call list_teams logic (similar to admin_teams_partial_html but inline)
         if current_user.is_admin:
-            teams, _ = await team_service.list_teams()
+            # Default first page
+            base_url = f"{root_path}/admin/teams/partial"
+            if q:
+                base_url += f"?q={urllib.parse.quote(q, safe='')}"
+
+            paginated_result = await team_service.list_teams(page=page, per_page=per_page, base_url=base_url, include_personal=True, search_query=q)
+            data = paginated_result["data"]
+            pagination = paginated_result["pagination"]
+            links = paginated_result["links"]
         else:
-            teams = await team_service.get_user_teams(current_user.email)
+            all_teams = await team_service.get_user_teams(current_user.email, include_personal=True)
+            # Basic pagination for user view
+            total = len(all_teams)
+            start = (page - 1) * per_page
+            end = start + per_page
+            data = all_teams[start:end]
+            pagination = PaginationMeta(page=page, per_page=per_page, total_items=total, total_pages=math.ceil(total / per_page) if per_page else 1, has_next=end < total, has_prev=page > 1)
+            links = None
 
-        # Batch fetch member counts with caching (N+1 elimination)
-        team_ids = [str(team.id) for team in teams]
-        member_counts = await team_service.get_member_counts_batch_cached(team_ids)
+        # Batch counts
+        team_ids = [str(t.id) for t in data]
+        counts = await team_service.get_member_counts_batch_cached(team_ids)
+        for t in data:
+            t.member_count = counts.get(str(t.id), 0)
 
-        # Generate HTML for teams (traditional view)
-        teams_html = ""
-        for team in teams:
-            member_count = member_counts.get(str(team.id), 0)
-            teams_html += f"""
-                <div id="team-card-{team.id}" class="border border-gray-200 dark:border-gray-600 rounded-lg p-4 mb-4">
-                    <div class="flex justify-between items-start">
-                        <div>
-                            <h4 class="text-lg font-medium text-gray-900 dark:text-white">{team.name}</h4>
-                            <p class="text-sm text-gray-600 dark:text-gray-400">Slug: {team.slug}</p>
-                            <p class="text-sm text-gray-600 dark:text-gray-400">Visibility: {team.visibility}</p>
-                            <p class="text-sm text-gray-600 dark:text-gray-400">Members: {member_count}</p>
-                            {f'<p class="text-sm text-gray-600 dark:text-gray-400">{team.description}</p>' if team.description else ""}
-                        </div>
-                        <div class="flex space-x-2">
-                            <button
-                                hx-get="{root_path}/admin/teams/{team.id}/members"
-                                hx-target="#team-details-{team.id}"
-                                hx-swap="innerHTML"
-                                class="px-3 py-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 border border-blue-300 dark:border-blue-600 hover:border-blue-500 dark:hover:border-blue-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                            >
-                                View Members
-                            </button>
-                            <button
-                                onclick="showTeamEditModal('{team.id}')"
-                                class="px-3 py-1 text-sm font-medium text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 border border-green-300 dark:border-green-600 hover:border-green-500 dark:hover:border-green-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-                            >
-                                Edit
-                            </button>
-                            {f'<button onclick="leaveTeam(&quot;{team.id}&quot;, &quot;{team.name}&quot;)" class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 hover:text-orange-800 dark:hover:text-orange-300 border border-orange-300 dark:border-orange-600 hover:border-orange-500 dark:hover:border-orange-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500">Leave Team</button>' if not team.is_personal and not current_user.is_admin else ""}
-                            {f'<button class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500" hx-delete="{root_path}/admin/teams/{team.id}" hx-confirm="Are you sure you want to delete this team?" hx-target="#team-card-{team.id}" hx-swap="outerHTML">Delete</button>' if not team.is_personal else ""}
-                        </div>
-                    </div>
-                    <div id="team-details-{team.id}" class="mt-4"></div>
-            </div>
-            """
-
-        if not teams_html:
-            teams_html = '<div class="text-center py-8"><p class="text-gray-500 dark:text-gray-400">No teams found. Create your first team above.</p></div>'
-
-        return HTMLResponse(content=teams_html)
+        # Render template
+        return request.app.state.templates.TemplateResponse(
+            "teams_partial.html",
+            {
+                "request": request,
+                "data": data,
+                "pagination": pagination if isinstance(pagination, dict) else pagination.model_dump(),
+                "links": links.model_dump() if links and not isinstance(links, dict) else links,
+                "root_path": root_path,
+            },
+        )
 
     except Exception as e:
         LOGGER.error(f"Error listing teams for admin {user}: {e}")

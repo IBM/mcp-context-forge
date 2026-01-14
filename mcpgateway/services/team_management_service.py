@@ -990,48 +990,175 @@ class TeamManagementService:
             logger.error(f"Failed to get role for {user_email} in team {team_id}: {e}")
             return None
 
-    async def list_teams(self, limit: int = 100, offset: int = 0, visibility_filter: Optional[str] = None) -> Tuple[List[EmailTeam], int]:
-        """List teams with pagination.
-
-        Note: This method returns ORM objects and cannot be cached since callers
-        depend on ORM methods (e.g., team.get_member_count()) and attributes
-        (created_at, updated_at) that cannot be serialized.
+    async def list_teams(
+        self,
+        # Unified pagination params
+        limit: int = 100,
+        offset: int = 0,
+        cursor: Optional[str] = None,
+        page: Optional[int] = None,
+        per_page: int = 50,
+        include_inactive: bool = False,
+        visibility_filter: Optional[str] = None,
+        base_url: Optional[str] = None,
+        include_personal: bool = False,
+        search_query: Optional[str] = None,
+    ) -> Union[Tuple[List[EmailTeam], Optional[str]], Dict[str, Any]]:
+        """List teams with pagination support (cursor or page based).
 
         Args:
-            limit: Maximum number of teams to return
-            offset: Number of teams to skip
+            limit: Max items for cursor pagination
+            offset: Offset for legacy/cursor pagination
+            cursor: Cursor token
+            page: Page number (1-indexed)
+            per_page: Items per page
+            include_inactive: Whether to include inactive teams
             visibility_filter: Filter by visibility (private, team, public)
+            base_url: Base URL for pagination links
+            include_personal: Whether to include personal teams
+            search_query: Search term for name/slug/description
 
         Returns:
-            Tuple[List[EmailTeam], int]: (teams, total_count)
-
-        Examples:
-            Team discovery and administration.
+            Union[Tuple[List[EmailTeam], Optional[str]], Dict[str, Any]]:
+                - Tuple (teams, next_cursor) if cursor/offset based
+                - Dict {data, pagination, links} if page based
         """
-        try:
-            query = self.db.query(EmailTeam).filter(EmailTeam.is_active.is_(True), EmailTeam.is_personal.is_(False))  # Exclude personal teams from listings
+        query = select(EmailTeam)
 
-            if visibility_filter:
-                query = query.filter(EmailTeam.visibility == visibility_filter)
+        if not include_personal:
+            query = query.where(EmailTeam.is_personal.is_(False))
 
-            total_count = query.count()
-            teams = query.offset(offset).limit(limit).all()
-            self.db.commit()  # Release transaction to avoid idle-in-transaction
+        if not include_inactive:
+            query = query.where(EmailTeam.is_active.is_(True))
 
-            return teams, total_count
+        if visibility_filter:
+            query = query.where(EmailTeam.visibility == visibility_filter)
 
-        except Exception as e:
-            self.db.rollback()
-            logger.error(f"Failed to list teams: {e}")
-            return [], 0
+        if search_query:
+            search_term = f"%{search_query}%"
+            query = query.where(
+                or_(
+                    EmailTeam.name.ilike(search_term),
+                    EmailTeam.slug.ilike(search_term),
+                    EmailTeam.description.ilike(search_term),
+                )
+            )
 
-    async def discover_public_teams(self, user_email: str, skip: int = 0, limit: int = 50) -> List[EmailTeam]:
+        # Choose ordering based on pagination mode:
+        # - Page-based (UI): alphabetical by name for user-friendly display
+        # - Cursor-based (API): created_at DESC, id DESC to match unified_paginate expectations
+        if page is not None:
+            query = query.order_by(EmailTeam.name, EmailTeam.id)
+        else:
+            query = query.order_by(desc(EmailTeam.created_at), desc(EmailTeam.id))
+
+        # Base URL for pagination links (default to admin partial if not provided)
+        if not base_url:
+            base_url = f"{settings.app_root_path}/admin/teams/partial"
+
+        # Apply offset manually for legacy offset-based pagination if not using page or cursor
+        if not page and not cursor and offset > 0:
+            query = query.offset(offset)
+
+        return await unified_paginate(
+            db=self.db,
+            query=query,
+            cursor=cursor,
+            limit=limit,
+            page=page,
+            per_page=per_page,
+            base_url=base_url,
+        )
+
+    async def get_all_team_ids(
+        self,
+        include_inactive: bool = False,
+        visibility_filter: Optional[str] = None,
+        include_personal: bool = False,
+        search_query: Optional[str] = None,
+    ) -> List[int]:
+        """Get all team IDs matching criteria (unpaginated).
+
+        Args:
+            include_inactive: Whether to include inactive teams
+            visibility_filter: Filter by visibility (private, team, public)
+            include_personal: Whether to include personal teams
+            search_query: Search term for name/slug
+
+        Returns:
+            List[int]: List of team IDs
+        """
+        query = select(EmailTeam.id)
+
+        if not include_personal:
+            query = query.where(EmailTeam.is_personal.is_(False))
+
+        if not include_inactive:
+            query = query.where(EmailTeam.is_active.is_(True))
+
+        if visibility_filter:
+            query = query.where(EmailTeam.visibility == visibility_filter)
+
+        if search_query:
+            search_term = f"%{search_query}%"
+            query = query.where(
+                or_(
+                    EmailTeam.name.ilike(search_term),
+                    EmailTeam.slug.ilike(search_term),
+                )
+            )
+
+        result = self.db.execute(query)
+        return [row[0] for row in result.all()]
+
+    async def get_teams_count(
+        self,
+        include_inactive: bool = False,
+        visibility_filter: Optional[str] = None,
+        include_personal: bool = False,
+        search_query: Optional[str] = None,
+    ) -> int:
+        """Get total count of teams matching criteria.
+
+        Args:
+            include_inactive: Whether to include inactive teams
+            visibility_filter: Filter by visibility (private, team, public)
+            include_personal: Whether to include personal teams
+            search_query: Search term for name/slug
+
+        Returns:
+            int: Total count of matching teams
+        """
+        query = select(func.count(EmailTeam.id))  # pylint: disable=not-callable
+
+        if not include_personal:
+            query = query.where(EmailTeam.is_personal.is_(False))
+
+        if not include_inactive:
+            query = query.where(EmailTeam.is_active.is_(True))
+
+        if visibility_filter:
+            query = query.where(EmailTeam.visibility == visibility_filter)
+
+        if search_query:
+            search_term = f"%{search_query}%"
+            query = query.where(
+                or_(
+                    EmailTeam.name.ilike(search_term),
+                    EmailTeam.slug.ilike(search_term),
+                )
+            )
+
+        result = self.db.execute(query)
+        return result.scalar() or 0
+
+    async def discover_public_teams(self, user_email: str, skip: int = 0, limit: Optional[int] = None) -> List[EmailTeam]:
         """Discover public teams that user can join.
 
         Args:
             user_email: Email of the user discovering teams
             skip: Number of teams to skip for pagination
-            limit: Maximum number of teams to return
+            limit: Maximum number of teams to return (None for unlimited)
 
         Returns:
             List[EmailTeam]: List of public teams user can join
@@ -1045,7 +1172,10 @@ class TeamManagementService:
 
             query = self.db.query(EmailTeam).filter(EmailTeam.visibility == "public", EmailTeam.is_active.is_(True), EmailTeam.is_personal.is_(False), ~EmailTeam.id.in_(user_team_subquery))
 
-            teams = query.offset(skip).limit(limit).all()
+            query = query.offset(skip)
+            if limit is not None:
+                query = query.limit(limit)
+            teams = query.all()
             self.db.commit()  # Release transaction to avoid idle-in-transaction
             return teams
 

@@ -662,12 +662,12 @@ class EmailAuthService:
             # len(result.data) <= 50     # Returns: True
 
             # Page-based pagination (for admin UI)
-            # result = await service.list_users(page=1, per_page=20)
+            # result = await service.list_users(page=1, per_page=10)
             # result.data       # Returns: list of users
             # result.pagination # Returns: pagination metadata
 
             # Search users
-            # users = await service.list_users(search="john", page=1, per_page=20)
+            # users = await service.list_users(search="john", page=1, per_page=10)
             # All users with "john" in email or name
         """
         try:
@@ -755,11 +755,14 @@ class EmailAuthService:
             logger.error(f"Error listing users: {e}")
             # Return appropriate empty response based on pagination mode
             if page is not None:
+                fallback_per_page = per_page or 50
                 return UsersListResult(
                     data=[],
-                    pagination=PaginationMeta(page=page, per_page=per_page or 50, total_items=0, total_pages=0, has_next=False, has_prev=False),
+                    pagination=PaginationMeta(page=page, per_page=fallback_per_page, total_items=0, total_pages=0, has_next=False, has_prev=False),
                     links=PaginationLinks(  # pylint: disable=kwarg-superseded-by-positional-arg
-                        self="/admin/users?page=1&per_page=50", first="/admin/users?page=1&per_page=50", last="/admin/users?page=1&per_page=50"
+                        self=f"/admin/users?page=1&per_page={fallback_per_page}",
+                        first=f"/admin/users?page=1&per_page={fallback_per_page}",
+                        last=f"/admin/users?page=1&per_page={fallback_per_page}",
                     ),
                 )
 
@@ -924,7 +927,7 @@ class EmailAuthService:
             users = await service.list_users(page=1, per_page=1000).data
 
             # For searching
-            users = await service.list_users(search="john", page=1, per_page=50).data
+            users = await service.list_users(search="john", page=1, per_page=10).data
         """
         if not self.__class__.get_all_users_deprecated_warned:
             warnings.warn(

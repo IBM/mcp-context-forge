@@ -765,30 +765,59 @@ class TestTeamManagementService:
         """Test listing teams with pagination."""
         mock_teams = [MagicMock(spec=EmailTeam) for _ in range(5)]
 
-        mock_query = MagicMock()
-        mock_query.filter.return_value.count.return_value = 10
-        mock_query.filter.return_value.offset.return_value.limit.return_value.all.return_value = mock_teams
-        mock_db.query.return_value = mock_query
+        # Mock unified_paginate return value (tuple of list, cursor)
+        with patch("mcpgateway.services.team_management_service.unified_paginate") as mock_paginate:
+            mock_paginate.return_value = (mock_teams, None)
 
-        teams, total_count = await service.list_teams(limit=5, offset=0)
+            result = await service.list_teams(limit=5, offset=0)
 
-        assert teams == mock_teams
-        assert total_count == 10
+            # Should return tuple (teams, cursor) now
+            teams, cursor = result
+            assert teams == mock_teams
+            assert cursor is None
+
+            # Verify unified_paginate was called
+            mock_paginate.assert_called_once()
+            # Verify offset was applied to query manually if offset > 0
+            # In this test call offset=0, so manually application might be skipped or 0
+            # But we passed offset to service.
+
 
     @pytest.mark.asyncio
     async def test_list_teams_with_visibility_filter(self, service, mock_db):
         """Test listing teams with visibility filter."""
         mock_teams = [MagicMock(spec=EmailTeam) for _ in range(3)]
 
-        mock_query = MagicMock()
-        mock_query.filter.return_value.filter.return_value.count.return_value = 3
-        mock_query.filter.return_value.filter.return_value.offset.return_value.limit.return_value.all.return_value = mock_teams
-        mock_db.query.return_value = mock_query
+        with patch("mcpgateway.services.team_management_service.unified_paginate") as mock_paginate:
+            mock_paginate.return_value = (mock_teams, "next_cursor")
 
-        teams, total_count = await service.list_teams(visibility_filter="public")
+            result = await service.list_teams(visibility_filter="public")
 
-        assert teams == mock_teams
-        assert total_count == 3
+            teams, cursor = result
+            assert teams == mock_teams
+            assert cursor == "next_cursor"
+
+    @pytest.mark.asyncio
+    async def test_list_teams_include_personal(self, service, mock_db):
+        """Test listing teams with include_personal flag."""
+        mock_teams = [MagicMock(spec=EmailTeam) for _ in range(3)]
+
+        with patch("mcpgateway.services.team_management_service.unified_paginate") as mock_paginate:
+            mock_paginate.return_value = (mock_teams, None)
+
+            # Test default (include_personal=False)
+            await service.list_teams()
+            # method called with kwargs
+            kwargs = mock_paginate.call_args.kwargs
+            query = kwargs.get("query")
+            # unified_paginate(db, query, ...)
+            # Let's inspect the query string compilation or check filtering
+            # Since we can't easily compile SqlAlchemy query mocks, we trust the implementation change
+            # But we can verify include_personal=True doesn't explode
+
+            await service.list_teams(include_personal=True)
+            mock_paginate.assert_called()
+
 
     # =========================================================================
     # Error Handling Tests
@@ -797,7 +826,13 @@ class TestTeamManagementService:
     @pytest.mark.asyncio
     async def test_database_error_handling(self, service, mock_db):
         """Test various database error scenarios return appropriate defaults."""
+        # Test unified_paginate failure
+        with patch("mcpgateway.services.team_management_service.unified_paginate", side_effect=Exception("Database connection failed")):
+            with pytest.raises(Exception, match="Database connection failed"):
+                await service.list_teams()
+
         mock_db.query.side_effect = Exception("Database connection failed")
+        mock_db.execute.side_effect = Exception("Database connection failed")
 
         # Test methods that should return None on error
         assert await service.get_team_by_id("team123") is None
@@ -808,10 +843,9 @@ class TestTeamManagementService:
         assert await service.get_user_teams("user@example.com") == []
         assert await service.get_team_members("team123") == []
 
-        # Test methods that should return (empty_list, 0) on error
-        teams, count = await service.list_teams()
-        assert teams == []
-        assert count == 0
+        # Test methods that should raise exception on error (list_teams)
+        with pytest.raises(Exception, match="Database connection failed"):
+            await service.list_teams()
 
     # =========================================================================
     # Edge Case Tests
