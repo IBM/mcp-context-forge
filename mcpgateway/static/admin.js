@@ -127,33 +127,13 @@ document.addEventListener("DOMContentLoaded", function () {
     initializeSearchInputs();
     initializePasswordValidation();
 
-    // Initialize server checkbox state from URL parameter
+    // Initialize checkbox states from URL parameter for inactive toggles
+    const urlParams = new URLSearchParams(window.location.search);
+    const includeInactive = urlParams.get("include_inactive") === "true";
     const serversCheckbox = document.getElementById("show-inactive-servers");
-    if (serversCheckbox) {
-        // Check URL for include_inactive parameter
-        const urlParams = new URLSearchParams(window.location.search);
-        const includeInactive = urlParams.get("include_inactive") === "true";
-        serversCheckbox.checked = includeInactive;
-
-        // Wait for HTMX to load the table, then apply filter
-        setTimeout(() => {
-            applyServerFilter(serversCheckbox.checked);
-        }, 500);
-    }
-
-    // Initialize gateway checkbox state from URL parameter
     const gatewaysCheckbox = document.getElementById("show-inactive-gateways");
-    if (gatewaysCheckbox) {
-        // Check URL for include_inactive parameter
-        const urlParams = new URLSearchParams(window.location.search);
-        const includeInactive = urlParams.get("include_inactive") === "true";
-        gatewaysCheckbox.checked = includeInactive;
-
-        // Wait for HTMX to load the table, then apply filter
-        setTimeout(() => {
-            applyGatewayFilter(gatewaysCheckbox.checked);
-        }, 500);
-    }
+    if (serversCheckbox) serversCheckbox.checked = includeInactive;
+    if (gatewaysCheckbox) gatewaysCheckbox.checked = includeInactive;
 
     initializeAddMembersForms();
 
@@ -219,22 +199,6 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // Re-initialize search inputs when HTMX content loads
     document.body.addEventListener("htmx:afterSwap", function (event) {
-        // Apply server filter on initial load and after HTMX swaps
-        if (event.detail.target.id === "servers-table") {
-            const checkbox = document.getElementById("show-inactive-servers");
-            if (checkbox) {
-                applyServerFilter(checkbox.checked);
-            }
-        }
-
-        // Apply gateway filter on initial load and after HTMX swaps
-        if (event.detail.target.id === "gateways-table") {
-            const checkbox = document.getElementById("show-inactive-gateways");
-            if (checkbox) {
-                applyGatewayFilter(checkbox.checked);
-            }
-        }
-
         setTimeout(() => {
             initializeSearchInputs();
         }, 200);
@@ -10184,82 +10148,6 @@ document.addEventListener("DOMContentLoaded", function () {
 // INACTIVE ITEMS HANDLING
 // ===================================================================
 
-/**
- * Apply client-side filtering to server table rows based on active/inactive state
- * @param {boolean} showInactive - Whether to show inactive servers
- */
-function applyServerFilter(showInactive) {
-    const tableBody = document.getElementById("servers-table-body");
-    if (!tableBody) {
-        console.warn("applyServerFilter: servers-table-body not found");
-        return;
-    }
-
-    const rows = tableBody.querySelectorAll("tr[data-enabled]");
-    console.log(
-        `applyServerFilter: showInactive=${showInactive}, found ${rows.length} rows`,
-    );
-
-    let hiddenCount = 0;
-    rows.forEach((row) => {
-        const isEnabled = row.getAttribute("data-enabled") === "true";
-        if (showInactive) {
-            // Show all rows (active and inactive)
-            row.style.removeProperty("display");
-            row.style.removeProperty("visibility");
-        } else {
-            // Show only active rows
-            if (isEnabled) {
-                row.style.removeProperty("display");
-                row.style.removeProperty("visibility");
-            } else {
-                row.style.display = "none";
-                hiddenCount++;
-            }
-        }
-    });
-
-    console.log(`applyServerFilter: ${hiddenCount} rows hidden`);
-}
-
-/**
- * Apply client-side filtering to gateway table rows based on active/inactive state
- * @param {boolean} showInactive - Whether to show inactive gateways
- */
-function applyGatewayFilter(showInactive) {
-    const tableBody = document.getElementById("gateways-table-body");
-    if (!tableBody) {
-        console.warn("applyGatewayFilter: gateways-table-body not found");
-        return;
-    }
-
-    const rows = tableBody.querySelectorAll("tr[data-enabled]");
-    console.log(
-        `applyGatewayFilter: showInactive=${showInactive}, found ${rows.length} rows`,
-    );
-
-    let hiddenCount = 0;
-    rows.forEach((row) => {
-        const isEnabled = row.getAttribute("data-enabled") === "true";
-        if (showInactive) {
-            // Show all rows (active and inactive)
-            row.style.removeProperty("display");
-            row.style.removeProperty("visibility");
-        } else {
-            // Show only active rows
-            if (isEnabled) {
-                row.style.removeProperty("display");
-                row.style.removeProperty("visibility");
-            } else {
-                row.style.display = "none";
-                hiddenCount++;
-            }
-        }
-    });
-
-    console.log(`applyGatewayFilter: ${hiddenCount} rows hidden`);
-}
-
 function toggleInactiveItems(type) {
     const checkbox = safeGetElement(`show-inactive-${type}`);
     if (!checkbox) {
@@ -10280,33 +10168,18 @@ function toggleInactiveItems(type) {
         // ignore (shouldn't happen)
     }
 
-    // For servers, use client-side filtering instead of HTMX refresh
-    if (type === "servers") {
-        console.log(
-            `toggleInactiveItems: servers checkbox toggled to ${checkbox.checked}`,
-        );
-        applyServerFilter(checkbox.checked);
-        return;
-    }
-
-    // For gateways, use client-side filtering instead of HTMX refresh
-    if (type === "gateways") {
-        console.log(
-            `toggleInactiveItems: gateways checkbox toggled to ${checkbox.checked}`,
-        );
-        applyGatewayFilter(checkbox.checked);
-        return;
-    }
-
     // Try to find the HTMX container that loads this entity's partial
     // Prefer an element with hx-get containing the admin partial endpoint
     const selector = `[hx-get*="/admin/${type}/partial"]`;
     let container = document.querySelector(selector);
 
     // Fallback to conventional id naming used in templates
+    // tools, servers, and gateways use "-table" suffix; others use "-list-container"
     if (!container) {
-        const fallbackId =
-            type === "tools" ? "tools-table" : `${type}-list-container`;
+        const tableTypes = ["tools", "servers", "gateways"];
+        const fallbackId = tableTypes.includes(type)
+            ? `${type}-table`
+            : `${type}-list-container`;
         container = document.getElementById(fallbackId);
     }
 
@@ -10340,12 +10213,28 @@ function toggleInactiveItems(type) {
                 reqUrl.searchParams.delete("include_inactive");
             }
         } else {
-            // construct from known pattern
+            // construct from known pattern, preserving URL params like team_id
             const root = window.ROOT_PATH || "";
+            const currentUrl = new URL(window.location);
+            // Read per_page from pagination select (Alpine.js state), fall back to URL, then default
+            const paginationControls = document.getElementById(
+                `${type}-pagination-controls`,
+            );
+            const paginationSelect = paginationControls?.querySelector(
+                'select[x-model="perPage"]',
+            );
+            const perPage =
+                paginationSelect?.value ||
+                currentUrl.searchParams.get("per_page") ||
+                "20";
+            const teamId = currentUrl.searchParams.get("team_id");
             reqUrl = new URL(
-                `${root}/admin/${type}/partial?page=1&per_page=50`,
+                `${root}/admin/${type}/partial?page=1&per_page=${perPage}`,
                 window.location.origin,
             );
+            if (teamId) {
+                reqUrl.searchParams.set("team_id", teamId);
+            }
             if (checkbox.checked) {
                 reqUrl.searchParams.set("include_inactive", "true");
             }
@@ -16729,6 +16618,11 @@ function initializeSearchInputs() {
             filterServerTable(this.value);
         });
         console.log("✅ Virtual Servers search initialized");
+        // Reapply current search term if any (preserves search after HTMX swap)
+        const currentSearch = catalogSearchInput.value || "";
+        if (currentSearch) {
+            filterServerTable(currentSearch);
+        }
     }
 
     // MCP Servers (Gateways) search
@@ -16759,8 +16653,11 @@ function initializeSearchInputs() {
 
         console.log("✅ MCP Servers search events attached");
 
-        // Test the function works
-        filterGatewaysTable("");
+        // Reapply current search term if any (preserves search after HTMX swap)
+        const currentSearch = gatewaysSearchInput.value || "";
+        if (currentSearch) {
+            filterGatewaysTable(currentSearch);
+        }
     } else {
         console.error("❌ MCP Servers search input not found!");
 
