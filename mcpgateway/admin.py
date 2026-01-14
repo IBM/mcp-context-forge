@@ -15050,6 +15050,8 @@ async def register_catalog_server(
         if result.success:
             # Check if this is an OAuth server requiring configuration (use explicit flag, not string matching)
             if result.oauth_required:
+                # OAuth servers are registered but disabled until configured
+                # Don't trigger refresh - the yellow warning should persist until user configures OAuth
                 button_fragment = f"""
                 <button
                     class="w-full px-4 py-2 bg-yellow-600 text-white rounded-md cursor-default"
@@ -15062,6 +15064,8 @@ async def register_catalog_server(
                     OAuth Config Required
                 </button>
                 """
+                # No HX-Trigger for OAuth - yellow warning persists until page reload or manual refresh
+                return HTMLResponse(content=button_fragment)
             else:
                 # Success: Show success button state
                 button_fragment = f"""
@@ -15076,10 +15080,10 @@ async def register_catalog_server(
                     Registered Successfully
                 </button>
                 """
-            # Success cases trigger a delayed table refresh via HX-Trigger header
-            response = HTMLResponse(content=button_fragment)
-            response.headers["HX-Trigger-After-Swap"] = orjson.dumps({"catalogRegistrationSuccess": {"delayMs": 1500}}).decode()
-            return response
+                # Only non-OAuth success triggers delayed table refresh
+                response = HTMLResponse(content=button_fragment)
+                response.headers["HX-Trigger-After-Swap"] = orjson.dumps({"catalogRegistrationSuccess": {"delayMs": 1500}}).decode()
+                return response
         else:
             # Error: Show error state with retry button (no auto-refresh so retry persists)
             error_msg = html.escape(result.error or result.message, quote=True)

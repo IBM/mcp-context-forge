@@ -125,8 +125,8 @@ def test_register_catalog_server_htmx_oauth(client):
     assert "OAuth Config Required" in response.text
     assert "bg-yellow-600" in response.text
     assert "disabled" in response.text
-    assert "HX-Trigger-After-Swap" in response.headers
-    assert "catalogRegistrationSuccess" in response.headers["HX-Trigger-After-Swap"]
+    # OAuth registrations should NOT trigger refresh (yellow warning persists)
+    assert "HX-Trigger-After-Swap" not in response.headers
 
 
 def test_register_catalog_server_htmx_error(client):
