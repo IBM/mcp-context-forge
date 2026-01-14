@@ -2729,7 +2729,7 @@ class GatewayCreate(BaseModel):
 
                 # Warn about duplicate keys (optional - could log this instead)
                 if duplicate_keys:
-                    logging.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
+                    logger.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
 
                 # Check for excessive headers (prevent abuse)
                 if len(header_dict) > 100:
@@ -2971,7 +2971,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
                 # Warn about duplicate keys (optional - could log this instead)
                 if duplicate_keys:
-                    logging.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
+                    logger.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
 
                 # Check for excessive headers (prevent abuse)
                 if len(header_dict) > 100:
@@ -4270,7 +4270,7 @@ class A2AAgentCreate(BaseModel):
 
                 # Warn about duplicate keys (optional - could log this instead)
                 if duplicate_keys:
-                    logging.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
+                    logger.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
 
                 # Check for excessive headers (prevent abuse)
                 if len(header_dict) > 100:
@@ -4558,7 +4558,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
 
                 # Warn about duplicate keys (optional - could log this instead)
                 if duplicate_keys:
-                    logging.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
+                    logger.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
 
                 # Check for excessive headers (prevent abuse)
                 if len(header_dict) > 100:
