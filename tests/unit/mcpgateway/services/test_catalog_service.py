@@ -75,8 +75,8 @@ async def test_get_catalog_servers_filters(service):
     }
     with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
         db = MagicMock()
-        # Return tuples of (url, enabled, auth_type) - enabled=True means active, auth_type for OAuth detection
-        db.execute.return_value = [("http://a", True, None)]
+        # Return tuples of (url, enabled, auth_type, oauth_config) - enabled=True means active
+        db.execute.return_value = [("http://a", True, None, None)]
         req = CatalogListRequest(category="cat", auth_type="Open", provider="prov", search="srv", tags=["t1"], show_registered_only=True, show_available_only=True, offset=0, limit=10)
         result = await service.get_catalog_servers(req, db)
         assert result.total >= 1

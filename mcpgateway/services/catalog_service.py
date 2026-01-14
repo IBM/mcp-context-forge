@@ -141,16 +141,19 @@ class CatalogService:
                 from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
 
                 # Query all gateways (enabled and disabled) to properly track registration status
-                # Also get auth_type to distinguish OAuth servers from manually disabled ones
-                stmt = select(DbGateway.url, DbGateway.enabled, DbGateway.auth_type)
+                # Include auth_type and oauth_config to distinguish OAuth servers needing setup
+                # from OAuth servers that were manually disabled after configuration
+                stmt = select(DbGateway.url, DbGateway.enabled, DbGateway.auth_type, DbGateway.oauth_config)
                 result = db.execute(stmt)
                 registered_urls = set()
                 oauth_disabled_urls = set()
                 for row in result:
-                    url, enabled, auth_type = row
+                    url, enabled, auth_type, oauth_config = row
                     registered_urls.add(url)
-                    # Only mark as requiring OAuth config if disabled AND using OAuth auth
-                    if not enabled and auth_type == "oauth":
+                    # Only mark as requiring OAuth config if:
+                    # - disabled AND OAuth auth_type AND oauth_config is empty/None
+                    # This distinguishes unconfigured OAuth servers from manually disabled ones
+                    if not enabled and auth_type == "oauth" and not oauth_config:
                         oauth_disabled_urls.add(url)
             except Exception as e:
                 logger.warning(f"Failed to check registered servers: {e}")
@@ -338,7 +341,7 @@ class CatalogService:
                     tags=gateway_data.get("tags", []),
                     transport=gateway_data["transport"],
                     capabilities={},
-                    auth_type=None,  # Will be set during OAuth configuration
+                    auth_type="oauth",  # Mark as OAuth so it can be identified after page refresh
                     enabled=False,  # Disabled until OAuth is configured
                     created_via="catalog",
                     visibility="public",
