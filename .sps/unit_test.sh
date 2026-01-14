@@ -22,6 +22,7 @@ echo "############# Running Install dependencies ################"
 echo "############# Running Install DB ################"
 make install-db
 echo "############# Running Tests and Coverage ##################"
+export PATH=/root/.local/bin/:$PATH
 source $HOME/.venv/mcpgateway/bin/activate && \
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
