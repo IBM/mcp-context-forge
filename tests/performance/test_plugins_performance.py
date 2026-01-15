@@ -179,7 +179,7 @@ async def profile_plugin_hook(manager: PluginManager, plugin_name: str, hook_typ
     try:
         for _ in range(iterations):
             await manager.invoke_hook_for_plugin(plugin_name, hook_enum, payload, context=plugin_context)
-    except Exception as e:        
+    except Exception as e:
         print(f"✗ Error: {e}")
     profiler.disable()
 
