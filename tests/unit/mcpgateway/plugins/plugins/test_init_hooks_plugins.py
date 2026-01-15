@@ -136,8 +136,8 @@ PLUGIN_HOOK_PARAMS = get_plugin_test_params()
 PLUGIN_NAMES = get_plugin_names()
 
 
-class TestDisabledPluginsInstantiation:
-    """Test that each disabled plugin can be instantiated."""
+class TestPluginInstantiation:
+    """Test that each enabled plugin can be instantiated."""
 
     @pytest.fixture(autouse=True)
     def reset_plugin_manager(self):
@@ -172,8 +172,8 @@ class TestDisabledPluginsInstantiation:
         await manager.shutdown()
 
 
-class TestDisabledPluginsHookInvocation:
-    """Test hook invocation for each disabled plugin."""
+class TestPluginHookInvocation:
+    """Test hook invocation for each enabled plugin."""
 
     @pytest.fixture(autouse=True)
     def reset_plugin_manager(self):
@@ -226,8 +226,8 @@ class TestDisabledPluginsHookInvocation:
         await manager.shutdown()
 
 
-class TestAllDisabledPluginsTogether:
-    """Test loading all disabled plugins together."""
+class TestAllPluginsTogether:
+    """Test loading all enabled plugins together."""
 
     @pytest.fixture(autouse=True)
     def reset_plugin_manager(self):
@@ -238,7 +238,7 @@ class TestAllDisabledPluginsTogether:
 
     @pytest.mark.asyncio
     async def test_all_plugins_load_together(self):
-        """Test that all disabled plugins can be loaded simultaneously."""
+        """Test that all enabled plugins can be loaded simultaneously."""
         manager = PluginManager(CONFIG_PATH)
         await manager.initialize()
 
