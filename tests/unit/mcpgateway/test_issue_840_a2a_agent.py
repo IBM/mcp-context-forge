@@ -458,7 +458,16 @@ class TestIssue840A2AToolsNotListedInGlobalTools:
         mock_tool_read.integration_type = "A2A"
         mock_tool_read.tags = ["a2a", "agent"]
 
-        with patch.object(tool_service, "convert_tool_to_read", return_value=mock_tool_read):
+        # Mock registry cache to ensure cache miss (prevents stale cached data from interfering)
+        mock_cache = MagicMock()
+        mock_cache.get = AsyncMock(return_value=None)
+        mock_cache.set = AsyncMock()
+        mock_cache.hash_filters = MagicMock(return_value="test_hash")
+
+        with (
+            patch("mcpgateway.services.tool_service._get_registry_cache", return_value=mock_cache),
+            patch.object(tool_service, "convert_tool_to_read", return_value=mock_tool_read),
+        ):
             # List tools - this should include A2A tools
             result = await tool_service.list_tools(
                 db=mock_db,
@@ -509,7 +518,16 @@ class TestIssue840A2AToolsNotListedInGlobalTools:
         mock_tool_read.integration_type = "A2A"
         mock_tool_read.tags = ["a2a", "agent", "test"]
 
-        with patch.object(tool_service, "convert_tool_to_read", return_value=mock_tool_read):
+        # Mock registry cache to ensure cache miss (prevents stale cached data from interfering)
+        mock_cache = MagicMock()
+        mock_cache.get = AsyncMock(return_value=None)
+        mock_cache.set = AsyncMock()
+        mock_cache.hash_filters = MagicMock(return_value="test_hash")
+
+        with (
+            patch("mcpgateway.services.tool_service._get_registry_cache", return_value=mock_cache),
+            patch.object(tool_service, "convert_tool_to_read", return_value=mock_tool_read),
+        ):
             # Filter by "a2a" tag - should find the A2A tool
             result = await tool_service.list_tools(
                 db=mock_db,
