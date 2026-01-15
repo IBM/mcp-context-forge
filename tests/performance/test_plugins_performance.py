@@ -48,7 +48,6 @@ sys.path.insert(0, ROOT_DIR)
 from mcpgateway.common.models import Message, PromptResult, ResourceContent, Role, TextContent  # noqa: E402
 from mcpgateway.plugins.framework import (  # noqa: E402
     GlobalContext,
-    PluginContext,
     PluginManager,
     PromptHookType,
     PromptPosthookPayload,
@@ -169,18 +168,13 @@ async def profile_plugin_hook(manager: PluginManager, plugin_name: str, hook_typ
 
     hook_enum = hook_type_map[hook_type]
 
-    plugin_context = PluginContext(state={}, global_context=global_context, metadata={})
-
     # Create profiler
     profiler = cProfile.Profile()
 
     # Profile the hook invocations
     profiler.enable()
-    try:
-        for _ in range(iterations):
-            await manager.invoke_hook_for_plugin(plugin_name, hook_enum, payload, context=plugin_context)
-    except Exception as e:
-        print(f"✗ Error: {e}")
+    for _ in range(iterations):
+        await manager.invoke_hook_for_plugin(plugin_name, hook_enum, payload, context=global_context)
     profiler.disable()
 
     # Save profile to file
