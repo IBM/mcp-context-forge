@@ -628,6 +628,7 @@ mcpContextForge:
 
     # ─ JWT Configuration (Advanced) ─
     JWT_AUDIENCE_VERIFICATION: "true"      # JWT audience verification (disable for DCR)
+    JWT_ISSUER_VERIFICATION: "true"        # JWT issuer verification (disable if needed)
     JWT_PRIVATE_KEY_PATH: ""               # path to JWT private key file (RSA/ECDSA algorithms)
     JWT_PUBLIC_KEY_PATH: ""                # path to JWT public key file (RSA/ECDSA algorithms)
 
