@@ -14,8 +14,7 @@ from typing import Dict
 import orjson
 
 # First-Party
-from mcpgateway.common.models import Gateway, Tool
-from mcpgateway.plugins.framework import Plugin, PluginConfig, PluginContext, get_attr
+from mcpgateway.plugins.framework import get_attr, Plugin, PluginConfig, PluginContext
 from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 from mcpgateway.plugins.framework.hooks.tools import ToolPostInvokePayload, ToolPostInvokeResult, ToolPreInvokePayload, ToolPreInvokeResult
 from mcpgateway.services.logging_service import LoggingService
