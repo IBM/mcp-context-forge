@@ -19,7 +19,6 @@
       ansible.builtin.command: >
         aws elasticache delete-serverless-cache
         --serverless-cache-name {{ prefix_v }}-redis
-        --no-final-snapshot
         --region {{ region_v }}
       when: elasticache_check_r.rc == 0
       register: elasticache_delete_r

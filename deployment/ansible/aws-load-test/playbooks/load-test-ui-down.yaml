@@ -1,0 +1,90 @@
+---
+- name: Remove ALB and Locust load testing UI
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: ../.venv/bin/python
+  environment:
+    AWS_REGION: "{{ region_v }}"
+  tasks:
+    # =========================================================================
+    # Delete Route 53 Records
+    # =========================================================================
+
+    - name: Delete Route 53 A record for ALB
+      amazon.aws.route53:
+        state: absent
+        zone: "{{ (mcf_domain | split('.'))[-2:] | join('.') }}"
+        record: "{{ prefix_v + '.' + mcf_domain }}"
+        type: A
+
+    # =========================================================================
+    # Delete ALB
+    # =========================================================================
+
+    - name: Delete Application Load Balancer
+      amazon.aws.elb_application_lb:
+        name: "{{ prefix_v }}-alb"
+        region: "{{ region_v }}"
+        state: absent
+        wait: true
+      retries: 5
+      delay: 30
+
+    # =========================================================================
+    # Delete Target Group
+    # =========================================================================
+
+    - name: Delete Locust target group
+      community.aws.elb_target_group:
+        name: "{{ prefix_v }}-locust-tg"
+        region: "{{ region_v }}"
+        state: absent
+      retries: 10
+      delay: 15
+
+    # =========================================================================
+    # Restore Security Groups
+    # =========================================================================
+
+    - name: Get VPC info
+      amazon.aws.ec2_vpc_net_info:
+        region: "{{ region_v }}"
+        filters:
+          "tag:Name": "{{ prefix_v }}-vpc"
+      register: vpc_info_r
+
+    - name: Set VPC ID fact
+      ansible.builtin.set_fact:
+        vpc_id_f: "{{ vpc_info_r.vpcs[0].id }}"
+      when: vpc_info_r.vpcs | length > 0
+
+    - name: Find my public IP
+      ansible.builtin.uri:
+        url: http://ifconfig.me/ip
+        return_content: true
+      register: ip_response
+
+    - name: Restore bastion security group (remove ALB access to 8089)
+      amazon.aws.ec2_security_group:
+        name: "{{ prefix_v }}-bastion-sg"
+        description: Allow SSH and Locust access
+        region: "{{ region_v }}"
+        vpc_id: "{{ vpc_id_f }}"
+        tags:
+          "Name": "{{ prefix_v }}-bastion-sg"
+        rules:
+          - proto: tcp
+            from_port: 22
+            to_port: 22
+            cidr_ip: "{{ ip_response.content }}/32"
+          - proto: tcp
+            from_port: 8089
+            to_port: 8089
+            cidr_ip: "{{ ip_response.content }}/32"
+      when: vpc_info_r.vpcs | length > 0
+
+    - name: ALB and Locust UI removed
+      ansible.builtin.debug:
+        msg: "ALB, target group, and Route53 record have been removed"

@@ -45,14 +45,100 @@ owner_v: Your Name
 instance_type_v: t4g.micro
 
 # -----------------------------------------------------------------------------
-# ECS EC2 Instance Configuration
+# ECS EC2 Instance Configuration (used for architecture detection)
 # -----------------------------------------------------------------------------
-# ecs_instance_type_v: The EC2 instance type for the ECS cluster node.
-#                      Default c6i.12xlarge provides 48 vCPU and 96GB RAM,
-#                      sufficient for 3 gateway replicas + supporting services.
-#                      See resource calculations in README.md
+# ecs_instance_type_v: Reference instance type for determining build architecture.
+#                      With Fargate, this is only used to determine the target
+#                      platform (amd64/arm64) for container image builds.
 ecs_instance_type_v: c6i.12xlarge
 
 # ecs_volume_size_v: Root volume size in GB for the ECS instance.
 #                    100GB provides space for container images and logs.
 ecs_volume_size_v: 100
+
+# -----------------------------------------------------------------------------
+# SSH Connection Settings (for bastion hosts)
+# -----------------------------------------------------------------------------
+# ansible_user: The SSH username for connecting to bastion hosts.
+#               Ubuntu AMIs use 'ubuntu', Amazon Linux uses 'ec2-user'.
+ansible_user: ubuntu
+
+# ansible_ssh_private_key_file: Path to the private key file for SSH access.
+#                               Must correspond to the keypair_v specified above.
+ansible_ssh_private_key_file: ~/.ssh/my-keypair.pem
+
+# -----------------------------------------------------------------------------
+# AWS Credentials for Bastion Operations
+# -----------------------------------------------------------------------------
+# These credentials are used by the bastion host when running AWS operations
+# (EFS, RDS, ECS, Secrets Manager, etc.). The bastion uses these to interact
+# with AWS services from within the VPC.
+#
+# access_key_v: AWS Access Key ID. Retrieved from environment variable to
+#               avoid storing credentials in version control.
+access_key_v: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') }}"
+
+# secret_key_v: AWS Secret Access Key. Retrieved from environment variable.
+secret_key_v: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') }}"
+
+# -----------------------------------------------------------------------------
+# MCP ContextForge Configuration
+# -----------------------------------------------------------------------------
+# gateway_replicas: Number of MCP Gateway replicas to run.
+#                   Default is 3 for load testing. Adjust based on expected load.
+gateway_replicas: 3
+
+# -----------------------------------------------------------------------------
+# Application Domain Configuration
+# -----------------------------------------------------------------------------
+# mcf_domain: The base domain name for the MCP ContextForge application.
+#             A subdomain will be created as: <prefix_v>.<mcf_domain>
+#             The parent domain must be managed in Route 53.
+mcf_domain: "mcf.example.com"
+
+# ca_certificate_arn: ARN of the ACM certificate for HTTPS on the ALB.
+#                     Must be a valid certificate in the deployment region that
+#                     covers the target domain (e.g., *.mcf.example.com).
+#                     Create via: aws acm request-certificate
+ca_certificate_arn: "arn:aws:acm:eu-west-1:123456789012:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# -----------------------------------------------------------------------------
+# Container Image Tags
+# -----------------------------------------------------------------------------
+# Pin the version of the container images to be used. Use 'latest' for the
+# most recent build, or specify a specific tag for reproducible deployments.
+#
+gateway_image_tag_v: latest
+nginx_image_tag_v: latest
+
+# -----------------------------------------------------------------------------
+# JWT Configuration
+# -----------------------------------------------------------------------------
+# jwt_secret_key_v: Secret key for signing JWT tokens. Must be at least 32
+#                   characters for HS256. Use the same value across gateway
+#                   and registration sidecars.
+#                   Generate with: openssl rand -base64 32
+#                   For production, use Secrets Manager:
+#                   jwt_secret_key_v: "{{ lookup('amazon.aws.secretsmanager_secret', prefix_v + '-jwt-secret-key') }}"
+jwt_secret_key_v: "change-me-to-a-secure-32-char-secret"
+
+# platform_admin_password_v: Password for the platform admin user.
+#                            For production, use Secrets Manager.
+platform_admin_password_v: "changeme"
+
+# -----------------------------------------------------------------------------
+# MCP Server Configuration
+# -----------------------------------------------------------------------------
+# benchmark_server_count: Number of benchmark MCP servers to spawn.
+#                         Each server runs on a separate port (9000+).
+benchmark_server_count: 10
+
+# -----------------------------------------------------------------------------
+# Load Testing Configuration
+# -----------------------------------------------------------------------------
+# Locust load testing settings for the bastion host.
+# Access via SSH tunnel: ssh -L 8089:localhost:8089 ubuntu@<bastion-ip>
+#
+locust_users: 1000
+locust_spawn_rate: 50
+locust_run_time: "10m"

@@ -6,14 +6,6 @@
     AWS_SECRET_ACCESS_KEY: "{{ secret_key_v }}"
     AWS_REGION: "{{ region_v }}"
   tasks:
-    # Delete Route 53 records
-    - name: Delete Route 53 A record for ALB
-      amazon.aws.route53:
-        state: absent
-        zone: "{{ (mcf_domain | split('.'))[-2:] | join('.') }}"
-        record: "{{ prefix_v + '.' + mcf_domain }}"
-        type: A
-
     # Delete the ECS services
     - name: Delete ECS services
       ecs_service:
@@ -24,29 +16,24 @@
       loop:
         - nginx
         - gateway
+        - fast-time
+        - fast-test
+        - benchmark
       register: services_delete_result
+
+    - name: Count deleted services
+      ansible.builtin.set_fact:
+        services_deleted_count: "{{ services_delete_result.results | selectattr('changed', 'equalto', true) | list | length }}"
 
     # Wait for services to drain before deleting ALB
     - name: Wait for services to drain
       ansible.builtin.pause:
         seconds: 30
+      when: services_deleted_count | int > 0
 
-    # Delete the ALB
-    - name: Delete Application Load Balancer
-      amazon.aws.elb_application_lb:
-        name: "{{ prefix_v }}-alb"
-        state: absent
-        wait: true
-      retries: 5
-      delay: 30
-
-    # Delete the target groups (retry until ALB is fully deleted)
-    - name: Delete target groups
-      community.aws.elb_target_group:
-        name: "{{ prefix_v }}-nginx-tg"
-        state: absent
-      retries: 10
-      delay: 15
+    - name: Report services deleted
+      ansible.builtin.debug:
+        msg: "{{ services_deleted_count }} service(s) deleted{{ ' - skipping drain wait' if services_deleted_count | int == 0 else '' }}"
 
     # Delete the Cloud Map namespace (wait for services to fully delete)
     - name: Delete Cloud Map namespace
@@ -154,6 +141,9 @@
       loop:
         - "{{ prefix_v }}-gateway-td"
         - "{{ prefix_v }}-nginx-td"
+        - "{{ prefix_v }}-fast-time-td"
+        - "{{ prefix_v }}-fast-test-td"
+        - "{{ prefix_v }}-benchmark-td"
       retries: 5
       delay: 10
 

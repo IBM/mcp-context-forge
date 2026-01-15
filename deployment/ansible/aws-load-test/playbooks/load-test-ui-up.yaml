@@ -1,0 +1,185 @@
+---
+- name: Create ALB and expose Locust load testing UI
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: ../.venv/bin/python
+  tasks:
+    # =========================================================================
+    # Get Required Information
+    # =========================================================================
+
+    - name: Get VPC info
+      amazon.aws.ec2_vpc_net_info:
+        region: "{{ region_v }}"
+        filters:
+          "tag:Name": "{{ prefix_v }}-vpc"
+      register: vpc_info_r
+
+    - name: Set VPC ID fact
+      ansible.builtin.set_fact:
+        vpc_id_f: "{{ vpc_info_r.vpcs[0].id }}"
+
+    - name: Get VPC public subnets
+      amazon.aws.ec2_vpc_subnet_info:
+        region: "{{ region_v }}"
+        filters:
+          "tag:Project": "{{ prefix_v }}"
+          "map-public-ip-on-launch": true
+      register: vpc_public_subnets_r
+
+    - name: Find my public IP
+      ansible.builtin.uri:
+        url: http://ifconfig.me/ip
+        return_content: true
+      register: ip_response
+
+    - name: Get ALB security group
+      amazon.aws.ec2_security_group_info:
+        region: "{{ region_v }}"
+        filters:
+          group-name: "{{ prefix_v }}-alb-sg"
+      register: alb_sg_info_r
+
+    - name: Get bastion security group
+      amazon.aws.ec2_security_group_info:
+        region: "{{ region_v }}"
+        filters:
+          group-name: "{{ prefix_v }}-bastion-sg"
+      register: bastion_sg_info_r
+
+    - name: Get bastion instance
+      amazon.aws.ec2_instance_info:
+        region: "{{ region_v }}"
+        filters:
+          "tag:Name": "{{ prefix_v }}-bastion"
+          "instance-state-name": running
+      register: bastion_instance_r
+
+    - name: Fail if bastion not found
+      ansible.builtin.fail:
+        msg: "Bastion instance not found or not running"
+      when: bastion_instance_r.instances | length == 0
+
+    # =========================================================================
+    # Update Security Groups
+    # =========================================================================
+
+    - name: Update ALB security group for HTTPS
+      amazon.aws.ec2_security_group:
+        name: "{{ prefix_v }}-alb-sg"
+        description: Allow HTTPS traffic from my IP to ALB
+        region: "{{ region_v }}"
+        vpc_id: "{{ vpc_id_f }}"
+        tags:
+          "Name": "{{ prefix_v }}-alb-sg"
+        rules:
+          - proto: tcp
+            from_port: 80
+            to_port: 80
+            cidr_ip: "{{ ip_response.content }}/32"
+          - proto: tcp
+            from_port: 443
+            to_port: 443
+            cidr_ip: "{{ ip_response.content }}/32"
+
+    - name: Add ALB access to bastion security group for Locust
+      amazon.aws.ec2_security_group:
+        name: "{{ prefix_v }}-bastion-sg"
+        description: Allow SSH and Locust access
+        region: "{{ region_v }}"
+        vpc_id: "{{ vpc_id_f }}"
+        tags:
+          "Name": "{{ prefix_v }}-bastion-sg"
+        rules:
+          - proto: tcp
+            from_port: 22
+            to_port: 22
+            cidr_ip: "{{ ip_response.content }}/32"
+          - proto: tcp
+            from_port: 8089
+            to_port: 8089
+            cidr_ip: "{{ ip_response.content }}/32"
+          - proto: tcp
+            from_port: 8089
+            to_port: 8089
+            group_id: "{{ alb_sg_info_r.security_groups[0].group_id }}"
+
+    # =========================================================================
+    # Create Target Group and ALB
+    # =========================================================================
+
+    - name: Create target group for Locust UI
+      community.aws.elb_target_group:
+        name: "{{ prefix_v }}-locust-tg"
+        protocol: HTTP
+        port: 8089
+        vpc_id: "{{ vpc_id_f }}"
+        region: "{{ region_v }}"
+        health_check_path: /
+        health_check_protocol: HTTP
+        health_check_interval: 30
+        health_check_timeout: 5
+        healthy_threshold_count: 2
+        unhealthy_threshold_count: 2
+        target_type: instance
+        state: present
+        targets:
+          - Id: "{{ bastion_instance_r.instances[0].instance_id }}"
+            Port: 8089
+      register: locust_target_group_r
+
+    - name: Create Application Load Balancer
+      amazon.aws.elb_application_lb:
+        name: "{{ prefix_v }}-alb"
+        region: "{{ region_v }}"
+        security_groups:
+          - "{{ alb_sg_info_r.security_groups[0].group_id }}"
+        subnets: "{{ vpc_public_subnets_r.subnets | map(attribute='id') | list }}"
+        scheme: internet-facing
+        state: present
+        tags:
+          "Name": "{{ prefix_v }}-alb"
+          "Project": "{{ prefix_v }}"
+        listeners:
+          - Protocol: HTTPS
+            Port: 443
+            SslPolicy: ELBSecurityPolicy-TLS13-1-2-Ext2-PQ-2025-09
+            DefaultActions:
+              - Type: forward
+                TargetGroupArn: "{{ locust_target_group_r.target_group_arn }}"
+            Certificates:
+              - CertificateArn: "{{ ca_certificate_arn }}"
+      register: alb_r
+
+    # =========================================================================
+    # Configure DNS
+    # =========================================================================
+
+    - name: ALB DNS Name is
+      ansible.builtin.debug:
+        var: alb_r.dns_name
+
+    - name: Wait for ALB DNS to be available
+      ansible.builtin.command: dig +short {{ alb_r.dns_name }}
+      changed_when: false
+      register: alb_dig_r
+      retries: 30
+      delay: 20
+      until: alb_dig_r.stdout is truthy
+
+    - name: Create Route 53 A records for ALB IP addresses
+      amazon.aws.route53:
+        state: present
+        zone: "{{ (mcf_domain | split('.'))[-2:] | join('.') }}"
+        record: "{{ prefix_v + '.' + mcf_domain }}"
+        type: A
+        ttl: 60
+        value: "{{ alb_dig_r.stdout | split('\n') }}"
+        overwrite: true
+        wait: true
+
+    - name: Display Locust UI URL
+      ansible.builtin.debug:
+        msg: "Locust UI available at: https://{{ prefix_v }}.{{ mcf_domain }}"

@@ -198,45 +198,6 @@
         wait_timeout: 300
       register: cloudmap_namespace_r
 
-    - name: Create target group for nginx service
-      community.aws.elb_target_group:
-        name: "{{ prefix_v }}-nginx-tg"
-        protocol: HTTP
-        port: 80
-        vpc_id: "{{ vpc_private_subnets_r.subnets[0].vpc_id }}"
-        health_check_path: /health
-        health_check_protocol: HTTP
-        health_check_interval: 30
-        health_check_timeout: 5
-        healthy_threshold_count: 2
-        unhealthy_threshold_count: 2
-        target_type: ip
-        state: present
-      register: nginx_target_group_r
-
-    - name: Create Application Load Balancer
-      elb_application_lb:
-        name: "{{ prefix_v }}-alb"
-        security_groups:
-          - "{{ alb_sg_group_id_f }}"
-        subnets: "{{ vpc_public_subnets_r.subnets | map(attribute='id') }}"
-        scheme: internet-facing
-        state: present
-        tags:
-          "Name": "{{ prefix_v }}-alb"
-          "Project": "{{ prefix_v }}"
-        listeners:
-          - Protocol: HTTPS
-            SslPolicy: ELBSecurityPolicy-TLS13-1-2-Ext2-PQ-2025-09
-            Port: 443
-            DefaultActions:
-              - Type: forward
-                Order: 1
-                TargetGroupArn: "{{ nginx_target_group_r.target_group_arn }}"
-            Certificates:
-              - CertificateArn: "{{ ca_certificate_arn }}"
-      register: alb_r
-
     # ==========================================================================
     # Task Definitions
     # ==========================================================================
@@ -246,7 +207,7 @@
         family: "{{ prefix_v }}-gateway-td"
         state: "present"
         launch_type: FARGATE
-        memory: "6144"
+        memory: "8192"
         cpu: "4096"
         network_mode: awsvpc
         execution_role_arn: "{{ execution_role_r.iam_role.arn }}"
@@ -290,6 +251,20 @@
                 value: "20"
               - name: MCP_SESSION_POOL_ENABLED
                 value: "true"
+              - name: JWT_ALGORITHM
+                value: "HS256"
+              - name: JWT_SECRET_KEY
+                value: "{{ jwt_secret_key_v }}"
+              - name: JWT_AUDIENCE
+                value: "mcpgateway-api"
+              - name: JWT_ISSUER
+                value: "mcpgateway"
+              - name: PLATFORM_ADMIN_EMAIL
+                value: "admin@example.com"
+              - name: PLATFORM_ADMIN_PASSWORD
+                value: "{{ platform_admin_password_v | default('changeme') }}"
+              - name: MCPGATEWAY_UI_ENABLED
+                value: "false"  # Until we patch the cache to just forward admin requests
             portMappings:
               - name: gateway
                 containerPort: 4444
@@ -301,8 +276,8 @@
         family: "{{ prefix_v }}-nginx-td"
         state: "present"
         launch_type: FARGATE
-        memory: "1024"
-        cpu: "4096"
+        memory: "2048"
+        cpu: "1024"
         network_mode: awsvpc
         execution_role_arn: "{{ execution_role_r.iam_role.arn }}"
         task_role_arn: "{{ task_role_r.iam_role.arn }}"
@@ -327,6 +302,288 @@
                 containerPort: 80
                 protocol: tcp
       register: nginx_td_r
+
+    - name: ECS Task Definition for fast-time-server
+      community.aws.ecs_taskdefinition:
+        family: "{{ prefix_v }}-fast-time-td"
+        state: "present"
+        launch_type: FARGATE
+        memory: "1024"
+        cpu: "512"
+        network_mode: awsvpc
+        execution_role_arn: "{{ execution_role_r.iam_role.arn }}"
+        task_role_arn: "{{ task_role_r.iam_role.arn }}"
+        force_create: true
+        containers:
+          - name: fast-time-server
+            image: "ghcr.io/ibm/fast-time-server:latest"
+            essential: true
+            logConfiguration:
+              logDriver: awslogs
+              options:
+                awslogs-group: /ecs/mcf
+                awslogs-region: "{{ region_v }}"
+                awslogs-stream-prefix: fast-time
+            command:
+              - "-transport=dual"
+              - "-listen=0.0.0.0"
+              - "-port=8080"
+              - "-log-level=info"
+            portMappings:
+              - name: fast-time
+                containerPort: 8080
+                protocol: tcp
+          - name: register-fast-time
+            image: "ghcr.io/ibm/mcp-context-forge:{{ gateway_image_tag_v | default('latest') }}"
+            essential: false
+            logConfiguration:
+              logDriver: awslogs
+              options:
+                awslogs-group: /ecs/mcf
+                awslogs-region: "{{ region_v }}"
+                awslogs-stream-prefix: register-fast-time
+            environment:
+              - name: JWT_SECRET_KEY
+                value: "{{ jwt_secret_key_v }}"
+              - name: GATEWAY_URL
+                value: "http://gateway.{{ prefix_v }}.local:4444"
+              - name: MCP_SERVER_URL
+                value: "http://localhost:8080/http"
+              - name: MCP_SERVER_NAME
+                value: "fast_time"
+            entryPoint:
+              - "/bin/sh"
+              - "-c"
+            command:
+              - |
+                echo "Waiting for gateway..."
+                for i in $(seq 1 60); do
+                  if python3 -c "import urllib.request; urllib.request.urlopen('$GATEWAY_URL/health', timeout=2)" 2>/dev/null; then
+                    echo "Gateway is ready"
+                    break
+                  fi
+                  echo "Waiting... ($i/60)"
+                  sleep 5
+                done
+                echo "Waiting for fast-time-server..."
+                for i in $(seq 1 30); do
+                  if python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=2)" 2>/dev/null; then
+                    echo "fast-time-server is ready"
+                    break
+                  fi
+                  echo "Waiting... ($i/30)"
+                  sleep 2
+                done
+                echo "Generating JWT and registering..."
+                export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret "$JWT_SECRET_KEY" --algo HS256 2>/dev/null)
+                python3 -c "
+                import urllib.request, json, os
+                token = os.environ['MCPGATEWAY_BEARER_TOKEN']
+                gateway_url = os.environ['GATEWAY_URL']
+                def api(method, path, data=None):
+                    req = urllib.request.Request(f'{gateway_url}{path}', method=method)
+                    req.add_header('Authorization', f'Bearer {token}')
+                    req.add_header('Content-Type', 'application/json')
+                    if data: req.data = json.dumps(data).encode()
+                    with urllib.request.urlopen(req, timeout=30) as r: return json.loads(r.read())
+                try:
+                    for gw in api('GET', '/gateways'):
+                        if gw.get('name') == 'fast_time':
+                            api('DELETE', f'/gateways/{gw[\"id\"]}')
+                            print('Deleted existing gateway')
+                except: pass
+                result = api('POST', '/gateways', {'name': 'fast_time', 'url': os.environ['MCP_SERVER_URL'], 'transport': 'STREAMABLEHTTP'})
+                print(f'Registered: {result.get(\"id\", \"unknown\")}')
+                "
+                echo "Registration complete"
+      register: fast_time_td_r
+
+    - name: ECS Task Definition for fast-test-server
+      community.aws.ecs_taskdefinition:
+        family: "{{ prefix_v }}-fast-test-td"
+        state: "present"
+        launch_type: FARGATE
+        memory: "1024"
+        cpu: "512"
+        network_mode: awsvpc
+        execution_role_arn: "{{ execution_role_r.iam_role.arn }}"
+        task_role_arn: "{{ task_role_r.iam_role.arn }}"
+        force_create: true
+        containers:
+          - name: fast-test-server
+            image: "{{ ecr_registry }}/{{ prefix_v }}/fast-test-server:latest"
+            essential: true
+            logConfiguration:
+              logDriver: awslogs
+              options:
+                awslogs-group: /ecs/mcf
+                awslogs-region: "{{ region_v }}"
+                awslogs-stream-prefix: fast-test
+            environment:
+              - name: BIND_ADDRESS
+                value: "0.0.0.0:8880"
+              - name: RUST_LOG
+                value: "info"
+            portMappings:
+              - name: fast-test
+                containerPort: 8880
+                protocol: tcp
+          - name: register-fast-test
+            image: "ghcr.io/ibm/mcp-context-forge:{{ gateway_image_tag_v | default('latest') }}"
+            essential: false
+            logConfiguration:
+              logDriver: awslogs
+              options:
+                awslogs-group: /ecs/mcf
+                awslogs-region: "{{ region_v }}"
+                awslogs-stream-prefix: register-fast-test
+            environment:
+              - name: JWT_SECRET_KEY
+                value: "{{ jwt_secret_key_v }}"
+              - name: GATEWAY_URL
+                value: "http://gateway.{{ prefix_v }}.local:4444"
+              - name: MCP_SERVER_URL
+                value: "http://localhost:8880/mcp"
+              - name: MCP_SERVER_NAME
+                value: "fast_test"
+            entryPoint:
+              - "/bin/sh"
+              - "-c"
+            command:
+              - |
+                echo "Waiting for gateway..."
+                for i in $(seq 1 60); do
+                  if python3 -c "import urllib.request; urllib.request.urlopen('$GATEWAY_URL/health', timeout=2)" 2>/dev/null; then
+                    echo "Gateway is ready"
+                    break
+                  fi
+                  echo "Waiting... ($i/60)"
+                  sleep 5
+                done
+                echo "Waiting for fast-test-server..."
+                for i in $(seq 1 30); do
+                  if python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8880/health', timeout=2)" 2>/dev/null; then
+                    echo "fast-test-server is ready"
+                    break
+                  fi
+                  echo "Waiting... ($i/30)"
+                  sleep 2
+                done
+                echo "Generating JWT and registering..."
+                export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret "$JWT_SECRET_KEY" --algo HS256 2>/dev/null)
+                python3 -c "
+                import urllib.request, json, os
+                token = os.environ['MCPGATEWAY_BEARER_TOKEN']
+                gateway_url = os.environ['GATEWAY_URL']
+                def api(method, path, data=None):
+                    req = urllib.request.Request(f'{gateway_url}{path}', method=method)
+                    req.add_header('Authorization', f'Bearer {token}')
+                    req.add_header('Content-Type', 'application/json')
+                    if data: req.data = json.dumps(data).encode()
+                    with urllib.request.urlopen(req, timeout=30) as r: return json.loads(r.read())
+                try:
+                    for gw in api('GET', '/gateways'):
+                        if gw.get('name') == 'fast_test':
+                            api('DELETE', f'/gateways/{gw[\"id\"]}')
+                            print('Deleted existing gateway')
+                except: pass
+                result = api('POST', '/gateways', {'name': 'fast_test', 'url': os.environ['MCP_SERVER_URL'], 'transport': 'STREAMABLEHTTP'})
+                print(f'Registered: {result.get(\"id\", \"unknown\")}')
+                "
+                echo "Registration complete"
+      register: fast_test_td_r
+
+    - name: ECS Task Definition for benchmark-server
+      community.aws.ecs_taskdefinition:
+        family: "{{ prefix_v }}-benchmark-td"
+        state: "present"
+        launch_type: FARGATE
+        memory: "2048"
+        cpu: "1024"
+        network_mode: awsvpc
+        execution_role_arn: "{{ execution_role_r.iam_role.arn }}"
+        task_role_arn: "{{ task_role_r.iam_role.arn }}"
+        force_create: true
+        containers:
+          - name: benchmark-server
+            image: "{{ ecr_registry }}/{{ prefix_v }}/benchmark-server:latest"
+            essential: true
+            logConfiguration:
+              logDriver: awslogs
+              options:
+                awslogs-group: /ecs/mcf
+                awslogs-region: "{{ region_v }}"
+                awslogs-stream-prefix: benchmark
+            command:
+              - "-transport=http"
+              - "-server-count={{ benchmark_server_count | default(10) | string }}"
+              - "-start-port=9000"
+              - "-tools=50"
+              - "-resources=20"
+              - "-prompts=10"
+            portMappings:
+              - name: benchmark
+                containerPort: 9000
+                protocol: tcp
+          - name: register-benchmark
+            image: "ghcr.io/ibm/mcp-context-forge:{{ gateway_image_tag_v | default('latest') }}"
+            essential: false
+            logConfiguration:
+              logDriver: awslogs
+              options:
+                awslogs-group: /ecs/mcf
+                awslogs-region: "{{ region_v }}"
+                awslogs-stream-prefix: register-benchmark
+            environment:
+              - name: JWT_SECRET_KEY
+                value: "{{ jwt_secret_key_v }}"
+              - name: GATEWAY_URL
+                value: "http://gateway.{{ prefix_v }}.local:4444"
+              - name: BENCHMARK_SERVER_COUNT
+                value: "{{ benchmark_server_count | default(10) | string }}"
+            entryPoint:
+              - "/bin/sh"
+              - "-c"
+            command:
+              - |
+                echo "Waiting for gateway..."
+                for i in $(seq 1 60); do
+                  if python3 -c "import urllib.request; urllib.request.urlopen('$GATEWAY_URL/health', timeout=2)" 2>/dev/null; then
+                    echo "Gateway is ready"
+                    break
+                  fi
+                  echo "Waiting... ($i/60)"
+                  sleep 5
+                done
+                echo "Waiting for benchmark-server..."
+                sleep 10
+                echo "Generating JWT and registering benchmark servers..."
+                export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret "$JWT_SECRET_KEY" --algo HS256 2>/dev/null)
+                python3 -c "
+                import urllib.request, json, os
+                token = os.environ['MCPGATEWAY_BEARER_TOKEN']
+                gateway_url = os.environ['GATEWAY_URL']
+                server_count = int(os.environ.get('BENCHMARK_SERVER_COUNT', '10'))
+                def api(method, path, data=None):
+                    req = urllib.request.Request(f'{gateway_url}{path}', method=method)
+                    req.add_header('Authorization', f'Bearer {token}')
+                    req.add_header('Content-Type', 'application/json')
+                    if data: req.data = json.dumps(data).encode()
+                    with urllib.request.urlopen(req, timeout=30) as r: return json.loads(r.read())
+                registered = 0
+                for port in range(9000, 9000 + server_count):
+                    name = f'benchmark-{port}'
+                    try:
+                        result = api('POST', '/gateways', {'name': name, 'url': f'http://localhost:{port}/mcp', 'transport': 'STREAMABLEHTTP'})
+                        print(f'Registered {name}: {result.get(\"id\", \"unknown\")}')
+                        registered += 1
+                    except Exception as e:
+                        if '409' in str(e): registered += 1
+                        else: print(f'Failed {name}: {e}')
+                print(f'Registered {registered}/{server_count} servers')
+                "
+                echo "Registration complete"
+      register: benchmark_td_r
 
     # ==========================================================================
     # ECS Services
@@ -369,10 +626,6 @@
         launch_type: FARGATE
         desired_count: 1
         task_definition: "{{ nginx_td_r.taskdefinition.taskDefinitionArn }}"
-        load_balancers:
-          - targetGroupArn: "{{ nginx_target_group_r.target_group_arn }}"
-            containerName: nginx
-            containerPort: 80
         network_configuration:
           assign_public_ip: false
           subnets: "{{ vpc_private_subnets_r.subnets | map(attribute='id') }}"
@@ -394,6 +647,93 @@
                 - port: 80
                   dns_name: nginx
 
+    - name: Fast Time Server service
+      ecs_service:
+        state: present
+        name: "{{ prefix_v }}-fast-time-svc"
+        cluster: "{{ prefix_v }}-ecs-cluster"
+        launch_type: FARGATE
+        desired_count: 1
+        task_definition: "{{ fast_time_td_r.taskdefinition.taskDefinitionArn }}"
+        network_configuration:
+          assign_public_ip: false
+          subnets: "{{ vpc_private_subnets_r.subnets | map(attribute='id') }}"
+          security_groups:
+            - "{{ ecs_ec2_sg_group_id_f }}"
+        enable_execute_command: "{{ debug_container_p }}"
+        service_connect_configuration:
+          enabled: true
+          namespace: "{{ prefix_v }}.local"
+          logConfiguration:
+            logDriver: awslogs
+            options:
+              awslogs-group: /ecs/mcf
+              awslogs-region: "{{ region_v }}"
+              awslogs-stream-prefix: fast-time-service-connect
+          services:
+            - port_name: fast-time
+              client_aliases:
+                - port: 8080
+                  dns_name: fast-time
+
+    - name: Fast Test Server service
+      ecs_service:
+        state: present
+        name: "{{ prefix_v }}-fast-test-svc"
+        cluster: "{{ prefix_v }}-ecs-cluster"
+        launch_type: FARGATE
+        desired_count: 1
+        task_definition: "{{ fast_test_td_r.taskdefinition.taskDefinitionArn }}"
+        network_configuration:
+          assign_public_ip: false
+          subnets: "{{ vpc_private_subnets_r.subnets | map(attribute='id') }}"
+          security_groups:
+            - "{{ ecs_ec2_sg_group_id_f }}"
+        enable_execute_command: "{{ debug_container_p }}"
+        service_connect_configuration:
+          enabled: true
+          namespace: "{{ prefix_v }}.local"
+          logConfiguration:
+            logDriver: awslogs
+            options:
+              awslogs-group: /ecs/mcf
+              awslogs-region: "{{ region_v }}"
+              awslogs-stream-prefix: fast-test-service-connect
+          services:
+            - port_name: fast-test
+              client_aliases:
+                - port: 8880
+                  dns_name: fast-test
+
+    - name: Benchmark Server service
+      ecs_service:
+        state: present
+        name: "{{ prefix_v }}-benchmark-svc"
+        cluster: "{{ prefix_v }}-ecs-cluster"
+        launch_type: FARGATE
+        desired_count: 1
+        task_definition: "{{ benchmark_td_r.taskdefinition.taskDefinitionArn }}"
+        network_configuration:
+          assign_public_ip: false
+          subnets: "{{ vpc_private_subnets_r.subnets | map(attribute='id') }}"
+          security_groups:
+            - "{{ ecs_ec2_sg_group_id_f }}"
+        enable_execute_command: "{{ debug_container_p }}"
+        service_connect_configuration:
+          enabled: true
+          namespace: "{{ prefix_v }}.local"
+          logConfiguration:
+            logDriver: awslogs
+            options:
+              awslogs-group: /ecs/mcf
+              awslogs-region: "{{ region_v }}"
+              awslogs-stream-prefix: benchmark-service-connect
+          services:
+            - port_name: benchmark
+              client_aliases:
+                - port: 9000
+                  dns_name: benchmark
+
     # ==========================================================================
     # Wait and Configure DNS
     # ==========================================================================
@@ -414,30 +754,6 @@
       loop:
         - gateway
         - nginx
-
-    - name: ALB DNS Name is
-      ansible.builtin.debug:
-        var: alb_r.dns_name
-
-    - name: Wait for DNS to be available
-      ansible.builtin.command: dig +short {{ alb_r.dns_name }}
-      changed_when: false
-      register: alb_dig_r
-      retries: 30
-      delay: 20
-      until: alb_dig_r.stdout is truthy
-
-    - name: Create Route 53 A records for ALB IP addresses
-      amazon.aws.route53:
-        state: present
-        zone: "{{ (mcf_domain | split('.'))[-2:] | join('.') }}"
-        record: "{{ prefix_v + '.' + mcf_domain }}"
-        type: A
-        ttl: 60
-        value: "{{ alb_dig_r.stdout | split('\n') }}"
-        overwrite: true
-        wait: true
-
-    - name: Display target domain name
-      ansible.builtin.debug:
-        msg: Application is reachable at https://{{ prefix_v + '.' + mcf_domain }}
+        - fast-time
+        - fast-test
+        - benchmark

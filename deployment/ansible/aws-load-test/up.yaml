@@ -4,7 +4,8 @@
 - import_playbook: playbooks/vpc-up.yaml
 - import_playbook: playbooks/security-up.yaml
 - import_playbook: playbooks/bastion-up.yaml
-- import_playbook: playbooks/build-nginx-image.yaml
+- import_playbook: playbooks/build-images.yaml
 - import_playbook: playbooks/postgres-up.yaml
 - import_playbook: playbooks/elasticache-up.yaml
 - import_playbook: playbooks/ecs-up.yaml
+- import_playbook: playbooks/load-test-ui-up.yaml
