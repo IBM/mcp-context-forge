@@ -1456,12 +1456,29 @@ async def test_respond_memory_backend_no_message(registry: SessionRegistry):
     registry._session_message = None
 
     # The respond method should handle None _session_message gracefully
-    # Since the actual code has a bug, we'll test that it doesn't crash
-    try:
+    await registry.respond(server_id=None, user={"token": "test"}, session_id="test_session", base_url="http://localhost")
+
+
+@pytest.mark.asyncio
+async def test_respond_memory_backend_with_none_message_content(registry: SessionRegistry, caplog):
+    """Test respond with memory backend when message content is None (not the whole dict)."""
+    caplog.set_level(logging.WARNING, logger="mcpgateway.cache.session_registry")
+
+    tr = FakeSSETransport("test_session")
+    await registry.add_session("test_session", tr)
+
+    # Set _session_message to a dict with "message" key having None value
+    # This is the specific edge case that was previously causing orjson.loads(None) to crash
+    registry._session_message = {"session_id": "test_session", "message": None}
+
+    with patch.object(registry, "generate_response", new_callable=AsyncMock) as mock_gen:
         await registry.respond(server_id=None, user={"token": "test"}, session_id="test_session", base_url="http://localhost")
-    except AttributeError:
-        # This is expected due to the bug in the source code
-        pass
+
+        # Should NOT call generate_response since message content is None
+        mock_gen.assert_not_called()
+
+    # Should log a warning about the None message content
+    assert "message content is None" in caplog.text
 
 
 @pytest.mark.asyncio
